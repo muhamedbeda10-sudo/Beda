@@ -16,7 +16,7 @@ import type {
 } from '@/types'
 import { buildSeed } from '@/data/seed'
 import { uid, nowISO, fileToDataUrl, fileToBlob } from '@/lib/utils'
-import { firebaseEnabled, getDb } from '@/lib/firebase'
+import { firebaseEnabled, firebaseUseStorage, firebaseSeedEnabled, getDb } from '@/lib/firebase'
 import {
   persistDiff,
   seedIfEmpty,
@@ -100,10 +100,12 @@ export async function enableFirebaseSync(): Promise<void> {
   if (!firebaseEnabled || firebaseReady) return
   mode = 'firebase'
   const store = getDb()
-  try {
-    await seedIfEmpty(store, buildSeed())
-  } catch (e) {
-    console.warn('[firebase] seed check failed', e)
+  if (firebaseSeedEnabled) {
+    try {
+      await seedIfEmpty(store, buildSeed())
+    } catch (e) {
+      console.warn('[firebase] seed check failed', e)
+    }
   }
   detachRealtime = attachRealtime((key: CollectionKey, rows: unknown[]) => {
     ;(state as unknown as Record<string, unknown[]>)[key] = rows as unknown[]
@@ -390,11 +392,14 @@ export const actions = {
     const id = uid('img')
     let dataUrl: string
     let storagePath: string | undefined
-    if (mode === 'firebase' && firebaseReady) {
+    if (mode === 'firebase' && firebaseReady && firebaseUseStorage) {
       const blob = await fileToBlob(file)
       const res = await uploadImageBlob(blob, `images/${meta.sessionId}/${id}.jpg`)
       dataUrl = res.url
       storagePath = res.path
+    } else if (mode === 'firebase' && firebaseReady) {
+      // No Cloud Storage (Spark plan): compress harder so base64 fits a Firestore doc.
+      dataUrl = await fileToDataUrl(file, 900, 0.55)
     } else {
       dataUrl = await fileToDataUrl(file)
     }

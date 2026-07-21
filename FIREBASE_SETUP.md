@@ -22,6 +22,11 @@ across devices/users** with **login** and **image storage**, connect Firebase.
   - أنشئ Firestore واختار Production mode.
 - **Storage** → Get started → pick the same region.
   - فعّل Storage.
+  - ⚠️ On the free **Spark** plan, Storage requires upgrading to **Blaze**. You
+    can skip Storage: set `VITE_FIREBASE_USE_STORAGE=false` and images are stored
+    (compressed) inside Firestore instead — no billing needed.
+  - على الخطة المجانية، الـ Storage بيطلب ترقية لـ Blaze. تقدر تتخطّاه بوضع
+    `VITE_FIREBASE_USE_STORAGE=false` والصور هتتخزن مضغوطة جوه Firestore.
 
 ## 3. Register a Web app · سجّل تطبيق ويب
 

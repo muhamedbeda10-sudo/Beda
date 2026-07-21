@@ -22,6 +22,16 @@ const cfg = {
 /** True only when the minimum required config is present. */
 export const firebaseEnabled = Boolean(cfg.apiKey && cfg.projectId && cfg.appId && cfg.authDomain)
 
+/** Whether to upload images to Cloud Storage (requires the Blaze plan).
+ *  Set VITE_FIREBASE_USE_STORAGE=false (Spark / free plan) to store images as
+ *  compressed base64 inside Firestore instead — no Storage or billing needed. */
+export const firebaseUseStorage =
+  firebaseEnabled && import.meta.env.VITE_FIREBASE_USE_STORAGE !== 'false'
+
+/** Auto-seed demo data into an empty Firestore on first sign-in.
+ *  Set VITE_FIREBASE_SEED=false to start with a completely empty database. */
+export const firebaseSeedEnabled = import.meta.env.VITE_FIREBASE_SEED !== 'false'
+
 let app: FirebaseApp | null = null
 let authInstance: Auth | null = null
 let dbInstance: Firestore | null = null
