@@ -2,7 +2,6 @@ import { useRef, useState } from 'react'
 import { Camera, ImagePlus, Trash2, Maximize2 } from 'lucide-react'
 import type { InspectionImage, ImageOwnerKind } from '@/types'
 import { actions } from '@/store/db'
-import { fileToDataUrl } from '@/lib/utils'
 import { useApp } from '@/store/AppContext'
 import { Lightbox } from '@/components/ui/Lightbox'
 
@@ -29,14 +28,15 @@ export function ImageStrip({
     if (!list || list.length === 0) return
     setBusy(true)
     try {
+      let count = 0
       for (const file of Array.from(list)) {
         if (!file.type.startsWith('image/')) continue
-        const dataUrl = await fileToDataUrl(file)
-        actions.addImage({ ownerKind, ownerId, sessionId, dataUrl, caption: file.name })
+        await actions.addImageFromFile(file, { ownerKind, ownerId, sessionId })
+        count++
       }
-      toast(`${list.length} image(s) added`, 'success')
+      if (count) toast(`${count} image(s) added`, 'success')
     } catch {
-      toast('Could not read image', 'error')
+      toast('Could not upload image', 'error')
     } finally {
       setBusy(false)
     }

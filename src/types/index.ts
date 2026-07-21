@@ -117,8 +117,10 @@ export interface InspectionImage {
   ownerKind: ImageOwnerKind
   ownerId: ID // sampleId or defectId
   sessionId: ID
-  /** base64 data URL (persisted in localStorage) */
+  /** base64 data URL (local mode) or a Cloud Storage download URL (firebase mode) */
   dataUrl: string
+  /** Cloud Storage object path, when the image lives in Firebase Storage */
+  storagePath?: string
   caption?: string
   createdAt: string
 }

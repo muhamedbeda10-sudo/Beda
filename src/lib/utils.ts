@@ -109,6 +109,35 @@ export function fileToDataUrl(file: File, maxDim = 1280, quality = 0.7): Promise
   })
 }
 
+/** File -> downscaled JPEG Blob (for Cloud Storage upload). */
+export function fileToBlob(file: File, maxDim = 1280, quality = 0.7): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        let { width, height } = img
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height)
+          width = Math.round(width * scale)
+          height = Math.round(height * scale)
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return reject(new Error('no canvas context'))
+        ctx.drawImage(img, 0, 0, width, height)
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/jpeg', quality)
+      }
+      img.onerror = () => reject(new Error('image decode failed'))
+      img.src = reader.result as string
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 export function daysAgoISO(days: number): string {
   const d = new Date()
   d.setDate(d.getDate() - days)

@@ -1,0 +1,19 @@
+rules_version = '2';
+// ---------------------------------------------------------------------------
+// QC System — Cloud Storage security rules
+// Deploy with:  firebase deploy --only storage
+//
+// Inspection images live under images/{sessionId}/{file}. Any signed-in user
+// may read; writes are limited to signed-in users and image files up to 8 MB.
+// ---------------------------------------------------------------------------
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /images/{sessionId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null;
+    }
+  }
+}

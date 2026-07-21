@@ -17,16 +17,25 @@ import {
   Info,
   AlertTriangle,
 } from 'lucide-react'
+import { LogOut } from 'lucide-react'
 import { useApp } from '@/store/AppContext'
+import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
+import type { UserRole } from '@/lib/firebase'
 
-const NAV = [
+const NAV: Array<{
+  to: string
+  label: string
+  icon: typeof ClipboardCheck
+  end?: boolean
+  roles?: UserRole[]
+}> = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/orders', label: 'Order Summary', icon: FileText },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3, roles: ['supervisor', 'manager'] },
   { to: '/history', label: 'History', icon: History },
-  { to: '/settings', label: 'Settings', icon: Settings },
-  { to: '/audit', label: 'Audit Logs', icon: ScrollText },
+  { to: '/settings', label: 'Settings', icon: Settings, roles: ['supervisor', 'manager'] },
+  { to: '/audit', label: 'Audit Logs', icon: ScrollText, roles: ['manager'] },
 ]
 
 function ToastHost() {
@@ -59,8 +68,11 @@ function ToastHost() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { theme, toggleTheme, user } = useApp()
+  const { role, firebaseEnabled, signOutUser } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
+
+  const nav = NAV.filter((n) => !n.roles || n.roles.includes(role))
 
   return (
     <div className="min-h-full">
@@ -81,7 +93,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           {/* Desktop nav */}
           <nav className="ml-6 hidden flex-1 items-center gap-1 lg:flex">
-            {NAV.map((n) => (
+            {nav.map((n) => (
               <NavLink
                 key={n.to}
                 to={n.to}
@@ -109,6 +121,16 @@ export function AppShell({ children }: { children: ReactNode }) {
             >
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
+            {firebaseEnabled && (
+              <button
+                onClick={() => signOutUser()}
+                className="hidden rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-rose-400 lg:block"
+                aria-label="Sign out"
+                title="Sign out"
+              >
+                <LogOut className="h-5 w-5" />
+              </button>
+            )}
             <button
               onClick={() => setMenuOpen(true)}
               className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 lg:hidden"
@@ -137,7 +159,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </button>
             </div>
             <nav className="flex flex-col gap-1 p-3">
-              {NAV.map((n) => {
+              {nav.map((n) => {
                 const active = n.end ? location.pathname === n.to : location.pathname.startsWith(n.to)
                 return (
                   <NavLink
@@ -158,8 +180,22 @@ export function AppShell({ children }: { children: ReactNode }) {
                 )
               })}
             </nav>
-            <div className="mt-2 border-t border-slate-100 px-5 py-4 text-sm text-slate-500 dark:border-slate-800">
-              Signed in as <span className="font-semibold text-slate-700 dark:text-slate-200">{user}</span>
+            <div className="mt-2 border-t border-slate-100 px-5 py-4 dark:border-slate-800">
+              <p className="text-sm text-slate-500">
+                Signed in as <span className="font-semibold text-slate-700 dark:text-slate-200">{user}</span>
+              </p>
+              <p className="mt-0.5 text-xs capitalize text-slate-400">Role: {role}</p>
+              {firebaseEnabled && (
+                <button
+                  onClick={() => {
+                    setMenuOpen(false)
+                    signOutUser()
+                  }}
+                  className="mt-3 inline-flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-rose-50 hover:text-rose-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+                >
+                  <LogOut className="h-4 w-4" /> Sign out
+                </button>
+              )}
             </div>
           </div>
         </div>

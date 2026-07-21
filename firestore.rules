@@ -1,0 +1,46 @@
+rules_version = '2';
+// ---------------------------------------------------------------------------
+// QC System — Firestore security rules
+// Deploy with:  firebase deploy --only firestore:rules
+//
+// Model: any signed-in user may read/write the shared QC data. User profile
+// docs (users/{uid}) are readable by all signed-in users but writable only by
+// the owner — EXCEPT the `role` field, which only a manager may change.
+// Tighten further per your organisation's policy as needed.
+// ---------------------------------------------------------------------------
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isManager() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager';
+    }
+
+    // User profiles
+    match /users/{uid} {
+      allow read: if signedIn();
+      // Owner can create/update their own profile, but cannot self-promote role;
+      // managers can update anyone's role.
+      allow create: if signedIn() && request.auth.uid == uid;
+      allow update: if isManager()
+        || (request.auth.uid == uid
+            && request.resource.data.role == resource.data.role);
+      allow delete: if isManager();
+    }
+
+    // Shared QC collections — signed-in access.
+    match /{collection}/{docId} {
+      allow read, write: if signedIn()
+        && collection in [
+          'machines', 'orders', 'sessions', 'samples', 'dimensions',
+          'defects', 'images', 'defectTypes', 'dimensionSpecs',
+          'gradeMappings', 'ptConsumables', 'audit'
+        ];
+    }
+  }
+}

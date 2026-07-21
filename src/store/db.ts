@@ -15,12 +15,36 @@ import type {
   PTConsumable,
 } from '@/types'
 import { buildSeed } from '@/data/seed'
-import { uid, nowISO } from '@/lib/utils'
+import { uid, nowISO, fileToDataUrl, fileToBlob } from '@/lib/utils'
+import { firebaseEnabled, getDb } from '@/lib/firebase'
+import {
+  persistDiff,
+  seedIfEmpty,
+  attachRealtime,
+  uploadImageBlob,
+  deleteStorageObject,
+  type CollectionKey,
+} from '@/store/firebaseSync'
 
 const STORAGE_KEY = 'qc-system-db-v1'
 const USER_KEY = 'qc-system-user'
 
+/** Backend mode. Starts 'local'; upgraded to 'firebase' once a user signs in. */
+let mode: 'local' | 'firebase' = 'local'
+let firebaseReady = false
+let detachRealtime: (() => void) | null = null
+
+function emptyDB(): DB {
+  return {
+    machines: [], orders: [], sessions: [], samples: [], dimensions: [], defects: [],
+    images: [], defectTypes: [], dimensionSpecs: [], gradeMappings: [], ptConsumables: [],
+    audit: [], meta: { version: 1, seededAt: nowISO() },
+  }
+}
+
 function load(): DB {
+  // In firebase mode we start empty and let realtime listeners fill the store.
+  if (firebaseEnabled) return emptyDB()
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
@@ -57,11 +81,52 @@ function persist() {
 
 /** Replace state immutably and notify subscribers. */
 function set(mutator: (draft: DB) => void) {
+  const prev = state
   const next: DB = structuredClone(state)
   mutator(next)
   state = next
-  persist()
   emit()
+  if (mode === 'firebase' && firebaseReady) {
+    persistDiff(prev, next).catch((e) => console.warn('[firebase] persist failed', e))
+  } else {
+    persist()
+  }
+}
+
+// ---- Firebase lifecycle ----------------------------------------------------
+
+/** Turn on Firestore sync (called after a user signs in). Idempotent. */
+export async function enableFirebaseSync(): Promise<void> {
+  if (!firebaseEnabled || firebaseReady) return
+  mode = 'firebase'
+  const store = getDb()
+  try {
+    await seedIfEmpty(store, buildSeed())
+  } catch (e) {
+    console.warn('[firebase] seed check failed', e)
+  }
+  detachRealtime = attachRealtime((key: CollectionKey, rows: unknown[]) => {
+    ;(state as unknown as Record<string, unknown[]>)[key] = rows as unknown[]
+    // reassign a fresh object identity so useSyncExternalStore sees a change
+    state = { ...state }
+    emit()
+  })
+  firebaseReady = true
+  emit()
+}
+
+/** Turn off sync on sign-out and reset the in-memory store. */
+export function disableFirebaseSync(): void {
+  detachRealtime?.()
+  detachRealtime = null
+  firebaseReady = false
+  mode = 'local'
+  state = emptyDB()
+  emit()
+}
+
+export function isFirebaseReady(): boolean {
+  return firebaseReady
 }
 
 export function getState(): DB {
@@ -106,7 +171,13 @@ function log(action: AuditAction, entity: string, entityRef: string, summary: st
 // ============================================================================
 
 export const actions = {
+  /** Restore local demo data. In firebase mode this only re-seeds Firestore
+   *  when the shared database is empty (it never wipes real shared data). */
   reset() {
+    if (mode === 'firebase' && firebaseReady) {
+      seedIfEmpty(getDb(), buildSeed()).catch((e) => console.warn('[firebase] reseed failed', e))
+      return
+    }
     localStorage.removeItem(STORAGE_KEY)
     state = load()
     emit()
@@ -309,7 +380,43 @@ export const actions = {
     })
     return created
   },
+
+  /** Add an image from a File. Uploads to Cloud Storage in firebase mode,
+   *  otherwise stores a downscaled base64 data URL locally. */
+  async addImageFromFile(
+    file: File,
+    meta: Pick<InspectionImage, 'ownerKind' | 'ownerId' | 'sessionId'>,
+  ): Promise<InspectionImage> {
+    const id = uid('img')
+    let dataUrl: string
+    let storagePath: string | undefined
+    if (mode === 'firebase' && firebaseReady) {
+      const blob = await fileToBlob(file)
+      const res = await uploadImageBlob(blob, `images/${meta.sessionId}/${id}.jpg`)
+      dataUrl = res.url
+      storagePath = res.path
+    } else {
+      dataUrl = await fileToDataUrl(file)
+    }
+    const created: InspectionImage = {
+      id,
+      ownerKind: meta.ownerKind,
+      ownerId: meta.ownerId,
+      sessionId: meta.sessionId,
+      dataUrl,
+      storagePath,
+      caption: file.name,
+      createdAt: nowISO(),
+    }
+    set((d) => {
+      d.images.push(created)
+    })
+    return created
+  },
+
   deleteImage(id: string) {
+    const img = state.images.find((x) => x.id === id)
+    if (img?.storagePath && mode === 'firebase') deleteStorageObject(img.storagePath)
     set((d) => {
       d.images = d.images.filter((x) => x.id !== id)
     })

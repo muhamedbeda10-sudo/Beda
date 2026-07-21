@@ -9,3 +9,4 @@ dist-ssr
 npm-debug.log*
 .env
 .env.*
+!.env.example

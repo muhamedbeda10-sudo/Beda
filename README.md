@@ -65,8 +65,10 @@ mobile** (responsive, touch-friendly, light + dark mode).
 - React Router
 - Recharts (analytics)
 - lucide-react (icons)
-- Data persisted client-side in `localStorage` (seeded with realistic demo data
-  on first run). No backend required to run the demo.
+- **Firebase (optional):** Firestore (shared data) + Auth (login & roles) +
+  Storage (images). When not configured, data is persisted client-side in
+  `localStorage` (seeded with realistic demo data) so the app runs with **zero
+  backend setup**.
 
 ## Getting started
 
@@ -84,6 +86,18 @@ All data lives in the browser via a small reactive store
 `src/types/index.ts` and `src/data/seed.ts`. Use **Settings → General → Reset
 demo data** to restore the seed at any time.
 
-The store is structured so the persistence layer can later be swapped for a real
-backend (e.g. Supabase / Dataverse) without changing the UI: every read goes
+The store is structured so the persistence layer swaps cleanly: every read goes
 through `useDB()` / selectors and every write through `actions.*`.
+
+### Firebase backend
+
+Set the `VITE_FIREBASE_*` variables (see `.env.example`) to switch from local
+demo mode to a shared **Firebase** backend — Firestore for data, Authentication
+for login & roles, and Cloud Storage for images. The store detects the config at
+runtime (`firebaseEnabled`), gates the app behind a login screen, syncs
+collections in realtime, and uploads images to Storage instead of base64. When
+the variables are absent, everything falls back to `localStorage`.
+
+**Full step-by-step setup (English + العربية): see [`FIREBASE_SETUP.md`](./FIREBASE_SETUP.md).**
+Security rules for Firestore and Storage are included (`firestore.rules`,
+`storage.rules`, `firebase.json`).

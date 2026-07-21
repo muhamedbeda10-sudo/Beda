@@ -47,6 +47,7 @@ export function AuditPage() {
           a.entityRef.toLowerCase().includes(term) ||
           a.user.toLowerCase().includes(term),
       )
+      .sort((a, b) => (a.at < b.at ? 1 : -1))
   }, [db.audit, q, action, user])
 
   function exportCsv() {
