@@ -215,6 +215,17 @@ export const COL = {
   gradeMappings: 'gradeMappings',
   audit: 'auditLogs',
   productionData: 'productionData',
+  // Paint inspection records. The source table is named ...paintsampleimages,
+  // but the row is the paint-sample record itself, not a photo pointer.
+  paintSamples: 'paintSamples',
+  // Image metadata. The rows migrate now; the bytes stay in SharePoint until
+  // Cloud Storage exists. Each carries legacySourceUrl and imagePending.
+  defectImages: 'defectImages',
+  sampleCoilImages: 'sampleCoilImages',
+  pdiImages: 'pdiImages',
+  // The per-session setup record. Linked by quality_sessionkey, not by the
+  // lookup column, which is null on all but one row.
+  sessionInitializations: 'sessionInitializations',
   // Quarantine. Rows that carry real evidence but have no parent to attach to.
   // They are held for human review, never silently dropped — losing a recorded
   // measurement is the exact failure this system exists to prevent.
@@ -731,6 +742,190 @@ export function transformAuditLog(r, ctx) {
 // 4. Files, in dependency order
 // ============================================================================
 
+// ============================================================================
+// Image metadata and the paint-sample record
+// ============================================================================
+
+/**
+ * The first of `candidates` that the row actually carries a value for.
+ *
+ * The four image tables were added to the migration after the column names in
+ * the rest of the export were known, and Dataverse is not consistent about
+ * whether a parent link is a lookup (`_x_value`) or a plain text column holding
+ * the GUID. Rather than assume one and write documents with an empty parent,
+ * each transform lists what it will accept and reports which one it found. A
+ * row carrying none of them is rejected by name, not written blank.
+ */
+export function pickField(row, candidates) {
+  for (const key of candidates) {
+    const v = strOrNull(row[key])
+    if (v) return { key, value: v }
+  }
+  return { key: null, value: null }
+}
+
+/** Shared shape for a row whose image bytes are still in SharePoint. */
+function pendingImage(url) {
+  return {
+    // A reconciliation key for the byte migration, and nothing else. The app
+    // must never render it: it is a SharePoint link that stops working the
+    // moment permissions change, so treating it as an image source would put
+    // broken evidence in front of an inspector.
+    legacySourceUrl: url ?? undefined,
+    imagePending: true,
+  }
+}
+
+/**
+ * 08_quality_paintsampleimages.json -- the paint inspection record.
+ *
+ * Named "...images" but it is the record: it carries the notes and the time the
+ * sample was taken, with the photo as one field. Dropping it would drop the
+ * whole paint inspection history.
+ *
+ * The link to the sample is `quality_inspectionsampleidtext`: a text column
+ * holding the sample GUID, with no `_value` suffix, so a generic lookup
+ * resolver does not see it.
+ */
+export function transformPaintSample(r, ctx) {
+  const id = r.quality_paintsampleimageid
+  if (!id) return reject('missing primary key')
+
+  const parent = pickField(r, ['quality_inspectionsampleidtext', '_quality_inspectionsample_value'])
+  ctx.resolvedColumn?.('08_quality_paintsampleimages.json', 'sample', parent.key)
+  if (!parent.value) {
+    ctx.count('paintSampleNoParent')
+    return reject('paint sample has no sample reference', { id })
+  }
+
+  return {
+    collection: COL.paintSamples,
+    id,
+    doc: pruned({
+      id,
+      legacyId: id,
+      sampleId: parent.value,
+      imageName: strOrNull(r.quality_imagename),
+      takenAt: isoOrNull(r.quality_takenon) ?? isoOrNull(r.createdon) ?? '',
+      notes: strOrNull(r.quality_notes),
+      imageIds: [],
+      ...pendingImage(strOrNull(r.quality_image)),
+    }),
+  }
+}
+
+/**
+ * The three remaining image-metadata tables. Same shape, different parent.
+ *
+ * `collection` and `parentField` say where the document goes and what the
+ * parent id is called on it; `candidates` are the source columns that may carry
+ * the link, in the order they are tried.
+ */
+function imageMetadataTransform({ file, collection, parentField, idKeys, candidates, kind }) {
+  return function transformImageMetadata(r, ctx) {
+    const id = pickField(r, idKeys).value
+    if (!id) return reject('missing primary key')
+
+    const parent = pickField(r, candidates)
+    ctx.resolvedColumn?.(file, kind, parent.key)
+    if (!parent.value) {
+      ctx.count(`${kind}ImageNoParent`)
+      return reject(`${kind} image has no ${kind} reference (looked for ${candidates.join(', ')})`, {
+        id,
+      })
+    }
+
+    return {
+      collection,
+      id,
+      doc: pruned({
+        id,
+        legacyId: id,
+        [parentField]: parent.value,
+        imageName: strOrNull(r.cr863_imagename) ?? strOrNull(r.quality_imagename),
+        notes: strOrNull(r.cr863_notes),
+        createdAt: isoOrNull(r.createdon) ?? '',
+        ...pendingImage(strOrNull(r.cr863_image) ?? strOrNull(r.quality_image)),
+      }),
+    }
+  }
+}
+
+/** 06_cr863_visualdefectimages.json -- 17 rows, every one resolving to a defect. */
+export const transformDefectImage = imageMetadataTransform({
+  file: '06_cr863_visualdefectimages.json',
+  collection: COL.defectImages,
+  parentField: 'defectId',
+  kind: 'defect',
+  idKeys: ['cr863_visualdefectimageid', 'cr863_visualdefectimage2id'],
+  candidates: [
+    '_cr863_visualdefectresult2_value',
+    '_cr863_visualdefectresult_value',
+    'cr863_visualdefectresultidtext',
+  ],
+})
+
+/** 07_cr863_samplecoilimages.json -- 5 rows, every one resolving to a sample coil. */
+export const transformSampleCoilImage = imageMetadataTransform({
+  file: '07_cr863_samplecoilimages.json',
+  collection: COL.sampleCoilImages,
+  parentField: 'sampleCoilId',
+  kind: 'sampleCoil',
+  idKeys: ['cr863_samplecoilimageid', 'cr863_samplecoilimage2id'],
+  candidates: ['_cr863_samplecoil2_value', '_cr863_samplecoil_value', 'cr863_samplecoilidtext'],
+})
+
+/** 10_cr863_pdiimages.json -- 3 rows, every one resolving to the PDI. */
+export const transformPdiImage = imageMetadataTransform({
+  file: '10_cr863_pdiimages.json',
+  collection: COL.pdiImages,
+  parentField: 'pdiId',
+  kind: 'pdi',
+  idKeys: ['cr863_pdiimageid'],
+  candidates: ['_cr863_pdi_value', 'cr863_pdiidtext'],
+})
+
+/**
+ * 11_quality_sessioninitializations.json -- the per-session setup record.
+ *
+ * The lookup column `_quality_inspectionsession_value` is null on 70 of the 71
+ * rows, so it cannot be the link. `quality_sessionkey` holds the session GUID
+ * directly and matches on 70. All 71 are imported; the one that does not
+ * resolve is written with the link unset and flagged for review rather than
+ * dropped, because a setup record with a broken pointer is still evidence that
+ * a session was set up.
+ */
+export function transformSessionInitialization(r, ctx) {
+  const id = r.quality_sessioninitializationid
+  if (!id) return reject('missing primary key')
+
+  const key = strOrNull(r.quality_sessionkey)
+  const resolves = key ? Boolean(ctx.sessionIds?.has(key)) : false
+  if (!resolves) ctx.count('sessionInitUnresolved')
+
+  return {
+    collection: COL.sessionInitializations,
+    id,
+    doc: pruned({
+      id,
+      legacyId: id,
+      sessionId: resolves ? key : undefined,
+      needsReview: resolves ? undefined : true,
+      unresolvedReason: resolves
+        ? undefined
+        : key
+          ? 'quality_sessionkey does not match any session in the export'
+          : 'quality_sessionkey is empty',
+      createdAt: isoOrNull(r.createdon) ?? '',
+      legacy: pruned({
+        sessionKey: key,
+        // Kept so the mismatch can be investigated without the source file.
+        lookupValue: strOrNull(r._quality_inspectionsession_value),
+      }),
+    }),
+  }
+}
+
 export const FILES = [
   { file: '12_cr863_productionorder1s.json', expect: 28871, fn: transformOrder, label: 'production orders' },
   { file: '13_cr863_samplecoilcopies.json', expect: 30296, fn: transformCoil, label: 'coil catalogue' },
@@ -749,16 +944,24 @@ export const FILES = [
   { file: '05_cr863_samplecoil2s.json', expect: 142, fn: transformSampleCoil, label: 'sample coils' },
   { file: '09_cr863_pdis.json', expect: 1, fn: transformPdi, label: 'PDI records' },
   { file: '24_cr863_auditlogs.json', expect: 31, fn: transformAuditLog, label: 'audit log' },
+  // Image metadata: the rows come across now, the bytes wait for Storage.
+  { file: '06_cr863_visualdefectimages.json', expect: 17, fn: transformDefectImage, label: 'defect images' },
+  { file: '07_cr863_samplecoilimages.json', expect: 5, fn: transformSampleCoilImage, label: 'sample coil images' },
+  { file: '08_quality_paintsampleimages.json', expect: 99, fn: transformPaintSample, label: 'paint samples' },
+  { file: '10_cr863_pdiimages.json', expect: 3, fn: transformPdiImage, label: 'PDI images' },
+  {
+    file: '11_quality_sessioninitializations.json',
+    expect: 71,
+    fn: transformSessionInitialization,
+    label: 'session initializations',
+  },
 ]
 
-/** Images are a deliberate second pass — the files are on disk, not in the DB. */
-const DEFERRED_IMAGE_FILES = [
-  '06_cr863_visualdefectimages.json',
-  '07_cr863_samplecoilimages.json',
-  '08_quality_paintsampleimages.json',
-  '10_cr863_pdiimages.json',
-  '22_cr863_images.json',
-]
+/**
+ * Still deferred, and for one reason only: these need Cloud Storage, which the
+ * Spark plan does not have. Their metadata has no home until the bytes do.
+ */
+const DEFERRED_IMAGE_FILES = ['21_quality_itemimages.json', '22_cr863_images.json']
 
 // ============================================================================
 // 5. Dry run
@@ -881,6 +1084,27 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
     )} · initialisations ${num(initMatched)}\n`,
   )
 
+  // Parents for the four image tables. Collected here so a dangling image row
+  // is reported rather than written against a record that does not exist.
+  const defectIds = new Set()
+  const sampleCoilIds = new Set()
+  const pdiIds = new Set()
+  for (const [file, key, into] of [
+    ['04_cr863_visualdefectresult2s.json', 'cr863_visualdefectresult2id', defectIds],
+    ['05_cr863_samplecoil2s.json', 'cr863_samplecoil2id', sampleCoilIds],
+    ['09_cr863_pdis.json', 'cr863_pdiid', pdiIds],
+  ]) {
+    if (!exists(f(file))) continue
+    for await (const r of streamRows(f(file))) {
+      if (r[key]) into.add(r[key])
+    }
+  }
+
+  // Which source column actually carried each link, reported rather than
+  // assumed. The four image tables arrived after the rest of the mapping was
+  // written, so the transforms accept more than one spelling and say which one
+  // the real data used.
+  const resolvedColumns = new Map()
   const ctx = {
     ...ctxBase,
     orderWorkCenter,
@@ -889,6 +1113,13 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
     sessionInit,
     sampleIndex,
     dimensionSequence,
+    sessionIds,
+    resolvedColumn: (file, kind, key) => {
+      const at = `${file} -> ${kind}`
+      const seen = resolvedColumns.get(at) ?? new Set()
+      seen.add(key ?? '(none found)')
+      resolvedColumns.set(at, seen)
+    },
   }
 
   const parentOf = {
@@ -897,6 +1128,11 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
     [COL.dimensions]: (d) => (sampleIds.has(d.sampleId) ? null : `sample ${d.sampleId}`),
     [COL.defects]: (d) => (sampleIds.has(d.sampleId) ? null : `sample ${d.sampleId}`),
     [COL.sampleCoils]: (d) => (sampleIds.has(d.sampleId) ? null : `sample ${d.sampleId}`),
+    [COL.paintSamples]: (d) => (sampleIds.has(d.sampleId) ? null : `sample ${d.sampleId}`),
+    [COL.defectImages]: (d) => (defectIds.has(d.defectId) ? null : `defect ${d.defectId}`),
+    [COL.sampleCoilImages]: (d) =>
+      sampleCoilIds.has(d.sampleCoilId) ? null : `sample coil ${d.sampleCoilId}`,
+    [COL.pdiImages]: (d) => (pdiIds.has(d.pdiId) ? null : `PDI ${d.pdiId}`),
   }
 
   // ---- Transform pass ------------------------------------------------------
@@ -1018,14 +1254,28 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
     for (const [k, n] of [...byField].sort((a, b) => b[1] - a[1])) log(`  ${pad(n)}  ${k}`)
   }
 
+  if (resolvedColumns.size) {
+    log('\n  -- Resolved link columns -----------------------------')
+    log('  Which source column actually carried each link, on this data.')
+    for (const [at, keys] of [...resolvedColumns].sort()) {
+      const list = [...keys].sort()
+      const bad = list.includes('(none found)')
+      log(`  ${bad ? '!' : ' '} ${at.padEnd(46)} ${list.join(', ')}`)
+      if (bad) report.problems.push(`${at}: some rows carried none of the accepted link columns`)
+    }
+  }
+
   if (report.notes.length) {
     log('\n  ── Notes ─────────────────────────────────────────────')
     for (const n of report.notes) log(`  · ${n}`)
   }
 
   log('\n  ── Deferred ──────────────────────────────────────────')
-  log(`  ${DEFERRED_IMAGE_FILES.length} image tables are not part of this pass.`)
-  log('  223 files (82 MB) upload separately so nothing is written twice.')
+  log(`  ${DEFERRED_IMAGE_FILES.length} tables need Cloud Storage and are not part of this pass:`)
+  for (const d of DEFERRED_IMAGE_FILES) log(`    ${d}`)
+  log('  Image metadata for defects, sample coils, paint samples and PDI DOES')
+  log('  migrate here: the rows carry legacySourceUrl and imagePending, and the')
+  log('  bytes follow once Storage exists.')
 
   if (report.problems.length) {
     log('\n  ── Problems ──────────────────────────────────────────')

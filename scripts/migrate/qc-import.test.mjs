@@ -360,19 +360,92 @@ describe('resume', () => {
   })
 })
 
-describe('the 444', () => {
-  it('the master files account for 444 source rows', () => {
-    // The number in the staged plan. If the mapping ever changes which files
-    // feed master, this fails rather than quietly moving the target.
-    const masterFiles = [
-      '15_cr863_dimensions.json',
-      '16_quality_dimensionorders.json',
-      '17_cr863_workcenterdimensions.json',
-      '18_cr863_workcentervisualdefects.json',
-      '19_quality_grademappings.json',
-      '20_cr863_machineses.json',
-    ]
-    const total = FILES.filter((f) => masterFiles.includes(f.file)).reduce((n, f) => n + f.expect, 0)
-    expect(total).toBe(444)
+describe('authoritative row counts', () => {
+  // Verified against the real export on the owner's machine. These are SOURCE
+  // ROW counts, not document counts -- see the note on the history total.
+  const rows = (files) =>
+    FILES.filter((f) => files.includes(f.file)).reduce((n, f) => n + f.expect, 0)
+
+  const MASTER_FILES = [
+    '20_cr863_machineses.json',            // machines                32
+    '19_quality_grademappings.json',       // gradeMappings            7
+    '15_cr863_dimensions.json',            // itemDimensionMaster     24
+    '16_quality_dimensionorders.json',     // itemDimensionOrder     328
+    '18_cr863_workcentervisualdefects.json', // workCenterDefects     52
+    '17_cr863_workcenterdimensions.json',  // workCenterDimensions     1
+  ]
+
+  const HISTORY_FILES = [
+    '01_cr863_inspectionsession1s.json',        // sessions              147
+    '02_cr863_inspectionsample1s.json',         // samples               374
+    '03_cr863_dimensionresult2s.json',          // dimensionResults    4,770
+    '04_cr863_visualdefectresult2s.json',       // defectResults          46
+    '05_cr863_samplecoil2s.json',               // sampleCoils           142
+    '06_cr863_visualdefectimages.json',         // defectImages           17
+    '07_cr863_samplecoilimages.json',           // sampleCoilImages        5
+    '08_quality_paintsampleimages.json',        // paintSamples           99
+    '09_cr863_pdis.json',                       // pdis                    1
+    '10_cr863_pdiimages.json',                  // pdiImages               3
+    '11_quality_sessioninitializations.json',   // sessionInitializations 71
+    '24_cr863_auditlogs.json',                  // auditLogs              31
+  ]
+
+  it('stage master is 444 rows', () => {
+    expect(rows(MASTER_FILES)).toBe(444)
+  })
+
+  it('stage history is 5,706 rows before the referenced orders', () => {
+    expect(rows(HISTORY_FILES)).toBe(5706)
+  })
+
+  it('every history file is mapped, so none can be silently missing', () => {
+    const mapped = new Set(FILES.map((f) => f.file))
+    for (const file of [...MASTER_FILES, ...HISTORY_FILES]) {
+      expect(mapped, `${file} is not in FILES`).toContain(file)
+    }
+  })
+
+  it('the four image tables are mapped and in stage history', () => {
+    // The earlier 5,271 estimate was short because these were treated as image
+    // files rather than rows. This is the guard against that recurring.
+    const imageTables = {
+      '06_cr863_visualdefectimages.json': COL.defectImages,
+      '07_cr863_samplecoilimages.json': COL.sampleCoilImages,
+      '08_quality_paintsampleimages.json': COL.paintSamples,
+      '10_cr863_pdiimages.json': COL.pdiImages,
+    }
+    for (const [file, collection] of Object.entries(imageTables)) {
+      expect(FILES.map((f) => f.file), file).toContain(file)
+      expect(HISTORY_COLLECTIONS, `${collection} must be in stage history`).toContain(collection)
+      expect(route(collection, { stage: 'history' })).toBe('write')
+    }
+  })
+
+  it('paint samples and session initializations are in stage history', () => {
+    for (const c of [COL.paintSamples, COL.sessionInitializations]) {
+      expect(HISTORY_COLLECTIONS).toContain(c)
+      expect(route(c, { stage: 'history' })).toBe('write')
+    }
+  })
+
+  it('itemReferenceImages and productionData stay deferred', () => {
+    // Confirmed by the owner: production reporting, not QC, and no screen in
+    // the spec consumes it; item images need Storage.
+    for (const c of [COL.itemReferenceImages, COL.productionData]) {
+      expect(DEFERRED_COLLECTIONS).toContain(c)
+      expect(route(c, { stage: 'history' })).toBe('filtered')
+      expect(route(c, { stage: 'all' })).toBe('filtered')
+    }
+  })
+
+  it("today's authorised scope fits the default write budget", () => {
+    // 444 + 5,706 + 125 referenced orders = 6,275 source rows. The projection
+    // writes fewer, because 240 unfilled dimension template rows are rejected,
+    // but the budget check has to hold for the larger number either way.
+    const referencedOrders = 125
+    const total = rows(MASTER_FILES) + rows(HISTORY_FILES) + referencedOrders
+    expect(total).toBe(6275)
+    expect(total).toBeLessThan(parseArgs(['/d', '--stage=all']).maxWrites)
+    expect(total).toBeLessThan(20000) // the Spark daily limit
   })
 })

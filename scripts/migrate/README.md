@@ -51,9 +51,9 @@ node qc-import.mjs /path/to/qc-migration/data --stage=history --commit
 | stage | collections | roughly |
 |---|---|---|
 | `master` | machines, gradeMappings, itemDimensionMaster, itemDimensionOrder, workCenterDefects, workCenterDimensions | 444 |
-| `history` | sessions, samples, dimensions, defects, sampleCoils, PDI, audit, quarantine -- **plus only the production orders those rows reference** | ~5,400 |
+| `history` | sessions, samples, dimensions, defects, sampleCoils, PDI, audit, quarantine, **paint samples, session initializations, and the four image-metadata tables** -- plus only the production orders those rows reference | 5,706 rows + 125 orders |
 | `all` | master + history. Today's authorised scope, not "everything in the file". | |
-| `deferred` | the remaining production orders, coils, itemReferenceImages, productionData | ~59,200 |
+| `deferred` | the remaining production orders, coils, itemReferenceImages, productionData, and every image **byte** | ~59,200 |
 
 The three stages **partition** the data: every document the transforms can
 produce belongs to exactly one of them. That is enforced by a test, not by this
@@ -82,6 +82,62 @@ is a finding to act on, not a line to scroll past.
 `deferred` takes exactly the orders `history` did not, so nothing is lost --
 it is queued for a day with the write budget for it.
 
+### Images: the rows migrate now, the bytes do not
+
+Four source tables are image *metadata*, and they are rows in the export, not
+files on disk. They migrate in stage 2:
+
+| file | rows | collection | link column |
+|---|---|---|---|
+| `06_cr863_visualdefectimages.json` | 17 | `defectImages` | `_cr863_visualdefectresult2_value` |
+| `07_cr863_samplecoilimages.json` | 5 | `sampleCoilImages` | `_cr863_samplecoil2_value` |
+| `08_quality_paintsampleimages.json` | 99 | `paintSamples` | `quality_inspectionsampleidtext` |
+| `10_cr863_pdiimages.json` | 3 | `pdiImages` | `_cr863_pdi_value` |
+
+Each document carries `legacySourceUrl` and `imagePending: true`.
+
+**`legacySourceUrl` is a reconciliation key for the byte migration and nothing
+else. The app must never render it.** It is a SharePoint link that stops working
+the moment permissions change, so treating it as an image source would put
+broken evidence in front of an inspector. The app renders `imageIds`, which stay
+empty until the bytes land.
+
+`08_quality_paintsampleimages.json` is named "...images" but the row **is** the
+paint inspection record -- it carries the notes and the time the sample was
+taken, with the photo as one field. It lands in `paintSamples`, the collection
+the History screen already reads. Writing zero of these would silently drop the
+entire paint inspection history.
+
+Its link to the sample is `quality_inspectionsampleidtext`: a **text** column
+holding the sample GUID, with no `_value` suffix, so a generic lookup resolver
+does not see it.
+
+Because these four tables were mapped after the rest of the export was
+understood, each transform accepts more than one spelling of its link column and
+**reports which one the real data used**, before anything is written:
+
+```
+  -- Resolved link columns -----------------------------
+    06_cr863_visualdefectimages.json -> defect: _cr863_visualdefectresult2_value
+    08_quality_paintsampleimages.json -> sample: quality_inspectionsampleidtext
+```
+
+If a link resolves to no column at all, the run **refuses to start**. Those rows
+would otherwise be written with an empty parent reference, which is evidence
+pointing at nothing.
+
+### Session initializations link by key, not by lookup
+
+`_quality_inspectionsession_value` is null on 70 of the 71 rows, so it cannot be
+the link. `quality_sessionkey` holds the session GUID directly and matches on 70.
+
+All 71 are imported. The one that does not resolve is written with `sessionId`
+unset, `needsReview: true` and the reason recorded -- not dropped. A setup record
+with a broken pointer is still evidence that a session was set up.
+
+The same rule applies to the 1 sample of 374 whose `_cr863_inspectionsession_value`
+is null: it goes to `orphanSamples` flagged, never silently discarded.
+
 Other flags:
 
 ```
@@ -104,11 +160,15 @@ and no connection to Firestore is opened. A dry run touches nothing.
 prints this same list in its own `--help` output:
 
 ```
-auditLogs             itemDimensionMaster   orphanMeasurements    sampleCoils
-coils                 itemDimensionOrder    orphanSamples         samples
-defects               itemReferenceImages   pdiDocuments          sessions
-dimensions            machines              productionData        workCenterDefects
-gradeMappings         orders                                      workCenterDimensions
+auditLogs             machines              productionData
+coils                 orders                sampleCoilImages
+defectImages          orphanMeasurements    sampleCoils
+defects               orphanSamples         samples
+dimensions            paintSamples          sessionInitializations
+gradeMappings         pdiDocuments          sessions
+itemDimensionMaster   pdiImages             workCenterDefects
+itemDimensionOrder                          workCenterDimensions
+itemReferenceImages
 ```
 
 A document routed anywhere else **aborts the run**. Every target goes through
@@ -132,16 +192,31 @@ is checked against what is left to write, not the whole stage.
 ```
   -- Projected writes ----------------------------------
   dimensions                    4,530
-  samples                         374
+  samples                         373
   sessions                        147
   orders                          125
+  paintSamples                     99
+  sessionInitializations           71
+  defects                          46
+  sampleCoils                     142
+  auditLogs                        31
+  defectImages                     17
+  sampleCoilImages                  5
+  pdiImages                         3
+  pdiDocuments                      1
+  orphanSamples                     1
   ...
-  TOTAL                         5,281
+  TOTAL                         5,591
 
   Orders: 125 of 28,871 in the file, selected because the inspection rows reference them.
 
-  Within budget: 5,281 writes, limit 18,000.
+  Within budget: 5,591 writes, limit 18,000.
 ```
+
+Source rows for stage 2 total **5,706**, plus 125 referenced orders. The
+projection writes slightly fewer because 240 unfilled dimension template rows
+are rejected, as agreed. The script prints the real number on the real data;
+this is an illustration, not a promise.
 
 **It verifies before it claims success.** See below.
 
@@ -214,13 +289,18 @@ Held back deliberately, because the project is on the Spark free plan today --
 
 * the production orders no inspection row references (28,746 of 28,871);
 * the coil catalogue, `13_cr863_samplecoilcopies.json` (30,296);
-* item reference images (42);
-* every image file -- 223 files, 82 MB. They are on disk, not in the database
-  export. The dry run lists the five image files it deliberately skips.
+* item reference images, `21_quality_itemimages.json` (42) -- needs Storage;
+* `22_cr863_images.json` (2) -- needs Storage;
+* production data, `23_cr863_productiondatas.json` (11). Production reporting --
+  worker names, produced weight, shift category, resource -- not QC data, and no
+  screen in the specification consumes it;
+* every image **byte**. The metadata rows are in; the files follow once Storage
+  exists, matched up through `legacySourceUrl`.
 
-The first three are `--stage=deferred`, which will exceed the default
-`--max-writes` and refuse until the budget is raised deliberately or the project
-moves to Blaze.
+The first three collections are `--stage=deferred`, which will exceed the
+default `--max-writes` and refuse until the budget is raised deliberately or the
+project moves to Blaze.
+
 
 ## 8. Quarantine
 

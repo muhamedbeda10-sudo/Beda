@@ -70,6 +70,14 @@ export const HISTORY_COLLECTIONS = [
   COL.audit,
   COL.orphanMeasurements,
   COL.orphanSamples,
+  // The paint inspection record, and the per-session setup record.
+  COL.paintSamples,
+  COL.sessionInitializations,
+  // Image metadata. The rows come across now; the bytes stay in SharePoint
+  // until Cloud Storage exists, which is what imagePending marks.
+  COL.defectImages,
+  COL.sampleCoilImages,
+  COL.pdiImages,
   COL.orders,
 ]
 
@@ -118,6 +126,11 @@ const NEEDS_PARENT_RESOLUTION = new Set([
   COL.sampleCoils,
   COL.orphanMeasurements,
   COL.orphanSamples,
+  COL.paintSamples,
+  COL.sessionInitializations,
+  COL.defectImages,
+  COL.sampleCoilImages,
+  COL.pdiImages,
 ])
 
 /**
@@ -218,7 +231,9 @@ Dataverse -> Firestore import
                      all       master + history, today's authorised scope
                      deferred  the bulk catalogues held back for a later day:
                                the remaining orders, coils, item reference
-                               images, production data
+                               images, production data. Image BYTES are a
+                               separate pass; the image metadata rows are in
+                               stage history already.
   --commit           required to write. Without it this counts what it would
                      write, prints the projection, and stops. No credential is
                      read and no connection to Firestore is opened.
@@ -310,6 +325,11 @@ async function resolveReferences(dir, { log = console.log } = {}) {
   const referencedOrders = new Set()
   const referencedBy = { sessions: 0, samples: 0, pdi: 0 }
   let sessionsWithNoOrder = 0
+  // Parents for the four image tables, so a dangling image row is caught rather
+  // than written against a record that does not exist.
+  const defectIds = new Set()
+  const sampleCoilIds = new Set()
+  const pdiIds = new Set()
 
   if (exists(f('12_cr863_productionorder1s.json'))) {
     for await (const r of streamRows(f('12_cr863_productionorder1s.json'))) {
@@ -391,6 +411,17 @@ async function resolveReferences(dir, { log = console.log } = {}) {
     }
   }
 
+  for (const [file, key, into] of [
+    ['04_cr863_visualdefectresult2s.json', 'cr863_visualdefectresult2id', defectIds],
+    ['05_cr863_samplecoil2s.json', 'cr863_samplecoil2id', sampleCoilIds],
+    ['09_cr863_pdis.json', 'cr863_pdiid', pdiIds],
+  ]) {
+    if (!exists(f(file))) continue
+    for await (const r of streamRows(f(file))) {
+      if (r[key]) into.add(r[key])
+    }
+  }
+
   const missing = [...referencedOrders].filter((id) => !orderIds.has(id))
 
   log(
@@ -412,6 +443,9 @@ async function resolveReferences(dir, { log = console.log } = {}) {
   return {
     orderIds,
     orderWorkCenter,
+    defectIds,
+    sampleCoilIds,
+    pdiIds,
     sessionIds,
     sessionMeta,
     sessionInspector,
@@ -441,8 +475,12 @@ async function* documentsToWrite(dir, refs, opts, tally) {
     sessionInit: refs.sessionInit,
     sampleIndex: refs.sampleIndex,
     dimensionSequence: refs.dimensionSequence,
+    // transformSessionInitialization joins on quality_sessionkey, so it needs
+    // the session ids to know which of the 71 rows resolve.
+    sessionIds: refs.sessionIds,
     decodeFailure: () => {},
     count: () => {},
+    resolvedColumn: (file, kind, key) => tally.resolvedColumns.add(`${file} -> ${kind}: ${key ?? '(none found)'}`),
   }
 
   const parentOf = {
@@ -451,6 +489,12 @@ async function* documentsToWrite(dir, refs, opts, tally) {
     [COL.dimensions]: (d) => refs.sampleIds.has(d.sampleId),
     [COL.defects]: (d) => refs.sampleIds.has(d.sampleId),
     [COL.sampleCoils]: (d) => refs.sampleIds.has(d.sampleId),
+    [COL.paintSamples]: (d) => refs.sampleIds.has(d.sampleId),
+    [COL.defectImages]: (d) => refs.defectIds.has(d.defectId),
+    [COL.sampleCoilImages]: (d) => refs.sampleCoilIds.has(d.sampleCoilId),
+    [COL.pdiImages]: (d) => refs.pdiIds.has(d.pdiId),
+    // A session initialisation that does not resolve is imported flagged, not
+    // dropped, so it deliberately has no parent check.
   }
 
   for (const spec of FILES) {
@@ -494,7 +538,14 @@ async function* documentsToWrite(dir, refs, opts, tally) {
 }
 
 function freshTally() {
-  return { rejected: 0, filtered: 0, dangling: 0, notReferenced: 0, missingFiles: [] }
+  return {
+    rejected: 0,
+    filtered: 0,
+    dangling: 0,
+    notReferenced: 0,
+    missingFiles: [],
+    resolvedColumns: new Set(),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +665,31 @@ async function main() {
   if (projTally.filtered) console.log(`  outside this stage/filter  ${pad(projTally.filtered)}`)
   if (projTally.missingFiles.length) {
     console.log(`  source files not present   ${pad(projTally.missingFiles.length)}`)
+    for (const mf of projTally.missingFiles) console.log(`    ${mf}`)
+  }
+
+  // The four image tables were mapped after the rest of the export was known,
+  // and Dataverse is not consistent about whether a parent link is a lookup or
+  // a text column holding the GUID. Each transform accepts more than one
+  // spelling; this reports which one the real data actually used, before
+  // anything is written, so a wrong assumption is visible rather than silent.
+  if (projTally.resolvedColumns.size) {
+    console.log('\n  -- Resolved link columns -----------------------------')
+    let unresolved = 0
+    for (const line of [...projTally.resolvedColumns].sort()) {
+      const bad = line.endsWith('(none found)')
+      if (bad) unresolved++
+      console.log(`  ${bad ? '!' : ' '} ${line}`)
+    }
+    if (unresolved) {
+      console.error(
+        `\n  REFUSING TO START.\n` +
+          `  ${unresolved} link(s) resolved to no column at all. Those rows would be\n` +
+          '  written with an empty parent reference, which is evidence pointing at\n' +
+          '  nothing. Add the real column name to the transform first.\n',
+      )
+      process.exit(1)
+    }
   }
 
   // ---- Budget --------------------------------------------------------------
@@ -835,8 +911,9 @@ async function main() {
   if (opts.stage === 'master') {
     console.log('  Next:  node qc-import.mjs <folder> --stage=history --commit')
   }
-  console.log('\n  Held back for a later day: the remaining production orders, the coil')
-  console.log('  catalogue, item reference images, and every image file.')
+  console.log('\n  Held back: the remaining production orders, the coil catalogue, item')
+  console.log('  reference images, production data, and the image BYTES. The image')
+  console.log('  metadata rows are in -- they carry legacySourceUrl and imagePending.')
   console.log('  Re-running is safe: the same document ids are rewritten.\n')
 }
 

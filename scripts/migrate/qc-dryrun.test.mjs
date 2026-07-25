@@ -18,6 +18,12 @@ import {
   transformDefectResult,
   transformAuditLog,
   transformGradeMapping,
+  transformPaintSample,
+  transformDefectImage,
+  transformSampleCoilImage,
+  transformPdiImage,
+  transformSessionInitialization,
+  pickField,
 } from './qc-dryrun.mjs'
 
 function ctx(extra = {}) {
@@ -547,5 +553,150 @@ describe('route placeholder', () => {
     const r = decodeRoute('0')
     expect(r.value).toBeUndefined()
     expect(r.failure.reason).toMatch(/placeholder/)
+  })
+})
+
+
+// ---------------------------------------------------------------------------
+// The four image tables and the session setup record.
+//
+// These were mapped after the rest of the export was understood, from column
+// lists verified against the real files. The tests pin the parts that would
+// silently lose data if they were wrong: which column carries the link, and
+// that a row is never written with an empty parent.
+// ---------------------------------------------------------------------------
+
+const noCtx = () => ({ counts: {}, count(k) { this.counts[k] = (this.counts[k] ?? 0) + 1 }, resolved: [], resolvedColumn(f, k, key) { this.resolved.push(`${k}:${key}`) } })
+
+describe('pickField', () => {
+  it('takes the first candidate the row actually carries', () => {
+    expect(pickField({ b: 'x' }, ['a', 'b']).key).toBe('b')
+    expect(pickField({ a: 'y', b: 'x' }, ['a', 'b']).value).toBe('y')
+  })
+
+  it('treats blank and whitespace as absent', () => {
+    expect(pickField({ a: '', b: '   ' }, ['a', 'b']).key).toBeNull()
+    expect(pickField({}, ['a']).value).toBeNull()
+  })
+})
+
+describe('paint samples', () => {
+  const row = {
+    quality_paintsampleimageid: 'ps-1',
+    quality_inspectionsampleidtext: 'smp-9',
+    quality_imagename: 'front.jpg',
+    quality_takenon: '2024-03-02T09:15:00Z',
+    quality_notes: 'colour drift on the left edge',
+    quality_image: 'https://sharepoint.example/sites/qc/paint/front.jpg',
+  }
+
+  it('is a record, not a photo pointer, and lands in paintSamples', () => {
+    const out = transformPaintSample(row, noCtx())
+    expect(out.collection).toBe('paintSamples')
+    expect(out.id).toBe('ps-1')
+    expect(out.doc.notes).toBe('colour drift on the left edge')
+    expect(out.doc.takenAt).toBe('2024-03-02T09:15:00Z')
+  })
+
+  it('links through the TEXT column, which carries no _value suffix', () => {
+    const ctx = noCtx()
+    const out = transformPaintSample(row, ctx)
+    expect(out.doc.sampleId).toBe('smp-9')
+    expect(ctx.resolved).toContain('sample:quality_inspectionsampleidtext')
+  })
+
+  it('keeps the SharePoint URL as a reconciliation key and marks the bytes pending', () => {
+    const out = transformPaintSample(row, noCtx())
+    expect(out.doc.legacySourceUrl).toBe('https://sharepoint.example/sites/qc/paint/front.jpg')
+    expect(out.doc.imagePending).toBe(true)
+    // The app renders imageIds, never legacySourceUrl -- a SharePoint link dies
+    // the moment permissions change, so it must not be an image source.
+    expect(out.doc.imageIds).toEqual([])
+  })
+
+  it('rejects rather than writing a paint sample with no parent', () => {
+    const ctx = noCtx()
+    const out = transformPaintSample({ quality_paintsampleimageid: 'ps-2' }, ctx)
+    expect(out.reject).toBeTruthy()
+    expect(ctx.counts.paintSampleNoParent).toBe(1)
+  })
+})
+
+describe('image metadata', () => {
+  const cases = [
+    { fn: transformDefectImage, id: 'cr863_visualdefectimageid', fk: '_cr863_visualdefectresult2_value', col: 'defectImages', field: 'defectId' },
+    { fn: transformSampleCoilImage, id: 'cr863_samplecoilimageid', fk: '_cr863_samplecoil2_value', col: 'sampleCoilImages', field: 'sampleCoilId' },
+    { fn: transformPdiImage, id: 'cr863_pdiimageid', fk: '_cr863_pdi_value', col: 'pdiImages', field: 'pdiId' },
+  ]
+
+  for (const c of cases) {
+    it(`${c.col}: carries the parent id and marks the bytes pending`, () => {
+      const out = c.fn(
+        { [c.id]: 'img-1', [c.fk]: 'parent-1', cr863_image: 'https://sharepoint.example/a.jpg' },
+        noCtx(),
+      )
+      expect(out.collection).toBe(c.col)
+      expect(out.doc[c.field]).toBe('parent-1')
+      expect(out.doc.legacySourceUrl).toBe('https://sharepoint.example/a.jpg')
+      expect(out.doc.imagePending).toBe(true)
+    })
+
+    it(`${c.col}: rejects by name rather than writing an empty parent`, () => {
+      const out = c.fn({ [c.id]: 'img-2' }, noCtx())
+      expect(out.reject).toBeTruthy()
+      // The reason names the columns it looked for, so a wrong assumption about
+      // the source schema is legible instead of producing orphaned evidence.
+      expect(out.reject.reason).toMatch(/looked for/)
+      expect(out.reject.reason).toContain(c.fk)
+    })
+
+    it(`${c.col}: reports which column resolved the link`, () => {
+      const ctx = noCtx()
+      c.fn({ [c.id]: 'img-3', [c.fk]: 'parent-1' }, ctx)
+      expect(ctx.resolved.some((r) => r.endsWith(c.fk))).toBe(true)
+    })
+  }
+})
+
+describe('session initializations', () => {
+  const ctxWith = (ids) => ({ ...noCtx(), sessionIds: new Set(ids) })
+
+  it('joins on quality_sessionkey, not on the lookup column', () => {
+    const ctx = ctxWith(['ses-1'])
+    const out = transformSessionInitialization(
+      {
+        quality_sessioninitializationid: 'si-1',
+        quality_sessionkey: 'ses-1',
+        _quality_inspectionsession_value: null,
+      },
+      ctx,
+    )
+    expect(out.collection).toBe('sessionInitializations')
+    expect(out.doc.sessionId).toBe('ses-1')
+    expect(out.doc.needsReview).toBeUndefined()
+  })
+
+  it('imports the row that does not resolve, flagged, rather than dropping it', () => {
+    const ctx = ctxWith(['ses-1'])
+    const out = transformSessionInitialization(
+      { quality_sessioninitializationid: 'si-2', quality_sessionkey: 'ses-missing' },
+      ctx,
+    )
+    expect(out.reject).toBeUndefined()
+    expect(out.doc.sessionId).toBeUndefined()
+    expect(out.doc.needsReview).toBe(true)
+    expect(out.doc.unresolvedReason).toMatch(/does not match/)
+    // and the key is kept so the mismatch can be chased without the source file
+    expect(out.doc.legacy.sessionKey).toBe('ses-missing')
+    expect(ctx.counts.sessionInitUnresolved).toBe(1)
+  })
+
+  it('flags a row with no session key at all', () => {
+    const out = transformSessionInitialization(
+      { quality_sessioninitializationid: 'si-3' },
+      ctxWith(['ses-1']),
+    )
+    expect(out.doc.needsReview).toBe(true)
+    expect(out.doc.unresolvedReason).toMatch(/empty/)
   })
 })
