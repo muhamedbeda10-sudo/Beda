@@ -1,14 +1,19 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { X, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, RotateCw } from 'lucide-react'
-import type { InspectionImage } from '@/types'
+/** Minimal shape the viewer needs — decoupled from any storage model. */
+export interface ViewableImage {
+  id: string
+  dataUrl: string
+  caption?: string
+}
 
 export function Lightbox({
   images,
   startIndex = 0,
   onClose,
 }: {
-  images: InspectionImage[]
+  images: ViewableImage[]
   startIndex?: number
   onClose: () => void
 }) {

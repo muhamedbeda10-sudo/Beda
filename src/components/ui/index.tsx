@@ -8,7 +8,7 @@ import {
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { SampleResult, Disposition, SessionStatus } from '@/types'
+import type { DimensionStatus, Disposition, SessionStatus } from '@/domain/types'
 
 // ---- Badge -----------------------------------------------------------------
 type BadgeTone = 'neutral' | 'green' | 'blue' | 'amber' | 'red' | 'violet'
@@ -46,11 +46,15 @@ export function Badge({
   )
 }
 
-export function resultTone(r: SampleResult): BadgeTone {
+export function resultTone(r: DimensionStatus): BadgeTone {
   return r === 'Pass' ? 'green' : r === 'Fail' ? 'red' : r === 'Warning' ? 'amber' : 'neutral'
 }
-export function dispositionTone(d: Disposition): BadgeTone {
-  return d === 'Accepted' ? 'green' : d === 'Rejected' ? 'red' : 'amber'
+/** Rejected reads as a failure, Hold as an open item, the rest as resolved. */
+export function dispositionTone(d: Disposition | null): BadgeTone {
+  if (!d) return 'red'
+  if (d === 'Rejected') return 'red'
+  if (d === 'Hold') return 'amber'
+  return 'green'
 }
 export function statusTone(s: SessionStatus): BadgeTone {
   return s === 'Open' ? 'green' : 'neutral'

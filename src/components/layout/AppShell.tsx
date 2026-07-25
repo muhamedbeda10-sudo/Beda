@@ -2,8 +2,6 @@ import { useState, type ReactNode } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   ClipboardCheck,
-  FileText,
-  BarChart3,
   History,
   Settings,
   Sun,
@@ -16,26 +14,24 @@ import {
   AlertCircle,
   Info,
   AlertTriangle,
+  LogOut,
 } from 'lucide-react'
-import { LogOut } from 'lucide-react'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
-import type { UserRole } from '@/lib/firebase'
+import { can, type Capability } from '@/domain/rules'
 
 const NAV: Array<{
   to: string
   label: string
   icon: typeof ClipboardCheck
   end?: boolean
-  roles?: UserRole[]
+  needs?: Capability
 }> = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
-  { to: '/orders', label: 'Order Summary', icon: FileText },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3, roles: ['supervisor', 'manager'] },
   { to: '/history', label: 'History', icon: History },
-  { to: '/settings', label: 'Settings', icon: Settings, roles: ['supervisor', 'manager'] },
-  { to: '/audit', label: 'Audit Logs', icon: ScrollText, roles: ['manager'] },
+  { to: '/admin', label: 'Admin', icon: Settings, needs: 'manage-admin-data' },
+  { to: '/audit', label: 'Audit Logs', icon: ScrollText, needs: 'edit-closed-session' },
 ]
 
 function ToastHost() {
@@ -54,10 +50,11 @@ function ToastHost() {
         return (
           <div
             key={t.id}
-            className="pointer-events-auto flex w-full max-w-sm items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-lift ring-1 ring-slate-200 animate-scale-in dark:bg-slate-800 dark:ring-slate-700"
+            role="status"
+            className="pointer-events-auto flex w-full max-w-md items-start gap-3 rounded-xl bg-white px-4 py-3 shadow-lift ring-1 ring-slate-200 animate-scale-in dark:bg-slate-800 dark:ring-slate-700"
             onClick={() => dismissToast(t.id)}
           >
-            <Icon className={cn('h-5 w-5 shrink-0', tones[t.kind])} />
+            <Icon className={cn('mt-0.5 h-5 w-5 shrink-0', tones[t.kind])} />
             <span className="text-sm font-medium">{t.message}</span>
           </div>
         )
@@ -68,30 +65,29 @@ function ToastHost() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { theme, toggleTheme, user } = useApp()
-  const { role, firebaseEnabled, signOutUser } = useAuth()
+  const { role, firebaseEnabled, signOutUser, profile } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
 
-  const nav = NAV.filter((n) => !n.roles || n.roles.includes(role))
+  const nav = NAV.filter((n) => !n.needs || can(role, n.needs))
+  const displayName = profile?.name || user
 
   return (
     <div className="min-h-full">
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/85 safe-top">
+      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/90 safe-top">
         <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
-          <div className="flex items-center gap-2.5">
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-600 text-white shadow-sm">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-600 text-white shadow-sm">
               <ShieldCheck className="h-5 w-5" />
             </span>
-            <div className="leading-tight">
+            <div className="min-w-0 leading-tight">
               <p className="text-base font-extrabold tracking-tight">QC SYSTEM</p>
-              <p className="hidden text-xs text-slate-500 sm:block dark:text-slate-400">
-                Welcome, <span className="font-semibold text-slate-700 dark:text-slate-200">{user}</span>
+              <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                Welcome, <span className="font-semibold text-slate-700 dark:text-slate-200">{displayName}</span>
               </p>
             </div>
           </div>
 
-          {/* Desktop nav */}
           <nav className="ml-6 hidden flex-1 items-center gap-1 lg:flex">
             {nav.map((n) => (
               <NavLink
@@ -116,24 +112,23 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="ml-auto flex items-center gap-1">
             <button
               onClick={toggleTheme}
-              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-              aria-label="Toggle theme"
+              className="rounded-lg p-2.5 text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              aria-label="Toggle light or dark theme"
             >
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
             {firebaseEnabled && (
               <button
                 onClick={() => signOutUser()}
-                className="hidden rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-rose-400 lg:block"
+                className="hidden rounded-lg p-2.5 text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:text-slate-300 dark:hover:bg-slate-800 lg:block"
                 aria-label="Sign out"
-                title="Sign out"
               >
                 <LogOut className="h-5 w-5" />
               </button>
             )}
             <button
               onClick={() => setMenuOpen(true)}
-              className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 lg:hidden"
+              className="rounded-lg p-2.5 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 lg:hidden"
               aria-label="Open menu"
             >
               <Menu className="h-6 w-6" />
@@ -142,11 +137,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      {/* Mobile drawer */}
       {menuOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fade-in" onClick={() => setMenuOpen(false)} />
-          <div className="absolute right-0 top-0 h-full w-[82%] max-w-sm bg-white shadow-lift animate-slide-up dark:bg-slate-900 safe-top">
+          <div className="absolute right-0 top-0 h-full w-[85%] max-w-sm overflow-y-auto bg-white shadow-lift animate-slide-up dark:bg-slate-900 safe-top">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
                 <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-600 text-white">
@@ -154,7 +148,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </span>
                 <span className="text-lg font-extrabold">Menu</span>
               </div>
-              <button onClick={() => setMenuOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Close menu">
+              <button
+                onClick={() => setMenuOpen(false)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                aria-label="Close menu"
+              >
                 <X className="h-6 w-6" />
               </button>
             </div>
@@ -168,7 +166,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     end={n.end}
                     onClick={() => setMenuOpen(false)}
                     className={cn(
-                      'flex items-center gap-3 rounded-2xl px-4 py-3.5 text-base font-semibold transition-colors',
+                      'flex items-center gap-3 rounded-2xl px-4 py-4 text-base font-semibold transition-colors',
                       active
                         ? 'bg-brand-600 text-white'
                         : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800',
@@ -182,7 +180,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </nav>
             <div className="mt-2 border-t border-slate-100 px-5 py-4 dark:border-slate-800">
               <p className="text-sm text-slate-500">
-                Signed in as <span className="font-semibold text-slate-700 dark:text-slate-200">{user}</span>
+                Signed in as <span className="font-semibold text-slate-700 dark:text-slate-200">{displayName}</span>
               </p>
               <p className="mt-0.5 text-xs capitalize text-slate-400">Role: {role}</p>
               {firebaseEnabled && (
@@ -191,7 +189,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     setMenuOpen(false)
                     signOutUser()
                   }}
-                  className="mt-3 inline-flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-rose-50 hover:text-rose-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+                  className="mt-3 inline-flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-rose-50 hover:text-rose-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
                 >
                   <LogOut className="h-4 w-4" /> Sign out
                 </button>

@@ -6,232 +6,349 @@ import {
   FileText,
   Factory,
   Play,
-  XCircle,
-  ChevronRight,
-  ChevronDown,
-  Layers,
-  Boxes,
-  AlertTriangle,
   Trash2,
+  ChevronDown,
+  AlertTriangle,
+  Boxes,
+  Lock,
+  CheckCircle2,
+  ClipboardCheck,
 } from 'lucide-react'
-import { useDB, actions } from '@/store/db'
-import { groupSessionsByMachine, sessionView, orderById, samplesOf, sessionHasHold } from '@/lib/selectors'
-import { Badge, Button, Card, Modal, statusTone } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, Field, Input, Modal } from '@/components/ui'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
-import { formatDate, cn } from '@/lib/utils'
-import type { InspectionSession } from '@/types'
+import { useAll } from '@/services/useCollection'
+import { COL, closeSession, softDelete } from '@/services/repository'
+import { useAuth } from '@/store/AuthContext'
+import { useApp } from '@/store/AppContext'
+import { can } from '@/domain/rules'
+import { cn, formatDate } from '@/lib/utils'
+import type {
+  DefectResult,
+  InspectionSample,
+  InspectionSession,
+  Machine,
+  ProductionOrder,
+} from '@/domain/types'
 
-type Filter = 'open' | 'all'
+const COLLAPSE_AFTER = 3
 
 export function InspectionsPage() {
-  const db = useDB()
   const navigate = useNavigate()
+  const { profile, role } = useAuth()
+  const { toast } = useApp()
+
+  const { rows: sessions, loading } = useAll<InspectionSession>(COL.sessions)
+  const { rows: orders } = useAll<ProductionOrder>(COL.orders)
+  const { rows: machines } = useAll<Machine>(COL.machines)
+  const { rows: samples } = useAll<InspectionSample>(COL.samples)
+  const { rows: defects } = useAll<DefectResult>(COL.defects)
+
   const [newOpen, setNewOpen] = useState(false)
-  const [filter, setFilter] = useState<Filter>('open')
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const [confirmDelete, setConfirmDelete] = useState<InspectionSession | null>(null)
+  const [closing, setClosing] = useState<InspectionSession | null>(null)
+  const [deleting, setDeleting] = useState<InspectionSession | null>(null)
 
-  const sessions = useMemo(() => {
-    const list = [...db.sessions].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
-    return filter === 'open' ? list.filter((s) => s.status === 'Open') : list
-  }, [db.sessions, filter])
+  const orderById = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders])
+  const samplesBySession = useMemo(() => {
+    const m = new Map<string, InspectionSample[]>()
+    for (const s of samples) {
+      const arr = m.get(s.sessionId) ?? []
+      arr.push(s)
+      m.set(s.sessionId, arr)
+    }
+    return m
+  }, [samples])
 
-  const groups = useMemo(() => groupSessionsByMachine(db, sessions), [db, sessions])
+  /** Defects parked on Hold are open business items — they must stay visible
+   *  until someone resolves them (§4, §8.5). */
+  const holdCount = useMemo(() => defects.filter((d) => d.disposition === 'Hold').length, [defects])
+
+  const openSessions = useMemo(
+    () => sessions.filter((s) => s.status === 'Open').sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)),
+    [sessions],
+  )
+
+  /** Group by work center / line, the way the inspector thinks about the floor. */
+  const groups = useMemo(() => {
+    const byWc = new Map<string, { machine?: Machine; label: string; sessions: InspectionSession[]; sampleCount: number }>()
+    for (const s of openSessions) {
+      const machine = machines.find((m) => m.code === s.workCenterCode)
+      const label = machine?.name ?? `Work center ${s.workCenterCode}`
+      const g = byWc.get(s.workCenterCode) ?? { machine, label, sessions: [], sampleCount: 0 }
+      g.sessions.push(s)
+      g.sampleCount += samplesBySession.get(s.id)?.length ?? 0
+      byWc.set(s.workCenterCode, g)
+    }
+    return Array.from(byWc.values()).sort((a, b) => a.label.localeCompare(b.label))
+  }, [openSessions, machines, samplesBySession])
+
+  const auditCtx = (s: InspectionSession) => {
+    const order = orderById.get(s.orderId)
+    return {
+      userUid: profile?.uid ?? 'unknown',
+      userName: profile?.name ?? 'unknown',
+      entity: 'InspectionSession',
+      entityId: s.id,
+      orderNumber: order?.orderNumber,
+      item: order?.item,
+      workCenterCode: s.workCenterCode,
+      sessionId: s.id,
+    }
+  }
 
   return (
     <div className="space-y-5">
-      {/* Quick actions */}
+      {/* §4 — three primary actions */}
       <div className="grid grid-cols-3 gap-3">
-        <QuickAction icon={<Plus className="h-6 w-6" />} title="New" subtitle="Inspection" onClick={() => setNewOpen(true)} primary />
-        <QuickAction icon={<Search className="h-6 w-6" />} title="Coil" subtitle="Search" onClick={() => navigate('/history?tab=coils')} />
-        <QuickAction icon={<FileText className="h-6 w-6" />} title="PDI" subtitle="Documents" onClick={() => navigate('/orders')} />
+        <QuickAction icon={<Plus className="h-6 w-6" />} title="New" subtitle="Inspection" onClick={() => setNewOpen(true)} />
+        <QuickAction icon={<Search className="h-6 w-6" />} title="Coil" subtitle="Search" onClick={() => navigate('/coils')} />
+        <QuickAction icon={<FileText className="h-6 w-6" />} title="PDI" subtitle="Documents" onClick={() => navigate('/pdi')} />
       </div>
 
-      {/* Section header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Inspection Sessions</h2>
-          <Badge tone="blue">{db.sessions.length}</Badge>
-        </div>
-        <div className="inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
-          {(['open', 'all'] as Filter[]).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={cn(
-                'rounded-lg px-3.5 py-1.5 text-sm font-semibold capitalize transition-colors',
-                filter === f ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-white' : 'text-slate-500',
-              )}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {groups.length === 0 && (
-        <Card className="p-10 text-center">
-          <Factory className="mx-auto h-10 w-10 text-slate-300" />
-          <p className="mt-3 font-semibold">No {filter === 'open' ? 'open ' : ''}inspection sessions</p>
-          <p className="mt-1 text-sm text-slate-400">Start a new inspection to begin recording samples.</p>
-          <Button variant="primary" className="mx-auto mt-4" onClick={() => setNewOpen(true)}>
-            <Plus className="h-4 w-4" /> New Inspection
+      {holdCount > 0 && (
+        <Card className="flex items-center gap-3 border-l-4 border-l-amber-400 p-4">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400">
+            <AlertTriangle className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-bold">
+              {holdCount} defect{holdCount === 1 ? '' : 's'} on Hold
+            </p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Open business items — they stay here until a disposition resolves them.
+            </p>
+          </div>
+          <Button variant="secondary" onClick={() => navigate('/history?disposition=Hold')}>
+            Review
           </Button>
         </Card>
       )}
 
-      {/* Machine groups */}
-      <div className="space-y-4">
-        {groups.map((g) => (
-          <Card key={g.machine.id} className="overflow-hidden">
-            <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3.5 dark:border-slate-800">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
-                <Factory className="h-5 w-5" />
-              </span>
-              <h3 className="flex-1 text-lg font-extrabold leading-tight">{g.machine.name}</h3>
-              <Badge tone="neutral">{g.sampleCount} samples</Badge>
-            </div>
+      <div className="flex items-center gap-2">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
+        <Badge tone="blue">{openSessions.length}</Badge>
+      </div>
 
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {g.sessions.map((s) => {
-                const order = orderById(db, s.orderId)
-                const isOpen = expanded[s.id]
-                const samples = samplesOf(db, s.id)
-                const remaining = order ? Math.max(0, order.requiredQty - order.finishedQty) : 0
-                return (
-                  <div key={s.id} className={cn('px-4 py-3.5', isOpen && 'bg-slate-50/70 dark:bg-slate-800/30')}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
+      {loading ? (
+        <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
+      ) : groups.length === 0 ? (
+        <EmptyState
+          icon={<ClipboardCheck className="h-10 w-10" />}
+          title="Nothing is open right now"
+          hint="Start a new inspection to begin recording samples."
+          action={
+            <Button variant="primary" onClick={() => setNewOpen(true)}>
+              <Plus className="h-4 w-4" /> New Inspection
+            </Button>
+          }
+        />
+      ) : (
+        <div className="space-y-4">
+          {groups.map((g) => {
+            const isExpanded = expanded[g.label]
+            const visible = isExpanded ? g.sessions : g.sessions.slice(0, COLLAPSE_AFTER)
+            const hidden = g.sessions.length - visible.length
+            return (
+              <Card key={g.label} className="overflow-hidden">
+                <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3.5 dark:border-slate-800">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
+                    <Factory className="h-5 w-5" />
+                  </span>
+                  <h3 className="flex-1 text-lg font-extrabold leading-tight">{g.label}</h3>
+                  <Badge tone="neutral">
+                    {g.sampleCount} sample{g.sampleCount === 1 ? '' : 's'}
+                  </Badge>
+                </div>
+
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {visible.map((s) => {
+                    const order = orderById.get(s.orderId)
+                    const sessionSamples = samplesBySession.get(s.id) ?? []
+                    return (
+                      <div key={s.id} className="px-4 py-3.5">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-bold">{order?.orderId ?? '—'}</span>
-                          <Badge tone="neutral">{s.sampleCount} samples</Badge>
-                          <Badge tone={statusTone(s.status)}>{s.status.toUpperCase()}</Badge>
+                          <span className="font-bold">{order?.orderNumber ?? '—'}</span>
+                          <Badge tone="green">OPEN</Badge>
+                          <Badge tone="neutral">
+                            {sessionSamples.length} sample{sessionSamples.length === 1 ? '' : 's'}
+                          </Badge>
+                          {s.startQtyConfirmed && (
+                            <Badge tone="blue" icon={<CheckCircle2 className="h-3 w-3" />}>
+                              Qty {s.startQtyConfirmed.qty}
+                            </Badge>
+                          )}
                         </div>
-                        <p className="mt-0.5 truncate text-sm font-medium text-brand-600 dark:text-brand-400">
-                          {order?.item} : {order?.itemCode} : {order?.nominalL} : {order?.color}
+                        <p className="mt-1 truncate text-sm font-medium text-brand-600 dark:text-brand-400">
+                          {order?.item} · {order?.itemCode}
                         </p>
                         <p className="mt-0.5 text-xs text-slate-400">
-                          {formatDate(s.startedAt)} · By {s.inspector}
+                          {formatDate(s.startedAt)} · {s.inspectorName}
                         </p>
-                      </div>
-                      <button
-                        onClick={() => setExpanded((e) => ({ ...e, [s.id]: !e[s.id] }))}
-                        className="shrink-0 rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
-                        aria-label="Toggle details"
-                      >
-                        {isOpen ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
-                      </button>
-                    </div>
 
-                    <div className="mt-2.5 flex items-center gap-2">
-                      <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-300">
-                        QTY {s.finalQty ?? 0}
-                      </span>
-                      <Badge tone={s.confirm === 'Confirmed' ? 'green' : 'amber'}>{s.confirm.toUpperCase()}</Badge>
-                      {s.holdCount > 0 && (
-                        <Badge tone="amber" icon={<AlertTriangle className="h-3 w-3" />}>
-                          {s.holdCount} hold
-                        </Badge>
-                      )}
-                    </div>
+                        <div className="mt-3 flex items-center gap-2">
+                          <Button variant="primary" className="min-h-[48px] flex-1" onClick={() => navigate(`/wizard/${s.id}`)}>
+                            <Play className="h-4 w-4" /> Continue
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            className="min-h-[48px]"
+                            onClick={() => setClosing(s)}
+                            aria-label="Close session"
+                          >
+                            <Lock className="h-4 w-4" />
+                            <span className="hidden sm:inline">Close</span>
+                          </Button>
+                          {can(role, 'delete-session') && (
+                            <button
+                              onClick={() => setDeleting(s)}
+                              className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-rose-500 ring-1 ring-rose-200 transition-colors hover:bg-rose-50 dark:ring-rose-500/30 dark:hover:bg-rose-500/10"
+                              aria-label="Delete session"
+                            >
+                              <Trash2 className="h-5 w-5" />
+                            </button>
+                          )}
+                        </div>
 
-                    <div className="mt-2.5 flex items-center gap-2">
-                      <Button variant="primary" className="flex-1" onClick={() => navigate(`/session/${s.id}`)}>
-                        <Play className="h-4 w-4" /> Continue
-                      </Button>
-                      <button
-                        onClick={() => setConfirmDelete(s)}
-                        className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-rose-500 ring-1 ring-rose-200 transition-colors hover:bg-rose-50 dark:ring-rose-500/30 dark:hover:bg-rose-500/10"
-                        aria-label="Discard session"
-                      >
-                        <XCircle className="h-6 w-6" />
-                      </button>
-                    </div>
-
-                    {/* Expanded order detail (matches screenshot) */}
-                    {isOpen && order && (
-                      <div className="mt-3 rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
-                        <div className="grid grid-cols-3 gap-2 text-center">
-                          <Metric label="REQ Q" value={order.requiredQty} />
-                          <Metric label="FINISHED" value={order.finishedQty} tone="green" />
-                          <Metric label="REMAIN" value={remaining} tone="blue" />
-                        </div>
-                        <div className="mt-3">
-                          <Badge tone="neutral">{order.status}</Badge>
-                        </div>
-                        <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                          <Detail label="DWG" value={order.drawing} accent />
-                          <Detail label="ROUTE" value={order.route} />
-                          <Detail label="COLOR" value={order.color} />
-                          <Detail label="DATE" value={formatDate(order.date)} />
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-3 text-sm text-slate-500 dark:text-slate-400">
-                          <span>T: <b className="text-slate-800 dark:text-slate-100">{order.nominalT.toFixed(2)}</b></span>
-                          <span>W: <b className="text-slate-800 dark:text-slate-100">{order.nominalW.toFixed(2)}</b></span>
-                          <span>L: <b className="text-slate-800 dark:text-slate-100">{order.nominalL.toFixed(2)}</b></span>
-                        </div>
-                        <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-700">
-                          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-slate-400">
-                            <Boxes className="h-3.5 w-3.5" /> Samples
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            {samples.length === 0 && <span className="text-xs text-slate-400">No samples yet.</span>}
-                            {samples.map((sm) => (
-                              <button
-                                key={sm.id}
-                                onClick={() => navigate(`/session/${s.id}?sample=${sm.id}`)}
-                                className="rounded-lg bg-brand-50 px-3 py-1.5 text-sm font-semibold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20"
-                              >
-                                {sm.label}
-                              </button>
-                            ))}
+                        {sessionSamples.length > 0 && (
+                          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
+                            <span className="flex items-center gap-1 text-xs font-bold uppercase text-slate-400">
+                              <Boxes className="h-3.5 w-3.5" /> Samples
+                            </span>
+                            {sessionSamples
+                              .sort((a, b) => a.index - b.index)
+                              .map((sm) => (
+                                <span
+                                  key={sm.id}
+                                  className="rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20"
+                                >
+                                  #{sm.index} · {sm.shift}
+                                </span>
+                              ))}
                           </div>
-                        </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </Card>
-        ))}
-      </div>
+                    )
+                  })}
+                </div>
+
+                {hidden > 0 && (
+                  <button
+                    onClick={() => setExpanded((e) => ({ ...e, [g.label]: true }))}
+                    className="flex w-full items-center justify-center gap-1.5 border-t border-slate-100 py-3 text-sm font-semibold text-brand-600 hover:bg-slate-50 dark:border-slate-800 dark:text-brand-400 dark:hover:bg-slate-800/50"
+                  >
+                    <ChevronDown className="h-4 w-4" /> View {hidden} more
+                  </button>
+                )}
+              </Card>
+            )
+          })}
+        </div>
+      )}
 
       <NewInspectionDialog open={newOpen} onClose={() => setNewOpen(false)} />
 
+      {closing && (
+        <CloseSessionDialog
+          session={closing}
+          onClose={() => setClosing(null)}
+          onConfirm={async (qty) => {
+            try {
+              await closeSession(closing, qty, auditCtx(closing))
+              toast('Session closed.', 'success')
+            } catch (e) {
+              toast(e instanceof Error ? e.message : 'Could not close the session.', 'error')
+            }
+            setClosing(null)
+          }}
+        />
+      )}
+
       <Modal
-        open={!!confirmDelete}
-        onClose={() => setConfirmDelete(null)}
-        title="Discard session?"
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="Delete this session?"
         icon={<Trash2 className="h-5 w-5" />}
         size="sm"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setConfirmDelete(null)}>
+            <Button variant="ghost" onClick={() => setDeleting(null)}>
               Cancel
             </Button>
             <Button
               variant="danger"
-              onClick={() => {
-                if (confirmDelete) actions.deleteSession(confirmDelete.id)
-                setConfirmDelete(null)
+              onClick={async () => {
+                if (!deleting) return
+                try {
+                  await softDelete(COL.sessions, deleting.id, auditCtx(deleting))
+                  toast('Session marked deleted. Nothing was erased.', 'success')
+                } catch (e) {
+                  toast(e instanceof Error ? e.message : 'Could not delete.', 'error')
+                }
+                setDeleting(null)
               }}
             >
-              <Trash2 className="h-4 w-4" /> Discard
+              <Trash2 className="h-4 w-4" /> Delete
             </Button>
           </>
         }
       >
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          This will permanently remove the session, its samples, measurements, defects and images. This cannot be undone.
+          The session is marked as deleted and hidden from this list. Nothing is erased — the samples,
+          measurements and photos stay in the record, and this deletion is written to the audit log.
         </p>
-        {confirmDelete && sessionHasHold(db, confirmDelete.id) && (
-          <div className="mt-3 flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
-            <AlertTriangle className="h-4 w-4" /> This session has open Hold defects.
-          </div>
-        )}
       </Modal>
     </div>
+  )
+}
+
+function CloseSessionDialog({
+  session,
+  onClose,
+  onConfirm,
+}: {
+  session: InspectionSession
+  onClose: () => void
+  onConfirm: (qty: number) => void
+}) {
+  const [qty, setQty] = useState(String(session.startQtyConfirmed?.qty ?? ''))
+  const parsed = Number(qty)
+  const valid = qty.trim() !== '' && !Number.isNaN(parsed) && parsed >= 0
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Close session"
+      icon={<Lock className="h-5 w-5" />}
+      size="sm"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={!valid} onClick={() => onConfirm(parsed)}>
+            <Lock className="h-4 w-4" /> Close session
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <Field label="Final produced quantity" hint="Recorded against this session and audited.">
+          <Input
+            autoFocus
+            type="number"
+            inputMode="numeric"
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            className="min-h-[48px] text-lg"
+          />
+        </Field>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          A closed session becomes read-only for inspectors. A supervisor can still correct it, and any
+          correction is audited.
+        </p>
+      </div>
+    </Modal>
   )
 }
 
@@ -240,24 +357,18 @@ function QuickAction({
   title,
   subtitle,
   onClick,
-  primary,
 }: {
-  icon: React.ReactNode
+  icon: ReactNodeLike
   title: string
   subtitle: string
   onClick: () => void
-  primary?: boolean
 }) {
   return (
-    <button onClick={onClick} className="card flex flex-col items-center gap-2 p-4 transition-transform active:scale-[.97] sm:p-5">
-      <span
-        className={cn(
-          'grid h-14 w-14 place-items-center rounded-full text-white shadow-sm',
-          primary ? 'bg-brand-600' : 'bg-brand-500',
-        )}
-      >
-        {icon}
-      </span>
+    <button
+      onClick={onClick}
+      className="card flex min-h-[112px] flex-col items-center justify-center gap-2 p-4 transition-transform active:scale-[.97]"
+    >
+      <span className="grid h-14 w-14 place-items-center rounded-full bg-brand-600 text-white shadow-sm">{icon}</span>
       <div className="text-center leading-tight">
         <p className="font-bold">{title}</p>
         <p className="text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>
@@ -266,28 +377,4 @@ function QuickAction({
   )
 }
 
-function Metric({ label, value, tone }: { label: string; value: number; tone?: 'green' | 'blue' }) {
-  return (
-    <div>
-      <p className="text-xs font-semibold uppercase text-slate-400">{label}</p>
-      <p
-        className={cn(
-          'text-2xl font-bold tabular-nums',
-          tone === 'green' && 'text-emerald-500',
-          tone === 'blue' && 'text-brand-500',
-        )}
-      >
-        {value}
-      </p>
-    </div>
-  )
-}
-
-function Detail({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div>
-      <p className="text-xs font-semibold uppercase text-slate-400">{label}</p>
-      <p className={cn('font-semibold', accent ? 'text-brand-600 dark:text-brand-400' : 'text-slate-800 dark:text-slate-100')}>{value}</p>
-    </div>
-  )
-}
+type ReactNodeLike = Parameters<typeof Badge>[0]['children']

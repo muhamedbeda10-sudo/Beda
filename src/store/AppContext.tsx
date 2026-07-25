@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react'
 import { uid } from '@/lib/utils'
-import { getUser, setUser as persistUser } from '@/store/db'
 
 type Theme = 'light' | 'dark'
 
@@ -32,7 +31,9 @@ function initTheme(): Theme {
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(initTheme)
-  const [user, setUserState] = useState<string>(getUser())
+  const [user, setUserState] = useState<string>(
+    () => localStorage.getItem('qc-system-user') || 'Inspector',
+  )
   const [toasts, setToasts] = useState<Toast[]>([])
 
   useEffect(() => {
@@ -45,7 +46,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const toggleTheme = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), [])
 
   const setUser = useCallback((name: string) => {
-    persistUser(name)
+    localStorage.setItem('qc-system-user', name)
     setUserState(name)
   }, [])
 

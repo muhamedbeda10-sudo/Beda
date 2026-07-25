@@ -1,99 +1,154 @@
-import { useMemo, useRef, useState } from 'react'
+// ============================================================================
+// §7 — Admin. Every piece of master data the inspection wizard depends on is
+// maintained here, plus the bulk importers that load production orders, coils
+// and production (dimension) data from the ERP exports.
+//
+// Two rules run through the whole screen:
+//   • Nothing is ever hard-deleted (§10) — delete marks the record and audits it.
+//   • Imports are idempotent (§7.7) — the same file imported twice updates the
+//     same documents rather than duplicating them.
+// ============================================================================
+
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
+import { doc, setDoc, writeBatch } from 'firebase/firestore'
 import {
-  Settings,
-  User,
-  Sun,
-  Moon,
-  RotateCcw,
-  ShieldAlert,
-  Bug,
-  Ruler,
-  Award,
-  FlaskConical,
-  Upload,
-  Plus,
-  Pencil,
-  Trash2,
-  Save,
-  Download,
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  Factory,
+  FileDown,
   FileSpreadsheet,
-  Check,
+  FlaskConical,
+  Image as ImageIcon,
+  Info,
+  Layers,
+  ListOrdered,
+  Loader2,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  RotateCcw,
+  Ruler,
+  ShieldAlert,
+  Shuffle,
+  Table2,
+  Trash2,
+  UploadCloud,
 } from 'lucide-react'
-import { useDB, actions } from '@/store/db'
+import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Stat } from '@/components/ui'
+import { ImagePicker } from '@/components/inspection/ImagePicker'
+import { useAll } from '@/services/useCollection'
+import { COL, softDelete, stripUndefined, type AuditContext } from '@/services/repository'
+import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { Badge, Button, Card, Field, Input, Modal, Select } from '@/components/ui'
-import { cn, parseCSV, downloadText } from '@/lib/utils'
+import { can } from '@/domain/rules'
+import { getDb } from '@/lib/firebase'
+import { cn, downloadText, parseCSV, uid } from '@/lib/utils'
 import type {
-  DefectType,
-  DimensionSpec,
+  Coil,
   GradeMapping,
-  PTConsumable,
-  DefectSeverity,
+  ItemDimensionMaster,
+  ItemDimensionOrder,
+  ItemReferenceImage,
+  Machine,
   ProductionOrder,
-} from '@/types'
+  PTConsumableKind,
+  PTConsumableProduct,
+  WorkCenterDefect,
+} from '@/domain/types'
 
-type TabKey =
-  | 'general'
-  | 'defects'
-  | 'dimensions'
-  | 'grades'
-  | 'consumables'
-  | 'import'
+const WORK_CENTER_CODES = ['7', '11', '22', '48', '58'] as const
+const PT_KINDS: readonly PTConsumableKind[] = ['Cleaner', 'Penetrant', 'Developer']
 
-const TABS: Array<{ key: TabKey; label: string; icon: React.ReactNode }> = [
-  { key: 'general', label: 'General', icon: <Settings className="h-4 w-4" /> },
-  { key: 'defects', label: 'Defect Types', icon: <Bug className="h-4 w-4" /> },
-  { key: 'dimensions', label: 'Dimensions', icon: <Ruler className="h-4 w-4" /> },
-  { key: 'grades', label: 'Grade Mappings', icon: <Award className="h-4 w-4" /> },
-  { key: 'consumables', label: 'PT Consumables', icon: <FlaskConical className="h-4 w-4" /> },
-  { key: 'import', label: 'Bulk Import', icon: <Upload className="h-4 w-4" /> },
-]
+// ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
+
+const TABS = [
+  { key: 'dimension-order', label: 'Dimension order', icon: ListOrdered },
+  { key: 'item-master', label: 'Item master dimensions', icon: Ruler },
+  { key: 'reference-images', label: 'Reference images', icon: ImageIcon },
+  { key: 'defects', label: 'Work-center defects', icon: AlertTriangle },
+  { key: 'machines', label: 'Machines', icon: Factory },
+  { key: 'grades', label: 'Grade mappings', icon: Shuffle },
+  { key: 'pt-consumables', label: 'PT consumables', icon: FlaskConical },
+  { key: 'import', label: 'Bulk import', icon: UploadCloud },
+] as const
+
+type TabKey = (typeof TABS)[number]['key']
 
 export function SettingsPage() {
-  const [tab, setTab] = useState<TabKey>('general')
+  const { role } = useAuth()
+  const [tab, setTab] = useState<TabKey>('dimension-order')
+
+  if (!can(role, 'manage-admin-data')) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-2xl font-extrabold tracking-tight">Admin</h1>
+        <Card className="flex flex-col items-center gap-3 p-8 text-center">
+          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400">
+            <ShieldAlert className="h-6 w-6" />
+          </span>
+          <div>
+            <p className="text-lg font-bold">You don't have access to Admin</p>
+            <p className="mx-auto mt-1 max-w-md text-sm text-slate-500 dark:text-slate-400">
+              Master data and bulk imports are limited to administrators, because a change here
+              affects every inspection that follows. Ask an administrator if you need something
+              added or corrected.
+            </p>
+          </div>
+          <Badge tone="neutral">Signed in as {role}</Badge>
+        </Card>
+      </div>
+    )
+  }
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
-          <Settings className="h-6 w-6" />
-        </span>
-        <div>
-          <h1 className="text-xl font-extrabold leading-tight">Settings</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Manage lookups, reference data and system configuration.
-          </p>
-        </div>
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-extrabold tracking-tight">Admin</h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          Master data the inspection wizard reads from, and the importers that load it in bulk.
+        </p>
       </div>
 
-      <div className="flex flex-col gap-5 lg:flex-row">
-        {/* Tab navigation — horizontal scroll on mobile, vertical rail on desktop */}
-        <nav className="lg:w-56 lg:shrink-0">
-          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
-            {TABS.map((t) => (
+      <div className="lg:flex lg:items-start lg:gap-6">
+        <nav
+          aria-label="Admin sections"
+          className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-2 lg:mx-0 lg:w-64 lg:shrink-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0"
+        >
+          {TABS.map((t) => {
+            const Icon = t.icon
+            const active = tab === t.key
+            return (
               <button
                 key={t.key}
+                type="button"
                 onClick={() => setTab(t.key)}
+                aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-3.5 py-2.5 text-sm font-semibold transition-colors lg:w-full',
-                  tab === t.key
+                  'inline-flex min-h-[48px] shrink-0 items-center gap-2 rounded-2xl px-4 text-sm font-semibold transition-colors lg:w-full lg:justify-start',
+                  active
                     ? 'bg-brand-600 text-white shadow-sm'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
                 )}
               >
-                {t.icon}
-                {t.label}
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className="whitespace-nowrap">{t.label}</span>
               </button>
-            ))}
-          </div>
+            )
+          })}
         </nav>
 
-        <div className="min-w-0 flex-1">
-          {tab === 'general' && <GeneralTab />}
-          {tab === 'defects' && <DefectTypesTab />}
-          {tab === 'dimensions' && <DimensionsTab />}
+        <div className="mt-2 min-w-0 flex-1 lg:mt-0">
+          {tab === 'dimension-order' && <DimensionOrderTab />}
+          {tab === 'item-master' && <ItemMasterTab />}
+          {tab === 'reference-images' && <ReferenceImagesTab />}
+          {tab === 'defects' && <WorkCenterDefectsTab />}
+          {tab === 'machines' && <MachinesTab />}
           {tab === 'grades' && <GradeMappingsTab />}
-          {tab === 'consumables' && <ConsumablesTab />}
+          {tab === 'pt-consumables' && <PTConsumablesTab />}
           {tab === 'import' && <BulkImportTab />}
         </div>
       </div>
@@ -101,1204 +156,1974 @@ export function SettingsPage() {
   )
 }
 
-// ============================================================================
-// General
-// ============================================================================
-function GeneralTab() {
-  const { user, setUser, theme, toggleTheme, toast } = useApp()
-  const [name, setName] = useState(user)
-  const [confirmReset, setConfirmReset] = useState(false)
+// ---------------------------------------------------------------------------
+// Shared master-data panel
+// ---------------------------------------------------------------------------
+
+interface Column<T> {
+  key: string
+  label: string
+  render: (row: T) => ReactNode
+  className?: string
+}
+
+interface PanelProps<T extends { id: string }, D> {
+  title: string
+  description: string
+  hint?: ReactNode
+  icon: ReactNode
+  collectionName: string
+  entity: string
+  idPrefix: string
+  rows: T[]
+  loading: boolean
+  columns: Column<T>[]
+  emptyHint: string
+  addLabel: string
+  newDraft: () => D
+  toDraft: (row: T) => D
+  validate: (draft: D) => string | null
+  toRecord: (draft: D, id: string, existing?: T) => T
+  renderForm: (draft: D, patch: (p: Partial<D>) => void) => ReactNode
+  describe: (row: T) => string
+  sort?: (a: T, b: T) => number
+  groupBy?: (row: T) => string
+  groupLabel?: (group: string) => string
+  minTableWidth?: string
+}
+
+function MasterDataPanel<T extends { id: string }, D>(props: PanelProps<T, D>) {
+  const { profile } = useAuth()
+  const { toast } = useApp()
+  const [editing, setEditing] = useState<{ id: string | null; draft: D } | null>(null)
+  const [confirming, setConfirming] = useState<T | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const { rows, sort, groupBy } = props
+
+  const sorted = useMemo(() => {
+    const copy = [...rows]
+    return sort ? copy.sort(sort) : copy
+  }, [rows, sort])
+
+  const groups = useMemo(() => {
+    if (!groupBy) return null
+    const map = new Map<string, T[]>()
+    for (const row of sorted) {
+      const g = groupBy(row)
+      const arr = map.get(g) ?? []
+      arr.push(row)
+      map.set(g, arr)
+    }
+    return Array.from(map.entries()).sort((a, b) =>
+      a[0].localeCompare(b[0], undefined, { numeric: true }),
+    )
+  }, [sorted, groupBy])
+
+  const patch = useCallback((p: Partial<D>) => {
+    setEditing((cur) => (cur ? { ...cur, draft: { ...cur.draft, ...p } } : cur))
+  }, [])
+
+  async function save() {
+    if (!editing) return
+    const problem = props.validate(editing.draft)
+    if (problem) {
+      toast(problem, 'error')
+      return
+    }
+    const id = editing.id ?? uid(props.idPrefix)
+    const existing = editing.id ? rows.find((r) => r.id === editing.id) : undefined
+    setBusy(true)
+    try {
+      const record = props.toRecord(editing.draft, id, existing)
+      await setDoc(doc(getDb(), props.collectionName, id), stripUndefined(record))
+      toast(editing.id ? 'Changes saved.' : 'Added.', 'success')
+      setEditing(null)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not save that record.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove() {
+    if (!confirming) return
+    setBusy(true)
+    try {
+      const ctx: AuditContext = {
+        userUid: profile?.uid ?? 'unknown',
+        userName: profile?.name ?? 'Unknown',
+        entity: props.entity,
+        entityId: confirming.id,
+      }
+      await softDelete(props.collectionName, confirming.id, ctx)
+      toast('Deleted. The record is kept for the audit trail.', 'success')
+      setConfirming(null)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not delete that record.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const table = (visible: T[]) => (
+    <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
+      <table className={cn('w-full text-sm', props.minTableWidth ?? 'min-w-[40rem]')}>
+        <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+          <tr>
+            {props.columns.map((c) => (
+              <th key={c.key} className={cn('px-3 py-2.5 font-bold', c.className)}>
+                {c.label}
+              </th>
+            ))}
+            <th className="px-3 py-2.5 text-right font-bold">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          {visible.map((row) => (
+            <tr key={row.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+              {props.columns.map((c) => (
+                <td key={c.key} className={cn('px-3 py-2.5 align-middle', c.className)}>
+                  {c.render(row)}
+                </td>
+              ))}
+              <td className="px-3 py-2 text-right">
+                <div className="inline-flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditing({ id: row.id, draft: props.toDraft(row) })}
+                    aria-label={`Edit ${props.describe(row)}`}
+                    className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirming(row)}
+                    aria-label={`Delete ${props.describe(row)}`}
+                    className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 
   return (
-    <div className="space-y-5">
-      <Card className="p-5">
-        <SectionHeader
-          icon={<User className="h-5 w-5" />}
-          title="Profile"
-          subtitle="Your display name is attached to inspections and audit entries."
-        />
-        <div className="mt-4 max-w-md space-y-3">
-          <Field label="Display name">
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Mohamed Abdelrahman"
-            />
-          </Field>
+    <div className="space-y-4">
+      <Card className="space-y-4 p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
+              {props.icon}
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold">{props.title}</h2>
+              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{props.description}</p>
+            </div>
+          </div>
           <Button
             variant="primary"
-            disabled={!name.trim() || name.trim() === user}
-            onClick={() => {
-              setUser(name.trim())
-              toast('Display name updated', 'success')
-            }}
+            className="min-h-[48px]"
+            onClick={() => setEditing({ id: null, draft: props.newDraft() })}
           >
-            <Save className="h-4 w-4" /> Save name
+            <Plus className="h-4 w-4" /> {props.addLabel}
           </Button>
         </div>
-      </Card>
 
-      <Card className="p-5">
-        <SectionHeader
-          icon={theme === 'dark' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
-          title="Appearance"
-          subtitle={`Currently using the ${theme} theme.`}
-        />
-        <div className="mt-4">
-          <Button variant="secondary" onClick={toggleTheme}>
-            {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            Switch to {theme === 'dark' ? 'light' : 'dark'} mode
-          </Button>
-        </div>
-      </Card>
-
-      <Card className="border-rose-200 p-5 dark:border-rose-500/30">
-        <SectionHeader
-          icon={<ShieldAlert className="h-5 w-5" />}
-          title="Danger zone"
-          subtitle="Destructive actions that affect all local data."
-          tone="danger"
-        />
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-slate-600 dark:text-slate-300">
-            Reset the demo database back to the original seed data.
+        {props.hint && (
+          <p className="flex items-start gap-2 rounded-2xl bg-brand-50 px-3 py-2.5 text-sm text-brand-800 dark:bg-brand-500/10 dark:text-brand-200">
+            <Info className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{props.hint}</span>
           </p>
-          <Button variant="danger" className="shrink-0" onClick={() => setConfirmReset(true)}>
-            <RotateCcw className="h-4 w-4" /> Reset demo data
-          </Button>
-        </div>
+        )}
+
+        {props.loading ? (
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-400">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          </div>
+        ) : sorted.length === 0 ? (
+          <EmptyState
+            title="Nothing here yet"
+            hint={props.emptyHint}
+            action={
+              <Button
+                variant="primary"
+                className="min-h-[48px]"
+                onClick={() => setEditing({ id: null, draft: props.newDraft() })}
+              >
+                <Plus className="h-4 w-4" /> {props.addLabel}
+              </Button>
+            }
+          />
+        ) : groups ? (
+          <div className="space-y-5">
+            {groups.map(([group, groupRows]) => (
+              <div key={group}>
+                <div className="mb-2 flex items-center gap-2">
+                  <Badge tone="blue">{props.groupLabel ? props.groupLabel(group) : group}</Badge>
+                  <span className="text-xs text-slate-400">
+                    {groupRows.length} {groupRows.length === 1 ? 'entry' : 'entries'}
+                  </span>
+                </div>
+                {table(groupRows)}
+              </div>
+            ))}
+          </div>
+        ) : (
+          table(sorted)
+        )}
+
+        {!props.loading && sorted.length > 0 && (
+          <p className="text-xs text-slate-400">
+            {sorted.length} {sorted.length === 1 ? 'record' : 'records'}
+          </p>
+        )}
       </Card>
 
       <Modal
-        open={confirmReset}
-        onClose={() => setConfirmReset(false)}
-        title="Reset demo data?"
-        icon={<RotateCcw className="h-5 w-5" />}
-        size="sm"
+        open={editing !== null}
+        onClose={() => {
+          if (!busy) setEditing(null)
+        }}
+        title={editing?.id ? `Edit — ${props.title}` : `Add — ${props.title}`}
+        icon={props.icon}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setConfirmReset(false)}>
+            <Button className="min-h-[48px]" onClick={() => setEditing(null)} disabled={busy}>
               Cancel
             </Button>
-            <Button
-              variant="danger"
-              onClick={() => {
-                actions.reset()
-                setConfirmReset(false)
-                toast('Demo data restored to seed', 'success')
-              }}
-            >
-              <RotateCcw className="h-4 w-4" /> Reset everything
+            <Button variant="primary" className="min-h-[48px]" onClick={() => void save()} disabled={busy}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              {editing?.id ? 'Save changes' : 'Add'}
             </Button>
           </>
         }
       >
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          This permanently discards every order, inspection session, sample, measurement, defect
-          and image you have created, and restores the original seed data set. This cannot be
-          undone.
+        {editing && <div className="space-y-3">{props.renderForm(editing.draft, patch)}</div>}
+      </Modal>
+
+      <Modal
+        open={confirming !== null}
+        onClose={() => {
+          if (!busy) setConfirming(null)
+        }}
+        title="Delete this record?"
+        size="sm"
+        icon={<Trash2 className="h-5 w-5" />}
+        footer={
+          <>
+            <Button className="min-h-[48px]" onClick={() => setConfirming(null)} disabled={busy}>
+              Keep it
+            </Button>
+            <Button variant="danger" className="min-h-[48px]" onClick={() => void remove()} disabled={busy}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              Delete
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm" dir="auto">
+          <span className="font-semibold">{confirming ? props.describe(confirming) : ''}</span> will
+          stop appearing to inspectors.
+        </p>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+          Nothing is erased — the record is marked deleted and kept, together with who deleted it,
+          so past inspections stay explainable.
         </p>
       </Modal>
     </div>
   )
 }
 
-// ============================================================================
-// Defect Types
-// ============================================================================
-const SEVERITIES: DefectSeverity[] = ['Minor', 'Major', 'Critical']
+// ---------------------------------------------------------------------------
+// Small form helpers
+// ---------------------------------------------------------------------------
 
-function severityTone(s: DefectSeverity) {
-  return s === 'Critical' ? 'red' : s === 'Major' ? 'amber' : 'neutral'
+function numberOrNull(v: string): number | null {
+  const t = v.trim()
+  if (t === '') return null
+  const n = Number(t)
+  return Number.isFinite(n) ? n : null
 }
 
-function DefectTypesTab() {
-  const db = useDB()
-  const { toast } = useApp()
-  const [editing, setEditing] = useState<DefectType | null>(null)
-  const [confirmDel, setConfirmDel] = useState<DefectType | null>(null)
+function requireText(v: string, label: string): string | null {
+  return v.trim() ? null : `${label} is required.`
+}
 
-  const blank: DefectType = {
-    id: '',
-    code: '',
-    title: '',
-    description: '',
-    defaultSeverity: 'Minor',
-    active: true,
-  }
+function requireNumber(v: string, label: string): string | null {
+  return numberOrNull(v) === null ? `${label} must be a number.` : null
+}
+
+// ---------------------------------------------------------------------------
+// 1. Dimension order
+// ---------------------------------------------------------------------------
+
+interface DimOrderDraft {
+  item: string
+  dimensionName: string
+  sequence: string
+  nominal: string
+  tolPlus: string
+  tolMinus: string
+  unit: string
+}
+
+function DimensionOrderTab() {
+  const { rows, loading } = useAll<ItemDimensionOrder>(COL.itemDimensionOrder)
+
+  const sort = useCallback(
+    (a: ItemDimensionOrder, b: ItemDimensionOrder) =>
+      a.item.localeCompare(b.item) || a.sequence - b.sequence,
+    [],
+  )
 
   return (
-    <LookupCard
-      title="Defect Types"
-      subtitle="Standard visual-defect catalogue used during inspections."
-      count={db.defectTypes.length}
-      onAdd={() => setEditing(blank)}
-    >
-      {db.defectTypes.length === 0 ? (
-        <EmptyRow label="No defect types yet." />
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <Th>
-                <td className="py-2 pr-3">Code</td>
-                <td className="py-2 pr-3">Title</td>
-                <td className="py-2 pr-3">Severity</td>
-                <td className="py-2 pr-3">Status</td>
-                <td className="py-2" />
-              </Th>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {db.defectTypes.map((row) => (
-                <tr key={row.id}>
-                  <td className="py-2.5 pr-3 font-mono font-semibold">{row.code}</td>
-                  <td className="py-2.5 pr-3">
-                    <p className="font-medium" dir="auto">
-                      {row.title}
-                    </p>
-                    {row.description && (
-                      <p className="text-xs text-slate-400" dir="auto">
-                        {row.description}
-                      </p>
-                    )}
-                  </td>
-                  <td className="py-2.5 pr-3">
-                    <Badge tone={severityTone(row.defaultSeverity)}>{row.defaultSeverity}</Badge>
-                  </td>
-                  <td className="py-2.5 pr-3">
-                    <ActiveBadge active={row.active} />
-                  </td>
-                  <td className="py-2.5">
-                    <RowActions onEdit={() => setEditing(row)} onDelete={() => setConfirmDel(row)} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+    <MasterDataPanel<ItemDimensionOrder, DimOrderDraft>
+      title="Dimension order"
+      description="Per-item dimensions, in the order they are measured."
+      hint={
+        <>
+          <strong>Sequence</strong> controls the order the inspector measures in — the wizard lists
+          the dimensions from the lowest sequence to the highest, so put the measurement that is
+          taken first at the machine at 1. These entries also pre-fill nominal and tolerance.
+        </>
+      }
+      icon={<ListOrdered className="h-5 w-5" />}
+      collectionName={COL.itemDimensionOrder}
+      entity="itemDimensionOrder"
+      idPrefix="ido"
+      rows={rows}
+      loading={loading}
+      sort={sort}
+      addLabel="Add dimension"
+      emptyHint="Add the dimensions for an item, or load them from the Bulk import tab."
+      minTableWidth="min-w-[46rem]"
+      columns={[
+        { key: 'item', label: 'Item', render: (r) => <span className="font-semibold">{r.item}</span> },
+        { key: 'name', label: 'Dimension', render: (r) => <span dir="auto">{r.dimensionName}</span> },
+        {
+          key: 'seq',
+          label: 'Seq',
+          className: 'tabular-nums',
+          render: (r) => <Badge tone="neutral">{r.sequence}</Badge>,
+        },
+        {
+          key: 'nominal',
+          label: 'Nominal',
+          className: 'tabular-nums',
+          render: (r) => (r.nominal === undefined ? '—' : r.nominal),
+        },
+        {
+          key: 'tol',
+          label: 'Tolerance',
+          className: 'tabular-nums',
+          render: (r) => `+${r.tolPlus} / −${r.tolMinus}`,
+        },
+        { key: 'unit', label: 'Unit', render: (r) => r.unit || '—' },
+      ]}
+      describe={(r) => `${r.item} · ${r.dimensionName}`}
+      newDraft={() => ({
+        item: '',
+        dimensionName: '',
+        sequence: '1',
+        nominal: '',
+        tolPlus: '0',
+        tolMinus: '0',
+        unit: 'mm',
+      })}
+      toDraft={(r) => ({
+        item: r.item,
+        dimensionName: r.dimensionName,
+        sequence: String(r.sequence),
+        nominal: r.nominal === undefined ? '' : String(r.nominal),
+        tolPlus: String(r.tolPlus),
+        tolMinus: String(r.tolMinus),
+        unit: r.unit,
+      })}
+      validate={(d) =>
+        requireText(d.item, 'Item') ??
+        requireText(d.dimensionName, 'Dimension name') ??
+        requireNumber(d.sequence, 'Sequence') ??
+        (d.nominal.trim() !== '' && numberOrNull(d.nominal) === null
+          ? 'Nominal must be a number.'
+          : null) ??
+        requireNumber(d.tolPlus, 'Tolerance +') ??
+        requireNumber(d.tolMinus, 'Tolerance −') ??
+        requireText(d.unit, 'Unit')
+      }
+      toRecord={(d, id) => ({
+        id,
+        item: d.item.trim(),
+        dimensionName: d.dimensionName.trim(),
+        sequence: Number(d.sequence),
+        nominal: numberOrNull(d.nominal) ?? undefined,
+        tolPlus: Number(d.tolPlus),
+        tolMinus: Number(d.tolMinus),
+        unit: d.unit.trim(),
+      })}
+      renderForm={(d, patch) => (
+        <>
+          <Field label="Item">
+            <Input
+              value={d.item}
+              onChange={(e) => patch({ item: e.target.value })}
+              placeholder="XL Light Beam"
+            />
+          </Field>
+          <Field label="Dimension name">
+            <Input
+              dir="auto"
+              value={d.dimensionName}
+              onChange={(e) => patch({ dimensionName: e.target.value })}
+              placeholder="Width"
+            />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Sequence" hint="Lowest is measured first.">
+              <Input
+                inputMode="numeric"
+                value={d.sequence}
+                onChange={(e) => patch({ sequence: e.target.value })}
+              />
+            </Field>
+            <Field label="Unit">
+              <Input value={d.unit} onChange={(e) => patch({ unit: e.target.value })} placeholder="mm" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Nominal" hint="Optional.">
+              <Input
+                inputMode="decimal"
+                value={d.nominal}
+                onChange={(e) => patch({ nominal: e.target.value })}
+              />
+            </Field>
+            <Field label="Tolerance +">
+              <Input
+                inputMode="decimal"
+                value={d.tolPlus}
+                onChange={(e) => patch({ tolPlus: e.target.value })}
+              />
+            </Field>
+            <Field label="Tolerance −">
+              <Input
+                inputMode="decimal"
+                value={d.tolMinus}
+                onChange={(e) => patch({ tolMinus: e.target.value })}
+              />
+            </Field>
+          </div>
+        </>
       )}
-
-      {editing && (
-        <DefectTypeModal
-          initial={editing}
-          onClose={() => setEditing(null)}
-          onSave={(row) => {
-            actions.saveDefectType(row)
-            setEditing(null)
-            toast('Defect type saved', 'success')
-          }}
-        />
-      )}
-
-      <ConfirmDelete
-        row={confirmDel}
-        label={confirmDel?.code}
-        onCancel={() => setConfirmDel(null)}
-        onConfirm={() => {
-          if (confirmDel) actions.deleteDefectType(confirmDel.id)
-          setConfirmDel(null)
-          toast('Defect type deleted', 'info')
-        }}
-      />
-    </LookupCard>
+    />
   )
 }
 
-function DefectTypeModal({
-  initial,
-  onClose,
-  onSave,
-}: {
-  initial: DefectType
-  onClose: () => void
-  onSave: (row: DefectType) => void
-}) {
-  const [form, setForm] = useState<DefectType>(initial)
-  const valid = form.code.trim() !== '' && form.title.trim() !== ''
+// ---------------------------------------------------------------------------
+// 2. Item master dimensions
+// ---------------------------------------------------------------------------
+
+interface DimMasterDraft {
+  item: string
+  dimensionName: string
+  nominal: string
+  tolPlus: string
+  tolMinus: string
+  unit: string
+}
+
+function ItemMasterTab() {
+  const { rows, loading } = useAll<ItemDimensionMaster>(COL.itemDimensionMaster)
+
+  const sort = useCallback(
+    (a: ItemDimensionMaster, b: ItemDimensionMaster) =>
+      a.item.localeCompare(b.item) || a.dimensionName.localeCompare(b.dimensionName),
+    [],
+  )
+
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={initial.id ? 'Edit defect type' : 'Add defect type'}
-      icon={<Bug className="h-5 w-5" />}
-      footer={<SaveFooter onClose={onClose} valid={valid} onSave={() => onSave(form)} />}
-    >
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Code">
+    <MasterDataPanel<ItemDimensionMaster, DimMasterDraft>
+      title="Item master dimensions"
+      description="Fallback nominal and tolerance when an item has no dimension-order entry."
+      hint="The wizard reads the dimension order first; anything not found there falls back to this master list."
+      icon={<Ruler className="h-5 w-5" />}
+      collectionName={COL.itemDimensionMaster}
+      entity="itemDimensionMaster"
+      idPrefix="idm"
+      rows={rows}
+      loading={loading}
+      sort={sort}
+      addLabel="Add dimension"
+      emptyHint="Add the master dimensions inspectors should fall back to."
+      columns={[
+        { key: 'item', label: 'Item', render: (r) => <span className="font-semibold">{r.item}</span> },
+        { key: 'name', label: 'Dimension', render: (r) => <span dir="auto">{r.dimensionName}</span> },
+        { key: 'nominal', label: 'Nominal', className: 'tabular-nums', render: (r) => r.nominal },
+        {
+          key: 'tol',
+          label: 'Tolerance',
+          className: 'tabular-nums',
+          render: (r) => `+${r.tolPlus} / −${r.tolMinus}`,
+        },
+        { key: 'unit', label: 'Unit', render: (r) => r.unit || '—' },
+      ]}
+      describe={(r) => `${r.item} · ${r.dimensionName}`}
+      newDraft={() => ({
+        item: '',
+        dimensionName: '',
+        nominal: '0',
+        tolPlus: '0',
+        tolMinus: '0',
+        unit: 'mm',
+      })}
+      toDraft={(r) => ({
+        item: r.item,
+        dimensionName: r.dimensionName,
+        nominal: String(r.nominal),
+        tolPlus: String(r.tolPlus),
+        tolMinus: String(r.tolMinus),
+        unit: r.unit,
+      })}
+      validate={(d) =>
+        requireText(d.item, 'Item') ??
+        requireText(d.dimensionName, 'Dimension name') ??
+        requireNumber(d.nominal, 'Nominal') ??
+        requireNumber(d.tolPlus, 'Tolerance +') ??
+        requireNumber(d.tolMinus, 'Tolerance −') ??
+        requireText(d.unit, 'Unit')
+      }
+      toRecord={(d, id) => ({
+        id,
+        item: d.item.trim(),
+        dimensionName: d.dimensionName.trim(),
+        nominal: Number(d.nominal),
+        tolPlus: Number(d.tolPlus),
+        tolMinus: Number(d.tolMinus),
+        unit: d.unit.trim(),
+      })}
+      renderForm={(d, patch) => (
+        <>
+          <Field label="Item">
+            <Input value={d.item} onChange={(e) => patch({ item: e.target.value })} />
+          </Field>
+          <Field label="Dimension name">
             <Input
-              value={form.code}
-              onChange={(e) => setForm({ ...form, code: e.target.value })}
-              placeholder="e.g. SCR"
+              dir="auto"
+              value={d.dimensionName}
+              onChange={(e) => patch({ dimensionName: e.target.value })}
             />
           </Field>
-          <Field label="Default severity">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Nominal">
+              <Input
+                inputMode="decimal"
+                value={d.nominal}
+                onChange={(e) => patch({ nominal: e.target.value })}
+              />
+            </Field>
+            <Field label="Unit">
+              <Input value={d.unit} onChange={(e) => patch({ unit: e.target.value })} />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Tolerance +">
+              <Input
+                inputMode="decimal"
+                value={d.tolPlus}
+                onChange={(e) => patch({ tolPlus: e.target.value })}
+              />
+            </Field>
+            <Field label="Tolerance −">
+              <Input
+                inputMode="decimal"
+                value={d.tolMinus}
+                onChange={(e) => patch({ tolMinus: e.target.value })}
+              />
+            </Field>
+          </div>
+        </>
+      )}
+    />
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 3. Item reference images
+// ---------------------------------------------------------------------------
+
+interface RefImageDraft {
+  item: string
+  caption: string
+  imageId: string
+}
+
+function ReferenceImagesTab() {
+  const { rows, loading } = useAll<ItemReferenceImage>(COL.itemReferenceImages)
+
+  const sort = useCallback(
+    (a: ItemReferenceImage, b: ItemReferenceImage) =>
+      a.item.localeCompare(b.item) || (a.caption ?? '').localeCompare(b.caption ?? ''),
+    [],
+  )
+
+  return (
+    <MasterDataPanel<ItemReferenceImage, RefImageDraft>
+      title="Item reference images"
+      description="The approved photo an inspector compares the real part against."
+      hint="These images are shown to inspectors during inspection, so they can compare the part in front of them with the reference before judging it."
+      icon={<ImageIcon className="h-5 w-5" />}
+      collectionName={COL.itemReferenceImages}
+      entity="itemReferenceImages"
+      idPrefix="iri"
+      rows={rows}
+      loading={loading}
+      sort={sort}
+      addLabel="Add reference"
+      emptyHint="Attach a reference photo to an item so inspectors have something to compare against."
+      minTableWidth="min-w-[34rem]"
+      columns={[
+        { key: 'item', label: 'Item', render: (r) => <span className="font-semibold">{r.item}</span> },
+        { key: 'caption', label: 'Caption', render: (r) => <span dir="auto">{r.caption || '—'}</span> },
+        {
+          key: 'image',
+          label: 'Image',
+          render: (r) => (
+            <ImagePicker imageIds={r.imageId ? [r.imageId] : []} onChange={() => undefined} readOnly />
+          ),
+        },
+      ]}
+      describe={(r) => `${r.item}${r.caption ? ` · ${r.caption}` : ''}`}
+      newDraft={() => ({ item: '', caption: '', imageId: '' })}
+      toDraft={(r) => ({ item: r.item, caption: r.caption ?? '', imageId: r.imageId })}
+      validate={(d) =>
+        requireText(d.item, 'Item') ?? (d.imageId.trim() ? null : 'Choose a reference image.')
+      }
+      toRecord={(d, id) => ({
+        id,
+        item: d.item.trim(),
+        imageId: d.imageId,
+        caption: d.caption.trim() || undefined,
+      })}
+      renderForm={(d, patch) => (
+        <>
+          <Field label="Item">
+            <Input value={d.item} onChange={(e) => patch({ item: e.target.value })} />
+          </Field>
+          <Field label="Caption" hint="Optional — what the inspector should be looking at.">
+            <Input dir="auto" value={d.caption} onChange={(e) => patch({ caption: e.target.value })} />
+          </Field>
+          <div>
+            <span className="label">Reference image</span>
+            <ImagePicker
+              imageIds={d.imageId ? [d.imageId] : []}
+              onChange={(ids) => patch({ imageId: ids[0] ?? '' } as Partial<RefImageDraft>)}
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              One image per entry — adding another replaces the current reference.
+            </p>
+          </div>
+        </>
+      )}
+    />
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 4. Work-center defects
+// ---------------------------------------------------------------------------
+
+interface DefectDraft {
+  workCenterCode: string
+  defectName: string
+}
+
+function WorkCenterDefectsTab() {
+  const { rows, loading } = useAll<WorkCenterDefect>(COL.workCenterDefects)
+
+  const sort = useCallback(
+    (a: WorkCenterDefect, b: WorkCenterDefect) => a.defectName.localeCompare(b.defectName),
+    [],
+  )
+  const groupBy = useCallback((r: WorkCenterDefect) => r.workCenterCode, [])
+  const groupLabel = useCallback((g: string) => `Work centre ${g}`, [])
+
+  return (
+    <MasterDataPanel<WorkCenterDefect, DefectDraft>
+      title="Work-center defects"
+      description="The defect names offered on each work centre, grouped by centre."
+      hint="Inspectors only ever see the defects listed for their own work centre, so keep each list short and specific. Arabic names are supported and display right-to-left automatically."
+      icon={<AlertTriangle className="h-5 w-5" />}
+      collectionName={COL.workCenterDefects}
+      entity="workCenterDefects"
+      idPrefix="wcd"
+      rows={rows}
+      loading={loading}
+      sort={sort}
+      groupBy={groupBy}
+      groupLabel={groupLabel}
+      addLabel="Add defect"
+      emptyHint="Add the defect names inspectors should be able to pick from."
+      minTableWidth="min-w-[28rem]"
+      columns={[
+        {
+          key: 'name',
+          label: 'Defect name',
+          render: (r) => (
+            <span dir="auto" className="font-semibold">
+              {r.defectName}
+            </span>
+          ),
+        },
+        {
+          key: 'wc',
+          label: 'Work centre',
+          render: (r) => <Badge tone="neutral">{r.workCenterCode}</Badge>,
+        },
+      ]}
+      describe={(r) => `${r.defectName} (work centre ${r.workCenterCode})`}
+      newDraft={() => ({ workCenterCode: WORK_CENTER_CODES[0], defectName: '' })}
+      toDraft={(r) => ({ workCenterCode: r.workCenterCode, defectName: r.defectName })}
+      validate={(d) =>
+        requireText(d.workCenterCode, 'Work centre') ?? requireText(d.defectName, 'Defect name')
+      }
+      toRecord={(d, id) => ({
+        id,
+        workCenterCode: d.workCenterCode,
+        defectName: d.defectName.trim(),
+      })}
+      renderForm={(d, patch) => (
+        <>
+          <Field label="Work centre">
             <Select
-              value={form.defaultSeverity}
-              onChange={(e) =>
-                setForm({ ...form, defaultSeverity: e.target.value as DefectSeverity })
-              }
+              className="min-h-[48px]"
+              value={d.workCenterCode}
+              onChange={(e) => patch({ workCenterCode: e.target.value })}
             >
-              {SEVERITIES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
+              {WORK_CENTER_CODES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
                 </option>
               ))}
             </Select>
           </Field>
-        </div>
-        <Field label="Title">
-          <Input
-            dir="auto"
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-            placeholder="Short title (Arabic supported)"
-          />
-        </Field>
-        <Field label="Description">
-          <Input
-            dir="auto"
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-            placeholder="Optional longer description"
-          />
-        </Field>
-        <ActiveToggle
-          checked={form.active}
-          onChange={(v) => setForm({ ...form, active: v })}
-        />
-      </div>
-    </Modal>
-  )
-}
-
-// ============================================================================
-// Dimensions
-// ============================================================================
-function DimensionsTab() {
-  const db = useDB()
-  const { toast } = useApp()
-  const [editing, setEditing] = useState<DimensionSpec | null>(null)
-  const [confirmDel, setConfirmDel] = useState<DimensionSpec | null>(null)
-
-  const blank: DimensionSpec = {
-    id: '',
-    code: '',
-    name: '',
-    target: 0,
-    tolMinus: 0,
-    tolPlus: 0,
-    unit: 'mm',
-    active: true,
-  }
-
-  return (
-    <LookupCard
-      title="Dimension Specs"
-      subtitle="Target dimensions and tolerance bands for measurements."
-      count={db.dimensionSpecs.length}
-      onAdd={() => setEditing(blank)}
-    >
-      {db.dimensionSpecs.length === 0 ? (
-        <EmptyRow label="No dimension specs yet." />
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <Th>
-                <td className="py-2 pr-3">Code</td>
-                <td className="py-2 pr-3">Name</td>
-                <td className="py-2 pr-3">Target ± Tol</td>
-                <td className="py-2 pr-3">Status</td>
-                <td className="py-2" />
-              </Th>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {db.dimensionSpecs.map((row) => (
-                <tr key={row.id}>
-                  <td className="py-2.5 pr-3 font-mono font-semibold">{row.code}</td>
-                  <td className="py-2.5 pr-3">{row.name}</td>
-                  <td className="py-2.5 pr-3 tabular-nums">
-                    <span className="font-semibold">{row.target}</span>
-                    <span className="text-slate-400">
-                      {' '}
-                      (-{row.tolMinus} / +{row.tolPlus}) {row.unit}
-                    </span>
-                  </td>
-                  <td className="py-2.5 pr-3">
-                    <ActiveBadge active={row.active} />
-                  </td>
-                  <td className="py-2.5">
-                    <RowActions onEdit={() => setEditing(row)} onDelete={() => setConfirmDel(row)} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {editing && (
-        <DimensionModal
-          initial={editing}
-          onClose={() => setEditing(null)}
-          onSave={(row) => {
-            actions.saveDimensionSpec(row)
-            setEditing(null)
-            toast('Dimension spec saved', 'success')
-          }}
-        />
-      )}
-
-      <ConfirmDelete
-        row={confirmDel}
-        label={confirmDel?.code}
-        onCancel={() => setConfirmDel(null)}
-        onConfirm={() => {
-          if (confirmDel) actions.deleteDimensionSpec(confirmDel.id)
-          setConfirmDel(null)
-          toast('Dimension spec deleted', 'info')
-        }}
-      />
-    </LookupCard>
-  )
-}
-
-function DimensionModal({
-  initial,
-  onClose,
-  onSave,
-}: {
-  initial: DimensionSpec
-  onClose: () => void
-  onSave: (row: DimensionSpec) => void
-}) {
-  const [form, setForm] = useState<DimensionSpec>(initial)
-  const valid = form.code.trim() !== '' && form.name.trim() !== ''
-  const num = (v: string) => (v === '' ? 0 : Number(v))
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={initial.id ? 'Edit dimension' : 'Add dimension'}
-      icon={<Ruler className="h-5 w-5" />}
-      footer={<SaveFooter onClose={onClose} valid={valid} onSave={() => onSave(form)} />}
-    >
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Code">
+          <Field label="Defect name" hint="Arabic or English.">
             <Input
-              value={form.code}
-              onChange={(e) => setForm({ ...form, code: e.target.value })}
-              placeholder="e.g. H"
+              dir="auto"
+              value={d.defectName}
+              onChange={(e) => patch({ defectName: e.target.value })}
+              placeholder="خدش سطحى"
             />
           </Field>
+        </>
+      )}
+    />
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 5. Machines
+// ---------------------------------------------------------------------------
+
+interface MachineDraft {
+  code: string
+  machineNumber: string
+  line: string
+  name: string
+  factory: string
+}
+
+function MachinesTab() {
+  const { rows, loading } = useAll<Machine>(COL.machines)
+
+  const sort = useCallback(
+    (a: Machine, b: Machine) =>
+      a.code.localeCompare(b.code, undefined, { numeric: true }) ||
+      a.machineNumber.localeCompare(b.machineNumber, undefined, { numeric: true }),
+    [],
+  )
+
+  return (
+    <MasterDataPanel<Machine, MachineDraft>
+      title="Machines"
+      description="The machines and lines an order can be produced on."
+      hint="The work-centre code decides which wizard steps appear — paint centres get the paint sample step, PT centres get the weld inspection step."
+      icon={<Factory className="h-5 w-5" />}
+      collectionName={COL.machines}
+      entity="machines"
+      idPrefix="mch"
+      rows={rows}
+      loading={loading}
+      sort={sort}
+      addLabel="Add machine"
+      emptyHint="Add the machines and lines used on the shop floor."
+      minTableWidth="min-w-[42rem]"
+      columns={[
+        { key: 'code', label: 'Work centre', render: (r) => <Badge tone="blue">{r.code}</Badge> },
+        {
+          key: 'number',
+          label: 'Machine no.',
+          render: (r) => <span className="font-semibold">{r.machineNumber}</span>,
+        },
+        { key: 'name', label: 'Name', render: (r) => r.name },
+        { key: 'line', label: 'Line', render: (r) => r.line || '—' },
+        { key: 'factory', label: 'Factory', render: (r) => r.factory || '—' },
+      ]}
+      describe={(r) => r.name || r.machineNumber}
+      newDraft={() => ({
+        code: WORK_CENTER_CODES[0],
+        machineNumber: '',
+        line: '',
+        name: '',
+        factory: '',
+      })}
+      toDraft={(r) => ({
+        code: r.code,
+        machineNumber: r.machineNumber,
+        line: r.line,
+        name: r.name,
+        factory: r.factory,
+      })}
+      validate={(d) =>
+        requireText(d.code, 'Work-centre code') ??
+        requireText(d.machineNumber, 'Machine number') ??
+        requireText(d.name, 'Name')
+      }
+      toRecord={(d, id) => ({
+        id,
+        code: d.code.trim(),
+        machineNumber: d.machineNumber.trim(),
+        line: d.line.trim(),
+        name: d.name.trim(),
+        factory: d.factory.trim(),
+      })}
+      renderForm={(d, patch) => (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Work-centre code">
+              <Select
+                className="min-h-[48px]"
+                value={d.code}
+                onChange={(e) => patch({ code: e.target.value })}
+              >
+                {WORK_CENTER_CODES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Machine number">
+              <Input
+                value={d.machineNumber}
+                onChange={(e) => patch({ machineNumber: e.target.value })}
+                placeholder="58-A"
+              />
+            </Field>
+          </div>
           <Field label="Name">
             <Input
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="e.g. Height"
+              value={d.name}
+              onChange={(e) => patch({ name: e.target.value })}
+              placeholder="58-A. Welding Line-LM4"
             />
           </Field>
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Field label="Target">
-            <Input
-              type="number"
-              step="any"
-              value={form.target}
-              onChange={(e) => setForm({ ...form, target: num(e.target.value) })}
-            />
-          </Field>
-          <Field label="Tol −">
-            <Input
-              type="number"
-              step="any"
-              value={form.tolMinus}
-              onChange={(e) => setForm({ ...form, tolMinus: num(e.target.value) })}
-            />
-          </Field>
-          <Field label="Tol +">
-            <Input
-              type="number"
-              step="any"
-              value={form.tolPlus}
-              onChange={(e) => setForm({ ...form, tolPlus: num(e.target.value) })}
-            />
-          </Field>
-          <Field label="Unit">
-            <Input
-              value={form.unit}
-              onChange={(e) => setForm({ ...form, unit: e.target.value })}
-              placeholder="mm"
-            />
-          </Field>
-        </div>
-        <ActiveToggle checked={form.active} onChange={(v) => setForm({ ...form, active: v })} />
-      </div>
-    </Modal>
-  )
-}
-
-// ============================================================================
-// Grade Mappings
-// ============================================================================
-function GradeMappingsTab() {
-  const db = useDB()
-  const { toast } = useApp()
-  const [editing, setEditing] = useState<GradeMapping | null>(null)
-
-  const blank: GradeMapping = {
-    id: '',
-    grade: '',
-    minPassRate: 0,
-    maxDefectRate: 0,
-    color: '#2563eb',
-    label: '',
-  }
-
-  return (
-    <LookupCard
-      title="Grade Mappings"
-      subtitle="Map pass / defect thresholds to a quality grade and colour."
-      count={db.gradeMappings.length}
-      onAdd={() => setEditing(blank)}
-    >
-      {db.gradeMappings.length === 0 ? (
-        <EmptyRow label="No grade mappings yet." />
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <Th>
-                <td className="py-2 pr-3">Grade</td>
-                <td className="py-2 pr-3">Label</td>
-                <td className="py-2 pr-3">Min pass %</td>
-                <td className="py-2 pr-3">Max defect %</td>
-                <td className="py-2" />
-              </Th>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {db.gradeMappings.map((row) => (
-                <tr key={row.id}>
-                  <td className="py-2.5 pr-3">
-                    <span
-                      className="inline-flex items-center gap-2 rounded-full px-2.5 py-0.5 text-xs font-bold text-white"
-                      style={{ backgroundColor: row.color }}
-                    >
-                      {row.grade || '—'}
-                    </span>
-                  </td>
-                  <td className="py-2.5 pr-3">{row.label}</td>
-                  <td className="py-2.5 pr-3 tabular-nums">{row.minPassRate}%</td>
-                  <td className="py-2.5 pr-3 tabular-nums">{row.maxDefectRate}%</td>
-                  <td className="py-2.5">
-                    <RowActions onEdit={() => setEditing(row)} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {editing && (
-        <GradeModal
-          initial={editing}
-          onClose={() => setEditing(null)}
-          onSave={(row) => {
-            actions.saveGradeMapping(row)
-            setEditing(null)
-            toast('Grade mapping saved', 'success')
-          }}
-        />
-      )}
-    </LookupCard>
-  )
-}
-
-function GradeModal({
-  initial,
-  onClose,
-  onSave,
-}: {
-  initial: GradeMapping
-  onClose: () => void
-  onSave: (row: GradeMapping) => void
-}) {
-  const [form, setForm] = useState<GradeMapping>(initial)
-  const valid = form.grade.trim() !== ''
-  const num = (v: string) => (v === '' ? 0 : Number(v))
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={initial.id ? 'Edit grade mapping' : 'Add grade mapping'}
-      icon={<Award className="h-5 w-5" />}
-      footer={<SaveFooter onClose={onClose} valid={valid} onSave={() => onSave(form)} />}
-    >
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Grade">
-            <Input
-              value={form.grade}
-              onChange={(e) => setForm({ ...form, grade: e.target.value })}
-              placeholder="e.g. A"
-            />
-          </Field>
-          <Field label="Label">
-            <Input
-              value={form.label}
-              onChange={(e) => setForm({ ...form, label: e.target.value })}
-              placeholder="e.g. Premium"
-            />
-          </Field>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Min pass rate (%)">
-            <Input
-              type="number"
-              step="any"
-              value={form.minPassRate}
-              onChange={(e) => setForm({ ...form, minPassRate: num(e.target.value) })}
-            />
-          </Field>
-          <Field label="Max defect rate (%)">
-            <Input
-              type="number"
-              step="any"
-              value={form.maxDefectRate}
-              onChange={(e) => setForm({ ...form, maxDefectRate: num(e.target.value) })}
-            />
-          </Field>
-        </div>
-        <Field label="Colour">
-          <div className="flex items-center gap-3">
-            <input
-              type="color"
-              value={form.color}
-              onChange={(e) => setForm({ ...form, color: e.target.value })}
-              className="h-10 w-16 cursor-pointer rounded-lg border border-slate-200 bg-transparent p-1 dark:border-slate-700"
-              aria-label="Grade colour"
-            />
-            <span
-              className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-bold text-white"
-              style={{ backgroundColor: form.color }}
-            >
-              {form.grade || 'Preview'}
-            </span>
-            <span className="font-mono text-xs text-slate-400">{form.color}</span>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Line">
+              <Input value={d.line} onChange={(e) => patch({ line: e.target.value })} placeholder="LM4" />
+            </Field>
+            <Field label="Factory">
+              <Input
+                value={d.factory}
+                onChange={(e) => patch({ factory: e.target.value })}
+                placeholder="Main"
+              />
+            </Field>
           </div>
-        </Field>
-      </div>
-    </Modal>
+        </>
+      )}
+    />
   )
 }
 
-// ============================================================================
-// PT Consumables
-// ============================================================================
-const PT_TYPES = ['Penetrant', 'Developer', 'Cleaner']
+// ---------------------------------------------------------------------------
+// 6. Grade mappings
+// ---------------------------------------------------------------------------
 
-function ConsumablesTab() {
-  const db = useDB()
-  const { toast } = useApp()
-  const [editing, setEditing] = useState<PTConsumable | null>(null)
-  const [confirmDel, setConfirmDel] = useState<PTConsumable | null>(null)
-
-  const blank: PTConsumable = {
-    id: '',
-    code: '',
-    name: '',
-    type: 'Penetrant',
-    batch: '',
-    expiry: '',
-    active: true,
-  }
-
-  return (
-    <LookupCard
-      title="PT Consumables"
-      subtitle="Penetrant-testing materials and their batch / expiry tracking."
-      count={db.ptConsumables.length}
-      onAdd={() => setEditing(blank)}
-    >
-      {db.ptConsumables.length === 0 ? (
-        <EmptyRow label="No consumables yet." />
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <Th>
-                <td className="py-2 pr-3">Code</td>
-                <td className="py-2 pr-3">Name</td>
-                <td className="py-2 pr-3">Type</td>
-                <td className="py-2 pr-3">Batch</td>
-                <td className="py-2 pr-3">Expiry</td>
-                <td className="py-2 pr-3">Status</td>
-                <td className="py-2" />
-              </Th>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {db.ptConsumables.map((row) => (
-                <tr key={row.id}>
-                  <td className="py-2.5 pr-3 font-mono font-semibold">{row.code}</td>
-                  <td className="py-2.5 pr-3">{row.name}</td>
-                  <td className="py-2.5 pr-3">
-                    <Badge tone="violet">{row.type}</Badge>
-                  </td>
-                  <td className="py-2.5 pr-3 font-mono">{row.batch || '—'}</td>
-                  <td className="py-2.5 pr-3 tabular-nums">{row.expiry || '—'}</td>
-                  <td className="py-2.5 pr-3">
-                    <ActiveBadge active={row.active} />
-                  </td>
-                  <td className="py-2.5">
-                    <RowActions onEdit={() => setEditing(row)} onDelete={() => setConfirmDel(row)} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {editing && (
-        <ConsumableModal
-          initial={editing}
-          onClose={() => setEditing(null)}
-          onSave={(row) => {
-            actions.savePTConsumable(row)
-            setEditing(null)
-            toast('Consumable saved', 'success')
-          }}
-        />
-      )}
-
-      <ConfirmDelete
-        row={confirmDel}
-        label={confirmDel?.code}
-        onCancel={() => setConfirmDel(null)}
-        onConfirm={() => {
-          if (confirmDel) actions.deletePTConsumable(confirmDel.id)
-          setConfirmDel(null)
-          toast('Consumable deleted', 'info')
-        }}
-      />
-    </LookupCard>
-  )
+interface GradeDraft {
+  gradeA: string
+  gradeB: string
 }
 
-function ConsumableModal({
-  initial,
-  onClose,
-  onSave,
-}: {
-  initial: PTConsumable
-  onClose: () => void
-  onSave: (row: PTConsumable) => void
-}) {
-  const [form, setForm] = useState<PTConsumable>(initial)
-  const valid = form.code.trim() !== '' && form.name.trim() !== ''
+function GradeMappingsTab() {
+  const { rows, loading } = useAll<GradeMapping>(COL.gradeMappings)
+
+  const sort = useCallback(
+    (a: GradeMapping, b: GradeMapping) =>
+      a.gradeA.localeCompare(b.gradeA) || a.gradeB.localeCompare(b.gradeB),
+    [],
+  )
+
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={initial.id ? 'Edit consumable' : 'Add consumable'}
-      icon={<FlaskConical className="h-5 w-5" />}
-      footer={<SaveFooter onClose={onClose} valid={valid} onSave={() => onSave(form)} />}
-    >
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Code">
+    <MasterDataPanel<GradeMapping, GradeDraft>
+      title="Grade mappings"
+      description="Grades that count as the same material when a coil is checked against an order."
+      hint={
+        <>
+          Equivalence is <strong>transitive</strong>: if A ≡ B and B ≡ C, then A ≡ C is applied
+          automatically. Record each pair once — the reverse direction is implied as well.
+        </>
+      }
+      icon={<Shuffle className="h-5 w-5" />}
+      collectionName={COL.gradeMappings}
+      entity="gradeMappings"
+      idPrefix="gm"
+      rows={rows}
+      loading={loading}
+      sort={sort}
+      addLabel="Add mapping"
+      emptyHint="Add a pair of grades that should be treated as equivalent."
+      minTableWidth="min-w-[26rem]"
+      columns={[
+        { key: 'a', label: 'Grade A', render: (r) => <span className="font-semibold">{r.gradeA}</span> },
+        { key: 'eq', label: '', className: 'w-8 text-center text-slate-400', render: () => '≡' },
+        { key: 'b', label: 'Grade B', render: (r) => <span className="font-semibold">{r.gradeB}</span> },
+      ]}
+      describe={(r) => `${r.gradeA} ≡ ${r.gradeB}`}
+      newDraft={() => ({ gradeA: '', gradeB: '' })}
+      toDraft={(r) => ({ gradeA: r.gradeA, gradeB: r.gradeB })}
+      validate={(d) =>
+        requireText(d.gradeA, 'Grade A') ??
+        requireText(d.gradeB, 'Grade B') ??
+        (d.gradeA.trim().toLowerCase() === d.gradeB.trim().toLowerCase()
+          ? 'Both grades are the same — no mapping is needed.'
+          : null)
+      }
+      toRecord={(d, id) => ({ id, gradeA: d.gradeA.trim(), gradeB: d.gradeB.trim() })}
+      renderForm={(d, patch) => (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Grade A">
             <Input
-              value={form.code}
-              onChange={(e) => setForm({ ...form, code: e.target.value })}
-              placeholder="e.g. PT-DP"
+              value={d.gradeA}
+              onChange={(e) => patch({ gradeA: e.target.value })}
+              placeholder="S355JR"
             />
           </Field>
-          <Field label="Type">
+          <Field label="Grade B">
+            <Input
+              value={d.gradeB}
+              onChange={(e) => patch({ gradeB: e.target.value })}
+              placeholder="ST52-3"
+            />
+          </Field>
+        </div>
+      )}
+    />
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 7. PT consumables
+// ---------------------------------------------------------------------------
+
+interface PTDraft {
+  kind: PTConsumableKind
+  productName: string
+  lotBatch: string
+}
+
+function PTConsumablesTab() {
+  const { rows, loading } = useAll<PTConsumableProduct>(COL.ptConsumables)
+
+  const sort = useCallback(
+    (a: PTConsumableProduct, b: PTConsumableProduct) =>
+      PT_KINDS.indexOf(a.kind) - PT_KINDS.indexOf(b.kind) ||
+      a.productName.localeCompare(b.productName),
+    [],
+  )
+
+  return (
+    <MasterDataPanel<PTConsumableProduct, PTDraft>
+      title="PT consumables"
+      description="Cleaner, penetrant and developer products offered on the PT / weld step."
+      hint="The lot / batch recorded on a PT inspection is the chemical audit trail — keep these current so inspectors pick from the list instead of typing."
+      icon={<FlaskConical className="h-5 w-5" />}
+      collectionName={COL.ptConsumables}
+      entity="ptConsumables"
+      idPrefix="ptc"
+      rows={rows}
+      loading={loading}
+      sort={sort}
+      addLabel="Add consumable"
+      emptyHint="Add the PT consumables in use, with their current lot numbers."
+      minTableWidth="min-w-[32rem]"
+      columns={[
+        {
+          key: 'kind',
+          label: 'Kind',
+          render: (r) => (
+            <Badge tone={r.kind === 'Cleaner' ? 'blue' : r.kind === 'Penetrant' ? 'red' : 'violet'}>
+              {r.kind}
+            </Badge>
+          ),
+        },
+        {
+          key: 'name',
+          label: 'Product',
+          render: (r) => <span className="font-semibold">{r.productName}</span>,
+        },
+        {
+          key: 'lot',
+          label: 'Lot / batch',
+          render: (r) => <span className="tabular-nums">{r.lotBatch}</span>,
+        },
+      ]}
+      describe={(r) => `${r.kind} — ${r.productName}`}
+      newDraft={() => ({ kind: 'Cleaner', productName: '', lotBatch: '' })}
+      toDraft={(r) => ({ kind: r.kind, productName: r.productName, lotBatch: r.lotBatch })}
+      validate={(d) =>
+        requireText(d.productName, 'Product name') ?? requireText(d.lotBatch, 'Lot / batch')
+      }
+      toRecord={(d, id) => ({
+        id,
+        kind: d.kind,
+        productName: d.productName.trim(),
+        lotBatch: d.lotBatch.trim(),
+      })}
+      renderForm={(d, patch) => (
+        <>
+          <Field label="Kind">
             <Select
-              value={form.type}
-              onChange={(e) => setForm({ ...form, type: e.target.value })}
+              className="min-h-[48px]"
+              value={d.kind}
+              onChange={(e) => patch({ kind: e.target.value as PTConsumableKind })}
             >
-              {PT_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
+              {PT_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {k}
                 </option>
               ))}
             </Select>
           </Field>
-        </div>
-        <Field label="Name">
-          <Input
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            placeholder="Product name"
-          />
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Batch">
+          <Field label="Product name">
             <Input
-              value={form.batch}
-              onChange={(e) => setForm({ ...form, batch: e.target.value })}
-              placeholder="Batch / lot no."
+              value={d.productName}
+              onChange={(e) => patch({ productName: e.target.value })}
+              placeholder="SKL-SP2 Red Penetrant"
             />
           </Field>
-          <Field label="Expiry">
+          <Field label="Lot / batch">
             <Input
-              type="date"
-              value={form.expiry}
-              onChange={(e) => setForm({ ...form, expiry: e.target.value })}
+              value={d.lotBatch}
+              onChange={(e) => patch({ lotBatch: e.target.value })}
+              placeholder="B24-0417"
             />
           </Field>
-        </div>
-        <ActiveToggle checked={form.active} onChange={(v) => setForm({ ...form, active: v })} />
-      </div>
-    </Modal>
+        </>
+      )}
+    />
   )
 }
 
-// ============================================================================
-// Bulk Import
-// ============================================================================
-type OrderFieldKey =
-  | 'orderId'
-  | 'item'
-  | 'itemCode'
-  | 'requiredQty'
-  | 'finishedQty'
-  | 'color'
-  | 'drawing'
-  | 'route'
-  | 'nominalL'
+// ---------------------------------------------------------------------------
+// 8. Bulk import (§7)
+// ---------------------------------------------------------------------------
 
-const ORDER_FIELDS: Array<{ key: OrderFieldKey; label: string; numeric?: boolean; required?: boolean }> = [
-  { key: 'orderId', label: 'Order ID', required: true },
-  { key: 'item', label: 'Item' },
-  { key: 'itemCode', label: 'Item Code' },
-  { key: 'requiredQty', label: 'Required Qty', numeric: true },
-  { key: 'finishedQty', label: 'Finished Qty', numeric: true },
-  { key: 'color', label: 'Color' },
-  { key: 'drawing', label: 'Drawing' },
-  { key: 'route', label: 'Route' },
-  { key: 'nominalL', label: 'Nominal L', numeric: true },
-]
+type CellValue = string | number
 
-const NONE = '__none__'
+interface ImportField {
+  /** Also the CSV template header, and the name error messages use. */
+  key: string
+  label: string
+  kind: 'text' | 'number'
+  aliases?: string[]
+  sample: string
+}
 
-function guessMapping(headers: string[]): Record<OrderFieldKey, string> {
-  const norm = (s: string) => s.toLowerCase().replace(/[\s_-]/g, '')
-  const map = {} as Record<OrderFieldKey, string>
-  for (const f of ORDER_FIELDS) {
-    const target = norm(f.label)
-    const targetKey = norm(f.key)
-    const idx = headers.findIndex((h) => {
-      const n = norm(h)
-      return n === targetKey || n === target
-    })
-    map[f.key] = idx >= 0 ? String(idx) : NONE
+interface Importer<T extends { id: string }> {
+  id: string
+  title: string
+  description: string
+  collectionName: string
+  idPrefix: string
+  templateFile: string
+  fields: ImportField[]
+  /** Fields that together form the business key. Import is blocked if unmapped. */
+  businessKeys: string[]
+  existing: T[]
+  loading: boolean
+  keyOf: (row: T) => string
+  build: (values: Record<string, CellValue>, previous: T | undefined, id: string) => T
+}
+
+const BATCH_SIZE = 100
+
+function normaliseHeader(h: string): string {
+  return h.toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function normaliseKeyPart(v: unknown): string {
+  return String(v ?? '').trim().toLowerCase()
+}
+
+/** FNV-1a — a short, stable suffix so two different business keys can never
+ *  collide on the same document id after the slug strips their characters. */
+function keyHash(s: string): string {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
   }
-  return map
+  return (h >>> 0).toString(36)
+}
+
+/** Deterministic document id derived from the business key, so re-importing the
+ *  same file updates the same documents instead of duplicating them (§7.7). */
+function deterministicId(prefix: string, key: string): string {
+  const slug = key
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60)
+  return `${prefix}_${slug ? `${slug}_` : ''}${keyHash(key)}`
+}
+
+function csvCell(v: string): string {
+  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
+}
+
+/** Unmapped columns leave the existing value alone, so a partial file can be
+ *  used to correct one column without wiping the rest of the record. */
+function str(v: CellValue | undefined, previous: string | undefined, fallback = ''): string {
+  return v === undefined ? (previous ?? fallback) : String(v)
+}
+
+function num(v: CellValue | undefined, previous: number | undefined, fallback = 0): number {
+  return v === undefined ? (previous ?? fallback) : Number(v)
 }
 
 function BulkImportTab() {
+  const [which, setWhich] = useState<'orders' | 'coils' | 'production'>('orders')
+
+  const { rows: orders, loading: ordersLoading } = useAll<ProductionOrder>(COL.orders)
+  const { rows: coils, loading: coilsLoading } = useAll<Coil>(COL.coils)
+  const { rows: dims, loading: dimsLoading } = useAll<ItemDimensionOrder>(COL.itemDimensionOrder)
+
+  const ordersImporter = useMemo<Importer<ProductionOrder>>(
+    () => ({
+      id: 'orders',
+      title: 'Production orders',
+      description: 'Existing orders are matched and updated on the order number.',
+      collectionName: COL.orders,
+      idPrefix: 'ord',
+      templateFile: 'production-orders-template.csv',
+      businessKeys: ['orderNumber'],
+      existing: orders,
+      loading: ordersLoading,
+      keyOf: (r) => normaliseKeyPart(r.orderNumber),
+      fields: [
+        {
+          key: 'orderNumber',
+          label: 'Order number',
+          kind: 'text',
+          aliases: ['order', 'order no', 'ordernr', 'po'],
+          sample: '20480-Ph1.4-SMA',
+        },
+        { key: 'item', label: 'Item', kind: 'text', aliases: ['item name', 'description'], sample: 'Shuttle Beam' },
+        { key: 'itemCode', label: 'Item code', kind: 'text', aliases: ['code', 'part code'], sample: 'LB406015-5TA3' },
+        {
+          key: 'workCenterCode',
+          label: 'Work centre',
+          kind: 'text',
+          aliases: ['work center', 'work centre', 'wc'],
+          sample: '48',
+        },
+        { key: 'requiredQty', label: 'Required qty', kind: 'number', aliases: ['required', 'quantity'], sample: '1350' },
+        { key: 'finishedQty', label: 'Finished qty', kind: 'number', aliases: ['finished', 'produced'], sample: '900' },
+        { key: 'drawing', label: 'Drawing', kind: 'text', aliases: ['dwg'], sample: 'BS9059/48' },
+        {
+          key: 'drawingAlt',
+          label: 'Alternative drawing',
+          kind: 'text',
+          aliases: ['drawing 2', 'alt drawing'],
+          sample: 'BS9059/48-ALT',
+        },
+        { key: 'issue', label: 'Issue', kind: 'text', aliases: ['rev', 'revision'], sample: 'Rev C' },
+        { key: 'material', label: 'Material', kind: 'text', sample: 'Steel' },
+        { key: 'expectedGrade', label: 'Expected grade', kind: 'text', aliases: ['grade'], sample: 'ST52-3' },
+        { key: 'customer', label: 'Customer', kind: 'text', aliases: ['client'], sample: 'Alpha Racking' },
+        { key: 'type', label: 'Type', kind: 'text', sample: 'Export' },
+        { key: 'colour', label: 'Colour', kind: 'text', aliases: ['color', 'ral'], sample: 'RAL7016' },
+        {
+          key: 'date',
+          label: 'Date',
+          kind: 'text',
+          aliases: ['order date'],
+          sample: new Date().toISOString().slice(0, 10),
+        },
+      ],
+      build: (v, prev, id) => ({
+        id,
+        orderNumber: str(v.orderNumber, prev?.orderNumber),
+        item: str(v.item, prev?.item),
+        itemCode: str(v.itemCode, prev?.itemCode),
+        workCenterCode: str(v.workCenterCode, prev?.workCenterCode),
+        machineId: prev?.machineId,
+        requiredQty: num(v.requiredQty, prev?.requiredQty),
+        finishedQty: num(v.finishedQty, prev?.finishedQty),
+        drawing: str(v.drawing, prev?.drawing),
+        drawingAlt: v.drawingAlt === undefined ? prev?.drawingAlt : String(v.drawingAlt),
+        issue: v.issue === undefined ? prev?.issue : String(v.issue),
+        material: str(v.material, prev?.material),
+        expectedGrade: str(v.expectedGrade, prev?.expectedGrade),
+        customer: str(v.customer, prev?.customer),
+        type: str(v.type, prev?.type),
+        colour: str(v.colour, prev?.colour),
+        date: str(v.date, prev?.date, new Date().toISOString()),
+      }),
+    }),
+    [orders, ordersLoading],
+  )
+
+  const coilsImporter = useMemo<Importer<Coil>>(
+    () => ({
+      id: 'coils',
+      title: 'Coils',
+      description: 'Existing coils are matched and updated on the coil number.',
+      collectionName: COL.coils,
+      idPrefix: 'coil',
+      templateFile: 'coils-template.csv',
+      businessKeys: ['coilNumber'],
+      existing: coils,
+      loading: coilsLoading,
+      keyOf: (r) => normaliseKeyPart(r.coilNumber),
+      fields: [
+        {
+          key: 'coilNumber',
+          label: 'Coil number',
+          kind: 'text',
+          aliases: ['coil', 'coil id', 'coil no'],
+          sample: 'C10021',
+        },
+        { key: 'grade', label: 'Grade', kind: 'text', sample: 'S355JR' },
+        { key: 'smType', label: 'SM type', kind: 'text', aliases: ['sm', 'type'], sample: 'HR' },
+        { key: 'supplier', label: 'Supplier', kind: 'text', aliases: ['vendor', 'mill'], sample: 'Ezz Steel' },
+        { key: 'thickness', label: 'Thickness', kind: 'number', aliases: ['thk'], sample: '2.5' },
+        { key: 'width', label: 'Width', kind: 'number', sample: '1250' },
+        { key: 'yield', label: 'Yield', kind: 'number', aliases: ['yield strength'], sample: '355' },
+        { key: 'notes', label: 'Notes', kind: 'text', aliases: ['remarks', 'comment'], sample: '' },
+      ],
+      build: (v, prev, id) => ({
+        id,
+        coilNumber: str(v.coilNumber, prev?.coilNumber),
+        grade: v.grade === undefined ? prev?.grade : String(v.grade),
+        smType: v.smType === undefined ? prev?.smType : String(v.smType),
+        supplier: v.supplier === undefined ? prev?.supplier : String(v.supplier),
+        thickness: v.thickness === undefined ? prev?.thickness : Number(v.thickness),
+        width: v.width === undefined ? prev?.width : Number(v.width),
+        yield: v.yield === undefined ? prev?.yield : Number(v.yield),
+        notes: v.notes === undefined ? prev?.notes : String(v.notes),
+      }),
+    }),
+    [coils, coilsLoading],
+  )
+
+  const productionImporter = useMemo<Importer<ItemDimensionOrder>>(
+    () => ({
+      id: 'production',
+      title: 'Production data',
+      description:
+        'Item dimensions and the sequence they are measured in. Matched on item + dimension name.',
+      collectionName: COL.itemDimensionOrder,
+      idPrefix: 'ido',
+      templateFile: 'production-data-template.csv',
+      businessKeys: ['item', 'dimensionName'],
+      existing: dims,
+      loading: dimsLoading,
+      keyOf: (r) => `${normaliseKeyPart(r.item)}||${normaliseKeyPart(r.dimensionName)}`,
+      fields: [
+        { key: 'item', label: 'Item', kind: 'text', aliases: ['item name', 'product'], sample: 'XL Light Beam' },
+        {
+          key: 'dimensionName',
+          label: 'Dimension name',
+          kind: 'text',
+          aliases: ['dimension', 'name', 'characteristic'],
+          sample: 'Width',
+        },
+        { key: 'sequence', label: 'Sequence', kind: 'number', aliases: ['seq', 'order', 'no'], sample: '1' },
+        { key: 'nominal', label: 'Nominal', kind: 'number', aliases: ['target', 'nom'], sample: '125' },
+        { key: 'tolPlus', label: 'Tolerance +', kind: 'number', aliases: ['tol plus', 'upper', 'plus'], sample: '0.5' },
+        {
+          key: 'tolMinus',
+          label: 'Tolerance −',
+          kind: 'number',
+          aliases: ['tol minus', 'lower', 'minus'],
+          sample: '0.5',
+        },
+        { key: 'unit', label: 'Unit', kind: 'text', aliases: ['uom'], sample: 'mm' },
+      ],
+      build: (v, prev, id) => ({
+        id,
+        item: str(v.item, prev?.item),
+        dimensionName: str(v.dimensionName, prev?.dimensionName),
+        sequence: num(v.sequence, prev?.sequence, 1),
+        nominal: v.nominal === undefined ? prev?.nominal : Number(v.nominal),
+        tolPlus: num(v.tolPlus, prev?.tolPlus),
+        tolMinus: num(v.tolMinus, prev?.tolMinus),
+        unit: str(v.unit, prev?.unit, 'mm'),
+      }),
+    }),
+    [dims, dimsLoading],
+  )
+
+  const SOURCES = [
+    { key: 'orders', label: 'Production orders', icon: Layers },
+    { key: 'coils', label: 'Coils', icon: Table2 },
+    { key: 'production', label: 'Production data', icon: Ruler },
+  ] as const
+
+  return (
+    <div className="space-y-4">
+      <Card className="space-y-4 p-4 sm:p-5">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
+            <UploadCloud className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-lg font-bold">Bulk import</h2>
+            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+              Load a CSV export, check exactly what it would change, then import. Nothing is written
+              until you press Import — and importing the same file twice updates the same records
+              rather than creating duplicates.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {SOURCES.map((t) => {
+            const Icon = t.icon
+            const active = which === t.key
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setWhich(t.key)}
+                aria-current={active ? 'true' : undefined}
+                className={cn(
+                  'inline-flex min-h-[48px] shrink-0 items-center gap-2 rounded-2xl px-4 text-sm font-semibold transition-colors',
+                  active
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                <span className="whitespace-nowrap">{t.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      </Card>
+
+      {which === 'orders' && <CsvImporter key="orders" importer={ordersImporter} />}
+      {which === 'coils' && <CsvImporter key="coils" importer={coilsImporter} />}
+      {which === 'production' && <CsvImporter key="production" importer={productionImporter} />}
+    </div>
+  )
+}
+
+// ---- The importer itself ---------------------------------------------------
+
+interface PlannedRow<T> {
+  rowNumber: number
+  docId: string
+  record: T
+  values: Record<string, CellValue>
+  mode: 'new' | 'update'
+}
+
+interface RowError {
+  rowNumber: number
+  message: string
+}
+
+interface Plan<T> {
+  valid: PlannedRow<T>[]
+  errors: RowError[]
+  newCount: number
+  updateCount: number
+}
+
+type RunStatus = 'idle' | 'running' | 'paused' | 'done'
+
+function CsvImporter<T extends { id: string }>({ importer }: { importer: Importer<T> }) {
   const { toast } = useApp()
   const fileRef = useRef<HTMLInputElement>(null)
-  const [fileName, setFileName] = useState('')
+
+  const [dragging, setDragging] = useState(false)
+  const [fileName, setFileName] = useState<string | null>(null)
   const [headers, setHeaders] = useState<string[]>([])
-  const [rows, setRows] = useState<string[][]>([])
-  const [mapping, setMapping] = useState<Record<OrderFieldKey, string>>(
-    () => guessMapping([]),
+  const [dataRows, setDataRows] = useState<string[][]>([])
+  const [mapping, setMapping] = useState<Record<string, number>>({})
+  const [parseError, setParseError] = useState<string | null>(null)
+
+  const [status, setStatus] = useState<RunStatus>('idle')
+  const [written, setWritten] = useState(0)
+  const [runTotal, setRunTotal] = useState(0)
+  const [runError, setRunError] = useState<string | null>(null)
+
+  const pausedRef = useRef(false)
+  const cursorRef = useRef(0)
+  const runPlanRef = useRef<PlannedRow<T>[]>([])
+
+  const locked = status === 'running' || status === 'paused'
+
+  const resetRun = useCallback(() => {
+    pausedRef.current = false
+    cursorRef.current = 0
+    runPlanRef.current = []
+    setStatus('idle')
+    setWritten(0)
+    setRunTotal(0)
+    setRunError(null)
+  }, [])
+
+  const autoMap = useCallback(
+    (cols: string[]) => {
+      const byNorm = new Map<string, number>()
+      cols.forEach((c, i) => {
+        const n = normaliseHeader(c)
+        if (n && !byNorm.has(n)) byNorm.set(n, i)
+      })
+      const next: Record<string, number> = {}
+      for (const f of importer.fields) {
+        const candidates = [f.key, f.label, ...(f.aliases ?? [])].map(normaliseHeader)
+        const hit = candidates.map((c) => byNorm.get(c)).find((i) => i !== undefined)
+        next[f.key] = hit ?? -1
+      }
+      return next
+    },
+    [importer],
   )
 
-  const handleFile = async (file: File) => {
-    const text = await file.text()
-    const parsed = parseCSV(text)
-    if (parsed.length === 0) {
-      toast('The CSV file appears to be empty', 'error')
-      return
-    }
-    const hdr = parsed[0]
-    const body = parsed.slice(1)
-    setFileName(file.name)
-    setHeaders(hdr)
-    setRows(body)
-    setMapping(guessMapping(hdr))
-  }
-
-  const preview = useMemo(() => {
-    return rows.slice(0, 5).map((r) => {
-      const obj: Partial<Record<OrderFieldKey, string>> = {}
-      for (const f of ORDER_FIELDS) {
-        const col = mapping[f.key]
-        if (col !== NONE) obj[f.key] = r[Number(col)] ?? ''
+  const loadFile = useCallback(
+    async (file: File | undefined | null) => {
+      if (!file) return
+      resetRun()
+      setParseError(null)
+      try {
+        const text = (await file.text()).replace(/^﻿/, '')
+        const grid = parseCSV(text)
+        setFileName(file.name)
+        if (grid.length === 0) {
+          setHeaders([])
+          setDataRows([])
+          setMapping({})
+          setParseError('That file has no rows in it.')
+          return
+        }
+        const cols = grid[0].map((h) => h.trim())
+        const rest = grid.slice(1)
+        setHeaders(cols)
+        setDataRows(rest)
+        setMapping(autoMap(cols))
+        if (rest.length === 0) setParseError('That file has a header row but no data rows.')
+      } catch {
+        setParseError('That file could not be read. Save it as CSV and try again.')
       }
-      return obj
-    })
-  }, [rows, mapping])
+    },
+    [autoMap, resetRun],
+  )
 
-  const mappedFields = ORDER_FIELDS.filter((f) => mapping[f.key] !== NONE)
-  const orderIdMapped = mapping.orderId !== NONE
+  const missingKeys = useMemo(
+    () => importer.businessKeys.filter((k) => (mapping[k] ?? -1) < 0),
+    [importer.businessKeys, mapping],
+  )
 
-  const buildRows = (): Array<Partial<ProductionOrder> & { orderId: string }> => {
-    const out: Array<Partial<ProductionOrder> & { orderId: string }> = []
-    for (const r of rows) {
-      const orderId = (r[Number(mapping.orderId)] ?? '').trim()
-      if (!orderId) continue
-      const obj: Partial<ProductionOrder> & { orderId: string } = { orderId }
-      for (const f of ORDER_FIELDS) {
-        if (f.key === 'orderId') continue
-        const col = mapping[f.key]
-        if (col === NONE) continue
-        const raw = (r[Number(col)] ?? '').trim()
-        if (f.numeric) {
-          ;(obj as Record<string, unknown>)[f.key] = Number(raw) || 0
+  /** The dry run. Pure: it computes what WOULD be written and never writes. */
+  const plan = useMemo<Plan<T> | null>(() => {
+    if (headers.length === 0 || dataRows.length === 0) return null
+    if (missingKeys.length > 0) return null
+
+    const existingByKey = new Map<string, T>()
+    for (const row of importer.existing) existingByKey.set(importer.keyOf(row), row)
+
+    const builtByKey = new Map<string, T>()
+    const idByKey = new Map<string, string>()
+    const valid: PlannedRow<T>[] = []
+    const errors: RowError[] = []
+    let newCount = 0
+    let updateCount = 0
+
+    dataRows.forEach((row, i) => {
+      // The header is line 1, so data row i is the line the user sees in their
+      // spreadsheet at i + 2. Errors have to point at that line, not at an index.
+      const rowNumber = i + 2
+      const values: Record<string, CellValue> = {}
+      const problems: string[] = []
+
+      for (const f of importer.fields) {
+        const col = mapping[f.key] ?? -1
+        if (col < 0) continue
+        const raw = (row[col] ?? '').trim()
+        if (raw === '') continue
+        if (f.kind === 'number') {
+          const n = Number(raw.replace(/,/g, ''))
+          if (!Number.isFinite(n)) {
+            problems.push(`${f.key} is not a number ("${raw}")`)
+            continue
+          }
+          values[f.key] = n
         } else {
-          ;(obj as Record<string, unknown>)[f.key] = raw
+          values[f.key] = raw
         }
       }
-      out.push(obj)
+
+      for (const k of importer.businessKeys) {
+        if (values[k] === undefined || String(values[k]).trim() === '') {
+          problems.push(`${k} is empty`)
+        }
+      }
+
+      if (problems.length > 0) {
+        errors.push({ rowNumber, message: problems.join('; ') })
+        return
+      }
+
+      const key = importer.businessKeys.map((k) => normaliseKeyPart(values[k])).join('||')
+      const existing = existingByKey.get(key)
+      const previous = builtByKey.get(key) ?? existing
+      const docId = idByKey.get(key) ?? existing?.id ?? deterministicId(importer.idPrefix, key)
+      idByKey.set(key, docId)
+
+      const record = importer.build(values, previous, docId)
+      const mode: 'new' | 'update' = previous ? 'update' : 'new'
+      if (mode === 'new') newCount += 1
+      else updateCount += 1
+      builtByKey.set(key, record)
+      valid.push({ rowNumber, docId, record, values, mode })
+    })
+
+    return { valid, errors, newCount, updateCount }
+  }, [headers, dataRows, mapping, missingKeys, importer])
+
+  const mappedFields = useMemo(
+    () => importer.fields.filter((f) => (mapping[f.key] ?? -1) >= 0),
+    [importer.fields, mapping],
+  )
+
+  /**
+   * Write in batches, from the cursor onwards. Pausing leaves the cursor where
+   * it is, so resuming continues from the next unwritten row and never rewrites
+   * a row that already landed.
+   */
+  async function run() {
+    const source = status === 'paused' ? runPlanRef.current : plan?.valid
+    if (!source || source.length === 0) return
+
+    if (status !== 'paused') {
+      runPlanRef.current = source
+      cursorRef.current = 0
+      setWritten(0)
+      setRunTotal(source.length)
     }
-    return out
+
+    pausedRef.current = false
+    setRunError(null)
+    setStatus('running')
+
+    try {
+      const store = getDb()
+      const rows = runPlanRef.current
+      while (cursorRef.current < rows.length) {
+        if (pausedRef.current) {
+          setStatus('paused')
+          return
+        }
+        const chunk = rows.slice(cursorRef.current, cursorRef.current + BATCH_SIZE)
+        const batch = writeBatch(store)
+        for (const p of chunk) {
+          batch.set(doc(store, importer.collectionName, p.docId), stripUndefined(p.record))
+        }
+        await batch.commit()
+        cursorRef.current += chunk.length
+        setWritten(cursorRef.current)
+      }
+      setStatus('done')
+      toast(`Imported ${rows.length} row${rows.length === 1 ? '' : 's'}.`, 'success')
+    } catch (e) {
+      setStatus('paused')
+      const done = cursorRef.current
+      setRunError(
+        `${e instanceof Error ? e.message : 'The import stopped unexpectedly.'} ${done} row${
+          done === 1 ? '' : 's'
+        } already imported — resume to continue from there.`,
+      )
+    }
   }
 
-  const doImport = () => {
-    const built = buildRows()
-    if (built.length === 0) {
-      toast('No rows with a valid Order ID to import', 'error')
-      return
-    }
-    const { created, updated } = actions.bulkImportOrders(built)
-    toast(`Import complete — ${created} created, ${updated} updated`, 'success')
+  function downloadTemplate() {
+    const head = importer.fields.map((f) => csvCell(f.key)).join(',')
+    const sample = importer.fields.map((f) => csvCell(f.sample)).join(',')
+    downloadText(importer.templateFile, `${head}\n${sample}\n`)
   }
 
-  const downloadTemplate = () => {
-    const headerLine = ORDER_FIELDS.map((f) => f.key).join(',')
-    const sampleLine = [
-      '20095-QC1-HYH',
-      'Bracket Assembly',
-      '125185TA3',
-      '500',
-      '120',
-      'RAL9010',
-      'DWG-4471',
-      'Local',
-      '1250',
-    ].join(',')
-    downloadText('orders-template.csv', `${headerLine}\n${sampleLine}\n`)
+  function clearFile() {
+    resetRun()
+    setFileName(null)
+    setHeaders([])
+    setDataRows([])
+    setMapping({})
+    setParseError(null)
+    if (fileRef.current) fileRef.current.value = ''
   }
+
+  const progressPct = runTotal > 0 ? Math.round((written / runTotal) * 100) : 0
+  const hasFile = headers.length > 0 && dataRows.length > 0
 
   return (
-    <Card className="p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <SectionHeader
-          icon={<Upload className="h-5 w-5" />}
-          title="Bulk import orders"
-          subtitle="Import production orders from a CSV file with column mapping."
-        />
-        <Button variant="secondary" className="shrink-0" onClick={downloadTemplate}>
-          <Download className="h-4 w-4" /> CSV template
-        </Button>
-      </div>
+    <div className="space-y-4">
+      {/* ---- Source file ---- */}
+      <Card className="space-y-4 p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-base font-bold">{importer.title}</h3>
+            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{importer.description}</p>
+          </div>
+          <Button className="min-h-[48px]" onClick={downloadTemplate}>
+            <FileDown className="h-4 w-4" /> Download CSV template
+          </Button>
+        </div>
 
-      {/* File input */}
-      <div className="mt-4">
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".csv"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (f) void handleFile(f)
-            e.target.value = ''
+        <div
+          onDragOver={(e) => {
+            e.preventDefault()
+            if (!locked) setDragging(true)
           }}
-        />
-        <button
-          onClick={() => fileRef.current?.click()}
-          className="flex w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 py-8 text-center transition-colors hover:border-brand-400 hover:bg-brand-50/40 dark:border-slate-700 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/5"
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragging(false)
+            if (locked) return
+            void loadFile(e.dataTransfer.files?.[0])
+          }}
+          className={cn(
+            'rounded-2xl border-2 border-dashed px-4 py-8 text-center transition-colors',
+            dragging
+              ? 'border-brand-500 bg-brand-50 dark:bg-brand-500/10'
+              : 'border-slate-300 dark:border-slate-700',
+            locked && 'opacity-60',
+          )}
         >
-          <FileSpreadsheet className="h-8 w-8 text-slate-400" />
-          <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
-            {fileName ? `Selected: ${fileName}` : 'Click to choose a CSV file'}
-          </span>
-          <span className="text-xs text-slate-400">First row is treated as headers</span>
-        </button>
-      </div>
-
-      {headers.length > 0 && (
-        <>
-          {/* Column mapping */}
-          <div className="mt-5">
-            <h4 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Column mapping
-            </h4>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {ORDER_FIELDS.map((f) => (
-                <Field
-                  key={f.key}
-                  label={f.required ? `${f.label} *` : f.label}
-                >
-                  <Select
-                    value={mapping[f.key]}
-                    onChange={(e) => setMapping({ ...mapping, [f.key]: e.target.value })}
-                  >
-                    <option value={NONE}>—</option>
-                    {headers.map((h, i) => (
-                      <option key={i} value={String(i)}>
-                        {h || `Column ${i + 1}`}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              ))}
-            </div>
-            {!orderIdMapped && (
-              <p className="mt-2 text-sm font-medium text-rose-500">
-                Order ID must be mapped before importing.
-              </p>
+          <FileSpreadsheet className="mx-auto h-8 w-8 text-slate-300 dark:text-slate-600" />
+          <p className="mt-2 text-sm font-semibold">{fileName ?? 'Drop a .csv file here'}</p>
+          <p className="mt-0.5 text-xs text-slate-400">
+            {fileName
+              ? `${dataRows.length} data row${dataRows.length === 1 ? '' : 's'} · ${headers.length} column${headers.length === 1 ? '' : 's'}`
+              : 'The first row must contain the column headers.'}
+          </p>
+          <div className="mt-3 flex flex-wrap justify-center gap-2">
+            <Button
+              variant="primary"
+              className="min-h-[48px]"
+              onClick={() => fileRef.current?.click()}
+              disabled={locked}
+            >
+              <UploadCloud className="h-4 w-4" /> Browse files
+            </Button>
+            {fileName && (
+              <Button className="min-h-[48px]" onClick={clearFile} disabled={status === 'running'}>
+                <RotateCcw className="h-4 w-4" /> Start over
+              </Button>
             )}
           </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            hidden
+            onChange={(e) => {
+              void loadFile(e.target.files?.[0])
+            }}
+          />
+        </div>
 
-          {/* Preview */}
-          <div className="mt-5">
-            <h4 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Preview{' '}
-              <span className="font-normal text-slate-400">
-                (first {preview.length} of {rows.length} rows)
+        {parseError && (
+          <p className="flex items-start gap-2 rounded-2xl bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {parseError}
+          </p>
+        )}
+      </Card>
+
+      {/* ---- Column mapping ---- */}
+      {hasFile && (
+        <Card className="space-y-4 p-4 sm:p-5">
+          <div>
+            <h3 className="text-base font-bold">Match your columns</h3>
+            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+              Columns whose names matched are already selected. The sample under each one comes from
+              the first data row, so you can confirm the mapping is right before importing. Anything
+              you don't need can be skipped.
+            </p>
+          </div>
+
+          {missingKeys.length > 0 && (
+            <p className="flex items-start gap-2 rounded-2xl bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                {missingKeys.join(' and ')} {missingKeys.length === 1 ? 'is' : 'are'} how existing
+                records are matched, so {missingKeys.length === 1 ? 'it' : 'they'} must be mapped
+                before this file can be imported.
               </span>
-            </h4>
-            <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-50 dark:bg-slate-800/50">
-                    {mappedFields.map((f) => (
-                      <td
-                        key={f.key}
-                        className="whitespace-nowrap px-3 py-2 text-xs font-bold uppercase text-slate-400"
-                      >
-                        {f.label}
-                      </td>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {preview.map((row, i) => (
-                    <tr key={i}>
+            </p>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {importer.fields.map((f) => {
+              const col = mapping[f.key] ?? -1
+              const isKey = importer.businessKeys.includes(f.key)
+              const sample = col >= 0 ? (dataRows[0]?.[col] ?? '').trim() : ''
+              return (
+                <div key={f.key}>
+                  <Field
+                    label={isKey ? `${f.label} *` : f.label}
+                    hint={col >= 0 ? `Sample: ${sample === '' ? '(empty)' : sample}` : undefined}
+                  >
+                    <Select
+                      className="min-h-[48px]"
+                      value={String(col)}
+                      disabled={locked}
+                      onChange={(e) => {
+                        const next = Number(e.target.value)
+                        setMapping((m) => ({ ...m, [f.key]: next }))
+                        resetRun()
+                      }}
+                    >
+                      <option value="-1">— skip —</option>
+                      {headers.map((h, i) => (
+                        <option key={`${i}-${h}`} value={String(i)}>
+                          {h || `Column ${i + 1}`}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  {isKey && col < 0 && (
+                    <p className="mt-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                      Required — records are matched on this.
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* ---- Dry run + import ---- */}
+      {plan && (
+        <Card className="space-y-4 p-4 sm:p-5">
+          <div>
+            <h3 className="text-base font-bold">Preview — nothing has been written yet</h3>
+            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+              This is exactly what pressing Import would do.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Stat
+              label="New records"
+              value={plan.newCount}
+              icon={<Plus className="h-5 w-5" />}
+              tone="green"
+            />
+            <Stat
+              label="Would be updated"
+              value={plan.updateCount}
+              sub="Matched on the business key"
+              icon={<RotateCcw className="h-5 w-5" />}
+              tone="blue"
+            />
+            <Stat
+              label="Rows skipped"
+              value={plan.errors.length}
+              sub={plan.errors.length > 0 ? 'Listed below with the reason' : 'No problems found'}
+              icon={<AlertTriangle className="h-5 w-5" />}
+              tone={plan.errors.length > 0 ? 'amber' : 'neutral'}
+            />
+          </div>
+
+          {plan.valid.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+                First {Math.min(5, plan.valid.length)} of {plan.valid.length} mapped rows
+              </p>
+              <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
+                <table className="w-full min-w-[40rem] text-sm">
+                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                    <tr>
+                      <th className="px-3 py-2.5 font-bold">Row</th>
+                      <th className="px-3 py-2.5 font-bold">Action</th>
                       {mappedFields.map((f) => (
-                        <td key={f.key} className="whitespace-nowrap px-3 py-2">
-                          {row[f.key] ?? ''}
-                        </td>
+                        <th key={f.key} className="px-3 py-2.5 font-bold">
+                          {f.label}
+                        </th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {plan.valid.slice(0, 5).map((p) => (
+                      <tr key={p.rowNumber}>
+                        <td className="px-3 py-2.5 tabular-nums text-slate-400">{p.rowNumber}</td>
+                        <td className="px-3 py-2.5">
+                          <Badge tone={p.mode === 'new' ? 'green' : 'blue'}>
+                            {p.mode === 'new' ? 'New' : 'Update'}
+                          </Badge>
+                        </td>
+                        {mappedFields.map((f) => (
+                          <td key={f.key} dir="auto" className="whitespace-nowrap px-3 py-2.5">
+                            {p.values[f.key] === undefined ? '—' : String(p.values[f.key])}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {plan.errors.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+                Rows that will be skipped
+              </p>
+              <ul className="max-h-60 space-y-1 overflow-y-auto rounded-2xl bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-500/10 dark:text-rose-300">
+                {plan.errors.slice(0, 25).map((e) => (
+                  <li key={e.rowNumber} className="flex items-start gap-2">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span dir="auto">
+                      Row {e.rowNumber}: {e.message}
+                    </span>
+                  </li>
+                ))}
+                {plan.errors.length > 25 && (
+                  <li className="pl-6 text-xs opacity-80">
+                    …and {plan.errors.length - 25} more. Every other row still imports.
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+
+          <div className="space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+            {status !== 'idle' && (
+              <div>
+                <div className="mb-1.5 flex items-center justify-between gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  <span>
+                    {status === 'done'
+                      ? 'Import complete'
+                      : status === 'paused'
+                        ? 'Paused — rows already written will not be written again'
+                        : 'Importing…'}
+                  </span>
+                  <span className="tabular-nums">
+                    {written} / {runTotal} ({progressPct}%)
+                  </span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                  <div
+                    role="progressbar"
+                    aria-valuenow={progressPct}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    className={cn(
+                      'h-full rounded-full transition-all',
+                      status === 'done' ? 'bg-emerald-500' : 'bg-brand-600',
+                    )}
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {runError && (
+              <p className="flex items-start gap-2 rounded-2xl bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {runError}
+              </p>
+            )}
+
+            {status === 'done' && (
+              <p className="flex items-start gap-2 rounded-2xl bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  {runTotal} row{runTotal === 1 ? '' : 's'} imported. Importing this same file again
+                  would update these records rather than duplicate them.
+                </span>
+              </p>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              {status === 'idle' && (
+                <Button
+                  variant="primary"
+                  className="min-h-[48px]"
+                  onClick={() => void run()}
+                  disabled={plan.valid.length === 0 || importer.loading}
+                >
+                  <Play className="h-4 w-4" /> Import {plan.valid.length} row
+                  {plan.valid.length === 1 ? '' : 's'}
+                </Button>
+              )}
+
+              {status === 'running' && (
+                <>
+                  <Button
+                    className="min-h-[48px]"
+                    onClick={() => {
+                      pausedRef.current = true
+                    }}
+                  >
+                    <Pause className="h-4 w-4" /> Pause
+                  </Button>
+                  <span className="inline-flex items-center gap-2 text-sm text-slate-400">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Writing in batches of {BATCH_SIZE}…
+                  </span>
+                </>
+              )}
+
+              {status === 'paused' && (
+                <>
+                  <Button variant="primary" className="min-h-[48px]" onClick={() => void run()}>
+                    <Play className="h-4 w-4" /> Resume from row {written + 1}
+                  </Button>
+                  <Button className="min-h-[48px]" onClick={resetRun}>
+                    <RotateCcw className="h-4 w-4" /> Discard the rest
+                  </Button>
+                </>
+              )}
+
+              {status === 'done' && (
+                <Button className="min-h-[48px]" onClick={clearFile}>
+                  <UploadCloud className="h-4 w-4" /> Import another file
+                </Button>
+              )}
             </div>
           </div>
-
-          <div className="mt-5 flex justify-end">
-            <Button variant="primary" disabled={!orderIdMapped} onClick={doImport}>
-              <Upload className="h-4 w-4" /> Import {rows.length} rows
-            </Button>
-          </div>
-        </>
+        </Card>
       )}
-    </Card>
-  )
-}
 
-// ============================================================================
-// Shared building blocks
-// ============================================================================
-function SectionHeader({
-  icon,
-  title,
-  subtitle,
-  tone,
-}: {
-  icon: React.ReactNode
-  title: string
-  subtitle?: string
-  tone?: 'danger'
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <span
-        className={cn(
-          'grid h-10 w-10 shrink-0 place-items-center rounded-xl',
-          tone === 'danger'
-            ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
-            : 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300',
-        )}
-      >
-        {icon}
-      </span>
-      <div className="min-w-0">
-        <h3 className="text-base font-bold leading-tight">{title}</h3>
-        {subtitle && <p className="text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>}
-      </div>
-    </div>
-  )
-}
-
-function LookupCard({
-  title,
-  subtitle,
-  count,
-  onAdd,
-  children,
-}: {
-  title: string
-  subtitle: string
-  count: number
-  onAdd: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <Card className="p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h3 className="text-base font-bold">{title}</h3>
-          <Badge tone="blue">{count}</Badge>
-        </div>
-        <Button variant="primary" className="shrink-0" onClick={onAdd}>
-          <Plus className="h-4 w-4" /> Add
-        </Button>
-      </div>
-      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>
-      <div className="mt-4">{children}</div>
-    </Card>
-  )
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
-      {children}
-    </tr>
-  )
-}
-
-function EmptyRow({ label }: { label: string }) {
-  return (
-    <div className="rounded-xl border border-dashed border-slate-300 py-8 text-center text-sm text-slate-400 dark:border-slate-700">
-      {label}
-    </div>
-  )
-}
-
-function ActiveBadge({ active }: { active: boolean }) {
-  return <Badge tone={active ? 'green' : 'neutral'}>{active ? 'Active' : 'Inactive'}</Badge>
-}
-
-function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete?: () => void }) {
-  return (
-    <div className="flex justify-end gap-1">
-      <button
-        onClick={onEdit}
-        className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
-        aria-label="Edit"
-      >
-        <Pencil className="h-4 w-4" />
-      </button>
-      {onDelete && (
-        <button
-          onClick={onDelete}
-          className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
-          aria-label="Delete"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
+      {hasFile && !plan && missingKeys.length > 0 && (
+        <Card className="p-5">
+          <p className="flex items-start gap-2 text-sm text-slate-500 dark:text-slate-400">
+            <Info className="mt-0.5 h-4 w-4 shrink-0" />
+            Map {missingKeys.join(' and ')} above to see what this file would change.
+          </p>
+        </Card>
       )}
     </div>
-  )
-}
-
-function ActiveToggle({
-  checked,
-  onChange,
-}: {
-  checked: boolean
-  onChange: (v: boolean) => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-3.5 py-2.5 text-left dark:border-slate-700"
-    >
-      <span className="text-sm font-semibold">Active</span>
-      <span
-        className={cn(
-          'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-          checked ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-600',
-        )}
-      >
-        <span
-          className={cn(
-            'inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform',
-            checked ? 'translate-x-5' : 'translate-x-0.5',
-          )}
-        />
-      </span>
-    </button>
-  )
-}
-
-function SaveFooter({
-  onClose,
-  onSave,
-  valid,
-}: {
-  onClose: () => void
-  onSave: () => void
-  valid: boolean
-}) {
-  return (
-    <>
-      <Button variant="ghost" onClick={onClose}>
-        Cancel
-      </Button>
-      <Button variant="primary" disabled={!valid} onClick={onSave}>
-        <Check className="h-4 w-4" /> Save
-      </Button>
-    </>
-  )
-}
-
-function ConfirmDelete<T>({
-  row,
-  label,
-  onCancel,
-  onConfirm,
-}: {
-  row: T | null
-  label?: string
-  onCancel: () => void
-  onConfirm: () => void
-}) {
-  return (
-    <Modal
-      open={!!row}
-      onClose={onCancel}
-      title="Delete entry?"
-      icon={<Trash2 className="h-5 w-5" />}
-      size="sm"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button variant="danger" onClick={onConfirm}>
-            <Trash2 className="h-4 w-4" /> Delete
-          </Button>
-        </>
-      }
-    >
-      <p className="text-sm text-slate-600 dark:text-slate-300">
-        Permanently delete <b>{label ?? 'this entry'}</b>? This cannot be undone.
-      </p>
-    </Modal>
   )
 }

@@ -1,50 +1,68 @@
-import { useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useMemo, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
-  Search,
+  AlertTriangle,
+  ArrowLeft,
+  Boxes,
+  ChevronRight,
+  ClipboardList,
+  Droplets,
   History as HistoryIcon,
   Layers,
-  CheckCircle2,
-  Boxes,
-  AlertTriangle,
+  Lock,
+  Package2,
+  Pencil,
   Ruler,
-  Eye,
-  ImageIcon,
-  Play,
+  Search,
+  ShieldCheck,
+  SprayCan,
+  X,
 } from 'lucide-react'
-import { useDB } from '@/store/db'
-import {
-  sessionView,
-  orderById,
-  machineById,
-  samplesOf,
-  dimsOf,
-  defectsOf,
-  imagesOf,
-  sessionDefects,
-  type SessionView,
-} from '@/lib/selectors'
 import {
   Badge,
   Button,
   Card,
-  Modal,
+  EmptyState,
   Field,
   Input,
+  Modal,
   Select,
   Stat,
-  EmptyState,
-  statusTone,
-  resultTone,
-  dispositionTone,
 } from '@/components/ui'
-import { Lightbox } from '@/components/ui/Lightbox'
-import { cn, formatDate, formatDateTime, daysAgoISO } from '@/lib/utils'
-import type { InspectionImage, InspectionSession } from '@/types'
+import { ImagePicker } from '@/components/inspection/ImagePicker'
+import { useAll } from '@/services/useCollection'
+import { COL, ConflictError, updateAudited, type AuditContext } from '@/services/repository'
+import { useAuth } from '@/store/AuthContext'
+import { useApp } from '@/store/AppContext'
+import { can, dimensionStatus, isPTWorkCenter, isPaintWorkCenter, shiftName } from '@/domain/rules'
+import { cn, daysAgoISO, formatDate, formatDateTime } from '@/lib/utils'
+import {
+  DISPOSITIONS,
+  type DefectResult,
+  type DimensionResult,
+  type DimensionStatus,
+  type Disposition,
+  type InspectionSample,
+  type InspectionSession,
+  type Machine,
+  type PTRecord,
+  type PaintSampleRecord,
+  type ProductionOrder,
+  type Role,
+  type SampleCoil,
+} from '@/domain/types'
 
-type StatusFilter = 'all' | 'Open' | 'Closed'
+// ============================================================================
+// §6 — History. Three levels: session → sample → the full record of that sample.
+//
+// This is also the correction screen. Inspectors mis-key a measurement or pick
+// the wrong disposition, and quality evidence has to be correctable — but never
+// silently. Every edit here goes through `updateAudited`, which writes one audit
+// entry per changed field.
+// ============================================================================
+
+type StatusFilter = 'All' | 'Open' | 'Closed'
 type RangeFilter = 'all' | '7' | '30' | '90'
-type Tab = 'sessions' | 'coils'
 
 const RANGE_LABEL: Record<RangeFilter, string> = {
   all: 'All time',
@@ -53,661 +71,1024 @@ const RANGE_LABEL: Record<RangeFilter, string> = {
   '90': 'Last 90 days',
 }
 
+function statusToneOf(s: DimensionStatus) {
+  return s === 'Pass' ? 'green' : s === 'Fail' ? 'red' : s === 'Warning' ? 'amber' : 'neutral'
+}
+
+function dispositionToneOf(d: Disposition | null) {
+  switch (d) {
+    case 'Rejected':
+      return 'red'
+    case 'Hold':
+      return 'amber'
+    case 'Repair':
+      return 'violet'
+    case 'Used in another order':
+      return 'blue'
+    case 'Accept with concession':
+      return 'green'
+    default:
+      return 'neutral'
+  }
+}
+
+function num(v: number | null | undefined, dash = '—'): string {
+  return v === null || v === undefined || Number.isNaN(v) ? dash : String(v)
+}
+
+/**
+ * `DimensionResult` and `DefectResult` carry no `version` field in the domain
+ * model — unlike sessions and samples they are never written by two clients at
+ * once, because this screen is the only place they are ever edited after the
+ * atomic save. `updateAudited` still stamps a version when it writes, so we read
+ * back whatever is on the row (0 the first time it is corrected) and pass that
+ * as the expected version. The optimistic check therefore still works for a
+ * second correction, and the audit trail is written either way.
+ */
+function rowVersion(row: object): number {
+  const v = (row as { version?: unknown }).version
+  return typeof v === 'number' ? v : 0
+}
+
+/** Auth roles are stored as free-form strings; only the three the capability
+ *  table knows about grant anything. Anything else is treated as view-only. */
+function capabilityRole(role: string): Role | undefined {
+  return role === 'inspector' || role === 'supervisor' || role === 'admin' ? role : undefined
+}
+
 export function HistoryPage() {
-  const db = useDB()
-  const navigate = useNavigate()
+  const { profile, role } = useAuth()
+  const { toast } = useApp()
   const [params, setParams] = useSearchParams()
 
-  const tab: Tab = params.get('tab') === 'coils' ? 'coils' : 'sessions'
-  const setTab = (t: Tab) => {
+  const { rows: sessions, loading } = useAll<InspectionSession>(COL.sessions)
+  const { rows: samples } = useAll<InspectionSample>(COL.samples)
+  const { rows: orders } = useAll<ProductionOrder>(COL.orders)
+  const { rows: dimensions } = useAll<DimensionResult>(COL.dimensions)
+  const { rows: defects } = useAll<DefectResult>(COL.defects)
+  const { rows: sampleCoils } = useAll<SampleCoil>(COL.sampleCoils)
+  const { rows: paintSamples } = useAll<PaintSampleRecord>(COL.paintSamples)
+  const { rows: ptRecords } = useAll<PTRecord>(COL.ptRecords)
+  const { rows: machines } = useAll<Machine>(COL.machines)
+
+  const [term, setTerm] = useState('')
+  const [status, setStatus] = useState<StatusFilter>('All')
+  const [workCenter, setWorkCenter] = useState('all')
+  const [range, setRange] = useState<RangeFilter>('all')
+
+  const [openSessionId, setOpenSessionId] = useState<string | null>(null)
+  const [openSampleId, setOpenSampleId] = useState<string | null>(null)
+  const [editingDim, setEditingDim] = useState<DimensionResult | null>(null)
+  const [editingDefect, setEditingDefect] = useState<DefectResult | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  /** The Inspections page links here as `/history?disposition=Hold` so a
+   *  supervisor lands straight on the sessions that still owe a decision. */
+  const dispositionFilter = params.get('disposition') as Disposition | null
+
+  const orderById = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders])
+
+  const samplesBySession = useMemo(() => {
+    const m = new Map<string, InspectionSample[]>()
+    for (const s of samples) {
+      const arr = m.get(s.sessionId) ?? []
+      arr.push(s)
+      m.set(s.sessionId, arr)
+    }
+    for (const arr of m.values()) arr.sort((a, b) => a.index - b.index)
+    return m
+  }, [samples])
+
+  const dimsBySample = useMemo(() => {
+    const m = new Map<string, DimensionResult[]>()
+    for (const d of dimensions) {
+      const arr = m.get(d.sampleId) ?? []
+      arr.push(d)
+      m.set(d.sampleId, arr)
+    }
+    for (const arr of m.values()) arr.sort((a, b) => a.sequence - b.sequence)
+    return m
+  }, [dimensions])
+
+  const defectsBySample = useMemo(() => {
+    const m = new Map<string, DefectResult[]>()
+    for (const d of defects) {
+      const arr = m.get(d.sampleId) ?? []
+      arr.push(d)
+      m.set(d.sampleId, arr)
+    }
+    return m
+  }, [defects])
+
+  const coilsBySample = useMemo(() => {
+    const m = new Map<string, SampleCoil[]>()
+    for (const c of sampleCoils) {
+      const arr = m.get(c.sampleId) ?? []
+      arr.push(c)
+      m.set(c.sampleId, arr)
+    }
+    return m
+  }, [sampleCoils])
+
+  /** Session-level counts, so the list can show what happened without opening it. */
+  const sessionStats = useMemo(() => {
+    const m = new Map<string, { samples: number; defects: number; dispositions: Set<string> }>()
+    for (const session of sessions) {
+      const list = samplesBySession.get(session.id) ?? []
+      const stat = { samples: list.length, defects: 0, dispositions: new Set<string>() }
+      for (const sample of list) {
+        for (const d of defectsBySample.get(sample.id) ?? []) {
+          stat.defects += 1
+          if (d.disposition) stat.dispositions.add(d.disposition)
+        }
+      }
+      m.set(session.id, stat)
+    }
+    return m
+  }, [sessions, samplesBySession, defectsBySample])
+
+  const workCenterName = (code: string) =>
+    machines.find((m) => m.code === code)?.name ?? `Work center ${code}`
+
+  const workCenterOptions = useMemo(() => {
+    const codes = Array.from(new Set(sessions.map((s) => s.workCenterCode))).filter(Boolean)
+    return codes.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  }, [sessions])
+
+  const filtered = useMemo(() => {
+    const t = term.trim().toLowerCase()
+    const since = range === 'all' ? null : daysAgoISO(Number(range))
+    return sessions
+      .filter((s) => {
+        if (status !== 'All' && s.status !== status) return false
+        if (workCenter !== 'all' && s.workCenterCode !== workCenter) return false
+        if (since && s.startedAt < since) return false
+        if (dispositionFilter && !sessionStats.get(s.id)?.dispositions.has(dispositionFilter)) return false
+        if (!t) return true
+        const order = orderById.get(s.orderId)
+        return (
+          (order?.orderNumber ?? '').toLowerCase().includes(t) ||
+          (order?.item ?? '').toLowerCase().includes(t) ||
+          (order?.itemCode ?? '').toLowerCase().includes(t) ||
+          s.inspectorName.toLowerCase().includes(t)
+        )
+      })
+      .sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : b.seq - a.seq))
+  }, [sessions, term, status, workCenter, range, dispositionFilter, sessionStats, orderById])
+
+  const totals = useMemo(() => {
+    let sampleCount = 0
+    let defectCount = 0
+    for (const s of filtered) {
+      const stat = sessionStats.get(s.id)
+      sampleCount += stat?.samples ?? 0
+      defectCount += stat?.defects ?? 0
+    }
+    return { sessions: filtered.length, samples: sampleCount, defects: defectCount }
+  }, [filtered, sessionStats])
+
+  const openSession = openSessionId ? sessions.find((s) => s.id === openSessionId) ?? null : null
+  const openSample = openSampleId ? samples.find((s) => s.id === openSampleId) ?? null : null
+  const openOrder = openSession ? orderById.get(openSession.orderId) ?? null : null
+
+  /** §14 — an inspector may correct an open session; a closed one needs a
+   *  supervisor. Anything else is read-only, and says so. */
+  const editable = openSession
+    ? openSession.status === 'Open'
+      ? can(capabilityRole(role), 'edit-open-session')
+      : can(capabilityRole(role), 'edit-closed-session')
+    : false
+
+  function auditCtx(entity: string, entityId: string): AuditContext {
+    return {
+      userUid: profile?.uid ?? 'unknown',
+      userName: profile?.name ?? 'unknown',
+      entity,
+      entityId,
+      orderNumber: openOrder?.orderNumber,
+      item: openOrder?.item,
+      workCenterCode: openSession?.workCenterCode,
+      sessionId: openSession?.id,
+      sampleId: openSample?.id,
+    }
+  }
+
+  async function saveDimension(dim: DimensionResult, actual: number | null) {
+    setSaving(true)
+    try {
+      await updateAudited<DimensionResult & { version: number }>(
+        COL.dimensions,
+        dim.id,
+        {
+          actual,
+          // The recorded verdict must always match the recorded measurement.
+          status: dimensionStatus({
+            nominal: dim.nominal,
+            tolPlus: dim.tolPlus,
+            tolMinus: dim.tolMinus,
+            actual,
+          }),
+        },
+        rowVersion(dim),
+        auditCtx('DimensionResult', dim.id),
+      )
+      toast('Measurement corrected. The change is in the audit log.', 'success')
+      setEditingDim(null)
+    } catch (e) {
+      toast(
+        e instanceof ConflictError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : 'Could not save the correction.',
+        'error',
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function saveDefect(defect: DefectResult, patch: { disposition: Disposition; qty: number }) {
+    setSaving(true)
+    try {
+      await updateAudited<DefectResult & { version: number }>(
+        COL.defects,
+        defect.id,
+        patch,
+        rowVersion(defect),
+        auditCtx('DefectResult', defect.id),
+      )
+      toast('Defect corrected. The change is in the audit log.', 'success')
+      setEditingDefect(null)
+    } catch (e) {
+      toast(
+        e instanceof ConflictError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : 'Could not save the correction.',
+        'error',
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function closeDrilldown() {
+    setOpenSessionId(null)
+    setOpenSampleId(null)
+    setEditingDim(null)
+    setEditingDefect(null)
+  }
+
+  function clearDisposition() {
     const next = new URLSearchParams(params)
-    if (t === 'coils') next.set('tab', 'coils')
-    else next.delete('tab')
+    next.delete('disposition')
     setParams(next, { replace: true })
   }
 
-  const [query, setQuery] = useState('')
-  const [status, setStatus] = useState<StatusFilter>('all')
-  const [machineFilter, setMachineFilter] = useState<string>('all')
-  const [range, setRange] = useState<RangeFilter>('all')
-  const [detail, setDetail] = useState<InspectionSession | null>(null)
-
-  const machines = useMemo(
-    () => [...db.machines].sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true })),
-    [db.machines],
-  )
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const cutoff = range === 'all' ? null : daysAgoISO(Number(range))
-    return db.sessions
-      .map((s) => sessionView(db, s))
-      .filter((v) => {
-        if (status !== 'all' && v.status !== status) return false
-        if (machineFilter !== 'all' && v.machineId !== machineFilter) return false
-        if (cutoff && v.startedAt < cutoff) return false
-        if (q) {
-          const hay = [
-            v.order?.orderId,
-            v.order?.item,
-            v.order?.itemCode,
-            v.inspector,
-            v.machine?.name,
-            v.machine?.code,
-          ]
-            .filter(Boolean)
-            .join(' ')
-            .toLowerCase()
-          if (!hay.includes(q)) return false
-        }
-        return true
-      })
-      .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
-  }, [db, query, status, machineFilter, range])
-
-  const stats = useMemo(() => {
-    let closed = 0
-    let samples = 0
-    let defects = 0
-    for (const v of filtered) {
-      if (v.status === 'Closed') closed++
-      samples += v.sampleCount
-      defects += v.defectCount
-    }
-    return { total: filtered.length, closed, samples, defects }
-  }, [filtered])
-
-  // ---- Coils tab: flatten samples that carry a coil id -----------------------
-  const coilRows = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const rows = db.samples
-      .filter((s) => s.coilId && s.coilId.trim() !== '')
-      .map((sample) => {
-        const session = db.sessions.find((x) => x.id === sample.sessionId)
-        const order = session ? orderById(db, session.orderId) : undefined
-        const machine = session ? machineById(db, session.machineId) : undefined
-        return { sample, session, order, machine }
-      })
-      .filter((r) => r.session)
-      .filter((r) => {
-        if (!q) return true
-        const hay = [r.sample.coilId, r.sample.label, r.order?.orderId, r.order?.item, r.machine?.name]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-        return hay.includes(q)
-      })
-      .sort((a, b) => (a.sample.createdAt < b.sample.createdAt ? 1 : -1))
-    return rows
-  }, [db, query])
+  const sessionSamples = openSession ? samplesBySession.get(openSession.id) ?? [] : []
 
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
-            <HistoryIcon className="h-6 w-6" />
-          </span>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">History</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Audit-friendly record of past inspection sessions, samples and coils.
-            </p>
-          </div>
-        </div>
-        <div className="inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
-          {(['sessions', 'coils'] as Tab[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={cn(
-                'rounded-lg px-3.5 py-1.5 text-sm font-semibold capitalize transition-colors',
-                tab === t ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-white' : 'text-slate-500',
-              )}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+      <div>
+        <h1 className="text-2xl font-extrabold tracking-tight">History</h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          Every recorded session, down to the measurement. Corrections are allowed — and audited.
+        </p>
       </div>
 
-      {/* Filter bar */}
-      <Card className="p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="sm:col-span-2 lg:col-span-1">
-            <Field label="Search">
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <Input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={tab === 'coils' ? 'Coil, order, item…' : 'Order, item, inspector, machine…'}
-                  className="pl-9"
-                />
-              </div>
-            </Field>
-          </div>
+      <div className="grid grid-cols-3 gap-3">
+        <Stat label="Sessions" value={totals.sessions} icon={<HistoryIcon className="h-5 w-5" />} />
+        <Stat label="Samples" value={totals.samples} tone="violet" icon={<Boxes className="h-5 w-5" />} />
+        <Stat
+          label="Defects"
+          value={totals.defects}
+          tone={totals.defects > 0 ? 'amber' : 'green'}
+          icon={<AlertTriangle className="h-5 w-5" />}
+        />
+      </div>
 
-          {tab === 'sessions' && (
-            <>
-              <Field label="Status">
-                <Select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)}>
-                  <option value="all">All statuses</option>
-                  <option value="Open">Open</option>
-                  <option value="Closed">Closed</option>
-                </Select>
-              </Field>
+      {dispositionFilter && (
+        <Card className="flex flex-wrap items-center gap-3 border-l-4 border-l-amber-400 p-4">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
+          <p className="min-w-0 flex-1 text-sm font-semibold">
+            Showing only sessions with a defect dispositioned{' '}
+            <Badge tone={dispositionToneOf(dispositionFilter)}>{dispositionFilter}</Badge>
+          </p>
+          <Button className="min-h-[48px]" onClick={clearDisposition}>
+            <X className="h-4 w-4" /> Clear filter
+          </Button>
+        </Card>
+      )}
 
-              <Field label="Machine">
-                <Select value={machineFilter} onChange={(e) => setMachineFilter(e.target.value)}>
-                  <option value="all">All machines</option>
-                  {machines.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.code} · {m.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-
-              <Field label="Date range">
-                <Select value={range} onChange={(e) => setRange(e.target.value as RangeFilter)}>
-                  {(['all', '7', '30', '90'] as RangeFilter[]).map((r) => (
-                    <option key={r} value={r}>
-                      {RANGE_LABEL[r]}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </>
-          )}
+      <Card className="space-y-3 p-4">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+            placeholder="Order number, item or inspector…"
+            className="min-h-[52px] pl-9 text-base"
+            aria-label="Search history"
+          />
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Field label="Status">
+            <Select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as StatusFilter)}
+              className="min-h-[48px]"
+            >
+              <option value="All">All</option>
+              <option value="Open">Open</option>
+              <option value="Closed">Closed</option>
+            </Select>
+          </Field>
+          <Field label="Work center">
+            <Select
+              value={workCenter}
+              onChange={(e) => setWorkCenter(e.target.value)}
+              className="min-h-[48px]"
+            >
+              <option value="all">All work centers</option>
+              {workCenterOptions.map((code) => (
+                <option key={code} value={code}>
+                  {workCenterName(code)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Date range">
+            <Select
+              value={range}
+              onChange={(e) => setRange(e.target.value as RangeFilter)}
+              className="min-h-[48px]"
+            >
+              {(Object.keys(RANGE_LABEL) as RangeFilter[]).map((r) => (
+                <option key={r} value={r}>
+                  {RANGE_LABEL[r]}
+                </option>
+              ))}
+            </Select>
+          </Field>
         </div>
       </Card>
 
-      {tab === 'sessions' ? (
+      {loading ? (
+        <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<HistoryIcon className="h-10 w-10" />}
+          title="No sessions match"
+          hint={
+            dispositionFilter
+              ? `Nothing is currently dispositioned ${dispositionFilter}.`
+              : 'Widen the date range or clear the search to see more.'
+          }
+        />
+      ) : (
         <>
-          {/* Stat tiles */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Sessions" value={stats.total} icon={<Layers className="h-5 w-5" />} tone="blue" />
-            <Stat
-              label="Closed"
-              value={stats.closed}
-              sub={`${stats.total - stats.closed} open`}
-              icon={<CheckCircle2 className="h-5 w-5" />}
-              tone="green"
-            />
-            <Stat label="Samples" value={stats.samples} icon={<Boxes className="h-5 w-5" />} tone="neutral" />
-            <Stat
-              label="Defects"
-              value={stats.defects}
-              icon={<AlertTriangle className="h-5 w-5" />}
-              tone={stats.defects > 0 ? 'amber' : 'neutral'}
-            />
+          {/* Mobile — one card per session. */}
+          <div className="space-y-3 md:hidden">
+            {filtered.map((s) => {
+              const order = orderById.get(s.orderId)
+              const stat = sessionStats.get(s.id)
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setOpenSessionId(s.id)}
+                  className="card w-full p-4 text-left transition-transform active:scale-[.99]"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
+                    <span className="font-bold">{order?.orderNumber ?? '—'}</span>
+                    <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status.toUpperCase()}</Badge>
+                  </div>
+                  <p className="mt-1 truncate text-sm font-medium text-brand-600 dark:text-brand-400">
+                    {order?.item ?? 'Unknown item'}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {workCenterName(s.workCenterCode)} · {s.inspectorName} · {formatDate(s.startedAt)}
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Badge tone="neutral">
+                      {stat?.samples ?? 0} sample{(stat?.samples ?? 0) === 1 ? '' : 's'}
+                    </Badge>
+                    <Badge tone={(stat?.defects ?? 0) > 0 ? 'amber' : 'green'}>
+                      {stat?.defects ?? 0} defect{(stat?.defects ?? 0) === 1 ? '' : 's'}
+                    </Badge>
+                    {s.finalQty !== undefined && <Badge tone="blue">Final {s.finalQty}</Badge>}
+                    <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
+                  </div>
+                </button>
+              )
+            })}
           </div>
 
-          {filtered.length === 0 ? (
-            <EmptyState
-              icon={<HistoryIcon className="h-10 w-10" />}
-              title="No sessions match your filters"
-              hint="Try clearing the search or widening the date range."
-            />
-          ) : (
-            <>
-              {/* Mobile: cards */}
-              <div className="space-y-3 md:hidden">
-                {filtered.map((v) => (
-                  <SessionCard key={v.id} view={v} onOpen={() => setDetail(v)} />
-                ))}
-              </div>
-
-              {/* Desktop: table */}
-              <Card className="hidden overflow-hidden md:block">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-100 text-left text-xs font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-800">
-                        <th className="px-4 py-3">#</th>
-                        <th className="px-4 py-3">Order</th>
-                        <th className="px-4 py-3">Machine</th>
-                        <th className="px-4 py-3">Inspector</th>
-                        <th className="px-4 py-3">Started</th>
-                        <th className="px-4 py-3">Status</th>
-                        <th className="px-4 py-3 text-right">Samples</th>
-                        <th className="px-4 py-3 text-right">Defects</th>
-                        <th className="px-4 py-3 text-right">Final Qty</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {filtered.map((v) => (
-                        <tr
-                          key={v.id}
-                          onClick={() => setDetail(v)}
-                          className="cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40"
+          {/* md+ — the same rows as a table. */}
+          <Card className="hidden md:block">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[860px] text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
+                    <th className="px-4 py-3">Seq</th>
+                    <th className="px-4 py-3">Order</th>
+                    <th className="px-4 py-3">Item</th>
+                    <th className="px-4 py-3">Work center</th>
+                    <th className="px-4 py-3">Inspector</th>
+                    <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Samples</th>
+                    <th className="px-4 py-3 text-right">Defects</th>
+                    <th className="px-4 py-3 text-right">Final qty</th>
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {filtered.map((s) => {
+                    const order = orderById.get(s.orderId)
+                    const stat = sessionStats.get(s.id)
+                    return (
+                      <tr
+                        key={s.id}
+                        onClick={() => setOpenSessionId(s.id)}
+                        className="cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                      >
+                        <td className="px-4 py-3 tabular-nums text-slate-400">#{s.seq}</td>
+                        <td className="px-4 py-3 font-bold">{order?.orderNumber ?? '—'}</td>
+                        <td className="max-w-[220px] truncate px-4 py-3">{order?.item ?? '—'}</td>
+                        <td className="px-4 py-3">{workCenterName(s.workCenterCode)}</td>
+                        <td className="px-4 py-3">{s.inspectorName}</td>
+                        <td className="px-4 py-3 tabular-nums">{formatDate(s.startedAt)}</td>
+                        <td className="px-4 py-3">
+                          <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">{stat?.samples ?? 0}</td>
+                        <td
+                          className={cn(
+                            'px-4 py-3 text-right tabular-nums',
+                            (stat?.defects ?? 0) > 0 && 'font-bold text-amber-600 dark:text-amber-400',
+                          )}
                         >
-                          <td className="px-4 py-3">
-                            <span className="grid h-7 w-7 place-items-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
-                              {v.seq}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="font-bold">{v.order?.orderId ?? '—'}</div>
-                            <div className="truncate text-xs text-brand-600 dark:text-brand-400">
-                              {v.order?.item ?? '—'} : {v.order?.itemCode ?? '—'}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{v.machine?.name ?? '—'}</td>
-                          <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{v.inspector}</td>
-                          <td className="whitespace-nowrap px-4 py-3 text-slate-500 dark:text-slate-400">
-                            {formatDateTime(v.startedAt)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <Badge tone={statusTone(v.status)}>{v.status}</Badge>
-                          </td>
-                          <td className="px-4 py-3 text-right tabular-nums">{v.sampleCount}</td>
-                          <td className="px-4 py-3 text-right tabular-nums">
-                            {v.defectCount > 0 ? (
-                              <span className="font-semibold text-amber-600 dark:text-amber-400">{v.defectCount}</span>
-                            ) : (
-                              <span className="text-slate-400">0</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-right font-semibold tabular-nums">{v.finalQty ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            </>
-          )}
+                          {stat?.defects ?? 0}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">{num(s.finalQty)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
         </>
-      ) : (
-        <CoilsList rows={coilRows} onOpenSession={(id) => navigate(`/session/${id}`)} />
       )}
 
-      <SessionDetailModal
-        session={detail}
-        onClose={() => setDetail(null)}
-        onOpenSession={(id) => {
-          setDetail(null)
-          navigate(`/session/${id}`)
-        }}
-      />
-    </div>
-  )
-}
-
-// ============================================================================
-// Session card (mobile)
-// ============================================================================
-function SessionCard({ view, onOpen }: { view: SessionView; onOpen: () => void }) {
-  return (
-    <button onClick={onOpen} className="card w-full p-4 text-left transition-transform active:scale-[.99]">
-      <div className="flex items-start gap-3">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-100 text-sm font-bold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
-          {view.seq}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-bold">{view.order?.orderId ?? '—'}</span>
-            <Badge tone={statusTone(view.status)}>{view.status}</Badge>
-          </div>
-          <p className="mt-0.5 truncate text-sm font-medium text-brand-600 dark:text-brand-400">
-            {view.order?.item ?? '—'} : {view.order?.itemCode ?? '—'}
-          </p>
-          <p className="mt-0.5 text-xs text-slate-400">
-            {view.machine?.name ?? '—'} · {view.inspector}
-          </p>
-          <p className="mt-0.5 text-xs text-slate-400">{formatDateTime(view.startedAt)}</p>
-        </div>
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Badge tone="neutral" icon={<Boxes className="h-3 w-3" />}>
-          {view.sampleCount} samples
-        </Badge>
-        <Badge tone={view.defectCount > 0 ? 'amber' : 'neutral'} icon={<AlertTriangle className="h-3 w-3" />}>
-          {view.defectCount} defects
-        </Badge>
-        <span className="ml-auto rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-300">
-          QTY {view.finalQty ?? '—'}
-        </span>
-      </div>
-    </button>
-  )
-}
-
-// ============================================================================
-// Coils tab
-// ============================================================================
-function CoilsList({
-  rows,
-  onOpenSession,
-}: {
-  rows: Array<{
-    sample: { id: string; label: string; coilId?: string; createdAt: string }
-    session?: InspectionSession
-    order?: { orderId: string; item: string } | undefined
-    machine?: { name: string } | undefined
-  }>
-  onOpenSession: (id: string) => void
-}) {
-  if (rows.length === 0) {
-    return (
-      <EmptyState
-        icon={<Search className="h-10 w-10" />}
-        title="No coils found"
-        hint="Samples record a coil id when captured. Try a different search."
-      />
-    )
-  }
-  return (
-    <Card className="overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-100 text-left text-xs font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-800">
-              <th className="px-4 py-3">Coil</th>
-              <th className="px-4 py-3">Sample</th>
-              <th className="px-4 py-3">Order</th>
-              <th className="px-4 py-3">Machine</th>
-              <th className="px-4 py-3">Captured</th>
-              <th className="px-4 py-3 text-right">Session</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {rows.map((r) => (
-              <tr key={r.sample.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                <td className="px-4 py-3 font-bold">{r.sample.coilId}</td>
-                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{r.sample.label}</td>
-                <td className="px-4 py-3">
-                  <div className="font-semibold">{r.order?.orderId ?? '—'}</div>
-                  <div className="truncate text-xs text-brand-600 dark:text-brand-400">{r.order?.item ?? '—'}</div>
-                </td>
-                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{r.machine?.name ?? '—'}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-500 dark:text-slate-400">
-                  {formatDateTime(r.sample.createdAt)}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  {r.session && (
-                    <Button variant="ghost" onClick={() => onOpenSession(r.session!.id)}>
-                      <Play className="h-4 w-4" /> Open
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  )
-}
-
-// ============================================================================
-// Session detail modal — full drill-down
-// ============================================================================
-function SessionDetailModal({
-  session,
-  onClose,
-  onOpenSession,
-}: {
-  session: InspectionSession | null
-  onClose: () => void
-  onOpenSession: (id: string) => void
-}) {
-  const db = useDB()
-  const [lightbox, setLightbox] = useState<{ images: InspectionImage[]; index: number } | null>(null)
-
-  const data = useMemo(() => {
-    if (!session) return null
-    const view = sessionView(db, session)
-    const samples = samplesOf(db, session.id)
-    const allDefects = sessionDefects(db, session.id)
-    let measurements = 0
-    let imageCount = 0
-    const perSample = samples.map((sample) => {
-      const dims = dimsOf(db, sample.id)
-      const defects = defectsOf(db, sample.id)
-      const sampleImages = imagesOf(db, 'sample', sample.id)
-      const defectImages = defects.flatMap((d) => imagesOf(db, 'defect', d.id))
-      const images = [...sampleImages, ...defectImages]
-      measurements += dims.length
-      imageCount += images.length
-      return { sample, dims, defects, sampleImages, defectImages, images }
-    })
-    return { view, samples, allDefects, perSample, measurements, imageCount }
-  }, [db, session])
-
-  const open = !!session && !!data
-
-  return (
-    <>
+      {/* ---- Drill-down: samples of one session, then one sample in full ---- */}
       <Modal
-        open={open}
-        onClose={onClose}
+        open={!!openSession}
+        onClose={closeDrilldown}
         size="xl"
-        icon={<Layers className="h-5 w-5" />}
-        title={data ? `Session #${data.view.seq} · ${data.view.order?.orderId ?? '—'}` : 'Session'}
+        icon={openSample ? <Layers className="h-5 w-5" /> : <ClipboardList className="h-5 w-5" />}
+        title={
+          openSession ? (
+            <span className="flex flex-wrap items-center gap-2">
+              <span>{openOrder?.orderNumber ?? 'Session'}</span>
+              <span className="text-sm font-semibold text-slate-400">#{openSession.seq}</span>
+              {openSample && (
+                <span className="text-sm font-semibold text-brand-600 dark:text-brand-400">
+                  · Sample #{openSample.index}
+                </span>
+              )}
+            </span>
+          ) : null
+        }
         footer={
-          session && (
-            <>
-              <Button variant="ghost" onClick={onClose}>
-                Close
-              </Button>
-              <Button variant="primary" onClick={() => onOpenSession(session.id)}>
-                <Play className="h-4 w-4" /> Open session
-              </Button>
-            </>
-          )
+          <Button className="min-h-[48px]" onClick={closeDrilldown}>
+            Close
+          </Button>
         }
       >
-        {data && session && (
-          <div className="space-y-5">
-            {/* Summary header */}
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={statusTone(data.view.status)}>{data.view.status}</Badge>
-              <Badge tone={data.view.confirm === 'Confirmed' ? 'green' : 'amber'}>{data.view.confirm}</Badge>
-              {data.view.holdCount > 0 && (
-                <Badge tone="amber" icon={<AlertTriangle className="h-3 w-3" />}>
-                  {data.view.holdCount} hold
-                </Badge>
-              )}
-            </div>
+        {openSession && (
+          <div className="space-y-4">
+            {openSample ? (
+              <>
+                <button
+                  onClick={() => setOpenSampleId(null)}
+                  className="inline-flex min-h-[48px] items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400"
+                >
+                  <ArrowLeft className="h-4 w-4" /> All samples
+                </button>
+                <SampleDetail
+                  session={openSession}
+                  sample={openSample}
+                  dimensions={dimsBySample.get(openSample.id) ?? []}
+                  defects={defectsBySample.get(openSample.id) ?? []}
+                  coils={coilsBySample.get(openSample.id) ?? []}
+                  paint={paintSamples.find((p) => p.sampleId === openSample.id)}
+                  pt={ptRecords.find((p) => p.sampleId === openSample.id)}
+                  editable={editable}
+                  onEditDimension={setEditingDim}
+                  onEditDefect={setEditingDefect}
+                />
+              </>
+            ) : (
+              <>
+                <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <Attr label="Item" value={openOrder?.item} />
+                  <Attr label="Work center" value={workCenterName(openSession.workCenterCode)} />
+                  <Attr label="Inspector" value={openSession.inspectorName} />
+                  <Attr label="Started" value={formatDateTime(openSession.startedAt)} />
+                  <Attr label="Status" value={openSession.status} />
+                  <Attr label="Start qty" value={openSession.startQtyConfirmed?.qty} />
+                  <Attr label="Final qty" value={openSession.finalQty} />
+                  <Attr label="Closed" value={openSession.closedAt ? formatDateTime(openSession.closedAt) : '—'} />
+                </dl>
 
-            {/* Order / machine / dates grid */}
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-2xl border border-slate-200 p-4 text-sm dark:border-slate-700 sm:grid-cols-3">
-              <Info label="Order" value={data.view.order?.orderId ?? '—'} accent />
-              <Info label="Item" value={data.view.order?.item ?? '—'} />
-              <Info label="Item code" value={data.view.order?.itemCode ?? '—'} />
-              <Info label="Machine" value={data.view.machine?.name ?? '—'} />
-              <Info label="Inspector" value={data.view.inspector} />
-              <Info label="Final qty" value={data.view.finalQty != null ? String(data.view.finalQty) : '—'} />
-              <Info label="Started" value={formatDateTime(data.view.startedAt)} />
-              <Info label="Closed" value={data.view.closedAt ? formatDateTime(data.view.closedAt) : '—'} />
-              <Info label="Order date" value={formatDate(data.view.order?.date)} />
-            </div>
-
-            {/* Counts */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <MiniStat icon={<Boxes className="h-4 w-4" />} label="Samples" value={data.samples.length} />
-              <MiniStat icon={<Ruler className="h-4 w-4" />} label="Measurements" value={data.measurements} />
-              <MiniStat icon={<Eye className="h-4 w-4" />} label="Defects" value={data.allDefects.length} />
-              <MiniStat icon={<ImageIcon className="h-4 w-4" />} label="Images" value={data.imageCount} />
-            </div>
-
-            {session.note && (
-              <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:bg-slate-800/50 dark:text-slate-300">
-                <span className="font-semibold">Note: </span>
-                {session.note}
-              </div>
+                {sessionSamples.length === 0 ? (
+                  <SectionEmpty message="No samples were recorded in this session." />
+                ) : (
+                  <div className="space-y-2">
+                    {sessionSamples.map((sm) => {
+                      const dimCount = (dimsBySample.get(sm.id) ?? []).length
+                      const defCount = (defectsBySample.get(sm.id) ?? []).length
+                      return (
+                        <button
+                          key={sm.id}
+                          onClick={() => setOpenSampleId(sm.id)}
+                          className="flex min-h-[48px] w-full items-center gap-3 rounded-2xl px-4 py-3 text-left ring-1 ring-slate-200 transition-colors hover:bg-slate-50 dark:ring-slate-700 dark:hover:bg-slate-800/60"
+                        >
+                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-sm font-bold tabular-nums text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+                            #{sm.index}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-bold">
+                              {shiftName(sm.shift)} shift · {sm.inspectorName}
+                            </span>
+                            <span className="block text-xs text-slate-400">
+                              {formatDateTime(sm.createdAt)} · {dimCount} dimension
+                              {dimCount === 1 ? '' : 's'} · {defCount} defect{defCount === 1 ? '' : 's'}
+                            </span>
+                          </span>
+                          <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </>
             )}
 
-            {/* Per-sample drill-down */}
-            {data.perSample.length === 0 && (
-              <EmptyState icon={<Boxes className="h-9 w-9" />} title="No samples recorded" />
+            {!editable && (
+              <p className="flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                <Lock className="h-4 w-4 shrink-0" />
+                {openSession.status === 'Closed'
+                  ? 'This session is closed. A supervisor can still correct it — every correction is audited.'
+                  : 'Your role can view this record but not correct it.'}
+              </p>
             )}
-
-            <div className="space-y-4">
-              {data.perSample.map(({ sample, dims, defects, images }) => (
-                <div key={sample.id} className="rounded-2xl border border-slate-200 dark:border-slate-700">
-                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-                    <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-100 text-sm font-bold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
-                      {sample.label}
-                    </span>
-                    <span className="font-semibold">Sample {sample.label}</span>
-                    <Badge tone={resultTone(sample.result)}>{sample.result}</Badge>
-                    {sample.coilId && (
-                      <Badge tone="neutral">Coil {sample.coilId}</Badge>
-                    )}
-                    <span className="ml-auto text-xs text-slate-400">{formatDateTime(sample.createdAt)}</span>
-                  </div>
-
-                  <div className="space-y-4 p-4">
-                    {/* Dimensions */}
-                    <div>
-                      <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-slate-400">
-                        <Ruler className="h-3.5 w-3.5" /> Dimensions ({dims.length})
-                      </p>
-                      {dims.length === 0 ? (
-                        <p className="text-xs text-slate-400">No dimension measurements.</p>
-                      ) : (
-                        <div className="overflow-x-auto rounded-xl border border-slate-100 dark:border-slate-800">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="border-b border-slate-100 text-left text-xs font-semibold uppercase text-slate-400 dark:border-slate-800">
-                                <th className="px-3 py-2">Code</th>
-                                <th className="px-3 py-2">Target ± Tol</th>
-                                <th className="px-3 py-2 text-right">Measured</th>
-                                <th className="px-3 py-2 text-right">Result</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                              {dims.map((d) => (
-                                <tr key={d.id}>
-                                  <td className="px-3 py-2">
-                                    <span className="font-semibold">{d.code}</span>
-                                    <span className="ml-1 text-xs text-slate-400">{d.name}</span>
-                                  </td>
-                                  <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-600 dark:text-slate-300">
-                                    {d.target}
-                                    <span className="text-slate-400">
-                                      {' '}
-                                      (-{d.tolMinus}/+{d.tolPlus}) {d.unit}
-                                    </span>
-                                  </td>
-                                  <td className="px-3 py-2 text-right tabular-nums font-semibold">
-                                    {d.measured != null ? `${d.measured} ${d.unit}` : '—'}
-                                  </td>
-                                  <td className="px-3 py-2 text-right">
-                                    <Badge tone={resultTone(d.result)}>{d.result}</Badge>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Defects */}
-                    <div>
-                      <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-slate-400">
-                        <Eye className="h-3.5 w-3.5" /> Visual defects ({defects.length})
-                      </p>
-                      {defects.length === 0 ? (
-                        <p className="text-xs text-slate-400">No visual defects.</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {defects.map((def) => (
-                            <div
-                              key={def.id}
-                              className="rounded-xl border border-slate-100 px-3 py-2.5 dark:border-slate-800"
-                            >
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span dir="auto" className="font-semibold">
-                                  {def.title}
-                                </span>
-                                <Badge tone={def.severity === 'Critical' ? 'red' : def.severity === 'Major' ? 'amber' : 'neutral'}>
-                                  {def.severity}
-                                </Badge>
-                                <Badge tone={dispositionTone(def.disposition)}>{def.disposition}</Badge>
-                                <span className="ml-auto text-xs text-slate-400">Qty {def.qty}</span>
-                              </div>
-                              {def.description && (
-                                <p dir="auto" className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                                  {def.description}
-                                </p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Images */}
-                    <div>
-                      <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-slate-400">
-                        <ImageIcon className="h-3.5 w-3.5" /> Images ({images.length})
-                      </p>
-                      {images.length === 0 ? (
-                        <p className="text-xs text-slate-400">No images.</p>
-                      ) : (
-                        <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
-                          {images.map((img, i) => (
-                            <button
-                              key={img.id}
-                              onClick={() => setLightbox({ images, index: i })}
-                              className="aspect-square overflow-hidden rounded-lg ring-1 ring-slate-200 transition-transform hover:scale-[1.03] dark:ring-slate-700"
-                            >
-                              <img src={img.dataUrl} alt={img.caption || 'inspection'} className="h-full w-full object-cover" />
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
         )}
       </Modal>
 
-      {lightbox && (
-        <Lightbox images={lightbox.images} startIndex={lightbox.index} onClose={() => setLightbox(null)} />
+      {editingDim && (
+        <DimensionEditDialog
+          dimension={editingDim}
+          saving={saving}
+          onClose={() => setEditingDim(null)}
+          onSave={(actual) => saveDimension(editingDim, actual)}
+        />
       )}
-    </>
-  )
-}
 
-function Info({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-      <p
-        dir="auto"
-        className={cn(
-          'mt-0.5 truncate font-semibold',
-          accent ? 'text-brand-600 dark:text-brand-400' : 'text-slate-800 dark:text-slate-100',
-        )}
-        title={value}
-      >
-        {value}
-      </p>
+      {editingDefect && (
+        <DefectEditDialog
+          defect={editingDefect}
+          saving={saving}
+          onClose={() => setEditingDefect(null)}
+          onSave={(patch) => saveDefect(editingDefect, patch)}
+        />
+      )}
     </div>
   )
 }
 
-function MiniStat({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
+// ---- Sample detail ---------------------------------------------------------
+
+function SampleDetail({
+  session,
+  sample,
+  dimensions,
+  defects,
+  coils,
+  paint,
+  pt,
+  editable,
+  onEditDimension,
+  onEditDefect,
+}: {
+  session: InspectionSession
+  sample: InspectionSample
+  dimensions: DimensionResult[]
+  defects: DefectResult[]
+  coils: SampleCoil[]
+  paint?: PaintSampleRecord
+  pt?: PTRecord
+  editable: boolean
+  onEditDimension: (d: DimensionResult) => void
+  onEditDefect: (d: DefectResult) => void
+}) {
   return (
-    <div className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 dark:bg-slate-800/50">
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white text-brand-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-brand-300 dark:ring-slate-700">
-        {icon}
-      </span>
-      <div>
-        <p className="text-lg font-bold leading-none tabular-nums">{value}</p>
-        <p className="text-xs text-slate-400">{label}</p>
+    <div className="space-y-5">
+      <dl className="grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/60 sm:grid-cols-4">
+        <Attr label="Shift" value={shiftName(sample.shift)} />
+        <Attr label="Recorded" value={formatDateTime(sample.createdAt)} />
+        <Attr label="Inspector" value={sample.inspectorName} />
+        <Attr label="Sample qty" value={sample.sampleQty} />
+        <Attr label="Drawing" value={sample.drawing} />
+        <Attr label="Drawing alt" value={sample.drawingAlt} />
+        <Attr label="Issue" value={sample.issue} />
+        <Attr label="Work center" value={session.workCenterCode} />
+      </dl>
+
+      {sample.gradeAcknowledgement && (
+        <p className="flex items-start gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/20">
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Grade mismatch acknowledged by {sample.gradeAcknowledgement.byName} on{' '}
+            {formatDateTime(sample.gradeAcknowledgement.at)} — expected{' '}
+            {sample.gradeAcknowledgement.expectedGrade}, found{' '}
+            {sample.gradeAcknowledgement.foundGrades.join(', ') || '—'}.
+          </span>
+        </p>
+      )}
+
+      <Section icon={<Ruler className="h-4 w-4" />} title="Dimensions" count={dimensions.length}>
+        {dimensions.length === 0 ? (
+          <SectionEmpty message="No dimensions were measured on this sample." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
+                  <th className="py-2 pr-3">Dimension</th>
+                  <th className="py-2 pr-3 text-right">Nominal</th>
+                  <th className="py-2 pr-3 text-right">Tolerance ±</th>
+                  <th className="py-2 pr-3 text-right">Actual</th>
+                  <th className="py-2 pr-3">Status</th>
+                  {editable && <th className="py-2" />}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {dimensions.map((d) => (
+                  <tr key={d.id}>
+                    <td className="py-2.5 pr-3 font-semibold" dir="auto">
+                      {d.name}
+                      {d.unit && <span className="ml-1 text-xs font-normal text-slate-400">({d.unit})</span>}
+                    </td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{num(d.nominal)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums text-slate-500 dark:text-slate-400">
+                      +{d.tolPlus} / -{d.tolMinus}
+                    </td>
+                    <td className="py-2.5 pr-3 text-right font-bold tabular-nums">{num(d.actual)}</td>
+                    <td className="py-2.5 pr-3">
+                      <Badge tone={statusToneOf(d.status)}>{d.status}</Badge>
+                    </td>
+                    {editable && (
+                      <td className="py-2.5 text-right">
+                        <button
+                          onClick={() => onEditDimension(d)}
+                          className="inline-grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
+                          aria-label={`Correct ${d.name}`}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+
+      <Section icon={<AlertTriangle className="h-4 w-4" />} title="Defects" count={defects.length}>
+        {defects.length === 0 ? (
+          <SectionEmpty message="No defects were recorded on this sample." />
+        ) : (
+          <div className="space-y-3">
+            {defects.map((d) => (
+              <div key={d.id} className="rounded-2xl p-4 ring-1 ring-slate-200 dark:ring-slate-700">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-bold" dir="auto">
+                    {d.defectName}
+                  </span>
+                  <Badge tone="neutral">Qty {d.qty}</Badge>
+                  <Badge tone={dispositionToneOf(d.disposition)}>{d.disposition ?? 'No disposition'}</Badge>
+                  {editable && (
+                    <button
+                      onClick={() => onEditDefect(d)}
+                      className="ml-auto inline-grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
+                      aria-label={`Correct ${d.defectName}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                {d.notes && (
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300" dir="auto">
+                    {d.notes}
+                  </p>
+                )}
+                <div className="mt-3">
+                  <ImagePicker imageIds={d.imageIds} onChange={() => {}} readOnly />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      <Section icon={<Package2 className="h-4 w-4" />} title="Coils used" count={coils.length}>
+        {coils.length === 0 ? (
+          <SectionEmpty message="No coils were attached to this sample." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
+                  <th className="py-2 pr-3">Coil</th>
+                  <th className="py-2 pr-3">Grade</th>
+                  <th className="py-2 pr-3">SM type</th>
+                  <th className="py-2 pr-3">Supplier</th>
+                  <th className="py-2 pr-3 text-right">Thickness</th>
+                  <th className="py-2 pr-3 text-right">Width</th>
+                  <th className="py-2 text-right">Yield</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {coils.map((c) => (
+                  <tr key={c.id}>
+                    <td className="py-2.5 pr-3 font-semibold">{c.coilNumber}</td>
+                    <td className="py-2.5 pr-3">{c.grade ?? '—'}</td>
+                    <td className="py-2.5 pr-3">{c.smType ?? '—'}</td>
+                    <td className="py-2.5 pr-3">{c.supplier ?? '—'}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{num(c.thickness)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{num(c.width)}</td>
+                    <td className="py-2.5 text-right tabular-nums">{num(c.yield)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+
+      {isPaintWorkCenter(session.workCenterCode) && (
+        <Section icon={<SprayCan className="h-4 w-4" />} title="Paint sample">
+          {!paint ? (
+            <SectionEmpty message="No paint sample was recorded for this sample." />
+          ) : (
+            <div className="space-y-3">
+              {paint.notes && (
+                <p className="text-sm text-slate-600 dark:text-slate-300" dir="auto">
+                  {paint.notes}
+                </p>
+              )}
+              <ImagePicker imageIds={paint.imageIds} onChange={() => {}} readOnly />
+            </div>
+          )}
+        </Section>
+      )}
+
+      {isPTWorkCenter(session.workCenterCode) && (
+        <Section icon={<Droplets className="h-4 w-4" />} title="PT / weld inspection">
+          {!pt ? (
+            <SectionEmpty message="No PT record was captured for this sample." />
+          ) : (
+            <div className="space-y-4">
+              <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <Attr label="Cleaner lot" value={pt.consumableLots.Cleaner} />
+                <Attr label="Penetrant lot" value={pt.consumableLots.Penetrant} />
+                <Attr label="Developer lot" value={pt.consumableLots.Developer} />
+                <Attr label="Test frequency" value={`${pt.testFrequencyPct}%`} />
+                <Attr label="Sample size" value={pt.sampleSize} />
+                <Attr label="Tested weld length" value={pt.testedWeldLength} />
+                <Attr label="Indication type" value={pt.indicationType} />
+                <Attr label="Indication size" value={pt.indicationSize} />
+                <Attr label="Welding wire batch" value={pt.weldingWireBatch} />
+                <Attr label="Accept / repair" value={pt.acceptOrRepair} />
+                <Attr label="Final result" value={pt.finalResult} />
+              </dl>
+              {pt.notes && (
+                <p className="text-sm text-slate-600 dark:text-slate-300" dir="auto">
+                  {pt.notes}
+                </p>
+              )}
+              <div>
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Attachments</p>
+                <ImagePicker imageIds={pt.imageIds} onChange={() => {}} readOnly />
+              </div>
+            </div>
+          )}
+        </Section>
+      )}
+    </div>
+  )
+}
+
+// ---- Correction dialogs ----------------------------------------------------
+
+function DimensionEditDialog({
+  dimension,
+  saving,
+  onClose,
+  onSave,
+}: {
+  dimension: DimensionResult
+  saving: boolean
+  onClose: () => void
+  onSave: (actual: number | null) => void
+}) {
+  const [value, setValue] = useState(dimension.actual === null ? '' : String(dimension.actual))
+  const trimmed = value.trim()
+  const parsed = trimmed === '' ? null : Number(trimmed)
+  const valid = parsed === null || !Number.isNaN(parsed)
+  const preview = dimensionStatus({
+    nominal: dimension.nominal,
+    tolPlus: dimension.tolPlus,
+    tolMinus: dimension.tolMinus,
+    actual: valid ? parsed : null,
+  })
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="sm"
+      icon={<Ruler className="h-5 w-5" />}
+      title="Correct measurement"
+      footer={
+        <>
+          <Button variant="ghost" className="min-h-[48px]" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            className="min-h-[48px]"
+            disabled={!valid || saving}
+            onClick={() => onSave(parsed)}
+          >
+            {saving ? 'Saving…' : 'Save correction'}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <dl className="grid grid-cols-3 gap-3 rounded-2xl bg-slate-50 p-3 dark:bg-slate-800/60">
+          <Attr label="Dimension" value={dimension.name} />
+          <Attr label="Nominal" value={dimension.nominal} />
+          <Attr label="Tolerance" value={`+${dimension.tolPlus} / -${dimension.tolMinus}`} />
+        </dl>
+        <Field
+          label={`Actual${dimension.unit ? ` (${dimension.unit})` : ''}`}
+          hint="Leave empty to clear the measurement. The change is written to the audit log."
+        >
+          <Input
+            autoFocus
+            type="number"
+            step="any"
+            inputMode="decimal"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            className="min-h-[48px] text-lg tabular-nums"
+          />
+        </Field>
+        <p className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+          New status: <Badge tone={statusToneOf(preview)}>{preview}</Badge>
+        </p>
       </div>
+    </Modal>
+  )
+}
+
+function DefectEditDialog({
+  defect,
+  saving,
+  onClose,
+  onSave,
+}: {
+  defect: DefectResult
+  saving: boolean
+  onClose: () => void
+  onSave: (patch: { disposition: Disposition; qty: number }) => void
+}) {
+  const [disposition, setDisposition] = useState<Disposition | ''>(defect.disposition ?? '')
+  const [qty, setQty] = useState(String(defect.qty))
+  const parsedQty = Number(qty)
+  const valid = disposition !== '' && qty.trim() !== '' && !Number.isNaN(parsedQty) && parsedQty > 0
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="sm"
+      icon={<AlertTriangle className="h-5 w-5" />}
+      title="Correct defect"
+      footer={
+        <>
+          <Button variant="ghost" className="min-h-[48px]" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            className="min-h-[48px]"
+            disabled={!valid || saving}
+            onClick={() => valid && onSave({ disposition: disposition as Disposition, qty: parsedQty })}
+          >
+            {saving ? 'Saving…' : 'Save correction'}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="font-bold" dir="auto">
+          {defect.defectName}
+        </p>
+        <Field label="Disposition" hint="A defect can never be left without one (§8.5).">
+          <Select
+            value={disposition}
+            onChange={(e) => setDisposition(e.target.value as Disposition | '')}
+            className="min-h-[48px]"
+          >
+            <option value="">Choose a disposition…</option>
+            {DISPOSITIONS.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Quantity" hint="Must be greater than zero.">
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            className="min-h-[48px] text-lg tabular-nums"
+          />
+        </Field>
+      </div>
+    </Modal>
+  )
+}
+
+// ---- Small building blocks -------------------------------------------------
+
+function Section({
+  icon,
+  title,
+  count,
+  children,
+}: {
+  icon: ReactNode
+  title: string
+  count?: number
+  children: ReactNode
+}) {
+  return (
+    <section>
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-slate-400">{icon}</span>
+        <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          {title}
+        </h3>
+        {count !== undefined && count > 0 && <Badge tone="neutral">{count}</Badge>}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function SectionEmpty({ message }: { message: string }) {
+  return (
+    <p className="rounded-2xl border border-dashed border-slate-200 px-4 py-4 text-sm text-slate-400 dark:border-slate-700">
+      {message}
+    </p>
+  )
+}
+
+function Attr({ label, value }: { label: string; value?: string | number | null }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</dt>
+      <dd className="truncate font-semibold tabular-nums" dir="auto">
+        {value === undefined || value === null || value === '' ? '—' : value}
+      </dd>
     </div>
   )
 }

@@ -1,4 +1,3 @@
-import type { SampleResult, DimensionResult, Disposition } from '@/types'
 
 /** Tailwind classnames merge helper (lightweight — no dependency). */
 export function cn(...parts: Array<string | false | null | undefined>): string {
@@ -46,34 +45,6 @@ export function timeAgo(iso?: string): string {
   if (hrs < 24) return `${hrs}h ago`
   const days = Math.round(hrs / 24)
   return `${days}d ago`
-}
-
-/** Evaluate a measured value against a target + tolerance band. */
-export function evalDimension(dim: Pick<DimensionResult, 'target' | 'tolMinus' | 'tolPlus' | 'measured'>): SampleResult {
-  if (dim.measured === null || dim.measured === undefined || Number.isNaN(dim.measured))
-    return 'Pending'
-  const lo = dim.target - dim.tolMinus
-  const hi = dim.target + dim.tolPlus
-  if (dim.measured < lo || dim.measured > hi) return 'Fail'
-  // Within 15% of a tolerance edge -> Warning
-  const band = dim.tolMinus + dim.tolPlus || 1
-  const edge = Math.min(dim.measured - lo, hi - dim.measured)
-  if (edge <= band * 0.12) return 'Warning'
-  return 'Pass'
-}
-
-/** Roll a sample's overall result up from its dimensions + defects. */
-export function rollupSample(
-  dims: SampleResult[],
-  dispositions: Disposition[],
-): SampleResult {
-  if (dispositions.includes('Rejected')) return 'Fail'
-  if (dims.includes('Fail')) return 'Fail'
-  if (dispositions.includes('Hold')) return 'Warning'
-  if (dims.includes('Warning')) return 'Warning'
-  if (dims.length === 0 && dispositions.length === 0) return 'Pending'
-  if (dims.includes('Pending')) return 'Pending'
-  return 'Pass'
 }
 
 export function clamp(n: number, lo: number, hi: number): number {
