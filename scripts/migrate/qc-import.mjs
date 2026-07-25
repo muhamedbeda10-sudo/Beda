@@ -11,10 +11,10 @@
 //
 // Safety properties, each enforced below and each covered by a test:
 //
-//   1. --commit is the only thing that enables writing. Every check runs, and
-//      the process exits, before firebase-admin is imported. Without --commit
-//      no credential is read, no app is initialised and no connection to
-//      Firestore is opened.
+//   1. --commit is the only thing that enables writing. Every check, and the
+//      whole projection pass, runs before firebase-admin is imported. Without
+//      --commit no credential is read, no app is initialised, and no connection
+//      to Firestore is opened. A run without it reads local files and prints.
 //   2. The importer writes only to the collections in STAGES.all. Any document
 //      routed anywhere else aborts the run. There is no delete, no collection
 //      clear, no query: the only database operation is set(merge) on a
@@ -22,8 +22,11 @@
 //   3. Document ids are the source GUIDs, so a second run rewrites the same
 //      documents. Nothing duplicates, and an interrupted run is resumed by
 //      running it again.
-//   4. Files stream. The 46 MB export is never held in memory whole.
-//   5. The service-account path comes from the environment. The key is never
+//   4. Nothing is written until the run has counted what it would write and
+//      shown the number. A projection above --max-writes refuses to start,
+//      which is what keeps a staged run inside the Spark daily write quota.
+//   5. Files stream. The 46 MB export is never held in memory whole.
+//   6. The service-account path comes from the environment. The key is never
 //      read from source, never printed, never logged.
 // ============================================================================
 
@@ -48,16 +51,16 @@ export const MASTER_COLLECTIONS = [
   COL.workCenterDimensions,
 ]
 
-/** The order and coil catalogues. The bulk of the row count, ~59,200 documents. */
-export const CATALOGUE_COLLECTIONS = [
-  COL.orders,
-  COL.coils,
-  COL.itemReferenceImages,
-  COL.productionData,
-]
-
-/** Recorded inspection evidence, and the quarantine holding rows with no parent. */
-export const EVIDENCE_COLLECTIONS = [
+/**
+ * Recorded inspection evidence, the quarantine holding rows with no parent, and
+ * the production orders those rows actually point at.
+ *
+ * Orders are in this stage by row, not by collection. The export holds 28,871
+ * of them; the 147 sessions reference far fewer. Only the referenced ones come
+ * across, and the set is derived from the history rows at run time -- never
+ * hardcoded, never the whole file. See referencedOrderIds() below.
+ */
+export const HISTORY_COLLECTIONS = [
   COL.sessions,
   COL.samples,
   COL.dimensions,
@@ -67,21 +70,44 @@ export const EVIDENCE_COLLECTIONS = [
   COL.audit,
   COL.orphanMeasurements,
   COL.orphanSamples,
+  COL.orders,
 ]
 
 /**
- * `master` and `history` partition the data exactly, which is the property the
- * staged plan depends on: run master, then history, and nothing is left behind.
- * `catalogue` and `evidence` split history further for anyone who wants the two
- * large phases separately. They are optional, never a substitute for the pair.
+ * Held back deliberately. The project is on the Spark plan: 20,000 writes a day
+ * and no Cloud Storage, so the bulk catalogues and every image wait for a day
+ * of their own or for a Blaze upgrade.
+ *
+ * Orders appear here too, as the complement of the referenced set: whatever
+ * `history` did not take.
+ */
+export const DEFERRED_COLLECTIONS = [
+  COL.orders,
+  COL.coils,
+  COL.itemReferenceImages,
+  COL.productionData,
+]
+
+/**
+ * `master`, `history` and `deferred` partition the data: every document the
+ * transforms can produce belongs to exactly one of them, orders included, and
+ * that is asserted by a test rather than claimed here.
+ *
+ * There is no default. Choosing the stage is the whole point of staging, and a
+ * default would be the one that quietly writes 65,000 documents.
  */
 export const STAGES = {
   master: MASTER_COLLECTIONS,
-  catalogue: CATALOGUE_COLLECTIONS,
-  evidence: EVIDENCE_COLLECTIONS,
-  history: [...CATALOGUE_COLLECTIONS, ...EVIDENCE_COLLECTIONS],
-  all: [...MASTER_COLLECTIONS, ...CATALOGUE_COLLECTIONS, ...EVIDENCE_COLLECTIONS],
+  history: HISTORY_COLLECTIONS,
+  deferred: DEFERRED_COLLECTIONS,
+  /** Today's authorised scope: master + history. Not "everything in the file". */
+  all: [...new Set([...MASTER_COLLECTIONS, ...HISTORY_COLLECTIONS])],
 }
+
+/** Every collection this process may write to, whatever the stage. */
+export const WRITABLE_COLLECTIONS = [
+  ...new Set([...MASTER_COLLECTIONS, ...HISTORY_COLLECTIONS, ...DEFERRED_COLLECTIONS]),
+].sort()
 
 /** Collections whose documents reference a parent in another file. */
 const NEEDS_PARENT_RESOLUTION = new Set([
@@ -102,7 +128,7 @@ const NEEDS_PARENT_RESOLUTION = new Set([
  * This turns that into a startup failure instead.
  */
 export function unstagedCollections() {
-  const staged = new Set(STAGES.all)
+  const staged = new Set(WRITABLE_COLLECTIONS)
   return Object.values(COL).filter((c) => !staged.has(c))
 }
 
@@ -114,12 +140,27 @@ export function unstagedCollections() {
  * Kept separate from main() so the routing that decides what the database
  * receives is testable without a database.
  */
-export function route(collection, { stage = 'all', only = null, skip = new Set() } = {}) {
-  if (!new Set(STAGES.all).has(collection)) return 'forbidden'
-  if (!new Set(STAGES[stage] ?? []).has(collection)) return 'filtered'
+export function route(collection, { stage = null, only = null, skip = new Set() } = {}) {
+  if (!WRITABLE_COLLECTIONS.includes(collection)) return 'forbidden'
+  if (!stage || !STAGES[stage]) return 'filtered'
+  if (!STAGES[stage].includes(collection)) return 'filtered'
   if (only && collection !== only) return 'filtered'
   if (skip.has(collection)) return 'filtered'
   return 'write'
+}
+
+/**
+ * The row-level half of routing, for collections a stage takes only part of.
+ *
+ * Only orders are split this way: `history` takes the ones the inspection rows
+ * reference, `deferred` takes the remainder. Every other collection is taken
+ * whole by whichever stage lists it.
+ */
+export function keepDocument(collection, doc, { stage, referencedOrders = new Set() } = {}) {
+  if (collection !== COL.orders) return true
+  if (stage === 'history' || stage === 'all') return referencedOrders.has(doc.id)
+  if (stage === 'deferred') return !referencedOrders.has(doc.id)
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -163,32 +204,45 @@ const exists = (p) => {
 const num = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 const pad = (n, w = 9) => num(n).padStart(w)
 
+const DEFAULT_MAX_WRITES = 18000
+
 const HELP = `
 Dataverse -> Firestore import
 
-  node qc-import.mjs <folder-with-the-json-files> --commit [options]
+  node qc-import.mjs <folder-with-the-json-files> --stage=<name> --commit [options]
 
-  --commit           required; without it nothing is written and no connection
-                     to Firestore is opened
-  --stage=<name>     master     the 444 reference documents (start here)
-                     history    everything else
-                     catalogue  orders and coils only, a subset of history
-                     evidence   sessions and below, a subset of history
-                     all        default
-  --only <col>       restrict to one target collection
+  --stage=<name>     REQUIRED. There is no default.
+                     master    the 444 reference documents (start here)
+                     history   inspection evidence, plus only the production
+                               orders those rows actually reference
+                     all       master + history, today's authorised scope
+                     deferred  the bulk catalogues held back for a later day:
+                               the remaining orders, coils, item reference
+                               images, production data
+  --commit           required to write. Without it this counts what it would
+                     write, prints the projection, and stops. No credential is
+                     read and no connection to Firestore is opened.
+  --max-writes <n>   refuse to start if the projection exceeds this.
+                     Default ${DEFAULT_MAX_WRITES}, which leaves headroom under the Spark
+                     free plan's 20,000 writes per day.
+  --only <col>       restrict to one target collection, within the stage
   --skip <col,col>   skip collections
   --resume           skip files already recorded complete in ${PROGRESS_FILE}
-  --allow-existing   pass when a target collection already holds documents this
-                     run did not write, so a surplus is not treated as a failure
+  --allow-existing   accept collections that already hold documents this run
+                     did not write, instead of treating that as a failure
   --verbose          print every failure
 
-  Requires:  npm i firebase-admin
+  Requires (only when --commit is given):
+             npm i firebase-admin
              GOOGLE_APPLICATION_CREDENTIALS=<path to service account json>
 
 Run qc-dryrun.mjs first and read its report. This writes the same documents.
 
 Re-running is safe. Document ids are the Dataverse GUIDs, so a second run
 rewrites the same documents rather than creating new ones.
+
+Collections this script is capable of writing to, and no others:
+${WRITABLE_COLLECTIONS.map((c) => `  ${c}`).join('\n')}
 `
 
 /**
@@ -208,32 +262,251 @@ export function flagValue(argv, flag) {
 
 export function parseArgs(argv) {
   const stageArg = argv.find((a) => a.startsWith('--stage='))
-  // A value belonging to --only or --skip is not the source folder, however the
-  // arguments happen to be ordered.
+  // A value belonging to a value-taking flag is not the source folder, however
+  // the arguments happen to be ordered.
   const consumed = new Set()
-  for (const flag of ['--only', '--skip']) {
+  for (const flag of ['--only', '--skip', '--max-writes']) {
     const i = argv.indexOf(flag)
     if (i !== -1 && i + 1 < argv.length) consumed.add(i + 1)
   }
+  const maxRaw = flagValue(argv, '--max-writes')
   return {
     src: argv.find((a, i) => !a.startsWith('--') && !consumed.has(i)),
     commit: argv.includes('--commit'),
     verbose: argv.includes('--verbose'),
     resume: argv.includes('--resume'),
     allowExisting: argv.includes('--allow-existing'),
-    stage: stageArg ? stageArg.slice('--stage='.length) : 'all',
+    stage: stageArg ? stageArg.slice('--stage='.length) : null,
+    maxWrites: maxRaw === null ? DEFAULT_MAX_WRITES : Number(maxRaw),
     only: flagValue(argv, '--only'),
     skip: new Set((flagValue(argv, '--skip') ?? '').split(',').filter(Boolean)),
   }
 }
+
+// ---------------------------------------------------------------------------
+// Reading the export
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve everything that needs more than one file to decide, and derive the
+ * set of production orders the inspection rows actually reference.
+ *
+ * The referenced set is built from the history rows themselves: the order a
+ * session points at, the order behind each sample's session, and the order on
+ * each PDI. Nothing here is hardcoded, and the full orders file is read only to
+ * learn which ids exist -- reading is free, writing is what is being limited.
+ */
+async function resolveReferences(dir, { log = console.log } = {}) {
+  const f = (n) => path.join(dir, n)
+  const orderIds = new Set()
+  const orderWorkCenter = new Map()
+  const sessionIds = new Set()
+  const sessionMeta = new Map()
+  const sessionInspector = new Map()
+  const sessionInit = new Map()
+  const sampleIds = new Set()
+  const sampleIndex = new Map()
+  const dimensionSequence = new Map()
+  const referencedOrders = new Set()
+  const referencedBy = { sessions: 0, samples: 0, pdi: 0 }
+  let sessionsWithNoOrder = 0
+
+  if (exists(f('12_cr863_productionorder1s.json'))) {
+    for await (const r of streamRows(f('12_cr863_productionorder1s.json'))) {
+      const id = r.cr863_productionorder1id
+      if (!id) continue
+      orderIds.add(id)
+      orderWorkCenter.set(id, String(r.cr863_workcenter ?? ''))
+    }
+  }
+  if (exists(f('01_cr863_inspectionsession1s.json'))) {
+    for await (const r of streamRows(f('01_cr863_inspectionsession1s.json'))) {
+      const id = r.cr863_inspectionsession1id
+      if (!id) continue
+      sessionIds.add(id)
+      const orderId = r._cr863_productionorder_value ?? ''
+      sessionMeta.set(id, {
+        orderId,
+        drawing: r.cr863_drawingno ?? '',
+        issue: r.cr863_issueno ?? undefined,
+      })
+      if (orderId) {
+        if (!referencedOrders.has(orderId)) referencedBy.sessions++
+        referencedOrders.add(orderId)
+      } else {
+        sessionsWithNoOrder++
+      }
+    }
+  }
+  if (exists(f('11_quality_sessioninitializations.json'))) {
+    for await (const r of streamRows(f('11_quality_sessioninitializations.json'))) {
+      const key = r.quality_sessionkey
+      if (key && sessionIds.has(key)) sessionInit.set(key, r)
+    }
+  }
+  if (exists(f('02_cr863_inspectionsample1s.json'))) {
+    const bySession = new Map()
+    for await (const r of streamRows(f('02_cr863_inspectionsample1s.json'))) {
+      const id = r.cr863_inspectionsample1id
+      if (!id) continue
+      sampleIds.add(id)
+      const sid = r._cr863_inspectionsession_value ?? ''
+      // A sample inherits its order from its session, so this adds nothing a
+      // session did not already contribute -- unless a sample points at a
+      // session that itself is missing, which is worth knowing about.
+      const viaSession = sessionMeta.get(sid)?.orderId
+      if (viaSession && !referencedOrders.has(viaSession)) {
+        referencedBy.samples++
+        referencedOrders.add(viaSession)
+      }
+      const arr = bySession.get(sid) ?? []
+      arr.push({ id, at: r.cr863_sampledatetime ?? r.createdon ?? '', name: r.cr863_inspectorname ?? '' })
+      bySession.set(sid, arr)
+    }
+    for (const [sid, arr] of bySession) {
+      arr.sort((a, b) => String(a.at).localeCompare(String(b.at)))
+      arr.forEach((s, i) => sampleIndex.set(s.id, i + 1))
+      const first = arr.find((s) => s.name)
+      if (first) sessionInspector.set(sid, first.name)
+    }
+  }
+  if (exists(f('09_cr863_pdis.json'))) {
+    for await (const r of streamRows(f('09_cr863_pdis.json'))) {
+      const orderId = r._cr863_productionorder_value ?? ''
+      if (orderId && !referencedOrders.has(orderId)) {
+        referencedBy.pdi++
+        referencedOrders.add(orderId)
+      }
+    }
+  }
+  if (exists(f('03_cr863_dimensionresult2s.json'))) {
+    const bySample = new Map()
+    for await (const r of streamRows(f('03_cr863_dimensionresult2s.json'))) {
+      const id = r.cr863_dimensionresult2id
+      if (!id) continue
+      const sid = r._cr863_inspectionsample_value ?? ''
+      const n = (bySample.get(sid) ?? 0) + 1
+      bySample.set(sid, n)
+      dimensionSequence.set(id, n)
+    }
+  }
+
+  const missing = [...referencedOrders].filter((id) => !orderIds.has(id))
+
+  log(
+    `    orders in file ${num(orderIds.size)} - sessions ${num(sessionIds.size)} - samples ${num(sampleIds.size)}`,
+  )
+  log(
+    `    orders referenced by the history rows: ${num(referencedOrders.size)}` +
+      ` (${referencedBy.sessions} via sessions, ${referencedBy.samples} via samples, ${referencedBy.pdi} via PDI)`,
+  )
+  if (sessionsWithNoOrder) {
+    log(`    ${num(sessionsWithNoOrder)} session(s) have no order link`)
+  }
+  if (missing.length) {
+    log(`    ${num(missing.length)} referenced order(s) are NOT in the export:`)
+    for (const id of missing.slice(0, 10)) log(`      ${id}`)
+    if (missing.length > 10) log(`      ... ${num(missing.length - 10)} more`)
+  }
+
+  return {
+    orderIds,
+    orderWorkCenter,
+    sessionIds,
+    sessionMeta,
+    sessionInspector,
+    sessionInit,
+    sampleIds,
+    sampleIndex,
+    dimensionSequence,
+    referencedOrders,
+    referencedBy,
+    sessionsWithNoOrder,
+    missingReferencedOrders: missing,
+  }
+}
+
+/**
+ * Every document this run would write, in file order.
+ *
+ * Projection and the write pass both consume this, so the number printed before
+ * writing and the documents actually written come from one piece of code. A
+ * projection computed by a second implementation would be worth nothing.
+ */
+async function* documentsToWrite(dir, refs, opts, tally) {
+  const ctx = {
+    orderWorkCenter: refs.orderWorkCenter,
+    session: refs.sessionMeta,
+    sessionInspector: refs.sessionInspector,
+    sessionInit: refs.sessionInit,
+    sampleIndex: refs.sampleIndex,
+    dimensionSequence: refs.dimensionSequence,
+    decodeFailure: () => {},
+    count: () => {},
+  }
+
+  const parentOf = {
+    [COL.sessions]: (d) => refs.orderIds.has(d.orderId),
+    [COL.samples]: (d) => refs.sessionIds.has(d.sessionId),
+    [COL.dimensions]: (d) => refs.sampleIds.has(d.sampleId),
+    [COL.defects]: (d) => refs.sampleIds.has(d.sampleId),
+    [COL.sampleCoils]: (d) => refs.sampleIds.has(d.sampleId),
+  }
+
+  for (const spec of FILES) {
+    const p = path.join(dir, spec.file)
+    if (!exists(p)) {
+      tally.missingFiles.push(spec.file)
+      continue
+    }
+    let n = 0
+    for await (const row of streamRows(p)) {
+      const out = spec.fn(row, ctx)
+      if (out.reject) {
+        tally.rejected++
+        continue
+      }
+      const decision = route(out.collection, opts)
+      if (decision === 'forbidden') {
+        throw new Error(
+          `${spec.file} produced a document for "${out.collection}", which is not a ` +
+            'collection this importer is allowed to write. Nothing further was written.',
+        )
+      }
+      if (decision === 'filtered') {
+        tally.filtered++
+        continue
+      }
+      if (!keepDocument(out.collection, out.doc, { stage: opts.stage, referencedOrders: refs.referencedOrders })) {
+        tally.notReferenced++
+        continue
+      }
+      const check = parentOf[out.collection]
+      if (check && !check(out.doc)) {
+        tally.dangling++
+        continue
+      }
+      n++
+      yield { file: spec.file, collection: out.collection, id: out.id, doc: out.doc }
+    }
+    yield { fileComplete: spec.file, count: n }
+  }
+}
+
+function freshTally() {
+  return { rejected: 0, filtered: 0, dangling: 0, notReferenced: 0, missingFiles: [] }
+}
+
+// ---------------------------------------------------------------------------
 
 async function main() {
   const argv = process.argv.slice(2)
   const opts = parseArgs(argv)
 
   // ---- Guards --------------------------------------------------------------
-  // Everything in this block runs before firebase-admin is imported, so a run
-  // that fails any check never opens a connection to Firestore.
+  // Everything from here to the projection runs on local files only. No
+  // credential is read and firebase-admin is not imported until after the
+  // projection has been printed and accepted.
 
   if (!opts.src) {
     console.log(HELP)
@@ -244,14 +517,22 @@ async function main() {
     console.error(`\n  Folder not found: ${dir}\n`)
     process.exit(1)
   }
-  if (!opts.commit) {
-    console.error('\n  Refusing to write without --commit. Run qc-dryrun.mjs to preview.\n')
+  if (!opts.stage) {
+    console.error(
+      `\n  --stage is required. Choose one of: ${Object.keys(STAGES).join(', ')}\n` +
+        '  There is no default, because the default would be the run that writes\n' +
+        '  everything.\n',
+    )
     process.exit(1)
   }
   if (!STAGES[opts.stage]) {
     console.error(
       `\n  Unknown stage "${opts.stage}". Choose one of: ${Object.keys(STAGES).join(', ')}\n`,
     )
+    process.exit(1)
+  }
+  if (!Number.isFinite(opts.maxWrites) || opts.maxWrites <= 0) {
+    console.error('\n  --max-writes must be a positive number.\n')
     process.exit(1)
   }
   const orphaned = unstagedCollections()
@@ -263,6 +544,106 @@ async function main() {
     )
     process.exit(1)
   }
+
+  console.log(`\n  Dataverse -> Firestore`)
+  console.log(`  source: ${dir}`)
+  console.log(`  stage:  ${opts.stage} -> ${STAGES[opts.stage].join(', ')}`)
+  console.log(`  mode:   ${opts.commit ? 'COMMIT' : 'projection only (no --commit)'}\n`)
+
+  // ---- Resume --------------------------------------------------------------
+  const prior = readProgress(dir)
+  const doneFiles = new Set()
+  if (prior && opts.resume) {
+    if (prior.stage !== opts.stage) {
+      console.log(`  ${PROGRESS_FILE} is from stage "${prior.stage}", this run is "${opts.stage}".`)
+      console.log('  Ignoring it and starting this stage from the top.\n')
+    } else {
+      for (const f of prior.completedFiles) doneFiles.add(f)
+      console.log(`  Resuming: ${doneFiles.size} file(s) already complete.\n`)
+    }
+  } else if (prior && !opts.resume) {
+    console.log(`  A ${PROGRESS_FILE} from a previous run is present.`)
+    console.log('  Starting from the top. That is safe -- the same ids are rewritten.')
+    console.log('  Pass --resume to skip the files it records as complete.\n')
+  }
+
+  // ---- Resolve references --------------------------------------------------
+  console.log('  Resolving cross-file references...')
+  const refs = await resolveReferences(dir)
+  console.log('')
+
+  // ---- Projection ----------------------------------------------------------
+  // Count what would be written before writing any of it. This is the same code
+  // path the write pass uses, so the number is the number.
+  console.log('  Counting what this stage would write...')
+  const projTally = freshTally()
+  const projected = new Map()
+  const projectedRemaining = new Map()
+  for await (const item of documentsToWrite(dir, refs, opts, projTally)) {
+    if (item.fileComplete) continue
+    projected.set(item.collection, (projected.get(item.collection) ?? 0) + 1)
+    if (!doneFiles.has(item.file)) {
+      projectedRemaining.set(item.collection, (projectedRemaining.get(item.collection) ?? 0) + 1)
+    }
+  }
+
+  const projectedTotal = [...projected.values()].reduce((a, b) => a + b, 0)
+  const remainingTotal = [...projectedRemaining.values()].reduce((a, b) => a + b, 0)
+
+  console.log('\n  -- Projected writes ----------------------------------')
+  for (const [col, c] of [...projected].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${col.padEnd(24)} ${pad(c)}`)
+  }
+  console.log(`  ${'TOTAL'.padEnd(24)} ${pad(projectedTotal)}`)
+  if (remainingTotal !== projectedTotal) {
+    console.log(`  ${'this run (after resume)'.padEnd(24)} ${pad(remainingTotal)}`)
+  }
+  if (projected.has(COL.orders)) {
+    console.log(
+      `\n  Orders: ${num(projected.get(COL.orders))} of ${num(refs.orderIds.size)} in the file,` +
+        ' selected because the inspection rows reference them.',
+    )
+  }
+
+  console.log('\n  -- Not written ---------------------------------------')
+  console.log(`  rejected by the transform  ${pad(projTally.rejected)}`)
+  console.log(`  dangling parent reference  ${pad(projTally.dangling)}`)
+  if (projTally.notReferenced) {
+    console.log(`  orders no history row uses ${pad(projTally.notReferenced)}`)
+  }
+  if (projTally.filtered) console.log(`  outside this stage/filter  ${pad(projTally.filtered)}`)
+  if (projTally.missingFiles.length) {
+    console.log(`  source files not present   ${pad(projTally.missingFiles.length)}`)
+  }
+
+  // ---- Budget --------------------------------------------------------------
+  if (remainingTotal > opts.maxWrites) {
+    console.error(
+      `\n  REFUSING TO START.\n` +
+        `  This run would write ${num(remainingTotal)} documents, over the --max-writes\n` +
+        `  limit of ${num(opts.maxWrites)}. The Spark free plan allows 20,000 writes a day.\n\n` +
+        '  Either pick a smaller --stage, or raise --max-writes deliberately if the\n' +
+        '  project is on a plan that can take it.\n',
+    )
+    process.exit(1)
+  }
+  console.log(
+    `\n  Within budget: ${num(remainingTotal)} writes, limit ${num(opts.maxWrites)}.`,
+  )
+
+  if (projectedTotal === 0) {
+    console.error('\n  Nothing to write for this stage. Check --stage, --only and the folder.\n')
+    process.exit(1)
+  }
+
+  if (!opts.commit) {
+    console.log('\n  Stopping here: --commit was not given, so nothing was written.')
+    console.log('  No credential was read and no connection to Firestore was opened.')
+    console.log(`\n  To write this stage:\n    node qc-import.mjs ${opts.src} --stage=${opts.stage} --commit\n`)
+    process.exit(0)
+  }
+
+  // ---- Credentials ---------------------------------------------------------
   if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     console.error(
       '\n  GOOGLE_APPLICATION_CREDENTIALS is not set.\n' +
@@ -294,32 +675,8 @@ async function main() {
     return false
   })
 
-  /** The complete set of collections this process may write to. */
-  const inStage = new Set(STAGES[opts.stage])
-
-  console.log(`\n  Dataverse -> Firestore -- COMMIT`)
-  console.log(`  source: ${dir}`)
-  console.log(`  stage:  ${opts.stage} (${inStage.size} collections)`)
-  console.log(`  project: ${process.env.GOOGLE_CLOUD_PROJECT ?? '(from service account)'}\n`)
-
-  // ---- Resume --------------------------------------------------------------
-  const prior = readProgress(dir)
-  const doneFiles = new Set()
-  if (prior && opts.resume) {
-    if (prior.stage !== opts.stage) {
-      console.log(
-        `  ${PROGRESS_FILE} is from stage "${prior.stage}", this run is "${opts.stage}".`,
-      )
-      console.log('  Ignoring it and starting this stage from the top.\n')
-    } else {
-      for (const f of prior.completedFiles) doneFiles.add(f)
-      console.log(`  Resuming: ${doneFiles.size} file(s) already complete.\n`)
-    }
-  } else if (prior && !opts.resume) {
-    console.log(`  A ${PROGRESS_FILE} from a previous run is present.`)
-    console.log('  Starting from the top. That is safe -- the same ids are rewritten.')
-    console.log('  Pass --resume to skip the files it records as complete.\n')
-  }
+  console.log(`  project: ${process.env.GOOGLE_CLOUD_PROJECT ?? '(from service account)'}`)
+  console.log('\n  Writing...\n')
 
   const progress = {
     startedAt: new Date().toISOString(),
@@ -328,166 +685,37 @@ async function main() {
     queued: prior && opts.resume && prior.stage === opts.stage ? { ...prior.queued } : {},
   }
 
-  // ---- Pre-pass ------------------------------------------------------------
-  // Resolving parents means streaming every file, so it runs only when this
-  // stage actually writes something that references a parent. A master-only
-  // run skips it entirely.
-  const needsPrePass = STAGES[opts.stage].some((c) => NEEDS_PARENT_RESOLUTION.has(c))
-
-  const orderIds = new Set()
-  const orderWorkCenter = new Map()
-  const sessionIds = new Set()
-  const sessionMeta = new Map()
-  const sessionInspector = new Map()
-  const sessionInit = new Map()
-  const sampleIds = new Set()
-  const sampleIndex = new Map()
-  const dimensionSequence = new Map()
-  const f = (n) => path.join(dir, n)
-
-  if (needsPrePass) {
-    console.log('  Resolving cross-file references...')
-    if (exists(f('12_cr863_productionorder1s.json'))) {
-      for await (const r of streamRows(f('12_cr863_productionorder1s.json'))) {
-        const id = r.cr863_productionorder1id
-        if (!id) continue
-        orderIds.add(id)
-        orderWorkCenter.set(id, String(r.cr863_workcenter ?? ''))
-      }
-    }
-    if (exists(f('01_cr863_inspectionsession1s.json'))) {
-      for await (const r of streamRows(f('01_cr863_inspectionsession1s.json'))) {
-        const id = r.cr863_inspectionsession1id
-        if (!id) continue
-        sessionIds.add(id)
-        sessionMeta.set(id, {
-          orderId: r._cr863_productionorder_value ?? '',
-          drawing: r.cr863_drawingno ?? '',
-          issue: r.cr863_issueno ?? undefined,
-        })
-      }
-    }
-    if (exists(f('11_quality_sessioninitializations.json'))) {
-      for await (const r of streamRows(f('11_quality_sessioninitializations.json'))) {
-        const key = r.quality_sessionkey
-        if (key && sessionIds.has(key)) sessionInit.set(key, r)
-      }
-    }
-    if (exists(f('02_cr863_inspectionsample1s.json'))) {
-      const bySession = new Map()
-      for await (const r of streamRows(f('02_cr863_inspectionsample1s.json'))) {
-        const id = r.cr863_inspectionsample1id
-        if (!id) continue
-        sampleIds.add(id)
-        const sid = r._cr863_inspectionsession_value ?? ''
-        const arr = bySession.get(sid) ?? []
-        arr.push({ id, at: r.cr863_sampledatetime ?? r.createdon ?? '', name: r.cr863_inspectorname ?? '' })
-        bySession.set(sid, arr)
-      }
-      for (const [sid, arr] of bySession) {
-        arr.sort((a, b) => String(a.at).localeCompare(String(b.at)))
-        arr.forEach((s, i) => sampleIndex.set(s.id, i + 1))
-        const first = arr.find((s) => s.name)
-        if (first) sessionInspector.set(sid, first.name)
-      }
-    }
-    if (exists(f('03_cr863_dimensionresult2s.json'))) {
-      const bySample = new Map()
-      for await (const r of streamRows(f('03_cr863_dimensionresult2s.json'))) {
-        const id = r.cr863_dimensionresult2id
-        if (!id) continue
-        const sid = r._cr863_inspectionsample_value ?? ''
-        const n = (bySample.get(sid) ?? 0) + 1
-        bySample.set(sid, n)
-        dimensionSequence.set(id, n)
-      }
-    }
-    console.log(
-      `    orders ${num(orderIds.size)} - sessions ${num(sessionIds.size)} - samples ${num(sampleIds.size)}\n`,
-    )
-  }
-
-  const counts = {}
-  const ctx = {
-    orderWorkCenter,
-    session: sessionMeta,
-    sessionInspector,
-    sessionInit,
-    sampleIndex,
-    dimensionSequence,
-    decodeFailure: () => {},
-    count: (k) => (counts[k] = (counts[k] ?? 0) + 1),
-  }
-
-  const parentOf = {
-    [COL.sessions]: (d) => orderIds.has(d.orderId),
-    [COL.samples]: (d) => sessionIds.has(d.sessionId),
-    [COL.dimensions]: (d) => sampleIds.has(d.sampleId),
-    [COL.defects]: (d) => sampleIds.has(d.sampleId),
-    [COL.sampleCoils]: (d) => sampleIds.has(d.sampleId),
-  }
-
-  // ---- Write ---------------------------------------------------------------
   const written = new Map(Object.entries(progress.queued))
-  const skipped = { rejected: 0, dangling: 0, filtered: 0 }
+  const writeTally = freshTally()
   let queued = 0
   const started = Date.now()
 
-  for (const spec of FILES) {
-    const p = f(spec.file)
-    if (!exists(p)) {
-      console.log(`  ${spec.label.padEnd(22)} -- file missing, skipped`)
+  for await (const item of documentsToWrite(dir, refs, opts, writeTally)) {
+    if (item.fileComplete) {
+      if (doneFiles.has(item.fileComplete)) {
+        console.log(`  ${item.fileComplete.padEnd(36)} -- already complete, skipped`)
+        continue
+      }
+      console.log(`  ${item.fileComplete.padEnd(36)} ${pad(item.count)} queued`)
+      // Recorded complete only after its writes are acknowledged, so --resume
+      // can never skip a file whose documents did not land.
+      await writer.flush()
+      progress.completedFiles.push(item.fileComplete)
+      progress.queued = Object.fromEntries(written)
+      writeProgress(dir, progress)
       continue
     }
-    if (doneFiles.has(spec.file)) {
-      console.log(`  ${spec.label.padEnd(22)} -- already complete, skipped`)
-      continue
-    }
-    let n = 0
-    for await (const row of streamRows(p)) {
-      const out = spec.fn(row, ctx)
-      if (out.reject) {
-        skipped.rejected++
-        continue
-      }
-      // Guard 2. A transform that ever routed a document outside the known set
-      // would be writing somewhere nobody reviewed. Stop rather than write it.
-      const decision = route(out.collection, opts)
-      if (decision === 'forbidden') {
-        throw new Error(
-          `${spec.file} produced a document for "${out.collection}", which is not a ` +
-            'collection this importer is allowed to write. Nothing further was written.',
-        )
-      }
-      if (decision === 'filtered') {
-        skipped.filtered++
-        continue
-      }
-      const check = parentOf[out.collection]
-      if (check && !check(out.doc)) {
-        skipped.dangling++
-        continue
-      }
-      // The Dataverse GUID is the document id, so this overwrites on a re-run
-      // rather than creating a second copy.
-      writer.set(db.collection(out.collection).doc(out.id), out.doc, { merge: true })
-      written.set(out.collection, (written.get(out.collection) ?? 0) + 1)
-      n++
-      queued++
-      if (queued % 5000 === 0) {
-        process.stdout.write(`\r  queued ${num(queued)}...`)
-        await writer.flush()
-      }
-    }
-    process.stdout.write('\r')
-    console.log(`  ${spec.label.padEnd(22)} ${pad(n)} queued`)
+    if (doneFiles.has(item.file)) continue
 
-    // The file is only recorded complete after its writes are acknowledged, so
-    // a --resume never skips a file whose documents never landed.
-    await writer.flush()
-    progress.completedFiles.push(spec.file)
-    progress.queued = Object.fromEntries(written)
-    writeProgress(dir, progress)
+    // The Dataverse GUID is the document id, so this overwrites on a re-run
+    // rather than creating a second copy.
+    writer.set(db.collection(item.collection).doc(item.id), item.doc, { merge: true })
+    written.set(item.collection, (written.get(item.collection) ?? 0) + 1)
+    queued++
+    if (queued % 2000 === 0) {
+      process.stdout.write(`\r  queued ${num(queued)}...`)
+      await writer.flush()
+    }
   }
 
   console.log('\n  Flushing...')
@@ -512,11 +740,6 @@ async function main() {
     if (written.get(COL.orphanSamples)) console.log(`    ${COL.orphanSamples}`)
   }
 
-  console.log('\n  -- Not written ---------------------------------------')
-  console.log(`  rejected by the transform  ${pad(skipped.rejected)}`)
-  console.log(`  dangling parent reference  ${pad(skipped.dangling)}`)
-  if (skipped.filtered) console.log(`  outside this stage/filter  ${pad(skipped.filtered)}`)
-
   if (failures.length) {
     console.log('\n  -- Write failures ------------------------------------')
     console.log(`  ${num(failures.length)} documents could not be written after retries.`)
@@ -530,9 +753,9 @@ async function main() {
 
   // ---- Verification --------------------------------------------------------
   // Queueing a write is not evidence that it landed. Read the count back from
-  // Firestore for every collection this run touched and compare.
+  // Firestore for every collection this run touched and compare against the
+  // projection -- the same numbers the dry run reports, from the same code.
   //
-  // What the comparison can and cannot prove:
   //   actual <  expected  writes are missing. Always a failure.
   //   actual >  expected  the collection holds documents this run did not
   //                       write. On a re-run that never happens, because the
@@ -550,14 +773,18 @@ async function main() {
     } catch (e) {
       error = e.message
     }
-    rows.push({ col, expected, actual, error })
+    rows.push({ col, expected, actual, error, projected: projected.get(col) ?? 0 })
   }
 
-  console.log(`  ${'collection'.padEnd(24)}${'expected'.padStart(11)}${'actual'.padStart(11)}${'difference'.padStart(13)}`)
+  console.log(
+    `  ${'collection'.padEnd(24)}${'expected'.padStart(11)}${'actual'.padStart(11)}${'difference'.padStart(13)}`,
+  )
   let short = 0
   let surplus = 0
   let unreadable = 0
+  let offProjection = 0
   for (const r of rows) {
+    if (r.expected !== r.projected) offProjection++
     if (r.error) {
       unreadable++
       console.log(`  ${r.col.padEnd(24)}${pad(r.expected, 11)}${'unreadable'.padStart(11)}${'?'.padStart(13)}`)
@@ -578,6 +805,9 @@ async function main() {
   if (failures.length) problems.push(`${num(failures.length)} documents failed to write`)
   if (short) problems.push(`${short} collection(s) hold fewer documents than this run wrote`)
   if (unreadable) problems.push(`${unreadable} collection(s) could not be counted`)
+  if (offProjection) {
+    problems.push(`${offProjection} collection(s) wrote a different count than projected`)
+  }
   if (surplus && !opts.allowExisting) {
     problems.push(
       `${surplus} collection(s) hold documents this run did not write ` +
@@ -605,7 +835,8 @@ async function main() {
   if (opts.stage === 'master') {
     console.log('  Next:  node qc-import.mjs <folder> --stage=history --commit')
   }
-  console.log('\n  Images are not part of this pass -- 223 files upload separately.')
+  console.log('\n  Held back for a later day: the remaining production orders, the coil')
+  console.log('  catalogue, item reference images, and every image file.')
   console.log('  Re-running is safe: the same document ids are rewritten.\n')
 }
 
