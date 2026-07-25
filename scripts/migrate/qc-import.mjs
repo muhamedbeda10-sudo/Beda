@@ -833,7 +833,12 @@ async function main() {
   if (!opts.commit) {
     console.log('\n  Stopping here: --commit was not given, so nothing was written.')
     console.log('  No credential was read and no connection to Firestore was opened.')
-    console.log(`\n  To write this stage:\n    node qc-import.mjs ${opts.src} --stage=${opts.stage} --commit\n`)
+    // Complete, including --project: this line exists to be copy-pasted, and a
+    // command missing it aborts on its first check.
+    console.log('\n  To write this stage:')
+    console.log(
+      `    node qc-import.mjs ${opts.src} --stage=${opts.stage} --project=${opts.project} --commit\n`,
+    )
     process.exit(0)
   }
 
@@ -903,7 +908,6 @@ async function main() {
     return false
   })
 
-  console.log(`  project: ${process.env.GOOGLE_CLOUD_PROJECT ?? '(from service account)'}`)
   console.log('\n  Writing...\n')
 
   const progress = {
@@ -1061,13 +1065,21 @@ async function main() {
           `\n  ${surplus} collection(s) also hold other documents, accepted via --allow-existing.`
       : '\n  Verified: every collection holds exactly what this run wrote.',
   )
-  if (opts.stage === 'master') {
-    console.log('  Next:  node qc-import.mjs <folder> --stage=history --commit')
-  }
   console.log('\n  Held back: the remaining production orders, the coil catalogue, item')
   console.log('  reference images, production data, and the image BYTES. The image')
   console.log('  metadata rows are in -- they carry legacySourceUrl and imagePending.')
-  console.log('  Re-running is safe: the same document ids are rewritten.\n')
+  console.log('  Re-running is safe: the same document ids are rewritten.')
+
+  if (opts.stage === 'master') {
+    // Printed complete, with this run's own arguments, because it exists to be
+    // copy-pasted. A command missing --project would abort on the first line.
+    console.log('\n  Next: open the app and check the master data is there, then run')
+    console.log(`    node qc-import.mjs ${opts.src} --stage=history --project=${opts.project} --commit`)
+  }
+
+  // The last line, so success is one unambiguous statement rather than
+  // something the operator has to assemble from the report above it.
+  console.log(`\n  Stage ${opts.stage} complete: ${num(total)} documents verified in ${opts.project}.\n`)
 
   // The Firestore gRPC channel keeps the event loop alive, so without this the
   // process prints "Verified" and then sits there. During a live migration that

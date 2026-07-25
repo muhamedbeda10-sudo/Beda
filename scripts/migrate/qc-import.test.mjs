@@ -589,6 +589,32 @@ describe('project target', () => {
   })
 })
 
+describe('the next-step hint', () => {
+  it('prints a complete command, because it exists to be copy-pasted', () => {
+    // A hint missing --project would abort on its first line, and the operator
+    // would reasonably conclude the importer was broken.
+    // Both hints: the one a projection-only run prints, and the one the master
+    // stage prints when it finishes.
+    const hints = source.match(/node qc-import\.mjs \$\{opts\.src\}[^`]*/g) ?? []
+    expect(hints.length, 'expected both copy-pasteable hints').toBe(2)
+    for (const hint of hints) {
+      expect(hint, `hint omits --project: ${hint}`).toContain('--project=${opts.project}')
+      expect(hint).toContain('--commit')
+      expect(hint).toMatch(/--stage=/)
+    }
+  })
+
+  it('no longer prints the ambiguous GOOGLE_CLOUD_PROJECT line', () => {
+    // It sat two lines under "Confirmed target project" and could show a
+    // different-looking string for the same project.
+    expect(source).not.toMatch(/project: \$\{process\.env\.GOOGLE_CLOUD_PROJECT/)
+  })
+
+  it('ends with one unambiguous success line naming stage, count and project', () => {
+    expect(source).toMatch(/Stage \$\{opts\.stage\} complete: \$\{num\(total\)\} documents verified in \$\{opts\.project\}/)
+  })
+})
+
 describe('process lifecycle', () => {
   it('closes the Firebase app and exits explicitly on success', () => {
     // Without this the gRPC channel keeps the event loop alive: the operator

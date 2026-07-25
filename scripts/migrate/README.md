@@ -12,6 +12,10 @@ point where it actually writes.
 Both read the same transforms, from `qc-dryrun.mjs`. There is one mapping, so
 what the dry run reports is what the import writes.
 
+**Running this for real? Go straight to [§9, the operator runbook](#9-operator-runbook)** —
+four commands in order, with the real values. The sections before it explain why
+each one behaves the way it does.
+
 > ### Deploy `firestore.rules` BEFORE running stage `master`
 >
 > The Admin SDK bypasses security rules, so the import succeeds whether or not
@@ -452,3 +456,129 @@ Samples with no session go to `orphanSamples` the same way.
 Nothing that carries a recorded measurement is dropped. Losing evidence quietly
 is the failure this system exists to prevent, so a row that cannot be placed is
 held for a person to place rather than discarded.
+
+---
+
+## 9. Operator runbook
+
+Four commands, in order. The **only** value to change is the path to the export
+folder — everything else is literal. Run them from `scripts/migrate/`.
+
+Set the export folder once, so the rest is copy-paste:
+
+```
+export QC_DATA=~/qc-migration/data          # <-- the one value to check
+export GOOGLE_APPLICATION_CREDENTIALS=~/secure/linkmisr-serviceAccount.json
+```
+
+The key file is the one you downloaded from Firebase Console → Project settings
+→ Service accounts. It never goes in the repository, in a command line, or in a
+chat window.
+
+---
+
+### 1 — Deploy the security rules. Before anything else.
+
+```
+cd ~/Beda && firebase deploy --only firestore:rules
+```
+
+Ends with:
+
+```
+✔  cloud.firestore: rules file firestore.rules compiled successfully
+✔  firestore: released rules firestore.rules to cloud.firestore
+✔  Deploy complete!
+```
+
+The import bypasses rules, so skipping this does not fail the import — it makes
+the app show empty screens afterwards, with nothing pointing at why.
+
+### 2 — Dry run. Writes nothing, connects to nothing.
+
+```
+node qc-dryrun.mjs $QC_DATA
+```
+
+Read the report. Check the per-collection counts, the quarantine totals, and
+the **Resolved link columns** block — every line there should name a column, and
+none should say `(none found)`.
+
+### 3 — Stage 1: the 444 reference documents.
+
+```
+node qc-import.mjs $QC_DATA --stage=master --project=linkmisr-9afbd --commit
+```
+
+Before it writes, it stops and shows you the target and the total:
+
+```
+  target: linkmisr-9afbd
+  mode:   COMMIT
+  ...
+  TOTAL                          444
+  Within budget: 444 writes, limit 18,000.
+```
+
+**If `target:` is not `linkmisr-9afbd`, or the run says `WRONG PROJECT`, stop.**
+Nothing has been written at that point. Check `GOOGLE_APPLICATION_CREDENTIALS`.
+
+A healthy run ends like this — the last line is the one to look for:
+
+```
+  Verified: every collection holds exactly what this run wrote.
+
+  Held back: the remaining production orders, the coil catalogue, item
+  reference images, production data, and the image BYTES. The image
+  metadata rows are in -- they carry legacySourceUrl and imagePending.
+  Re-running is safe: the same document ids are rewritten.
+
+  Next: open the app and check the master data is there, then run
+    node qc-import.mjs <your path> --stage=history --project=linkmisr-9afbd --commit
+
+  Stage master complete: 444 documents verified in linkmisr-9afbd.
+```
+
+**`Stage master complete: 444 documents verified in linkmisr-9afbd.`** — that
+exact line, then the shell prompt comes back. The command exits on its own; it
+does not hang. Exit code `0`.
+
+Every number in the `difference` column must be `0`. If any line is negative,
+or the run ends in `-- NOT VERIFIED --`, do not continue to stage 2 — re-run
+this command, which is safe, and read what it says the second time.
+
+### 4 — Stop. Open the app and look.
+
+https://linkmisr-9afbd.web.app
+
+Sign in and check **Admin → Machines**: 32 rows, each reading like
+`58-A. Welding Line-LM4`. Check **Admin → Dimension order**: 328 rows.
+
+If those screens are empty but stage 1 said `Verified`, the data is in the
+database and the rules are not deployed. Go back to step 1.
+
+Only when the app shows the master data:
+
+```
+node qc-import.mjs $QC_DATA --stage=history --project=linkmisr-9afbd --commit
+```
+
+Same shape, ending in `Stage history complete: 5,591 documents verified in
+linkmisr-9afbd.` Then check **History** — 147 sessions, and opening one shows
+its samples.
+
+---
+
+### If it is interrupted
+
+Run the same command again. Document ids are the source GUIDs, so a second run
+rewrites the same documents rather than duplicating them. Add `--resume` to skip
+the files already recorded complete. Either way the verification at the end is
+what tells you the data is there.
+
+### What is NOT in these two runs
+
+The remaining 28,746 production orders, the 30,296-row coil catalogue, item
+reference images, production data, and every image file. Those are
+`--stage=deferred`, a later day, and the images need a Blaze upgrade for Cloud
+Storage. See §7.
