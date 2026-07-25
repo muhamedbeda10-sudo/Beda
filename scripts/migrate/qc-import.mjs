@@ -4,7 +4,7 @@
 //
 //   npm i firebase-admin
 //   export GOOGLE_APPLICATION_CREDENTIALS=/secure/path/serviceAccount.json
-//   node qc-import.mjs /path/to/qc-migration/data --stage=master --commit
+//   node qc-import.mjs /path/to/data --stage=master --project=linkmisr-9afbd --commit
 //
 // Reads the same transforms as qc-dryrun.mjs, so what the dry run reported is
 // exactly what gets written. There is no second mapping to drift.
@@ -27,7 +27,12 @@
 //      which is what keeps a staged run inside the Spark daily write quota.
 //   5. Files stream. The 46 MB export is never held in memory whole.
 //   6. The service-account path comes from the environment. The key is never
-//      read from source, never printed, never logged.
+//      read from source, never printed, never logged. Only its project_id is
+//      read out of it, to check the target.
+//   7. The target project is asserted, twice, before the first write: once from
+//      the credential file and once from what the SDK resolved. Writing to the
+//      wrong project is the one failure the verification pass cannot catch,
+//      because it would read its counts back from that same wrong project.
 // ============================================================================
 
 import path from 'node:path'
@@ -222,8 +227,14 @@ const DEFAULT_MAX_WRITES = 18000
 const HELP = `
 Dataverse -> Firestore import
 
-  node qc-import.mjs <folder-with-the-json-files> --stage=<name> --commit [options]
+  node qc-import.mjs <folder> --stage=<name> --project=<id> --commit [options]
 
+  --project=<id>     REQUIRED. The Firebase project this run may write to. The
+                     run aborts before the first write if the credential
+                     resolves to anything else. Without it the target is
+                     whatever GOOGLE_APPLICATION_CREDENTIALS points at, and a
+                     wrong-project run would still report success -- the one
+                     failure the verification pass cannot catch.
   --stage=<name>     REQUIRED. There is no default.
                      master    the 444 reference documents (start here)
                      history   inspection evidence, plus only the production
@@ -269,6 +280,12 @@ ${WRITABLE_COLLECTIONS.map((c) => `  ${c}`).join('\n')}
  * so nothing was ever written. Hence the explicit presence check.
  */
 export function flagValue(argv, flag) {
+  // `--flag=value` first, so the form used in the help text works.
+  const inline = argv.find((a) => a.startsWith(`${flag}=`))
+  if (inline) {
+    const v = inline.slice(flag.length + 1)
+    return v === '' ? null : v
+  }
   const i = argv.indexOf(flag)
   if (i === -1 || i + 1 >= argv.length) return null
   const v = argv[i + 1]
@@ -276,11 +293,11 @@ export function flagValue(argv, flag) {
 }
 
 export function parseArgs(argv) {
-  const stageArg = argv.find((a) => a.startsWith('--stage='))
+  const stage = flagValue(argv, '--stage')
   // A value belonging to a value-taking flag is not the source folder, however
   // the arguments happen to be ordered.
   const consumed = new Set()
-  for (const flag of ['--only', '--skip', '--max-writes']) {
+  for (const flag of ['--only', '--skip', '--max-writes', '--project', '--stage']) {
     const i = argv.indexOf(flag)
     if (i !== -1 && i + 1 < argv.length) consumed.add(i + 1)
   }
@@ -291,11 +308,73 @@ export function parseArgs(argv) {
     verbose: argv.includes('--verbose'),
     resume: argv.includes('--resume'),
     allowExisting: argv.includes('--allow-existing'),
-    stage: stageArg ? stageArg.slice('--stage='.length) : null,
+    stage,
     maxWrites: maxRaw === null ? DEFAULT_MAX_WRITES : Number(maxRaw),
+    project: flagValue(argv, '--project'),
     only: flagValue(argv, '--only'),
     skip: new Set((flagValue(argv, '--skip') ?? '').split(',').filter(Boolean)),
   }
+}
+
+// ---------------------------------------------------------------------------
+// Which project is being written to
+// ---------------------------------------------------------------------------
+
+/**
+ * The project id the credential file names.
+ *
+ * This is the one failure mode the whole design cannot otherwise catch.
+ * applicationDefault() writes to whatever GOOGLE_APPLICATION_CREDENTIALS points
+ * at. Point it at the wrong service-account file and the run writes 6,275
+ * documents into the wrong project, then reads the counts back from that same
+ * wrong project and reports "Verified: every collection holds exactly what this
+ * run wrote" -- because from its own point of view it did. Verification cannot
+ * see this. So the target is asserted separately, before the first write.
+ *
+ * Only `project_id` is read out of the file. Nothing else from it is returned,
+ * printed or logged.
+ */
+export function projectIdFromCredentialFile(readFile = readFileSync) {
+  const p = process.env.GOOGLE_APPLICATION_CREDENTIALS
+  if (!p) return null
+  try {
+    const parsed = JSON.parse(readFile(p, 'utf8'))
+    return typeof parsed.project_id === 'string' ? parsed.project_id : null
+  } catch {
+    // Unreadable or not a service-account JSON (a gcloud ADC file, say). The
+    // caller falls back to what the SDK resolves, and refuses if neither works.
+    return null
+  }
+}
+
+/** What the initialised SDK believes it is talking to. */
+export function projectIdFromSdk(app, db) {
+  return (
+    app?.options?.projectId ||
+    app?.options?.credential?.projectId ||
+    db?._settings?.projectId ||
+    process.env.GOOGLE_CLOUD_PROJECT ||
+    process.env.GCLOUD_PROJECT ||
+    null
+  )
+}
+
+/**
+ * Compare what was asked for against what was resolved.
+ * Returns null when the run may proceed, or the reason it must not.
+ */
+export function projectMismatch(expected, resolved, { source = 'the credential' } = {}) {
+  if (!expected) return 'no --project was given'
+  if (!resolved) {
+    return (
+      'the target project could not be determined from ' +
+      `${source}, so it cannot be checked against --project=${expected}`
+    )
+  }
+  if (resolved !== expected) {
+    return `${source} resolves to "${resolved}", but --project says "${expected}"`
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -610,6 +689,16 @@ async function main() {
     )
     process.exit(1)
   }
+  if (!opts.project) {
+    console.error(
+      '\n  --project is required. It names the Firebase project this run may\n' +
+        '  write to, and the run aborts if the credential resolves to any other.\n\n' +
+        '    node qc-import.mjs <folder> --stage=master --project=linkmisr-9afbd --commit\n\n' +
+        '  Without it, the target is whatever GOOGLE_APPLICATION_CREDENTIALS happens\n' +
+        '  to point at, and a wrong-project run would still report success.\n',
+    )
+    process.exit(1)
+  }
   if (!Number.isFinite(opts.maxWrites) || opts.maxWrites <= 0) {
     console.error('\n  --max-writes must be a positive number.\n')
     process.exit(1)
@@ -627,6 +716,7 @@ async function main() {
   console.log(`\n  Dataverse -> Firestore`)
   console.log(`  source: ${dir}`)
   console.log(`  stage:  ${opts.stage} -> ${STAGES[opts.stage].join(', ')}`)
+  console.log(`  target: ${opts.project}`)
   console.log(`  mode:   ${opts.commit ? 'COMMIT' : 'projection only (no --commit)'}\n`)
 
   // ---- Resume --------------------------------------------------------------
@@ -757,6 +847,25 @@ async function main() {
     process.exit(1)
   }
 
+  // The credential file names its own project. Checking it here means a
+  // wrong-project run stops before firebase-admin is even loaded.
+  const fileProject = projectIdFromCredentialFile()
+  if (fileProject) {
+    const bad = projectMismatch(opts.project, fileProject, {
+      source: 'the service-account file',
+    })
+    if (bad) {
+      console.error(
+        `\n  WRONG PROJECT. ${bad}.\n\n` +
+          '  Nothing was written and no connection was opened. Check\n' +
+          '  GOOGLE_APPLICATION_CREDENTIALS, or --project if the target really\n' +
+          '  has changed.\n',
+      )
+      process.exit(1)
+    }
+    console.log(`  Service-account file targets ${fileProject}, which matches --project.`)
+  }
+
   let admin
   try {
     admin = (await import('firebase-admin')).default
@@ -766,8 +875,23 @@ async function main() {
   }
 
   // ---- Past this line, and only past this line, the process talks to Firestore.
-  admin.initializeApp({ credential: admin.credential.applicationDefault() })
+  const app = admin.initializeApp({ credential: admin.credential.applicationDefault() })
   const db = admin.firestore()
+
+  // Second check, on what the initialised SDK actually resolved. The file check
+  // above covers a service-account JSON; this covers every other way the
+  // credential chain can pick a project, and it runs before the first write.
+  const sdkProject = projectIdFromSdk(app, db)
+  const bad = projectMismatch(opts.project, sdkProject, { source: 'the initialised SDK' })
+  if (bad) {
+    console.error(
+      `\n  WRONG PROJECT. ${bad}.\n\n` +
+        '  Aborting before the first write. Nothing was written.\n',
+    )
+    await app.delete().catch(() => {})
+    process.exit(1)
+  }
+  console.log(`  Confirmed target project: ${sdkProject}`)
   // BulkWriter batches and retries internally, staying inside the 500-operation
   // limit without the caller chunking by hand.
   const writer = db.bulkWriter()
@@ -927,6 +1051,7 @@ async function main() {
     console.log('\n  Re-run the import. Document ids are stable, so it retries')
     console.log('  what is missing without duplicating anything already written.')
     console.log(`  ${PROGRESS_FILE} records how far this run got; --resume uses it.\n`)
+    await app.delete().catch(() => {})
     process.exit(1)
   }
 
@@ -943,6 +1068,12 @@ async function main() {
   console.log('  reference images, production data, and the image BYTES. The image')
   console.log('  metadata rows are in -- they carry legacySourceUrl and imagePending.')
   console.log('  Re-running is safe: the same document ids are rewritten.\n')
+
+  // The Firestore gRPC channel keeps the event loop alive, so without this the
+  // process prints "Verified" and then sits there. During a live migration that
+  // reads as a hang and invites a Ctrl-C at the worst possible moment.
+  await app.delete().catch(() => {})
+  process.exit(0)
 }
 
 // Only run when invoked directly, so the tests can import the stage tables.

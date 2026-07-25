@@ -20,6 +20,9 @@ import {
   keepDocument,
   parseArgs,
   flagValue,
+  projectIdFromCredentialFile,
+  projectIdFromSdk,
+  projectMismatch,
 } from './qc-import.mjs'
 import { COL, FILES } from './qc-dryrun.mjs'
 
@@ -219,11 +222,19 @@ describe('write guards', () => {
     expect(initIdx).toBeGreaterThan(importIdx)
   })
 
-  it('has no delete, no recursive delete and no query in the write path', () => {
+  it('has no document delete, no recursive delete and no query in the write path', () => {
     // The only database operation is set(merge) on a document id. Anything that
     // could remove or overwrite data this import does not own would show here.
-    expect(source).not.toMatch(/\.delete\(/)
+    //
+    // app.delete() is the Firebase app being closed so the process can exit --
+    // it removes nothing from the database -- so it is the one permitted
+    // occurrence, and this asserts it is the ONLY one rather than skipping the
+    // check.
+    const deletes = source.match(/[\w.]*\.delete\(/g) ?? []
+    expect(deletes.every((d) => d === 'app.delete('), `unexpected delete: ${deletes}`).toBe(true)
     expect(source).not.toMatch(/recursiveDelete/)
+    expect(source).not.toMatch(/writer\.delete\(/)
+    expect(source).not.toMatch(/batch\.delete\(/)
     expect(source).not.toMatch(/bulkWriter\(\)[\s\S]*?\.where\(/)
     expect(source).toMatch(/writer\.set\(/)
   })
@@ -498,5 +509,100 @@ describe('the dimension arithmetic', () => {
     expect(sourceRows).toBeLessThan(cap)
     expect(documents).toBeLessThan(cap)
     expect(sourceRows).toBeLessThan(20000) // the Spark daily limit
+  })
+})
+
+
+// ---------------------------------------------------------------------------
+// Which project is being written to.
+//
+// applicationDefault() targets whatever GOOGLE_APPLICATION_CREDENTIALS points
+// at. A wrong-project run writes everything into the wrong database and then
+// reads its counts back from that same wrong database, so it reports success.
+// Verification cannot catch this; it needs its own guard.
+// ---------------------------------------------------------------------------
+
+describe('project target', () => {
+  it('is required, and says why', () => {
+    const r = run(['/tmp', '--stage=master', '--commit'])
+    expect(r.code).not.toBe(0)
+    expect(r.out).toMatch(/--project is required/)
+    expect(parseArgs(['/d', '--stage=master', '--commit']).project).toBeNull()
+  })
+
+  it('accepts both --project=id and --project id', () => {
+    expect(parseArgs(['/d', '--project=linkmisr-9afbd']).project).toBe('linkmisr-9afbd')
+    expect(parseArgs(['/d', '--project', 'linkmisr-9afbd']).project).toBe('linkmisr-9afbd')
+  })
+
+  it('is printed in the header, before the projection', () => {
+    expect(source.indexOf('target: ${opts.project}')).toBeGreaterThan(-1)
+    expect(source.indexOf('  target: ')).toBeLessThan(source.indexOf('-- Projected writes'))
+  })
+
+  it('reads only project_id out of the credential file', () => {
+    const fake = () => JSON.stringify({ project_id: 'linkmisr-9afbd', private_key: 'SECRET' })
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = '/fake/path.json'
+    try {
+      expect(projectIdFromCredentialFile(fake)).toBe('linkmisr-9afbd')
+    } finally {
+      delete process.env.GOOGLE_APPLICATION_CREDENTIALS
+    }
+  })
+
+  it('returns null rather than throwing on an unreadable credential', () => {
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = '/fake/path.json'
+    try {
+      expect(projectIdFromCredentialFile(() => 'not json')).toBeNull()
+      expect(projectIdFromCredentialFile(() => { throw new Error('nope') })).toBeNull()
+    } finally {
+      delete process.env.GOOGLE_APPLICATION_CREDENTIALS
+    }
+  })
+
+  it('resolves the SDK project from whichever field carries it', () => {
+    expect(projectIdFromSdk({ options: { projectId: 'a' } }, null)).toBe('a')
+    expect(projectIdFromSdk({ options: { credential: { projectId: 'b' } } }, null)).toBe('b')
+    expect(projectIdFromSdk({ options: {} }, { _settings: { projectId: 'c' } })).toBe('c')
+  })
+
+  it('refuses a mismatch', () => {
+    expect(projectMismatch('right', 'wrong')).toMatch(/resolves to "wrong"/)
+    expect(projectMismatch('right', 'right')).toBeNull()
+  })
+
+  it('refuses when the target cannot be determined at all', () => {
+    // Unverifiable is not the same as fine. If the project cannot be read, the
+    // run must not write on the assumption that it is the right one.
+    expect(projectMismatch('right', null)).toMatch(/could not be determined/)
+    expect(projectMismatch(null, 'anything')).toMatch(/no --project/)
+  })
+
+  it('checks the credential file before firebase-admin is imported', () => {
+    expect(source.indexOf('projectIdFromCredentialFile()')).toBeLessThan(
+      source.indexOf("await import('firebase-admin')"),
+    )
+  })
+
+  it('checks the SDK-resolved project before the writer is created', () => {
+    expect(source.indexOf('projectIdFromSdk(app, db)')).toBeLessThan(source.indexOf('db.bulkWriter()'))
+  })
+})
+
+describe('process lifecycle', () => {
+  it('closes the Firebase app and exits explicitly on success', () => {
+    // Without this the gRPC channel keeps the event loop alive: the operator
+    // sees "Verified" and then a terminal that sits there, which during a live
+    // migration reads as a hang and invites a Ctrl-C at the worst moment.
+    const verified = source.indexOf('Verified: every collection holds')
+    const del = source.indexOf('await app.delete()', verified)
+    const exit = source.indexOf('process.exit(0)', del)
+    expect(del).toBeGreaterThan(verified)
+    expect(exit).toBeGreaterThan(del)
+  })
+
+  it('closes the app on the not-verified path too', () => {
+    const notVerified = source.indexOf('-- NOT VERIFIED ---')
+    expect(source.indexOf('await app.delete()', notVerified)).toBeGreaterThan(notVerified)
   })
 })

@@ -119,8 +119,19 @@ export function AuditPage() {
     if (!profile || selected.size === 0) return
     try {
       const ids = Array.from(selected)
+      const at = new Date().toISOString()
       const batch = writeBatch(getDb())
-      for (const id of ids) batch.delete(doc(getDb(), COL.audit, id))
+      // A soft delete, not a removal. An admin quietly erasing audit entries is
+      // the thing §11 exists to prevent, and the rules now deny `delete` on this
+      // collection outright — only deletedAt may be set. The entries stay in the
+      // database and stay recoverable; they simply leave this browser.
+      for (const id of ids) {
+        batch.update(doc(getDb(), COL.audit, id), {
+          deletedAt: at,
+          deletedByUid: profile.uid,
+          deletedByName: profile.name,
+        })
+      }
       const record = auditEvent(
         'purge',
         {
@@ -131,11 +142,14 @@ export function AuditPage() {
         },
         new Date().toISOString(),
         uid('aud_purge'),
-        { newValue: `Purged ${ids.length} audit entries` },
+        { newValue: `Marked ${ids.length} audit entries deleted` },
       )
       batch.set(doc(getDb(), COL.audit, record.id), { ...record })
       await batch.commit()
-      toast(`${ids.length} entries purged. The purge itself was recorded.`, 'success')
+      toast(
+        `${ids.length} entries marked deleted. They remain in the database, and this was itself recorded.`,
+        'success',
+      )
       setSelected(new Set())
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Could not purge.', 'error')
@@ -299,7 +313,7 @@ export function AuditPage() {
       <Modal
         open={purging}
         onClose={() => setPurging(false)}
-        title="Purge audit entries?"
+        title="Mark audit entries deleted?"
         icon={<Flame className="h-5 w-5" />}
         size="sm"
         footer={
@@ -314,8 +328,10 @@ export function AuditPage() {
         }
       >
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          This permanently removes {selected.size} audit {selected.size === 1 ? 'entry' : 'entries'}. The purge
-          itself is recorded, naming you and the number removed. Inspection data is not affected.
+          This marks {selected.size} audit {selected.size === 1 ? 'entry' : 'entries'} deleted and removes{' '}
+          {selected.size === 1 ? 'it' : 'them'} from this browser. Nothing is destroyed: the{' '}
+          {selected.size === 1 ? 'entry stays' : 'entries stay'} in the database and can be recovered. This
+          action is itself recorded, naming you and the number affected. Inspection data is not affected.
         </p>
       </Modal>
     </div>

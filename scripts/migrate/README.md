@@ -12,6 +12,25 @@ point where it actually writes.
 Both read the same transforms, from `qc-dryrun.mjs`. There is one mapping, so
 what the dry run reports is what the import writes.
 
+> ### Deploy `firestore.rules` BEFORE running stage `master`
+>
+> The Admin SDK bypasses security rules, so the import succeeds whether or not
+> the current rules are deployed. If they are not, every write still lands and
+> then **the app shows empty screens**, because the client is denied reads on
+> collections the rules do not name -- `paintSamples`, `defectImages`,
+> `sampleCoilImages`, `pdiImages`, `sessionInitializations`,
+> `workCenterDimensions`, `productionData`, `orphanMeasurements`,
+> `orphanSamples`.
+>
+> Nothing in the import enforces this, and no error will point at it. Deploy
+> first, and check again after:
+>
+> ```
+> firebase deploy --only firestore:rules
+> ```
+>
+> A push to `main` deploys them too, via `.github/workflows/firebase-hosting.yml`.
+
 ---
 
 ## 1. Dry run first
@@ -44,8 +63,8 @@ npm i firebase-admin
 run that writes everything.
 
 ```
-node qc-import.mjs /path/to/qc-migration/data --stage=master  --commit
-node qc-import.mjs /path/to/qc-migration/data --stage=history --commit
+node qc-import.mjs /path/to/data --stage=master  --project=linkmisr-9afbd --commit
+node qc-import.mjs /path/to/data --stage=history --project=linkmisr-9afbd --commit
 ```
 
 | stage | collections | roughly |
@@ -81,6 +100,27 @@ is a finding to act on, not a line to scroll past.
 
 `deferred` takes exactly the orders `history` did not, so nothing is lost --
 it is queued for a day with the write budget for it.
+
+> **A later `--stage=deferred` run will report a surplus on `orders`, and fail.**
+> That is correct, not corruption.
+>
+> Stage 2 already wrote the 125 referenced orders. Verification compares the
+> live count against what *that* run wrote, so a deferred run writing the
+> remaining 28,746 reads back 28,871 and reports `+125`. The guard is doing
+> exactly its job: it cannot tell "orders my sibling stage wrote" from "orders
+> somebody else put here", so it refuses and asks.
+>
+> Pass `--allow-existing` on the deferred run, having read the surplus and
+> recognised it as the 125:
+>
+> ```
+> node qc-import.mjs <folder> --stage=deferred --project=linkmisr-9afbd --commit \
+>   --max-writes 60000 --allow-existing
+> ```
+>
+> Do not add `--allow-existing` to the `master` or `history` runs. On a first
+> import into an empty project those should show `0` in every difference column,
+> and a surplus there would be a real finding.
 
 ### Images: the rows migrate now, the bytes do not
 
@@ -141,6 +181,52 @@ with a broken pointer is still evidence that a session was set up.
 The same rule applies to the 1 sample of 374 whose `_cr863_inspectionsession_value`
 is null: it goes to `orphanSamples` flagged, never silently discarded.
 
+### The target project is asserted, twice
+
+`--project` is **required**:
+
+```
+node qc-import.mjs /path/to/data --stage=master --project=linkmisr-9afbd --commit
+```
+
+`applicationDefault()` writes to whatever `GOOGLE_APPLICATION_CREDENTIALS`
+points at. With two service-account files on a machine, or one wrong `export`,
+a run writes every document into the wrong project -- and then reads its counts
+back from that same wrong project and prints *"Verified: every collection holds
+exactly what this run wrote"*, because from its own point of view it did.
+
+**This is the one failure in the whole design that verification cannot catch**,
+so it has its own guard, checked twice:
+
+1. the `project_id` in the service-account file, **before `firebase-admin` is
+   even imported**, so a wrong-project run never opens a connection;
+2. the project the initialised SDK actually resolved, before the writer is
+   created and before the first write.
+
+Either mismatch aborts. So does an unverifiable target -- if the project cannot
+be determined, the run stops rather than assuming it is the right one. The
+target is printed in the header, above the projection, while there is still time
+to stop:
+
+```
+  Dataverse -> Firestore
+  source: /home/.../qc-migration/data
+  stage:  master -> machines, gradeMappings, ...
+  target: linkmisr-9afbd
+  mode:   COMMIT
+```
+
+Only `project_id` is read out of the credential file. Nothing else from it is
+returned, printed or logged.
+
+### The process exits when it is done
+
+`app.delete()` is called and the process exits explicitly, on both the success
+and the not-verified path. Without it the Firestore gRPC channel keeps the event
+loop alive: the operator sees "Verified" and then a terminal that just sits
+there, which during a live migration reads as a hang and invites a Ctrl-C at the
+worst possible moment.
+
 ### Dimension rows with no reading are kept
 
 4,770 dimension results, of which 349 have no parent sample. Those 349 split
@@ -191,6 +277,7 @@ land separately, so they cannot drift.
 Other flags:
 
 ```
+--project <id>          REQUIRED. The project this run may write to.
 --max-writes <n>        refuse to start above this. Default 18000.
 --only <collection>     one collection, within the stage
 --skip <col,col>        exclude collections
@@ -205,6 +292,9 @@ Other flags:
 reads local files, prints what it would write, and stops with exit 0. No
 credential is read, `firebase-admin` is never imported, no app is initialised,
 and no connection to Firestore is opened. A dry run touches nothing.
+
+**`--project` names the only project it may write to**, and a mismatch aborts
+before the first write. See below.
 
 **Every collection it is capable of writing to**, and no others -- the script
 prints this same list in its own `--help` output:
@@ -321,7 +411,7 @@ A file is recorded complete only after its writes have been flushed and
 acknowledged, so `--resume` never skips a file whose documents did not land.
 
 ```
-node qc-import.mjs /path/to/data --stage=history --commit --resume
+node qc-import.mjs /path/to/data --stage=history --project=linkmisr-9afbd --commit --resume
 ```
 
 `--resume` skips the files listed in `completedFiles`. A progress file written
