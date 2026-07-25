@@ -43,12 +43,15 @@ jobs:
           SA_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LINKMISR }}
 
       - name: Deploy Firestore rules
+        id: firestore_rules
+        continue-on-error: true
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: npx --yes firebase-tools@13 deploy --only firestore:rules --project linkmisr-9afbd --non-interactive
 
       # Storage requires the Blaze plan; skip quietly if the bucket isn't set up.
       - name: Deploy Storage rules (optional)
+        id: storage_rules
         continue-on-error: true
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
@@ -57,3 +60,9 @@ jobs:
       - name: Remove credentials
         if: always()
         run: rm -f "$RUNNER_TEMP/firebase-sa.json"
+
+      # Never fail the release over rules, but never fail silently either.
+      - name: Report skipped rules deploy
+        if: steps.firestore_rules.outcome == 'failure' || steps.storage_rules.outcome == 'failure'
+        run: |
+          echo "::warning title=Security rules were NOT deployed::The app deployed fine, but firebase-tools could not publish the rules (usually HTTP 403). Grant the service account the 'Firebase Rules Admin' role in Google Cloud IAM, then re-run this workflow. Until then, paste rules into the Firebase console manually."
