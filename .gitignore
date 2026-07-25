@@ -10,3 +10,9 @@ npm-debug.log*
 .env
 .env.*
 !.env.example
+
+# Firebase Admin SDK service account keys — full project access, bypasses every
+# security rule. Never commit; a deleted file stays in git history.
+*serviceAccount*.json
+*adminsdk*.json
+qc-migration/
