@@ -1,12 +1,15 @@
 rules_version = '2';
 // ---------------------------------------------------------------------------
-// QC System — Firestore security rules
-// Deploy with:  firebase deploy --only firestore:rules
+// QC Inspection System — Firestore security rules
 //
-// Model: any signed-in user may read/write the shared QC data. User profile
-// docs (users/{uid}) are readable by all signed-in users but writable only by
-// the owner — EXCEPT the `role` field, which only a manager may change.
-// Tighten further per your organisation's policy as needed.
+// Two guarantees from the specification are enforced here, not just in the UI:
+//
+//   §10  Nothing is hard-deleted. Evidence collections deny `delete` outright;
+//        removing a record means setting deletedAt, which is an update.
+//   §11  The audit trail is append-only. Entries cannot be edited, and only an
+//        admin may purge them.
+//
+// Roles live on users/{uid}.role — inspector | supervisor | admin.
 // ---------------------------------------------------------------------------
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -15,32 +18,78 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isManager() {
-      return signedIn()
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager';
+    function profile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    // User profiles
+    function hasProfile() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function role() {
+      return hasProfile() ? profile().role : 'none';
+    }
+
+    function isAdmin() {
+      return role() == 'admin';
+    }
+
+    function isSupervisor() {
+      return role() == 'supervisor' || isAdmin();
+    }
+
+    // ---- User profiles ----------------------------------------------------
+    // Everyone signed in can see who recorded what. A user may create and edit
+    // their own profile but cannot promote themselves; only an admin sets roles.
     match /users/{uid} {
       allow read: if signedIn();
-      // Owner can create/update their own profile, but cannot self-promote role;
-      // managers can update anyone's role.
       allow create: if signedIn() && request.auth.uid == uid;
-      allow update: if isManager()
+      allow update: if isAdmin()
         || (request.auth.uid == uid
             && request.resource.data.role == resource.data.role);
-      allow delete: if isManager();
+      allow delete: if isAdmin();
     }
 
-    // Shared QC collections — signed-in access.
-    match /{collection}/{docId} {
-      allow read, write: if signedIn()
-        && collection in [
-          'machines', 'orders', 'sessions', 'samples', 'dimensions',
-          'defects', 'images', 'defectTypes', 'dimensionSpecs',
-          'gradeMappings', 'ptConsumables', 'audit'
-        ];
+    // ---- Inspection evidence ----------------------------------------------
+    // Recorded by inspectors, corrected by supervisors, never destroyed.
+    match /{col}/{docId} {
+      allow read: if signedIn()
+        && col in ['sessions', 'samples', 'dimensions', 'defects', 'sampleCoils',
+                   'paintSamples', 'ptRecords', 'images', 'imageChunks',
+                   'pdiDocuments', 'submissions'];
+      allow create: if signedIn()
+        && col in ['sessions', 'samples', 'dimensions', 'defects', 'sampleCoils',
+                   'paintSamples', 'ptRecords', 'images', 'imageChunks',
+                   'pdiDocuments', 'submissions'];
+      allow update: if signedIn()
+        && col in ['sessions', 'samples', 'dimensions', 'defects', 'sampleCoils',
+                   'paintSamples', 'ptRecords', 'images', 'pdiDocuments'];
+      // §10 — no hard deletes anywhere in the system.
+      allow delete: if false;
+    }
+
+    // ---- Master data ------------------------------------------------------
+    // Read by every inspector so the wizard can pre-fill; changed by admins.
+    match /{col}/{docId} {
+      allow read: if signedIn()
+        && col in ['orders', 'machines', 'coils', 'itemDimensionOrder',
+                   'itemDimensionMaster', 'itemReferenceImages',
+                   'workCenterDefects', 'gradeMappings', 'ptConsumables'];
+      allow write: if isAdmin()
+        && col in ['orders', 'machines', 'coils', 'itemDimensionOrder',
+                   'itemDimensionMaster', 'itemReferenceImages',
+                   'workCenterDefects', 'gradeMappings', 'ptConsumables'];
+    }
+
+    // ---- Audit trail ------------------------------------------------------
+    // Append-only: anyone signed in adds entries as a side effect of their work,
+    // nobody may rewrite history, and only an admin may purge (itself audited).
+    match /auditLogs/{entryId} {
+      allow read: if isSupervisor();
+      allow create: if signedIn();
+      allow update: if false;
+      allow delete: if isAdmin();
     }
   }
 }

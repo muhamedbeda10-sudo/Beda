@@ -76,8 +76,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const p = await loadOrCreateProfile(user)
           setProfile(p)
-          if (firebaseSeedEnabled) {
-            // Only fills an empty database; never overwrites real data.
+          // Master data is admin-writable only, so only an admin can seed it.
+          // Only fills an empty database; never overwrites real data.
+          if (firebaseSeedEnabled && p.role === 'admin') {
             await seedMasterDataIfEmpty().catch((e) => console.warn('[seed]', e))
           }
         } catch (e) {
