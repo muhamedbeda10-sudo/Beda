@@ -62,7 +62,13 @@ jobs:
         run: rm -f "$RUNNER_TEMP/firebase-sa.json"
 
       # Never fail the release over rules, but never fail silently either.
-      - name: Report skipped rules deploy
-        if: steps.firestore_rules.outcome == 'failure' || steps.storage_rules.outcome == 'failure'
+      # Each rule set reports its own cause — they fail for different reasons.
+      - name: Report skipped Firestore rules
+        if: steps.firestore_rules.outcome == 'failure'
         run: |
-          echo "::warning title=Security rules were NOT deployed::The app deployed fine, but firebase-tools could not publish the rules (usually HTTP 403). Grant the service account the 'Firebase Rules Admin' role in Google Cloud IAM, then re-run this workflow. Until then, paste rules into the Firebase console manually."
+          echo "::warning title=Firestore rules were NOT published::The app deployed fine, but firestore.rules could not be published. If the log shows HTTP 403 from firebaserules.googleapis.com, grant the deploy service account the 'Firebase Rules Admin' role in Google Cloud IAM and re-run. Until then, paste firestore.rules into the Firebase console manually."
+
+      - name: Report skipped Storage rules
+        if: steps.storage_rules.outcome == 'failure'
+        run: |
+          echo "::notice title=Storage rules skipped::storage.rules was not published, which is expected while Cloud Storage is not provisioned (it requires the Blaze plan). The app stores images in Firestore in this mode, so nothing is broken. Enable Storage and set VITE_FIREBASE_USE_STORAGE=true to switch.""
