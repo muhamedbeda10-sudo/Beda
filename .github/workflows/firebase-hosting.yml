@@ -33,3 +33,27 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LINKMISR }}
           channelId: live
           projectId: linkmisr-9afbd
+
+      # Publish security rules so schema changes and their rules ship together.
+      # Runs after hosting so a rules failure never blocks the app deploy.
+      - name: Write service account credentials
+        run: |
+          printf '%s' "$SA_JSON" > "$RUNNER_TEMP/firebase-sa.json"
+        env:
+          SA_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LINKMISR }}
+
+      - name: Deploy Firestore rules
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: npx --yes firebase-tools@13 deploy --only firestore:rules --project linkmisr-9afbd --non-interactive
+
+      # Storage requires the Blaze plan; skip quietly if the bucket isn't set up.
+      - name: Deploy Storage rules (optional)
+        continue-on-error: true
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: npx --yes firebase-tools@13 deploy --only storage --project linkmisr-9afbd --non-interactive
+
+      - name: Remove credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/firebase-sa.json"
