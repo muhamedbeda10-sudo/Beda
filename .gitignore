@@ -16,3 +16,6 @@ npm-debug.log*
 *serviceAccount*.json
 *adminsdk*.json
 qc-migration/
+
+# Written by qc-import.mjs into the export folder as it runs.
+qc-import-progress.json
