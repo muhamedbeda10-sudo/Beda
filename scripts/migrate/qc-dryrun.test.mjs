@@ -467,3 +467,85 @@ describe('streaming reader', () => {
     expect(got.every((r) => r.s.includes('ترحيل'))).toBe(true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Quarantine. The old save wrote dimension rows before linking them to their
+// sample, so a mid-save failure left rows stranded. Rows carrying a real
+// reading are evidence and must survive the migration for a person to place.
+// ---------------------------------------------------------------------------
+import { transformDimensionResult as td, transformSample as ts, COL as COLS } from './qc-dryrun.mjs'
+
+describe('rows with no parent', () => {
+  it('quarantines a stranded measurement instead of dropping it', () => {
+    const c = ctx()
+    const out = td(
+      {
+        cr863_dimensionresult2id: 'd-value',
+        _cr863_inspectionsample_value: null,
+        cr863_dimensionname: 'Paint Thickness',
+        cr863_actual: 89.4,
+      },
+      c,
+    )
+    expect(out.collection).toBe(COLS.orphanMeasurements)
+    expect(out.doc.actual).toBe(89.4)
+    expect(out.doc.quarantined).toBe(true)
+    expect(out.doc.needsReview).toBe(true)
+    expect(out.doc.legacyId).toBe('d-value')
+    expect(c.counts.parentlessDimensionWithValue).toBe(1)
+  })
+
+  it('keeps the judgement that was recorded against a stranded reading', () => {
+    const out = td(
+      {
+        cr863_dimensionresult2id: 'd-fail',
+        _cr863_inspectionsample_value: null,
+        cr863_dimensionname: 'K',
+        cr863_nominal: 100,
+        cr863_actual: 100.6,
+        cr863_status: 898710001,
+      },
+      ctx(),
+    )
+    expect(out.doc.status).toBe('Fail')
+    expect(out.doc.nominal).toBe(100)
+  })
+
+  it('drops an unfilled template row but counts it', () => {
+    const c = ctx()
+    const out = td(
+      { cr863_dimensionresult2id: 'd-empty', _cr863_inspectionsample_value: null, cr863_actual: null },
+      c,
+    )
+    expect(out.reject).toBeTruthy()
+    expect(out.reject.reason).toMatch(/unfilled template row/)
+    expect(c.counts.parentlessDimensionEmpty).toBe(1)
+    expect(c.counts.parentlessDimensionWithValue).toBeUndefined()
+  })
+
+  it('quarantines a sample with no session rather than deleting it', () => {
+    const c = ctx()
+    const out = ts(
+      {
+        cr863_inspectionsample1id: 'smp-noses',
+        _cr863_inspectionsession_value: null,
+        cr863_samplename: 'SMP-Drive In Rear Bracing Channel',
+        cr863_shift: 898710000,
+        cr863_samplequantity: 2,
+      },
+      c,
+    )
+    expect(out.collection).toBe(COLS.orphanSamples)
+    expect(out.doc.quarantined).toBe(true)
+    expect(out.doc.legacy.sampleName).toContain('Drive In Rear Bracing')
+    expect(c.counts.parentlessSample).toBe(1)
+  })
+})
+
+describe('route placeholder', () => {
+  it('leaves the "0" placeholder unset and reports it rather than guessing', () => {
+    const r = decodeRoute('0')
+    expect(r.value).toBeUndefined()
+    expect(r.failure.reason).toMatch(/placeholder/)
+  })
+})

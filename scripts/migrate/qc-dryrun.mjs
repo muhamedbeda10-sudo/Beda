@@ -150,8 +150,13 @@ export function decodeChoice(table, field, raw, fallback = null) {
 
 export function decodeRoute(raw) {
   if (raw === null || raw === undefined || String(raw).trim() === '') return { value: null }
-  const hit = ROUTES[String(raw).trim().toLowerCase()]
-  return hit ? { value: hit } : { failure: { field: 'cr863_explocal', value: raw, reason: 'unrecognised route' } }
+  const v = String(raw).trim()
+  const hit = ROUTES[v.toLowerCase()]
+  if (hit) return { value: hit }
+  // "0" appears once and means nothing. It stays null and is reported; guessing
+  // Local or Export would put a fabricated market on a real order.
+  const reason = v === '0' ? 'placeholder value, left unset' : 'unrecognised route'
+  return { failure: { field: 'cr863_explocal', value: raw, reason } }
 }
 
 export function decodeOrderStatus(raw) {
@@ -210,6 +215,11 @@ export const COL = {
   gradeMappings: 'gradeMappings',
   audit: 'auditLogs',
   productionData: 'productionData',
+  // Quarantine. Rows that carry real evidence but have no parent to attach to.
+  // They are held for human review, never silently dropped — losing a recorded
+  // measurement is the exact failure this system exists to prevent.
+  orphanMeasurements: 'orphanMeasurements',
+  orphanSamples: 'orphanSamples',
 }
 
 const reject = (reason, extra = {}) => ({ reject: { reason, ...extra } })
@@ -486,12 +496,37 @@ export function transformSample(r, ctx) {
   const id = r.cr863_inspectionsample1id
   if (!id) return reject('missing primary key')
   const sessionId = strOrNull(r._cr863_inspectionsession_value)
-  if (!sessionId) return reject('sample has no session', { id })
 
   // The stored shift is the historical record and is used as-is; re-deriving it
   // from the timestamp would silently rewrite what the inspector recorded.
   const shift = decodeChoice(SHIFT, 'cr863_shift', r.cr863_shift, null)
   if (shift.failure) ctx.decodeFailure(shift.failure, id)
+
+  if (!sessionId) {
+    // Same stranding pattern as the dimension rows — hold it, do not delete it.
+    ctx.count('parentlessSample')
+    return {
+      collection: COL.orphanSamples,
+      id,
+      doc: pruned({
+        id,
+        legacyId: id,
+        quarantined: true,
+        quarantineReason: 'sample had no session reference in the source',
+        needsReview: true,
+        shift: shift.value ?? undefined,
+        createdAt: isoOrNull(r.cr863_sampledatetime) ?? isoOrNull(r.createdon) ?? '',
+        inspectorUid: legacyUid(r._createdby_value),
+        inspectorName: strOrNull(r.cr863_inspectorname) ?? '',
+        sampleQty: numOrNull(r.cr863_samplequantity) ?? 0,
+        legacy: pruned({
+          sampleName: strOrNull(r.cr863_samplename),
+          createdOn: isoOrNull(r.createdon),
+          createdBy: strOrNull(r._createdby_value),
+        }),
+      }),
+    }
+  }
 
   const session = ctx.session?.get(sessionId)
   return {
@@ -526,7 +561,6 @@ export function transformDimensionResult(r, ctx) {
   const id = r.cr863_dimensionresult2id
   if (!id) return reject('missing primary key')
   const sampleId = strOrNull(r._cr863_inspectionsample_value)
-  if (!sampleId) return reject('dimension result has no sample', { id })
 
   // A null status is "not evaluated", never a pass.
   const status = decodeChoice(DIMENSION_STATUS, 'cr863_status', r.cr863_status, 'Pending')
@@ -535,6 +569,42 @@ export function transformDimensionResult(r, ctx) {
   const nominal = numOrNull(r.cr863_nominal)
   const actual = numOrNull(r.cr863_actual)
   if (actual !== null && nominal === null) ctx.count('measurementWithoutSpecification')
+
+  if (!sampleId) {
+    // The old save wrote dimension rows before linking them to their sample, so
+    // a failure part-way left rows stranded. Rows with no reading are unfilled
+    // template rows and are dropped; rows with a reading are real evidence and
+    // go to quarantine for a person to place.
+    if (actual === null) {
+      ctx.count('parentlessDimensionEmpty')
+      return reject('dimension result has no sample and no measurement — unfilled template row', { id })
+    }
+    ctx.count('parentlessDimensionWithValue')
+    return {
+      collection: COL.orphanMeasurements,
+      id,
+      doc: pruned({
+        id,
+        legacyId: id,
+        quarantined: true,
+        quarantineReason: 'dimension result had no sample reference in the source',
+        needsReview: true,
+        name: strOrNull(r.cr863_dimensionname) ?? '',
+        nominal,
+        tolPlus: numOrNull(r.cr863_toleranceplus),
+        tolMinus: numOrNull(r.cr863_toleranceminus),
+        actual,
+        unit: '',
+        status: status.value ?? 'Pending',
+        source: 'legacy',
+        legacy: pruned({
+          createdOn: isoOrNull(r.createdon),
+          modifiedOn: isoOrNull(r.modifiedon),
+          createdBy: strOrNull(r._createdby_value),
+        }),
+      }),
+    }
+  }
 
   return {
     collection: COL.dimensions,
@@ -832,7 +902,8 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
   // ---- Transform pass ------------------------------------------------------
   log('  file                        read      →  documents')
   log('  ' + '─'.repeat(54))
-  let orphans = 0
+  let dangling = 0
+  let quarantined = 0
   for (const spec of FILES) {
     const p = f(spec.file)
     if (!exists(p)) {
@@ -852,11 +923,16 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
       if (check) {
         const missing = check(out.doc)
         if (missing) {
-          orphans++
-          report.rejects.push({ file: spec.file, id: out.id, reason: `orphan — ${missing} not found` })
+          dangling++
+          report.rejects.push({
+            file: spec.file,
+            id: out.id,
+            reason: `dangling reference — ${missing} does not exist`,
+          })
           continue
         }
       }
+      if (out.collection === COL.orphanMeasurements || out.collection === COL.orphanSamples) quarantined++
       bump(report.perCollection, out.collection)
       written++
     }
@@ -898,7 +974,7 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
     log('  These import as Pending — unjudgeable is not a pass.')
   }
 
-  log('\n  ── Rows with no home ─────────────────────────────────')
+  log('\n  ── Rows not imported ─────────────────────────────────')
   if (report.rejects.length === 0) {
     log('  none')
   } else {
@@ -912,8 +988,26 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
     }
   }
 
-  log('\n  ── Orphans ───────────────────────────────────────────')
-  log(orphans === 0 ? '  none — every child resolves to its parent' : `  ${num(orphans)}`)
+  // One heading for everything that has no parent, so the report cannot say
+  // "no orphans" directly above a list of parentless rows.
+  log('\n  ── Rows with no parent ───────────────────────────────')
+  const pdEmpty = report.counts.parentlessDimensionEmpty ?? 0
+  const pdValue = report.counts.parentlessDimensionWithValue ?? 0
+  const psample = report.counts.parentlessSample ?? 0
+  if (pdEmpty + pdValue + psample + dangling === 0) {
+    log('  none — every row resolves to its parent')
+  } else {
+    log(`  dimension results with no sample reference   ${pad(pdEmpty + pdValue)}`)
+    log(`      carrying a measurement  → quarantined    ${pad(pdValue)}`)
+    log(`      empty template row      → dropped        ${pad(pdEmpty)}`)
+    log(`  samples with no session reference            ${pad(psample)}`)
+    log(`      → quarantined                            ${pad(psample)}`)
+    log(`  dangling references (parent id set, missing) ${pad(dangling)}`)
+    log('')
+    log(`  ${pad(quarantined)} rows are held in quarantine for review, not deleted.`)
+    log('  They are real recordings the old save left stranded — a batch commit')
+    log('  makes that failure mode impossible going forward.')
+  }
 
   log('\n  ── Decode failures ───────────────────────────────────')
   if (report.decodeFailures.length === 0) {
