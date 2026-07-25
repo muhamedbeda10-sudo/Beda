@@ -10,8 +10,6 @@ import {
   DIMENSION_STATUS,
   DEFECT_STATUS,
   AUDIT_ACTION,
-} from './decode.mjs'
-import {
   transformOrder,
   transformMachine,
   transformSession,
@@ -20,7 +18,7 @@ import {
   transformDefectResult,
   transformAuditLog,
   transformGradeMapping,
-} from './transform.mjs'
+} from './qc-dryrun.mjs'
 
 function ctx(extra = {}) {
   const failures = []
@@ -390,5 +388,82 @@ describe('identity and grade pairs', () => {
     expect(
       transformGradeMapping({ quality_grademappingid: 'g2', quality_grade: 'N09C' }).reject.reason,
     ).toMatch(/missing one side/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The streaming reader is hand-rolled so the tool needs no dependencies, which
+// makes it the riskiest part of the script. An earlier version re-scanned
+// characters after a chunk boundary, double-counting braces and corrupting the
+// depth — these cover exactly that.
+// ---------------------------------------------------------------------------
+import { writeFileSync, mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { streamRows } from './qc-dryrun.mjs'
+
+function fixtureFile(rows, { pretty = false } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'qcstream-'))
+  const p = join(dir, 'rows.json')
+  const payload = { table: 't', rowCount: rows.length, rows }
+  writeFileSync(p, pretty ? JSON.stringify(payload, null, 2) : JSON.stringify(payload))
+  return p
+}
+
+async function collect(p) {
+  const out = []
+  for await (const r of streamRows(p)) out.push(r)
+  return out
+}
+
+describe('streaming reader', () => {
+  it('reads every row of a small file', async () => {
+    const rows = [{ a: 1 }, { a: 2 }, { a: 3 }]
+    expect(await collect(fixtureFile(rows))).toEqual(rows)
+  })
+
+  it('handles an empty rows array', async () => {
+    expect(await collect(fixtureFile([]))).toEqual([])
+  })
+
+  it('handles pretty-printed files with newlines between elements', async () => {
+    const rows = [{ a: 1 }, { a: 2 }]
+    expect(await collect(fixtureFile(rows, { pretty: true }))).toEqual(rows)
+  })
+
+  it('keeps braces, brackets and escaped quotes that live inside strings', async () => {
+    const rows = [
+      { s: 'a {brace} and [bracket]' },
+      { s: 'he said "hello"' },
+      { s: 'trailing backslash \\' },
+      { s: '}{][' },
+    ]
+    expect(await collect(fixtureFile(rows))).toEqual(rows)
+  })
+
+  it('preserves Arabic text and newlines', async () => {
+    const rows = [{ s: 'ترحيل فى الابعاد', t: 'line1\nline2' }]
+    expect(await collect(fixtureFile(rows))).toEqual(rows)
+  })
+
+  it('reads nested objects and arrays without ending an element early', async () => {
+    const rows = [{ a: { b: { c: [1, 2, { d: 3 }] } } }, { a: 2 }]
+    expect(await collect(fixtureFile(rows))).toEqual(rows)
+  })
+
+  it('reads a file far larger than one chunk without losing or duplicating rows', async () => {
+    // 20k rows padded past the 1 MiB read size, so elements are split across
+    // chunk boundaries many times over.
+    const rows = Array.from({ length: 20000 }, (_, i) => ({
+      id: `ord-${i}`,
+      pad: 'x'.repeat(120),
+      s: 'quote " brace { bracket [ arabic ترحيل',
+    }))
+    const got = await collect(fixtureFile(rows))
+    expect(got).toHaveLength(20000)
+    expect(got[0].id).toBe('ord-0')
+    expect(got[19999].id).toBe('ord-19999')
+    expect(new Set(got.map((r) => r.id)).size).toBe(20000)
+    expect(got.every((r) => r.s.includes('ترحيل'))).toBe(true)
   })
 })
