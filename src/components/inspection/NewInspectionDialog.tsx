@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { doc, setDoc } from 'firebase/firestore'
 import { Search, Package, Play, ArrowLeft, CheckCircle2, Boxes, Factory } from 'lucide-react'
 import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
-import { useAll } from '@/services/useCollection'
+import { usePrefixSearch, useSmallCollection, useWhere } from '@/services/useCollection'
 import { COL, stripUndefined } from '@/services/repository'
 import { getDb } from '@/lib/firebase'
 import { useAuth } from '@/store/AuthContext'
@@ -23,11 +23,6 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
   const { profile } = useAuth()
   const { toast } = useApp()
 
-  const { rows: orders } = useAll<ProductionOrder>(COL.orders)
-  const { rows: machines } = useAll<Machine>(COL.machines)
-  const { rows: sessions } = useAll<InspectionSession>(COL.sessions)
-  const { rows: samples } = useAll<InspectionSample>(COL.samples)
-
   const [orderTerm, setOrderTerm] = useState('')
   const [itemFilter, setItemFilter] = useState('')
   const [wcFilter, setWcFilter] = useState('')
@@ -35,29 +30,51 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
   const [startQty, setStartQty] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const itemOptions = useMemo(
-    () => Array.from(new Set(orders.map((o) => o.item))).sort(),
-    [orders],
-  )
+  // The order catalogue is ~29,000 rows, so it is searched on the server rather
+  // than loaded. Inspectors type either an order number or an item code, so
+  // both are matched as prefixes; the item-code query only runs once something
+  // has been typed, because with an empty term it would repeat the first list.
+  const term = orderTerm.trim()
+  const { rows: byOrderNumber } = usePrefixSearch<ProductionOrder>(COL.orders, 'orderNumber', term, 40)
+  const { rows: byItemCode } = usePrefixSearch<ProductionOrder>(COL.orders, 'itemCode', term, 40, {
+    enabled: term.length > 0,
+  })
+
+  const { rows: machines } = useSmallCollection<Machine>(COL.machines)
+  // Only the picked order's history is needed, never every session or sample.
+  const { rows: sessions } = useWhere<InspectionSession>(COL.sessions, 'orderId', picked?.id)
+  const { rows: samples } = useWhere<InspectionSample>(COL.samples, 'orderId', picked?.id)
+
+  /** Work centres come from the machine register, which is master data. */
   const wcOptions = useMemo(
-    () => Array.from(new Set(orders.map((o) => o.workCenterCode))).sort((a, b) => Number(a) - Number(b)),
-    [orders],
+    () => Array.from(new Set(machines.map((m) => m.code))).sort((a, b) => Number(a) - Number(b)),
+    [machines],
   )
 
-  const results = useMemo(() => {
-    const term = orderTerm.trim().toLowerCase()
-    return orders
-      .filter((o) => !term || o.orderNumber.toLowerCase().includes(term) || o.itemCode.toLowerCase().includes(term))
-      .filter((o) => !itemFilter || o.item === itemFilter)
-      .filter((o) => !wcFilter || o.workCenterCode === wcFilter)
-      .slice(0, 40)
-  }, [orders, orderTerm, itemFilter, wcFilter])
+  const found = useMemo(() => {
+    const byId = new Map<string, ProductionOrder>()
+    for (const o of [...byOrderNumber, ...byItemCode]) byId.set(o.id, o)
+    return Array.from(byId.values())
+  }, [byOrderNumber, byItemCode])
+
+  /** Items present in what the search returned — not the whole catalogue. */
+  const itemOptions = useMemo(() => Array.from(new Set(found.map((o) => o.item))).sort(), [found])
+
+  const results = useMemo(
+    () =>
+      found
+        .filter((o) => !itemFilter || o.item === itemFilter)
+        .filter((o) => !wcFilter || o.workCenterCode === wcFilter)
+        .sort((a, b) => a.orderNumber.localeCompare(b.orderNumber))
+        .slice(0, 40),
+    [found, itemFilter, wcFilter],
+  )
 
   /** Samples already recorded against the picked order (§4). */
-  const previousSamples = useMemo(() => {
-    if (!picked) return []
-    return samples.filter((s) => s.orderId === picked.id).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-  }, [samples, picked])
+  const previousSamples = useMemo(
+    () => [...samples].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
+    [samples],
+  )
 
   function reset() {
     setPicked(null)
@@ -74,7 +91,8 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     setBusy(true)
     try {
       const now = new Date().toISOString()
-      const seq = sessions.filter((s) => s.orderId === picked.id).length + 1
+      // `sessions` is already scoped to this order.
+      const seq = sessions.length + 1
       const session: InspectionSession = {
         id: uid('sess'),
         seq,
@@ -223,7 +241,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
         </div>
         <div className="grid grid-cols-2 gap-2">
           <Select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} className="min-h-[48px]">
-            <option value="">All items</option>
+            <option value="">All items found</option>
             {itemOptions.map((i) => (
               <option key={i} value={i}>
                 {i}
@@ -234,7 +252,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             <option value="">All work centers</option>
             {wcOptions.map((w) => (
               <option key={w} value={w}>
-                {machines.find((m) => m.code === w)?.name ?? `Work center ${w}`}
+                {machines.find((m) => m.code === w)?.displayName ?? `Work center ${w}`}
               </option>
             ))}
           </Select>

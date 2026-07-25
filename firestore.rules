@@ -6,8 +6,13 @@ rules_version = '2';
 //
 //   §10  Nothing is hard-deleted. Evidence collections deny `delete` outright;
 //        removing a record means setting deletedAt, which is an update.
-//   §11  The audit trail is append-only. Entries cannot be edited, and only an
-//        admin may purge them.
+//   §11  The audit trail is append-only AND undeletable. Entries cannot be
+//        edited, and nobody — admin included — may remove one.
+//
+// One documented exception: users/{uid} allows an admin to delete a profile.
+// That is account administration, not evidence, and removing a person's login
+// does not remove anything they recorded: audit entries carry userUid and
+// userName as values, so the trail survives the account.
 //
 // Roles live on users/{uid}.role — inspector | supervisor | admin.
 // ---------------------------------------------------------------------------
@@ -57,15 +62,46 @@ service cloud.firestore {
       allow read: if signedIn()
         && col in ['sessions', 'samples', 'dimensions', 'defects', 'sampleCoils',
                    'paintSamples', 'ptRecords', 'images', 'imageChunks',
-                   'pdiDocuments', 'submissions'];
+                   'pdiDocuments', 'submissions',
+                   // Migrated image metadata. The bytes are still in SharePoint;
+                   // these rows carry legacySourceUrl and imagePending.
+                   'defectImages', 'sampleCoilImages', 'pdiImages',
+                   // The per-session setup record from the old system.
+                   'sessionInitializations'];
       allow create: if signedIn()
         && col in ['sessions', 'samples', 'dimensions', 'defects', 'sampleCoils',
                    'paintSamples', 'ptRecords', 'images', 'imageChunks',
-                   'pdiDocuments', 'submissions'];
+                   'pdiDocuments', 'submissions',
+                   'defectImages', 'sampleCoilImages', 'pdiImages',
+                   'sessionInitializations'];
+      // UNRESOLVED AUTHORISATION DECISION, not a considered choice.
+      //
+      // This grants update to anyone signed in, which means an inspector can
+      // edit a sample belonging to a session that is already closed, and can
+      // edit another inspector's record. The specification does not say who may
+      // correct a closed session, and the owner has not answered it yet.
+      //
+      // Whoever reads this next: this line is a placeholder awaiting that
+      // answer. Do not read it as a decision that closed sessions are freely
+      // editable. Narrowing it to isSupervisor(), or to the recording
+      // inspector while the session is open, are both one-line changes.
       allow update: if signedIn()
         && col in ['sessions', 'samples', 'dimensions', 'defects', 'sampleCoils',
-                   'paintSamples', 'ptRecords', 'images', 'pdiDocuments'];
+                   'paintSamples', 'ptRecords', 'images', 'pdiDocuments',
+                   'defectImages', 'sampleCoilImages', 'pdiImages',
+                   'sessionInitializations'];
       // §10 — no hard deletes anywhere in the system.
+      allow delete: if false;
+    }
+
+    // ---- Quarantine -------------------------------------------------------
+    // Rows the old system stranded: real recordings with no parent to attach
+    // to. Everyone signed in can see them, so they are not hidden; only a
+    // supervisor or admin can resolve one, and nobody can delete one. Losing
+    // evidence quietly is the failure this system exists to prevent.
+    match /{col}/{docId} {
+      allow read: if signedIn() && col in ['orphanMeasurements', 'orphanSamples'];
+      allow create, update: if isSupervisor() && col in ['orphanMeasurements', 'orphanSamples'];
       allow delete: if false;
     }
 
@@ -75,21 +111,33 @@ service cloud.firestore {
       allow read: if signedIn()
         && col in ['orders', 'machines', 'coils', 'itemDimensionOrder',
                    'itemDimensionMaster', 'itemReferenceImages',
-                   'workCenterDefects', 'gradeMappings', 'ptConsumables'];
+                   'workCenterDefects', 'workCenterDimensions',
+                   'gradeMappings', 'ptConsumables', 'productionData'];
       allow write: if isAdmin()
         && col in ['orders', 'machines', 'coils', 'itemDimensionOrder',
                    'itemDimensionMaster', 'itemReferenceImages',
-                   'workCenterDefects', 'gradeMappings', 'ptConsumables'];
+                   'workCenterDefects', 'workCenterDimensions',
+                   'gradeMappings', 'ptConsumables', 'productionData'];
     }
 
     // ---- Audit trail ------------------------------------------------------
-    // Append-only: anyone signed in adds entries as a side effect of their work,
-    // nobody may rewrite history, and only an admin may purge (itself audited).
+    // Append-only, and now undeletable.
+    //
+    // This used to allow an admin to delete entries. An admin quietly removing
+    // audit entries is precisely what §11 exists to prevent, and a purge that
+    // records itself is no protection when the same account can delete that
+    // record too. Purging is now a soft delete like everything else: an update
+    // setting deletedAt, which leaves the entry in place and is itself audited.
+    //
+    // Update is still denied outright for the fields that make an entry what it
+    // is; only deletedAt may be set, and only by an admin.
     match /auditLogs/{entryId} {
       allow read: if isSupervisor();
       allow create: if signedIn();
-      allow update: if false;
-      allow delete: if isAdmin();
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['deletedAt', 'deletedByUid', 'deletedByName']);
+      allow delete: if false;
     }
   }
 }

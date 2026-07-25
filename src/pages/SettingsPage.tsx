@@ -9,8 +9,17 @@
 //     same documents rather than duplicating them.
 // ============================================================================
 
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
-import { doc, setDoc, writeBatch } from 'firebase/firestore'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  collection,
+  doc,
+  getDocs,
+  limit,
+  query,
+  setDoc,
+  where,
+  writeBatch,
+} from 'firebase/firestore'
 import {
   AlertCircle,
   AlertTriangle,
@@ -38,12 +47,12 @@ import {
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Stat } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
-import { useAll } from '@/services/useCollection'
+import { useSmallCollection } from '@/services/useCollection'
 import { COL, softDelete, stripUndefined, type AuditContext } from '@/services/repository'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain/rules'
-import { getDb } from '@/lib/firebase'
+import { firebaseEnabled, getDb } from '@/lib/firebase'
 import { cn, downloadText, parseCSV, uid } from '@/lib/utils'
 import type {
   Coil,
@@ -475,7 +484,7 @@ interface DimOrderDraft {
 }
 
 function DimensionOrderTab() {
-  const { rows, loading } = useAll<ItemDimensionOrder>(COL.itemDimensionOrder)
+  const { rows, loading } = useSmallCollection<ItemDimensionOrder>(COL.itemDimensionOrder)
 
   const sort = useCallback(
     (a: ItemDimensionOrder, b: ItemDimensionOrder) =>
@@ -639,7 +648,7 @@ interface DimMasterDraft {
 }
 
 function ItemMasterTab() {
-  const { rows, loading } = useAll<ItemDimensionMaster>(COL.itemDimensionMaster)
+  const { rows, loading } = useSmallCollection<ItemDimensionMaster>(COL.itemDimensionMaster)
 
   const sort = useCallback(
     (a: ItemDimensionMaster, b: ItemDimensionMaster) =>
@@ -764,7 +773,7 @@ interface RefImageDraft {
 }
 
 function ReferenceImagesTab() {
-  const { rows, loading } = useAll<ItemReferenceImage>(COL.itemReferenceImages)
+  const { rows, loading } = useSmallCollection<ItemReferenceImage>(COL.itemReferenceImages)
 
   const sort = useCallback(
     (a: ItemReferenceImage, b: ItemReferenceImage) =>
@@ -844,7 +853,7 @@ interface DefectDraft {
 }
 
 function WorkCenterDefectsTab() {
-  const { rows, loading } = useAll<WorkCenterDefect>(COL.workCenterDefects)
+  const { rows, loading } = useSmallCollection<WorkCenterDefect>(COL.workCenterDefects)
 
   const sort = useCallback(
     (a: WorkCenterDefect, b: WorkCenterDefect) => a.defectName.localeCompare(b.defectName),
@@ -932,19 +941,17 @@ function WorkCenterDefectsTab() {
 
 interface MachineDraft {
   code: string
-  machineNumber: string
-  line: string
   name: string
-  factory: string
+  line: string
 }
 
 function MachinesTab() {
-  const { rows, loading } = useAll<Machine>(COL.machines)
+  const { rows, loading } = useSmallCollection<Machine>(COL.machines)
 
   const sort = useCallback(
     (a: Machine, b: Machine) =>
       a.code.localeCompare(b.code, undefined, { numeric: true }) ||
-      a.machineNumber.localeCompare(b.machineNumber, undefined, { numeric: true }),
+      a.line.localeCompare(b.line, undefined, { numeric: true }),
     [],
   )
 
@@ -965,43 +972,35 @@ function MachinesTab() {
       minTableWidth="min-w-[42rem]"
       columns={[
         { key: 'code', label: 'Work centre', render: (r) => <Badge tone="blue">{r.code}</Badge> },
-        {
-          key: 'number',
-          label: 'Machine no.',
-          render: (r) => <span className="font-semibold">{r.machineNumber}</span>,
-        },
-        { key: 'name', label: 'Name', render: (r) => r.name },
+        { key: 'name', label: 'Work-centre name', render: (r) => r.name },
         { key: 'line', label: 'Line', render: (r) => r.line || '—' },
-        { key: 'factory', label: 'Factory', render: (r) => r.factory || '—' },
+        {
+          key: 'displayName',
+          label: 'Shown as',
+          render: (r) => <span className="font-semibold">{r.displayName}</span>,
+        },
       ]}
-      describe={(r) => r.name || r.machineNumber}
-      newDraft={() => ({
-        code: WORK_CENTER_CODES[0],
-        machineNumber: '',
-        line: '',
-        name: '',
-        factory: '',
-      })}
-      toDraft={(r) => ({
-        code: r.code,
-        machineNumber: r.machineNumber,
-        line: r.line,
-        name: r.name,
-        factory: r.factory,
-      })}
+      describe={(r) => r.displayName || r.name}
+      newDraft={() => ({ code: WORK_CENTER_CODES[0], name: '', line: '' })}
+      toDraft={(r) => ({ code: r.code, name: r.name, line: r.line })}
       validate={(d) =>
         requireText(d.code, 'Work-centre code') ??
-        requireText(d.machineNumber, 'Machine number') ??
-        requireText(d.name, 'Name')
+        requireText(d.name, 'Work-centre name') ??
+        requireText(d.line, 'Line')
       }
-      toRecord={(d, id) => ({
-        id,
-        code: d.code.trim(),
-        machineNumber: d.machineNumber.trim(),
-        line: d.line.trim(),
-        name: d.name.trim(),
-        factory: d.factory.trim(),
-      })}
+      toRecord={(d, id) => {
+        const code = d.code.trim()
+        const name = d.name.trim()
+        const line = d.line.trim()
+        return {
+          id,
+          code,
+          name,
+          line,
+          // The label the shop floor recognises: "58-A. Welding Line-LM4".
+          displayName: [code, name, line].filter(Boolean).join('-'),
+        }
+      }}
       renderForm={(d, patch) => (
         <>
           <div className="grid grid-cols-2 gap-3">
@@ -1018,33 +1017,17 @@ function MachinesTab() {
                 ))}
               </Select>
             </Field>
-            <Field label="Machine number">
-              <Input
-                value={d.machineNumber}
-                onChange={(e) => patch({ machineNumber: e.target.value })}
-                placeholder="58-A"
-              />
-            </Field>
-          </div>
-          <Field label="Name">
-            <Input
-              value={d.name}
-              onChange={(e) => patch({ name: e.target.value })}
-              placeholder="58-A. Welding Line-LM4"
-            />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
             <Field label="Line">
               <Input value={d.line} onChange={(e) => patch({ line: e.target.value })} placeholder="LM4" />
             </Field>
-            <Field label="Factory">
-              <Input
-                value={d.factory}
-                onChange={(e) => patch({ factory: e.target.value })}
-                placeholder="Main"
-              />
-            </Field>
           </div>
+          <Field label="Work-centre name" hint='Shown as "{code}-{name}-{line}", e.g. 58-A. Welding Line-LM4'>
+            <Input
+              value={d.name}
+              onChange={(e) => patch({ name: e.target.value })}
+              placeholder="A. Welding Line"
+            />
+          </Field>
         </>
       )}
     />
@@ -1061,7 +1044,7 @@ interface GradeDraft {
 }
 
 function GradeMappingsTab() {
-  const { rows, loading } = useAll<GradeMapping>(COL.gradeMappings)
+  const { rows, loading } = useSmallCollection<GradeMapping>(COL.gradeMappings)
 
   const sort = useCallback(
     (a: GradeMapping, b: GradeMapping) =>
@@ -1138,7 +1121,7 @@ interface PTDraft {
 }
 
 function PTConsumablesTab() {
-  const { rows, loading } = useAll<PTConsumableProduct>(COL.ptConsumables)
+  const { rows, loading } = useSmallCollection<PTConsumableProduct>(COL.ptConsumables)
 
   const sort = useCallback(
     (a: PTConsumableProduct, b: PTConsumableProduct) =>
@@ -1255,13 +1238,29 @@ interface Importer<T extends { id: string }> {
   fields: ImportField[]
   /** Fields that together form the business key. Import is blocked if unmapped. */
   businessKeys: string[]
-  existing: T[]
-  loading: boolean
+  /**
+   * The single field the existing-record lookup queries on — always the first
+   * business key. Firestore can only `in`-match one field, so a composite key
+   * (item + dimension name) is narrowed by its item and completed in memory.
+   */
+  lookupField: string
+  /** Business key of a stored record, in the same normalised form as a CSV row. */
   keyOf: (row: T) => string
   build: (values: Record<string, CellValue>, previous: T | undefined, id: string) => T
 }
 
 const BATCH_SIZE = 100
+
+/** Firestore caps `in` at 30 values per query. */
+const LOOKUP_CHUNK = 30
+
+/**
+ * Ceiling per lookup query. One chunk asks about 30 business keys; orders and
+ * coils return one document each, and a production-data chunk returns every
+ * dimension of 30 items. 2,000 is far above either and keeps the read bounded
+ * even if the data is not what we expect.
+ */
+const LOOKUP_LIMIT = 2000
 
 function normaliseHeader(h: string): string {
   return h.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -1307,13 +1306,49 @@ function num(v: CellValue | undefined, previous: number | undefined, fallback = 
   return v === undefined ? (previous ?? fallback) : Number(v)
 }
 
+/**
+ * Find the records the file is about — and only those.
+ *
+ * The importer used to hold every order and every coil in memory to decide
+ * insert-vs-update. With 28,871 orders that is 28,871 reads for a ten-row file.
+ * Instead the distinct business keys in the file are asked for directly, thirty
+ * at a time, so a ten-row file costs ten reads.
+ *
+ * Soft-deleted records are skipped, exactly as the old collection read did.
+ */
+async function fetchExistingByKey<T extends { id: string }>(
+  collectionName: string,
+  field: string,
+  values: string[],
+  keyOf: (row: T) => string,
+  onProgress: (resolved: number) => void,
+  isCancelled: () => boolean,
+): Promise<Map<string, T>> {
+  const found = new Map<string, T>()
+  if (!firebaseEnabled) return found
+
+  const store = getDb()
+  for (let i = 0; i < values.length; i += LOOKUP_CHUNK) {
+    if (isCancelled()) return found
+    const group = values.slice(i, i + LOOKUP_CHUNK)
+    const snap = await getDocs(
+      query(collection(store, collectionName), where(field, 'in', group), limit(LOOKUP_LIMIT)),
+    )
+    for (const d of snap.docs) {
+      const row = { ...(d.data() as T & { deletedAt?: string | null }), id: d.id }
+      if (row.deletedAt) continue
+      found.set(keyOf(row), row as T)
+    }
+    onProgress(Math.min(i + LOOKUP_CHUNK, values.length))
+  }
+  return found
+}
+
 function BulkImportTab() {
   const [which, setWhich] = useState<'orders' | 'coils' | 'production'>('orders')
 
-  const { rows: orders, loading: ordersLoading } = useAll<ProductionOrder>(COL.orders)
-  const { rows: coils, loading: coilsLoading } = useAll<Coil>(COL.coils)
-  const { rows: dims, loading: dimsLoading } = useAll<ItemDimensionOrder>(COL.itemDimensionOrder)
-
+  // Nothing is read here. Each importer describes how to find the handful of
+  // records its file is about; the lookup happens when a file is loaded.
   const ordersImporter = useMemo<Importer<ProductionOrder>>(
     () => ({
       id: 'orders',
@@ -1323,8 +1358,7 @@ function BulkImportTab() {
       idPrefix: 'ord',
       templateFile: 'production-orders-template.csv',
       businessKeys: ['orderNumber'],
-      existing: orders,
-      loading: ordersLoading,
+      lookupField: 'orderNumber',
       keyOf: (r) => normaliseKeyPart(r.orderNumber),
       fields: [
         {
@@ -1387,7 +1421,7 @@ function BulkImportTab() {
         date: str(v.date, prev?.date, new Date().toISOString()),
       }),
     }),
-    [orders, ordersLoading],
+    [],
   )
 
   const coilsImporter = useMemo<Importer<Coil>>(
@@ -1399,8 +1433,7 @@ function BulkImportTab() {
       idPrefix: 'coil',
       templateFile: 'coils-template.csv',
       businessKeys: ['coilNumber'],
-      existing: coils,
-      loading: coilsLoading,
+      lookupField: 'coilNumber',
       keyOf: (r) => normaliseKeyPart(r.coilNumber),
       fields: [
         {
@@ -1430,7 +1463,7 @@ function BulkImportTab() {
         notes: v.notes === undefined ? prev?.notes : String(v.notes),
       }),
     }),
-    [coils, coilsLoading],
+    [],
   )
 
   const productionImporter = useMemo<Importer<ItemDimensionOrder>>(
@@ -1443,8 +1476,7 @@ function BulkImportTab() {
       idPrefix: 'ido',
       templateFile: 'production-data-template.csv',
       businessKeys: ['item', 'dimensionName'],
-      existing: dims,
-      loading: dimsLoading,
+      lookupField: 'item',
       keyOf: (r) => `${normaliseKeyPart(r.item)}||${normaliseKeyPart(r.dimensionName)}`,
       fields: [
         { key: 'item', label: 'Item', kind: 'text', aliases: ['item name', 'product'], sample: 'XL Light Beam' },
@@ -1478,7 +1510,7 @@ function BulkImportTab() {
         unit: str(v.unit, prev?.unit, 'mm'),
       }),
     }),
-    [dims, dimsLoading],
+    [],
   )
 
   const SOURCES = [
@@ -1576,6 +1608,15 @@ function CsvImporter<T extends { id: string }>({ importer }: { importer: Importe
   const [runTotal, setRunTotal] = useState(0)
   const [runError, setRunError] = useState<string | null>(null)
 
+  /** The records the file is about, keyed by business key. Only ever holds the
+   *  keys present in the file — never the collection. */
+  const [existingByKey, setExistingByKey] = useState<Map<string, T>>(new Map())
+  /** Which lookup the map above answers, so a stale map is never used. */
+  const [resolvedFor, setResolvedFor] = useState<string | null>(null)
+  const [resolvedCount, setResolvedCount] = useState(0)
+  const [lookupError, setLookupError] = useState<string | null>(null)
+  const [retryToken, setRetryToken] = useState(0)
+
   const pausedRef = useRef(false)
   const cursorRef = useRef(0)
   const runPlanRef = useRef<PlannedRow<T>[]>([])
@@ -1644,13 +1685,83 @@ function CsvImporter<T extends { id: string }>({ importer }: { importer: Importe
     [importer.businessKeys, mapping],
   )
 
+  /** The distinct values of the lookup field in this file — the only keys the
+   *  database is ever asked about. */
+  const lookupValues = useMemo(() => {
+    const col = mapping[importer.lookupField] ?? -1
+    if (col < 0 || dataRows.length === 0) return []
+    const seen = new Set<string>()
+    for (const row of dataRows) {
+      const raw = (row[col] ?? '').trim()
+      if (raw !== '') seen.add(raw)
+    }
+    return Array.from(seen)
+  }, [dataRows, mapping, importer.lookupField])
+
+  /** Identifies one lookup exactly, so the resolved map can never be read
+   *  against a different file, mapping or collection. */
+  const lookupSignature = useMemo(
+    () => `${importer.collectionName}|${importer.lookupField}|${lookupValues.join('\u0001')}`,
+    [importer.collectionName, importer.lookupField, lookupValues],
+  )
+
+  const lookupNeeded = missingKeys.length === 0 && lookupValues.length > 0
+  const resolving = lookupNeeded && lookupError === null && resolvedFor !== lookupSignature
+
+  useEffect(() => {
+    if (!lookupNeeded) {
+      setExistingByKey(new Map())
+      setResolvedCount(0)
+      setLookupError(null)
+      setResolvedFor(lookupSignature)
+      return
+    }
+
+    let cancelled = false
+    setLookupError(null)
+    setResolvedCount(0)
+    setResolvedFor(null)
+
+    void (async () => {
+      try {
+        const found = await fetchExistingByKey<T>(
+          importer.collectionName,
+          importer.lookupField,
+          lookupValues,
+          importer.keyOf,
+          (resolved) => {
+            if (!cancelled) setResolvedCount(resolved)
+          },
+          () => cancelled,
+        )
+        if (cancelled) return
+        setExistingByKey(found)
+        setResolvedFor(lookupSignature)
+      } catch (e) {
+        if (cancelled) return
+        // Reporting every row as new would be a lie that duplicates records.
+        setExistingByKey(new Map())
+        setLookupError(
+          e instanceof Error
+            ? `Could not check which records already exist: ${e.message}`
+            : 'Could not check which records already exist.',
+        )
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lookupSignature, lookupNeeded, retryToken])
+
   /** The dry run. Pure: it computes what WOULD be written and never writes. */
   const plan = useMemo<Plan<T> | null>(() => {
     if (headers.length === 0 || dataRows.length === 0) return null
     if (missingKeys.length > 0) return null
-
-    const existingByKey = new Map<string, T>()
-    for (const row of importer.existing) existingByKey.set(importer.keyOf(row), row)
+    // Until the lookup lands, insert-vs-update is unknown — and a preview that
+    // guesses is worse than no preview.
+    if (resolvedFor !== lookupSignature) return null
 
     const builtByKey = new Map<string, T>()
     const idByKey = new Map<string, string>()
@@ -1709,7 +1820,7 @@ function CsvImporter<T extends { id: string }>({ importer }: { importer: Importe
     })
 
     return { valid, errors, newCount, updateCount }
-  }, [headers, dataRows, mapping, missingKeys, importer])
+  }, [headers, dataRows, mapping, missingKeys, importer, existingByKey, resolvedFor, lookupSignature])
 
   const mappedFields = useMemo(
     () => importer.fields.filter((f) => (mapping[f.key] ?? -1) >= 0),
@@ -1923,6 +2034,72 @@ function CsvImporter<T extends { id: string }>({ importer }: { importer: Importe
         </Card>
       )}
 
+      {/* ---- Looking up only the keys in the file ---- */}
+      {hasFile && resolving && (
+        <Card className="space-y-3 p-4 sm:p-5">
+          <div className="flex items-start gap-3">
+            <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-brand-600 dark:text-brand-400" />
+            <div className="min-w-0">
+              <h3 className="text-base font-bold">Checking which records already exist</h3>
+              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                Only the {lookupValues.length}{' '}
+                {lookupValues.length === 1 ? 'key' : 'keys'} in this file are looked up, in groups of{' '}
+                {LOOKUP_CHUNK} — the rest of the collection is never read.
+              </p>
+            </div>
+          </div>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <span>Matching against the database…</span>
+              <span className="tabular-nums">
+                {Math.min(resolvedCount, lookupValues.length)} / {lookupValues.length}
+              </span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+              <div
+                role="progressbar"
+                aria-valuenow={
+                  lookupValues.length > 0
+                    ? Math.round((Math.min(resolvedCount, lookupValues.length) / lookupValues.length) * 100)
+                    : 0
+                }
+                aria-valuemin={0}
+                aria-valuemax={100}
+                className="h-full rounded-full bg-brand-600 transition-all"
+                style={{
+                  width: `${
+                    lookupValues.length > 0
+                      ? Math.round(
+                          (Math.min(resolvedCount, lookupValues.length) / lookupValues.length) * 100,
+                        )
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {hasFile && lookupError && (
+        <Card className="space-y-3 p-4 sm:p-5">
+          <p className="flex items-start gap-2 rounded-2xl bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              {lookupError} Nothing has been written. Without that check an import could duplicate
+              records, so the preview is held back until it succeeds.
+            </span>
+          </p>
+          <Button
+            variant="primary"
+            className="min-h-[48px]"
+            onClick={() => setRetryToken((t) => t + 1)}
+          >
+            <RotateCcw className="h-4 w-4" /> Try again
+          </Button>
+        </Card>
+      )}
+
       {/* ---- Dry run + import ---- */}
       {plan && (
         <Card className="space-y-4 p-4 sm:p-5">
@@ -2072,7 +2249,7 @@ function CsvImporter<T extends { id: string }>({ importer }: { importer: Importe
                   variant="primary"
                   className="min-h-[48px]"
                   onClick={() => void run()}
-                  disabled={plan.valid.length === 0 || importer.loading}
+                  disabled={plan.valid.length === 0}
                 >
                   <Play className="h-4 w-4" /> Import {plan.valid.length} row
                   {plan.valid.length === 1 ? '' : 's'}

@@ -21,10 +21,14 @@ export interface Machine {
   id: ID
   /** Work-center code, e.g. "58" */
   code: string
-  machineNumber: string
-  line: string
+  /** Work-centre / process name, e.g. "A. Welding Line". */
   name: string
-  factory: string
+  /** Production line, e.g. "LM4". */
+  line: string
+  /** How the old app labelled a group: "58-A. Welding Line-LM4". */
+  displayName: string
+  machineNumber?: string
+  factory?: string
   deletedAt?: ISODate
 }
 
@@ -51,6 +55,12 @@ export interface ProductionOrder {
   type: string
   colour: string
   date: ISODate
+  /** Dataverse GUID — lets any row be traced back to the source system. */
+  legacyId?: string
+  /** cr863_orderid, the numeric key the old system matched on. */
+  legacyOrderId?: string
+  /** Fields with no home in this model, kept verbatim so nothing is lost. */
+  legacy?: Record<string, unknown>
   deletedAt?: ISODate
 }
 
@@ -83,6 +93,13 @@ export interface InspectionSession {
   closedAt?: ISODate
   closedByUid?: ID
   deletedAt?: ISODate
+  /**
+   * How many samples this session holds.
+   *
+   * Denormalised so the history list is one query. Maintained in the same
+   * batch that writes a sample, so it cannot drift from the rows it counts.
+   */
+  sampleCount?: number
   /** Optimistic-concurrency token (§9.4). */
   version: number
 }
@@ -116,6 +133,22 @@ export interface InspectionSample {
   }
   /** Client-generated id making retries idempotent (§9.3). */
   submissionId: string
+  /**
+   * Child counts, denormalised.
+   *
+   * The history list needs these per row; fetching the children to count them
+   * is the unbounded read this design exists to avoid, and a count aggregation
+   * per row is a per-row cost. They are written in the same batch as the
+   * sample, under the atomic-save rule, so they cannot drift.
+   *
+   * `measuredDimensionCount` is deliberately separate from `dimensionCount`:
+   * a dimension row that was never measured must stay visible as unmeasured
+   * rather than counting toward a completion figure.
+   */
+  dimensionCount?: number
+  measuredDimensionCount?: number
+  defectCount?: number
+  coilCount?: number
   deletedAt?: ISODate
   version: number
 }
@@ -129,14 +162,25 @@ export interface DimensionResult {
   sampleId: ID
   name: string
   sequence: number
-  nominal: number
-  tolPlus: number
-  tolMinus: number
+  /** Null where the source recorded a measurement with no specification to
+   *  judge it against — such a row is Pending, never Pass. */
+  nominal: number | null
+  tolPlus: number | null
+  tolMinus: number | null
   actual: number | null
   unit: string
+  /**
+   * Whether a reading was ever taken. False for a row the inspector opened and
+   * left blank. Such a row is imported, not dropped: removing it would raise
+   * the apparent completion rate of the inspection it belongs to.
+   */
+  measured?: boolean
+  /** Why there is no reading. A specified dimension nobody measured is a
+   *  different fact from a blank template line. */
+  unmeasuredReason?: 'blank-template-row' | 'required-not-measured'
   status: DimensionStatus
   /** Where nominal/tolerance came from (§8.3) — useful when auditing. */
-  source: 'item-order' | 'item-master' | 'carry-forward' | 'manual'
+  source: 'item-order' | 'item-master' | 'carry-forward' | 'manual' | 'legacy'
   deletedAt?: ISODate
 }
 
@@ -293,7 +337,8 @@ export interface ItemDimensionMaster {
   id: ID
   item: string
   dimensionName: string
-  nominal: number
+  /** Optional: the source carries tolerances only. */
+  nominal?: number
   tolPlus: number
   tolMinus: number
   unit: string
@@ -305,6 +350,15 @@ export interface ItemReferenceImage {
   item: string
   imageId: ID
   caption?: string
+  deletedAt?: ISODate
+}
+
+/** Which dimensions a work centre filters to. The source holds a single row
+ *  (Paint Thickness @ 48) — incomplete configuration, migrated verbatim. */
+export interface WorkCenterDimension {
+  id: ID
+  workCenterCode: string
+  dimensionName: string
   deletedAt?: ISODate
 }
 
