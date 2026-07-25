@@ -32,7 +32,7 @@
 
 import path from 'node:path'
 import { statSync, readFileSync, writeFileSync } from 'node:fs'
-import { FILES, COL, streamRows } from './qc-dryrun.mjs'
+import { FILES, COL, streamRows, strOrNull, numOrNull } from './qc-dryrun.mjs'
 
 // ---------------------------------------------------------------------------
 // Stages
@@ -364,12 +364,21 @@ async function resolveReferences(dir, { log = console.log } = {}) {
       if (key && sessionIds.has(key)) sessionInit.set(key, r)
     }
   }
+  // Denormalised child counts, computed from the rows already being streamed.
+  // The history list reads them instead of fetching children per row.
+  const samplesPerSession = new Map()
+  const dimensionsPerSample = new Map()
+  const measuredDimensionsPerSample = new Map()
+  const defectsPerSample = new Map()
+  const coilsPerSample = new Map()
+  const tick = (m, k) => { if (k) m.set(k, (m.get(k) ?? 0) + 1) }
   if (exists(f('02_cr863_inspectionsample1s.json'))) {
     const bySession = new Map()
     for await (const r of streamRows(f('02_cr863_inspectionsample1s.json'))) {
       const id = r.cr863_inspectionsample1id
       if (!id) continue
       sampleIds.add(id)
+      tick(samplesPerSession, r._cr863_inspectionsession_value ?? '')
       const sid = r._cr863_inspectionsession_value ?? ''
       // A sample inherits its order from its session, so this adds nothing a
       // session did not already contribute -- unless a sample points at a
@@ -408,17 +417,26 @@ async function resolveReferences(dir, { log = console.log } = {}) {
       const n = (bySample.get(sid) ?? 0) + 1
       bySample.set(sid, n)
       dimensionSequence.set(id, n)
+      tick(dimensionsPerSample, sid)
+      // Counted separately so a row the inspector opened and never measured
+      // stays visible as unmeasured instead of reading as work completed.
+      if (numOrNull(r.cr863_actual) !== null) tick(measuredDimensionsPerSample, sid)
     }
   }
 
-  for (const [file, key, into] of [
-    ['04_cr863_visualdefectresult2s.json', 'cr863_visualdefectresult2id', defectIds],
-    ['05_cr863_samplecoil2s.json', 'cr863_samplecoil2id', sampleCoilIds],
-    ['09_cr863_pdis.json', 'cr863_pdiid', pdiIds],
+  // One pass over the three parent tables: collect their ids for the image
+  // dangling checks, and count defects and coils per sample for the
+  // denormalised totals. Both files link to the sample by
+  // _cr863_inspectionsample_value.
+  for (const [file, key, into, perSample] of [
+    ['04_cr863_visualdefectresult2s.json', 'cr863_visualdefectresult2id', defectIds, defectsPerSample],
+    ['05_cr863_samplecoil2s.json', 'cr863_samplecoil2id', sampleCoilIds, coilsPerSample],
+    ['09_cr863_pdis.json', 'cr863_pdiid', pdiIds, null],
   ]) {
     if (!exists(f(file))) continue
     for await (const r of streamRows(f(file))) {
       if (r[key]) into.add(r[key])
+      if (perSample) tick(perSample, strOrNull(r._cr863_inspectionsample_value))
     }
   }
 
@@ -443,6 +461,11 @@ async function resolveReferences(dir, { log = console.log } = {}) {
   return {
     orderIds,
     orderWorkCenter,
+    samplesPerSession,
+    dimensionsPerSample,
+    measuredDimensionsPerSample,
+    defectsPerSample,
+    coilsPerSample,
     defectIds,
     sampleCoilIds,
     pdiIds,
@@ -475,6 +498,11 @@ async function* documentsToWrite(dir, refs, opts, tally) {
     sessionInit: refs.sessionInit,
     sampleIndex: refs.sampleIndex,
     dimensionSequence: refs.dimensionSequence,
+    samplesPerSession: refs.samplesPerSession,
+    dimensionsPerSample: refs.dimensionsPerSample,
+    measuredDimensionsPerSample: refs.measuredDimensionsPerSample,
+    defectsPerSample: refs.defectsPerSample,
+    coilsPerSample: refs.coilsPerSample,
     // transformSessionInitialization joins on quality_sessionkey, so it needs
     // the session ids to know which of the 71 rows resolve.
     sessionIds: refs.sessionIds,

@@ -478,6 +478,8 @@ export function transformSession(r, ctx) {
       inspectorName: ctx.sessionInspector?.get(id) ?? '',
       startedAt,
       status: status.value ?? 'Open',
+      // Denormalised child count; see InspectionSession.sampleCount.
+      sampleCount: ctx.samplesPerSession?.get(id) ?? 0,
       startQtyConfirmed:
         qty === null
           ? undefined
@@ -556,6 +558,13 @@ export function transformSample(r, ctx) {
       drawing: session?.drawing ?? '',
       issue: session?.issue ?? undefined,
       sampleQty: numOrNull(r.cr863_samplequantity) ?? 0,
+      // Denormalised child counts; see InspectionSample. Computed from the same
+      // rows this run is already streaming, so they cost nothing extra and
+      // start out exactly matching what was written.
+      dimensionCount: ctx.dimensionsPerSample?.get(id) ?? 0,
+      measuredDimensionCount: ctx.measuredDimensionsPerSample?.get(id) ?? 0,
+      defectCount: ctx.defectsPerSample?.get(id) ?? 0,
+      coilCount: ctx.coilsPerSample?.get(id) ?? 0,
       // Derived from the source guid, so a re-run cannot duplicate a sample.
       submissionId: `legacy:${id}`,
       version: 0,
@@ -617,6 +626,19 @@ export function transformDimensionResult(r, ctx) {
     }
   }
 
+  // A row with a parent is kept whatever it holds. The drop rule above applies
+  // only to PARENTLESS rows: an unfilled template row attached to a real sample
+  // is part of that inspection's record. Dropping it would quietly raise the
+  // historical completion rate of every inspection it belongs to, which is
+  // falsifying a QC record, not tidying one.
+  const measured = actual !== null
+  if (!measured) {
+    // Two different facts, and the difference matters. A row with a nominal was
+    // a dimension somebody specified and nobody measured. A row with neither is
+    // a blank template line that was never going to be filled in.
+    ctx.count(nominal === null ? 'dimensionBlankTemplate' : 'dimensionRequiredNotMeasured')
+  }
+
   return {
     collection: COL.dimensions,
     id,
@@ -631,8 +653,18 @@ export function transformDimensionResult(r, ctx) {
       tolMinus: numOrNull(r.cr863_toleranceminus),
       actual,
       unit: '',
-      status: status.value ?? 'Pending',
+      measured,
+      // Why there is no reading, so a report can tell "specified and skipped"
+      // from "blank line" without re-deriving it from nulls.
+      unmeasuredReason: measured ? undefined : nominal === null ? 'blank-template-row' : 'required-not-measured',
+      // A dimension with no reading cannot have passed, whatever the source
+      // said. The source value is kept rather than discarded, but it does not
+      // become the status a report reads.
+      status: measured ? (status.value ?? 'Pending') : 'Pending',
       source: 'legacy',
+      legacy: pruned({
+        sourceStatus: measured ? undefined : status.value ?? undefined,
+      }),
     }),
   }
 }
@@ -858,9 +890,12 @@ export const transformDefectImage = imageMetadataTransform({
   parentField: 'defectId',
   kind: 'defect',
   idKeys: ['cr863_visualdefectimageid', 'cr863_visualdefectimage2id'],
+  // Verified against the real file: the lookup drops the digit even though the
+  // parent table is cr863_visualdefectresult2s. The "2" spelling is kept as a
+  // fallback, not as the assumption.
   candidates: [
-    '_cr863_visualdefectresult2_value',
     '_cr863_visualdefectresult_value',
+    '_cr863_visualdefectresult2_value',
     'cr863_visualdefectresultidtext',
   ],
 })
@@ -872,7 +907,8 @@ export const transformSampleCoilImage = imageMetadataTransform({
   parentField: 'sampleCoilId',
   kind: 'sampleCoil',
   idKeys: ['cr863_samplecoilimageid', 'cr863_samplecoilimage2id'],
-  candidates: ['_cr863_samplecoil2_value', '_cr863_samplecoil_value', 'cr863_samplecoilidtext'],
+  // Same trap as the defect images: no digit on the lookup.
+  candidates: ['_cr863_samplecoil_value', '_cr863_samplecoil2_value', 'cr863_samplecoilidtext'],
 })
 
 /** 10_cr863_pdiimages.json -- 3 rows, every one resolving to the PDI. */
@@ -1048,12 +1084,21 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
         (initUnmatched.length ? ` — ${initUnmatched.join(', ')}` : ''),
     )
   }
+  // Denormalised child counts, computed from the rows already being streamed.
+  // The history list reads them instead of fetching children per row.
+  const samplesPerSession = new Map()
+  const dimensionsPerSample = new Map()
+  const measuredDimensionsPerSample = new Map()
+  const defectsPerSample = new Map()
+  const coilsPerSample = new Map()
+  const tick = (m, k) => { if (k) m.set(k, (m.get(k) ?? 0) + 1) }
   if (exists(f('02_cr863_inspectionsample1s.json'))) {
     const bySession = new Map()
     for await (const r of streamRows(f('02_cr863_inspectionsample1s.json'))) {
       const id = r.cr863_inspectionsample1id
       if (!id) continue
       sampleIds.add(id)
+      tick(samplesPerSession, r._cr863_inspectionsession_value ?? '')
       const sid = r._cr863_inspectionsession_value ?? ''
       const arr = bySession.get(sid) ?? []
       arr.push({ id, at: r.cr863_sampledatetime ?? r.createdon ?? '', name: r.cr863_inspectorname ?? '' })
@@ -1076,6 +1121,10 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
       const n = (bySample.get(sid) ?? 0) + 1
       bySample.set(sid, n)
       dimensionSequence.set(id, n)
+      tick(dimensionsPerSample, sid)
+      // Counted separately so a row the inspector opened and never measured
+      // stays visible as unmeasured instead of reading as work completed.
+      if (numOrNull(r.cr863_actual) !== null) tick(measuredDimensionsPerSample, sid)
     }
   }
   log(
@@ -1089,14 +1138,19 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
   const defectIds = new Set()
   const sampleCoilIds = new Set()
   const pdiIds = new Set()
-  for (const [file, key, into] of [
-    ['04_cr863_visualdefectresult2s.json', 'cr863_visualdefectresult2id', defectIds],
-    ['05_cr863_samplecoil2s.json', 'cr863_samplecoil2id', sampleCoilIds],
-    ['09_cr863_pdis.json', 'cr863_pdiid', pdiIds],
+  // One pass over the three parent tables: collect their ids for the image
+  // dangling checks, and count defects and coils per sample for the
+  // denormalised totals. Both files link to the sample by
+  // _cr863_inspectionsample_value.
+  for (const [file, key, into, perSample] of [
+    ['04_cr863_visualdefectresult2s.json', 'cr863_visualdefectresult2id', defectIds, defectsPerSample],
+    ['05_cr863_samplecoil2s.json', 'cr863_samplecoil2id', sampleCoilIds, coilsPerSample],
+    ['09_cr863_pdis.json', 'cr863_pdiid', pdiIds, null],
   ]) {
     if (!exists(f(file))) continue
     for await (const r of streamRows(f(file))) {
       if (r[key]) into.add(r[key])
+      if (perSample) tick(perSample, strOrNull(r._cr863_inspectionsample_value))
     }
   }
 
@@ -1114,6 +1168,11 @@ export async function runDryRun(src, { verbose = false, log = console.log } = {}
     sampleIndex,
     dimensionSequence,
     sessionIds,
+    samplesPerSession,
+    dimensionsPerSample,
+    measuredDimensionsPerSample,
+    defectsPerSample,
+    coilsPerSample,
     resolvedColumn: (file, kind, key) => {
       const at = `${file} -> ${kind}`
       const seen = resolvedColumns.get(at) ?? new Set()

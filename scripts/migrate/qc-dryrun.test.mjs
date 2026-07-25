@@ -700,3 +700,157 @@ describe('session initializations', () => {
     expect(out.doc.unresolvedReason).toMatch(/empty/)
   })
 })
+
+
+// ---------------------------------------------------------------------------
+// Unmeasured dimension rows.
+//
+// 623 of the 4,770 dimension results have a valid parent sample but no reading.
+// They are template rows an inspector opened and never measured. Dropping them
+// would quietly raise the completion rate of every inspection they belong to,
+// which is falsifying a QC record rather than tidying one.
+// ---------------------------------------------------------------------------
+
+describe('dimension rows with a parent but no reading', () => {
+  const ctx = () => ({ counts: {}, count(k) { this.counts[k] = (this.counts[k] ?? 0) + 1 }, decodeFailure() {}, dimensionSequence: new Map() })
+  const row = (over) => ({
+    cr863_dimensionresult2id: 'dr-1',
+    _cr863_inspectionsample_value: 'smp-1',
+    cr863_dimensionname: 'Width',
+    ...over,
+  })
+
+  it('keeps a row that has a nominal and no actual, flagged as required-not-measured', () => {
+    const c = ctx()
+    const out = transformDimensionResult(row({ cr863_nominal: 50, cr863_actual: null }), c)
+    expect(out.reject).toBeUndefined()
+    expect(out.collection).toBe('dimensions')
+    expect(out.doc.measured).toBe(false)
+    expect(out.doc.unmeasuredReason).toBe('required-not-measured')
+    expect(c.counts.dimensionRequiredNotMeasured).toBe(1)
+  })
+
+  it('keeps a blank template row that has neither, flagged as blank-template-row', () => {
+    const c = ctx()
+    const out = transformDimensionResult(row({ cr863_nominal: null, cr863_actual: null }), c)
+    expect(out.reject).toBeUndefined()
+    expect(out.collection).toBe('dimensions')
+    expect(out.doc.measured).toBe(false)
+    expect(out.doc.unmeasuredReason).toBe('blank-template-row')
+    expect(c.counts.dimensionBlankTemplate).toBe(1)
+  })
+
+  it('never reports an unmeasured row as passing, whatever the source said', () => {
+    // The real export marks unmeasured rows Pass. Importing that verbatim would
+    // put a pass on a dimension nobody measured.
+    const out = transformDimensionResult(
+      row({ cr863_nominal: 50, cr863_actual: null, cr863_status: 898710000 }),
+      ctx(),
+    )
+    expect(out.doc.status).toBe('Pending')
+    // and the source value is kept rather than discarded
+    expect(out.doc.legacy.sourceStatus).toBe('Pass')
+  })
+
+  it('marks a measured row as measured and keeps its status', () => {
+    const out = transformDimensionResult(
+      row({ cr863_nominal: 50, cr863_actual: 50.1, cr863_status: 898710000 }),
+      ctx(),
+    )
+    expect(out.doc.measured).toBe(true)
+    expect(out.doc.unmeasuredReason).toBeUndefined()
+    expect(out.doc.status).toBe('Pass')
+  })
+
+  it('the drop rule applies only to PARENTLESS rows', () => {
+    // This is the property that keeps the 623. A row with no reading is dropped
+    // only when it also has no sample to belong to.
+    const withParent = transformDimensionResult(
+      row({ cr863_nominal: null, cr863_actual: null }),
+      ctx(),
+    )
+    const parentless = transformDimensionResult(
+      row({ _cr863_inspectionsample_value: null, cr863_nominal: null, cr863_actual: null }),
+      ctx(),
+    )
+    expect(withParent.reject).toBeUndefined()
+    expect(parentless.reject).toBeTruthy()
+  })
+})
+
+describe('denormalised child counts', () => {
+  it('a session carries its sample count', () => {
+    const out = transformSession(
+      { cr863_inspectionsession1id: 'ses-1', _cr863_productionorder_value: 'ord-1' },
+      { count() {}, decodeFailure() {}, samplesPerSession: new Map([['ses-1', 4]]) },
+    )
+    expect(out.doc.sampleCount).toBe(4)
+  })
+
+  it('a sample carries dimension, measured, defect and coil counts', () => {
+    const out = transformSample(
+      {
+        cr863_inspectionsample1id: 'smp-1',
+        _cr863_inspectionsession_value: 'ses-1',
+        cr863_shift: 898710000,
+      },
+      {
+        count() {},
+        decodeFailure() {},
+        session: new Map([['ses-1', { orderId: 'ord-1' }]]),
+        sampleIndex: new Map([['smp-1', 1]]),
+        dimensionsPerSample: new Map([['smp-1', 9]]),
+        measuredDimensionsPerSample: new Map([['smp-1', 3]]),
+        defectsPerSample: new Map([['smp-1', 2]]),
+        coilsPerSample: new Map([['smp-1', 1]]),
+      },
+    )
+    expect(out.doc.dimensionCount).toBe(9)
+    // Separate from dimensionCount precisely so the unmeasured rows stay visible.
+    expect(out.doc.measuredDimensionCount).toBe(3)
+    expect(out.doc.defectCount).toBe(2)
+    expect(out.doc.coilCount).toBe(1)
+  })
+
+  it('defaults to zero rather than undefined, so a list never renders a blank', () => {
+    const out = transformSample(
+      { cr863_inspectionsample1id: 'smp-2', _cr863_inspectionsession_value: 'ses-1', cr863_shift: 898710000 },
+      { count() {}, decodeFailure() {}, session: new Map(), sampleIndex: new Map() },
+    )
+    expect(out.doc.dimensionCount).toBe(0)
+    expect(out.doc.measuredDimensionCount).toBe(0)
+  })
+})
+
+describe('verified link columns', () => {
+  const ctx = () => ({ count() {}, resolvedColumn() {} })
+
+  it('defect images link without the digit, matching the real file', () => {
+    const out = transformDefectImage(
+      { cr863_visualdefectimageid: 'di-1', _cr863_visualdefectresult_value: 'def-1' },
+      ctx(),
+    )
+    expect(out.doc.defectId).toBe('def-1')
+  })
+
+  it('sample coil images link without the digit too', () => {
+    const out = transformSampleCoilImage(
+      { cr863_samplecoilimageid: 'sci-1', _cr863_samplecoil_value: 'sc-1' },
+      ctx(),
+    )
+    expect(out.doc.sampleCoilId).toBe('sc-1')
+  })
+
+  it('the verified spelling is tried before the fallback', () => {
+    // A row carrying BOTH must resolve to the verified one.
+    const out = transformDefectImage(
+      {
+        cr863_visualdefectimageid: 'di-2',
+        _cr863_visualdefectresult_value: 'right',
+        _cr863_visualdefectresult2_value: 'wrong',
+      },
+      ctx(),
+    )
+    expect(out.doc.defectId).toBe('right')
+  })
+})

@@ -525,6 +525,11 @@ export function HistoryPage() {
                     {workCenterName(s.workCenterCode)} · {s.inspectorName} · {formatDate(s.startedAt)}
                   </p>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {/* Read from the session document, not counted by fetching
+                        its samples. See InspectionSession.sampleCount. */}
+                    <Badge tone="neutral">
+                      {s.sampleCount ?? 0} sample{s.sampleCount === 1 ? '' : 's'}
+                    </Badge>
                     {s.startQtyConfirmed && (
                       <Badge tone="neutral">Start {s.startQtyConfirmed.qty}</Badge>
                     )}
@@ -552,6 +557,7 @@ export function HistoryPage() {
                     <th className="px-4 py-3">Inspector</th>
                     <th className="px-4 py-3">Date</th>
                     <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Samples</th>
                     <th className="px-4 py-3 text-right">Start qty</th>
                     <th className="px-4 py-3 text-right">Final qty</th>
                     <th className="px-4 py-3" />
@@ -575,6 +581,7 @@ export function HistoryPage() {
                         <td className="px-4 py-3">
                           <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
                         </td>
+                        <td className="px-4 py-3 text-right tabular-nums">{num(s.sampleCount)}</td>
                         <td className="px-4 py-3 text-right tabular-nums">
                           {num(s.startQtyConfirmed?.qty)}
                         </td>
@@ -676,6 +683,25 @@ export function HistoryPage() {
                             </span>
                             <span className="block text-xs text-slate-400">
                               {formatDateTime(sm.createdAt)} · sample qty {sm.sampleQty}
+                            </span>
+                            {/* Counts come from the sample document. The
+                                measured/total split keeps a dimension nobody
+                                measured visible instead of folding it into a
+                                completion figure. */}
+                            <span className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                              <span className="tabular-nums">
+                                {sm.measuredDimensionCount ?? 0}/{sm.dimensionCount ?? 0} measured
+                              </span>
+                              {(sm.defectCount ?? 0) > 0 && (
+                                <span className="tabular-nums text-amber-600 dark:text-amber-400">
+                                  {sm.defectCount} defect{sm.defectCount === 1 ? '' : 's'}
+                                </span>
+                              )}
+                              {(sm.coilCount ?? 0) > 0 && (
+                                <span className="tabular-nums">
+                                  {sm.coilCount} coil{sm.coilCount === 1 ? '' : 's'}
+                                </span>
+                              )}
                             </span>
                           </span>
                           <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />

@@ -21,6 +21,7 @@ import {
   writeBatch,
   runTransaction,
   serverTimestamp,
+  increment,
   type Firestore,
 } from 'firebase/firestore'
 import { getDb } from '@/lib/firebase'
@@ -131,6 +132,7 @@ export async function saveSampleAtomic(bundle: SampleBundle, ctx: AuditContext):
     (bundle.paint ? 1 : 0) +
     (bundle.pt ? 1 : 0) +
     bundle.images.length +
+    1 + // the session's sampleCount increment
     1 // audit create entry
   if (writes > 450) {
     throw new Error(
@@ -139,7 +141,25 @@ export async function saveSampleAtomic(bundle: SampleBundle, ctx: AuditContext):
   }
 
   const batch = writeBatch(store)
-  batch.set(doc(store, COL.samples, bundle.sample.id), strip(bundle.sample))
+
+  // Child counts live on the sample so the history list is one query rather
+  // than one fetch (or one aggregation) per row. They are derived here, from
+  // the very rows this batch is writing, and committed in the same batch: the
+  // count and the things it counts cannot land separately, so they cannot
+  // drift. measuredDimensionCount is separate from dimensionCount so a
+  // dimension nobody measured stays visible as unmeasured.
+  const sample: InspectionSample = {
+    ...bundle.sample,
+    dimensionCount: bundle.dimensions.length,
+    measuredDimensionCount: bundle.dimensions.filter((d) => d.actual !== null).length,
+    defectCount: bundle.defects.length,
+    coilCount: bundle.coils.length,
+  }
+  batch.set(doc(store, COL.samples, sample.id), strip(sample))
+
+  // The session's sample count, incremented in the same batch. increment() is
+  // resolved by the server, so two inspectors saving at once both count.
+  batch.update(doc(store, COL.sessions, sample.sessionId), { sampleCount: increment(1) })
   for (const d of bundle.dimensions) batch.set(doc(store, COL.dimensions, d.id), strip(d))
   for (const d of bundle.defects) batch.set(doc(store, COL.defects, d.id), strip(d))
   for (const c of bundle.coils) batch.set(doc(store, COL.sampleCoils, c.id), strip(c))

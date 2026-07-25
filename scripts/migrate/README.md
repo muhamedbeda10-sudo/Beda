@@ -51,7 +51,7 @@ node qc-import.mjs /path/to/qc-migration/data --stage=history --commit
 | stage | collections | roughly |
 |---|---|---|
 | `master` | machines, gradeMappings, itemDimensionMaster, itemDimensionOrder, workCenterDefects, workCenterDimensions | 444 |
-| `history` | sessions, samples, dimensions, defects, sampleCoils, PDI, audit, quarantine, **paint samples, session initializations, and the four image-metadata tables** -- plus only the production orders those rows reference | 5,706 rows + 125 orders |
+| `history` | sessions, samples, dimensions, defects, sampleCoils, PDI, audit, quarantine, **paint samples, session initializations, and the four image-metadata tables** -- plus only the production orders those rows reference | 5,706 rows -> **5,591 documents** incl. 125 orders |
 | `all` | master + history. Today's authorised scope, not "everything in the file". | |
 | `deferred` | the remaining production orders, coils, itemReferenceImages, productionData, and every image **byte** | ~59,200 |
 
@@ -89,8 +89,8 @@ files on disk. They migrate in stage 2:
 
 | file | rows | collection | link column |
 |---|---|---|---|
-| `06_cr863_visualdefectimages.json` | 17 | `defectImages` | `_cr863_visualdefectresult2_value` |
-| `07_cr863_samplecoilimages.json` | 5 | `sampleCoilImages` | `_cr863_samplecoil2_value` |
+| `06_cr863_visualdefectimages.json` | 17 | `defectImages` | `_cr863_visualdefectresult_value` |
+| `07_cr863_samplecoilimages.json` | 5 | `sampleCoilImages` | `_cr863_samplecoil_value` |
 | `08_quality_paintsampleimages.json` | 99 | `paintSamples` | `quality_inspectionsampleidtext` |
 | `10_cr863_pdiimages.json` | 3 | `pdiImages` | `_cr863_pdi_value` |
 
@@ -112,9 +112,12 @@ Its link to the sample is `quality_inspectionsampleidtext`: a **text** column
 holding the sample GUID, with no `_value` suffix, so a generic lookup resolver
 does not see it.
 
-Because these four tables were mapped after the rest of the export was
-understood, each transform accepts more than one spelling of its link column and
-**reports which one the real data used**, before anything is written:
+Note the lookup columns **drop the digit** even though the parent tables are
+`cr863_visualdefectresult2s` and `cr863_samplecoil2s`. Verified against the real
+files.
+
+Each transform still accepts more than one spelling, with the verified name
+first, and **reports which one the real data used** before anything is written:
 
 ```
   -- Resolved link columns -----------------------------
@@ -137,6 +140,53 @@ with a broken pointer is still evidence that a session was set up.
 
 The same rule applies to the 1 sample of 374 whose `_cr863_inspectionsession_value`
 is null: it goes to `orphanSamples` flagged, never silently discarded.
+
+### Dimension rows with no reading are kept
+
+4,770 dimension results, of which 349 have no parent sample. Those 349 split
+exactly: 240 have neither an actual nor a nominal and are dropped, 109 carry a
+measurement and go to quarantine. So the file produces **4,530 documents**.
+
+The drop rule applies **only to parentless rows.** 623 rows have a valid parent
+sample but no actual and no nominal, and a further 36 have a nominal but no
+actual. All 659 are imported.
+
+Dropping them would quietly raise the completion rate of every inspection they
+belong to. That is falsifying a QC record, not tidying one.
+
+Each carries:
+
+| field | meaning |
+|---|---|
+| `measured: false` | no reading was ever taken |
+| `unmeasuredReason: 'blank-template-row'` | neither a spec nor a reading -- the 623 |
+| `unmeasuredReason: 'required-not-measured'` | a spec existed and nobody measured it -- the 36 |
+
+**An unmeasured row is never imported as passing.** The source marks some of
+them `Pass`; the import forces `status: 'Pending'` whenever `actual` is null and
+keeps the original in `legacy.sourceStatus`. A dimension with no reading cannot
+have passed, whatever the old system recorded.
+
+### Child counts are denormalised
+
+The history list needs counts per row. Fetching the children to count them is
+the unbounded read the app was rebuilt to avoid, and a count aggregation per row
+is a per-row cost on every page view. So the counts live on the parent:
+
+| document | fields |
+|---|---|
+| session | `sampleCount` |
+| sample | `dimensionCount`, `measuredDimensionCount`, `defectCount`, `coilCount` |
+
+The migration computes them from the rows it is already streaming, so they cost
+nothing extra and start out exactly matching what was written. The app maintains
+them in the **same batch** that writes a sample -- `saveSampleAtomic` derives
+them from the bundle it is committing and increments the session's `sampleCount`
+with `increment(1)` in that batch. The count and the things it counts cannot
+land separately, so they cannot drift.
+
+`measuredDimensionCount` is deliberately separate from `dimensionCount` so the
+623 stay visible as unmeasured rather than folding into a completion figure.
 
 Other flags:
 
@@ -213,10 +263,10 @@ is checked against what is left to write, not the whole stage.
   Within budget: 5,591 writes, limit 18,000.
 ```
 
-Source rows for stage 2 total **5,706**, plus 125 referenced orders. The
-projection writes slightly fewer because 240 unfilled dimension template rows
-are rejected, as agreed. The script prints the real number on the real data;
-this is an illustration, not a promise.
+Stage 2 is **5,706 source rows**, of which 240 are dropped (parentless with
+nothing recorded), giving 5,466 documents plus 125 referenced orders =
+**5,591**. Grand total for the day: 444 + 5,591 = **6,035**, inside the 18,000
+cap and the 20,000 daily limit.
 
 **It verifies before it claims success.** See below.
 

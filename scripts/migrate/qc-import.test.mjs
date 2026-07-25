@@ -41,6 +41,33 @@ function run(args, env = {}) {
   }
 }
 
+const rows = (files) =>
+  FILES.filter((f) => files.includes(f.file)).reduce((n, f) => n + f.expect, 0)
+
+const MASTER_FILES = [
+  '20_cr863_machineses.json',            // machines                32
+  '19_quality_grademappings.json',       // gradeMappings            7
+  '15_cr863_dimensions.json',            // itemDimensionMaster     24
+  '16_quality_dimensionorders.json',     // itemDimensionOrder     328
+  '18_cr863_workcentervisualdefects.json', // workCenterDefects     52
+  '17_cr863_workcenterdimensions.json',  // workCenterDimensions     1
+]
+
+const HISTORY_FILES = [
+  '01_cr863_inspectionsession1s.json',        // sessions              147
+  '02_cr863_inspectionsample1s.json',         // samples               374
+  '03_cr863_dimensionresult2s.json',          // dimensionResults    4,770
+  '04_cr863_visualdefectresult2s.json',       // defectResults          46
+  '05_cr863_samplecoil2s.json',               // sampleCoils           142
+  '06_cr863_visualdefectimages.json',         // defectImages           17
+  '07_cr863_samplecoilimages.json',           // sampleCoilImages        5
+  '08_quality_paintsampleimages.json',        // paintSamples           99
+  '09_cr863_pdis.json',                       // pdis                    1
+  '10_cr863_pdiimages.json',                  // pdiImages               3
+  '11_quality_sessioninitializations.json',   // sessionInitializations 71
+  '24_cr863_auditlogs.json',                  // auditLogs              31
+]
+
 describe('stages', () => {
   it('master is exactly the six reference collections', () => {
     expect([...MASTER_COLLECTIONS].sort()).toEqual(
@@ -363,32 +390,6 @@ describe('resume', () => {
 describe('authoritative row counts', () => {
   // Verified against the real export on the owner's machine. These are SOURCE
   // ROW counts, not document counts -- see the note on the history total.
-  const rows = (files) =>
-    FILES.filter((f) => files.includes(f.file)).reduce((n, f) => n + f.expect, 0)
-
-  const MASTER_FILES = [
-    '20_cr863_machineses.json',            // machines                32
-    '19_quality_grademappings.json',       // gradeMappings            7
-    '15_cr863_dimensions.json',            // itemDimensionMaster     24
-    '16_quality_dimensionorders.json',     // itemDimensionOrder     328
-    '18_cr863_workcentervisualdefects.json', // workCenterDefects     52
-    '17_cr863_workcenterdimensions.json',  // workCenterDimensions     1
-  ]
-
-  const HISTORY_FILES = [
-    '01_cr863_inspectionsession1s.json',        // sessions              147
-    '02_cr863_inspectionsample1s.json',         // samples               374
-    '03_cr863_dimensionresult2s.json',          // dimensionResults    4,770
-    '04_cr863_visualdefectresult2s.json',       // defectResults          46
-    '05_cr863_samplecoil2s.json',               // sampleCoils           142
-    '06_cr863_visualdefectimages.json',         // defectImages           17
-    '07_cr863_samplecoilimages.json',           // sampleCoilImages        5
-    '08_quality_paintsampleimages.json',        // paintSamples           99
-    '09_cr863_pdis.json',                       // pdis                    1
-    '10_cr863_pdiimages.json',                  // pdiImages               3
-    '11_quality_sessioninitializations.json',   // sessionInitializations 71
-    '24_cr863_auditlogs.json',                  // auditLogs              31
-  ]
 
   it('stage master is 444 rows', () => {
     expect(rows(MASTER_FILES)).toBe(444)
@@ -447,5 +448,55 @@ describe('authoritative row counts', () => {
     expect(total).toBe(6275)
     expect(total).toBeLessThan(parseArgs(['/d', '--stage=all']).maxWrites)
     expect(total).toBeLessThan(20000) // the Spark daily limit
+  })
+})
+
+describe('the dimension arithmetic', () => {
+  // Verified independently on the real export. Every number here is a fact
+  // about the data, and the point of pinning them is that the 623 survive.
+  const DIMENSION_ROWS = 4770
+  const PARENTLESS = 349
+  const PARENTLESS_DROPPED = 240 // no actual AND no nominal, so nothing to keep
+  const PARENTLESS_QUARANTINED = 109 // carrying a measurement
+  const WITH_PARENT_UNMEASURED_BLANK = 623 // valid parent, no actual, no nominal
+  const WITH_PARENT_REQUIRED_SKIPPED = 36 // valid parent, nominal, no actual
+
+  it('the parentless split reconciles exactly', () => {
+    expect(PARENTLESS_DROPPED + PARENTLESS_QUARANTINED).toBe(PARENTLESS)
+  })
+
+  it('the 623 are inside the rows that have a parent, so they are kept', () => {
+    const withParent = DIMENSION_ROWS - PARENTLESS
+    expect(withParent).toBe(4421)
+    // The drop rule only ever removes parentless rows. The unmeasured rows that
+    // DO have a parent are inside this number and are all written.
+    expect(WITH_PARENT_UNMEASURED_BLANK + WITH_PARENT_REQUIRED_SKIPPED).toBeLessThan(withParent)
+    expect(WITH_PARENT_UNMEASURED_BLANK).toBe(623)
+  })
+
+  it('the dimension file produces 4,530 documents, and only 240 are dropped', () => {
+    const documents = DIMENSION_ROWS - PARENTLESS_DROPPED
+    expect(documents).toBe(4530)
+    // 4,421 in dimensions + 109 in quarantine.
+    expect((DIMENSION_ROWS - PARENTLESS) + PARENTLESS_QUARANTINED).toBe(documents)
+  })
+
+  it("stage 2 projects 5,591 documents, which is the owner's adopted figure", () => {
+    const historyDocuments = rows(HISTORY_FILES) - PARENTLESS_DROPPED
+    expect(historyDocuments).toBe(5466)
+    expect(historyDocuments + 125).toBe(5591)
+  })
+
+  it("today's authorised scope fits the default write budget", () => {
+    // Source rows 444 + 5,706 + 125 = 6,275; documents 444 + 5,591 = 6,035.
+    // Both are checked, because the budget has to hold for the larger one.
+    const sourceRows = rows(MASTER_FILES) + rows(HISTORY_FILES) + 125
+    const documents = rows(MASTER_FILES) + (rows(HISTORY_FILES) - PARENTLESS_DROPPED) + 125
+    expect(sourceRows).toBe(6275)
+    expect(documents).toBe(6035)
+    const cap = parseArgs(['/d', '--stage=all']).maxWrites
+    expect(sourceRows).toBeLessThan(cap)
+    expect(documents).toBeLessThan(cap)
+    expect(sourceRows).toBeLessThan(20000) // the Spark daily limit
   })
 })

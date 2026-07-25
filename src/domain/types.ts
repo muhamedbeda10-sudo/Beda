@@ -93,6 +93,13 @@ export interface InspectionSession {
   closedAt?: ISODate
   closedByUid?: ID
   deletedAt?: ISODate
+  /**
+   * How many samples this session holds.
+   *
+   * Denormalised so the history list is one query. Maintained in the same
+   * batch that writes a sample, so it cannot drift from the rows it counts.
+   */
+  sampleCount?: number
   /** Optimistic-concurrency token (§9.4). */
   version: number
 }
@@ -126,6 +133,22 @@ export interface InspectionSample {
   }
   /** Client-generated id making retries idempotent (§9.3). */
   submissionId: string
+  /**
+   * Child counts, denormalised.
+   *
+   * The history list needs these per row; fetching the children to count them
+   * is the unbounded read this design exists to avoid, and a count aggregation
+   * per row is a per-row cost. They are written in the same batch as the
+   * sample, under the atomic-save rule, so they cannot drift.
+   *
+   * `measuredDimensionCount` is deliberately separate from `dimensionCount`:
+   * a dimension row that was never measured must stay visible as unmeasured
+   * rather than counting toward a completion figure.
+   */
+  dimensionCount?: number
+  measuredDimensionCount?: number
+  defectCount?: number
+  coilCount?: number
   deletedAt?: ISODate
   version: number
 }
@@ -146,6 +169,15 @@ export interface DimensionResult {
   tolMinus: number | null
   actual: number | null
   unit: string
+  /**
+   * Whether a reading was ever taken. False for a row the inspector opened and
+   * left blank. Such a row is imported, not dropped: removing it would raise
+   * the apparent completion rate of the inspection it belongs to.
+   */
+  measured?: boolean
+  /** Why there is no reading. A specified dimension nobody measured is a
+   *  different fact from a blank template line. */
+  unmeasuredReason?: 'blank-template-row' | 'required-not-measured'
   status: DimensionStatus
   /** Where nominal/tolerance came from (§8.3) — useful when auditing. */
   source: 'item-order' | 'item-master' | 'carry-forward' | 'manual' | 'legacy'

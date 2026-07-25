@@ -57,15 +57,35 @@ service cloud.firestore {
       allow read: if signedIn()
         && col in ['sessions', 'samples', 'dimensions', 'defects', 'sampleCoils',
                    'paintSamples', 'ptRecords', 'images', 'imageChunks',
-                   'pdiDocuments', 'submissions'];
+                   'pdiDocuments', 'submissions',
+                   // Migrated image metadata. The bytes are still in SharePoint;
+                   // these rows carry legacySourceUrl and imagePending.
+                   'defectImages', 'sampleCoilImages', 'pdiImages',
+                   // The per-session setup record from the old system.
+                   'sessionInitializations'];
       allow create: if signedIn()
         && col in ['sessions', 'samples', 'dimensions', 'defects', 'sampleCoils',
                    'paintSamples', 'ptRecords', 'images', 'imageChunks',
-                   'pdiDocuments', 'submissions'];
+                   'pdiDocuments', 'submissions',
+                   'defectImages', 'sampleCoilImages', 'pdiImages',
+                   'sessionInitializations'];
       allow update: if signedIn()
         && col in ['sessions', 'samples', 'dimensions', 'defects', 'sampleCoils',
-                   'paintSamples', 'ptRecords', 'images', 'pdiDocuments'];
+                   'paintSamples', 'ptRecords', 'images', 'pdiDocuments',
+                   'defectImages', 'sampleCoilImages', 'pdiImages',
+                   'sessionInitializations'];
       // §10 — no hard deletes anywhere in the system.
+      allow delete: if false;
+    }
+
+    // ---- Quarantine -------------------------------------------------------
+    // Rows the old system stranded: real recordings with no parent to attach
+    // to. Everyone signed in can see them, so they are not hidden; only a
+    // supervisor or admin can resolve one, and nobody can delete one. Losing
+    // evidence quietly is the failure this system exists to prevent.
+    match /{col}/{docId} {
+      allow read: if signedIn() && col in ['orphanMeasurements', 'orphanSamples'];
+      allow create, update: if isSupervisor() && col in ['orphanMeasurements', 'orphanSamples'];
       allow delete: if false;
     }
 
@@ -75,11 +95,13 @@ service cloud.firestore {
       allow read: if signedIn()
         && col in ['orders', 'machines', 'coils', 'itemDimensionOrder',
                    'itemDimensionMaster', 'itemReferenceImages',
-                   'workCenterDefects', 'gradeMappings', 'ptConsumables'];
+                   'workCenterDefects', 'workCenterDimensions',
+                   'gradeMappings', 'ptConsumables', 'productionData'];
       allow write: if isAdmin()
         && col in ['orders', 'machines', 'coils', 'itemDimensionOrder',
                    'itemDimensionMaster', 'itemReferenceImages',
-                   'workCenterDefects', 'gradeMappings', 'ptConsumables'];
+                   'workCenterDefects', 'workCenterDimensions',
+                   'gradeMappings', 'ptConsumables', 'productionData'];
     }
 
     // ---- Audit trail ------------------------------------------------------
