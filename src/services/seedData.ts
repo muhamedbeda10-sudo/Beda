@@ -18,11 +18,11 @@ import type {
 } from '@/domain/types'
 
 const machines: Machine[] = [
-  { id: 'wc7', code: '7', machineNumber: '7', line: 'LM1', name: '7-Paint Sample Line', factory: 'Main' },
-  { id: 'wc11', code: '11', machineNumber: '11', line: 'LM2', name: '11-Paint Sample Booth', factory: 'Main' },
-  { id: 'wc22', code: '22', machineNumber: '22', line: 'LM3', name: '22-Welding Cell', factory: 'Main' },
-  { id: 'wc48', code: '48', machineNumber: '48', line: 'LM4', name: '48-Painting Line-LM4', factory: 'Main' },
-  { id: 'wc58', code: '58', machineNumber: '58-A', line: 'LM4', name: '58-A. Welding Line-LM4', factory: 'Main' },
+  { id: 'wc7', code: '7', name: 'Painting Line', line: 'LM1', displayName: '7-Painting Line-LM1' },
+  { id: 'wc11', code: '11', name: 'Painting Line', line: 'LM2', displayName: '11-Painting Line-LM2' },
+  { id: 'wc22', code: '22', name: 'Shuttle Welding', line: 'LM3', displayName: '22-Shuttle Welding-LM3' },
+  { id: 'wc48', code: '48', name: 'Painting Line', line: 'LM4', displayName: '48-Painting Line-LM4' },
+  { id: 'wc58', code: '58', name: 'A. Welding Line', line: 'LM4', displayName: '58-A. Welding Line-LM4' },
 ]
 
 const items = [

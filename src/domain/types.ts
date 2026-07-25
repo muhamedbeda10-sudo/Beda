@@ -21,10 +21,14 @@ export interface Machine {
   id: ID
   /** Work-center code, e.g. "58" */
   code: string
-  machineNumber: string
-  line: string
+  /** Work-centre / process name, e.g. "A. Welding Line". */
   name: string
-  factory: string
+  /** Production line, e.g. "LM4". */
+  line: string
+  /** How the old app labelled a group: "58-A. Welding Line-LM4". */
+  displayName: string
+  machineNumber?: string
+  factory?: string
   deletedAt?: ISODate
 }
 
@@ -51,6 +55,12 @@ export interface ProductionOrder {
   type: string
   colour: string
   date: ISODate
+  /** Dataverse GUID — lets any row be traced back to the source system. */
+  legacyId?: string
+  /** cr863_orderid, the numeric key the old system matched on. */
+  legacyOrderId?: string
+  /** Fields with no home in this model, kept verbatim so nothing is lost. */
+  legacy?: Record<string, unknown>
   deletedAt?: ISODate
 }
 
@@ -129,14 +139,16 @@ export interface DimensionResult {
   sampleId: ID
   name: string
   sequence: number
-  nominal: number
-  tolPlus: number
-  tolMinus: number
+  /** Null where the source recorded a measurement with no specification to
+   *  judge it against — such a row is Pending, never Pass. */
+  nominal: number | null
+  tolPlus: number | null
+  tolMinus: number | null
   actual: number | null
   unit: string
   status: DimensionStatus
   /** Where nominal/tolerance came from (§8.3) — useful when auditing. */
-  source: 'item-order' | 'item-master' | 'carry-forward' | 'manual'
+  source: 'item-order' | 'item-master' | 'carry-forward' | 'manual' | 'legacy'
   deletedAt?: ISODate
 }
 
@@ -293,7 +305,8 @@ export interface ItemDimensionMaster {
   id: ID
   item: string
   dimensionName: string
-  nominal: number
+  /** Optional: the source carries tolerances only. */
+  nominal?: number
   tolPlus: number
   tolMinus: number
   unit: string
@@ -305,6 +318,15 @@ export interface ItemReferenceImage {
   item: string
   imageId: ID
   caption?: string
+  deletedAt?: ISODate
+}
+
+/** Which dimensions a work centre filters to. The source holds a single row
+ *  (Paint Thickness @ 48) — incomplete configuration, migrated verbatim. */
+export interface WorkCenterDimension {
+  id: ID
+  workCenterCode: string
+  dimensionName: string
   deletedAt?: ISODate
 }
 

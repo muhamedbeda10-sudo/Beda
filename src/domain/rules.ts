@@ -67,13 +67,17 @@ export const WARNING_BAND = 0.1
  * asymmetric (e.g. +0.5 / -0.1) and a shared band would misreport the tight side.
  */
 export function dimensionStatus(input: {
-  nominal: number
-  tolPlus: number
-  tolMinus: number
+  nominal: number | null | undefined
+  tolPlus: number | null | undefined
+  tolMinus: number | null | undefined
   actual: number | null | undefined
 }): DimensionStatus {
   const { nominal, tolPlus, tolMinus, actual } = input
   if (actual === null || actual === undefined || Number.isNaN(actual)) return 'Pending'
+  // A measurement with no specification cannot be judged — it is not a pass.
+  if (nominal === null || nominal === undefined || Number.isNaN(nominal)) return 'Pending'
+  if (tolPlus === null || tolPlus === undefined || tolMinus === null || tolMinus === undefined)
+    return 'Pending'
 
   const upper = nominal + Math.abs(tolPlus)
   const lower = nominal - Math.abs(tolMinus)
@@ -316,7 +320,7 @@ export interface ResolvedDimension {
 export function resolveDimensions(input: {
   item: string
   order: Array<{ item: string; dimensionName: string; sequence: number; nominal?: number; tolPlus: number; tolMinus: number; unit: string }>
-  master: Array<{ item: string; dimensionName: string; nominal: number; tolPlus: number; tolMinus: number; unit: string }>
+  master: Array<{ item: string; dimensionName: string; nominal?: number | null; tolPlus: number; tolMinus: number; unit: string }>
   previous: Array<{ name: string; nominal: number; tolPlus: number; tolMinus: number; unit: string }>
   /** Optional filter — paint work centers only offer their configured dims. */
   allowedNames?: string[]
@@ -348,7 +352,7 @@ export function resolveDimensions(input: {
     add({
       name: m.dimensionName,
       sequence: next++,
-      nominal: m.nominal,
+      nominal: m.nominal ?? null,
       tolPlus: m.tolPlus,
       tolMinus: m.tolMinus,
       unit: m.unit,

@@ -932,10 +932,8 @@ function WorkCenterDefectsTab() {
 
 interface MachineDraft {
   code: string
-  machineNumber: string
-  line: string
   name: string
-  factory: string
+  line: string
 }
 
 function MachinesTab() {
@@ -944,7 +942,7 @@ function MachinesTab() {
   const sort = useCallback(
     (a: Machine, b: Machine) =>
       a.code.localeCompare(b.code, undefined, { numeric: true }) ||
-      a.machineNumber.localeCompare(b.machineNumber, undefined, { numeric: true }),
+      a.line.localeCompare(b.line, undefined, { numeric: true }),
     [],
   )
 
@@ -965,43 +963,35 @@ function MachinesTab() {
       minTableWidth="min-w-[42rem]"
       columns={[
         { key: 'code', label: 'Work centre', render: (r) => <Badge tone="blue">{r.code}</Badge> },
-        {
-          key: 'number',
-          label: 'Machine no.',
-          render: (r) => <span className="font-semibold">{r.machineNumber}</span>,
-        },
-        { key: 'name', label: 'Name', render: (r) => r.name },
+        { key: 'name', label: 'Work-centre name', render: (r) => r.name },
         { key: 'line', label: 'Line', render: (r) => r.line || '—' },
-        { key: 'factory', label: 'Factory', render: (r) => r.factory || '—' },
+        {
+          key: 'displayName',
+          label: 'Shown as',
+          render: (r) => <span className="font-semibold">{r.displayName}</span>,
+        },
       ]}
-      describe={(r) => r.name || r.machineNumber}
-      newDraft={() => ({
-        code: WORK_CENTER_CODES[0],
-        machineNumber: '',
-        line: '',
-        name: '',
-        factory: '',
-      })}
-      toDraft={(r) => ({
-        code: r.code,
-        machineNumber: r.machineNumber,
-        line: r.line,
-        name: r.name,
-        factory: r.factory,
-      })}
+      describe={(r) => r.displayName || r.name}
+      newDraft={() => ({ code: WORK_CENTER_CODES[0], name: '', line: '' })}
+      toDraft={(r) => ({ code: r.code, name: r.name, line: r.line })}
       validate={(d) =>
         requireText(d.code, 'Work-centre code') ??
-        requireText(d.machineNumber, 'Machine number') ??
-        requireText(d.name, 'Name')
+        requireText(d.name, 'Work-centre name') ??
+        requireText(d.line, 'Line')
       }
-      toRecord={(d, id) => ({
-        id,
-        code: d.code.trim(),
-        machineNumber: d.machineNumber.trim(),
-        line: d.line.trim(),
-        name: d.name.trim(),
-        factory: d.factory.trim(),
-      })}
+      toRecord={(d, id) => {
+        const code = d.code.trim()
+        const name = d.name.trim()
+        const line = d.line.trim()
+        return {
+          id,
+          code,
+          name,
+          line,
+          // The label the shop floor recognises: "58-A. Welding Line-LM4".
+          displayName: [code, name, line].filter(Boolean).join('-'),
+        }
+      }}
       renderForm={(d, patch) => (
         <>
           <div className="grid grid-cols-2 gap-3">
@@ -1018,33 +1008,17 @@ function MachinesTab() {
                 ))}
               </Select>
             </Field>
-            <Field label="Machine number">
-              <Input
-                value={d.machineNumber}
-                onChange={(e) => patch({ machineNumber: e.target.value })}
-                placeholder="58-A"
-              />
-            </Field>
-          </div>
-          <Field label="Name">
-            <Input
-              value={d.name}
-              onChange={(e) => patch({ name: e.target.value })}
-              placeholder="58-A. Welding Line-LM4"
-            />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
             <Field label="Line">
               <Input value={d.line} onChange={(e) => patch({ line: e.target.value })} placeholder="LM4" />
             </Field>
-            <Field label="Factory">
-              <Input
-                value={d.factory}
-                onChange={(e) => patch({ factory: e.target.value })}
-                placeholder="Main"
-              />
-            </Field>
           </div>
+          <Field label="Work-centre name" hint='Shown as "{code}-{name}-{line}", e.g. 58-A. Welding Line-LM4'>
+            <Input
+              value={d.name}
+              onChange={(e) => patch({ name: e.target.value })}
+              placeholder="A. Welding Line"
+            />
+          </Field>
         </>
       )}
     />

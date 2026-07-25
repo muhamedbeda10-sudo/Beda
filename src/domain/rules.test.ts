@@ -372,3 +372,15 @@ describe('§14 q2 permissions', () => {
     expect(can(undefined, 'record-inspection')).toBe(false)
   })
 })
+
+describe('§8.2 measurements with no specification', () => {
+  it('is Pending when there is no nominal to judge against', () => {
+    // Real legacy shape: "Paint Thickness" recorded 88 with no nominal or
+    // tolerance. Calling that a Pass would invent a conformance decision.
+    expect(dimensionStatus({ nominal: null, tolPlus: null, tolMinus: null, actual: 88 })).toBe('Pending')
+  })
+
+  it('is Pending when a tolerance side is missing', () => {
+    expect(dimensionStatus({ nominal: 10, tolPlus: null, tolMinus: 0.1, actual: 10 })).toBe('Pending')
+  })
+})
