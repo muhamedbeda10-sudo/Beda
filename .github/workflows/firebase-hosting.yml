@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  # Flip to 'true' after upgrading to Blaze and enabling Cloud Storage.
+  USE_STORAGE: 'false'
+
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
@@ -25,7 +29,7 @@ jobs:
           VITE_FIREBASE_STORAGE_BUCKET: linkmisr-9afbd.firebasestorage.app
           VITE_FIREBASE_MESSAGING_SENDER_ID: "200160743300"
           VITE_FIREBASE_APP_ID: "1:200160743300:web:154f5edb9b7203c5f797d1"
-          VITE_FIREBASE_USE_STORAGE: "false"
+          VITE_FIREBASE_USE_STORAGE: ${{ env.USE_STORAGE }}
       - name: Deploy to Firebase Hosting (live)
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
@@ -50,8 +54,10 @@ jobs:
         run: npx --yes firebase-tools@13 deploy --only firestore:rules --project linkmisr-9afbd --non-interactive
 
       # Storage requires the Blaze plan; skip quietly if the bucket isn't set up.
-      - name: Deploy Storage rules (optional)
+      # Only attempt Storage rules when the build actually uses Cloud Storage.
+      - name: Deploy Storage rules
         id: storage_rules
+        if: env.USE_STORAGE == 'true'
         continue-on-error: true
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
@@ -71,4 +77,4 @@ jobs:
       - name: Report skipped Storage rules
         if: steps.storage_rules.outcome == 'failure'
         run: |
-          echo "::notice title=Storage rules skipped::storage.rules was not published, which is expected while Cloud Storage is not provisioned (it requires the Blaze plan). The app stores images in Firestore in this mode, so nothing is broken. Enable Storage and set VITE_FIREBASE_USE_STORAGE=true to switch.""
+          echo "::notice title=Storage rules skipped::storage.rules was not published, which is expected while Cloud Storage is not provisioned (it requires the Blaze plan). The app stores images in Firestore in this mode, so nothing is broken. Enable Storage and set VITE_FIREBASE_USE_STORAGE=true to switch."
