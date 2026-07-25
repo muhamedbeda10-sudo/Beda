@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
-import { useAll, useWhere } from '@/services/useCollection'
+import { useDocsByIds, useSmallCollection, useWhere } from '@/services/useCollection'
 import { COL, saveSampleAtomic, type SampleBundle } from '@/services/repository'
 import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect } from '@/services/draftStore'
 import { useAuth } from '@/store/AuthContext'
@@ -71,19 +71,27 @@ export function WizardPage() {
   const { profile } = useAuth()
   const { toast } = useApp()
 
-  const { rows: sessions, loading: sessionsLoading } = useAll<InspectionSession>(COL.sessions)
-  const { rows: orders } = useAll<ProductionOrder>(COL.orders)
-  const { rows: dimOrder } = useAll<ItemDimensionOrder>(COL.itemDimensionOrder)
-  const { rows: dimMaster } = useAll<ItemDimensionMaster>(COL.itemDimensionMaster)
-  const { rows: wcDefects } = useAll<WorkCenterDefect>(COL.workCenterDefects)
-  const { rows: gradeMappings } = useAll<GradeMappingT>(COL.gradeMappings)
-  const { rows: consumables } = useAll<PTConsumableProduct>(COL.ptConsumables)
-  const { rows: refImages } = useAll<ItemReferenceImage>(COL.itemReferenceImages)
-  const { rows: priorSamples } = useWhere<InspectionSample>(COL.samples, 'sessionId', sessionId)
+  // The wizard needs exactly one session and one order, fetched by id, plus the
+  // configuration for that order's item and work centre. Nothing here reads a
+  // whole collection.
+  const sessionIds = useMemo(() => (sessionId ? [sessionId] : []), [sessionId])
+  const { rows: sessions, loading: sessionsLoading } = useDocsByIds<InspectionSession>(COL.sessions, sessionIds)
+  const session = sessions[0]
 
-  const session = sessions.find((s) => s.id === sessionId)
-  const order = orders.find((o) => o.id === session?.orderId)
+  const orderIds = useMemo(() => (session?.orderId ? [session.orderId] : []), [session?.orderId])
+  const { rows: orders } = useDocsByIds<ProductionOrder>(COL.orders, orderIds)
+  const order = orders[0]
   const wc = session?.workCenterCode ?? ''
+  const item = order?.item
+
+  const { rows: dimOrder } = useWhere<ItemDimensionOrder>(COL.itemDimensionOrder, 'item', item)
+  const { rows: dimMaster } = useWhere<ItemDimensionMaster>(COL.itemDimensionMaster, 'item', item)
+  const { rows: refImages } = useWhere<ItemReferenceImage>(COL.itemReferenceImages, 'item', item)
+  const { rows: wcDefects } = useWhere<WorkCenterDefect>(COL.workCenterDefects, 'workCenterCode', wc)
+  // Grade equivalences and PT consumables are small registers, read whole.
+  const { rows: gradeMappings } = useSmallCollection<GradeMappingT>(COL.gradeMappings)
+  const { rows: consumables } = useSmallCollection<PTConsumableProduct>(COL.ptConsumables)
+  const { rows: priorSamples } = useWhere<InspectionSample>(COL.samples, 'sessionId', sessionId)
   const steps = useMemo(() => stepsForWorkCenter(wc), [wc])
 
   const [draft, setDraft] = useState<SampleDraft | null>(null)

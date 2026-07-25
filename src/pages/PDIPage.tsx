@@ -4,7 +4,7 @@ import { doc, setDoc } from 'firebase/firestore'
 import { ArrowLeft, FileText, Plus, Search } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
-import { useAll } from '@/services/useCollection'
+import { useDocsByIds, usePrefixSearch, useRecent } from '@/services/useCollection'
 import { COL, stripUndefined } from '@/services/repository'
 import { getDb } from '@/lib/firebase'
 import { useAuth } from '@/store/AuthContext'
@@ -17,27 +17,28 @@ export function PDIPage() {
   const navigate = useNavigate()
   const { profile } = useAuth()
   const { toast } = useApp()
-  const { rows: orders } = useAll<ProductionOrder>(COL.orders)
-  const { rows: docs, loading } = useAll<PDIDocument>(COL.pdi)
-
   const [term, setTerm] = useState('')
   const [adding, setAdding] = useState(false)
 
+  // The 50 most recent PDI documents, and only the orders they name.
+  const { rows: docs, loading } = useRecent<PDIDocument>(COL.pdi, 'createdAt', 50)
+  const docOrderIds = useMemo(() => docs.map((d) => d.orderId), [docs])
+  const { rows: orders } = useDocsByIds<ProductionOrder>(COL.orders, docOrderIds)
+
   const orderById = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders])
 
+  // Searching narrows what is already on screen; it does not scan the archive.
   const filtered = useMemo(() => {
     const t = term.trim().toLowerCase()
-    return docs
-      .filter((d) => {
-        if (!t) return true
-        const o = orderById.get(d.orderId)
-        return (
-          o?.orderNumber.toLowerCase().includes(t) ||
-          o?.item.toLowerCase().includes(t) ||
-          (d.notes ?? '').toLowerCase().includes(t)
-        )
-      })
-      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+    if (!t) return docs
+    return docs.filter((d) => {
+      const o = orderById.get(d.orderId)
+      return (
+        o?.orderNumber.toLowerCase().includes(t) ||
+        o?.item.toLowerCase().includes(t) ||
+        (d.notes ?? '').toLowerCase().includes(t)
+      )
+    })
   }, [docs, term, orderById])
 
   return (
@@ -112,7 +113,6 @@ export function PDIPage() {
 
       {adding && (
         <NewPDIDialog
-          orders={orders}
           onClose={() => setAdding(false)}
           onSave={async (orderId, notes, imageIds) => {
             if (!profile) return
@@ -139,17 +139,20 @@ export function PDIPage() {
 }
 
 function NewPDIDialog({
-  orders,
   onClose,
   onSave,
 }: {
-  orders: ProductionOrder[]
   onClose: () => void
   onSave: (orderId: string, notes: string, imageIds: string[]) => void
 }) {
-  const [orderId, setOrderId] = useState(orders[0]?.id ?? '')
+  const [orderTerm, setOrderTerm] = useState('')
+  const [orderId, setOrderId] = useState('')
   const [notes, setNotes] = useState('')
   const [imageIds, setImageIds] = useState<string[]>([])
+
+  // The order is chosen by searching the catalogue on the server, not by
+  // scrolling a list of 29,000 options.
+  const { rows: orders } = usePrefixSearch<ProductionOrder>(COL.orders, 'orderNumber', orderTerm, 25)
 
   return (
     <Modal
@@ -169,8 +172,23 @@ function NewPDIDialog({
       }
     >
       <div className="space-y-3">
-        <Field label="Production order">
-          <Select value={orderId} onChange={(e) => setOrderId(e.target.value)} className="min-h-[48px]">
+        <Field label="Production order" hint="Type an order number to search.">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              autoFocus
+              value={orderTerm}
+              onChange={(e) => setOrderTerm(e.target.value)}
+              placeholder="Order number…"
+              className="min-h-[48px] pl-9"
+            />
+          </div>
+          <Select
+            value={orderId}
+            onChange={(e) => setOrderId(e.target.value)}
+            className="mt-2 min-h-[48px]"
+          >
+            <option value="">Select an order…</option>
             {orders.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.orderNumber} · {o.item}

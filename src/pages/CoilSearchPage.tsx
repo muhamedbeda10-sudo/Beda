@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Search, Package2, ArrowLeft } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Badge, Button, Card, EmptyState, Input } from '@/components/ui'
-import { useAll } from '@/services/useCollection'
+import { useDocsByIds, usePrefixSearch, useWhereIn } from '@/services/useCollection'
 import { COL } from '@/services/repository'
 import type { Coil, InspectionSample, ProductionOrder, SampleCoil } from '@/domain/types'
 
@@ -12,29 +12,41 @@ import type { Coil, InspectionSample, ProductionOrder, SampleCoil } from '@/doma
  */
 export function CoilSearchPage() {
   const navigate = useNavigate()
-  const { rows: coils, loading } = useAll<Coil>(COL.coils)
-  const { rows: sampleCoils } = useAll<SampleCoil>(COL.sampleCoils)
-  const { rows: samples } = useAll<InspectionSample>(COL.samples)
-  const { rows: orders } = useAll<ProductionOrder>(COL.orders)
   const [term, setTerm] = useState('')
+  const t = term.trim()
+
+  // 30,000 coils are not loaded to find one. Each field an inspector might type
+  // is matched as a prefix on the server; the grade and supplier queries only
+  // run once something has been typed.
+  const { rows: byNumber, loading } = usePrefixSearch<Coil>(COL.coils, 'coilNumber', t, 25)
+  const { rows: byGrade } = usePrefixSearch<Coil>(COL.coils, 'grade', t, 25, { enabled: t.length > 0 })
+  const { rows: bySupplier } = usePrefixSearch<Coil>(COL.coils, 'supplier', t, 25, { enabled: t.length > 0 })
 
   const results = useMemo(() => {
-    const t = term.trim().toLowerCase()
-    if (!t) return coils.slice(0, 25)
-    return coils.filter(
-      (c) =>
-        c.coilNumber.toLowerCase().includes(t) ||
-        (c.grade ?? '').toLowerCase().includes(t) ||
-        (c.supplier ?? '').toLowerCase().includes(t),
-    )
-  }, [coils, term])
+    const byId = new Map<string, Coil>()
+    for (const c of [...byNumber, ...byGrade, ...bySupplier]) byId.set(c.id, c)
+    return Array.from(byId.values())
+      .sort((a, b) => a.coilNumber.localeCompare(b.coilNumber))
+      .slice(0, 25)
+  }, [byNumber, byGrade, bySupplier])
+
+  // Traceability is resolved only for the coils on screen: their usage rows,
+  // then the samples those name, then the orders behind those samples.
+  const coilNumbers = useMemo(() => results.map((c) => c.coilNumber), [results])
+  const { rows: sampleCoils } = useWhereIn<SampleCoil>(COL.sampleCoils, 'coilNumber', coilNumbers)
+  const sampleIds = useMemo(() => sampleCoils.map((sc) => sc.sampleId), [sampleCoils])
+  const { rows: samples } = useDocsByIds<InspectionSample>(COL.samples, sampleIds)
+  const orderIds = useMemo(() => samples.map((s) => s.orderId), [samples])
+  const { rows: orders } = useDocsByIds<ProductionOrder>(COL.orders, orderIds)
 
   /** Where each coil has been used — the traceability the search exists for. */
   const usage = useMemo(() => {
+    const sampleById = new Map(samples.map((s) => [s.id, s]))
+    const orderById = new Map(orders.map((o) => [o.id, o]))
     const map = new Map<string, { orderNumber: string; customer: string; sampleIndex: number }[]>()
     for (const sc of sampleCoils) {
-      const sample = samples.find((s) => s.id === sc.sampleId)
-      const order = orders.find((o) => o.id === sample?.orderId)
+      const sample = sampleById.get(sc.sampleId)
+      const order = sample ? orderById.get(sample.orderId) : undefined
       if (!sample || !order) continue
       const key = sc.coilNumber.toLowerCase()
       const arr = map.get(key) ?? []

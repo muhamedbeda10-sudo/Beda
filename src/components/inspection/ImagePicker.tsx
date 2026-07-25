@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, ImagePlus, Trash2, Loader2, AlertCircle } from 'lucide-react'
 import { uploadImage } from '@/services/uploadImage'
 import { resolveImageUrl } from '@/services/uploadImage'
 import { ImageRejected } from '@/services/imageStore'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { useAll } from '@/services/useCollection'
+import { useDocsByIds } from '@/services/useCollection'
 import { COL } from '@/services/repository'
 import { Lightbox } from '@/components/ui/Lightbox'
 import type { ImageAsset } from '@/domain/types'
@@ -33,16 +33,19 @@ export function ImagePicker({
 }) {
   const { profile } = useAuth()
   const { toast } = useApp()
-  const { rows: allImages } = useAll<ImageAsset>(COL.images)
+  // Only the photos this record references, fetched by id.
+  const { rows: attached } = useDocsByIds<ImageAsset>(COL.images, imageIds)
   const camRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(0)
   const [viewer, setViewer] = useState<number | null>(null)
   const [fullUrls, setFullUrls] = useState<Record<string, string>>({})
 
-  const assets = imageIds
-    .map((id) => allImages.find((a) => a.id === id))
-    .filter((a): a is ImageAsset => Boolean(a))
+  // Kept in the order the record lists them, not the order they arrive.
+  const assets = useMemo(() => {
+    const byId = new Map(attached.map((a) => [a.id, a]))
+    return imageIds.map((id) => byId.get(id)).filter((a): a is ImageAsset => Boolean(a))
+  }, [imageIds, attached])
 
   // Resolve full-resolution content only while the viewer is open.
   useEffect(() => {

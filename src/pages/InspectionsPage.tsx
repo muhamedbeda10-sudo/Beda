@@ -16,14 +16,14 @@ import {
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal } from '@/components/ui'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
-import { useAll } from '@/services/useCollection'
+import { useSmallCollection, useDocsByIds, useWhereIn, useCount, useQueryRows } from '@/services/useCollection'
 import { COL, closeSession, softDelete } from '@/services/repository'
+import { where, limit as fbLimit } from 'firebase/firestore'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain/rules'
 import { cn, formatDate } from '@/lib/utils'
 import type {
-  DefectResult,
   InspectionSample,
   InspectionSession,
   Machine,
@@ -37,11 +37,31 @@ export function InspectionsPage() {
   const { profile, role } = useAuth()
   const { toast } = useApp()
 
-  const { rows: sessions, loading } = useAll<InspectionSession>(COL.sessions)
-  const { rows: orders } = useAll<ProductionOrder>(COL.orders)
-  const { rows: machines } = useAll<Machine>(COL.machines)
-  const { rows: samples } = useAll<InspectionSample>(COL.samples)
-  const { rows: defects } = useAll<DefectResult>(COL.defects)
+  // Only the open sessions — this screen exists to answer "what is open now",
+  // and the closed ones would be thousands of documents nobody is looking at.
+  const { rows: openSessions, loading } = useQueryRows<InspectionSession>(
+    COL.sessions,
+    [where('status', '==', 'Open'), fbLimit(200)],
+    ['open-sessions'],
+  )
+  const { rows: machines } = useSmallCollection<Machine>(COL.machines)
+
+  const sessionIds = useMemo(() => openSessions.map((s) => s.id), [openSessions])
+  const orderIds = useMemo(() => openSessions.map((s) => s.orderId), [openSessions])
+
+  // The orders behind the open sessions, fetched by id — a handful of reads
+  // instead of the whole 28,871-row collection.
+  const { rows: orders } = useDocsByIds<ProductionOrder>(COL.orders, orderIds)
+  // Samples belonging to those sessions only.
+  const { rows: samples } = useWhereIn<InspectionSample>(COL.samples, 'sessionId', sessionIds)
+
+  // The Hold badge needs the number, not the defects. A count aggregation does
+  // not return documents, so this stays cheap however many defects exist.
+  const { count: holdCount } = useCount(
+    COL.defects,
+    [where('disposition', '==', 'Hold')],
+    ['hold-count'],
+  )
 
   const [newOpen, setNewOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
@@ -59,21 +79,13 @@ export function InspectionsPage() {
     return m
   }, [samples])
 
-  /** Defects parked on Hold are open business items — they must stay visible
-   *  until someone resolves them (§4, §8.5). */
-  const holdCount = useMemo(() => defects.filter((d) => d.disposition === 'Hold').length, [defects])
-
-  const openSessions = useMemo(
-    () => sessions.filter((s) => s.status === 'Open').sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)),
-    [sessions],
-  )
-
   /** Group by work center / line, the way the inspector thinks about the floor. */
   const groups = useMemo(() => {
+    const sorted = [...openSessions].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
     const byWc = new Map<string, { machine?: Machine; label: string; sessions: InspectionSession[]; sampleCount: number }>()
-    for (const s of openSessions) {
+    for (const s of sorted) {
       const machine = machines.find((m) => m.code === s.workCenterCode)
-      const label = machine?.name ?? `Work center ${s.workCenterCode}`
+      const label = machine?.displayName || machine?.name || `Work center ${s.workCenterCode}`
       const g = byWc.get(s.workCenterCode) ?? { machine, label, sessions: [], sampleCount: 0 }
       g.sessions.push(s)
       g.sampleCount += samplesBySession.get(s.id)?.length ?? 0

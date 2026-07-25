@@ -12,10 +12,10 @@ import {
   Flame,
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Input, Modal, Select, Stat } from '@/components/ui'
-import { useAll } from '@/services/useCollection'
+import { useCount, useRecent } from '@/services/useCollection'
 import { COL } from '@/services/repository'
 import { getDb } from '@/lib/firebase'
-import { writeBatch, doc } from 'firebase/firestore'
+import { writeBatch, doc, where } from 'firebase/firestore'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain/rules'
@@ -32,6 +32,9 @@ const ACTION_META: Record<AuditAction, { icon: typeof Plus; tone: string; label:
   acknowledge: { icon: ShieldAlert, tone: 'text-amber-500 bg-amber-100 dark:bg-amber-500/15', label: 'Acknowledge' },
 }
 
+/** How many entries the browser holds. The log only grows, so it is a window. */
+const WINDOW = 500
+
 const RANGES = [
   { label: 'All time', days: 0 },
   { label: 'Last 7 days', days: 7 },
@@ -41,7 +44,13 @@ const RANGES = [
 
 /** §11 — the audit browser. */
 export function AuditPage() {
-  const { rows: entries, loading } = useAll<AuditEntry & { id: string }>(COL.audit)
+  // The newest WINDOW entries. The filters below narrow that window; they do
+  // not scan the whole log, which grows with every save the factory makes.
+  const { rows: entries, loading } = useRecent<AuditEntry & { id: string }>(COL.audit, 'at', WINDOW)
+  const { count: totalEvents } = useCount(COL.audit, [], ['audit-total'])
+  const { count: updateCount } = useCount(COL.audit, [where('action', '==', 'update')], ['audit-update'])
+  const { count: deleteCount } = useCount(COL.audit, [where('action', '==', 'delete')], ['audit-delete'])
+  const { count: ackCount } = useCount(COL.audit, [where('action', '==', 'acknowledge')], ['audit-ack'])
   const { profile, role } = useAuth()
   const { toast } = useApp()
 
@@ -164,10 +173,10 @@ export function AuditPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Total events" value={entries.length} icon={<ScrollText className="h-5 w-5" />} />
-        <Stat label="Updates" value={entries.filter((e) => e.action === 'update').length} tone="blue" icon={<Pencil className="h-5 w-5" />} />
-        <Stat label="Deletions" value={entries.filter((e) => e.action === 'delete').length} tone="red" icon={<Trash2 className="h-5 w-5" />} />
-        <Stat label="Overrides" value={entries.filter((e) => e.action === 'acknowledge').length} tone="amber" icon={<ShieldAlert className="h-5 w-5" />} />
+        <Stat label="Total events" value={totalEvents} icon={<ScrollText className="h-5 w-5" />} />
+        <Stat label="Updates" value={updateCount} tone="blue" icon={<Pencil className="h-5 w-5" />} />
+        <Stat label="Deletions" value={deleteCount} tone="red" icon={<Trash2 className="h-5 w-5" />} />
+        <Stat label="Overrides" value={ackCount} tone="amber" icon={<ShieldAlert className="h-5 w-5" />} />
       </div>
 
       <Card className="space-y-2 p-3">
@@ -213,6 +222,12 @@ export function AuditPage() {
             ))}
           </Select>
         </div>
+        {totalEvents > entries.length && (
+          <p className="px-1 text-xs text-slate-400">
+            Showing the {entries.length} most recent of {totalEvents} events. The filters and the
+            export apply to these.
+          </p>
+        )}
         {can(role, 'purge-audit-logs') && rows.length > 0 && (
           <label className="flex min-h-[44px] cursor-pointer items-center gap-2 text-sm font-semibold text-slate-600 dark:text-slate-300">
             <input type="checkbox" checked={allSelected} onChange={toggleAll} className="h-5 w-5 rounded accent-brand-600" />

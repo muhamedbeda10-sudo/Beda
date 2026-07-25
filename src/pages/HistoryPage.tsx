@@ -3,11 +3,11 @@ import { useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowLeft,
-  Boxes,
   ChevronRight,
   ClipboardList,
   Droplets,
   History as HistoryIcon,
+  Info,
   Layers,
   Lock,
   Package2,
@@ -30,12 +30,17 @@ import {
   Stat,
 } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
-import { useAll } from '@/services/useCollection'
+import {
+  useDocsByIds,
+  useRecent,
+  useSmallCollection,
+  useWhere,
+} from '@/services/useCollection'
 import { COL, ConflictError, updateAudited, type AuditContext } from '@/services/repository'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, isPTWorkCenter, isPaintWorkCenter, shiftName } from '@/domain/rules'
-import { cn, daysAgoISO, formatDate, formatDateTime } from '@/lib/utils'
+import { daysAgoISO, formatDate, formatDateTime } from '@/lib/utils'
 import {
   DISPOSITIONS,
   type DefectResult,
@@ -59,10 +64,21 @@ import {
 // the wrong disposition, and quality evidence has to be correctable — but never
 // silently. Every edit here goes through `updateAudited`, which writes one audit
 // entry per changed field.
+//
+// Reads are bounded at every level. The list is one page of recent sessions and
+// the orders they point at; a session's samples load when that session is
+// opened, and a sample's dimensions, defects and coils when that sample is
+// opened. Nothing here reads a whole collection.
 // ============================================================================
 
 type StatusFilter = 'All' | 'Open' | 'Closed'
 type RangeFilter = 'all' | '7' | '30' | '90'
+
+/** How many sessions the list holds. Stated in the UI — never a silent cut. */
+const SESSION_PAGE = 100
+
+/** Ceiling on the defects pulled in for a `?disposition=` landing. */
+const DISPOSITION_LIMIT = 500
 
 const RANGE_LABEL: Record<RangeFilter, string> = {
   all: 'All time',
@@ -121,16 +137,6 @@ export function HistoryPage() {
   const { toast } = useApp()
   const [params, setParams] = useSearchParams()
 
-  const { rows: sessions, loading } = useAll<InspectionSession>(COL.sessions)
-  const { rows: samples } = useAll<InspectionSample>(COL.samples)
-  const { rows: orders } = useAll<ProductionOrder>(COL.orders)
-  const { rows: dimensions } = useAll<DimensionResult>(COL.dimensions)
-  const { rows: defects } = useAll<DefectResult>(COL.defects)
-  const { rows: sampleCoils } = useAll<SampleCoil>(COL.sampleCoils)
-  const { rows: paintSamples } = useAll<PaintSampleRecord>(COL.paintSamples)
-  const { rows: ptRecords } = useAll<PTRecord>(COL.ptRecords)
-  const { rows: machines } = useAll<Machine>(COL.machines)
-
   const [term, setTerm] = useState('')
   const [status, setStatus] = useState<StatusFilter>('All')
   const [workCenter, setWorkCenter] = useState('all')
@@ -146,69 +152,104 @@ export function HistoryPage() {
    *  supervisor lands straight on the sessions that still owe a decision. */
   const dispositionFilter = params.get('disposition') as Disposition | null
 
+  // ---- The list ------------------------------------------------------------
+  // One page of the newest sessions. The filters below narrow this page; they
+  // are not a query against the archive, and the screen says so.
+  const { rows: recentSessions, loading: recentLoading } = useRecent<InspectionSession>(
+    COL.sessions,
+    'startedAt',
+    SESSION_PAGE,
+  )
+
+  // A `?disposition=` landing is answered from the defects side instead: the
+  // capped set of defects carrying that disposition, the samples they belong to,
+  // and those samples' sessions — all fetched by id, never by scanning.
+  const { rows: flaggedDefects, loading: flaggedDefectsLoading } = useWhere<DefectResult>(
+    COL.defects,
+    'disposition',
+    dispositionFilter ?? undefined,
+    DISPOSITION_LIMIT,
+  )
+  const flaggedSampleIds = useMemo(
+    () => Array.from(new Set(flaggedDefects.map((d) => d.sampleId).filter(Boolean))),
+    [flaggedDefects],
+  )
+  const { rows: flaggedSamples, loading: flaggedSamplesLoading } = useDocsByIds<InspectionSample>(
+    COL.samples,
+    flaggedSampleIds,
+  )
+  const flaggedSessionIds = useMemo(
+    () => Array.from(new Set(flaggedSamples.map((s) => s.sessionId).filter(Boolean))),
+    [flaggedSamples],
+  )
+  const { rows: flaggedSessions, loading: flaggedSessionsLoading } = useDocsByIds<InspectionSession>(
+    COL.sessions,
+    flaggedSessionIds,
+  )
+
+  const sessions = dispositionFilter ? flaggedSessions : recentSessions
+  const loading = dispositionFilter
+    ? flaggedDefectsLoading || flaggedSamplesLoading || flaggedSessionsLoading
+    : recentLoading
+
+  // Only the orders the listed sessions actually point at.
+  const sessionOrderIds = useMemo(
+    () => Array.from(new Set(sessions.map((s) => s.orderId).filter(Boolean))),
+    [sessions],
+  )
+  const { rows: orders } = useDocsByIds<ProductionOrder>(COL.orders, sessionOrderIds)
+
+  // Master data — 32 rows, and the work-centre names come from nowhere else.
+  const { rows: machines } = useSmallCollection<Machine>(COL.machines)
+
+  // ---- The drill-down ------------------------------------------------------
+  // Children load for what is open and nothing else. With no session open these
+  // hooks are disabled and read zero documents.
+  const { rows: samples, loading: samplesLoading } = useWhere<InspectionSample>(
+    COL.samples,
+    'sessionId',
+    openSessionId ?? undefined,
+  )
+  const { rows: dimensions, loading: dimensionsLoading } = useWhere<DimensionResult>(
+    COL.dimensions,
+    'sampleId',
+    openSampleId ?? undefined,
+  )
+  const { rows: defects, loading: defectsLoading } = useWhere<DefectResult>(
+    COL.defects,
+    'sampleId',
+    openSampleId ?? undefined,
+  )
+  const { rows: sampleCoils, loading: coilsLoading } = useWhere<SampleCoil>(
+    COL.sampleCoils,
+    'sampleId',
+    openSampleId ?? undefined,
+  )
+  const { rows: paintSamples } = useWhere<PaintSampleRecord>(
+    COL.paintSamples,
+    'sampleId',
+    openSampleId ?? undefined,
+  )
+  const { rows: ptRecords } = useWhere<PTRecord>(COL.ptRecords, 'sampleId', openSampleId ?? undefined)
+
+  /** Nothing in a sample may read as "none recorded" while it is still arriving. */
+  const sampleLoading = dimensionsLoading || defectsLoading || coilsLoading
+
   const orderById = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders])
 
-  const samplesBySession = useMemo(() => {
-    const m = new Map<string, InspectionSample[]>()
-    for (const s of samples) {
-      const arr = m.get(s.sessionId) ?? []
-      arr.push(s)
-      m.set(s.sessionId, arr)
-    }
-    for (const arr of m.values()) arr.sort((a, b) => a.index - b.index)
-    return m
-  }, [samples])
+  /** The open session's samples, in the order they were taken. */
+  const sessionSamples = useMemo(
+    () => [...samples].sort((a, b) => a.index - b.index),
+    [samples],
+  )
 
-  const dimsBySample = useMemo(() => {
-    const m = new Map<string, DimensionResult[]>()
-    for (const d of dimensions) {
-      const arr = m.get(d.sampleId) ?? []
-      arr.push(d)
-      m.set(d.sampleId, arr)
-    }
-    for (const arr of m.values()) arr.sort((a, b) => a.sequence - b.sequence)
-    return m
-  }, [dimensions])
-
-  const defectsBySample = useMemo(() => {
-    const m = new Map<string, DefectResult[]>()
-    for (const d of defects) {
-      const arr = m.get(d.sampleId) ?? []
-      arr.push(d)
-      m.set(d.sampleId, arr)
-    }
-    return m
-  }, [defects])
-
-  const coilsBySample = useMemo(() => {
-    const m = new Map<string, SampleCoil[]>()
-    for (const c of sampleCoils) {
-      const arr = m.get(c.sampleId) ?? []
-      arr.push(c)
-      m.set(c.sampleId, arr)
-    }
-    return m
-  }, [sampleCoils])
-
-  /** Session-level counts, so the list can show what happened without opening it. */
-  const sessionStats = useMemo(() => {
-    const m = new Map<string, { samples: number; defects: number; dispositions: Set<string> }>()
-    for (const session of sessions) {
-      const list = samplesBySession.get(session.id) ?? []
-      const stat = { samples: list.length, defects: 0, dispositions: new Set<string>() }
-      for (const sample of list) {
-        for (const d of defectsBySample.get(sample.id) ?? []) {
-          stat.defects += 1
-          if (d.disposition) stat.dispositions.add(d.disposition)
-        }
-      }
-      m.set(session.id, stat)
-    }
-    return m
-  }, [sessions, samplesBySession, defectsBySample])
+  const openSampleDimensions = useMemo(
+    () => [...dimensions].sort((a, b) => a.sequence - b.sequence),
+    [dimensions],
+  )
 
   const workCenterName = (code: string) =>
-    machines.find((m) => m.code === code)?.name ?? `Work center ${code}`
+    machines.find((m) => m.code === code)?.displayName ?? `Work center ${code}`
 
   const workCenterOptions = useMemo(() => {
     const codes = Array.from(new Set(sessions.map((s) => s.workCenterCode))).filter(Boolean)
@@ -223,7 +264,6 @@ export function HistoryPage() {
         if (status !== 'All' && s.status !== status) return false
         if (workCenter !== 'all' && s.workCenterCode !== workCenter) return false
         if (since && s.startedAt < since) return false
-        if (dispositionFilter && !sessionStats.get(s.id)?.dispositions.has(dispositionFilter)) return false
         if (!t) return true
         const order = orderById.get(s.orderId)
         return (
@@ -234,18 +274,13 @@ export function HistoryPage() {
         )
       })
       .sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : b.seq - a.seq))
-  }, [sessions, term, status, workCenter, range, dispositionFilter, sessionStats, orderById])
+  }, [sessions, term, status, workCenter, range, orderById])
 
   const totals = useMemo(() => {
-    let sampleCount = 0
-    let defectCount = 0
-    for (const s of filtered) {
-      const stat = sessionStats.get(s.id)
-      sampleCount += stat?.samples ?? 0
-      defectCount += stat?.defects ?? 0
-    }
-    return { sessions: filtered.length, samples: sampleCount, defects: defectCount }
-  }, [filtered, sessionStats])
+    let open = 0
+    for (const s of filtered) if (s.status === 'Open') open += 1
+    return { sessions: filtered.length, open, closed: filtered.length - open }
+  }, [filtered])
 
   const openSession = openSessionId ? sessions.find((s) => s.id === openSessionId) ?? null : null
   const openSample = openSampleId ? samples.find((s) => s.id === openSampleId) ?? null : null
@@ -347,8 +382,6 @@ export function HistoryPage() {
     setParams(next, { replace: true })
   }
 
-  const sessionSamples = openSession ? samplesBySession.get(openSession.id) ?? [] : []
-
   return (
     <div className="space-y-5">
       <div>
@@ -359,15 +392,36 @@ export function HistoryPage() {
       </div>
 
       <div className="grid grid-cols-3 gap-3">
-        <Stat label="Sessions" value={totals.sessions} icon={<HistoryIcon className="h-5 w-5" />} />
-        <Stat label="Samples" value={totals.samples} tone="violet" icon={<Boxes className="h-5 w-5" />} />
         <Stat
-          label="Defects"
-          value={totals.defects}
-          tone={totals.defects > 0 ? 'amber' : 'green'}
-          icon={<AlertTriangle className="h-5 w-5" />}
+          label="Sessions"
+          value={totals.sessions}
+          sub={dispositionFilter ? `Dispositioned ${dispositionFilter}` : `Of the last ${SESSION_PAGE}`}
+          icon={<HistoryIcon className="h-5 w-5" />}
+        />
+        <Stat
+          label="Open"
+          value={totals.open}
+          tone={totals.open > 0 ? 'green' : 'neutral'}
+          icon={<ClipboardList className="h-5 w-5" />}
+        />
+        <Stat
+          label="Closed"
+          value={totals.closed}
+          tone="neutral"
+          icon={<Lock className="h-5 w-5" />}
         />
       </div>
+
+      {!dispositionFilter && (
+        <p className="flex items-start gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+          <span>
+            Showing the {SESSION_PAGE} most recent sessions, newest first. The search and filters
+            below narrow this list — older sessions are not loaded, so narrow the work centre and
+            date range to the period you need.
+          </span>
+        </p>
+      )}
 
       {dispositionFilter && (
         <Card className="flex flex-wrap items-center gap-3 border-l-4 border-l-amber-400 p-4">
@@ -453,7 +507,6 @@ export function HistoryPage() {
           <div className="space-y-3 md:hidden">
             {filtered.map((s) => {
               const order = orderById.get(s.orderId)
-              const stat = sessionStats.get(s.id)
               return (
                 <button
                   key={s.id}
@@ -472,14 +525,14 @@ export function HistoryPage() {
                     {workCenterName(s.workCenterCode)} · {s.inspectorName} · {formatDate(s.startedAt)}
                   </p>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <Badge tone="neutral">
-                      {stat?.samples ?? 0} sample{(stat?.samples ?? 0) === 1 ? '' : 's'}
-                    </Badge>
-                    <Badge tone={(stat?.defects ?? 0) > 0 ? 'amber' : 'green'}>
-                      {stat?.defects ?? 0} defect{(stat?.defects ?? 0) === 1 ? '' : 's'}
-                    </Badge>
+                    {s.startQtyConfirmed && (
+                      <Badge tone="neutral">Start {s.startQtyConfirmed.qty}</Badge>
+                    )}
                     {s.finalQty !== undefined && <Badge tone="blue">Final {s.finalQty}</Badge>}
-                    <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
+                    <span className="ml-auto text-xs font-semibold text-slate-400">
+                      Open for samples
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-slate-400" />
                   </div>
                 </button>
               )
@@ -499,8 +552,7 @@ export function HistoryPage() {
                     <th className="px-4 py-3">Inspector</th>
                     <th className="px-4 py-3">Date</th>
                     <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Samples</th>
-                    <th className="px-4 py-3 text-right">Defects</th>
+                    <th className="px-4 py-3 text-right">Start qty</th>
                     <th className="px-4 py-3 text-right">Final qty</th>
                     <th className="px-4 py-3" />
                   </tr>
@@ -508,7 +560,6 @@ export function HistoryPage() {
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {filtered.map((s) => {
                     const order = orderById.get(s.orderId)
-                    const stat = sessionStats.get(s.id)
                     return (
                       <tr
                         key={s.id}
@@ -524,14 +575,8 @@ export function HistoryPage() {
                         <td className="px-4 py-3">
                           <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
                         </td>
-                        <td className="px-4 py-3 text-right tabular-nums">{stat?.samples ?? 0}</td>
-                        <td
-                          className={cn(
-                            'px-4 py-3 text-right tabular-nums',
-                            (stat?.defects ?? 0) > 0 && 'font-bold text-amber-600 dark:text-amber-400',
-                          )}
-                        >
-                          {stat?.defects ?? 0}
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {num(s.startQtyConfirmed?.qty)}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums">{num(s.finalQty)}</td>
                         <td className="px-4 py-3 text-right">
@@ -585,11 +630,12 @@ export function HistoryPage() {
                 <SampleDetail
                   session={openSession}
                   sample={openSample}
-                  dimensions={dimsBySample.get(openSample.id) ?? []}
-                  defects={defectsBySample.get(openSample.id) ?? []}
-                  coils={coilsBySample.get(openSample.id) ?? []}
-                  paint={paintSamples.find((p) => p.sampleId === openSample.id)}
-                  pt={ptRecords.find((p) => p.sampleId === openSample.id)}
+                  dimensions={openSampleDimensions}
+                  defects={defects}
+                  coils={sampleCoils}
+                  paint={paintSamples[0]}
+                  pt={ptRecords[0]}
+                  loading={sampleLoading}
                   editable={editable}
                   onEditDimension={setEditingDim}
                   onEditDefect={setEditingDefect}
@@ -608,13 +654,13 @@ export function HistoryPage() {
                   <Attr label="Closed" value={openSession.closedAt ? formatDateTime(openSession.closedAt) : '—'} />
                 </dl>
 
-                {sessionSamples.length === 0 ? (
+                {samplesLoading ? (
+                  <SectionEmpty message="Loading the samples of this session…" />
+                ) : sessionSamples.length === 0 ? (
                   <SectionEmpty message="No samples were recorded in this session." />
                 ) : (
                   <div className="space-y-2">
                     {sessionSamples.map((sm) => {
-                      const dimCount = (dimsBySample.get(sm.id) ?? []).length
-                      const defCount = (defectsBySample.get(sm.id) ?? []).length
                       return (
                         <button
                           key={sm.id}
@@ -629,8 +675,7 @@ export function HistoryPage() {
                               {shiftName(sm.shift)} shift · {sm.inspectorName}
                             </span>
                             <span className="block text-xs text-slate-400">
-                              {formatDateTime(sm.createdAt)} · {dimCount} dimension
-                              {dimCount === 1 ? '' : 's'} · {defCount} defect{defCount === 1 ? '' : 's'}
+                              {formatDateTime(sm.createdAt)} · sample qty {sm.sampleQty}
                             </span>
                           </span>
                           <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
@@ -685,6 +730,7 @@ function SampleDetail({
   coils,
   paint,
   pt,
+  loading,
   editable,
   onEditDimension,
   onEditDefect,
@@ -696,6 +742,9 @@ function SampleDetail({
   coils: SampleCoil[]
   paint?: PaintSampleRecord
   pt?: PTRecord
+  /** The sample's children are fetched when it is opened — until they land,
+   *  an empty list must not be reported as "nothing was recorded". */
+  loading: boolean
   editable: boolean
   onEditDimension: (d: DimensionResult) => void
   onEditDefect: (d: DefectResult) => void
@@ -726,7 +775,9 @@ function SampleDetail({
       )}
 
       <Section icon={<Ruler className="h-4 w-4" />} title="Dimensions" count={dimensions.length}>
-        {dimensions.length === 0 ? (
+        {loading && dimensions.length === 0 ? (
+          <SectionEmpty message="Loading the measurements…" />
+        ) : dimensions.length === 0 ? (
           <SectionEmpty message="No dimensions were measured on this sample." />
         ) : (
           <div className="overflow-x-auto">
@@ -776,7 +827,9 @@ function SampleDetail({
       </Section>
 
       <Section icon={<AlertTriangle className="h-4 w-4" />} title="Defects" count={defects.length}>
-        {defects.length === 0 ? (
+        {loading && defects.length === 0 ? (
+          <SectionEmpty message="Loading the defects…" />
+        ) : defects.length === 0 ? (
           <SectionEmpty message="No defects were recorded on this sample." />
         ) : (
           <div className="space-y-3">
@@ -813,7 +866,9 @@ function SampleDetail({
       </Section>
 
       <Section icon={<Package2 className="h-4 w-4" />} title="Coils used" count={coils.length}>
-        {coils.length === 0 ? (
+        {loading && coils.length === 0 ? (
+          <SectionEmpty message="Loading the coils…" />
+        ) : coils.length === 0 ? (
           <SectionEmpty message="No coils were attached to this sample." />
         ) : (
           <div className="overflow-x-auto">
