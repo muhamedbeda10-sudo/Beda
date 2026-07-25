@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "QC System / Inspection Recorder \u2014 quality control inspection recording for manufacturing",
+  "description": "QC System / Inspection Recorder — quality control inspection recording for manufacturing",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vitest run && vite build",
@@ -17,8 +17,7 @@
     "lucide-react": "^0.454.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.28.0",
-    "recharts": "^2.13.3"
+    "react-router-dom": "^6.28.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

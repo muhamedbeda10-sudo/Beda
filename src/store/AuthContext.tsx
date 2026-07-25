@@ -8,15 +8,16 @@ import {
   type User,
 } from 'firebase/auth'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
-import { firebaseEnabled, getAuthInstance, getDb, type UserProfile, type UserRole } from '@/lib/firebase'
-import { enableFirebaseSync, disableFirebaseSync, setUser as setDbUser } from '@/store/db'
-import { useApp } from '@/store/AppContext'
+import { firebaseEnabled, firebaseSeedEnabled, getAuthInstance, getDb } from '@/lib/firebase'
+import { COL } from '@/services/repository'
+import { seedMasterDataIfEmpty } from '@/services/seedData'
+import type { Role, UserProfile } from '@/domain/types'
 
 interface AuthValue {
   ready: boolean
   firebaseEnabled: boolean
   profile: UserProfile | null
-  role: UserRole
+  role: Role
   error: string | null
   signIn: (email: string, password: string) => Promise<void>
   signUp: (email: string, password: string, name: string) => Promise<void>
@@ -25,36 +26,49 @@ interface AuthValue {
 
 const AuthContext = createContext<AuthValue | null>(null)
 
+/**
+ * Load the signed-in user's profile, creating it on first sign-in.
+ *
+ * The very first account to sign in becomes the admin — otherwise nobody could
+ * reach Admin to promote anyone. Everyone after that starts as an inspector and
+ * is promoted deliberately.
+ */
 async function loadOrCreateProfile(user: User): Promise<UserProfile> {
   const store = getDb()
-  const pref = doc(store, 'users', user.uid)
-  const snap = await getDoc(pref)
+  const ref = doc(store, COL.users, user.uid)
+  const snap = await getDoc(ref)
   if (snap.exists()) {
     const d = snap.data() as Partial<UserProfile>
     return {
       uid: user.uid,
       email: user.email ?? d.email ?? '',
       name: d.name ?? user.displayName ?? user.email ?? 'Inspector',
-      role: (d.role as UserRole) ?? 'inspector',
+      role: (d.role as Role) ?? 'inspector',
     }
   }
+
+  const bootstrapRef = doc(store, COL.users, '__bootstrap__')
+  const bootstrap = await getDoc(bootstrapRef)
+  const isFirstUser = !bootstrap.exists()
+
   const profile: UserProfile = {
     uid: user.uid,
     email: user.email ?? '',
-    name: user.displayName ?? user.email ?? 'Inspector',
-    role: 'inspector',
+    name: user.displayName ?? user.email?.split('@')[0] ?? 'Inspector',
+    role: isFirstUser ? 'admin' : 'inspector',
   }
-  await setDoc(pref, profile)
+  await setDoc(ref, profile)
+  if (isFirstUser) {
+    await setDoc(bootstrapRef, { claimedBy: user.uid, at: new Date().toISOString() })
+  }
   return profile
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { user: demoName } = useApp()
   const [ready, setReady] = useState(!firebaseEnabled)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Firebase auth listener (only when configured)
   useEffect(() => {
     if (!firebaseEnabled) return
     const unsub = onAuthStateChanged(getAuthInstance(), async (user) => {
@@ -62,15 +76,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const p = await loadOrCreateProfile(user)
           setProfile(p)
-          setDbUser(p.name)
-          await enableFirebaseSync()
+          if (firebaseSeedEnabled) {
+            // Only fills an empty database; never overwrites real data.
+            await seedMasterDataIfEmpty().catch((e) => console.warn('[seed]', e))
+          }
         } catch (e) {
-          console.warn('profile load failed', e)
-          setError('Failed to load profile')
+          console.warn('[auth] profile load failed', e)
+          setError('Signed in, but your profile could not be loaded.')
         }
       } else {
         setProfile(null)
-        disableFirebaseSync()
       }
       setReady(true)
     })
@@ -92,12 +107,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const cred = await createUserWithEmailAndPassword(getAuthInstance(), email, password)
       await updateProfile(cred.user, { displayName: name })
-      await setDoc(doc(getDb(), 'users', cred.user.uid), {
-        uid: cred.user.uid,
-        email,
-        name,
-        role: 'inspector' as UserRole,
-      })
     } catch (e) {
       setError(friendlyError(e))
       throw e
@@ -108,10 +117,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (firebaseEnabled) await signOut(getAuthInstance())
   }, [])
 
-  // Demo mode: synthesize a manager profile from the local display name.
+  // Without Firebase the app runs as a local demo with full access.
   const effectiveProfile: UserProfile | null = firebaseEnabled
     ? profile
-    : { uid: 'demo', email: 'demo@local', name: demoName, role: 'manager' }
+    : { uid: 'demo', email: 'demo@local', name: 'Demo User', role: 'admin' }
 
   return (
     <AuthContext.Provider

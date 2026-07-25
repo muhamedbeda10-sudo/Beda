@@ -2,12 +2,12 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { Loader2, ShieldCheck } from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
 import { InspectionsPage } from '@/pages/InspectionsPage'
-import { SessionPage } from '@/pages/SessionPage'
-import { OrderSummaryPage } from '@/pages/OrderSummaryPage'
-import { AnalyticsPage } from '@/pages/AnalyticsPage'
+import { WizardPage } from '@/pages/WizardPage'
 import { HistoryPage } from '@/pages/HistoryPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { AuditPage } from '@/pages/AuditPage'
+import { CoilSearchPage } from '@/pages/CoilSearchPage'
+import { PDIPage } from '@/pages/PDIPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { useAuth } from '@/store/AuthContext'
 
@@ -34,11 +34,11 @@ export default function App() {
     <AppShell>
       <Routes>
         <Route path="/" element={<InspectionsPage />} />
-        <Route path="/session/:id" element={<SessionPage />} />
-        <Route path="/orders" element={<OrderSummaryPage />} />
-        <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/wizard/:sessionId" element={<WizardPage />} />
+        <Route path="/coils" element={<CoilSearchPage />} />
+        <Route path="/pdi" element={<PDIPage />} />
         <Route path="/history" element={<HistoryPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/admin" element={<SettingsPage />} />
         <Route path="/audit" element={<AuditPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -1,133 +1,204 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Package, Play, ArrowRight, Factory, CheckCircle2 } from 'lucide-react'
-import { Modal, Input, Field, Button, Badge } from '@/components/ui'
-import { useDB, actions } from '@/store/db'
-import { machineById } from '@/lib/selectors'
+import { doc, setDoc } from 'firebase/firestore'
+import { Search, Package, Play, ArrowLeft, CheckCircle2, Boxes, Factory } from 'lucide-react'
+import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
+import { useAll } from '@/services/useCollection'
+import { COL, stripUndefined } from '@/services/repository'
+import { getDb } from '@/lib/firebase'
+import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import type { ProductionOrder } from '@/types'
-import { cn } from '@/lib/utils'
+import { uid } from '@/lib/utils'
+import { isPaintWorkCenter, isPTWorkCenter } from '@/domain/rules'
+import type { InspectionSample, InspectionSession, Machine, ProductionOrder } from '@/domain/types'
 
 /**
- * New Inspection flow.
- * Step 1: pick a production order.
- * Step 2: if the machine is a Paint Sample line (7 / 11 / 48) go straight into
- * the inspection. Otherwise show a start-session confirmation popup (qty).
+ * §4 — New Inspection.
+ * Cascading filters narrow to one order; the inspector then confirms the order
+ * context and the starting production quantity before any session exists. That
+ * confirmation is the baseline every later quantity is judged against.
  */
 export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const db = useDB()
-  const { toast } = useApp()
   const navigate = useNavigate()
-  const [q, setQ] = useState('')
-  const [selected, setSelected] = useState<ProductionOrder | null>(null)
-  const [qty, setQty] = useState('')
+  const { profile } = useAuth()
+  const { toast } = useApp()
+
+  const { rows: orders } = useAll<ProductionOrder>(COL.orders)
+  const { rows: machines } = useAll<Machine>(COL.machines)
+  const { rows: sessions } = useAll<InspectionSession>(COL.sessions)
+  const { rows: samples } = useAll<InspectionSample>(COL.samples)
+
+  const [orderTerm, setOrderTerm] = useState('')
+  const [itemFilter, setItemFilter] = useState('')
+  const [wcFilter, setWcFilter] = useState('')
+  const [picked, setPicked] = useState<ProductionOrder | null>(null)
+  const [startQty, setStartQty] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const itemOptions = useMemo(
+    () => Array.from(new Set(orders.map((o) => o.item))).sort(),
+    [orders],
+  )
+  const wcOptions = useMemo(
+    () => Array.from(new Set(orders.map((o) => o.workCenterCode))).sort((a, b) => Number(a) - Number(b)),
+    [orders],
+  )
 
   const results = useMemo(() => {
-    const term = q.trim().toLowerCase()
-    return db.orders
-      .filter((o) => o.status !== 'Cancelled')
-      .filter(
-        (o) =>
-          !term ||
-          o.orderId.toLowerCase().includes(term) ||
-          o.item.toLowerCase().includes(term) ||
-          o.itemCode.toLowerCase().includes(term),
-      )
+    const term = orderTerm.trim().toLowerCase()
+    return orders
+      .filter((o) => !term || o.orderNumber.toLowerCase().includes(term) || o.itemCode.toLowerCase().includes(term))
+      .filter((o) => !itemFilter || o.item === itemFilter)
+      .filter((o) => !wcFilter || o.workCenterCode === wcFilter)
       .slice(0, 40)
-  }, [db.orders, q])
+  }, [orders, orderTerm, itemFilter, wcFilter])
+
+  /** Samples already recorded against the picked order (§4). */
+  const previousSamples = useMemo(() => {
+    if (!picked) return []
+    return samples.filter((s) => s.orderId === picked.id).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+  }, [samples, picked])
 
   function reset() {
-    setSelected(null)
-    setQty('')
-    setQ('')
+    setPicked(null)
+    setStartQty('')
+    setOrderTerm('')
+    setItemFilter('')
+    setWcFilter('')
   }
 
-  function startFlow(order: ProductionOrder) {
-    const machine = machineById(db, order.machineId)
-    const isPaintSample = machine?.kind === 'Paint Sample'
-    if (isPaintSample) {
-      // Paint sample machines go straight into inspection.
-      const session = actions.createSession({
-        orderId: order.id,
-        machineId: order.machineId,
-        confirm: 'Confirmed',
-      })
-      toast(`Inspection started for ${order.orderId}`, 'success')
+  async function startSession() {
+    if (!picked || !profile) return
+    const qty = Number(startQty)
+    if (Number.isNaN(qty) || qty < 0) return
+    setBusy(true)
+    try {
+      const now = new Date().toISOString()
+      const seq = sessions.filter((s) => s.orderId === picked.id).length + 1
+      const session: InspectionSession = {
+        id: uid('sess'),
+        seq,
+        orderId: picked.id,
+        workCenterCode: picked.workCenterCode,
+        inspectorUid: profile.uid,
+        inspectorName: profile.name,
+        startedAt: now,
+        status: 'Open',
+        startQtyConfirmed: { qty, byUid: profile.uid, byName: profile.name, at: now },
+        version: 0,
+      }
+      await setDoc(doc(getDb(), COL.sessions, session.id), stripUndefined(session))
+      toast(`Session started for ${picked.orderNumber}.`, 'success')
       reset()
       onClose()
-      navigate(`/session/${session.id}`)
-    } else {
-      // Non-paint machines require a start-session confirmation popup.
-      setSelected(order)
-      setQty(String(order.requiredQty || ''))
+      navigate(`/wizard/${session.id}`)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not start the session.', 'error')
+    } finally {
+      setBusy(false)
     }
   }
 
-  function confirmStart() {
-    if (!selected) return
-    const session = actions.createSession({
-      orderId: selected.id,
-      machineId: selected.machineId,
-      finalQty: qty ? Number(qty) : undefined,
-      confirm: 'Confirmed',
-    })
-    toast(`Inspection started for ${selected.orderId}`, 'success')
-    reset()
-    onClose()
-    navigate(`/session/${session.id}`)
-  }
+  // ---- Step 2: confirm the order and the starting quantity -----------------
+  if (picked) {
+    const machine = machines.find((m) => m.code === picked.workCenterCode)
+    const remaining = Math.max(0, picked.requiredQty - picked.finishedQty)
+    const qty = Number(startQty)
+    const valid = startQty.trim() !== '' && !Number.isNaN(qty) && qty >= 0
 
-  // Confirmation popup (step 2)
-  if (selected) {
-    const machine = machineById(db, selected.machineId)
     return (
       <Modal
         open={open}
-        onClose={() => setSelected(null)}
-        title="Confirm inspection start"
+        onClose={() => setPicked(null)}
+        title="Confirm and start"
         icon={<Factory className="h-5 w-5" />}
-        size="md"
+        size="lg"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setSelected(null)}>
-              Back
+            <Button variant="ghost" onClick={() => setPicked(null)}>
+              <ArrowLeft className="h-4 w-4" /> Back
             </Button>
-            <Button variant="primary" onClick={confirmStart}>
-              <Play className="h-4 w-4" /> Start Inspection
+            <Button variant="primary" disabled={!valid || busy} onClick={startSession} className="min-h-[48px]">
+              <Play className="h-4 w-4" /> {busy ? 'Starting…' : 'Start inspection'}
             </Button>
           </>
         }
       >
         <div className="space-y-4">
           <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/50">
-            <p className="text-lg font-bold">{selected.orderId}</p>
-            <p className="text-sm text-brand-600 dark:text-brand-400">
-              {selected.item} : {selected.itemCode} : {selected.nominalL} : {selected.color}
-            </p>
-            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <p className="text-xs uppercase text-slate-400">Machine</p>
-                <p className="font-semibold">{machine?.name}</p>
-              </div>
-              <div>
-                <p className="text-xs uppercase text-slate-400">Route</p>
-                <p className="font-semibold">{selected.route}</p>
-              </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-lg font-bold">{picked.orderNumber}</p>
+              {isPaintWorkCenter(picked.workCenterCode) && <Badge tone="violet">Paint sample step</Badge>}
+              {isPTWorkCenter(picked.workCenterCode) && <Badge tone="amber">PT / weld step</Badge>}
             </div>
+            <p className="text-sm text-brand-600 dark:text-brand-400">
+              {picked.item} · {picked.itemCode}
+            </p>
+
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              <Metric label="Required" value={picked.requiredQty} />
+              <Metric label="Finished" value={picked.finishedQty} tone="green" />
+              <Metric label="Remaining" value={remaining} tone="blue" />
+            </div>
+
+            <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+              <Detail label="Work center" value={machine?.name ?? picked.workCenterCode} />
+              <Detail label="Drawing" value={picked.drawing} />
+              <Detail label="Material" value={picked.material} />
+              <Detail label="Grade" value={picked.expectedGrade} />
+              <Detail label="Customer" value={picked.customer} />
+              <Detail label="Type" value={picked.type} />
+              <Detail label="Colour" value={picked.colour} />
+            </dl>
           </div>
-          <Field label="Starting quantity" hint="Confirm the batch quantity for this session">
-            <Input type="number" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" />
+
+          <Field
+            label="Starting production quantity"
+            hint="Confirmed once per session — the baseline every later quantity is judged against."
+          >
+            <Input
+              autoFocus
+              type="number"
+              inputMode="numeric"
+              value={startQty}
+              onChange={(e) => setStartQty(e.target.value)}
+              placeholder="0"
+              className="min-h-[48px] text-lg"
+            />
           </Field>
-          <div className="flex items-center gap-2 rounded-xl bg-brand-50 px-3 py-2.5 text-sm text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
-            <CheckCircle2 className="h-4 w-4" />
-            A new inspection session will be created and linked to this order.
+
+          <div>
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-slate-400">
+              <Boxes className="h-3.5 w-3.5" /> Previous samples on this order
+            </p>
+            {previousSamples.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-slate-400 dark:border-slate-700">
+                No samples recorded yet.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {previousSamples.slice(0, 12).map((s) => (
+                  <span
+                    key={s.id}
+                    className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                  >
+                    #{s.index} · shift {s.shift} · {new Date(s.createdAt).toLocaleDateString()}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-start gap-2 rounded-xl bg-brand-50 px-3 py-2.5 text-sm text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+            Who confirmed this quantity, and when, is recorded with the session.
           </div>
         </div>
       </Modal>
     )
   }
 
-  // Order picker (step 1)
+  // ---- Step 1: cascading filters -------------------------------------------
   return (
     <Modal
       open={open}
@@ -135,45 +206,94 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
         reset()
         onClose()
       }}
-      title="New Inspection"
+      title="New inspection"
       icon={<Package className="h-5 w-5" />}
       size="lg"
     >
       <div className="space-y-3">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <Input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search order, item or code…" className="pl-9" />
+          <Input
+            autoFocus
+            value={orderTerm}
+            onChange={(e) => setOrderTerm(e.target.value)}
+            placeholder="Order number or item code…"
+            className="min-h-[48px] pl-9"
+          />
         </div>
-        <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
-          {results.length === 0 && <p className="py-8 text-center text-sm text-slate-400">No matching orders.</p>}
-          {results.map((o) => {
-            const machine = machineById(db, o.machineId)
-            const isPaint = machine?.kind === 'Paint Sample'
-            return (
-              <button
-                key={o.id}
-                onClick={() => startFlow(o)}
-                className="group flex w-full items-center gap-3 rounded-2xl border border-slate-200 p-3 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/50 dark:border-slate-800 dark:hover:border-brand-500/50 dark:hover:bg-brand-500/5"
-              >
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
-                  <Package className="h-5 w-5" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-bold">{o.orderId}</span>
-                    {isPaint && <Badge tone="violet">Paint Sample</Badge>}
-                    <Badge tone={o.status === 'Active' ? 'green' : 'neutral'}>{o.status}</Badge>
-                  </div>
-                  <p className="truncate text-sm text-slate-500 dark:text-slate-400">
-                    {o.item} : {o.itemCode} · {machine?.name}
-                  </p>
-                </div>
-                <ArrowRight className={cn('h-5 w-5 shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-brand-500')} />
-              </button>
-            )
-          })}
+        <div className="grid grid-cols-2 gap-2">
+          <Select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} className="min-h-[48px]">
+            <option value="">All items</option>
+            {itemOptions.map((i) => (
+              <option key={i} value={i}>
+                {i}
+              </option>
+            ))}
+          </Select>
+          <Select value={wcFilter} onChange={(e) => setWcFilter(e.target.value)} className="min-h-[48px]">
+            <option value="">All work centers</option>
+            {wcOptions.map((w) => (
+              <option key={w} value={w}>
+                {machines.find((m) => m.code === w)?.name ?? `Work center ${w}`}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        <div className="max-h-[46vh] space-y-2 overflow-y-auto pr-1">
+          {results.length === 0 && (
+            <p className="py-8 text-center text-sm text-slate-400">No orders match those filters.</p>
+          )}
+          {results.map((o) => (
+            <button
+              key={o.id}
+              onClick={() => {
+                setPicked(o)
+                setStartQty(String(Math.max(0, o.requiredQty - o.finishedQty)))
+              }}
+              className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 p-3 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/50 dark:border-slate-800 dark:hover:border-brand-500/50 dark:hover:bg-brand-500/5"
+            >
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
+                <Package className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold">{o.orderNumber}</p>
+                <p className="truncate text-sm text-slate-500 dark:text-slate-400">
+                  {o.item} · {o.itemCode} · WC {o.workCenterCode}
+                </p>
+              </div>
+            </button>
+          ))}
         </div>
       </div>
     </Modal>
+  )
+}
+
+function Metric({ label, value, tone }: { label: string; value: number; tone?: 'green' | 'blue' }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase text-slate-400">{label}</p>
+      <p
+        className={
+          tone === 'green'
+            ? 'text-xl font-bold tabular-nums text-emerald-500'
+            : tone === 'blue'
+              ? 'text-xl font-bold tabular-nums text-brand-500'
+              : 'text-xl font-bold tabular-nums'
+        }
+      >
+        {value}
+      </p>
+    </div>
+  )
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-xs font-semibold uppercase text-slate-400">{label}</dt>
+      <dd className="truncate font-semibold text-slate-800 dark:text-slate-100">{value || '—'}</dd>
+    </div>
   )
 }
