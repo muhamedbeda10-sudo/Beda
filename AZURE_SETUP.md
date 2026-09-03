@@ -50,7 +50,20 @@ az deployment group create \
 ```
 
 Pick the region closest to the factory (for Egypt: `westeurope`, `uaenorth` or
-`qatarcentral`). The deployment takes 5–10 minutes. At the end it prints:
+`qatarcentral`).
+
+**Trying it for free?** Add `appServiceSku=F1` to the parameters. The free tier
+sleeps after 20 idle minutes (the first visitor then waits a few seconds) and
+has a 60-minute CPU quota per day, which is enough to evaluate with a few
+users. When the factory goes live, move to `B1` from the portal (App Service
+plan → **Scale up**) with no redeploy. The database and photo storage sit
+inside the free-account limits for the first 12 months either way.
+
+للتجربة المجانية ضيف `appServiceSku=F1` للأمر. الخطة المجانية بتنام بعد 20 دقيقة
+من غير استخدام وليها سقف 60 دقيقة معالجة في اليوم. لما تدخل الإنتاج حوّل لـ B1
+من الـ Portal من غير ما تعيد النشر.
+
+The deployment takes 5–10 minutes. At the end it prints:
 
 ```
 webAppName   qc-system-xxxxxxxx
@@ -110,7 +123,7 @@ az webapp config appsettings set -g rg-qc-system -n <webAppName> \
 | Change a setting            | Web App → **Configuration → Application settings** (the app restarts)                            |
 | Database backups            | Automatic, 14-day retention (point-in-time restore from the PostgreSQL server's **Backups**)     |
 | Photo backups               | Soft delete is on for 30 days; add lifecycle / geo-redundancy in the storage account if needed   |
-| Scale up                    | App Service plan → **Scale up**; PostgreSQL server → **Compute + storage**. No redeploy needed.  |
+| Scale up                    | App Service plan → **Scale up** (e.g. F1 → B1); PostgreSQL server → **Compute + storage**. No redeploy needed. |
 | Connect with a SQL client   | PostgreSQL server → **Networking** → add your client IP; connect with `sslmode=require`          |
 | Rotate the JWT secret       | Set a new `JWT_SECRET`; everyone signs in again (refresh cookies stay valid)                      |
 

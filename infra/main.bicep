@@ -36,8 +36,12 @@ param dbAdminPassword string
 @minLength(32)
 param jwtSecret string
 
-@description('App Service plan SKU. B1 fits a factory of tens of users; scale up later without redeploying.')
-@allowed(['B1', 'B2', 'B3', 'P0v3', 'P1v3'])
+@description('''App Service plan SKU.
+  F1  free tier for a first trial: the app sleeps after 20 idle minutes and has a
+      60-minute CPU quota per day. Fine to evaluate with a few users.
+  B1  the production starting point: always on, no daily quota.
+Scale between them later from the portal without redeploying.''')
+@allowed(['F1', 'B1', 'B2', 'B3', 'P0v3', 'P1v3'])
 param appServiceSku string = 'B1'
 
 @description('PostgreSQL compute. Burstable B1ms is enough to start; storage is set separately.')
@@ -152,6 +156,7 @@ resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   kind: 'linux'
   sku: {
     name: appServiceSku
+    tier: appServiceSku == 'F1' ? 'Free' : (startsWith(appServiceSku, 'B') ? 'Basic' : 'PremiumV3')
   }
   properties: {
     reserved: true
@@ -175,7 +180,9 @@ resource web 'Microsoft.Web/sites@2023-12-01' = {
       minTlsVersion: '1.2'
       http20Enabled: true
       appCommandLine: 'node dist/index.js'
-      healthCheckPath: '/api/health'
+      // Health-check pings keep an instance monitored on paid tiers; on the
+      // free tier they would only burn the daily CPU quota.
+      healthCheckPath: appServiceSku == 'F1' ? null : '/api/health'
       appSettings: [
         { name: 'NODE_ENV', value: 'production' }
         { name: 'DATABASE_URL', value: databaseUrl }
