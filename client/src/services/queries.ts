@@ -1,0 +1,174 @@
+// ============================================================================
+// Read hooks — one per thing a screen shows. Each wraps an API call in React
+// Query, so the screen gets caching, focus re-fetch and a loading flag, and
+// the write functions in ./mutations invalidate by key so screens refresh
+// after a save.
+//
+// Every read here is bounded the way the Firestore version was: a prefix
+// search, a lookup by id, or a capped page. Nothing loads a whole table.
+// ============================================================================
+
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import type {
+  AuditListResponse,
+  AuditStats,
+  CoilUsage,
+  HistoryResponse,
+  MasterKind,
+  MasterListQuery,
+  MasterRecordByKind,
+  OpenSessionsResponse,
+  OrderHistory,
+  PDIWithOrder,
+  SampleDetail,
+  SampleSummary,
+  SessionWithOrder,
+  WizardContext,
+} from '@qc/shared/api'
+import type { Coil, Disposition, ImageAsset, ProductionOrder, UserProfile } from '@qc/shared/types'
+import { api, qs } from '@/lib/api'
+
+export const keys = {
+  openBoard: ['sessions', 'open'] as const,
+  history: (disposition?: Disposition | null) => ['sessions', 'history', disposition ?? 'all'] as const,
+  session: (id: string) => ['sessions', id] as const,
+  wizard: (id: string) => ['sessions', id, 'wizard'] as const,
+  sessionSamples: (id: string) => ['sessions', id, 'samples'] as const,
+  sample: (id: string) => ['samples', id] as const,
+  orderSearch: (term: string) => ['orders', 'search', term] as const,
+  orderHistory: (id: string) => ['orders', id, 'history'] as const,
+  coilSearch: (term: string) => ['coils', 'search', term] as const,
+  coilUsage: (numbers: string) => ['coils', 'usage', numbers] as const,
+  images: (ids: string) => ['images', ids] as const,
+  master: (kind: MasterKind, filters?: MasterListQuery) => ['master', kind, filters ?? {}] as const,
+  pdi: ['pdi'] as const,
+  audit: ['audit', 'list'] as const,
+  auditStats: ['audit', 'stats'] as const,
+  users: ['users'] as const,
+}
+
+/** A value that settles `ms` after it stops changing, so typing an
+ *  eight-character order number costs one query, not eight. */
+export function useDebounced<T>(value: T, ms = 300): T {
+  const [settled, setSettled] = useState(value)
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms)
+    return () => clearTimeout(t)
+  }, [value, ms])
+  return settled
+}
+
+// ---- Sessions --------------------------------------------------------------
+
+export function useOpenBoard() {
+  return useQuery({ queryKey: keys.openBoard, queryFn: () => api<OpenSessionsResponse>('/sessions/open'), refetchInterval: 60_000 })
+}
+
+export function useHistory(disposition: Disposition | null, limit = 100) {
+  return useQuery({
+    queryKey: keys.history(disposition),
+    queryFn: () => api<HistoryResponse>(`/sessions/history${qs({ limit, disposition })}`),
+  })
+}
+
+export function useSession(id: string | null) {
+  return useQuery({ queryKey: keys.session(id ?? ''), queryFn: () => api<SessionWithOrder>(`/sessions/${id}`), enabled: !!id })
+}
+
+export function useWizardContext(sessionId: string) {
+  return useQuery({
+    queryKey: keys.wizard(sessionId),
+    queryFn: () => api<WizardContext>(`/sessions/${sessionId}/wizard`),
+    enabled: !!sessionId,
+    staleTime: 60_000,
+  })
+}
+
+export function useSessionSamples(sessionId: string | null) {
+  return useQuery({
+    queryKey: keys.sessionSamples(sessionId ?? ''),
+    queryFn: () => api<SampleSummary[]>(`/sessions/${sessionId}/samples`),
+    enabled: !!sessionId,
+  })
+}
+
+export function useSampleDetail(sampleId: string | null) {
+  return useQuery({ queryKey: keys.sample(sampleId ?? ''), queryFn: () => api<SampleDetail>(`/samples/${sampleId}`), enabled: !!sampleId })
+}
+
+// ---- Orders & coils --------------------------------------------------------
+
+export function useOrderSearch(term: string, limit = 40, enabled = true) {
+  const t = useDebounced(term.trim())
+  return useQuery({
+    queryKey: keys.orderSearch(`${t}|${limit}`),
+    queryFn: () => api<ProductionOrder[]>(`/orders${qs({ search: t, limit })}`),
+    enabled,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useOrderHistory(orderId: string | null) {
+  return useQuery({ queryKey: keys.orderHistory(orderId ?? ''), queryFn: () => api<OrderHistory>(`/orders/${orderId}/history`), enabled: !!orderId })
+}
+
+export function useCoilSearch(term: string, limit = 25) {
+  const t = useDebounced(term.trim())
+  return useQuery({
+    queryKey: keys.coilSearch(`${t}|${limit}`),
+    queryFn: () => api<Coil[]>(`/coils${qs({ search: t, limit })}`),
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useCoilUsage(coilNumbers: string[]) {
+  const key = Array.from(new Set(coilNumbers)).sort().join(',')
+  return useQuery({
+    queryKey: keys.coilUsage(key),
+    queryFn: () => api<CoilUsage[]>(`/coils/usage${qs({ coilNumbers: key })}`),
+    enabled: key.length > 0,
+  })
+}
+
+// ---- Images ----------------------------------------------------------------
+
+/** Metadata (including thumbnails) for the photos a record references. */
+export function useImages(ids: string[]) {
+  const key = Array.from(new Set(ids.filter(Boolean))).sort().join(',')
+  return useQuery({
+    queryKey: keys.images(key),
+    queryFn: () => api<ImageAsset[]>(`/images${qs({ ids: key })}`),
+    enabled: key.length > 0,
+    staleTime: 5 * 60_000,
+  })
+}
+
+// ---- Master data -----------------------------------------------------------
+
+export function useMaster<K extends MasterKind>(kind: K, filters?: MasterListQuery, enabled = true) {
+  return useQuery({
+    queryKey: keys.master(kind, filters),
+    queryFn: () => api<MasterRecordByKind[K][]>(`/master/${kind}${qs({ ...filters })}`),
+    enabled,
+    staleTime: 60_000,
+  })
+}
+
+// ---- PDI, audit, users -----------------------------------------------------
+
+export function usePdiList(limit = 50) {
+  return useQuery({ queryKey: keys.pdi, queryFn: () => api<PDIWithOrder[]>(`/pdi${qs({ limit })}`) })
+}
+
+export function useAuditList(limit = 500) {
+  return useQuery({ queryKey: keys.audit, queryFn: () => api<AuditListResponse>(`/audit${qs({ limit })}`) })
+}
+
+export function useAuditStats() {
+  return useQuery({ queryKey: keys.auditStats, queryFn: () => api<AuditStats>('/audit/stats') })
+}
+
+export function useUsers() {
+  return useQuery({ queryKey: keys.users, queryFn: () => api<UserProfile[]>('/users') })
+}

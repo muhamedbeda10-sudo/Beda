@@ -1,0 +1,71 @@
+# Build, test, and deploy the QC System to Azure App Service.
+#
+# One-time setup in the repository (Settings → Secrets and variables → Actions):
+#   AZURE_WEBAPP_NAME             the Web App's name (output `webAppName` of infra/main.bicep)
+#   AZURE_WEBAPP_PUBLISH_PROFILE  Azure portal → the Web App → Get publish profile (the XML)
+#
+# Every push to main runs the full test-suite against a PostgreSQL service,
+# builds the client and the API, packages them as one deployable folder, and
+# publishes it. The API applies pending migrations when it starts.
+name: Deploy to Azure App Service
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: azure-deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: qc
+          POSTGRES_PASSWORD: qc
+          POSTGRES_DB: qc_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U qc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+        env:
+          TEST_DATABASE_URL: postgresql://qc:qc@127.0.0.1:5432/qc_test
+
+  deploy:
+    name: Build and deploy
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build client and API
+        run: npm run build
+      - name: Package for App Service
+        run: node scripts/package.mjs
+      - name: Deploy
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: deploy

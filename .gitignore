@@ -11,11 +11,13 @@ npm-debug.log*
 .env.*
 !.env.example
 
-# Firebase Admin SDK service account keys — full project access, bypasses every
-# security rule. Never commit; a deleted file stays in git history.
-*serviceAccount*.json
-*adminsdk*.json
-qc-migration/
+# Local image store used when IMAGE_STORAGE_DRIVER=local (dev / tests).
+server/data/
 
-# Written by qc-import.mjs into the export folder as it runs.
-qc-import-progress.json
+# Client build copied into the API for a single-App-Service deployment.
+server/public/
+
+# Azure deployment artefacts.
+deploy/
+*.publishsettings
+*.PublishSettings
