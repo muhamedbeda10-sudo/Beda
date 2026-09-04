@@ -58,12 +58,27 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      # Until the two Azure secrets exist, the build still runs (so main stays
+      # green and buildable) and the deploy step reports what is missing.
+      - name: Check Azure secrets
+        id: azure
+        env:
+          NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
+          PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        run: |
+          if [ -n "$NAME" ] && [ -n "$PROFILE" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Not deployed::Add the AZURE_WEBAPP_NAME and AZURE_WEBAPP_PUBLISH_PROFILE repository secrets (see AZURE_SETUP.md) to deploy on push."
+          fi
       - run: npm ci
       - name: Build client and API
         run: npm run build
       - name: Package for App Service
         run: node scripts/package.mjs
       - name: Deploy
+        if: steps.azure.outputs.configured == 'true'
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
