@@ -169,6 +169,12 @@ export interface ExistingKeysRequest {
   keys: string[]
 }
 
+/**
+ * Most business keys one `existing-keys` request may ask about. The client
+ * splits a larger file into requests of this size; the API rejects more.
+ */
+export const EXISTING_KEYS_MAX = 5000
+
 export interface ExistingKeysResponse {
   /** Normalised keys that already exist (lower-cased, trimmed). */
   existing: string[]

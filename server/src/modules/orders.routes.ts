@@ -6,7 +6,7 @@
 
 import { Router } from 'express'
 import { z } from 'zod'
-import type { ExistingKeysResponse, ImportResult, OrderHistory, SampleSummary } from '@qc/shared/api'
+import { EXISTING_KEYS_MAX, type ExistingKeysResponse, type ImportResult, type OrderHistory, type SampleSummary } from '@qc/shared/api'
 import type { InspectionSession, ProductionOrder } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
@@ -47,7 +47,7 @@ const importRow = z.object({
 })
 
 const importSchema = z.object({ rows: z.array(importRow).min(1).max(1000) })
-const existingKeysSchema = z.object({ keys: z.array(z.string().trim().min(1)).max(5000) })
+const existingKeysSchema = z.object({ keys: z.array(z.string().trim().min(1)).max(EXISTING_KEYS_MAX) })
 
 export async function fetchOrdersByIds(q: Queryable, ids: string[]): Promise<ProductionOrder[]> {
   if (ids.length === 0) return []

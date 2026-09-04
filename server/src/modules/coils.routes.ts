@@ -5,7 +5,7 @@
 
 import { Router } from 'express'
 import { z } from 'zod'
-import type { CoilUsage, ExistingKeysResponse, ImportResult } from '@qc/shared/api'
+import { EXISTING_KEYS_MAX, type CoilUsage, type ExistingKeysResponse, type ImportResult } from '@qc/shared/api'
 import type { Coil } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { withTransaction } from '../db/pool'
@@ -73,7 +73,7 @@ export function coilsRoutes(ctx: AppContext): Router {
   })
 
   r.post('/existing-keys', requireCapability('manage-admin-data'), async (req, res) => {
-    const { keys } = parse(z.object({ keys: z.array(z.string().trim().min(1)).max(5000) }), req.body)
+    const { keys } = parse(z.object({ keys: z.array(z.string().trim().min(1)).max(EXISTING_KEYS_MAX) }), req.body)
     const wanted = Array.from(new Set(keys.map(normaliseKey)))
     const { rows } = await ctx.db.query<{ key: string }>(`SELECT lower(coil_number) AS key FROM coils WHERE lower(coil_number) = ANY($1::text[])`, [wanted])
     const body: ExistingKeysResponse = { existing: rows.map((x) => x.key) }

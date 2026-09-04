@@ -1,5 +1,5 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
-import type { ApiErrorBody, AuditListResponse, ImportResult, ExistingKeysResponse, OrderHistory, CoilUsage } from '@qc/shared/api'
+import { EXISTING_KEYS_MAX, type ApiErrorBody, type AuditListResponse, type ImportResult, type ExistingKeysResponse, type OrderHistory, type CoilUsage } from '@qc/shared/api'
 import type { Machine, ProductionOrder, Coil, WorkCenterDefect } from '@qc/shared/types'
 import { TestApp, type Session } from './harness'
 
@@ -162,6 +162,15 @@ describe('production orders', () => {
       body: { keys: ['20480-PH1.4-SMA', 'nope-1'] },
     })
     expect(res.body.existing).toEqual(['20480-ph1.4-sma'])
+  })
+
+  it('answers exactly the published maximum of keys per request and refuses one more', async () => {
+    const keys = Array.from({ length: EXISTING_KEYS_MAX }, (_, i) => `probe-${i}`)
+    const full = await app.api<ExistingKeysResponse>('POST', '/api/orders/existing-keys', { token: admin.token, body: { keys } })
+    expect(full.status).toBe(200)
+    expect(full.body.existing).toEqual([])
+    const over = await app.api<ApiErrorBody>('POST', '/api/orders/existing-keys', { token: admin.token, body: { keys: [...keys, 'one-more'] } })
+    expect(over.status).toBe(400)
   })
 
   it('fetches by ids and answers an empty history for a fresh order', async () => {
