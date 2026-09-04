@@ -1,0 +1,555 @@
+// ============================================================================
+// Inspection sessions, and the atomic sample save that lives under them (§9).
+//
+// A sample carries its dimensions, defects, coils, an optional paint record,
+// an optional PT record and image references. They are written as ONE unit
+// inside one transaction: either the complete inspection exists, or nothing
+// does. There is no code path that reports partial success, because there is
+// no code path that produces it.
+// ============================================================================
+
+import { Router } from 'express'
+import { z } from 'zod'
+import {
+  DISPOSITIONS,
+  PT_CONSUMABLE_KINDS,
+  type GradeMapping,
+  type InspectionSession,
+  type ItemDimensionMaster,
+  type ItemDimensionOrder,
+  type ItemReferenceImage,
+  type PTConsumableProduct,
+  type ProductionOrder,
+  type WorkCenterDefect,
+} from '@qc/shared/types'
+import {
+  deriveShift,
+  dimensionStatus,
+  isPTWorkCenter,
+  isPaintWorkCenter,
+  can,
+  validateSample,
+} from '@qc/shared/rules'
+import type {
+  HistoryResponse,
+  OpenSessionsResponse,
+  SampleSummary,
+  SaveSampleResponse,
+  SessionWithOrder,
+  WizardContext,
+} from '@qc/shared/api'
+import type { AuditContext } from '@qc/shared/audit'
+import type { AppContext } from '../context'
+import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
+import { ConflictError, badRequest, forbidden, notFound } from '../lib/errors'
+import { parse } from '../lib/validate'
+import { requireCapability, requireUser } from '../auth/middleware'
+import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
+import { auditEvent } from '@qc/shared/audit'
+import { dropNulls } from '../lib/rows'
+import { assertImagesUsable, linkImages } from './images.links'
+import { fetchOrdersByIds } from './orders.routes'
+import {
+  ORDER_SUMMARY_SELECT,
+  SAMPLE_SUMMARY_SELECT,
+  SESSION_SELECT,
+  toSession,
+  toSessionWithOrder,
+  type OrderSummaryRow,
+  type SessionRow,
+} from './sessions.sql'
+
+const uuid = z.string().uuid()
+
+const startSchema = z.object({ orderId: uuid, startQty: z.coerce.number().min(0) })
+const closeSchema = z.object({ finalQty: z.coerce.number().min(0), version: z.coerce.number().int().min(0) })
+
+const optText = (max: number) => z.string().trim().max(max).optional().transform((v) => (v ? v : undefined))
+const nullableNum = z.union([z.number().finite(), z.null()])
+
+const saveSampleSchema = z.object({
+  submissionId: uuid,
+  drawing: z.string().trim().min(1, 'Select a drawing.').max(200),
+  drawingAlt: optText(200),
+  issue: optText(100),
+  sampleQty: z.number().positive('Sample quantity must be greater than zero.'),
+  dimensions: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(200),
+        sequence: z.number().int().min(1),
+        nominal: nullableNum,
+        tolPlus: nullableNum,
+        tolMinus: nullableNum,
+        actual: nullableNum,
+        unit: z.string().trim().max(20).default('mm'),
+        source: z.enum(['item-order', 'item-master', 'carry-forward', 'manual']),
+      }),
+    )
+    .max(200),
+  defects: z
+    .array(
+      z.object({
+        defectName: z.string().trim().min(1).max(200),
+        qty: z.number().positive(),
+        disposition: z.enum(DISPOSITIONS as unknown as [string, ...string[]]),
+        notes: optText(2000),
+        imageIds: z.array(uuid).max(30).default([]),
+      }),
+    )
+    .max(100),
+  coils: z
+    .array(
+      z.object({
+        coilNumber: z.string().trim().min(1, 'Every coil needs a coil ID.').max(120),
+        grade: optText(60),
+        smType: optText(60),
+        supplier: optText(200),
+        thickness: z.number().finite().optional(),
+        width: z.number().finite().optional(),
+        yield: z.number().finite().optional(),
+        notes: optText(1000),
+      }),
+    )
+    .max(50),
+  paint: z.object({ notes: optText(4000), imageIds: z.array(uuid).max(50).default([]) }).optional(),
+  pt: z
+    .object({
+      testFrequencyPct: z.number().finite(),
+      consumableLots: z.object({ Cleaner: z.string().trim(), Penetrant: z.string().trim(), Developer: z.string().trim() }),
+      sampleSize: optText(100),
+      testedWeldLength: optText(100),
+      indicationType: optText(200),
+      indicationSize: optText(100),
+      weldingWireBatch: optText(100),
+      acceptOrRepair: z.enum(['Accept', 'Reject / Repair']).optional(),
+      finalResult: optText(200),
+      notes: optText(4000),
+      imageIds: z.array(uuid).max(50).default([]),
+    })
+    .optional(),
+  gradeAcknowledgement: z
+    .object({
+      coilNumbers: z.array(z.string().trim().min(1)).min(1),
+      expectedGrade: z.string().trim(),
+      foundGrades: z.array(z.string().trim()),
+      at: z.string().datetime({ offset: true }),
+    })
+    .optional(),
+})
+
+async function loadSessionWithOrder(q: Queryable, id: string, lock = false): Promise<SessionWithOrder | null> {
+  const { rows } = await q.query<SessionRow & OrderSummaryRow>(
+    `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
+       FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
+      WHERE s.id = $1 AND s.deleted_at IS NULL${lock ? ' FOR UPDATE OF s' : ''}`,
+    [id],
+  )
+  return rows[0] ? toSessionWithOrder(rows[0]) : null
+}
+
+function auditCtxFor(user: { id: string; name: string }, s: SessionWithOrder, entity: string, entityId: string, sampleId?: string): AuditContext {
+  return {
+    userId: user.id,
+    userName: user.name,
+    entity,
+    entityId,
+    orderNumber: s.order?.orderNumber,
+    item: s.order?.item,
+    workCenterCode: s.workCenterCode,
+    sessionId: s.id,
+    sampleId,
+  }
+}
+
+export function sessionsRoutes(ctx: AppContext): Router {
+  const r = Router()
+  const { db } = ctx
+
+  /** The board: what is open now, the samples recorded so far, and the Hold badge. */
+  r.get('/open', async (req, res) => {
+    const q = parse(z.object({ limit: z.coerce.number().int().min(1).max(500).default(200) }), req.query)
+    const sessions = await db.query<SessionRow & OrderSummaryRow>(
+      `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
+         FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
+        WHERE s.status = 'Open' AND s.deleted_at IS NULL
+        ORDER BY s.started_at DESC LIMIT $1`,
+      [q.limit],
+    )
+    const ids = sessions.rows.map((s) => s.id)
+    const [samples, hold] = await Promise.all([
+      ids.length
+        ? db.query<SampleSummary>(
+            `SELECT ${SAMPLE_SUMMARY_SELECT} FROM inspection_samples sm WHERE sm.session_id = ANY($1::uuid[]) AND sm.deleted_at IS NULL ORDER BY sm.index`,
+            [ids],
+          )
+        : Promise.resolve({ rows: [] as SampleSummary[] }),
+      db.query<{ n: number }>(`SELECT count(*)::int AS n FROM defect_results WHERE disposition = 'Hold' AND deleted_at IS NULL`),
+    ])
+    const body: OpenSessionsResponse = {
+      sessions: sessions.rows.map(toSessionWithOrder),
+      samples: samples.rows,
+      holdCount: hold.rows[0].n,
+    }
+    res.json(body)
+  })
+
+  /** §6 — one page of the newest sessions, or those owning a defect with a disposition. */
+  r.get('/history', async (req, res) => {
+    const q = parse(
+      z.object({
+        limit: z.coerce.number().int().min(1).max(500).default(100),
+        disposition: z.enum(DISPOSITIONS as unknown as [string, ...string[]]).optional(),
+      }),
+      req.query,
+    )
+    const { rows } = q.disposition
+      ? await db.query<SessionRow & OrderSummaryRow>(
+          `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
+             FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
+            WHERE s.deleted_at IS NULL AND EXISTS (
+                    SELECT 1 FROM inspection_samples sm
+                    JOIN defect_results d ON d.sample_id = sm.id AND d.deleted_at IS NULL
+                   WHERE sm.session_id = s.id AND sm.deleted_at IS NULL AND d.disposition = $2)
+            ORDER BY s.started_at DESC LIMIT $1`,
+          [q.limit, q.disposition],
+        )
+      : await db.query<SessionRow & OrderSummaryRow>(
+          `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
+             FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
+            WHERE s.deleted_at IS NULL
+            ORDER BY s.started_at DESC LIMIT $1`,
+          [q.limit],
+        )
+    const body: HistoryResponse = { sessions: rows.map(toSessionWithOrder) }
+    res.json(body)
+  })
+
+  /** §4 — start a session against an order, confirming the starting quantity. */
+  r.post('/', requireCapability('record-inspection'), async (req, res) => {
+    const user = requireUser(req)
+    const body = parse(startSchema, req.body)
+    const created = await withTransaction(db, async (tx) => {
+      // Lock the order so two inspectors starting at once get distinct seqs.
+      const order = (await tx.query<ProductionOrder>(
+        `SELECT id, order_number AS "orderNumber", item, work_center_code AS "workCenterCode"
+           FROM production_orders WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [body.orderId],
+      )).rows[0]
+      if (!order) throw badRequest('That order does not exist.')
+      const seq = (await tx.query<{ next: number }>(
+        `SELECT COALESCE(max(seq), 0) + 1 AS next FROM inspection_sessions WHERE order_id = $1`,
+        [order.id],
+      )).rows[0].next
+      const { rows } = await tx.query<{ id: string }>(
+        `INSERT INTO inspection_sessions
+           (seq, order_id, work_center_code, inspector_id, inspector_name, start_qty, start_qty_by_id, start_qty_by_name, start_qty_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $4, $5, now()) RETURNING id`,
+        [seq, order.id, order.workCenterCode, user.id, user.name, body.startQty],
+      )
+      const session = (await loadSessionWithOrder(tx, rows[0].id))!
+      await auditCreate(tx, auditCtxFor(user, session, 'InspectionSession', session.id))
+      return session
+    })
+    res.status(201).json(created)
+  })
+
+  r.get('/:id', async (req, res) => {
+    const session = await loadSessionWithOrder(db, parse(uuid, req.params.id))
+    if (!session) throw notFound('That session')
+    res.json(session)
+  })
+
+  /** Everything the wizard needs in one round trip. */
+  r.get('/:id/wizard', async (req, res) => {
+    const id = parse(uuid, req.params.id)
+    const session = await loadSessionWithOrder(db, id)
+    if (!session) throw notFound('That session')
+    const [order] = await fetchOrdersByIds(db, [session.orderId])
+    if (!order) throw notFound('The session’s order')
+    const [dimOrder, dimMaster, refImages, wcDefects, grades, consumables, samples] = await Promise.all([
+      db.query<ItemDimensionOrder>(
+        `SELECT id, item, dimension_name AS "dimensionName", sequence, nominal, tol_plus AS "tolPlus", tol_minus AS "tolMinus", unit
+           FROM item_dimension_order WHERE item = $1 AND deleted_at IS NULL ORDER BY sequence`,
+        [order.item],
+      ),
+      db.query<ItemDimensionMaster>(
+        `SELECT id, item, dimension_name AS "dimensionName", nominal, tol_plus AS "tolPlus", tol_minus AS "tolMinus", unit
+           FROM item_dimension_master WHERE item = $1 AND deleted_at IS NULL ORDER BY dimension_name`,
+        [order.item],
+      ),
+      db.query<ItemReferenceImage>(
+        `SELECT id, item, image_id AS "imageId", caption FROM item_reference_images WHERE item = $1 AND deleted_at IS NULL ORDER BY created_at`,
+        [order.item],
+      ),
+      db.query<WorkCenterDefect>(
+        `SELECT id, work_center_code AS "workCenterCode", defect_name AS "defectName" FROM work_center_defects WHERE work_center_code = $1 AND deleted_at IS NULL ORDER BY defect_name`,
+        [session.workCenterCode],
+      ),
+      db.query<GradeMapping>(`SELECT id, grade_a AS "gradeA", grade_b AS "gradeB" FROM grade_mappings WHERE deleted_at IS NULL`),
+      db.query<PTConsumableProduct>(
+        `SELECT id, kind, product_name AS "productName", lot_batch AS "lotBatch" FROM pt_consumables WHERE deleted_at IS NULL ORDER BY kind, product_name`,
+      ),
+      db.query<SampleSummary>(
+        `SELECT ${SAMPLE_SUMMARY_SELECT} FROM inspection_samples sm WHERE sm.session_id = $1 AND sm.deleted_at IS NULL ORDER BY sm.index`,
+        [id],
+      ),
+    ])
+    const { order: _summary, ...plain } = session
+    const body: WizardContext = {
+      session: plain,
+      order,
+      dimensionOrder: dimOrder.rows.map(dropNulls),
+      dimensionMaster: dimMaster.rows.map(dropNulls),
+      referenceImages: refImages.rows.map(dropNulls),
+      workCenterDefects: wcDefects.rows,
+      gradeMappings: grades.rows,
+      ptConsumables: consumables.rows,
+      samples: samples.rows,
+    }
+    res.json(body)
+  })
+
+  r.get('/:id/samples', async (req, res) => {
+    const id = parse(uuid, req.params.id)
+    const { rows } = await db.query<SampleSummary>(
+      `SELECT ${SAMPLE_SUMMARY_SELECT} FROM inspection_samples sm WHERE sm.session_id = $1 AND sm.deleted_at IS NULL ORDER BY sm.index`,
+      [id],
+    )
+    res.json(rows)
+  })
+
+  /** §8.6 — close with the confirmed final quantity. Rejected if the session moved. */
+  r.post('/:id/close', requireCapability('record-inspection'), async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    const body = parse(closeSchema, req.body)
+    const closed = await withTransaction(db, async (tx) => {
+      const before = await loadSessionWithOrder(tx, id, true)
+      if (!before) throw notFound('That session')
+      if (before.version !== body.version) throw new ConflictError(before)
+      if (before.status === 'Closed') throw badRequest('This session is already closed.')
+      await tx.query(
+        `UPDATE inspection_sessions SET status = 'Closed', final_qty = $2, closed_at = now(), closed_by_id = $3, version = version + 1 WHERE id = $1`,
+        [id, body.finalQty, user.id],
+      )
+      const after = (await loadSessionWithOrder(tx, id))!
+      await auditChanges(
+        tx,
+        auditCtxFor(user, before, 'InspectionSession', id),
+        { status: before.status, finalQty: before.finalQty, closedAt: before.closedAt, closedById: before.closedById },
+        { status: after.status, finalQty: after.finalQty, closedAt: after.closedAt, closedById: after.closedById },
+      )
+      return after
+    })
+    res.json(closed)
+  })
+
+  /** §10 — a session is marked deleted, never erased. */
+  r.delete('/:id', requireCapability('delete-session'), async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    await withTransaction(db, async (tx) => {
+      const session = await loadSessionWithOrder(tx, id, true)
+      if (!session) throw notFound('That session')
+      await tx.query(`UPDATE inspection_sessions SET deleted_at = now(), deleted_by_id = $2 WHERE id = $1`, [id, user.id])
+      await auditDelete(tx, auditCtxFor(user, session, 'InspectionSession', id))
+    })
+    res.status(204).end()
+  })
+
+  /** §9 — save a complete sample atomically. */
+  r.post('/:id/samples', requireCapability('record-inspection'), async (req, res) => {
+    const user = requireUser(req)
+    const sessionId = parse(uuid, req.params.id)
+    const body = parse(saveSampleSchema, req.body)
+
+    const outcome = await withTransaction(db, async (tx): Promise<SaveSampleResponse> => {
+      // Lock the session: sample indexes are assigned under this lock, and a
+      // closed session cannot gain samples.
+      const session = await loadSessionWithOrder(tx, sessionId, true)
+      if (!session) throw notFound('That session')
+      if (session.status === 'Closed') throw badRequest('This session is closed. Samples cannot be added to it.')
+      if (session.inspectorId !== user.id && !can(user.role, 'edit-open-session')) throw forbidden()
+
+      // §9.3 — a retry with the same submission id returns the first save.
+      const dup = (await tx.query<{ id: string; index: number }>(
+        `SELECT id, index FROM inspection_samples WHERE submission_id = $1`,
+        [body.submissionId],
+      )).rows[0]
+      if (dup) return { sampleId: dup.id, index: dup.index, deduped: true }
+
+      const [order] = await fetchOrdersByIds(tx, [session.orderId])
+      if (!order) throw notFound('The session’s order')
+      const wc = session.workCenterCode
+
+      // The same business rules the wizard applies, enforced where they cannot
+      // be bypassed (§5, §8).
+      const issues = validateSample({
+        workCenterCode: wc,
+        sampleQty: body.sampleQty,
+        drawing: body.drawing,
+        coils: body.coils.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade })),
+        defects: body.defects.map((d) => ({ defectName: d.defectName, disposition: d.disposition as never, qty: d.qty })),
+        pt: body.pt ? { testFrequencyPct: body.pt.testFrequencyPct, consumableLots: body.pt.consumableLots } : undefined,
+      })
+      if (issues.length > 0) throw badRequest(issues[0].message, issues)
+      if (isPaintWorkCenter(wc) && !body.paint) throw badRequest('A paint sample record is required on this work centre.')
+
+      const imageIds = [
+        ...body.defects.flatMap((d) => d.imageIds),
+        ...(body.paint?.imageIds ?? []),
+        ...(body.pt?.imageIds ?? []),
+      ]
+      await assertImagesUsable(tx, imageIds)
+
+      const index = (await tx.query<{ next: number }>(
+        `SELECT COALESCE(max(index), 0) + 1 AS next FROM inspection_samples WHERE session_id = $1`,
+        [sessionId],
+      )).rows[0].next
+      const now = new Date()
+      const shift = deriveShift(now, ctx.config.FACTORY_TIMEZONE)
+      const ack = body.gradeAcknowledgement
+
+      let sampleId: string
+      try {
+        sampleId = (await tx.query<{ id: string }>(
+          `INSERT INTO inspection_samples
+             (session_id, order_id, index, shift, created_at, inspector_id, inspector_name, drawing, drawing_alt, issue,
+              sample_qty, grade_ack_by_id, grade_ack_by_name, grade_ack_at, grade_ack_coil_numbers,
+              grade_ack_expected_grade, grade_ack_found_grades, submission_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+          [
+            sessionId,
+            session.orderId,
+            index,
+            shift,
+            now,
+            user.id,
+            user.name,
+            body.drawing,
+            body.drawingAlt ?? null,
+            body.issue ?? null,
+            body.sampleQty,
+            ack ? user.id : null,
+            ack ? user.name : null,
+            ack ? ack.at : null,
+            ack ? ack.coilNumbers : null,
+            ack ? ack.expectedGrade : null,
+            ack ? ack.foundGrades : null,
+            body.submissionId,
+          ],
+        )).rows[0].id
+      } catch (e) {
+        // Two identical submissions raced past the check above; the other one
+        // won. Surface it as the dedupe it is, not as an error.
+        if (pgCode(e) === PG.UNIQUE_VIOLATION) {
+          throw new DuplicateSubmission(body.submissionId)
+        }
+        throw e
+      }
+
+      for (const d of body.dimensions) {
+        await tx.query(
+          `INSERT INTO dimension_results (sample_id, name, sequence, nominal, tol_plus, tol_minus, actual, unit, status, source)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [
+            sampleId,
+            d.name,
+            d.sequence,
+            d.nominal,
+            d.tolPlus,
+            d.tolMinus,
+            d.actual,
+            d.unit,
+            dimensionStatus({ nominal: d.nominal, tolPlus: d.tolPlus, tolMinus: d.tolMinus, actual: d.actual }),
+            d.source,
+          ],
+        )
+      }
+      for (const d of body.defects) {
+        const defectId = (await tx.query<{ id: string }>(
+          `INSERT INTO defect_results (sample_id, defect_name, qty, disposition, notes) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+          [sampleId, d.defectName, d.qty, d.disposition, d.notes ?? null],
+        )).rows[0].id
+        await linkImages(tx, 'defect_images', 'defect_id', defectId, d.imageIds)
+      }
+      for (const c of body.coils) {
+        await tx.query(
+          `INSERT INTO sample_coils (sample_id, coil_number, grade, sm_type, supplier, thickness, width, yield, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [sampleId, c.coilNumber, c.grade ?? null, c.smType ?? null, c.supplier ?? null, c.thickness ?? null, c.width ?? null, c.yield ?? null, c.notes ?? null],
+        )
+      }
+      if (body.paint && isPaintWorkCenter(wc)) {
+        const paintId = (await tx.query<{ id: string }>(
+          `INSERT INTO paint_samples (sample_id, notes) VALUES ($1, $2) RETURNING id`,
+          [sampleId, body.paint.notes ?? null],
+        )).rows[0].id
+        await linkImages(tx, 'paint_sample_images', 'paint_sample_id', paintId, body.paint.imageIds)
+      }
+      if (body.pt && isPTWorkCenter(wc)) {
+        const pt = body.pt
+        const ptId = (await tx.query<{ id: string }>(
+          `INSERT INTO pt_records
+             (sample_id, test_frequency_pct, cleaner_lot, penetrant_lot, developer_lot, sample_size, tested_weld_length,
+              indication_type, indication_size, welding_wire_batch, accept_or_repair, final_result, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+          [
+            sampleId,
+            pt.testFrequencyPct,
+            pt.consumableLots.Cleaner,
+            pt.consumableLots.Penetrant,
+            pt.consumableLots.Developer,
+            pt.sampleSize ?? null,
+            pt.testedWeldLength ?? null,
+            pt.indicationType ?? null,
+            pt.indicationSize ?? null,
+            pt.weldingWireBatch ?? null,
+            pt.acceptOrRepair ?? null,
+            pt.finalResult ?? null,
+            pt.notes ?? null,
+          ],
+        )).rows[0].id
+        await linkImages(tx, 'pt_record_images', 'pt_record_id', ptId, pt.imageIds)
+      }
+      if (imageIds.length > 0) {
+        await tx.query(`UPDATE images SET sample_id = $1 WHERE id = ANY($2::uuid[]) AND sample_id IS NULL`, [sampleId, imageIds])
+      }
+
+      const auditCtx = auditCtxFor(user, session, 'InspectionSample', sampleId, sampleId)
+      const at = now.toISOString()
+      const entries = [auditEvent('create', auditCtx, at)]
+      // §8.4 — an overridden grade mismatch is itself evidence.
+      if (ack) {
+        entries.push(
+          auditEvent('acknowledge', auditCtx, at, {
+            field: 'gradeAcknowledgement',
+            newValue: JSON.stringify({ ...ack, byId: user.id, byName: user.name }),
+          }),
+        )
+      }
+      await writeAudit(tx, entries)
+      return { sampleId, index, deduped: false }
+    }).catch(async (e) => {
+      if (e instanceof DuplicateSubmission) {
+        const { rows } = await db.query<{ id: string; index: number }>(`SELECT id, index FROM inspection_samples WHERE submission_id = $1`, [e.submissionId])
+        if (rows[0]) return { sampleId: rows[0].id, index: rows[0].index, deduped: true } satisfies SaveSampleResponse
+      }
+      throw e
+    })
+
+    res.status(outcome.deduped ? 200 : 201).json(outcome)
+  })
+
+  return r
+}
+
+class DuplicateSubmission extends Error {
+  constructor(readonly submissionId: string) {
+    super('duplicate submission')
+  }
+}
+
+export { loadSessionWithOrder, auditCtxFor, toSession }
+export type { InspectionSession }
