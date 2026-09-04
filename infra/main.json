@@ -1,0 +1,313 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.46.1.21595",
+      "templateHash": "16217276193253900050"
+    }
+  },
+  "parameters": {
+    "appName": {
+      "type": "string",
+      "defaultValue": "qc-system",
+      "minLength": 3,
+      "maxLength": 20,
+      "metadata": {
+        "description": "Short name used as a prefix for every resource (letters and digits)."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for every resource."
+      }
+    },
+    "dbAdminLogin": {
+      "type": "string",
+      "defaultValue": "qcadmin",
+      "metadata": {
+        "description": "Administrator login for PostgreSQL."
+      }
+    },
+    "dbAdminPassword": {
+      "type": "securestring",
+      "minLength": 16,
+      "metadata": {
+        "description": "Administrator password for PostgreSQL. 16+ characters, mixed classes."
+      }
+    },
+    "jwtSecret": {
+      "type": "securestring",
+      "minLength": 32,
+      "metadata": {
+        "description": "Secret used to sign access tokens. 32+ characters; generate with `openssl rand -base64 48`."
+      }
+    },
+    "appServiceSku": {
+      "type": "string",
+      "defaultValue": "B1",
+      "allowedValues": [
+        "F1",
+        "B1",
+        "B2",
+        "B3",
+        "P0v3",
+        "P1v3"
+      ],
+      "metadata": {
+        "description": "App Service plan SKU.\n  F1  free tier for a first trial: the app sleeps after 20 idle minutes and has a\n      60-minute CPU quota per day. Fine to evaluate with a few users.\n  B1  the production starting point: always on, no daily quota.\nScale between them later from the portal without redeploying."
+      }
+    },
+    "dbSkuName": {
+      "type": "string",
+      "defaultValue": "Standard_B1ms",
+      "metadata": {
+        "description": "PostgreSQL compute. Burstable B1ms is enough to start; storage is set separately."
+      }
+    },
+    "dbStorageGb": {
+      "type": "int",
+      "defaultValue": 32,
+      "metadata": {
+        "description": "PostgreSQL storage in GB."
+      }
+    },
+    "allowSelfRegistration": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Whether people may create their own account from the login screen (first account is always allowed)."
+      }
+    },
+    "factoryTimeZone": {
+      "type": "string",
+      "defaultValue": "Africa/Cairo",
+      "metadata": {
+        "description": "IANA time zone the factory runs on; shifts are derived in it."
+      }
+    }
+  },
+  "variables": {
+    "suffix": "[uniqueString(resourceGroup().id)]",
+    "storageName": "[toLower(replace(format('{0}{1}', take(parameters('appName'), 11), variables('suffix')), '-', ''))]",
+    "dbServerName": "[toLower(format('{0}-pg-{1}', parameters('appName'), variables('suffix')))]",
+    "webAppName": "[toLower(format('{0}-{1}', parameters('appName'), variables('suffix')))]",
+    "dbName": "qc",
+    "containerName": "qc-images"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+      "apiVersion": "2023-12-01-preview",
+      "name": "[variables('dbServerName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "[parameters('dbSkuName')]",
+        "tier": "Burstable"
+      },
+      "properties": {
+        "version": "16",
+        "administratorLogin": "[parameters('dbAdminLogin')]",
+        "administratorLoginPassword": "[parameters('dbAdminPassword')]",
+        "storage": {
+          "storageSizeGB": "[parameters('dbStorageGb')]",
+          "autoGrow": "Enabled"
+        },
+        "backup": {
+          "backupRetentionDays": 14,
+          "geoRedundantBackup": "Disabled"
+        },
+        "highAvailability": {
+          "mode": "Disabled"
+        },
+        "network": {
+          "publicNetworkAccess": "Enabled"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+      "apiVersion": "2023-12-01-preview",
+      "name": "[format('{0}/{1}', variables('dbServerName'), variables('dbName'))]",
+      "properties": {
+        "charset": "UTF8",
+        "collation": "en_US.utf8"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('dbServerName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
+      "apiVersion": "2023-12-01-preview",
+      "name": "[format('{0}/{1}', variables('dbServerName'), 'AllowAzureServices')]",
+      "properties": {
+        "startIpAddress": "0.0.0.0",
+        "endIpAddress": "0.0.0.0"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('dbServerName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[variables('storageName')]",
+      "location": "[parameters('location')]",
+      "kind": "StorageV2",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "properties": {
+        "minimumTlsVersion": "TLS1_2",
+        "allowBlobPublicAccess": false,
+        "supportsHttpsTrafficOnly": true
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+      "properties": {
+        "deleteRetentionPolicy": {
+          "enabled": true,
+          "days": 30
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', variables('containerName'))]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2023-12-01",
+      "name": "[format('{0}-plan', parameters('appName'))]",
+      "location": "[parameters('location')]",
+      "kind": "linux",
+      "sku": {
+        "name": "[parameters('appServiceSku')]",
+        "tier": "[if(equals(parameters('appServiceSku'), 'F1'), 'Free', if(startsWith(parameters('appServiceSku'), 'B'), 'Basic', 'PremiumV3'))]"
+      },
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2023-12-01",
+      "name": "[variables('webAppName')]",
+      "location": "[parameters('location')]",
+      "kind": "app,linux",
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', parameters('appName')))]",
+        "httpsOnly": true,
+        "siteConfig": {
+          "linuxFxVersion": "NODE|20-lts",
+          "alwaysOn": "[not(equals(parameters('appServiceSku'), 'F1'))]",
+          "ftpsState": "Disabled",
+          "minTlsVersion": "1.2",
+          "http20Enabled": true,
+          "appCommandLine": "node dist/index.js",
+          "healthCheckPath": "[if(equals(parameters('appServiceSku'), 'F1'), null(), '/api/health')]",
+          "appSettings": [
+            {
+              "name": "NODE_ENV",
+              "value": "production"
+            },
+            {
+              "name": "DATABASE_URL",
+              "value": "[format('postgresql://{0}:{1}@{2}:5432/{3}?sslmode=require', parameters('dbAdminLogin'), uriComponent(parameters('dbAdminPassword')), reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('dbServerName')), '2023-12-01-preview').fullyQualifiedDomainName, variables('dbName'))]"
+            },
+            {
+              "name": "JWT_SECRET",
+              "value": "[parameters('jwtSecret')]"
+            },
+            {
+              "name": "IMAGE_STORAGE_DRIVER",
+              "value": "azure-blob"
+            },
+            {
+              "name": "AZURE_STORAGE_CONNECTION_STRING",
+              "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', variables('storageName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value, environment().suffixes.storage)]"
+            },
+            {
+              "name": "AZURE_STORAGE_CONTAINER",
+              "value": "[variables('containerName')]"
+            },
+            {
+              "name": "AUTH_ALLOW_SELF_REGISTRATION",
+              "value": "[string(parameters('allowSelfRegistration'))]"
+            },
+            {
+              "name": "RUN_MIGRATIONS_ON_START",
+              "value": "true"
+            },
+            {
+              "name": "SEED_DEMO_DATA",
+              "value": "false"
+            },
+            {
+              "name": "TRUST_PROXY",
+              "value": "true"
+            },
+            {
+              "name": "FACTORY_TIMEZONE",
+              "value": "[parameters('factoryTimeZone')]"
+            },
+            {
+              "name": "STATIC_DIR",
+              "value": "public"
+            },
+            {
+              "name": "WEBSITE_NODE_DEFAULT_VERSION",
+              "value": "~20"
+            },
+            {
+              "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+              "value": "false"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', variables('containerName'))]",
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('dbServerName'))]",
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers/databases', variables('dbServerName'), variables('dbName'))]",
+        "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', parameters('appName')))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "webAppName": {
+      "type": "string",
+      "value": "[variables('webAppName')]"
+    },
+    "webAppUrl": {
+      "type": "string",
+      "value": "[format('https://{0}', reference(resourceId('Microsoft.Web/sites', variables('webAppName')), '2023-12-01').defaultHostName)]"
+    },
+    "postgresHost": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('dbServerName')), '2023-12-01-preview').fullyQualifiedDomainName]"
+    },
+    "storageAccount": {
+      "type": "string",
+      "value": "[variables('storageName')]"
+    }
+  }
+}
