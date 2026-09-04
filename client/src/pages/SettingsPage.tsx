@@ -56,6 +56,7 @@ import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
 import { cn, downloadText, parseCSV } from '@/lib/utils'
+import { isLegacyExcelFile, isZipFile, readWorkbook, WorkbookReadError, type WorkbookSheet } from '@/lib/xlsx'
 import type { MasterKind, MasterRecordByKind } from '@qc/shared/api'
 import {
   ROLES,
@@ -1317,7 +1318,7 @@ function BulkImportTab() {
           <div className="min-w-0">
             <h2 className="text-lg font-bold">Bulk import</h2>
             <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-              Load a CSV export, check exactly what it would change, then import. Nothing is written until you press Import — and importing
+              Load a CSV or Excel (.xlsx) export, check exactly what it would change, then import. Nothing is written until you press Import — and importing
               the same file twice updates the same records rather than creating duplicates.
             </p>
           </div>
@@ -1384,6 +1385,9 @@ function CsvImporter({ importer }: { importer: Importer }) {
 
   const [dragging, setDragging] = useState(false)
   const [fileName, setFileName] = useState<string | null>(null)
+  /** The worksheets of an Excel file; empty for a CSV. */
+  const [sheets, setSheets] = useState<WorkbookSheet[]>([])
+  const [sheetIndex, setSheetIndex] = useState(0)
   const [headers, setHeaders] = useState<string[]>([])
   const [dataRows, setDataRows] = useState<string[][]>([])
   const [mapping, setMapping] = useState<Record<string, number>>({})
@@ -1438,34 +1442,78 @@ function CsvImporter({ importer }: { importer: Importer }) {
     [importer],
   )
 
+  /** Takes a header row plus data rows and prepares the column mapping. */
+  const applyGrid = useCallback(
+    (grid: string[][], emptyMessage: string) => {
+      if (grid.length === 0) {
+        setHeaders([])
+        setDataRows([])
+        setMapping({})
+        setParseError(emptyMessage)
+        return
+      }
+      const cols = grid[0].map((h) => h.trim())
+      const rest = grid.slice(1)
+      setHeaders(cols)
+      setDataRows(rest)
+      setMapping(autoMap(cols))
+      if (rest.length === 0) setParseError('The header row was found but there are no data rows under it.')
+    },
+    [autoMap],
+  )
+
   const loadFile = useCallback(
     async (file: File | undefined | null) => {
       if (!file) return
       resetRun()
       setParseError(null)
+      setSheets([])
+      setSheetIndex(0)
+      setFileName(file.name)
       try {
-        // Excel writes a byte-order mark at the start of a UTF-8 CSV.
-        const text = (await file.text()).replace(/^﻿/, '')
-        const grid = parseCSV(text)
-        setFileName(file.name)
-        if (grid.length === 0) {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        if (isLegacyExcelFile(bytes)) {
           setHeaders([])
           setDataRows([])
           setMapping({})
-          setParseError('That file has no rows in it.')
+          setParseError(
+            'This is an old binary Excel file (.xls). In Excel choose File → Save As → "Excel Workbook (*.xlsx)" or "CSV UTF-8", then load that file.',
+          )
           return
         }
-        const cols = grid[0].map((h) => h.trim())
-        const rest = grid.slice(1)
-        setHeaders(cols)
-        setDataRows(rest)
-        setMapping(autoMap(cols))
-        if (rest.length === 0) setParseError('That file has a header row but no data rows.')
-      } catch {
-        setParseError('That file could not be read. Save it as CSV and try again.')
+        if (isZipFile(bytes)) {
+          // Excel workbook: every worksheet is read; the first one is shown.
+          const workbook = readWorkbook(bytes)
+          setSheets(workbook.sheets)
+          applyGrid(workbook.sheets[0].rows, `The worksheet "${workbook.sheets[0].name}" is empty.`)
+          return
+        }
+        // CSV. Excel writes a byte-order mark at the start of a UTF-8 CSV.
+        const text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '')
+        applyGrid(parseCSV(text), 'That file has no rows in it.')
+      } catch (e) {
+        setHeaders([])
+        setDataRows([])
+        setMapping({})
+        setParseError(
+          e instanceof WorkbookReadError ? e.message : 'That file could not be read. Save it as CSV UTF-8 or as an .xlsx workbook and try again.',
+        )
       }
     },
-    [autoMap, resetRun],
+    [applyGrid, resetRun],
+  )
+
+  /** Switches to another worksheet of the loaded workbook. */
+  const chooseSheet = useCallback(
+    (index: number) => {
+      const sheet = sheets[index]
+      if (!sheet) return
+      resetRun()
+      setParseError(null)
+      setSheetIndex(index)
+      applyGrid(sheet.rows, `The worksheet "${sheet.name}" is empty.`)
+    },
+    [sheets, applyGrid, resetRun],
   )
 
   const missingKeys = useMemo(() => importer.businessKeys.filter((k) => (mapping[k] ?? -1) < 0), [importer.businessKeys, mapping])
@@ -1641,6 +1689,8 @@ function CsvImporter({ importer }: { importer: Importer }) {
   function clearFile() {
     resetRun()
     setFileName(null)
+    setSheets([])
+    setSheetIndex(0)
     setHeaders([])
     setDataRows([])
     setMapping({})
@@ -1684,12 +1734,31 @@ function CsvImporter({ importer }: { importer: Importer }) {
           )}
         >
           <FileSpreadsheet className="mx-auto h-8 w-8 text-slate-300 dark:text-slate-600" />
-          <p className="mt-2 text-sm font-semibold">{fileName ?? 'Drop a .csv file here'}</p>
+          <p className="mt-2 text-sm font-semibold">{fileName ?? 'Drop a .csv or .xlsx file here'}</p>
           <p className="mt-0.5 text-xs text-slate-400">
             {fileName
-              ? `${dataRows.length} data row${dataRows.length === 1 ? '' : 's'} · ${headers.length} column${headers.length === 1 ? '' : 's'}`
+              ? [
+                  sheets.length > 0 ? `Sheet "${sheets[sheetIndex]?.name ?? ''}"` : null,
+                  `${dataRows.length} data row${dataRows.length === 1 ? '' : 's'}`,
+                  `${headers.length} column${headers.length === 1 ? '' : 's'}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
               : 'The first row must contain the column headers.'}
           </p>
+          {sheets.length > 1 && (
+            <div className="mx-auto mt-3 max-w-xs text-left">
+              <Field label="Worksheet" hint="Only the selected worksheet is imported.">
+                <Select className="min-h-[48px]" value={String(sheetIndex)} disabled={locked} onChange={(e) => chooseSheet(Number(e.target.value))}>
+                  {sheets.map((sh, i) => (
+                    <option key={i} value={i}>
+                      {sh.name} ({Math.max(0, sh.rows.length - 1)} rows)
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          )}
           <div className="mt-3 flex flex-wrap justify-center gap-2">
             <Button variant="primary" className="min-h-[48px]" onClick={() => fileRef.current?.click()} disabled={locked}>
               <UploadCloud className="h-4 w-4" /> Browse files
@@ -1703,7 +1772,7 @@ function CsvImporter({ importer }: { importer: Importer }) {
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,text/csv"
+            accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             hidden
             onChange={(e) => {
               void loadFile(e.target.files?.[0])

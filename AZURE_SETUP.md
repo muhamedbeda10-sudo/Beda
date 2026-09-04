@@ -138,7 +138,7 @@ az webapp config appsettings set -g rg-qc-system -n <webAppName> \
 ```
 
 4. Load master data from **Admin**: machines, work-centre defects, dimension
-   configuration (or use **Bulk import** with the CSV templates), grade
+   configuration (or use **Bulk import** with CSV or Excel `.xlsx` files), grade
    mappings, PT consumables, and the production orders and coils from the ERP.
 
 أول حساب يتعمل بيبقى الـ admin. اعمل حسابات المفتشين من Admin → Users، وبعدها
