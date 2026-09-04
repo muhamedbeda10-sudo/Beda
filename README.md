@@ -67,7 +67,7 @@ The **first account created becomes the admin**. Afterwards, set
 - **Coil search** — coil → sample → order → customer traceability.
 - **PDI documents** — pre-delivery photos attached to an order.
 - **Admin** — dimension order, item master dimensions, reference images,
-  work-centre defects, machines, grade mappings, PT consumables, **CSV bulk
+  work-centre defects, machines, grade mappings, PT consumables, **CSV / Excel bulk
   import** with preview (idempotent upsert on the business key), **Users**.
 - **Audit log** — every create / update / delete / acknowledge / purge, field by
   field, with who and when. Append-only and undeletable at the database.
