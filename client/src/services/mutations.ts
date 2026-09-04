@@ -4,26 +4,28 @@
 // ============================================================================
 
 import type { QueryClient } from '@tanstack/react-query'
-import type {
-  CloseSessionRequest,
-  CorrectDefectRequest,
-  CorrectDimensionRequest,
-  CreatePDIRequest,
-  CreateUserRequest,
-  ExistingKeysResponse,
-  ImportResult,
-  MasterKind,
-  MasterRecordByKind,
-  PDIWithOrder,
-  PurgeAuditRequest,
-  SaveSampleRequest,
-  SaveSampleResponse,
-  SessionWithOrder,
-  StartSessionRequest,
-  UpdateUserRequest,
+import {
+  EXISTING_KEYS_MAX,
+  type CloseSessionRequest,
+  type CorrectDefectRequest,
+  type CorrectDimensionRequest,
+  type CreatePDIRequest,
+  type CreateUserRequest,
+  type ExistingKeysResponse,
+  type ImportResult,
+  type MasterKind,
+  type MasterRecordByKind,
+  type PDIWithOrder,
+  type PurgeAuditRequest,
+  type SaveSampleRequest,
+  type SaveSampleResponse,
+  type SessionWithOrder,
+  type StartSessionRequest,
+  type UpdateUserRequest,
 } from '@qc/shared/api'
 import type { DefectResult, DimensionResult, UserProfile } from '@qc/shared/types'
 import { api } from '@/lib/api'
+import { chunk } from '@/lib/utils'
 
 export async function startSession(qc: QueryClient, body: StartSessionRequest): Promise<SessionWithOrder> {
   const session = await api<SessionWithOrder>('/sessions', { method: 'POST', body })
@@ -112,8 +114,14 @@ export async function existingKeys(target: ImportTarget, keys: string[]): Promis
     const rows = await api<MasterRecordByKind['item-dimension-order'][]>('/master/item-dimension-order')
     return new Set(rows.map((r) => `${r.item.trim().toLowerCase()}||${r.dimensionName.trim().toLowerCase()}`))
   }
-  const res = await api<ExistingKeysResponse>(`/${target}/existing-keys`, { method: 'POST', body: { keys } })
-  return new Set(res.existing)
+  // A file from the ERP can hold tens of thousands of keys; the API answers
+  // at most EXISTING_KEYS_MAX per request, so ask in slices and merge.
+  const existing = new Set<string>()
+  for (const slice of chunk(keys, EXISTING_KEYS_MAX)) {
+    const res = await api<ExistingKeysResponse>(`/${target}/existing-keys`, { method: 'POST', body: { keys: slice } })
+    for (const key of res.existing) existing.add(key)
+  }
+  return existing
 }
 
 export async function importRows(qc: QueryClient, target: ImportTarget, rows: unknown[]): Promise<ImportResult> {

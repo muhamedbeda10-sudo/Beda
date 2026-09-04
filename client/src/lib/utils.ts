@@ -116,3 +116,11 @@ export function newSubmissionId(): string {
   const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
+
+/** Splits a list into consecutive slices of at most `size` items. */
+export function chunk<T>(items: readonly T[], size: number): T[][] {
+  if (!Number.isInteger(size) || size < 1) throw new RangeError(`chunk size must be a positive integer, got ${size}`)
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
+}
