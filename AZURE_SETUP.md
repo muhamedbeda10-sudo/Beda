@@ -36,6 +36,36 @@ openssl rand -base64 48
 
 ## 2. Create the infrastructure · إنشاء البنية التحتية
 
+Two ways to do the same thing. **Option A** needs no command line at all.
+
+### Option A — from the Azure portal, no command line · من الـ Portal من غير أوامر
+
+1. In the portal search box type **Deploy a custom template** and open it.
+2. Click **Build your own template in the editor**, delete the sample text, paste
+   the whole contents of [`infra/main.json`](./infra/main.json) from this
+   repository, and click **Save**.
+3. Fill in the form:
+   - **Resource group** → *Create new* → `rg-qc-system`
+   - **Region** → the one closest to the factory (`West Europe`, `UAE North` or `Qatar Central`)
+   - **App Name** → `qc-system`
+   - **Db Admin Password** → the PostgreSQL password you generated
+   - **Jwt Secret** → the JWT secret you generated
+   - **App Service Sku** → `F1` for a free trial, `B1` for production
+   - **Allow Self Registration** → `true` (you close it after the first account)
+   - **Factory Time Zone** → `Africa/Cairo`
+4. **Review + create** → **Create**. It takes 5–10 minutes. When it finishes, open
+   the deployment's **Outputs** tab: `webAppName` and `webAppUrl` are there.
+
+من الـ Portal ابحث عن **Deploy a custom template**، اختار **Build your own template
+in the editor**، الصق محتوى ملف `infra/main.json` كله واضغط Save. املأ الفورم زي
+اللي فوق واضغط Create. بعد ما يخلص هتلاقي اسم الـ Web App والرابط في تاب
+**Outputs**.
+
+`infra/main.json` is generated from `infra/main.bicep` (`bicep build infra/main.bicep`);
+edit the Bicep file and regenerate rather than editing the JSON.
+
+### Option B — with the Azure CLI · بأداة az
+
 ```bash
 az group create --name rg-qc-system --location westeurope
 
