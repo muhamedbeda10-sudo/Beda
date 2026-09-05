@@ -12,7 +12,7 @@ export interface ImportField {
   /** Also the CSV template header, and the name error messages use. */
   key: string
   label: string
-  kind: 'text' | 'number'
+  kind: 'text' | 'number' | 'date'
   aliases?: string[]
   sample: string
 }
@@ -56,6 +56,23 @@ export function normaliseKeyPart(v: unknown): string {
   return String(v ?? '').trim().toLowerCase()
 }
 
+/**
+ * A cell's value as the API receives it, or the reason it cannot be sent.
+ * Numbers drop thousands separators; dates become ISO timestamps so the
+ * server never has to guess a spreadsheet's date format.
+ */
+export function coerceCell(field: ImportField, raw: string): { value: CellValue } | { error: string } {
+  if (field.kind === 'number') {
+    const n = Number(raw.replace(/,/g, ''))
+    return Number.isFinite(n) ? { value: n } : { error: `${field.label} is not a number ("${raw}")` }
+  }
+  if (field.kind === 'date') {
+    const d = new Date(raw)
+    return Number.isNaN(d.getTime()) ? { error: `${field.label} is not a date ("${raw}")` } : { value: d.toISOString() }
+  }
+  return { value: raw }
+}
+
 export function csvCell(v: string): string {
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
 }
@@ -87,7 +104,7 @@ export const ORDERS_IMPORTER: Importer = {
     { key: 'type', label: 'Type', kind: 'text', aliases: ['exp local', 'export local', 'cr863_explocal'], sample: 'Export' },
     { key: 'colour', label: 'Colour', kind: 'text', aliases: ['color', 'ral', 'cr863_color'], sample: 'RAL7016' },
     { key: 'erpStatus', label: 'Status', kind: 'text', aliases: ['access status', 'accessstatus', 'cr863_accessstatus'], sample: 'Active' },
-    { key: 'date', label: 'Date', kind: 'text', aliases: ['order date', 'release date', 'cr863_releasedate'], sample: new Date().toISOString().slice(0, 10) },
+    { key: 'date', label: 'Date', kind: 'date', aliases: ['order date', 'release date', 'cr863_releasedate'], sample: new Date().toISOString().slice(0, 10) },
   ],
   // The ERP has no grade column: it lives inside the raw-material description.
   derive: (values) => {

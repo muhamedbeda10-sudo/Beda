@@ -42,3 +42,16 @@ describe('order sheet from the ERP', () => {
     expect(mapped.expectedGrade).toBeUndefined()
   })
 })
+
+describe('cell coercion', () => {
+  it('turns a spreadsheet date into an ISO timestamp and names a bad one', async () => {
+    const { coerceCell, ORDERS_IMPORTER } = await import('./importers')
+    const date = ORDERS_IMPORTER.fields.find((f) => f.key === 'date')!
+    expect(coerceCell(date, '2026-08-30 10:00:52')).toEqual({ value: new Date('2026-08-30 10:00:52').toISOString() })
+    expect(coerceCell(date, '2026-08-30')).toEqual({ value: new Date('2026-08-30').toISOString() })
+    expect(coerceCell(date, '10:00:52')).toEqual({ error: 'Date is not a date ("10:00:52")' })
+    const qty = ORDERS_IMPORTER.fields.find((f) => f.key === 'requiredQty')!
+    expect(coerceCell(qty, '1,350')).toEqual({ value: 1350 })
+    expect(coerceCell(qty, 'many')).toEqual({ error: 'Required qty is not a number ("many")' })
+  })
+})

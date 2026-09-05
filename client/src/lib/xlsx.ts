@@ -275,7 +275,10 @@ export function serialToIso(serial: number, shape: DateShape, date1904: boolean)
   const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
   const time = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
   if (shape === 'date') return date
-  if (shape === 'time') return time
+  // A time format shows only the clock, but a serial of 1 or more still
+  // carries a date (an ERP export formatted "mm:ss" is a full timestamp).
+  // Keep it: an import can drop a date it does not need, not invent one.
+  if (shape === 'time' && serial < 1) return time
   return `${date} ${time}`
 }
 

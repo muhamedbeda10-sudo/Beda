@@ -5,7 +5,7 @@ import { Badge, Button } from '@/components/ui'
 import { existingKeys, importRows } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { cn } from '@/lib/utils'
-import { BATCH_SIZE, normaliseHeader, normaliseKeyPart, type CellValue, type ImportField, type Importer } from '@/components/admin/importers'
+import { BATCH_SIZE, coerceCell, normaliseHeader, normaliseKeyPart, type CellValue, type ImportField, type Importer } from '@/components/admin/importers'
 
 /**
  * §7.7 — an Excel-like grid with the importer's columns already in place.
@@ -290,15 +290,13 @@ export function planRows(
     importer.fields.forEach((f, c) => {
       const raw = (row[c] ?? '').trim()
       if (raw === '') return
-      if (f.kind === 'number') {
-        const n = Number(raw.replace(/,/g, ''))
-        if (!Number.isFinite(n)) {
-          cols.add(f.key)
-          messages.push(`${f.label} is not a number`)
-          return
-        }
-        values[f.key] = n
-      } else values[f.key] = raw
+      const cell = coerceCell(f, raw)
+      if ('error' in cell) {
+        cols.add(f.key)
+        messages.push(cell.error)
+        return
+      }
+      values[f.key] = cell.value
     })
     const derived = importer.derive ? importer.derive(values) : values
     for (const k of importer.businessKeys) {
