@@ -25,11 +25,12 @@ import {
 import {
   deriveShift,
   dimensionStatus,
-  isPTWorkCenter,
-  isPaintWorkCenter,
+  processForMachine,
+  ptOverallVerdict,
   can,
   validateSample,
 } from '@qc/shared/rules'
+import { instructionsInForce } from './workInstructions.routes'
 import type {
   HistoryResponse,
   OpenSessionsResponse,
@@ -79,7 +80,7 @@ const nullableNum = z.union([z.number().finite(), z.null()])
 
 const saveSampleSchema = z.object({
   submissionId: uuid,
-  drawing: z.string().trim().min(1, 'Select a drawing.').max(200),
+  drawing: z.string().trim().max(200).default(''),
   drawingAlt: optText(200),
   issue: optText(100),
   sampleQty: z.number().positive('Sample quantity must be greater than zero.'),
@@ -128,13 +129,11 @@ const saveSampleSchema = z.object({
     .object({
       testFrequencyPct: z.number().finite(),
       consumableLots: z.object({ Cleaner: z.string().trim(), Penetrant: z.string().trim(), Developer: z.string().trim() }),
-      sampleSize: optText(100),
-      testedWeldLength: optText(100),
-      indicationType: optText(200),
-      indicationSize: optText(100),
       weldingWireBatch: optText(100),
-      acceptOrRepair: z.enum(['Accept', 'Reject / Repair']).optional(),
-      finalResult: optText(200),
+      testedLengths: z
+        .array(z.object({ lengthMm: z.number().finite(), verdict: z.enum(['Accept', 'Reject / Repair']) }))
+        .max(50)
+        .default([]),
       notes: optText(4000),
       imageIds: z.array(uuid).max(50).default([]),
     })
@@ -148,6 +147,16 @@ const saveSampleSchema = z.object({
     })
     .optional(),
 })
+
+/** The register's row for a machine code, or null when the code is not registered. */
+async function loadMachine(q: Queryable, code: string): Promise<Machine | null> {
+  const { rows } = await q.query<Machine>(
+    `SELECT id, code, name, line, display_name AS "displayName", machine_number AS "machineNumber", factory, process
+       FROM machines WHERE lower(code) = lower($1) AND deleted_at IS NULL LIMIT 1`,
+    [code],
+  )
+  return rows[0] ? dropNulls(rows[0]) : null
+}
 
 async function loadSessionWithOrder(q: Queryable, id: string, lock = false): Promise<SessionWithOrder | null> {
   const { rows } = await q.query<SessionRow & OrderSummaryRow>(
@@ -301,12 +310,9 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const [order] = await fetchOrdersByIds(db, [session.orderId])
     if (!order) throw notFound('The session’s order')
     const wc = session.workCenterCode
-    const [machine, dimOrder, refImages, wcDefects, grades, consumables, samples, previousDims] = await Promise.all([
-      db.query<Machine>(
-        `SELECT id, code, name, line, display_name AS "displayName", machine_number AS "machineNumber", factory
-           FROM machines WHERE lower(code) = lower($1) AND deleted_at IS NULL LIMIT 1`,
-        [wc],
-      ),
+    const machine = await loadMachine(db, wc)
+    const process = processForMachine(machine, wc)
+    const [dimOrder, refImages, wcDefects, grades, consumables, samples, previousDims, previousWire, instructions] = await Promise.all([
       // The item's general rows plus the rows specific to this machine; the
       // shared resolver decides which wins (§8.3).
       db.query<ItemDimensionOrder>(
@@ -360,12 +366,21 @@ export function sessionsRoutes(ctx: AppContext): Router {
           ORDER BY d.sequence, d.name`,
         [id, order.itemCode, wc],
       ),
+      // The welding wire batch of this session's latest sample, offered again.
+      db.query<{ batch: string | null }>(
+        `SELECT p.welding_wire_batch AS batch
+           FROM pt_records p JOIN inspection_samples sm ON sm.id = p.sample_id
+          WHERE sm.session_id = $1 AND sm.deleted_at IS NULL AND p.deleted_at IS NULL
+          ORDER BY sm.created_at DESC LIMIT 1`,
+        [id],
+      ),
+      instructionsInForce(db, process),
     ])
     const { order: _summary, ...plain } = session
     const body: WizardContext = {
       session: plain,
       order,
-      machine: machine.rows[0] ? dropNulls(machine.rows[0]) : null,
+      machine,
       dimensionOrder: dimOrder.rows.map(dropNulls),
       referenceImages: refImages.rows.map(dropNulls),
       workCenterDefects: wcDefects.rows,
@@ -373,6 +388,9 @@ export function sessionsRoutes(ctx: AppContext): Router {
       ptConsumables: consumables.rows,
       samples: samples.rows,
       previousDimensions: previousDims.rows,
+      process,
+      previousWeldingWireBatch: previousWire.rows[0]?.batch ?? null,
+      workInstructions: instructions,
     }
     res.json(body)
   })
@@ -449,19 +467,24 @@ export function sessionsRoutes(ctx: AppContext): Router {
       const [order] = await fetchOrdersByIds(tx, [session.orderId])
       if (!order) throw notFound('The session’s order')
       const wc = session.workCenterCode
+      const process = processForMachine(await loadMachine(tx, wc), wc)
 
       // The same business rules the wizard applies, enforced where they cannot
       // be bypassed (§5, §8).
       const issues = validateSample({
-        workCenterCode: wc,
+        process,
         sampleQty: body.sampleQty,
         drawing: body.drawing,
         coils: body.coils.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade })),
         defects: body.defects.map((d) => ({ defectName: d.defectName, disposition: d.disposition as never, qty: d.qty })),
-        pt: body.pt ? { testFrequencyPct: body.pt.testFrequencyPct, consumableLots: body.pt.consumableLots } : undefined,
+        dimensions: body.dimensions.map((d) => ({ name: d.name, nominal: d.nominal ?? null, actual: d.actual ?? null })),
+        paint: body.paint ? { imageIds: body.paint.imageIds } : { imageIds: [] },
+        pt: body.pt
+          ? { testFrequencyPct: body.pt.testFrequencyPct, consumableLots: body.pt.consumableLots, testedLengths: body.pt.testedLengths }
+          : undefined,
       })
       if (issues.length > 0) throw badRequest(issues[0].message, issues)
-      if (isPaintWorkCenter(wc) && !body.paint) throw badRequest('A paint sample record is required on this work centre.')
+      if (process === 'paint' && !body.paint) throw badRequest('A paint sample record is required on this machine.')
 
       const imageIds = [
         ...body.defects.flatMap((d) => d.imageIds),
@@ -549,36 +572,40 @@ export function sessionsRoutes(ctx: AppContext): Router {
           [sampleId, c.coilId ?? null, c.coilNumber, c.grade ?? null, c.smType ?? null, c.supplier ?? null, c.thickness ?? null, c.width ?? null, c.yield ?? null, c.notes ?? null],
         )
       }
-      if (body.paint && isPaintWorkCenter(wc)) {
+      if (body.paint && process === 'paint') {
         const paintId = (await tx.query<{ id: string }>(
           `INSERT INTO paint_samples (sample_id, notes) VALUES ($1, $2) RETURNING id`,
           [sampleId, body.paint.notes ?? null],
         )).rows[0].id
         await linkImages(tx, 'paint_sample_images', 'paint_sample_id', paintId, body.paint.imageIds)
       }
-      if (body.pt && isPTWorkCenter(wc)) {
+      if (body.pt && process === 'welding') {
         const pt = body.pt
+        // The record's verdict follows its lengths: Reject / Repair as soon as one is.
+        const verdict = ptOverallVerdict(pt.testedLengths)
         const ptId = (await tx.query<{ id: string }>(
           `INSERT INTO pt_records
-             (sample_id, test_frequency_pct, cleaner_lot, penetrant_lot, developer_lot, sample_size, tested_weld_length,
-              indication_type, indication_size, welding_wire_batch, accept_or_repair, final_result, notes)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+             (sample_id, test_frequency_pct, cleaner_lot, penetrant_lot, developer_lot, welding_wire_batch, accept_or_repair, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
           [
             sampleId,
             pt.testFrequencyPct,
             pt.consumableLots.Cleaner,
             pt.consumableLots.Penetrant,
             pt.consumableLots.Developer,
-            pt.sampleSize ?? null,
-            pt.testedWeldLength ?? null,
-            pt.indicationType ?? null,
-            pt.indicationSize ?? null,
             pt.weldingWireBatch ?? null,
-            pt.acceptOrRepair ?? null,
-            pt.finalResult ?? null,
+            verdict,
             pt.notes ?? null,
           ],
         )).rows[0].id
+        for (const [i, l] of pt.testedLengths.entries()) {
+          await tx.query(`INSERT INTO pt_tested_lengths (pt_record_id, seq, length_mm, verdict) VALUES ($1, $2, $3, $4)`, [
+            ptId,
+            i + 1,
+            l.lengthMm,
+            l.verdict,
+          ])
+        }
         await linkImages(tx, 'pt_record_images', 'pt_record_id', ptId, pt.imageIds)
       }
       if (imageIds.length > 0) {

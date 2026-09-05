@@ -45,10 +45,20 @@ export function buildStorageKey(input: { id: string; sessionId?: string | null; 
   return `images/${scope}/${input.id}.jpg`
 }
 
+/** Controlled documents (work instructions) share the store under their own prefix. */
+export function buildDocumentStorageKey(id: string): string {
+  return `documents/work-instructions/${id}.pdf`
+}
+
 function assertSafeKey(key: string): void {
-  if (!/^images\/[A-Za-z0-9_./-]+\.jpg$/.test(key) || key.includes('..')) {
+  const ok = /^images\/[A-Za-z0-9_./-]+\.jpg$/.test(key) || /^documents\/[A-Za-z0-9_./-]+\.pdf$/.test(key)
+  if (!ok || key.includes('..')) {
     throw new Error(`Refusing unsafe storage key: ${key}`)
   }
+}
+
+function contentTypeForKey(key: string): string {
+  return key.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'
 }
 
 // ---- Local filesystem ------------------------------------------------------
@@ -82,7 +92,7 @@ export class LocalImageStorage implements ImageStorage {
     } catch {
       return null
     }
-    return { stream: createReadStream(file), contentType: 'image/jpeg' }
+    return { stream: createReadStream(file), contentType: contentTypeForKey(key) }
   }
 
   async remove(key: string): Promise<void> {
@@ -137,7 +147,7 @@ export class AzureBlobImageStorage implements ImageStorage {
       if (!body) return null
       return {
         stream: body as unknown as Readable,
-        contentType: res.contentType ?? 'image/jpeg',
+        contentType: res.contentType ?? contentTypeForKey(key),
         byteSize: res.contentLength,
       }
     } catch (e) {

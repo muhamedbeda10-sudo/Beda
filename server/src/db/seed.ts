@@ -9,11 +9,12 @@ import type { Db } from './pool'
 import { withTransaction } from './pool'
 
 const machines = [
-  { code: '7', name: 'Painting Line', line: 'LM1' },
-  { code: '11', name: 'Painting Line', line: 'LM2' },
-  { code: '22', name: 'Shuttle Welding', line: 'LM3' },
-  { code: '48', name: 'Painting Line', line: 'LM4' },
-  { code: '58', name: 'A. Welding Line', line: 'LM4' },
+  { code: '7', name: 'Painting Line', line: 'LM1', process: 'paint' },
+  { code: '11', name: 'Painting Line', line: 'LM2', process: 'paint' },
+  { code: '22', name: 'Shuttle Welding', line: 'LM3', process: 'welding' },
+  { code: '48', name: 'Painting Line', line: 'LM4', process: 'paint' },
+  { code: '58', name: 'A. Welding Line', line: 'LM4', process: 'welding' },
+  { code: '31', name: 'Roll Forming', line: 'LM2', process: 'forming' },
 ]
 
 const items = [
@@ -92,8 +93,8 @@ export async function seedDemoDataIfEmpty(db: Db): Promise<boolean> {
     const machineIds = new Map<string, string>()
     for (const m of machines) {
       const { rows: ins } = await tx.query<{ id: string }>(
-        `INSERT INTO machines (code, name, line, display_name) VALUES ($1, $2, $3, $4) RETURNING id`,
-        [m.code, m.name, m.line, `${m.code}-${m.name}-${m.line}`],
+        `INSERT INTO machines (code, name, line, display_name, process) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [m.code, m.name, m.line, `${m.code}-${m.name}-${m.line}`, m.process],
       )
       machineIds.set(m.code, ins[0].id)
     }

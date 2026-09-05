@@ -9,10 +9,11 @@
 // carry the submission id so a resumed draft saved twice still lands once.
 // ============================================================================
 
-import type { Disposition, PTConsumableKind, ShiftLetter } from '@qc/shared/types'
+import type { Disposition, PTConsumableKind, PTVerdict, Process, ShiftLetter } from '@qc/shared/types'
 
-// v2: submission ids are UUIDs (the API validates them). Older drafts are ignored.
-const PREFIX = 'qc-draft-v2:'
+// v3: drafts carry the machine's process and the PT record lists tested
+// lengths. Older drafts are ignored rather than half-migrated.
+const PREFIX = 'qc-draft-v3:'
 
 export interface DraftCoil {
   /** Set when the coil was picked from the register; absent when typed by hand. */
@@ -48,16 +49,18 @@ export interface DraftDefect {
   imageIds: string[]
 }
 
+export interface DraftTestedLength {
+  key: string
+  lengthMm: string
+  verdict?: PTVerdict
+}
+
 export interface DraftPT {
   testFrequencyPct: string
   consumableLots: Partial<Record<PTConsumableKind, string>>
-  sampleSize?: string
-  testedWeldLength?: string
-  indicationType?: string
-  indicationSize?: string
+  /** Entered on the setup step of a welding machine. */
   weldingWireBatch?: string
-  acceptOrRepair?: 'Accept' | 'Reject / Repair'
-  finalResult?: string
+  testedLengths: DraftTestedLength[]
   notes?: string
   imageIds: string[]
 }
@@ -66,6 +69,8 @@ export interface SampleDraft {
   sessionId: string
   orderId: string
   workCenterCode: string
+  /** The machine's process when the draft was started; decides the steps. */
+  process: Process
   /** Stable across retries — the server dedupes on it (§9.3). */
   submissionId: string
   step: string

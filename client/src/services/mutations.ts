@@ -23,8 +23,10 @@ import {
   type SessionWithOrder,
   type StartSessionRequest,
   type UpdateUserRequest,
+  type UpdateWorkInstructionRequest,
+  type UploadWorkInstructionFields,
 } from '@qc/shared/api'
-import type { DefectResult, DimensionResult, UserProfile } from '@qc/shared/types'
+import type { DefectResult, DimensionResult, UserProfile, WorkInstruction } from '@qc/shared/types'
 import { api } from '@/lib/api'
 import { chunk } from '@/lib/utils'
 
@@ -163,6 +165,32 @@ export async function updateUser(qc: QueryClient, id: string, body: UpdateUserRe
   const user = await api<UserProfile>(`/users/${id}`, { method: 'PATCH', body })
   await qc.invalidateQueries({ queryKey: ['users'] })
   return user
+}
+
+// ---- Work instructions -----------------------------------------------------
+
+/** Upload one PDF. A new issue of an existing code supersedes the issue in force. */
+export async function uploadWorkInstruction(qc: QueryClient, file: File, fields: UploadWorkInstructionFields): Promise<WorkInstruction> {
+  const form = new FormData()
+  form.set('file', file, file.name)
+  for (const [k, v] of Object.entries(fields)) if (v !== undefined && v !== '') form.set(k, String(v))
+  const created = await api<WorkInstruction>('/work-instructions', { method: 'POST', form })
+  await qc.invalidateQueries({ queryKey: ['work-instructions'] })
+  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  return created
+}
+
+export async function updateWorkInstruction(qc: QueryClient, id: string, body: UpdateWorkInstructionRequest): Promise<WorkInstruction> {
+  const row = await api<WorkInstruction>(`/work-instructions/${id}`, { method: 'PATCH', body })
+  await qc.invalidateQueries({ queryKey: ['work-instructions'] })
+  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  return row
+}
+
+export async function deleteWorkInstruction(qc: QueryClient, id: string): Promise<void> {
+  await api<void>(`/work-instructions/${id}`, { method: 'DELETE' })
+  await qc.invalidateQueries({ queryKey: ['work-instructions'] })
+  await qc.invalidateQueries({ queryKey: ['sessions'] })
 }
 
 /** Remove an account: it leaves the list, is signed out everywhere and its

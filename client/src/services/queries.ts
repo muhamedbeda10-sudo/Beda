@@ -27,7 +27,7 @@ import type {
   SessionWithOrder,
   WizardContext,
 } from '@qc/shared/api'
-import type { Coil, Disposition, ImageAsset, ProductionOrder, UserProfile } from '@qc/shared/types'
+import type { Coil, Disposition, ImageAsset, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
 export const keys = {
@@ -49,6 +49,7 @@ export const keys = {
   audit: ['audit', 'list'] as const,
   auditStats: ['audit', 'stats'] as const,
   users: ['users'] as const,
+  workInstructions: (process?: string, history?: boolean) => ['work-instructions', process ?? 'all', history ? 'history' : 'in-force'] as const,
 }
 
 /** A value that settles `ms` after it stops changing, so typing an
@@ -195,6 +196,17 @@ export function useAuditList(limit = 500) {
 
 export function useAuditStats() {
   return useQuery({ queryKey: keys.auditStats, queryFn: () => api<AuditStats>('/audit/stats') })
+}
+
+/** The documents in force for a process (or every document), oldest issue last. */
+export function useWorkInstructions(process?: WorkInstructionScope, history = false, enabled = true) {
+  return useQuery({
+    queryKey: keys.workInstructions(process, history),
+    queryFn: () =>
+      api<WorkInstruction[]>(`/work-instructions${qs({ process: process && process !== 'all' ? process : undefined, history: history ? '1' : undefined })}`),
+    enabled,
+    staleTime: 60_000,
+  })
 }
 
 export function useUsers() {

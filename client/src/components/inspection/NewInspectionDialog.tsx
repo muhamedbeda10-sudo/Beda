@@ -6,7 +6,7 @@ import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
 import { useMaster, useOrderHistory, useOrderLines, useOrderNumbers } from '@/services/queries'
 import { startSession } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
-import { isPaintWorkCenter, isPTWorkCenter } from '@qc/shared/rules'
+import { processForMachine } from '@qc/shared/rules'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
 
 /**
@@ -135,8 +135,8 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
               <p className="text-lg font-bold">{picked.orderNumber}</p>
               <Badge tone="neutral">Order ID {picked.lineKey}</Badge>
               {statusBadge(picked.erpStatus)}
-              {isPaintWorkCenter(picked.workCenterCode) && <Badge tone="violet">Paint sample step</Badge>}
-              {isPTWorkCenter(picked.workCenterCode) && <Badge tone="amber">PT / weld step</Badge>}
+              {processForMachine(machine, picked.workCenterCode) === 'paint' && <Badge tone="violet">Paint flow</Badge>}
+              {processForMachine(machine, picked.workCenterCode) === 'welding' && <Badge tone="amber">Welding flow · VT + PT</Badge>}
             </div>
             <p className="text-sm text-brand-600 dark:text-brand-400">
               {picked.item} · {picked.itemCode}

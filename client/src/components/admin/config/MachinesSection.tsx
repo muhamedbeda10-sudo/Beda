@@ -4,18 +4,21 @@
 
 import { useCallback } from 'react'
 import { Factory } from 'lucide-react'
-import { Badge, Field, Input } from '@/components/ui'
+import { Badge, Field, Input, Select } from '@/components/ui'
 import { useMaster } from '@/services/queries'
 import { can } from '@/domain'
 import { MasterDataPanel, MachineSelect, numberOrNull, requireNumber, requireText } from '@/components/admin/MasterDataPanel'
-import { type Machine } from '@qc/shared/types'
+import { PROCESSES, PROCESS_LABEL, type Machine, type Process } from '@qc/shared/types'
 
 interface MachineDraft {
   code: string
   name: string
   line: string
   factory: string
+  process: Process
 }
+
+const PROCESS_TONE: Record<Process, 'neutral' | 'amber' | 'violet' | 'blue'> = { forming: 'blue', welding: 'amber', paint: 'violet', other: 'neutral' }
 
 export function MachinesSection() {
   const { data: rows = [], isLoading: loading } = useMaster('machines')
@@ -42,11 +45,12 @@ export function MachinesSection() {
       sort={sort}
       addLabel="Add machine"
       emptyHint="Add the machines and lines used on the shop floor."
-      minTableWidth="min-w-[42rem]"
+      minTableWidth="min-w-[52rem]"
       columns={[
         { key: 'code', label: 'Code', render: (r) => <Badge tone="blue">{r.code}</Badge> },
         { key: 'name', label: 'Machine', render: (r) => r.name },
         { key: 'line', label: 'Line', render: (r) => r.line || '—' },
+        { key: 'process', label: 'Process', render: (r) => <Badge tone={PROCESS_TONE[r.process ?? 'forming']}>{PROCESS_LABEL[r.process ?? 'forming']}</Badge> },
         {
           key: 'displayName',
           label: 'Shown as',
@@ -54,8 +58,8 @@ export function MachinesSection() {
         },
       ]}
       describe={(r) => r.displayName || r.name}
-      newDraft={() => ({ code: '', name: '', line: '', factory: '' })}
-      toDraft={(r) => ({ code: r.code, name: r.name, line: r.line, factory: r.factory ?? '' })}
+      newDraft={() => ({ code: '', name: '', line: '', factory: '', process: 'forming' })}
+      toDraft={(r) => ({ code: r.code, name: r.name, line: r.line, factory: r.factory ?? '', process: r.process ?? 'forming' })}
       validate={(d) => requireText(d.code, 'Machine code') ?? requireText(d.name, 'Machine name')}
       toRecord={(d) => {
         const code = d.code.trim()
@@ -66,6 +70,7 @@ export function MachinesSection() {
           name,
           line,
           factory: d.factory.trim() || undefined,
+          process: d.process,
           // The label the shop floor recognises: "58-A. Welding Line-LM4".
           displayName: [code, name, line].filter(Boolean).join('-'),
         }
@@ -88,6 +93,15 @@ export function MachinesSection() {
               <Input value={d.line} onChange={(e) => patch({ line: e.target.value })} placeholder="LM4" />
             </Field>
           </div>
+          <Field label="Process" hint="Decides the inspection steps: welding adds VT documents and PT, paint records sample photos and thickness readings.">
+            <Select value={d.process} onChange={(e) => patch({ process: e.target.value as Process })} className="min-h-[48px]">
+              {PROCESSES.map((p) => (
+                <option key={p} value={p}>
+                  {PROCESS_LABEL[p]}
+                </option>
+              ))}
+            </Select>
+          </Field>
         </>
       )}
     />

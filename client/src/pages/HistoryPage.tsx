@@ -26,7 +26,7 @@ import { useHistory, useMaster, useSampleDetail, useSessionSamples } from '@/ser
 import { correctDefect, correctDimension } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can, dimensionStatus, isPTWorkCenter, isPaintWorkCenter, shiftName } from '@/domain'
+import { can, dimensionStatus, processForMachine, shiftName } from '@/domain'
 import { cn, daysAgoISO, formatDate, formatDateTime } from '@/lib/utils'
 import {
   DISPOSITIONS,
@@ -39,6 +39,7 @@ import {
   type PTRecord,
   type PaintSampleRecord,
   type SampleCoil,
+  type Process,
 } from '@qc/shared/types'
 import type { SessionWithOrder } from '@qc/shared/api'
 
@@ -461,6 +462,7 @@ export function HistoryPage() {
                 {detail ? (
                   <SampleDetail
                     session={openSession}
+                    process={processForMachine(machines.find((m) => m.code === openSession.workCenterCode) ?? null, openSession.workCenterCode)}
                     sample={detail.sample}
                     dimensions={detail.dimensions}
                     defects={detail.defects}
@@ -559,6 +561,7 @@ export function HistoryPage() {
 
 function SampleDetail({
   session,
+  process,
   sample,
   dimensions,
   defects,
@@ -571,6 +574,7 @@ function SampleDetail({
   onEditDefect,
 }: {
   session: SessionWithOrder | InspectionSession
+  process: Process
   sample: InspectionSample
   dimensions: DimensionResult[]
   defects: DefectResult[]
@@ -733,7 +737,7 @@ function SampleDetail({
         )}
       </Section>
 
-      {isPaintWorkCenter(session.workCenterCode) && (
+      {process === 'paint' && (
         <Section icon={<SprayCan className="h-4 w-4" />} title="Paint sample">
           {!paint ? (
             <SectionEmpty message="No paint sample was recorded for this sample." />
@@ -750,7 +754,7 @@ function SampleDetail({
         </Section>
       )}
 
-      {isPTWorkCenter(session.workCenterCode) && (
+      {process === 'welding' && (
         <Section icon={<Droplets className="h-4 w-4" />} title="PT / weld inspection">
           {!pt ? (
             <SectionEmpty message="No PT record was captured for this sample." />
@@ -761,14 +765,34 @@ function SampleDetail({
                 <Attr label="Penetrant lot" value={pt.consumableLots.Penetrant} />
                 <Attr label="Developer lot" value={pt.consumableLots.Developer} />
                 <Attr label="Test frequency" value={`${pt.testFrequencyPct}%`} />
-                <Attr label="Sample size" value={pt.sampleSize} />
-                <Attr label="Tested weld length" value={pt.testedWeldLength} />
-                <Attr label="Indication type" value={pt.indicationType} />
-                <Attr label="Indication size" value={pt.indicationSize} />
                 <Attr label="Welding wire batch" value={pt.weldingWireBatch} />
-                <Attr label="Accept / repair" value={pt.acceptOrRepair} />
-                <Attr label="Final result" value={pt.finalResult} />
+                <div>
+                  <dt className="text-xs font-semibold uppercase text-slate-400">PT verdict</dt>
+                  <dd className="mt-0.5">
+                    {pt.acceptOrRepair ? <Badge tone={pt.acceptOrRepair === 'Accept' ? 'green' : 'red'}>{pt.acceptOrRepair}</Badge> : <span className="text-slate-400">—</span>}
+                  </dd>
+                </div>
+                {/* Older records carry the free-text fields the form used to have. */}
+                {pt.sampleSize && <Attr label="Sample size" value={pt.sampleSize} />}
+                {pt.testedWeldLength && <Attr label="Tested weld length" value={pt.testedWeldLength} />}
+                {pt.indicationType && <Attr label="Indication type" value={pt.indicationType} />}
+                {pt.indicationSize && <Attr label="Indication size" value={pt.indicationSize} />}
+                {pt.finalResult && <Attr label="Final result" value={pt.finalResult} />}
               </dl>
+              {(pt.testedLengths ?? []).length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Tested weld lengths</p>
+                  <ul className="flex flex-wrap gap-2">
+                    {pt.testedLengths.map((l) => (
+                      <li key={l.id ?? l.seq} className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm dark:bg-slate-800/60">
+                        <span className="text-slate-400">#{l.seq}</span>
+                        <span className="font-bold tabular-nums">{l.lengthMm} mm</span>
+                        <Badge tone={l.verdict === 'Accept' ? 'green' : 'red'}>{l.verdict}</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {pt.notes && (
                 <p className="text-sm text-slate-600 dark:text-slate-300" dir="auto">
                   {pt.notes}

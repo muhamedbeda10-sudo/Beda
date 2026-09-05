@@ -163,7 +163,9 @@ export const MACHINES_IMPORTER: Importer = {
     { key: 'code', label: 'Machine code', kind: 'text', aliases: ['machine code', 'code', 'machine number', 'work center', 'work centre', 'wc'], sample: '58' },
     { key: 'name', label: 'Machine name', kind: 'text', aliases: ['machine', 'machine name', 'name', 'line'], sample: 'A. Welding Line' },
     { key: 'factory', label: 'Factory', kind: 'text', aliases: ['plant', 'site'], sample: 'LM4' },
+    { key: 'process', label: 'Process', kind: 'text', aliases: ['type', 'machine type', 'process type', 'operation'], sample: 'welding' },
   ],
+  optionalKeys: ['factory', 'process'],
 }
 
 export const DEFECTS_IMPORTER: Importer = {

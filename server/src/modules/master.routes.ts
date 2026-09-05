@@ -9,7 +9,7 @@
 import { Router } from 'express'
 import { z, type ZodTypeAny } from 'zod'
 import { EXISTING_KEYS_MAX, MASTER_KINDS, type ExistingKeysResponse, type ImportResult, type MasterKind } from '@qc/shared/api'
-import { PT_CONSUMABLE_KINDS } from '@qc/shared/types'
+import { PROCESSES, PT_CONSUMABLE_KINDS, type Process } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
 import { badRequest, duplicate, notFound } from '../lib/errors'
@@ -37,6 +37,24 @@ interface MasterDef {
 }
 
 const text = (max = 200) => z.string().trim().min(1).max(max)
+/** The process a machine runs, accepted in any case and with the shop's synonyms. */
+const processSchema = z.preprocess(
+  (v) => (typeof v === 'string' ? normaliseProcess(v) : v),
+  z.enum(PROCESSES as unknown as [Process, ...Process[]]),
+)
+export function normaliseProcess(raw: string): string {
+  const v = raw.trim().toLowerCase()
+  if (['weld', 'welding', 'لحام'].some((k) => v.includes(k))) return 'welding'
+  if (['paint', 'painting', 'coat', 'دهان'].some((k) => v.includes(k))) return 'paint'
+  if (['form', 'forming', 'fabrication', 'roll', 'punch', 'cut', 'bend', 'تشكيل'].some((k) => v.includes(k))) return 'forming'
+  if (['other', 'أخرى', 'اخرى'].some((k) => v.includes(k))) return 'other'
+  return v
+}
+/** A machine sheet without a process column: guess from the machine name, else forming. */
+function processFromName(name: string): Process {
+  const guessed = normaliseProcess(name)
+  return (PROCESSES as readonly string[]).includes(guessed) ? (guessed as Process) : 'forming'
+}
 const optText = (max = 500) => z.string().trim().max(max).optional().nullable().transform((v) => (v ? v : null))
 const num = () => z.coerce.number().finite()
 const optNum = () => z.union([z.coerce.number().finite(), z.literal(''), z.null()]).optional().transform((v) => (v === '' || v === undefined ? null : v))
@@ -53,6 +71,7 @@ const DEFS: Record<MasterKind, MasterDef> = {
       { field: 'displayName', column: 'display_name' },
       { field: 'machineNumber', column: 'machine_number' },
       { field: 'factory', column: 'factory' },
+      { field: 'process', column: 'process' },
     ],
     schema: z.object({
       code: text(40),
@@ -61,6 +80,7 @@ const DEFS: Record<MasterKind, MasterDef> = {
       displayName: text(200),
       machineNumber: optText(60),
       factory: optText(120),
+      process: processSchema.default('forming'),
     }),
     filters: { factory: 'factory' },
     orderBy: 'factory, code, line',
@@ -370,6 +390,7 @@ export function masterRoutes(ctx: AppContext): Router {
       displayName: z.string().trim().max(200).optional(),
       machineNumber: z.string().trim().max(60).optional(),
       factory: z.string().trim().max(120).optional(),
+      process: processSchema.optional(),
     })
     const { rows } = parse(z.object({ rows: z.array(rowSchema).min(1).max(1000) }), req.body)
     const byKey = new Map<string, z.infer<typeof rowSchema>>()
@@ -385,10 +406,15 @@ export function masterRoutes(ctx: AppContext): Router {
         display_name_default: machineDisplayName(m.code, m.name, m.line),
         machine_number: m.machineNumber ?? null,
         factory: m.factory ?? null,
+        // The sheet's process when it has one; a new machine without one is
+        // guessed from its name, an existing one keeps what it has.
+        process: m.process ?? null,
+        process_default: m.process ?? processFromName(m.name),
       })),
     )
     const recordset = `jsonb_to_recordset($1::jsonb) AS i(
-      code text, name text, line text, display_name text, display_name_default text, machine_number text, factory text)`
+      code text, name text, line text, display_name text, display_name_default text, machine_number text, factory text,
+      process text, process_default text)`
     const result = await withTransaction(ctx.db, async (tx) => {
       let updated: { rowCount: number | null }
       let inserted: { rowCount: number | null }
@@ -399,6 +425,7 @@ export function masterRoutes(ctx: AppContext): Router {
               display_name = COALESCE(i.display_name,
                 t.code || '-' || i.name || CASE WHEN COALESCE(i.line, t.line) <> '' THEN '-' || COALESCE(i.line, t.line) ELSE '' END),
               machine_number = COALESCE(i.machine_number, t.machine_number), factory = COALESCE(i.factory, t.factory),
+              process = COALESCE(i.process, t.process),
               deleted_at = NULL, deleted_by_id = NULL
             FROM ${recordset}
            WHERE lower(t.code) = lower(i.code)
@@ -406,8 +433,9 @@ export function masterRoutes(ctx: AppContext): Router {
           [payload],
         )
         inserted = await tx.query(
-          `INSERT INTO machines (code, name, line, display_name, machine_number, factory)
-           SELECT i.code, i.name, COALESCE(i.line, ''), COALESCE(i.display_name, i.display_name_default), i.machine_number, i.factory
+          `INSERT INTO machines (code, name, line, display_name, machine_number, factory, process)
+           SELECT i.code, i.name, COALESCE(i.line, ''), COALESCE(i.display_name, i.display_name_default), i.machine_number, i.factory,
+                  i.process_default
              FROM ${recordset}
             WHERE NOT EXISTS (SELECT 1 FROM machines t WHERE lower(t.code) = lower(i.code))`,
           [payload],

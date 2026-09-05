@@ -16,7 +16,7 @@ import type {
   SessionWithOrder,
   WizardContext,
 } from '@qc/shared/api'
-import type { Coil, DefectResult, DimensionResult, ImageAsset, ProductionOrder } from '@qc/shared/types'
+import type { Coil, DefectResult, DimensionResult, ImageAsset, ProductionOrder, WorkInstruction } from '@qc/shared/types'
 import { TestApp, tinyJpeg, type Session } from './harness'
 
 const app = new TestApp()
@@ -58,7 +58,11 @@ function weldSample(submissionId: string, overrides: Partial<SaveSampleRequest> 
     pt: {
       testFrequencyPct: 10,
       consumableLots: { Cleaner: 'B24-0388', Penetrant: 'B24-0417', Developer: 'B24-0511' },
-      acceptOrRepair: 'Accept',
+      weldingWireBatch: 'WW-2401',
+      testedLengths: [
+        { lengthMm: 150, verdict: 'Accept' },
+        { lengthMm: 90, verdict: 'Reject / Repair' },
+      ],
       imageIds: [],
     },
     ...overrides,
@@ -73,8 +77,8 @@ beforeAll(async () => {
   await app.api('POST', '/api/users', { token: admin.token, body: { username: 'sup', password: 'Password#1', name: 'Super', role: 'supervisor' } })
   supervisor = await app.login('sup')
 
-  await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '58', name: 'A. Welding Line', line: 'LM4', displayName: '58-A. Welding Line-LM4' } })
-  await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '48', name: 'Painting Line', line: 'LM4', displayName: '48-Painting Line-LM4' } })
+  await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '58', name: 'A. Welding Line', line: 'LM4', displayName: '58-A. Welding Line-LM4', process: 'welding' } })
+  await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '48', name: 'Painting Line', line: 'LM4', displayName: '48-Painting Line-LM4', process: 'paint' } })
   await app.api('POST', '/api/master/item-dimension-order', { token: admin.token, body: { itemCode: '125185TA3', item: 'XL Light Beam', dimensionName: 'Width', sequence: 1, nominal: 125, tolPlus: 0.5, tolMinus: 0.5, unit: 'mm' } })
   // The same item measured differently on the paint line, and a dimension only that line has.
   await app.api('POST', '/api/master/item-dimension-order', { token: admin.token, body: { itemCode: '125185ta3', workCenterCode: '48', dimensionName: 'Width', sequence: 2, nominal: 127, tolPlus: 1, tolMinus: 1, unit: 'mm' } })
@@ -189,7 +193,7 @@ describe('the atomic sample save', () => {
 
   it('rejects a sample that breaks a business rule, writing nothing', async () => {
     const noLots = weldSample('22222222-2222-4222-8222-222222222222', {
-      pt: { testFrequencyPct: 3, consumableLots: { Cleaner: '', Penetrant: 'x', Developer: 'y' }, imageIds: [] },
+      pt: { testFrequencyPct: 3, consumableLots: { Cleaner: '', Penetrant: 'x', Developer: 'y' }, testedLengths: [], imageIds: [] },
     })
     const res = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/samples`, { token: inspector.token, body: noLots })
     expect(res.status).toBe(400)
@@ -265,7 +269,13 @@ describe('the atomic sample save', () => {
     expect(coils[0].coilNumber).toBe('C10021')
     expect(coils[0].coilId).toBe(catalogueCoil.id)
     expect(pt?.consumableLots).toEqual({ Cleaner: 'B24-0388', Penetrant: 'B24-0417', Developer: 'B24-0511' })
-    expect(pt?.acceptOrRepair).toBe('Accept')
+    expect(pt?.weldingWireBatch).toBe('WW-2401')
+    expect(pt?.testedLengths.map((l) => [l.seq, l.lengthMm, l.verdict])).toEqual([
+      [1, 150, 'Accept'],
+      [2, 90, 'Reject / Repair'],
+    ])
+    // One rejected length rejects the record.
+    expect(pt?.acceptOrRepair).toBe('Reject / Repair')
     expect(paint).toBeNull()
 
     // The photo now knows which sample it belongs to.
@@ -463,25 +473,49 @@ describe('corrections (§9.4, §14)', () => {
   })
 })
 
-describe('paint work centre', () => {
-  it('requires the paint record and stores its photos', async () => {
+describe('paint machine', () => {
+  it('tells the wizard the process and hands it the paint flow', async () => {
+    const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: paintOrder.id, startQty: 450 } })
+    const ctx = await app.api<WizardContext>('GET', `/api/sessions/${started.body.id}/wizard`, { token: inspector.token })
+    expect(ctx.body.process).toBe('paint')
+    expect(ctx.body.machine?.process).toBe('paint')
+    expect((await app.api('DELETE', `/api/sessions/${started.body.id}`, { token: supervisor.token })).status).toBe(204)
+  })
+
+  it('needs no drawing, but photos of the sample and three thickness readings', async () => {
     const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: paintOrder.id, startQty: 450 } })
     const sid = started.body.id
+    const reading = (actual: number | null) => ({ name: 'Paint thickness', sequence: 1, nominal: 60, tolPlus: 10, tolMinus: 5, actual, unit: 'µm', source: 'item-order' as const })
     const missing = await app.api<ApiErrorBody>('POST', `/api/sessions/${sid}/samples`, {
       token: inspector.token,
-      body: { submissionId: '77777777-7777-4777-8777-777777777777', drawing: 'BS9059/48', sampleQty: 1, dimensions: [], defects: [], coils: [] },
+      body: { submissionId: '77777777-7777-4777-8777-777777777777', drawing: '', sampleQty: 1, dimensions: [], defects: [], coils: [] },
     })
     expect(missing.status).toBe(400)
-    expect(missing.body.error.message).toMatch(/paint sample/i)
+    expect(missing.body.error.message).toMatch(/photo/i)
 
     const photo = await uploadImage(inspector, 9, { sessionId: sid })
+    const twoReadings = await app.api<ApiErrorBody>('POST', `/api/sessions/${sid}/samples`, {
+      token: inspector.token,
+      body: {
+        submissionId: '77777777-7777-4777-8777-777777777777',
+        drawing: '',
+        sampleQty: 1,
+        dimensions: [reading(61), reading(59)],
+        defects: [],
+        coils: [],
+        paint: { imageIds: [photo.id] },
+      },
+    })
+    expect(twoReadings.status).toBe(400)
+    expect(twoReadings.body.error.message).toMatch(/3 paint thickness readings/i)
+
     const ok = await app.api<SaveSampleResponse>('POST', `/api/sessions/${sid}/samples`, {
       token: inspector.token,
       body: {
         submissionId: '77777777-7777-4777-8777-777777777777',
-        drawing: 'BS9059/48',
+        drawing: '',
         sampleQty: 2,
-        dimensions: [],
+        dimensions: [reading(61), { ...reading(59), sequence: 2 }, { ...reading(75), sequence: 3 }],
         defects: [],
         coils: [],
         paint: { notes: 'RAL7016 ok', imageIds: [photo.id] },
@@ -491,6 +525,69 @@ describe('paint work centre', () => {
     const detail = await app.api<SampleDetail>('GET', `/api/samples/${ok.body.sampleId}`, { token: inspector.token })
     expect(detail.body.paint?.imageIds).toEqual([photo.id])
     expect(detail.body.paint?.notes).toBe('RAL7016 ok')
+    // The three readings are dimension rows judged against the tolerance: 75 is over 60 + 10.
+    expect(detail.body.dimensions.map((d) => [d.sequence, d.actual, d.status])).toEqual([
+      [1, 61, 'Pass'],
+      [2, 59, 'Pass'],
+      [3, 75, 'Fail'],
+    ])
+  })
+})
+
+describe('work instructions', () => {
+  const pdf = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n')
+  let firstId: string
+
+  async function uploadInstruction(s: Session, fields: Record<string, string>, bytes: Buffer = pdf, filename = 'wi.pdf') {
+    const form = new FormData()
+    form.append('file', new Blob([bytes], { type: 'application/pdf' }), filename)
+    for (const [k, v] of Object.entries(fields)) form.append(k, v)
+    return app.api<WorkInstruction>('POST', '/api/work-instructions', { token: s.token, raw: form })
+  }
+
+  it('lets an admin upload a PDF for a process and step, and refuses anything else', async () => {
+    const notPdf = await uploadInstruction(admin, { code: 'WI-X', title: 'Not a PDF', process: 'welding', step: 'defects' }, Buffer.from('hello'))
+    expect(notPdf.status).toBe(400)
+    const asInspector = await uploadInstruction(inspector, { code: 'WI-X', title: 'No', process: 'welding', step: 'defects' })
+    expect(asInspector.status).toBe(403)
+    const res = await uploadInstruction(admin, { code: 'WI-PD-03-04', title: 'Visual test method', issueNo: '1', issueDate: '2025-01-02', process: 'welding', step: 'defects' })
+    expect(res.status).toBe(201)
+    expect(res.body.code).toBe('WI-PD-03-04')
+    expect(res.body.issueDate).toMatch(/^2025-01-02/)
+    expect(res.body.byteSize).toBe(pdf.length)
+    firstId = res.body.id
+  })
+
+  it('serves the bytes back to any signed-in user, and offers the document on the right wizard step', async () => {
+    const content = await app.api<string>('GET', `/api/work-instructions/${firstId}/content`, { token: inspector.token })
+    expect(content.status).toBe(200)
+    expect(content.headers.get('content-type')).toBe('application/pdf')
+    const weldSession = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrder.id, startQty: 1 } })
+    const ctx = await app.api<WizardContext>('GET', `/api/sessions/${weldSession.body.id}/wizard`, { token: inspector.token })
+    expect(ctx.body.process).toBe('welding')
+    expect(ctx.body.workInstructions.map((w) => [w.code, w.step])).toEqual([['WI-PD-03-04', 'defects']])
+    await app.api('DELETE', `/api/sessions/${weldSession.body.id}`, { token: supervisor.token })
+    // A paint machine does not see a welding document.
+    const paintSession = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: paintOrder.id, startQty: 1 } })
+    const paintCtx = await app.api<WizardContext>('GET', `/api/sessions/${paintSession.body.id}/wizard`, { token: inspector.token })
+    expect(paintCtx.body.workInstructions).toEqual([])
+    await app.api('DELETE', `/api/sessions/${paintSession.body.id}`, { token: supervisor.token })
+  })
+
+  it('supersedes the issue in force when a new issue of the same code is uploaded', async () => {
+    const next = await uploadInstruction(admin, { code: 'wi-pd-03-04', title: 'Visual test method', issueNo: '2', process: 'welding', step: 'defects' })
+    expect(next.status).toBe(201)
+    const inForce = await app.api<WorkInstruction[]>('GET', '/api/work-instructions?process=welding', { token: inspector.token })
+    expect(inForce.body.map((w) => [w.id, w.issueNo])).toEqual([[next.body.id, '2']])
+    const history = await app.api<WorkInstruction[]>('GET', '/api/work-instructions?history=1', { token: admin.token })
+    const old = history.body.find((w) => w.id === firstId)!
+    expect(old.supersededById).toBe(next.body.id)
+    // The old issue's bytes are still readable.
+    expect((await app.api('GET', `/api/work-instructions/${firstId}/content`, { token: inspector.token })).status).toBe(200)
+
+    expect((await app.api('DELETE', `/api/work-instructions/${next.body.id}`, { token: admin.token })).status).toBe(204)
+    const after = await app.api<WorkInstruction[]>('GET', '/api/work-instructions', { token: inspector.token })
+    expect(after.body).toEqual([])
   })
 })
 
