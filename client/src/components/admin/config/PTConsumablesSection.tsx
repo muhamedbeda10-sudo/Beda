@@ -30,8 +30,6 @@ export function PTConsumablesSection() {
   return (
     <MasterDataPanel<'pt-consumables', PTDraft>
       title="PT consumables"
-      description="Cleaner, penetrant and developer products offered on the PT / weld step."
-      hint="The lot / batch recorded on a PT inspection is the chemical audit trail — keep these current so inspectors pick from the list instead of typing."
       icon={<FlaskConical className="h-5 w-5" />}
       kind='pt-consumables'
       rows={rows}

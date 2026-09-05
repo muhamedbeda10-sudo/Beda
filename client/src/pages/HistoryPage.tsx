@@ -218,7 +218,6 @@ export function HistoryPage() {
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">History</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Every recorded session, down to the measurement. Corrections are allowed — and audited.</p>
       </div>
 
       <div className="grid grid-cols-3 gap-3">

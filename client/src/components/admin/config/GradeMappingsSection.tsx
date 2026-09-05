@@ -26,13 +26,6 @@ export function GradeMappingsSection() {
   return (
     <MasterDataPanel<'grade-mappings', GradeDraft>
       title="Grade mappings"
-      description="Grades that count as the same material when a coil is checked against an order."
-      hint={
-        <>
-          Equivalence is <strong>transitive</strong>: if A ≡ B and B ≡ C, then A ≡ C is applied
-          automatically. Record each pair once — the reverse direction is implied as well.
-        </>
-      }
       icon={<Shuffle className="h-5 w-5" />}
       kind='grade-mappings'
       rows={rows}

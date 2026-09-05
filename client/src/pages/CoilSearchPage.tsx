@@ -44,7 +44,6 @@ export function CoilSearchPage() {
 
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Coil Search</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Trace raw material back: coil → sample → order → customer.</p>
       </div>
 
       <div className="relative">

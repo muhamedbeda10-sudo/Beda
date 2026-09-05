@@ -42,7 +42,6 @@ export function DataImportPage() {
   return (
     <AdminLayout
       title="Data import"
-      description="Load the ERP's order lines and coil register. Preview first; nothing is written until you press Import, and importing the same file twice updates rather than duplicates."
       needs="manage-admin-data"
       actions={
         which === 'orders' ? (

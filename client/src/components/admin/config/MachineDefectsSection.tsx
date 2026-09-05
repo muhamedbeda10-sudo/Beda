@@ -27,8 +27,6 @@ export function MachineDefectsSection() {
   return (
     <MasterDataPanel<'work-center-defects', DefectDraft>
       title="Machine defects"
-      description="The defect names offered on each machine, grouped by machine code."
-      hint="Inspectors only ever see the defects listed for the machine they are inspecting at, so keep each list short and specific. Arabic names are supported and display right-to-left automatically."
       icon={<AlertTriangle className="h-5 w-5" />}
       kind='work-center-defects'
       rows={rows}

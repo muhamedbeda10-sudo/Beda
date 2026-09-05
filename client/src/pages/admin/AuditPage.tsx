@@ -107,7 +107,6 @@ export function AuditPage() {
   return (
     <AdminLayout
       title="Audit log"
-      description="Every change to inspection data after its first save — who, when, and what changed."
       needs="edit-closed-session"
       actions={
         <>

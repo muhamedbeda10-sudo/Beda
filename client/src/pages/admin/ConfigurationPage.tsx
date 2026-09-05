@@ -37,7 +37,7 @@ export function ConfigurationPage() {
   if (!current) return <Navigate to={`/admin/configuration/${SECTIONS[0].key}`} replace />
 
   return (
-    <AdminLayout title="Configuration" description="The master data every inspection is judged against." needs="manage-admin-data">
+    <AdminLayout title="Configuration" needs="manage-admin-data">
       <div className="space-y-4">
         <div className="flex gap-2 overflow-x-auto pb-1 lg:flex-wrap lg:overflow-visible">
           {SECTIONS.map((s) => (
@@ -70,9 +70,7 @@ export function ConfigurationPage() {
                   </span>
                   <div className="min-w-0">
                     <h3 className="text-base font-bold">{fileMode ? `Load ${current.label.toLowerCase()} from a file` : `Paste ${current.label.toLowerCase()} from Excel`}</h3>
-                    <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                      Columns: {current.importer.fields.map((f) => f.label).join(' · ')}. {current.importer.description}
-                    </p>
+                    <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{current.importer.fields.map((f) => f.label).join(' · ')}</p>
                   </div>
                 </div>
                 <Button className="min-h-[44px]" onClick={() => setFileMode((m) => !m)}>
