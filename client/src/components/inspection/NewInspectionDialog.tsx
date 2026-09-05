@@ -298,7 +298,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
               </p>
               <Button
                 variant="ghost"
-                className="min-h-[40px]"
+                className="min-h-[40px] shrink-0 whitespace-nowrap"
                 onClick={() => {
                   setOrderNumber('')
                   setItemTerm('')

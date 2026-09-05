@@ -97,7 +97,7 @@ export function CoilPicker({
           })}
         </div>
 
-        {typed && !exactMatch && (
+        {typed && !exactMatch && results.length === 0 && (
           <div className="rounded-2xl border border-dashed border-amber-300 bg-amber-50/60 p-3 dark:border-amber-500/40 dark:bg-amber-500/5">
             <p className="text-sm text-amber-800 dark:text-amber-200">
               <strong>{typed}</strong> is not in the coil register. You can still record it by hand; it will be saved without
@@ -115,6 +115,19 @@ export function CoilPicker({
               <PenLine className="h-4 w-4" /> Add "{typed}" by hand
             </Button>
           </div>
+        )}
+        {typed && !exactMatch && results.length > 0 && (
+          <button
+            type="button"
+            disabled={chosen.has(typed.toLowerCase())}
+            onClick={() => {
+              onTyped(typed)
+              close()
+            }}
+            className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-brand-700 disabled:opacity-50 dark:hover:bg-slate-800"
+          >
+            <PenLine className="h-4 w-4" /> None of these — add "{typed}" by hand
+          </button>
         )}
       </div>
     </Modal>

@@ -411,7 +411,14 @@ export function WizardPage() {
           {current === 'review' ? (
             <Button variant="primary" className="min-h-[52px] flex-1" disabled={saving} onClick={attemptSave}>
               {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
-              {saving ? 'Saving…' : 'Save inspection'}
+              {saving ? (
+                'Saving…'
+              ) : (
+                <>
+                  <span className="sm:hidden">Save</span>
+                  <span className="hidden sm:inline">Save inspection</span>
+                </>
+              )}
             </Button>
           ) : (
             <Button variant="primary" className="min-h-[52px] flex-1" onClick={next}>
@@ -710,7 +717,75 @@ function DimensionsStep({
   return (
     <div className="space-y-3">
       {reference}
-      <div className="overflow-x-auto">
+      {/* A phone has no room for a six-column table: one card per dimension,
+          with the measurement the inspector types made the biggest thing on it. */}
+      <div className="space-y-2 sm:hidden">
+        {draft.dimensions.map((d, i) => {
+          const status = dimensionStatus({
+            nominal: Number(d.nominal),
+            tolPlus: Number(d.tolPlus),
+            tolMinus: Number(d.tolMinus),
+            actual: d.actual.trim() === '' ? null : Number(d.actual),
+          })
+          return (
+            <div
+              key={`${d.name}-${i}`}
+              className={cn(
+                'rounded-2xl border p-3',
+                status === 'Fail'
+                  ? 'border-rose-300 bg-rose-50/60 dark:border-rose-500/40 dark:bg-rose-500/5'
+                  : status === 'Warning'
+                    ? 'border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-500/5'
+                    : 'border-slate-200 dark:border-slate-700',
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-bold">{d.name}</p>
+                <span className="flex items-center gap-1">
+                  <Badge tone={status === 'Pass' ? 'green' : status === 'Fail' ? 'red' : status === 'Warning' ? 'amber' : 'neutral'}>{status}</Badge>
+                  <button
+                    onClick={() => update((dd) => ({ ...dd, dimensions: dd.dimensions.filter((_, j) => j !== i) }))}
+                    className="rounded p-2 text-slate-300 hover:text-rose-500"
+                    aria-label={`Remove ${d.name}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </span>
+              </div>
+              <div className="mt-2 grid grid-cols-[1fr_auto_1.4fr] items-end gap-2">
+                <label className="block">
+                  <span className="label">Nominal</span>
+                  <input
+                    value={d.nominal}
+                    onChange={(e) => setRow(i, { nominal: e.target.value })}
+                    inputMode="decimal"
+                    className="input min-h-[48px] text-right tabular-nums"
+                  />
+                </label>
+                <span className="pb-3 text-xs tabular-nums text-slate-400">
+                  +{d.tolPlus}/-{d.tolMinus}
+                </span>
+                <label className="block">
+                  <span className="label">Actual</span>
+                  <input
+                    value={d.actual}
+                    onChange={(e) => setRow(i, { actual: e.target.value })}
+                    inputMode="decimal"
+                    type="number"
+                    step="any"
+                    placeholder="—"
+                    className={cn(
+                      'input min-h-[52px] text-center text-lg font-bold tabular-nums',
+                      status === 'Fail' ? 'border-rose-400' : status === 'Warning' ? 'border-amber-400' : '',
+                    )}
+                  />
+                </label>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div className="hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[560px] text-sm">
           <thead className="text-xs uppercase text-slate-400">
             <tr>
