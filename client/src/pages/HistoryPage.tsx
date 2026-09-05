@@ -609,11 +609,28 @@ function SampleDetail({
         </p>
       )}
 
-      <Section icon={<Ruler className="h-4 w-4" />} title="Dimensions" count={dimensions.length}>
+      <Section icon={<Ruler className="h-4 w-4" />} title={process === 'paint' ? 'Paint thickness readings' : 'Dimensions'} count={dimensions.length}>
         {loading && dimensions.length === 0 ? (
           <SectionEmpty message="Loading the measurements…" />
         ) : dimensions.length === 0 ? (
-          <SectionEmpty message="No dimensions were measured on this sample." />
+          <SectionEmpty message={process === 'paint' ? 'No thickness readings were recorded on this sample.' : 'No dimensions were measured on this sample.'} />
+        ) : process === 'paint' ? (
+          // Recorded as measured: no required value, so no judgement column.
+          <ul className="grid grid-cols-3 gap-2">
+            {dimensions.map((d) => (
+              <li key={d.id} className="rounded-xl bg-slate-50 px-3 py-2 text-center dark:bg-slate-800/60">
+                <span className="block text-xs font-semibold uppercase text-slate-400">Reading {d.sequence}</span>
+                <span className="flex items-center justify-center gap-1 text-lg font-bold tabular-nums">
+                  {num(d.actual)} <span className="text-xs font-normal text-slate-400">{d.unit}</span>
+                  {editable && (
+                    <button type="button" onClick={() => onEditDimension(d)} className="ml-1 rounded p-1 text-slate-300 hover:text-brand-600" aria-label={`Correct reading ${d.sequence}`}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[560px] text-sm">

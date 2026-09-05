@@ -146,16 +146,20 @@ export function WizardPage() {
       unit: r.unit,
       source: r.source,
     })
-    // A paint sample measures one thing three times: the configured (or
-    // remembered) "Paint thickness" row becomes three readings.
+    // A paint sample is three thickness readings, recorded as measured: no
+    // required value, no tolerance, no judgement.
     const dimensions: DraftDimension[] =
       process === 'paint'
-        ? Array.from({ length: PAINT_THICKNESS_READINGS }, (_, i) => {
-            const rule = rows.find((r) => isPaintThicknessName(r.name))
-            return rule
-              ? toDraftRow(rule, i + 1)
-              : { name: PAINT_THICKNESS_NAME, sequence: i + 1, nominal: '', tolPlus: '', tolMinus: '', actual: '', unit: PAINT_THICKNESS_UNIT, source: 'manual' }
-          })
+        ? Array.from({ length: PAINT_THICKNESS_READINGS }, (_, i) => ({
+            name: PAINT_THICKNESS_NAME,
+            sequence: i + 1,
+            nominal: '',
+            tolPlus: '',
+            tolMinus: '',
+            actual: '',
+            unit: PAINT_THICKNESS_UNIT,
+            source: 'manual' as const,
+          }))
         : rows.map((r) => toDraftRow(r))
     setDraft({
       sessionId: session.id,
@@ -448,7 +452,7 @@ export function WizardPage() {
         {current === 'paintThickness' && (
           <>
             <WorkInstructionLinks instructions={instructions} step="paintThickness" />
-            <PaintThicknessStep draft={draft} update={update} order={order} refImages={refImages} />
+            <PaintThicknessStep draft={draft} update={update} />
           </>
         )}
         {current === 'pt' && (
@@ -1179,32 +1183,12 @@ function PaintStep({
 }
 
 /**
- * Three readings of the dry film thickness against one required value. The
- * value and tolerance come from the item's configuration when it has a
- * "Paint thickness" row, or from the previous sample; otherwise the inspector
- * types them once and they apply to all three readings.
+ * Three readings of the dry film thickness, recorded as measured. The paint
+ * line records what the gauge shows; no required value or tolerance is asked
+ * for and no judgement is made on the readings.
  */
-function PaintThicknessStep({
-  draft,
-  update,
-  order,
-  refImages,
-}: {
-  draft: SampleDraft
-  update: Updater
-  order: ProductionOrder
-  refImages: ItemReferenceImage[]
-}) {
+function PaintThicknessStep({ draft, update }: { draft: SampleDraft; update: Updater }) {
   const readings = draft.dimensions.map((d, i) => ({ d, i })).filter(({ d }) => isPaintThicknessName(d.name))
-  const first = readings[0]?.d
-  const configured = !!first && first.source === 'item-order' && first.nominal.trim() !== ''
-
-  /** The required value and tolerance are one setting shared by all readings. */
-  const setShared = (patch: Partial<Pick<DraftDimension, 'nominal' | 'tolPlus' | 'tolMinus' | 'unit'>>) =>
-    update((dd) => ({
-      ...dd,
-      dimensions: dd.dimensions.map((x) => (isPaintThicknessName(x.name) ? { ...x, ...patch } : x)),
-    }))
   const setActual = (index: number, actual: string) =>
     update((dd) => {
       const dimensions = [...dd.dimensions]
@@ -1212,71 +1196,22 @@ function PaintThicknessStep({
       return { ...dd, dimensions }
     })
 
-  if (!first) return <Empty>No thickness readings on this draft.</Empty>
+  if (readings.length === 0) return <Empty>No thickness readings on this draft.</Empty>
 
   return (
     <div className="space-y-4">
-      {refImages.length > 0 && (
-        <div>
-          <span className="label">Reference photos for {order.itemCode}</span>
-          <ImagePicker imageIds={refImages.map((r) => r.imageId)} onChange={() => {}} readOnly />
-        </div>
-      )}
-
-      <div className="rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <span className="label !mb-0">Required thickness</span>
-          {configured ? <Badge tone="green">From configuration</Badge> : first.source === 'carry-forward' || first.nominal ? <Badge tone="blue">Remembered</Badge> : <Badge tone="amber">Type it once</Badge>}
-        </div>
-        <div className="grid grid-cols-[1.4fr_1fr_1fr_auto] items-end gap-2">
-          <label className="block">
-            <span className="label">Nominal</span>
-            <input
-              value={first.nominal}
-              onChange={(e) => setShared({ nominal: e.target.value })}
-              inputMode="decimal"
-              type="number"
-              step="any"
-              className={cn('input min-h-[48px] text-right text-lg font-bold tabular-nums', first.nominal.trim() === '' && 'border-rose-400')}
-            />
-          </label>
-          <label className="block">
-            <span className="label">+ tol</span>
-            <input value={first.tolPlus} onChange={(e) => setShared({ tolPlus: e.target.value })} inputMode="decimal" type="number" step="any" className="input min-h-[48px] text-right tabular-nums" />
-          </label>
-          <label className="block">
-            <span className="label">- tol</span>
-            <input value={first.tolMinus} onChange={(e) => setShared({ tolMinus: e.target.value })} inputMode="decimal" type="number" step="any" className="input min-h-[48px] text-right tabular-nums" />
-          </label>
-          <span className="pb-3 text-sm font-semibold text-slate-400">{first.unit || PAINT_THICKNESS_UNIT}</span>
-        </div>
-      </div>
-
       <div>
-        <span className="label">Readings</span>
+        <span className="label">
+          Thickness readings <span className="normal-case">({readings[0].d.unit || PAINT_THICKNESS_UNIT})</span>
+        </span>
         <div className="grid gap-2 sm:grid-cols-3">
           {readings.map(({ d, i }, n) => {
-            const status = dimensionStatus({
-              nominal: d.nominal.trim() === '' ? NaN : Number(d.nominal),
-              tolPlus: Number(d.tolPlus),
-              tolMinus: Number(d.tolMinus),
-              actual: d.actual.trim() === '' ? null : Number(d.actual),
-            })
+            const filled = d.actual.trim() !== ''
             return (
-              <label
-                key={i}
-                className={cn(
-                  'block rounded-2xl border p-3',
-                  status === 'Fail'
-                    ? 'border-rose-300 bg-rose-50/60 dark:border-rose-500/40 dark:bg-rose-500/5'
-                    : status === 'Warning'
-                      ? 'border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-500/5'
-                      : 'border-slate-200 dark:border-slate-700',
-                )}
-              >
+              <label key={i} className={cn('block rounded-2xl border p-3', filled ? 'border-emerald-300 bg-emerald-50/40 dark:border-emerald-500/40 dark:bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700')}>
                 <span className="flex items-center justify-between">
                   <span className="text-sm font-bold">Reading {n + 1}</span>
-                  <Badge tone={status === 'Pass' ? 'green' : status === 'Fail' ? 'red' : status === 'Warning' ? 'amber' : 'neutral'}>{status}</Badge>
+                  {filled ? <Badge tone="green">Recorded</Badge> : <Badge tone="neutral">Required</Badge>}
                 </span>
                 <input
                   value={d.actual}
@@ -1285,10 +1220,7 @@ function PaintThicknessStep({
                   type="number"
                   step="any"
                   placeholder="—"
-                  className={cn(
-                    'input mt-2 min-h-[56px] text-center text-2xl font-bold tabular-nums',
-                    status === 'Fail' ? 'border-rose-400' : status === 'Warning' ? 'border-amber-400' : '',
-                  )}
+                  className="input mt-2 min-h-[56px] text-center text-2xl font-bold tabular-nums"
                 />
               </label>
             )
@@ -1534,6 +1466,17 @@ function ReviewStep({
       <Section title={draft.process === 'paint' ? `Paint thickness (${measured.length} of ${PAINT_THICKNESS_READINGS} readings)` : `Dimensions (${measured.length} measured)`}>
         {measured.length === 0 ? (
           <Empty>No measurements entered.</Empty>
+        ) : draft.process === 'paint' ? (
+          <ul className="grid grid-cols-3 gap-2 text-sm">
+            {measured.map((d, i) => (
+              <li key={i} className="rounded-lg bg-slate-50 px-3 py-2 text-center dark:bg-slate-800/50">
+                <span className="block text-xs font-semibold uppercase text-slate-400">Reading {d.sequence}</span>
+                <span className="text-lg font-bold tabular-nums">
+                  {d.actual} <span className="text-xs font-normal text-slate-400">{d.unit}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[420px] text-sm">
