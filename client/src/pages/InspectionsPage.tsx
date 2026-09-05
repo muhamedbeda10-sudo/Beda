@@ -238,7 +238,7 @@ export function InspectionsPage() {
         />
       ) : (
         // Several machines side by side on a wide screen; one column on a phone.
-        <div className="grid items-start gap-4 md:grid-cols-2 2xl:grid-cols-3">
+        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 2xl:grid-cols-3">
           {groups.map((g) => {
             const isExpanded = expanded[g.label]
             const visible = isExpanded ? g.sessions : g.sessions.slice(0, COLLAPSE_AFTER)
