@@ -39,7 +39,7 @@ export function AdminLayout({
       </div>
 
       <div className="lg:flex lg:items-start lg:gap-6">
-        <nav aria-label="Administration sections" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-2 lg:mx-0 lg:w-60 lg:shrink-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0">
+        <nav aria-label="Administration sections" className="flex flex-wrap gap-2 pb-2 lg:w-60 lg:shrink-0 lg:flex-col lg:pb-0">
           {sections.map((s) => (
             <NavLink
               key={s.to}

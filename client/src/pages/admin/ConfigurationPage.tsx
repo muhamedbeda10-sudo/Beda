@@ -39,7 +39,7 @@ export function ConfigurationPage() {
   return (
     <AdminLayout title="Configuration" needs="manage-admin-data">
       <div className="space-y-4">
-        <div className="flex gap-2 overflow-x-auto pb-1 lg:flex-wrap lg:overflow-visible">
+        <div className="flex flex-wrap gap-2 pb-1">
           {SECTIONS.map((s) => (
             <NavLink
               key={s.key}

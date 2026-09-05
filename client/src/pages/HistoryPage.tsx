@@ -220,7 +220,7 @@ export function HistoryPage() {
         <h1 className="text-2xl font-extrabold tracking-tight">History</h1>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat
           label="Sessions"
           value={totals.sessions}

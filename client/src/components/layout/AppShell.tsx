@@ -168,14 +168,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-full">
       <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/85 shadow-[0_1px_0_rgba(255,255,255,.6)_inset] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/85 safe-top">
-        <div className="grid h-16 grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 sm:px-6 lg:px-8">
+        <div className="grid h-16 grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:px-8">
           {/* Left — brand */}
           <button type="button" onClick={() => navigate('/')} className="justify-self-start rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" aria-label="Home">
             <Brand />
           </button>
 
           {/* Centre — the inspector's tabs */}
-          <nav className="hidden items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 lg:flex dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
+          <nav className="hidden items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 md:flex dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
             {NAV.map((n) => {
               const active = isActive(n)
               return (
@@ -203,12 +203,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
             {admin.length > 0 && (
-              <div className="hidden lg:block">
+              <div className="hidden md:block">
                 <AdminMenu items={admin} />
               </div>
             )}
-            <div className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 lg:block" />
-            <div className="hidden items-center gap-2 lg:flex">
+            <div className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 md:block" />
+            <div className="hidden items-center gap-2 md:flex">
               <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-xs font-bold text-white shadow-card" title={displayName}>
                 {initials || '?'}
               </span>
@@ -217,7 +217,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <LogOut className="h-5 w-5" />
               </button>
             </div>
-            <button onClick={() => setMenuOpen(true)} className="icon-btn lg:hidden" aria-label="Open menu">
+            <button onClick={() => setMenuOpen(true)} className="icon-btn md:hidden" aria-label="Open menu">
               <Menu className="h-6 w-6" />
             </button>
           </div>
@@ -225,7 +225,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
 
       {menuOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="fixed inset-0 z-50 md:hidden">
           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fade-in" onClick={() => setMenuOpen(false)} />
           <div className="absolute right-0 top-0 h-full w-[85%] max-w-sm overflow-y-auto bg-white shadow-lift animate-slide-up dark:bg-slate-900 safe-top">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
