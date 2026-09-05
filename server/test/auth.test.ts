@@ -144,6 +144,23 @@ describe('user administration', () => {
     expect(list.body.map((u) => u.username).sort()).toEqual(['admin', 'insp', 'sup'])
   })
 
+  it('lets an admin rename a login, refusing one that is taken', async () => {
+    const admin = await app.login('admin', 'NewPassword#2')
+    const list = await app.api<UserProfile[]>('GET', '/api/users', { token: admin.token })
+    const sup = list.body.find((u) => u.username === 'sup')!
+    const taken = await app.api<ApiErrorBody>('PATCH', `/api/users/${sup.id}`, { token: admin.token, body: { username: 'insp' } })
+    expect(taken.status).toBe(409)
+    const bad = await app.api<ApiErrorBody>('PATCH', `/api/users/${sup.id}`, { token: admin.token, body: { username: 'no spaces' } })
+    expect(bad.status).toBe(400)
+    const renamed = await app.api<UserProfile>('PATCH', `/api/users/${sup.id}`, { token: admin.token, body: { username: ' Super.Visor ' } })
+    expect(renamed.status).toBe(200)
+    expect(renamed.body.username).toBe('super.visor')
+    expect((await app.api('POST', '/api/auth/login', { body: { username: 'sup', password: 'Password#1' } })).status).toBe(401)
+    await app.login('super.visor')
+    // Back to the old name so the tests that follow still find it.
+    await app.api('PATCH', `/api/users/${sup.id}`, { token: admin.token, body: { username: 'sup' } })
+  })
+
   it('removes an account: it leaves the list, cannot sign in, and frees its username', async () => {
     const admin = await app.login('admin', 'NewPassword#2')
     const sup = await app.login('sup')

@@ -21,6 +21,7 @@ const createSchema = z.object({
 
 const updateSchema = z
   .object({
+    username: usernameSchema.optional(),
     name: z.string().trim().min(1).max(120).optional(),
     role: z.enum(ROLES as unknown as [string, ...string[]]).optional(),
     isActive: z.boolean().optional(),
@@ -84,18 +85,25 @@ export function usersRoutes(ctx: AppContext): Router {
       }
 
       const passwordHash = body.password ? await hashPassword(body.password) : null
-      const after = (
-        await tx.query<UserProfile>(
-          `UPDATE users
-              SET name = COALESCE($2, name),
-                  role = COALESCE($3, role),
-                  is_active = COALESCE($4, is_active),
-                  password_hash = COALESCE($5, password_hash)
-            WHERE id = $1
-            RETURNING ${USER_COLUMNS}`,
-          [id, body.name ?? null, body.role ?? null, body.isActive ?? null, passwordHash],
-        )
-      ).rows[0]
+      let after: UserProfile
+      try {
+        after = (
+          await tx.query<UserProfile>(
+            `UPDATE users
+                SET username = COALESCE($2, username),
+                    name = COALESCE($3, name),
+                    role = COALESCE($4, role),
+                    is_active = COALESCE($5, is_active),
+                    password_hash = COALESCE($6, password_hash)
+              WHERE id = $1
+              RETURNING ${USER_COLUMNS}`,
+            [id, body.username ?? null, body.name ?? null, body.role ?? null, body.isActive ?? null, passwordHash],
+          )
+        ).rows[0]
+      } catch (e) {
+        if (pgCode(e) === PG.UNIQUE_VIOLATION) throw duplicate('This username is already taken.')
+        throw e
+      }
 
       if (!after.isActive) {
         await tx.query('UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [id])
@@ -104,8 +112,8 @@ export function usersRoutes(ctx: AppContext): Router {
       await auditChanges(
         tx,
         ctxAudit,
-        { name: before.name, role: before.role, isActive: before.isActive },
-        { name: after.name, role: after.role, isActive: after.isActive },
+        { username: before.username, name: before.name, role: before.role, isActive: before.isActive },
+        { username: after.username, name: after.name, role: after.role, isActive: after.isActive },
       )
       if (passwordHash) {
         await auditChanges(tx, ctxAudit, { password: '' }, { password: '(reset by administrator)' })

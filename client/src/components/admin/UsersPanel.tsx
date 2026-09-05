@@ -42,7 +42,12 @@ export function UsersPanel() {
   const [creating, setCreating] = useState<UserDraft | null>(null)
   const [editing, setEditing] = useState<UserProfile | null>(null)
   const [removing, setRemoving] = useState<UserProfile | null>(null)
-  const [editDraft, setEditDraft] = useState<{ name: string; role: Role; password: string }>({ name: '', role: 'inspector', password: '' })
+  const [editDraft, setEditDraft] = useState<{ username: string; name: string; role: Role; password: string }>({
+    username: '',
+    name: '',
+    role: 'inspector',
+    password: '',
+  })
   const [busy, setBusy] = useState(false)
 
   const sorted = useMemo(
@@ -70,11 +75,14 @@ export function UsersPanel() {
 
   async function submitEdit() {
     if (!editing) return
-    if (!editDraft.name.trim()) return toast('Name is required.', 'error')
+    const username = editDraft.username.trim().toLowerCase()
+    if (!username || !editDraft.name.trim()) return toast('Username and name are required.', 'error')
+    if (!USERNAME_PATTERN.test(username)) return toast('Username: 2–40 letters, digits, dots, dashes or underscores.', 'error')
     if (editDraft.password && editDraft.password.length < 8) return toast('Password must be at least 8 characters.', 'error')
     setBusy(true)
     try {
       await updateUser(queryClient, editing.id, {
+        username: username !== editing.username ? username : undefined,
         name: editDraft.name.trim(),
         role: editDraft.role,
         password: editDraft.password || undefined,
@@ -168,7 +176,7 @@ export function UsersPanel() {
                           type="button"
                           onClick={() => {
                             setEditing(u)
-                            setEditDraft({ name: u.name, role: u.role, password: '' })
+                            setEditDraft({ username: u.username, name: u.name, role: u.role, password: '' })
                           }}
                           aria-label={`Edit ${u.name}`}
                           className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
@@ -281,6 +289,16 @@ export function UsersPanel() {
           <div className="space-y-3">
             <Field label="Full name">
               <Input value={editDraft.name} onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })} />
+            </Field>
+            <Field label="Username" hint="What they type to sign in. Changing it does not sign them out.">
+              <Input
+                type="text"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                value={editDraft.username}
+                onChange={(e) => setEditDraft({ ...editDraft, username: e.target.value })}
+              />
             </Field>
             <Field label="Role" hint={ROLE_HELP[editDraft.role]}>
               <Select

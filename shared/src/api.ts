@@ -96,6 +96,8 @@ export interface CreateUserRequest {
 }
 
 export interface UpdateUserRequest {
+  /** A new login name; must still be free. */
+  username?: string
   name?: string
   role?: Role
   isActive?: boolean
