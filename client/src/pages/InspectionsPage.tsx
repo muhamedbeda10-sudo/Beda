@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal } from '@/components/ui'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
+import { InstallBanner } from '@/components/layout/InstallBanner'
 import { useMaster, useOpenBoard } from '@/services/queries'
 import { closeSession, deleteSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
@@ -74,6 +75,8 @@ export function InspectionsPage() {
 
   return (
     <div className="space-y-5">
+      <InstallBanner />
+
       {/* §4 — three primary actions */}
       <div className="grid grid-cols-3 gap-3">
         <QuickAction icon={<Plus className="h-6 w-6" />} title="New" subtitle="Inspection" onClick={() => setNewOpen(true)} />
