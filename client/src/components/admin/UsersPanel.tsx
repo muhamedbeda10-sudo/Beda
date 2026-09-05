@@ -1,13 +1,14 @@
 // ============================================================================
-// §14 — accounts and roles. Accounts are deactivated, never deleted.
+// §14 — accounts and roles. An account can be deactivated (and brought back)
+// or removed for good; history keeps the person's name either way.
 // ============================================================================
 
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Info, KeyRound, Loader2, Pencil, RotateCcw, ShieldAlert, UserCog, UserPlus } from 'lucide-react'
+import { KeyRound, Loader2, Pencil, RotateCcw, ShieldAlert, Trash2, UserCog, UserPlus } from 'lucide-react'
 import { Badge, Button, Card, Field, Input, Modal, Select } from '@/components/ui'
 import { useUsers } from '@/services/queries'
-import { createUser, updateUser } from '@/services/mutations'
+import { createUser, deleteUser, updateUser } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
@@ -23,8 +24,11 @@ const ROLE_HELP: Record<Role, string> = {
   admin: 'Also manages master data, imports, users and audit purges.',
 }
 
+/** Mirrors the API's rule: 2–40 letters, digits, dots, dashes or underscores. */
+const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{1,39}$/
+
 interface UserDraft {
-  email: string
+  username: string
   name: string
   role: Role
   password: string
@@ -37,6 +41,7 @@ export function UsersPanel() {
   const { data: users = [], isLoading } = useUsers()
   const [creating, setCreating] = useState<UserDraft | null>(null)
   const [editing, setEditing] = useState<UserProfile | null>(null)
+  const [removing, setRemoving] = useState<UserProfile | null>(null)
   const [editDraft, setEditDraft] = useState<{ name: string; role: Role; password: string }>({ name: '', role: 'inspector', password: '' })
   const [busy, setBusy] = useState(false)
 
@@ -47,11 +52,13 @@ export function UsersPanel() {
 
   async function submitCreate() {
     if (!creating) return
-    if (!creating.email.trim() || !creating.name.trim()) return toast('Email and name are required.', 'error')
+    const username = creating.username.trim().toLowerCase()
+    if (!username || !creating.name.trim()) return toast('Username and name are required.', 'error')
+    if (!USERNAME_PATTERN.test(username)) return toast('Username: 2–40 letters, digits, dots, dashes or underscores.', 'error')
     if (creating.password.length < 8) return toast('Password must be at least 8 characters.', 'error')
     setBusy(true)
     try {
-      await createUser(queryClient, { email: creating.email.trim(), name: creating.name.trim(), role: creating.role, password: creating.password })
+      await createUser(queryClient, { username, name: creating.name.trim(), role: creating.role, password: creating.password })
       toast('Account created.', 'success')
       setCreating(null)
     } catch (e) {
@@ -76,6 +83,20 @@ export function UsersPanel() {
       setEditing(null)
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Could not update the account.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function submitRemove() {
+    if (!removing) return
+    setBusy(true)
+    try {
+      await deleteUser(queryClient, removing.id)
+      toast(`${removing.name} removed — the account is signed out everywhere and "${removing.username}" is free again.`, 'success')
+      setRemoving(null)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not remove the account.', 'error')
     } finally {
       setBusy(false)
     }
@@ -106,18 +127,10 @@ export function UsersPanel() {
               <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">Who can sign in, and what each person may do.</p>
             </div>
           </div>
-          <Button variant="primary" className="min-h-[48px]" onClick={() => setCreating({ email: '', name: '', role: 'inspector', password: '' })}>
+          <Button variant="primary" className="min-h-[48px]" onClick={() => setCreating({ username: '', name: '', role: 'inspector', password: '' })}>
             <UserPlus className="h-4 w-4" /> Add user
           </Button>
         </div>
-
-        <p className="flex items-start gap-2 rounded-2xl bg-brand-50 px-3 py-2.5 text-sm text-brand-800 dark:bg-brand-500/10 dark:text-brand-200">
-          <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            Accounts are never deleted. Deactivating one signs that person out everywhere and blocks sign-in, while every inspection and audit
-            entry they made keeps their name. Role changes take effect on the person's next request.
-          </span>
-        </p>
 
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-400">
@@ -129,7 +142,7 @@ export function UsersPanel() {
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
                 <tr>
                   <th className="px-3 py-2.5 font-bold">Name</th>
-                  <th className="px-3 py-2.5 font-bold">Email</th>
+                  <th className="px-3 py-2.5 font-bold">Username</th>
                   <th className="px-3 py-2.5 font-bold">Role</th>
                   <th className="px-3 py-2.5 font-bold">Status</th>
                   <th className="px-3 py-2.5 text-right font-bold">Actions</th>
@@ -142,7 +155,7 @@ export function UsersPanel() {
                       {u.name}
                       {u.id === profile?.id && <span className="ml-2 text-xs font-normal text-slate-400">(you)</span>}
                     </td>
-                    <td className="px-3 py-2.5">{u.email}</td>
+                    <td className="px-3 py-2.5 font-mono text-[13px]">{u.username}</td>
                     <td className="px-3 py-2.5">
                       <Badge tone={ROLE_TONE[u.role]}>{u.role}</Badge>
                     </td>
@@ -171,6 +184,17 @@ export function UsersPanel() {
                             className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
                           >
                             {u.isActive ? <ShieldAlert className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
+                          </button>
+                        )}
+                        {u.id !== profile?.id && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => setRemoving(u)}
+                            aria-label={`Remove ${u.name}`}
+                            className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
+                          >
+                            <Trash2 className="h-4 w-4" />
                           </button>
                         )}
                       </div>
@@ -207,8 +231,16 @@ export function UsersPanel() {
             <Field label="Full name">
               <Input value={creating.name} onChange={(e) => setCreating({ ...creating, name: e.target.value })} placeholder="Mohamed Abdelrahman" />
             </Field>
-            <Field label="Email">
-              <Input type="email" value={creating.email} onChange={(e) => setCreating({ ...creating, email: e.target.value })} placeholder="name@factory.com" />
+            <Field label="Username" hint="What they type to sign in. Letters, digits, dots, dashes or underscores.">
+              <Input
+                type="text"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                value={creating.username}
+                onChange={(e) => setCreating({ ...creating, username: e.target.value })}
+                placeholder="m.abdelrahman"
+              />
             </Field>
             <Field label="Role" hint={ROLE_HELP[creating.role]}>
               <Select className="min-h-[48px]" value={creating.role} onChange={(e) => setCreating({ ...creating, role: e.target.value as Role })}>
@@ -271,6 +303,35 @@ export function UsersPanel() {
               </div>
             </Field>
           </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={removing !== null}
+        onClose={() => {
+          if (!busy) setRemoving(null)
+        }}
+        title={removing ? `Remove ${removing.name}?` : 'Remove user'}
+        icon={<Trash2 className="h-5 w-5" />}
+        size="sm"
+        footer={
+          <>
+            <Button className="min-h-[48px]" onClick={() => setRemoving(null)} disabled={busy}>
+              Keep the account
+            </Button>
+            <Button variant="danger" className="min-h-[48px]" onClick={() => void submitRemove()} disabled={busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Remove
+            </Button>
+          </>
+        }
+      >
+        {removing && (
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            <span className="font-semibold">{removing.name}</span> (<span className="font-mono">{removing.username}</span>) disappears from this
+            list, is signed out on every device and can no longer sign in. The username is free to give to someone else. Inspections and
+            audit entries they recorded keep their name. This cannot be undone.
+          </p>
         )}
       </Modal>
     </div>

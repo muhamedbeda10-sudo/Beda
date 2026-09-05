@@ -108,6 +108,13 @@ export interface InspectionSession {
   deletedAt?: ISODate | null
   /** How many samples this session holds. Computed by the API. */
   sampleCount?: number
+  /** Defects recorded across the session's samples. Computed by the API. */
+  defectCount?: number
+  /** Of those, the ones dispositioned Hold. Computed by the API. */
+  holdCount?: number
+  /** The same item of the same order already showed defects on another
+   *  machine or in an earlier session. Computed by the API. */
+  priorDefectsElsewhere?: boolean
   /** Optimistic-concurrency token (§9.4). */
   version: number
 }
@@ -417,7 +424,8 @@ export const ROLES: readonly Role[] = ['inspector', 'supervisor', 'admin']
 
 export interface UserProfile {
   id: ID
-  email: string
+  /** The login name: lower-case letters, digits, dot, dash, underscore. */
+  username: string
   name: string
   role: Role
   isActive: boolean

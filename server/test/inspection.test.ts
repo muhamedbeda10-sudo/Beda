@@ -26,6 +26,7 @@ let supervisor: Session
 let weldOrder: ProductionOrder
 let paintOrder: ProductionOrder
 let paintBeamOrder: ProductionOrder
+let weldOrderOnPaintLine: ProductionOrder
 
 async function uploadImage(s: Session, seed: number, extra: Record<string, string> = {}): Promise<ImageAsset> {
   const bytes = tinyJpeg(seed)
@@ -67,10 +68,10 @@ function weldSample(submissionId: string, overrides: Partial<SaveSampleRequest> 
 beforeAll(async () => {
   await app.start()
   await app.resetDatabase()
-  admin = await app.register('admin@factory.com', 'Admin')
-  inspector = await app.register('insp@factory.com', 'Inspector One')
-  await app.api('POST', '/api/users', { token: admin.token, body: { email: 'sup@factory.com', password: 'Password#1', name: 'Super', role: 'supervisor' } })
-  supervisor = await app.login('sup@factory.com')
+  admin = await app.register('admin', 'Admin')
+  inspector = await app.register('insp', 'Inspector One')
+  await app.api('POST', '/api/users', { token: admin.token, body: { username: 'sup', password: 'Password#1', name: 'Super', role: 'supervisor' } })
+  supervisor = await app.login('sup')
 
   await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '58', name: 'A. Welding Line', line: 'LM4', displayName: '58-A. Welding Line-LM4' } })
   await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '48', name: 'Painting Line', line: 'LM4', displayName: '48-Painting Line-LM4' } })
@@ -88,6 +89,8 @@ beforeAll(async () => {
         { lineKey: 'L-1', orderNumber: '20095-QC1-HYH', item: 'XL Light Beam', itemCode: '125185TA3', workCenterCode: '58', requiredQty: 2500, finishedQty: 2000, customer: 'Beta Storage', expectedGrade: 'S355JR', drawing: 'BS9059/58', drawingAlt: 'BS9059/58-ALT' },
         { lineKey: 'L-2', orderNumber: '20480-Ph1.4-SMA', item: 'Shuttle Beam', itemCode: 'LB406015-5TA3', workCenterCode: '48', requiredQty: 1350, finishedQty: 900, customer: 'Alpha Racking', expectedGrade: 'ST52-3', drawing: 'BS9059/48' },
         { lineKey: 'L-3', orderNumber: '20480-Ph1.4-SMA', item: 'XL Light Beam', itemCode: '125185TA3', workCenterCode: '48', requiredQty: 100, finishedQty: 0, customer: 'Alpha Racking', expectedGrade: 'S355JR', drawing: 'BS9059/48' },
+        // The weld order's beam also runs on the paint line: same order, same item, another machine.
+        { lineKey: 'L-4', orderNumber: '20095-QC1-HYH', item: 'XL Light Beam', itemCode: '125185TA3', workCenterCode: '48', requiredQty: 2500, finishedQty: 0, customer: 'Beta Storage', expectedGrade: 'S355JR', drawing: 'BS9059/48' },
       ],
     },
   })
@@ -96,6 +99,7 @@ beforeAll(async () => {
   weldOrder = orders.find((o) => o.lineKey === 'L-1')!
   paintOrder = orders.find((o) => o.lineKey === 'L-2')!
   paintBeamOrder = orders.find((o) => o.lineKey === 'L-3')!
+  weldOrderOnPaintLine = orders.find((o) => o.lineKey === 'L-4')!
 })
 afterAll(() => app.stop())
 
@@ -292,6 +296,64 @@ describe('the atomic sample save', () => {
     expect(history.body.samples).toHaveLength(2)
     const list = await app.api<SampleSummary[]>('GET', `/api/sessions/${sessionId}/samples`, { token: inspector.token })
     expect(list.body.map((s) => s.index)).toEqual([1, 2])
+  })
+
+  it('shows an inspector only their own sessions; a supervisor sees everyone’s', async () => {
+    // The supervisor opens a session of their own on the paint beam line.
+    const theirs = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: paintBeamOrder.id, startQty: 5 } })
+    expect(theirs.status).toBe(201)
+
+    const mine = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: inspector.token })
+    expect(mine.body.sessions.map((s) => s.id)).toEqual([sessionId])
+    expect(mine.body.samples.every((sm) => sm.sessionId === sessionId)).toBe(true)
+    expect(mine.body.holdCount).toBe(1)
+
+    const all = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: supervisor.token })
+    expect(all.body.sessions.map((s) => s.id).sort()).toEqual([sessionId, theirs.body.id].sort())
+
+    const myHistory = await app.api<HistoryResponse>('GET', '/api/sessions/history', { token: inspector.token })
+    expect(myHistory.body.sessions.map((s) => s.id)).toEqual([sessionId])
+    const myHold = await app.api<HistoryResponse>('GET', '/api/sessions/history?disposition=Hold', { token: inspector.token })
+    expect(myHold.body.sessions.map((s) => s.id)).toEqual([sessionId])
+    const allHistory = await app.api<HistoryResponse>('GET', '/api/sessions/history', { token: supervisor.token })
+    expect(allHistory.body.sessions.length).toBeGreaterThan(1)
+
+    expect((await app.api('DELETE', `/api/sessions/${theirs.body.id}`, { token: supervisor.token })).status).toBe(204)
+  })
+
+  it('flags the session by its defects and offers the last sample’s nominal to the next one', async () => {
+    // Sample 1 holds a defect on Hold, sample 2 is clean: the session is amber.
+    const board = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: inspector.token })
+    const flagged = board.body.sessions[0]
+    expect(flagged.defectCount).toBe(1)
+    expect(flagged.holdCount).toBe(1)
+    expect(flagged.priorDefectsElsewhere).toBe(false)
+
+    // The wizard hands back the rows of the latest sample, so the inspector's
+    // nominal for "Length" (not configured) is typed once.
+    const ctx = await app.api<WizardContext>('GET', `/api/sessions/${sessionId}/wizard`, { token: inspector.token })
+    expect(ctx.body.previousDimensions.map((d) => [d.name, d.nominal])).toEqual([
+      ['Width', 125],
+      ['Thickness', 2.5],
+      ['Length', 2500],
+    ])
+
+    // The same item of the same order on ANOTHER machine (line L-4) is grey:
+    // defects before. The same item on a different order (line L-3) is not.
+    const elsewhere = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrderOnPaintLine.id, startQty: 5 } })
+    expect(elsewhere.status).toBe(201)
+    expect(elsewhere.body.defectCount).toBe(0)
+    expect(elsewhere.body.priorDefectsElsewhere).toBe(true)
+    expect((await app.api('DELETE', `/api/sessions/${elsewhere.body.id}`, { token: supervisor.token })).status).toBe(204)
+    const other = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: paintBeamOrder.id, startQty: 5 } })
+    expect(other.body.priorDefectsElsewhere).toBe(false)
+    expect((await app.api('DELETE', `/api/sessions/${other.body.id}`, { token: supervisor.token })).status).toBe(204)
+
+    // The same order line, a later session on the same machine: grey too.
+    const later = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrder.id, startQty: 5 } })
+    expect(later.body.defectCount).toBe(0)
+    expect(later.body.priorDefectsElsewhere).toBe(true)
+    expect((await app.api('DELETE', `/api/sessions/${later.body.id}`, { token: supervisor.token })).status).toBe(204)
   })
 
   it('wrote create and acknowledge audit entries with the order context', async () => {

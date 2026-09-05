@@ -33,6 +33,7 @@ import {
 import type {
   HistoryResponse,
   OpenSessionsResponse,
+  PreviousDimension,
   SampleSummary,
   SaveSampleResponse,
   SessionWithOrder,
@@ -43,7 +44,7 @@ import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
 import { ConflictError, badRequest, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
 import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
 import { auditEvent } from '@qc/shared/audit'
 import { dropNulls } from '../lib/rows'
@@ -177,14 +178,27 @@ export function sessionsRoutes(ctx: AppContext): Router {
   const { db } = ctx
 
   /** The board: what is open now, the samples recorded so far, and the Hold badge. */
+  /**
+   * Whose sessions a request may list. An inspector sees only the sessions
+   * they opened; a supervisor or administrator sees everyone's. The rule is
+   * applied here, in SQL, so a list can never leak past the client's filters.
+   */
+  function visibleTo(user: AuthUser, firstParam: number): { clause: string; params: unknown[] } {
+    if (can(user.role, 'view-all-sessions')) return { clause: 'TRUE', params: [] }
+    return { clause: `s.inspector_id = $${firstParam}`, params: [user.id] }
+  }
+
   r.get('/open', async (req, res) => {
+    const user = requireUser(req)
     const q = parse(z.object({ limit: z.coerce.number().int().min(1).max(500).default(200) }), req.query)
+    const visible = visibleTo(user, 2)
+    const onlyVisible = visibleTo(user, 1)
     const sessions = await db.query<SessionRow & OrderSummaryRow>(
       `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
          FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
-        WHERE s.status = 'Open' AND s.deleted_at IS NULL
+        WHERE s.status = 'Open' AND s.deleted_at IS NULL AND ${visible.clause}
         ORDER BY s.started_at DESC LIMIT $1`,
-      [q.limit],
+      [q.limit, ...visible.params],
     )
     const ids = sessions.rows.map((s) => s.id)
     const [samples, hold] = await Promise.all([
@@ -194,7 +208,15 @@ export function sessionsRoutes(ctx: AppContext): Router {
             [ids],
           )
         : Promise.resolve({ rows: [] as SampleSummary[] }),
-      db.query<{ n: number }>(`SELECT count(*)::int AS n FROM defect_results WHERE disposition = 'Hold' AND deleted_at IS NULL`),
+      // Defects on Hold across the sessions this person may see, open or closed.
+      db.query<{ n: number }>(
+        `SELECT count(*)::int AS n
+           FROM defect_results d
+           JOIN inspection_samples sm ON sm.id = d.sample_id AND sm.deleted_at IS NULL
+           JOIN inspection_sessions s ON s.id = sm.session_id AND s.deleted_at IS NULL
+          WHERE d.disposition = 'Hold' AND d.deleted_at IS NULL AND ${onlyVisible.clause}`,
+        onlyVisible.params,
+      ),
     ])
     const body: OpenSessionsResponse = {
       sessions: sessions.rows.map(toSessionWithOrder),
@@ -213,23 +235,24 @@ export function sessionsRoutes(ctx: AppContext): Router {
       }),
       req.query,
     )
+    const visible = visibleTo(requireUser(req), 2)
     const { rows } = q.disposition
       ? await db.query<SessionRow & OrderSummaryRow>(
           `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
              FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
-            WHERE s.deleted_at IS NULL AND EXISTS (
+            WHERE s.deleted_at IS NULL AND ${visible.clause} AND EXISTS (
                     SELECT 1 FROM inspection_samples sm
                     JOIN defect_results d ON d.sample_id = sm.id AND d.deleted_at IS NULL
-                   WHERE sm.session_id = s.id AND sm.deleted_at IS NULL AND d.disposition = $2)
+                   WHERE sm.session_id = s.id AND sm.deleted_at IS NULL AND d.disposition = $${visible.params.length + 2})
             ORDER BY s.started_at DESC LIMIT $1`,
-          [q.limit, q.disposition],
+          [q.limit, ...visible.params, q.disposition],
         )
       : await db.query<SessionRow & OrderSummaryRow>(
           `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
              FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
-            WHERE s.deleted_at IS NULL
+            WHERE s.deleted_at IS NULL AND ${visible.clause}
             ORDER BY s.started_at DESC LIMIT $1`,
-          [q.limit],
+          [q.limit, ...visible.params],
         )
     const body: HistoryResponse = { sessions: rows.map(toSessionWithOrder) }
     res.json(body)
@@ -278,7 +301,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const [order] = await fetchOrdersByIds(db, [session.orderId])
     if (!order) throw notFound('The session’s order')
     const wc = session.workCenterCode
-    const [machine, dimOrder, refImages, wcDefects, grades, consumables, samples] = await Promise.all([
+    const [machine, dimOrder, refImages, wcDefects, grades, consumables, samples, previousDims] = await Promise.all([
       db.query<Machine>(
         `SELECT id, code, name, line, display_name AS "displayName", machine_number AS "machineNumber", factory
            FROM machines WHERE lower(code) = lower($1) AND deleted_at IS NULL LIMIT 1`,
@@ -317,6 +340,26 @@ export function sessionsRoutes(ctx: AppContext): Router {
         `SELECT ${SAMPLE_SUMMARY_SELECT} FROM inspection_samples sm WHERE sm.session_id = $1 AND sm.deleted_at IS NULL ORDER BY sm.index`,
         [id],
       ),
+      // The nominal an inspector typed on the last sample of this item on
+      // this machine — this session's own latest sample first — is offered
+      // again on the next one, so it is typed once.
+      db.query<PreviousDimension>(
+        `SELECT d.name, d.nominal, d.tol_plus AS "tolPlus", d.tol_minus AS "tolMinus", d.unit
+           FROM dimension_results d
+          WHERE d.deleted_at IS NULL
+            AND d.sample_id = (
+              SELECT sm.id
+                FROM inspection_samples sm
+                JOIN inspection_sessions s ON s.id = sm.session_id
+                JOIN production_orders o ON o.id = sm.order_id
+               WHERE sm.deleted_at IS NULL AND s.deleted_at IS NULL
+                 AND lower(o.item_code) = lower($2) AND btrim(o.item_code) <> ''
+                 AND lower(s.work_center_code) = lower($3)
+               ORDER BY (sm.session_id = $1) DESC, sm.created_at DESC
+               LIMIT 1)
+          ORDER BY d.sequence, d.name`,
+        [id, order.itemCode, wc],
+      ),
     ])
     const { order: _summary, ...plain } = session
     const body: WizardContext = {
@@ -329,6 +372,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       gradeMappings: grades.rows,
       ptConsumables: consumables.rows,
       samples: samples.rows,
+      previousDimensions: previousDims.rows,
     }
     res.json(body)
   })

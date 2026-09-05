@@ -11,8 +11,8 @@ let inspector: Session
 beforeAll(async () => {
   await app.start()
   await app.resetDatabase()
-  admin = await app.register('admin@factory.com', 'Admin')
-  inspector = await app.register('insp@factory.com', 'Inspector')
+  admin = await app.register('admin', 'Admin')
+  inspector = await app.register('insp', 'Inspector')
 })
 afterAll(() => app.stop())
 

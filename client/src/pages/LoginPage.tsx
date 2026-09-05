@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react'
-import { LogIn, UserPlus, Loader2, Mail, Lock, User as UserIcon } from 'lucide-react'
+import { LogIn, UserPlus, Loader2, AtSign, Lock, User as UserIcon } from 'lucide-react'
 import { Brand } from '@/components/brand/Brand'
 import { useAuth } from '@/store/AuthContext'
 import { Button, Input, Field } from '@/components/ui'
 import { useApp } from '@/store/AppContext'
 
 const MIN_PASSWORD_LENGTH = 8
+/** Mirrors the API's rule: 2–40 letters, digits, dots, dashes or underscores. */
+const USERNAME_PATTERN = '[A-Za-z0-9][A-Za-z0-9._-]{1,39}'
 
 export function LoginPage() {
   const { signIn, signUp, error, selfRegistrationOpen } = useAuth()
   const { theme } = useApp()
   const [mode, setMode] = useState<'in' | 'up'>('in')
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
@@ -25,8 +27,9 @@ export function LoginPage() {
     e.preventDefault()
     setBusy(true)
     try {
-      if (mode === 'in') await signIn(email.trim(), password)
-      else await signUp(email.trim(), password, name.trim() || email.split('@')[0])
+      const login = username.trim().toLowerCase()
+      if (mode === 'in') await signIn(login, password)
+      else await signUp(login, password, name.trim() || login)
     } catch {
       /* error surfaced via context */
     } finally {
@@ -70,16 +73,21 @@ export function LoginPage() {
                   </div>
                 </Field>
               )}
-              <Field label="Email">
+              <Field label="Username" hint={mode === 'up' ? 'Letters, digits, dots, dashes or underscores.' : undefined}>
                 <div className="relative">
-                  <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <AtSign className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <Input
-                    type="email"
-                    autoComplete="email"
+                    type="text"
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@factory.com"
+                    pattern={USERNAME_PATTERN}
+                    title="2–40 letters, digits, dots, dashes or underscores"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="m.abdelrahman"
                     className="pl-9"
                   />
                 </div>

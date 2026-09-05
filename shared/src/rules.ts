@@ -354,12 +354,17 @@ export function normaliseCode(code: string | null | undefined): string {
  * A machine-specific entry therefore replaces the general entry of the same
  * dimension name and keeps its own sequence; general entries the machine does
  * not override are still offered.
+ *
+ * The configuration rarely carries a nominal — the inspector types it on the
+ * first sample. A configured row without one takes the nominal the previous
+ * sample saved under the same name, so it is typed once per item and machine
+ * rather than once per sample. Tolerances stay the configured ones.
  */
 export function resolveDimensions(input: {
   itemCode: string
   workCenterCode: string
   order: DimensionOrderRule[]
-  previous: Array<{ name: string; nominal: number; tolPlus: number; tolMinus: number; unit: string }>
+  previous: Array<{ name: string; nominal: number | null; tolPlus: number | null; tolMinus: number | null; unit: string }>
   /** Optional filter — paint work centers only offer their configured dims. */
   allowedNames?: string[]
 }): ResolvedDimension[] {
@@ -381,11 +386,14 @@ export function resolveDimensions(input: {
   const general = forItem.filter((x) => normaliseCode(x.workCenterCode) === '')
   const bySequence = (a: DimensionOrderRule, b: DimensionOrderRule) => a.sequence - b.sequence
 
+  const previousByName = new Map(previous.map((p) => [p.name.trim().toLowerCase(), p]))
+
   for (const o of [...specific.sort(bySequence), ...general.sort(bySequence)]) {
+    const remembered = previousByName.get(o.dimensionName.trim().toLowerCase())
     add({
       name: o.dimensionName,
       sequence: o.sequence,
-      nominal: o.nominal ?? null,
+      nominal: o.nominal ?? remembered?.nominal ?? null,
       tolPlus: o.tolPlus,
       tolMinus: o.tolMinus,
       unit: o.unit,
@@ -398,8 +406,8 @@ export function resolveDimensions(input: {
       name: p.name,
       sequence: next++,
       nominal: p.nominal,
-      tolPlus: p.tolPlus,
-      tolMinus: p.tolMinus,
+      tolPlus: p.tolPlus ?? 0,
+      tolMinus: p.tolMinus ?? 0,
       unit: p.unit,
       source: 'carry-forward',
     })
@@ -410,12 +418,33 @@ export function resolveDimensions(input: {
   return Array.from(out.values()).sort((a, b) => a.sequence - b.sequence)
 }
 
+// ---- Session colouring -----------------------------------------------------
+
+/**
+ * How a session is coloured in the lists. In order of urgency:
+ *   hold   — at least one defect is on Hold, waiting for a decision (amber)
+ *   defect — the session recorded defects (red)
+ *   prior  — no defects here, but the same item of the same order showed
+ *            defects on another machine or in an earlier session (grey)
+ *   null   — nothing to flag
+ */
+export type SessionTone = 'hold' | 'defect' | 'prior' | null
+
+export function sessionTone(s: { defectCount?: number; holdCount?: number; priorDefectsElsewhere?: boolean }): SessionTone {
+  if ((s.holdCount ?? 0) > 0) return 'hold'
+  if ((s.defectCount ?? 0) > 0) return 'defect'
+  if (s.priorDefectsElsewhere) return 'prior'
+  return null
+}
+
 // ---- §14 q2 Permissions ----------------------------------------------------
 
 import type { Role } from './types'
 
 export type Capability =
   | 'record-inspection'
+  /** See every inspector's sessions on the board and in History, not only one's own. */
+  | 'view-all-sessions'
   | 'edit-open-session'
   | 'edit-closed-session'
   | 'delete-defect'
@@ -428,6 +457,7 @@ const CAPABILITIES: Record<Role, Capability[]> = {
   inspector: ['record-inspection', 'edit-open-session'],
   supervisor: [
     'record-inspection',
+    'view-all-sessions',
     'edit-open-session',
     'edit-closed-session',
     'delete-defect',
@@ -436,6 +466,7 @@ const CAPABILITIES: Record<Role, Capability[]> = {
   ],
   admin: [
     'record-inspection',
+    'view-all-sessions',
     'edit-open-session',
     'edit-closed-session',
     'delete-defect',

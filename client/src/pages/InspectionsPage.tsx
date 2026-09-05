@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -15,15 +15,16 @@ import {
   CheckCircle2,
   ClipboardCheck,
 } from 'lucide-react'
-import { Badge, Button, Card, EmptyState, Field, Input, Modal } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
+import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
 import { InstallBanner } from '@/components/layout/InstallBanner'
 import { useMaster, useOpenBoard } from '@/services/queries'
 import { closeSession, deleteSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
-import { formatDate } from '@/lib/utils'
+import { cn, formatDate } from '@/lib/utils'
 import type { SampleSummary, SessionWithOrder } from '@qc/shared/api'
 import type { Machine } from '@qc/shared/types'
 
@@ -45,6 +46,60 @@ export function InspectionsPage() {
 
   const [newOpen, setNewOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+
+  // ---- Who sees what (§14) ------------------------------------------------
+  // The API already hands an inspector only their own sessions. A supervisor
+  // or administrator gets everyone's, and these filters to find their way.
+  const seesAll = can(role, 'view-all-sessions')
+  const [term, setTerm] = useState('')
+  const [inspectorFilter, setInspectorFilter] = useState('all')
+  const [factoryFilter, setFactoryFilter] = useState('all')
+  const [machineFilter, setMachineFilter] = useState('all')
+
+  const machineOf = useMemo(() => new Map(machines.map((m) => [m.code, m])), [machines])
+  const machineLabel = useCallback(
+    (code: string) => {
+      const m = machineOf.get(code)
+      return m?.displayName || m?.name || `Machine ${code}`
+    },
+    [machineOf],
+  )
+
+  const inspectorOptions = useMemo(() => {
+    const byId = new Map<string, string>()
+    for (const s of openSessions) byId.set(s.inspectorId, s.inspectorName)
+    return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [openSessions])
+  const factoryOptions = useMemo(() => {
+    const names = new Set<string>()
+    for (const s of openSessions) {
+      const f = machineOf.get(s.workCenterCode)?.factory?.trim()
+      if (f) names.add(f)
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b))
+  }, [openSessions, machineOf])
+  const machineOptions = useMemo(() => {
+    const codes = Array.from(new Set(openSessions.map((s) => s.workCenterCode)))
+    return codes.sort((a, b) => machineLabel(a).localeCompare(machineLabel(b), undefined, { numeric: true }))
+  }, [openSessions, machineLabel])
+
+  const filtered = useMemo(() => {
+    if (!seesAll) return openSessions
+    const t = term.trim().toLowerCase()
+    return openSessions.filter((s) => {
+      if (inspectorFilter !== 'all' && s.inspectorId !== inspectorFilter) return false
+      if (factoryFilter !== 'all' && (machineOf.get(s.workCenterCode)?.factory?.trim() ?? '') !== factoryFilter) return false
+      if (machineFilter !== 'all' && s.workCenterCode !== machineFilter) return false
+      if (!t) return true
+      return (
+        (s.order?.orderNumber ?? '').toLowerCase().includes(t) ||
+        (s.order?.item ?? '').toLowerCase().includes(t) ||
+        (s.order?.itemCode ?? '').toLowerCase().includes(t) ||
+        (s.order?.customer ?? '').toLowerCase().includes(t)
+      )
+    })
+  }, [seesAll, openSessions, term, inspectorFilter, factoryFilter, machineFilter, machineOf])
+  const filtering = seesAll && (term.trim() !== '' || inspectorFilter !== 'all' || factoryFilter !== 'all' || machineFilter !== 'all')
   const [closing, setClosing] = useState<SessionWithOrder | null>(null)
   const [deleting, setDeleting] = useState<SessionWithOrder | null>(null)
 
@@ -60,7 +115,7 @@ export function InspectionsPage() {
 
   /** Group by work center / line, the way the inspector thinks about the floor. */
   const groups = useMemo(() => {
-    const sorted = [...openSessions].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
+    const sorted = [...filtered].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
     const byWc = new Map<string, { machine?: Machine; label: string; sessions: SessionWithOrder[]; sampleCount: number }>()
     for (const s of sorted) {
       const machine = machines.find((m) => m.code === s.workCenterCode)
@@ -71,7 +126,7 @@ export function InspectionsPage() {
       byWc.set(s.workCenterCode, g)
     }
     return Array.from(byWc.values()).sort((a, b) => a.label.localeCompare(b.label))
-  }, [openSessions, machines, samplesBySession])
+  }, [filtered, machines, samplesBySession])
 
   return (
     <div className="space-y-5">
@@ -103,20 +158,82 @@ export function InspectionsPage() {
 
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
-        <Badge tone="blue">{openSessions.length}</Badge>
+        <Badge tone="blue">{filtering ? `${filtered.length} of ${openSessions.length}` : openSessions.length}</Badge>
       </div>
+
+      {seesAll && openSessions.length > 0 && (
+        <Card className="space-y-3 p-4">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder="Order number, item or customer…"
+              className="min-h-[48px] pl-9"
+              aria-label="Search open sessions"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Field label="Inspector">
+              <Select value={inspectorFilter} onChange={(e) => setInspectorFilter(e.target.value)} className="min-h-[48px]">
+                <option value="all">All inspectors</option>
+                {inspectorOptions.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Factory">
+              <Select value={factoryFilter} onChange={(e) => setFactoryFilter(e.target.value)} className="min-h-[48px]">
+                <option value="all">All factories</option>
+                {factoryOptions.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <div className="col-span-2 sm:col-span-1">
+              <Field label="Machine">
+                <Select value={machineFilter} onChange={(e) => setMachineFilter(e.target.value)} className="min-h-[48px]">
+                  <option value="all">All machines</option>
+                  {machineOptions.map((code) => (
+                    <option key={code} value={code}>
+                      {machineLabel(code)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {isLoading ? (
         <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
       ) : groups.length === 0 ? (
         <EmptyState
           icon={<ClipboardCheck className="h-10 w-10" />}
-          title="Nothing is open right now"
-          hint="Start a new inspection to begin recording samples."
+          title={filtering ? 'No open session matches' : 'Nothing is open right now'}
+          hint={filtering ? 'Clear a filter to see the rest.' : 'Start a new inspection to begin recording samples.'}
           action={
-            <Button variant="primary" onClick={() => setNewOpen(true)}>
-              <Plus className="h-4 w-4" /> New Inspection
-            </Button>
+            filtering ? (
+              <Button
+                onClick={() => {
+                  setTerm('')
+                  setInspectorFilter('all')
+                  setFactoryFilter('all')
+                  setMachineFilter('all')
+                }}
+              >
+                Clear filters
+              </Button>
+            ) : (
+              <Button variant="primary" onClick={() => setNewOpen(true)}>
+                <Plus className="h-4 w-4" /> New Inspection
+              </Button>
+            )
           }
         />
       ) : (
@@ -143,10 +260,11 @@ export function InspectionsPage() {
                     const order = s.order
                     const sessionSamples = samplesBySession.get(s.id) ?? []
                     return (
-                      <div key={s.id} className="px-4 py-3.5">
+                      <div key={s.id} className={cn('px-4 py-3.5', sessionToneClass(s, 'block'))}>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-bold">{order?.orderNumber ?? '—'}</span>
                           <Badge tone="green">OPEN</Badge>
+                          <SessionToneBadge session={s} />
                           <Badge tone="neutral">
                             {sessionSamples.length} sample{sessionSamples.length === 1 ? '' : 's'}
                           </Badge>

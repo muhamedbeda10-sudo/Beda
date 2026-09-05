@@ -11,29 +11,30 @@ import { REFRESH_COOKIE, SESSION_MARKER_COOKIE, hashRefreshToken, newRefreshToke
 import { authenticate, requireUser } from '../auth/middleware'
 import { seedDemoDataIfEmpty } from '../db/seed'
 
-const emailSchema = z
+/** The login name: letters, digits, dot, dash, underscore; case does not matter. */
+export const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{1,39}$/
+export const usernameSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .email('Enter a valid email address.')
-  .max(254)
+  .regex(USERNAME_PATTERN, 'Username: 2–40 letters, digits, dots, dashes or underscores, starting with a letter or digit.')
 
 const passwordSchema = z
   .string()
   .min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
   .max(200)
 
-const loginSchema = z.object({ email: emailSchema, password: z.string().min(1).max(200) })
+const loginSchema = z.object({ username: usernameSchema, password: z.string().min(1).max(200) })
 const registerSchema = z.object({
-  email: emailSchema,
+  username: usernameSchema,
   password: passwordSchema,
   name: z.string().trim().min(1, 'Enter your name.').max(120),
 })
 
-export const USER_COLUMNS = `id, email, name, role, is_active AS "isActive", created_at AS "createdAt", last_login_at AS "lastLoginAt"`
+export const USER_COLUMNS = `id, username, name, role, is_active AS "isActive", created_at AS "createdAt", last_login_at AS "lastLoginAt"`
 
 async function countUsers(q: Queryable): Promise<number> {
-  const { rows } = await q.query<{ n: number }>('SELECT count(*)::int AS n FROM users')
+  const { rows } = await q.query<{ n: number }>('SELECT count(*)::int AS n FROM users WHERE deleted_at IS NULL')
   return rows[0].n
 }
 
@@ -107,12 +108,12 @@ export function authRoutes(ctx: AppContext): Router {
       const role: Role = first ? 'admin' : 'inspector'
       try {
         const { rows } = await tx.query<UserProfile>(
-          `INSERT INTO users (email, name, role, password_hash) VALUES ($1, $2, $3, $4) RETURNING ${USER_COLUMNS}`,
-          [body.email, body.name, role, passwordHash],
+          `INSERT INTO users (username, name, role, password_hash) VALUES ($1, $2, $3, $4) RETURNING ${USER_COLUMNS}`,
+          [body.username, body.name, role, passwordHash],
         )
         return rows[0]
       } catch (e) {
-        if (pgCode(e) === PG.UNIQUE_VIOLATION) throw duplicate('This email is already registered.')
+        if (pgCode(e) === PG.UNIQUE_VIOLATION) throw duplicate('This username is already taken.')
         throw e
       }
     })
@@ -126,21 +127,21 @@ export function authRoutes(ctx: AppContext): Router {
 
   r.post('/login', async (req, res) => {
     const body = parse(loginSchema, req.body)
-    const limiterKey = `${req.ip ?? 'unknown'}|${body.email}`
+    const limiterKey = `${req.ip ?? 'unknown'}|${body.username}`
     const wait = ctx.loginLimiter.hit(limiterKey)
     if (wait > 0) {
       throw new HttpError(429, 'rate_limited', `Too many attempts. Try again in ${wait} seconds.`)
     }
 
     const { rows } = await db.query<UserProfile & { passwordHash: string }>(
-      `SELECT ${USER_COLUMNS}, password_hash AS "passwordHash" FROM users WHERE email = $1`,
-      [body.email],
+      `SELECT ${USER_COLUMNS}, password_hash AS "passwordHash" FROM users WHERE username = $1 AND deleted_at IS NULL`,
+      [body.username],
     )
     const row = rows[0]
     // Verify against a real hash even when the user does not exist, so timing
-    // does not reveal which emails are registered.
+    // does not reveal which usernames exist.
     const ok = row ? await verifyPassword(body.password, row.passwordHash) : await verifyPassword(body.password, DUMMY_HASH).then(() => false)
-    if (!ok) throw unauthenticated('Incorrect email or password.')
+    if (!ok) throw unauthenticated('Incorrect username or password.')
     if (!row.isActive) throw unauthenticated('This account has been deactivated. Contact your administrator.')
 
     ctx.loginLimiter.reset(limiterKey)
@@ -158,10 +159,11 @@ export function authRoutes(ctx: AppContext): Router {
     const expiresAt = new Date(Date.now() + refreshTtlMs)
     const result = await withTransaction(db, async (tx) => {
       const { rows } = await tx.query<{ sid: string } & UserProfile>(
-        `SELECT s.id AS sid, u.id, u.email, u.name, u.role, u.is_active AS "isActive",
+        `SELECT s.id AS sid, u.id, u.username, u.name, u.role, u.is_active AS "isActive",
                 u.created_at AS "createdAt", u.last_login_at AS "lastLoginAt"
            FROM auth_sessions s JOIN users u ON u.id = s.user_id
           WHERE s.refresh_token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
+            AND u.deleted_at IS NULL
           FOR UPDATE OF s`,
         [hashRefreshToken(presented)],
       )
@@ -201,7 +203,7 @@ export function authRoutes(ctx: AppContext): Router {
 
   r.get('/me', authenticate(db, config.JWT_SECRET), async (req, res) => {
     const user = requireUser(req)
-    const { rows } = await db.query<UserProfile>(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [user.id])
+    const { rows } = await db.query<UserProfile>(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1 AND deleted_at IS NULL`, [user.id])
     if (!rows[0]) throw unauthenticated()
     res.json(rows[0])
   })

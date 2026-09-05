@@ -62,12 +62,12 @@ export interface ApiErrorBody {
 // ---- Auth ------------------------------------------------------------------
 
 export interface LoginRequest {
-  email: string
+  username: string
   password: string
 }
 
 export interface RegisterRequest {
-  email: string
+  username: string
   password: string
   name: string
 }
@@ -89,7 +89,7 @@ export interface AuthConfigResponse {
 // ---- Users (admin) ---------------------------------------------------------
 
 export interface CreateUserRequest {
-  email: string
+  username: string
   password: string
   name: string
   role: Role
@@ -279,6 +279,19 @@ export interface WizardContext {
   ptConsumables: PTConsumableProduct[]
   /** Samples already saved in this session, oldest first. */
   samples: SampleSummary[]
+  /** The dimension rows of the most recent sample of this item on this
+   *  machine — this session's own latest sample when it has one — so the
+   *  nominal the inspector typed once is offered again. */
+  previousDimensions: PreviousDimension[]
+}
+
+/** A dimension row as it was saved on an earlier sample. */
+export interface PreviousDimension {
+  name: string
+  nominal: number | null
+  tolPlus: number | null
+  tolMinus: number | null
+  unit: string
 }
 
 /** The order's inspection history, shown before a session is started. */
