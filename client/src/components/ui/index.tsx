@@ -209,12 +209,15 @@ export function Stat({
   sub,
   icon,
   tone = 'blue',
+  compact = false,
 }: {
   label: string
   value: ReactNode
   sub?: ReactNode
   icon?: ReactNode
   tone?: BadgeTone
+  /** Three across on a phone: label and number only. */
+  compact?: boolean
 }) {
   const bg: Record<BadgeTone, string> = {
     neutral: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
@@ -225,14 +228,14 @@ export function Stat({
     violet: 'bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300',
   }
   return (
-    <Card className="p-4">
+    <Card className={compact ? 'p-3 sm:p-4' : 'p-4'}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-          <p className="mt-1 text-2xl font-bold tabular-nums">{value}</p>
-          {sub && <p className="mt-0.5 text-xs text-slate-400">{sub}</p>}
+          <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400 sm:text-xs">{label}</p>
+          <p className={cn('mt-1 font-bold tabular-nums', compact ? 'text-xl sm:text-2xl' : 'text-2xl')}>{value}</p>
+          {sub && <p className={cn('mt-0.5 text-xs text-slate-400', compact && 'hidden sm:block')}>{sub}</p>}
         </div>
-        {icon && <div className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl', bg[tone])}>{icon}</div>}
+        {icon && <div className={cn('shrink-0 place-items-center rounded-xl', bg[tone], compact ? 'hidden h-10 w-10 sm:grid' : 'grid h-10 w-10')}>{icon}</div>}
       </div>
     </Card>
   )

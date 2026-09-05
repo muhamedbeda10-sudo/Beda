@@ -220,26 +220,18 @@ export function HistoryPage() {
         <h1 className="text-2xl font-extrabold tracking-tight">History</h1>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <Stat
+          compact
           label="Sessions"
           value={totals.sessions}
           sub={dispositionFilter ? `Dispositioned ${dispositionFilter}` : `Of the last ${SESSION_PAGE}`}
           icon={<HistoryIcon className="h-5 w-5" />}
         />
-        <Stat label="Open" value={totals.open} tone={totals.open > 0 ? 'green' : 'neutral'} icon={<ClipboardList className="h-5 w-5" />} />
-        <Stat label="Closed" value={totals.closed} tone="neutral" icon={<Lock className="h-5 w-5" />} />
+        <Stat compact label="Open" value={totals.open} tone={totals.open > 0 ? 'green' : 'neutral'} icon={<ClipboardList className="h-5 w-5" />} />
+        <Stat compact label="Closed" value={totals.closed} tone="neutral" icon={<Lock className="h-5 w-5" />} />
       </div>
 
-      {!dispositionFilter && (
-        <p className="flex items-start gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-          <span>
-            Showing the {SESSION_PAGE} most recent sessions, newest first. The search and filters below narrow this list — older sessions are not
-            loaded, so narrow the machine and date range to the period you need.
-          </span>
-        </p>
-      )}
 
       {dispositionFilter && (
         <Card className="flex flex-wrap items-center gap-3 border-l-4 border-l-amber-400 p-4">
@@ -264,22 +256,12 @@ export function HistoryPage() {
             aria-label="Search history"
           />
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Field label="Status">
             <Select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} className="min-h-[48px]">
               <option value="All">All</option>
               <option value="Open">Open</option>
               <option value="Closed">Closed</option>
-            </Select>
-          </Field>
-          <Field label="Machine">
-            <Select value={workCenter} onChange={(e) => setWorkCenter(e.target.value)} className="min-h-[48px]">
-              <option value="all">All machines</option>
-              {workCenterOptions.map((code) => (
-                <option key={code} value={code}>
-                  {workCenterName(code)}
-                </option>
-              ))}
             </Select>
           </Field>
           <Field label="Date range">
@@ -291,6 +273,18 @@ export function HistoryPage() {
               ))}
             </Select>
           </Field>
+          <div className="col-span-2 sm:col-span-1">
+          <Field label="Machine">
+            <Select value={workCenter} onChange={(e) => setWorkCenter(e.target.value)} className="min-h-[48px]">
+              <option value="all">All machines</option>
+              {workCenterOptions.map((code) => (
+                <option key={code} value={code}>
+                  {workCenterName(code)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          </div>
         </div>
       </Card>
 
@@ -317,14 +311,15 @@ export function HistoryPage() {
                 <p className="mt-0.5 text-xs text-slate-400">
                   {workCenterName(s.workCenterCode)} · {s.inspectorName} · {formatDate(s.startedAt)}
                 </p>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Badge tone="neutral">
-                    {s.sampleCount ?? 0} sample{s.sampleCount === 1 ? '' : 's'}
-                  </Badge>
-                  {s.startQtyConfirmed && <Badge tone="neutral">Start {s.startQtyConfirmed.qty}</Badge>}
-                  {s.finalQty !== undefined && <Badge tone="blue">Final {s.finalQty}</Badge>}
-                  <span className="ml-auto text-xs font-semibold text-slate-400">Open for samples</span>
-                  <ChevronRight className="h-4 w-4 text-slate-400" />
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="flex min-w-0 flex-wrap items-center gap-2">
+                    <Badge tone="neutral">
+                      {s.sampleCount ?? 0} sample{s.sampleCount === 1 ? '' : 's'}
+                    </Badge>
+                    {s.startQtyConfirmed && <Badge tone="neutral">Start {s.startQtyConfirmed.qty}</Badge>}
+                    {s.finalQty !== undefined && <Badge tone="blue">Final {s.finalQty}</Badge>}
+                  </span>
+                  <ChevronRight className="ml-auto h-5 w-5 shrink-0 text-slate-400" />
                 </div>
               </button>
             ))}

@@ -222,6 +222,30 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
           </div>
         </div>
+        {/* A phone has no room beside the brand: the tabs get their own row, centred. */}
+        <nav className="flex justify-center px-3 pb-2 md:hidden" aria-label="Main">
+          <div className="flex w-full max-w-sm items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 dark:bg-slate-800/70 dark:ring-slate-700/70">
+            {NAV.map((n) => {
+              const active = isActive(n)
+              return (
+                <NavLink
+                  key={n.to}
+                  to={n.to}
+                  end={n.end}
+                  className={cn(
+                    'flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-xl px-3 text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
+                    active
+                      ? 'bg-white text-brand-800 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:text-white dark:ring-slate-700'
+                      : 'text-slate-600 dark:text-slate-300',
+                  )}
+                >
+                  <n.icon className={cn('h-4 w-4', active && 'text-accent-500')} />
+                  {n.label}
+                </NavLink>
+              )
+            })}
+          </div>
+        </nav>
       </header>
 
       {menuOpen && (
