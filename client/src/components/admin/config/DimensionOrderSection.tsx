@@ -36,15 +36,6 @@ export function DimensionOrderSection() {
   return (
     <MasterDataPanel<'item-dimension-order', DimOrderDraft>
       title="Dimension order"
-      description="Per-item dimensions, keyed by item code, in the order they are measured."
-      hint={
-        <>
-          A row with <strong>Every machine</strong> applies wherever the item is produced. A row that names a
-          machine applies only there and replaces the general row of the same dimension. <strong>Sequence</strong>{' '}
-          controls the order the inspector measures in — put the measurement taken first at 1. These entries also
-          pre-fill nominal and tolerance.
-        </>
-      }
       groupBy={groupBy}
       groupLabel={(g) => `Item ${g}`}
       icon={<ListOrdered className="h-5 w-5" />}

@@ -5,7 +5,7 @@
 
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Info, Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Modal, Select } from '@/components/ui'
 import { useMaster } from '@/services/queries'
 import { createMaster, deleteMaster, updateMaster } from '@/services/mutations'
@@ -24,8 +24,6 @@ export interface Column<T> {
 
 interface PanelProps<K extends MasterKind, D> {
   title: string
-  description: string
-  hint?: ReactNode
   icon: ReactNode
   /** Which master-data table the API manages for this panel. */
   kind: K
@@ -175,7 +173,6 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
             </span>
             <div className="min-w-0">
               <h2 className="text-lg font-bold">{props.title}</h2>
-              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{props.description}</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -190,12 +187,6 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
           </div>
         </div>
 
-        {props.hint && (
-          <p className="flex items-start gap-2 rounded-2xl bg-brand-50 px-3 py-2.5 text-sm text-brand-800 dark:bg-brand-500/10 dark:text-brand-200">
-            <Info className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>{props.hint}</span>
-          </p>
-        )}
 
         {props.loading ? (
           <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-400">

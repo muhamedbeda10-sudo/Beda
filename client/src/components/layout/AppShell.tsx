@@ -13,8 +13,6 @@ import {
   Info,
   AlertTriangle,
   LogOut,
-  Package2,
-  FileText,
   SlidersHorizontal,
   UploadCloud,
   Users,
@@ -41,8 +39,6 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/history', label: 'History', icon: History },
-  { to: '/coils', label: 'Coils', icon: Package2 },
-  { to: '/pdi', label: 'PDI', icon: FileText },
 ]
 
 /** Administration, behind the gear. Each entry is shown only to a role that may use it. */

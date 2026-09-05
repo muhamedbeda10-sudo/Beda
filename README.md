@@ -150,7 +150,7 @@ API on start (or by `npm run db:migrate`). Migrations are forward-only; add a
 new numbered file rather than editing an applied one.
 
 Main tables: `users`, `auth_sessions`, `machines`, `production_orders`,
-`coils`, `item_dimension_order`, `item_dimension_master`,
+`coils`, `item_dimension_order`,
 `item_reference_images`, `work_center_defects`, `grade_mappings`,
 `pt_consumables`, `images`, `inspection_sessions`, `inspection_samples`,
 `dimension_results`, `defect_results`, `sample_coils`, `paint_samples`,

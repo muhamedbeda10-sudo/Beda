@@ -115,11 +115,6 @@ export async function seedDemoDataIfEmpty(db: Db): Promise<boolean> {
         [it.code, it.item, wc, name, seq, nominal, plus, minus],
       )
     }
-    await tx.query(
-      `INSERT INTO item_dimension_master (item_code, item, dimension_name, nominal, tol_plus, tol_minus, unit)
-       VALUES ($1, 'XL Light Beam', 'Squareness', 90, 0.5, 0.5, 'deg')`,
-      [items[0].code],
-    )
     for (const [wc, name] of workCenterDefects) {
       await tx.query(`INSERT INTO work_center_defects (work_center_code, defect_name) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [wc, name])
     }

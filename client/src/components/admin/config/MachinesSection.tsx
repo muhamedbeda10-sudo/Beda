@@ -33,8 +33,6 @@ export function MachinesSection() {
   return (
     <MasterDataPanel<'machines', MachineDraft>
       title="Machines"
-      description="The machine register: every machine an order line can be produced on, by its code."
-      hint="The code is what orders, defects and machine-specific dimensions refer to, so it must match the ERP exactly. Its leading digits are the work-centre number that decides which wizard steps appear — 7, 11 and 48 get the paint sample step, 22 and 58 get the weld inspection step."
       groupBy={groupBy}
       groupLabel={groupLabel}
       icon={<Factory className="h-5 w-5" />}

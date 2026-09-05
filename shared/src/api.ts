@@ -20,7 +20,6 @@ import type {
   ImageAsset,
   InspectionSample,
   InspectionSession,
-  ItemDimensionMaster,
   ItemDimensionOrder,
   ItemReferenceImage,
   Machine,
@@ -109,7 +108,6 @@ export interface UpdateUserRequest {
 export const MASTER_KINDS = [
   'machines',
   'item-dimension-order',
-  'item-dimension-master',
   'item-reference-images',
   'work-center-defects',
   'grade-mappings',
@@ -121,7 +119,6 @@ export type MasterKind = (typeof MASTER_KINDS)[number]
 export interface MasterRecordByKind {
   machines: Machine
   'item-dimension-order': ItemDimensionOrder
-  'item-dimension-master': ItemDimensionMaster
   'item-reference-images': ItemReferenceImage
   'work-center-defects': WorkCenterDefect
   'grade-mappings': GradeMapping
@@ -182,6 +179,12 @@ export interface ImportRequest<Row> {
 export interface ImportResult {
   inserted: number
   updated: number
+}
+
+/** Answer to clearing the order catalogue before a fresh export is loaded. */
+export interface ClearOrdersResult {
+  /** Lines marked deleted. Sessions recorded against them keep their history. */
+  removed: number
 }
 
 /** Which business keys already exist — lets the importer preview new vs update. */
@@ -270,7 +273,6 @@ export interface WizardContext {
   machine: Machine | null
   /** General rows for the item plus the rows specific to this machine. */
   dimensionOrder: ItemDimensionOrder[]
-  dimensionMaster: ItemDimensionMaster[]
   referenceImages: ItemReferenceImage[]
   workCenterDefects: WorkCenterDefect[]
   gradeMappings: GradeMapping[]

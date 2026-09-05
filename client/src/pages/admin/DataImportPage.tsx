@@ -1,8 +1,12 @@
 import { useState } from 'react'
-import { Layers, Table2 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { Layers, Loader2, Table2, Trash2 } from 'lucide-react'
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { CsvImporter } from '@/components/admin/CsvImporter'
 import { COILS_IMPORTER, ORDERS_IMPORTER } from '@/components/admin/importers'
+import { Button, Modal } from '@/components/ui'
+import { clearOrders } from '@/services/mutations'
+import { useApp } from '@/store/AppContext'
 import { cn } from '@/lib/utils'
 
 /**
@@ -15,14 +19,37 @@ const SOURCES = [
 ] as const
 
 export function DataImportPage() {
+  const queryClient = useQueryClient()
+  const { toast } = useApp()
   const [which, setWhich] = useState<(typeof SOURCES)[number]['key']>('orders')
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const source = SOURCES.find((s) => s.key === which) ?? SOURCES[0]
+
+  async function runClear() {
+    setClearing(true)
+    try {
+      const { removed } = await clearOrders(queryClient)
+      toast(`${removed} order line${removed === 1 ? '' : 's'} marked deleted. Load the new export now.`, 'success')
+      setConfirmClear(false)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not clear the orders.', 'error')
+    } finally {
+      setClearing(false)
+    }
+  }
 
   return (
     <AdminLayout
       title="Data import"
-      description="Load the ERP's order lines and coil register. Preview first; nothing is written until you press Import, and importing the same file twice updates rather than duplicates."
       needs="manage-admin-data"
+      actions={
+        which === 'orders' ? (
+          <Button variant="danger" className="min-h-[48px]" onClick={() => setConfirmClear(true)}>
+            <Trash2 className="h-4 w-4" /> Remove all current order lines
+          </Button>
+        ) : undefined
+      }
     >
       <div className="space-y-4">
         <div className="inline-flex rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 dark:bg-slate-800/70 dark:ring-slate-700/70">
@@ -51,6 +78,33 @@ export function DataImportPage() {
           <CsvImporter importer={source.importer} />
         </div>
       </div>
+
+      <Modal
+        open={confirmClear}
+        onClose={() => {
+          if (!clearing) setConfirmClear(false)
+        }}
+        title="Remove all current order lines?"
+        icon={<Trash2 className="h-5 w-5" />}
+        size="sm"
+        footer={
+          <>
+            <Button className="min-h-[48px]" onClick={() => setConfirmClear(false)} disabled={clearing}>
+              Keep them
+            </Button>
+            <Button variant="danger" className="min-h-[48px]" onClick={() => void runClear()} disabled={clearing}>
+              {clearing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Remove all
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Every order line disappears from New inspection and the importers. Nothing is erased: the lines are marked deleted, sessions
+          already recorded against them keep their history, and a line the new export still carries comes back when you import it. This
+          action is written to the audit log with your name.
+        </p>
+      </Modal>
     </AdminLayout>
   )
 }

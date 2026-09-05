@@ -349,21 +349,6 @@ export interface ItemDimensionOrder {
   deletedAt?: ISODate | null
 }
 
-/** Item master dimension — fallback when no per-item order entry exists. */
-export interface ItemDimensionMaster {
-  id: ID
-  itemCode: string
-  /** Item name, for display only. */
-  item: string
-  dimensionName: string
-  /** Optional: the source may carry tolerances only. */
-  nominal?: number | null
-  tolPlus: number
-  tolMinus: number
-  unit: string
-  deletedAt?: ISODate | null
-}
-
 export interface ItemReferenceImage {
   id: ID
   itemCode: string

@@ -78,7 +78,6 @@ beforeAll(async () => {
   // The same item measured differently on the paint line, and a dimension only that line has.
   await app.api('POST', '/api/master/item-dimension-order', { token: admin.token, body: { itemCode: '125185ta3', workCenterCode: '48', dimensionName: 'Width', sequence: 2, nominal: 127, tolPlus: 1, tolMinus: 1, unit: 'mm' } })
   await app.api('POST', '/api/master/item-dimension-order', { token: admin.token, body: { itemCode: '125185TA3', workCenterCode: '48', dimensionName: 'Paint thickness', sequence: 1, nominal: 60, tolPlus: 10, tolMinus: 5, unit: 'µm' } })
-  await app.api('POST', '/api/master/item-dimension-master', { token: admin.token, body: { itemCode: '125185TA3', dimensionName: 'Squareness', nominal: 90, tolPlus: 0.5, tolMinus: 0.5, unit: 'deg' } })
   await app.api('POST', '/api/master/work-center-defects', { token: admin.token, body: { workCenterCode: '58', defectName: 'عيب لحام' } })
   await app.api('POST', '/api/master/grade-mappings', { token: admin.token, body: { gradeA: 'S355JR', gradeB: 'ST52-3' } })
   await app.api('POST', '/api/master/pt-consumables', { token: admin.token, body: { kind: 'Cleaner', productName: 'SKC-S', lotBatch: 'B24-0388' } })
@@ -143,7 +142,6 @@ describe('sessions', () => {
     expect(ctx.body.machine?.displayName).toBe('58-A. Welding Line-LM4')
     // Only the item's general rows: the paint-line rows belong to machine 48.
     expect(ctx.body.dimensionOrder.map((d) => [d.dimensionName, d.nominal])).toEqual([['Width', 125]])
-    expect(ctx.body.dimensionMaster.map((d) => d.dimensionName)).toEqual(['Squareness'])
     expect(ctx.body.workCenterDefects.map((d) => d.defectName)).toEqual(['عيب لحام'])
     expect(ctx.body.gradeMappings).toHaveLength(1)
     expect(ctx.body.ptConsumables).toHaveLength(1)

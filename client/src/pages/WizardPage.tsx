@@ -81,7 +81,6 @@ export function WizardPage() {
   const wc = session?.workCenterCode ?? ''
 
   const dimOrder = useMemo(() => ctx?.dimensionOrder ?? [], [ctx])
-  const dimMaster = useMemo(() => ctx?.dimensionMaster ?? [], [ctx])
   const refImages = useMemo(() => ctx?.referenceImages ?? [], [ctx])
   const wcDefects = useMemo(() => ctx?.workCenterDefects ?? [], [ctx])
   const gradeMappings = useMemo(() => ctx?.gradeMappings ?? [], [ctx])
@@ -119,7 +118,6 @@ export function WizardPage() {
       itemCode: order.itemCode,
       workCenterCode: session.workCenterCode,
       order: dimOrder,
-      master: dimMaster,
       previous: [],
     })
     setDraft({
@@ -150,7 +148,7 @@ export function WizardPage() {
         : undefined,
       updatedAt: new Date().toISOString(),
     })
-  }, [session, order, draft, dimOrder, dimMaster])
+  }, [session, order, draft, dimOrder])
 
   // Persist on every change so a reload or a dead network loses nothing (§9.6).
   const update = useCallback((patch: Partial<SampleDraft> | ((d: SampleDraft) => SampleDraft)) => {

@@ -33,8 +33,6 @@ export function ReferenceImagesSection() {
   return (
     <MasterDataPanel<'item-reference-images', RefImageDraft>
       title="Item reference images"
-      description="The approved photo an inspector compares the real part against."
-      hint="Keyed by item code. These images are shown to inspectors on the Dimensions step, so they can compare the part in front of them with the reference while measuring it."
       icon={<ImageIcon className="h-5 w-5" />}
       kind='item-reference-images'
       rows={rows}
