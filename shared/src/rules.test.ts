@@ -287,7 +287,7 @@ describe('save-time validation', () => {
     expect(bad.filter((i) => i.ref === 'length-2')).toHaveLength(1)
   })
 
-  it('needs no drawing on a paint machine, but photos and three thickness readings', () => {
+  it('needs no drawing or nominal on a paint machine, but photos and three thickness readings', () => {
     const paint = { ...base, process: 'paint' as const, drawing: '' }
     const bare = validateSample(paint)
     expect(bare.map((i) => i.step)).toEqual(['paint', 'paintThickness'])
@@ -310,7 +310,8 @@ describe('save-time validation', () => {
         { name: 'Paint thickness', nominal: null, actual: 62 },
       ],
     })
-    expect(missingOne.map((i) => i.ref)).toEqual(['nominal', 'reading-2'])
+    // Readings are recorded as measured: a missing nominal is not a problem, a missing reading is.
+    expect(missingOne.map((i) => i.ref)).toEqual(['reading-2'])
     expect(
       validateSample({
         ...paint,

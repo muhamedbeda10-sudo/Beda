@@ -138,7 +138,8 @@ export function processForMachine(machine: { process?: Process | null } | null |
  * not apply, nor be able to skip one that does.
  *   forming / other — setup (drawing, coils), dimensions, defects
  *   welding         — setup (drawing, welding wire), dimensions, VT defects, PT
- *   paint           — paint sample photos, paint thickness readings, defects
+ *   paint           — paint sample photos, three thickness readings (actual
+ *                     values only), defects
  */
 export function stepsForProcess(process: Process): WizardStep[] {
   switch (process) {
@@ -325,13 +326,12 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
     if ((draft.paint?.imageIds.length ?? 0) === 0) {
       issues.push({ step: 'paint', message: 'Take at least one photo of the paint sample.' })
     }
+    // The readings are recorded as measured: no required value or tolerance
+    // is asked for, so no judgement is made on them here.
     const readings = (draft.dimensions ?? []).filter((d) => isPaintThicknessName(d.name))
     if (readings.length < PAINT_THICKNESS_READINGS) {
       issues.push({ step: 'paintThickness', message: `Enter ${PAINT_THICKNESS_READINGS} paint thickness readings.` })
     } else {
-      if (readings.some((r) => r.nominal === null || !Number.isFinite(r.nominal))) {
-        issues.push({ step: 'paintThickness', message: 'Enter the required paint thickness.', ref: 'nominal' })
-      }
       readings.forEach((r, i) => {
         if (r.actual === null || !Number.isFinite(r.actual)) {
           issues.push({ step: 'paintThickness', message: `Reading ${i + 1} is missing.`, ref: `reading-${i + 1}` })
