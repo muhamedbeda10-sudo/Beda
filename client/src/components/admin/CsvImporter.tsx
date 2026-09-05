@@ -266,8 +266,10 @@ export function CsvImporter({ importer }: { importer: Importer }) {
         }
       }
 
+      const derived = importer.derive ? importer.derive(values) : values
+
       for (const k of importer.businessKeys) {
-        if (values[k] === undefined || String(values[k]).trim() === '') problems.push(`${k} is empty`)
+        if (derived[k] === undefined || String(derived[k]).trim() === '') problems.push(`${k} is empty`)
       }
 
       if (problems.length > 0) {
@@ -275,12 +277,12 @@ export function CsvImporter({ importer }: { importer: Importer }) {
         return
       }
 
-      const key = keyParts.map((k) => normaliseKeyPart(values[k])).join('||')
+      const key = keyParts.map((k) => normaliseKeyPart(derived[k])).join('||')
       const mode: 'new' | 'update' = existing.has(key) || seenKeys.has(key) ? 'update' : 'new'
       seenKeys.add(key)
       if (mode === 'new') newCount += 1
       else updateCount += 1
-      valid.push({ rowNumber, values, mode })
+      valid.push({ rowNumber, values: derived, mode })
     })
 
     return { valid, errors, newCount, updateCount }

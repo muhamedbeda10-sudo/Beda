@@ -182,11 +182,13 @@ describe('production orders', () => {
           { lineKey: 'L-1', orderNumber: '20480-Ph1.4-SMA', item: 'Shuttle Beam', itemCode: 'LB406015-5TA3', workCenterCode: '48', requiredQty: 1350, finishedQty: 900, customer: 'Alpha Racking', expectedGrade: 'ST52-3', drawing: 'BS9059/48' },
           { lineKey: 'L-2', orderNumber: '20480-Ph1.4-SMA', item: 'XL Upright', itemCode: 'UP90-3T3', workCenterCode: '58', requiredQty: 400, finishedQty: 0, customer: 'Alpha Racking', expectedGrade: 'S355JR', drawing: 'BS9059/58' },
           { lineKey: 'L-3', orderNumber: '20095-QC1-HYH', item: 'XL Light Beam', itemCode: '125185TA3', workCenterCode: '58', requiredQty: 2500, finishedQty: 2500, customer: 'Beta Storage', expectedGrade: 'S355JR', drawing: 'BS9059/58' },
+          // Withdrawn by the ERP: kept for history, never offered for inspection.
+          { lineKey: 'L-X', orderNumber: '20999-CANCELLED', item: 'Old Beam', itemCode: '125185TA3', workCenterCode: '58', requiredQty: 10, erpStatus: 'Cancel' },
         ],
       },
     })
     expect(first.status).toBe(200)
-    expect(first.body).toEqual({ inserted: 3, updated: 0 })
+    expect(first.body).toEqual({ inserted: 4, updated: 0 })
 
     const second = await app.api<ImportResult>('POST', '/api/orders/import', {
       token: admin.token,
@@ -215,6 +217,10 @@ describe('production orders', () => {
     expect(byKey.body.map((o) => o.orderNumber)).toEqual(['20095-QC1-HYH'])
     const all = await app.api<ProductionOrder[]>('GET', '/api/orders', { token: inspector.token })
     expect(all.body).toHaveLength(4)
+    expect(all.body.some((o) => o.lineKey === 'L-X')).toBe(false)
+    const withCancelled = await app.api<ProductionOrder[]>('GET', '/api/orders?includeCancelled=true', { token: inspector.token })
+    expect(withCancelled.body).toHaveLength(5)
+    expect(withCancelled.body.find((o) => o.lineKey === 'L-X')!.erpStatus).toBe('Cancel')
     const none = await app.api<ProductionOrder[]>('GET', '/api/orders?search=zzz', { token: inspector.token })
     expect(none.body).toHaveLength(0)
   })

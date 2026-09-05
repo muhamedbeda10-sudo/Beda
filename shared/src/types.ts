@@ -57,6 +57,9 @@ export interface ProductionOrder {
   itemCode: string
   /** Code of the machine the line is produced on (see Machine.code). */
   workCenterCode: string
+  /** The ERP's access status: Active, Hold, Stock or Cancel. A cancelled
+   *  line is kept for history but never offered for inspection. */
+  erpStatus: string
   machineId?: ID | null
   requiredQty: number
   finishedQty: number

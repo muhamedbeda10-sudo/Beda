@@ -140,6 +140,8 @@ export interface MasterListQuery {
 export interface OrderSearchQuery {
   /** Prefix matched against the order number, the item code and the line key. */
   search?: string
+  /** Cancelled lines are left out unless this is set. */
+  includeCancelled?: boolean
   /** Only lines produced on this machine. */
   machine?: string
   /** Only the lines of this order (exact, case-insensitive). */
@@ -213,7 +215,7 @@ export interface CoilUsage {
 /** The order fields every session list needs alongside the session. */
 export type OrderSummary = Pick<
   ProductionOrder,
-  'id' | 'lineKey' | 'orderNumber' | 'item' | 'itemCode' | 'workCenterCode' | 'customer' | 'expectedGrade'
+  'id' | 'lineKey' | 'orderNumber' | 'item' | 'itemCode' | 'workCenterCode' | 'customer' | 'expectedGrade' | 'erpStatus'
 >
 
 export type SampleSummary = Pick<

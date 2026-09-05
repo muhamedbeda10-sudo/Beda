@@ -31,7 +31,7 @@ export const ORDER_SELECT = `
   id, line_key AS "lineKey", order_number AS "orderNumber", item, item_code AS "itemCode", work_center_code AS "workCenterCode",
   machine_id AS "machineId", required_qty AS "requiredQty", finished_qty AS "finishedQty",
   drawing, drawing_alt AS "drawingAlt", issue, material, expected_grade AS "expectedGrade",
-  customer, type, colour, order_date AS "date", deleted_at AS "deletedAt"`
+  customer, type, colour, erp_status AS "erpStatus", order_date AS "date", deleted_at AS "deletedAt"`
 
 const importRow = z.object({
   lineKey: z.string().trim().min(1).max(120),
@@ -49,6 +49,7 @@ const importRow = z.object({
   customer: z.string().trim().max(200).optional(),
   type: z.string().trim().max(60).optional(),
   colour: z.string().trim().max(60).optional(),
+  erpStatus: z.string().trim().max(40).optional(),
   date: z
     .string()
     .trim()
@@ -59,6 +60,9 @@ const importRow = z.object({
 
 const importSchema = z.object({ rows: z.array(importRow).min(1).max(1000) })
 const existingKeysSchema = z.object({ keys: z.array(z.string().trim().min(1)).max(EXISTING_KEYS_MAX) })
+
+/** The ERP marks a withdrawn line "Cancel"; such a line is history, not work. */
+const NOT_CANCELLED = `lower(erp_status) <> 'cancel'`
 
 /** A LIKE pattern matching values that start with `term`, wildcards escaped. */
 function likePrefix(term: string): string {
@@ -88,12 +92,16 @@ export function ordersRoutes(ctx: AppContext): Router {
         search: z.string().trim().max(120).default(''),
         machine: z.string().trim().max(40).default(''),
         orderNumber: z.string().trim().max(120).default(''),
-        limit: z.coerce.number().int().min(1).max(100).default(40),
+        includeCancelled: z.coerce.boolean().default(false),
+        // One order can have well over a hundred items on one machine; the
+        // exact-order query returns them all, prefix search stays a page.
+        limit: z.coerce.number().int().min(1).max(500).default(40),
       }),
       req.query,
     )
     const where: string[] = ['deleted_at IS NULL']
     const params: unknown[] = []
+    if (!q.includeCancelled) where.push(NOT_CANCELLED)
     if (q.machine) {
       params.push(q.machine.toLowerCase())
       where.push(`lower(work_center_code) = $${params.length}`)
@@ -126,12 +134,14 @@ export function ordersRoutes(ctx: AppContext): Router {
       z.object({
         search: z.string().trim().max(120).default(''),
         machine: z.string().trim().max(40).default(''),
+        includeCancelled: z.coerce.boolean().default(false),
         limit: z.coerce.number().int().min(1).max(100).default(40),
       }),
       req.query,
     )
     const where: string[] = ['deleted_at IS NULL']
     const params: unknown[] = []
+    if (!q.includeCancelled) where.push(NOT_CANCELLED)
     if (q.machine) {
       params.push(q.machine.toLowerCase())
       where.push(`lower(work_center_code) = $${params.length}`)
@@ -239,13 +249,14 @@ export function ordersRoutes(ctx: AppContext): Router {
           customer: o.customer ?? null,
           type: o.type ?? null,
           colour: o.colour ?? null,
+          erp_status: o.erpStatus ?? null,
           order_date: o.date ? o.date.toISOString() : null,
         })),
       )
       const recordset = `jsonb_to_recordset($1::jsonb) AS i(
         line_key text, order_number text, item text, item_code text, work_center_code text, required_qty numeric,
         finished_qty numeric, drawing text, drawing_alt text, issue text, material text,
-        expected_grade text, customer text, type text, colour text, order_date timestamptz)`
+        expected_grade text, customer text, type text, colour text, erp_status text, order_date timestamptz)`
 
       const updated = await tx.query<{ id: string }>(
         `UPDATE production_orders p SET
@@ -263,6 +274,7 @@ export function ordersRoutes(ctx: AppContext): Router {
             customer = COALESCE(i.customer, p.customer),
             type = COALESCE(i.type, p.type),
             colour = COALESCE(i.colour, p.colour),
+            erp_status = COALESCE(i.erp_status, p.erp_status),
             order_date = COALESCE(i.order_date, p.order_date),
             deleted_at = NULL, deleted_by_id = NULL
           FROM ${recordset}
@@ -273,11 +285,11 @@ export function ordersRoutes(ctx: AppContext): Router {
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO production_orders
             (line_key, order_number, item, item_code, work_center_code, required_qty, finished_qty, drawing, drawing_alt,
-             issue, material, expected_grade, customer, type, colour, order_date)
+             issue, material, expected_grade, customer, type, colour, erp_status, order_date)
          SELECT i.line_key, i.order_number, COALESCE(i.item, ''), COALESCE(i.item_code, ''), COALESCE(i.work_center_code, ''),
                 COALESCE(i.required_qty, 0), COALESCE(i.finished_qty, 0), COALESCE(i.drawing, ''), i.drawing_alt,
                 i.issue, COALESCE(i.material, ''), COALESCE(i.expected_grade, ''), COALESCE(i.customer, ''),
-                COALESCE(i.type, ''), COALESCE(i.colour, ''), COALESCE(i.order_date, now())
+                COALESCE(i.type, ''), COALESCE(i.colour, ''), COALESCE(i.erp_status, ''), COALESCE(i.order_date, now())
            FROM ${recordset}
           WHERE NOT EXISTS (SELECT 1 FROM production_orders p WHERE lower(p.line_key) = lower(i.line_key))
          RETURNING id`,
