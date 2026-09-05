@@ -131,7 +131,7 @@ export function HistoryPage() {
   /** The open session's samples, in the order they were taken. */
   const sessionSamples = useMemo(() => [...samples].sort((a, b) => a.index - b.index), [samples])
 
-  const workCenterName = (code: string) => machines.find((m) => m.code === code)?.displayName ?? `Work center ${code}`
+  const workCenterName = (code: string) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`
 
   const workCenterOptions = useMemo(() => {
     const codes = Array.from(new Set(sessions.map((s) => s.workCenterCode))).filter(Boolean)
@@ -237,7 +237,7 @@ export function HistoryPage() {
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
           <span>
             Showing the {SESSION_PAGE} most recent sessions, newest first. The search and filters below narrow this list — older sessions are not
-            loaded, so narrow the work centre and date range to the period you need.
+            loaded, so narrow the machine and date range to the period you need.
           </span>
         </p>
       )}
@@ -273,9 +273,9 @@ export function HistoryPage() {
               <option value="Closed">Closed</option>
             </Select>
           </Field>
-          <Field label="Work center">
+          <Field label="Machine">
             <Select value={workCenter} onChange={(e) => setWorkCenter(e.target.value)} className="min-h-[48px]">
-              <option value="all">All work centers</option>
+              <option value="all">All machines</option>
               {workCenterOptions.map((code) => (
                 <option key={code} value={code}>
                   {workCenterName(code)}
@@ -306,9 +306,9 @@ export function HistoryPage() {
       ) : (
         <>
           {/* Mobile — one card per session. */}
-          <div className="space-y-3 md:hidden">
+          <div className="grid gap-3 sm:grid-cols-2 md:hidden">
             {filtered.map((s) => (
-              <button key={s.id} onClick={() => setOpenSessionId(s.id)} className="card w-full p-4 text-left transition-transform active:scale-[.99]">
+              <button key={s.id} onClick={() => setOpenSessionId(s.id)} className="card-hover w-full p-4 text-left">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
                   <span className="font-bold">{s.order?.orderNumber ?? '—'}</span>
@@ -340,7 +340,7 @@ export function HistoryPage() {
                     <th className="px-4 py-3">Seq</th>
                     <th className="px-4 py-3">Order</th>
                     <th className="px-4 py-3">Item</th>
-                    <th className="px-4 py-3">Work center</th>
+                    <th className="px-4 py-3">Machine</th>
                     <th className="px-4 py-3">Inspector</th>
                     <th className="px-4 py-3">Date</th>
                     <th className="px-4 py-3">Status</th>
@@ -430,7 +430,7 @@ export function HistoryPage() {
               <>
                 <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <Attr label="Item" value={openSession.order?.item} />
-                  <Attr label="Work center" value={workCenterName(openSession.workCenterCode)} />
+                  <Attr label="Machine" value={workCenterName(openSession.workCenterCode)} />
                   <Attr label="Inspector" value={openSession.inspectorName} />
                   <Attr label="Started" value={formatDateTime(openSession.startedAt)} />
                   <Attr label="Status" value={openSession.status} />
@@ -542,7 +542,7 @@ function SampleDetail({
         <Attr label="Drawing" value={sample.drawing} />
         <Attr label="Drawing alt" value={sample.drawingAlt} />
         <Attr label="Issue" value={sample.issue} />
-        <Attr label="Work center" value={session.workCenterCode} />
+        <Attr label="Machine" value={session.workCenterCode} />
       </dl>
 
       {sample.gradeAcknowledgement && (

@@ -63,7 +63,7 @@ export function InspectionsPage() {
     const byWc = new Map<string, { machine?: Machine; label: string; sessions: SessionWithOrder[]; sampleCount: number }>()
     for (const s of sorted) {
       const machine = machines.find((m) => m.code === s.workCenterCode)
-      const label = machine?.displayName || machine?.name || `Work center ${s.workCenterCode}`
+      const label = machine?.displayName || machine?.name || `Machine ${s.workCenterCode}`
       const g = byWc.get(s.workCenterCode) ?? { machine, label, sessions: [], sampleCount: 0 }
       g.sessions.push(s)
       g.sampleCount += samplesBySession.get(s.id)?.length ?? 0
@@ -117,7 +117,8 @@ export function InspectionsPage() {
           }
         />
       ) : (
-        <div className="space-y-4">
+        // Several machines side by side on a wide screen; one column on a phone.
+        <div className="grid items-start gap-4 md:grid-cols-2 2xl:grid-cols-3">
           {groups.map((g) => {
             const isExpanded = expanded[g.label]
             const visible = isExpanded ? g.sessions : g.sessions.slice(0, COLLAPSE_AFTER)
@@ -315,8 +316,10 @@ function CloseSessionDialog({
 
 function QuickAction({ icon, title, subtitle, onClick }: { icon: ReactNodeLike; title: string; subtitle: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="card flex min-h-[112px] flex-col items-center justify-center gap-2 p-4 transition-transform active:scale-[.97]">
-      <span className="grid h-14 w-14 place-items-center rounded-full bg-brand-600 text-white shadow-sm">{icon}</span>
+    <button onClick={onClick} className="card-hover group flex min-h-[112px] flex-col items-center justify-center gap-2 p-4">
+      <span className="grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-white shadow-card transition-transform duration-300 ease-out group-hover:scale-110 group-hover:rotate-3">
+        {icon}
+      </span>
       <div className="text-center leading-tight">
         <p className="font-bold">{title}</p>
         <p className="text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>

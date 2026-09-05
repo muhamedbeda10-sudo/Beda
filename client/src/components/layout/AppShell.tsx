@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   ClipboardCheck,
   History,
@@ -8,30 +8,49 @@ import {
   Moon,
   Menu,
   X,
-  ShieldCheck,
-  ScrollText,
   CheckCircle2,
   AlertCircle,
   Info,
   AlertTriangle,
   LogOut,
+  Package2,
+  FileText,
+  SlidersHorizontal,
+  UploadCloud,
+  Users,
+  ScrollText,
+  ChevronRight,
 } from 'lucide-react'
+import { Brand } from '@/components/brand/Brand'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
 import { can, type Capability } from '@qc/shared/rules'
 
-const NAV: Array<{
+interface NavItem {
   to: string
   label: string
   icon: typeof ClipboardCheck
   end?: boolean
   needs?: Capability
-}> = [
+  /** One line shown under the label in the administration menu. */
+  hint?: string
+}
+
+/** The work an inspector does, centred in the bar. */
+const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/history', label: 'History', icon: History },
-  { to: '/admin', label: 'Admin', icon: Settings, needs: 'manage-admin-data' },
-  { to: '/audit', label: 'Audit Logs', icon: ScrollText, needs: 'edit-closed-session' },
+  { to: '/coils', label: 'Coils', icon: Package2 },
+  { to: '/pdi', label: 'PDI', icon: FileText },
+]
+
+/** Administration, behind the gear. Each entry is shown only to a role that may use it. */
+export const ADMIN_NAV: NavItem[] = [
+  { to: '/admin/configuration', label: 'Configuration', icon: SlidersHorizontal, needs: 'manage-admin-data', hint: 'Machines, items, defects, grades' },
+  { to: '/admin/import', label: 'Data import', icon: UploadCloud, needs: 'manage-admin-data', hint: 'Production orders and coils' },
+  { to: '/admin/users', label: 'Users', icon: Users, needs: 'manage-admin-data', hint: 'Accounts and roles' },
+  { to: '/admin/audit', label: 'Audit log', icon: ScrollText, needs: 'edit-closed-session', hint: 'Who changed what, and when' },
 ]
 
 function ToastHost() {
@@ -63,72 +82,146 @@ function ToastHost() {
   )
 }
 
+/** The gear: an icon-only control on the far right that opens administration. */
+function AdminMenu({ items }: { items: NavItem[] }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const location = useLocation()
+  const inAdmin = location.pathname.startsWith('/admin')
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  // Close after navigating so the menu never lingers over the new page.
+  useEffect(() => setOpen(false), [location.pathname])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Administration"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={cn('icon-btn group', (open || inAdmin) && 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200')}
+      >
+        <Settings className={cn('h-5 w-5 transition-transform duration-500 ease-out group-hover:rotate-45', open && 'rotate-90')} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-50 mt-2 w-80 origin-top-right overflow-hidden rounded-2xl bg-white p-1.5 shadow-lift ring-1 ring-slate-200 animate-drop-in dark:bg-slate-900 dark:ring-slate-800"
+        >
+          <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Administration</p>
+          {items.map((n) => (
+            <NavLink
+              key={n.to}
+              to={n.to}
+              role="menuitem"
+              className={({ isActive }) =>
+                cn(
+                  'group/item flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors',
+                  isActive ? 'bg-brand-50 text-brand-800 dark:bg-brand-500/15 dark:text-brand-100' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800',
+                )
+              }
+            >
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-600 transition-[background-color,color,transform] duration-200 group-hover/item:scale-105 group-hover/item:bg-brand-600 group-hover/item:text-white dark:bg-slate-800 dark:text-slate-300">
+                <n.icon className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1 leading-tight">
+                <span className="block text-sm font-semibold">{n.label}</span>
+                {n.hint && <span className="block truncate text-xs text-slate-400">{n.hint}</span>}
+              </span>
+              <ChevronRight className="h-4 w-4 text-slate-300 transition-transform duration-200 group-hover/item:translate-x-0.5 group-hover/item:text-brand-500" />
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const { theme, toggleTheme, user } = useApp()
   const { role, signOutUser, profile } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
 
-  const nav = NAV.filter((n) => !n.needs || can(role, n.needs))
+  const admin = ADMIN_NAV.filter((n) => !n.needs || can(role, n.needs))
   const displayName = profile?.name || user
+  const initials = (displayName ?? '?')
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('')
+
+  const isActive = (n: NavItem) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to))
 
   return (
     <div className="min-h-full">
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/90 safe-top">
-        <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-600 text-white shadow-sm">
-              <ShieldCheck className="h-5 w-5" />
-            </span>
-            <div className="min-w-0 leading-tight">
-              <p className="text-base font-extrabold tracking-tight">QC SYSTEM</p>
-              <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                Welcome, <span className="font-semibold text-slate-700 dark:text-slate-200">{displayName}</span>
-              </p>
-            </div>
-          </div>
+      <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/85 shadow-[0_1px_0_rgba(255,255,255,.6)_inset] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/85 safe-top">
+        <div className="grid h-16 grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 sm:px-6 lg:px-8">
+          {/* Left — brand */}
+          <button type="button" onClick={() => navigate('/')} className="justify-self-start rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" aria-label="Home">
+            <Brand />
+          </button>
 
-          <nav className="ml-6 hidden flex-1 items-center gap-1 lg:flex">
-            {nav.map((n) => (
-              <NavLink
-                key={n.to}
-                to={n.to}
-                end={n.end}
-                className={({ isActive }) =>
-                  cn(
-                    'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors',
-                    isActive
-                      ? 'bg-brand-600 text-white shadow-sm'
-                      : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
-                  )
-                }
-              >
-                <n.icon className="h-4 w-4" />
-                {n.label}
-              </NavLink>
-            ))}
+          {/* Centre — the inspector's tabs */}
+          <nav className="hidden items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 lg:flex dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
+            {NAV.map((n) => {
+              const active = isActive(n)
+              return (
+                <NavLink
+                  key={n.to}
+                  to={n.to}
+                  end={n.end}
+                  className={cn(
+                    'group relative flex min-h-[40px] items-center gap-2 rounded-xl px-4 text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
+                    active
+                      ? 'bg-white text-brand-800 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:text-white dark:ring-slate-700'
+                      : 'text-slate-600 hover:text-brand-700 dark:text-slate-300 dark:hover:text-white',
+                  )}
+                >
+                  <n.icon className={cn('h-4 w-4 transition-transform duration-200 group-hover:-translate-y-0.5', active && 'text-accent-500')} />
+                  {n.label}
+                </NavLink>
+              )
+            })}
           </nav>
 
-          <div className="ml-auto flex items-center gap-1">
-            <button
-              onClick={toggleTheme}
-              className="rounded-lg p-2.5 text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-              aria-label="Toggle light or dark theme"
-            >
+          {/* Right — theme, administration, account */}
+          <div className="flex items-center gap-1 justify-self-end">
+            <button onClick={toggleTheme} className="icon-btn" aria-label="Toggle light or dark theme">
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
-            <button
-              onClick={() => signOutUser()}
-              className="hidden rounded-lg p-2.5 text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:text-slate-300 dark:hover:bg-slate-800 lg:block"
-              aria-label="Sign out"
-            >
-              <LogOut className="h-5 w-5" />
-            </button>
-            <button
-              onClick={() => setMenuOpen(true)}
-              className="rounded-lg p-2.5 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 lg:hidden"
-              aria-label="Open menu"
-            >
+            {admin.length > 0 && (
+              <div className="hidden lg:block">
+                <AdminMenu items={admin} />
+              </div>
+            )}
+            <div className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 lg:block" />
+            <div className="hidden items-center gap-2 lg:flex">
+              <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-xs font-bold text-white shadow-card" title={displayName}>
+                {initials || '?'}
+              </span>
+              <span className="hidden max-w-[10rem] truncate text-sm font-semibold xl:block">{displayName}</span>
+              <button onClick={() => signOutUser()} className="icon-btn hover:text-rose-600" aria-label="Sign out">
+                <LogOut className="h-5 w-5" />
+              </button>
+            </div>
+            <button onClick={() => setMenuOpen(true)} className="icon-btn lg:hidden" aria-label="Open menu">
               <Menu className="h-6 w-6" />
             </button>
           </div>
@@ -140,41 +233,23 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fade-in" onClick={() => setMenuOpen(false)} />
           <div className="absolute right-0 top-0 h-full w-[85%] max-w-sm overflow-y-auto bg-white shadow-lift animate-slide-up dark:bg-slate-900 safe-top">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-600 text-white">
-                  <ShieldCheck className="h-5 w-5" />
-                </span>
-                <span className="text-lg font-extrabold">Menu</span>
-              </div>
-              <button
-                onClick={() => setMenuOpen(false)}
-                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                aria-label="Close menu"
-              >
+              <Brand />
+              <button onClick={() => setMenuOpen(false)} className="icon-btn" aria-label="Close menu">
                 <X className="h-6 w-6" />
               </button>
             </div>
             <nav className="flex flex-col gap-1 p-3">
-              {nav.map((n) => {
-                const active = n.end ? location.pathname === n.to : location.pathname.startsWith(n.to)
-                return (
-                  <NavLink
-                    key={n.to}
-                    to={n.to}
-                    end={n.end}
-                    onClick={() => setMenuOpen(false)}
-                    className={cn(
-                      'flex items-center gap-3 rounded-2xl px-4 py-4 text-base font-semibold transition-colors',
-                      active
-                        ? 'bg-brand-600 text-white'
-                        : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800',
-                    )}
-                  >
-                    <n.icon className="h-5 w-5" />
-                    {n.label}
-                  </NavLink>
-                )
-              })}
+              {NAV.map((n) => (
+                <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
+              ))}
+              {admin.length > 0 && (
+                <>
+                  <p className="px-4 pb-1 pt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Administration</p>
+                  {admin.map((n) => (
+                    <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
+                  ))}
+                </>
+              )}
             </nav>
             <div className="mt-2 border-t border-slate-100 px-5 py-4 dark:border-slate-800">
               <p className="text-sm text-slate-500">
@@ -186,7 +261,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   setMenuOpen(false)
                   signOutUser()
                 }}
-                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-rose-50 hover:text-rose-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+                className="btn-secondary mt-3 hover:text-rose-600"
               >
                 <LogOut className="h-4 w-4" /> Sign out
               </button>
@@ -195,8 +270,30 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      <main className="mx-auto max-w-7xl px-4 py-5 safe-bottom">{children}</main>
+      {/* Full width; each route change replays the entrance so a page feels placed, not swapped. */}
+      <main className="px-4 py-5 sm:px-6 lg:px-8 safe-bottom">
+        <div key={location.pathname} className="animate-page-in">
+          {children}
+        </div>
+      </main>
       <ToastHost />
     </div>
+  )
+}
+
+function DrawerLink({ item, active, onClick }: { item: NavItem; active: boolean; onClick: () => void }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.end}
+      onClick={onClick}
+      className={cn(
+        'flex items-center gap-3 rounded-2xl px-4 py-4 text-base font-semibold transition-colors',
+        active ? 'bg-brand-700 text-white shadow-card' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800',
+      )}
+    >
+      <item.icon className="h-5 w-5" />
+      {item.label}
+    </NavLink>
   )
 }

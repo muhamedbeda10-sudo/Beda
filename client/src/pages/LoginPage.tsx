@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { ShieldCheck, LogIn, UserPlus, Loader2, Mail, Lock, User as UserIcon } from 'lucide-react'
+import { LogIn, UserPlus, Loader2, Mail, Lock, User as UserIcon } from 'lucide-react'
+import { Brand } from '@/components/brand/Brand'
 import { useAuth } from '@/store/AuthContext'
 import { Button, Input, Field } from '@/components/ui'
 import { useApp } from '@/store/AppContext'
@@ -37,15 +38,15 @@ export function LoginPage() {
     <div className={theme === 'dark' ? 'dark' : ''}>
       <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 dark:bg-slate-950">
         <div className="w-full max-w-md">
-          <div className="mb-6 flex flex-col items-center text-center">
-            <span className="grid h-16 w-16 place-items-center rounded-2xl bg-brand-600 text-white shadow-lift">
-              <ShieldCheck className="h-9 w-9" />
-            </span>
-            <h1 className="mt-4 text-2xl font-extrabold tracking-tight">QC SYSTEM</h1>
+          <div className="mb-6 flex flex-col items-center text-center animate-scale-in">
+            <Brand size="lg" withText={false} />
+            <h1 className="mt-4 text-2xl font-extrabold tracking-tight text-brand-900 dark:text-white">
+              Link<span className="text-accent-500">Misr</span> Quality Control
+            </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">Inspection Recorder</p>
           </div>
 
-          <div className="card p-6">
+          <div className="card p-6 shadow-hover">
             {selfRegistrationOpen && (
               <div className="mb-4 inline-flex w-full rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
                 {(['in', 'up'] as const).map((m) => (

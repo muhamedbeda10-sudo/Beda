@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { ScrollText, Search, Plus, Pencil, Trash2, RotateCcw, ShieldAlert, Download, Flame } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Input, Modal, Select, Stat } from '@/components/ui'
+import { AdminLayout } from '@/components/admin/AdminLayout'
 import { useAuditList, useAuditStats } from '@/services/queries'
 import { purgeAudit } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
@@ -104,15 +105,12 @@ export function AuditPage() {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight">
-            <ScrollText className="h-6 w-6 text-brand-600" /> Audit Logs
-          </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Every change to inspection data after its first save — who, when, and what changed.</p>
-        </div>
-        <div className="flex gap-2">
+    <AdminLayout
+      title="Audit log"
+      description="Every change to inspection data after its first save — who, when, and what changed."
+      needs="edit-closed-session"
+      actions={
+        <>
           <Button variant="secondary" className="min-h-[48px]" onClick={exportCsv}>
             <Download className="h-4 w-4" /> Export
           </Button>
@@ -121,9 +119,10 @@ export function AuditPage() {
               <Flame className="h-4 w-4" /> Purge {selected.size > 0 && `(${selected.size})`}
             </Button>
           )}
-        </div>
-      </div>
-
+        </>
+      }
+    >
+    <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Total events" value={totalEvents} icon={<ScrollText className="h-5 w-5" />} />
         <Stat label="Updates" value={stats?.byAction.update ?? 0} tone="blue" icon={<Pencil className="h-5 w-5" />} />
@@ -266,5 +265,6 @@ export function AuditPage() {
         </p>
       </Modal>
     </div>
+    </AdminLayout>
   )
 }

@@ -329,7 +329,9 @@ export function WizardPage() {
   const StepIcon = STEP_META[current].icon
 
   return (
-    <div className="space-y-4 pb-32">
+    // Forms read best at a bounded width, so the wizard is centred even on a
+    // wide screen while list pages use the whole of it.
+    <div className="mx-auto max-w-5xl space-y-4 pb-32">
       <button
         onClick={() => navigate('/')}
         className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400"
@@ -404,7 +406,7 @@ export function WizardPage() {
 
       {/* Sticky navigation */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 safe-bottom">
-        <div className="mx-auto flex max-w-7xl items-center gap-2 px-4 py-3">
+        <div className="mx-auto flex max-w-5xl items-center gap-2 px-4 py-3">
           <Button variant="secondary" className="min-h-[52px] flex-1 sm:flex-none" disabled={stepIndex === 0} onClick={back}>
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>
