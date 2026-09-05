@@ -13,13 +13,34 @@ export type ISODate = string
 
 // ---- Work centers ----------------------------------------------------------
 
-/** Work-center codes in use. The code decides which wizard steps appear. */
+/** Legacy work-centre numbers. Kept only to guess a process for a machine
+ *  that is not in the register; the register's `process` is the authority. */
 export type WorkCenterCode = '7' | '11' | '22' | '48' | '58'
 
-/** Work centers that get the Paint Sample step. */
+/** Legacy: work centres that got the Paint Sample step before the register carried a process. */
 export const PAINT_WORK_CENTERS: readonly WorkCenterCode[] = ['7', '11', '48']
-/** Work centers that get the PT / Weld Inspection step. */
+/** Legacy: work centres that got the PT / Weld Inspection step before the register carried a process. */
 export const PT_WORK_CENTERS: readonly WorkCenterCode[] = ['22', '58']
+
+/**
+ * What a machine does. The process decides which wizard steps an inspection
+ * on that machine gets and which work instructions it shows:
+ *   forming — roll forming, punching, cutting, bending and other fabrication:
+ *             setup (drawing, coils), dimensions, defects
+ *   welding — setup (drawing, welding wire), dimensions, VT defects, PT
+ *   paint   — paint sample photos, paint thickness readings, defects
+ *   other   — the forming flow
+ */
+export type Process = 'forming' | 'welding' | 'paint' | 'other'
+
+export const PROCESSES: readonly Process[] = ['forming', 'welding', 'paint', 'other']
+
+export const PROCESS_LABEL: Record<Process, string> = {
+  forming: 'Forming / fabrication',
+  welding: 'Welding',
+  paint: 'Paint',
+  other: 'Other',
+}
 
 export interface Machine {
   id: ID
@@ -37,6 +58,8 @@ export interface Machine {
   displayName: string
   machineNumber?: string
   factory?: string
+  /** Decides the inspection flow on this machine. */
+  process: Process
   deletedAt?: ISODate | null
 }
 
@@ -271,6 +294,14 @@ export const PT_CONSUMABLE_KINDS: readonly PTConsumableKind[] = ['Cleaner', 'Pen
 
 export type PTVerdict = 'Accept' | 'Reject / Repair'
 
+/** One tested weld length and its own verdict (§5.6). */
+export interface PTTestedLength {
+  id?: ID
+  seq: number
+  lengthMm: number
+  verdict: PTVerdict
+}
+
 export interface PTRecord {
   id: ID
   sampleId: ID
@@ -283,6 +314,8 @@ export interface PTRecord {
   indicationType?: string
   indicationSize?: string
   weldingWireBatch?: string
+  /** Every tested length with its verdict; the record's verdict is Reject / Repair when any length is. */
+  testedLengths: PTTestedLength[]
   acceptOrRepair?: PTVerdict
   finalResult?: string
   notes?: string
@@ -389,6 +422,52 @@ export interface PTConsumableProduct {
   kind: PTConsumableKind
   productName: string
   lotBatch: string
+  deletedAt?: ISODate | null
+}
+
+// ---- Work instructions -----------------------------------------------------
+
+/** The wizard step a work instruction is offered on. */
+export type WorkInstructionStep = 'setup' | 'dimensions' | 'defects' | 'pt' | 'paint' | 'paintThickness'
+
+export const WORK_INSTRUCTION_STEPS: readonly WorkInstructionStep[] = ['setup', 'dimensions', 'defects', 'pt', 'paint', 'paintThickness']
+
+export const WORK_INSTRUCTION_STEP_LABEL: Record<WorkInstructionStep, string> = {
+  setup: 'Setup',
+  dimensions: 'Dimensions',
+  defects: 'Defects (VT)',
+  pt: 'PT / weld',
+  paint: 'Paint sample',
+  paintThickness: 'Paint thickness',
+}
+
+/** Which machines see the document: one process, or every machine. */
+export type WorkInstructionScope = Process | 'all'
+
+/**
+ * A controlled document (a PDF) the inspector can open from a wizard step:
+ * acceptance limits, test methods, repair instructions. Uploading a new
+ * issue under the same code supersedes the previous one, which stays on
+ * record so an old inspection can still be read against the issue that was
+ * in force at the time.
+ */
+export interface WorkInstruction {
+  id: ID
+  /** The document control code, e.g. WI-PD-03-01. */
+  code: string
+  title: string
+  issueNo: string
+  issueDate?: ISODate | null
+  process: WorkInstructionScope
+  step: WorkInstructionStep
+  originalFilename: string
+  byteSize: number
+  sha256: string
+  uploadedByName: string
+  uploadedAt: ISODate
+  sortOrder: number
+  supersededAt?: ISODate | null
+  supersededById?: ID | null
   deletedAt?: ISODate | null
 }
 

@@ -9,6 +9,8 @@ import {
   type DimensionStatus,
   type Disposition,
   type GradeMapping,
+  type Process,
+  type PTVerdict,
   type ShiftLetter,
   type WorkCenterCode,
 } from './types'
@@ -113,24 +115,58 @@ export function dimensionStatus(input: {
 
 // ---- §5.1 Step gating ------------------------------------------------------
 
-export type WizardStep = 'setup' | 'dimensions' | 'defects' | 'paint' | 'pt' | 'review'
+export type WizardStep = 'setup' | 'dimensions' | 'defects' | 'paint' | 'paintThickness' | 'pt' | 'review'
 
-/** The steps a work center gets. An inspector must never see a step that does
- *  not apply, nor be able to skip one that does. */
-export function stepsForWorkCenter(code: string): WizardStep[] {
+/**
+ * The process of a machine that is not in the register, guessed from the
+ * legacy work-centre numbers. The register's own `process` always wins.
+ */
+export function legacyProcessForCode(code: string): Process {
   const c = normaliseWorkCenter(code)
-  const steps: WizardStep[] = ['setup', 'dimensions', 'defects']
-  if ((PAINT_WORK_CENTERS as readonly string[]).includes(c)) steps.push('paint')
-  if ((PT_WORK_CENTERS as readonly string[]).includes(c)) steps.push('pt')
-  steps.push('review')
-  return steps
+  if ((PAINT_WORK_CENTERS as readonly string[]).includes(c)) return 'paint'
+  if ((PT_WORK_CENTERS as readonly string[]).includes(c)) return 'welding'
+  return 'forming'
 }
 
-export function isPaintWorkCenter(code: string): boolean {
-  return (PAINT_WORK_CENTERS as readonly string[]).includes(normaliseWorkCenter(code))
+/** The process an inspection on a machine follows: the register's, else the legacy guess. */
+export function processForMachine(machine: { process?: Process | null } | null | undefined, code: string): Process {
+  return machine?.process ?? legacyProcessForCode(code)
 }
-export function isPTWorkCenter(code: string): boolean {
-  return (PT_WORK_CENTERS as readonly string[]).includes(normaliseWorkCenter(code))
+
+/**
+ * The steps a process gets. An inspector must never see a step that does
+ * not apply, nor be able to skip one that does.
+ *   forming / other — setup (drawing, coils), dimensions, defects
+ *   welding         — setup (drawing, welding wire), dimensions, VT defects, PT
+ *   paint           — paint sample photos, paint thickness readings, defects
+ */
+export function stepsForProcess(process: Process): WizardStep[] {
+  switch (process) {
+    case 'paint':
+      return ['paint', 'paintThickness', 'defects', 'review']
+    case 'welding':
+      return ['setup', 'dimensions', 'defects', 'pt', 'review']
+    default:
+      return ['setup', 'dimensions', 'defects', 'review']
+  }
+}
+
+/** The dimension name the paint-thickness readings are saved under (§5.5). */
+export const PAINT_THICKNESS_NAME = 'Paint thickness'
+/** How many thickness readings a paint sample carries. */
+export const PAINT_THICKNESS_READINGS = 3
+/** The unit used when no configuration row names one. */
+export const PAINT_THICKNESS_UNIT = 'µm'
+
+export function isPaintThicknessName(name: string): boolean {
+  return name.trim().toLowerCase() === PAINT_THICKNESS_NAME.toLowerCase()
+}
+
+/** The PT record's verdict: Reject / Repair as soon as one tested length is. */
+export function ptOverallVerdict(lengths: Array<{ verdict: PTVerdict | null | undefined }>): PTVerdict | null {
+  if (lengths.length === 0) return null
+  if (lengths.some((l) => !l.verdict)) return null
+  return lengths.some((l) => l.verdict === 'Reject / Repair') ? 'Reject / Repair' : 'Accept'
 }
 
 /** Work centers appear as "58", "58-A", "58-A. Welding Line-LM4" — the leading
@@ -227,14 +263,18 @@ export interface ValidationIssue {
 }
 
 export interface SampleDraftForValidation {
-  workCenterCode: string
+  process: Process
   sampleQty: number
   drawing: string
   coils: Array<{ coilNumber: string; grade?: string }>
   defects: Array<{ defectName: string; disposition: Disposition | null; qty: number }>
+  /** The measurement rows; a paint sample's thickness readings live here. */
+  dimensions?: Array<{ name: string; nominal: number | null; actual: number | null }>
+  paint?: { imageIds: string[] }
   pt?: {
     testFrequencyPct: number
     consumableLots: Partial<Record<'Cleaner' | 'Penetrant' | 'Developer', string>>
+    testedLengths?: Array<{ lengthMm: number; verdict: PTVerdict | null | undefined }>
   }
 }
 
@@ -244,9 +284,10 @@ export interface SampleDraftForValidation {
  */
 export function validateSample(draft: SampleDraftForValidation): ValidationIssue[] {
   const issues: ValidationIssue[] = []
-  const wc = draft.workCenterCode
+  const process = draft.process
+  const steps = stepsForProcess(process)
 
-  if (!draft.drawing?.trim()) {
+  if (steps.includes('setup') && !draft.drawing?.trim()) {
     issues.push({ step: 'setup', message: 'Select a drawing.' })
   }
   // §5.7 — the sample quantity is entered last, on the review step.
@@ -254,13 +295,6 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
     issues.push({ step: 'review', message: 'Sample quantity must be greater than zero.' })
   }
 
-  // §5.2 — PT/weld work centers require at least one coil.
-  if (isPTWorkCenter(wc) && draft.coils.filter((c) => c.coilNumber?.trim()).length === 0) {
-    issues.push({
-      step: 'setup',
-      message: 'At least one coil is required on PT / weld work centers.',
-    })
-  }
   for (const c of draft.coils) {
     if (!c.coilNumber?.trim()) {
       issues.push({ step: 'setup', message: 'Every coil needs a coil ID.', ref: 'coil' })
@@ -286,8 +320,28 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
     }
   }
 
+  // §5.5 — a paint sample: photos first, then three thickness readings.
+  if (process === 'paint') {
+    if ((draft.paint?.imageIds.length ?? 0) === 0) {
+      issues.push({ step: 'paint', message: 'Take at least one photo of the paint sample.' })
+    }
+    const readings = (draft.dimensions ?? []).filter((d) => isPaintThicknessName(d.name))
+    if (readings.length < PAINT_THICKNESS_READINGS) {
+      issues.push({ step: 'paintThickness', message: `Enter ${PAINT_THICKNESS_READINGS} paint thickness readings.` })
+    } else {
+      if (readings.some((r) => r.nominal === null || !Number.isFinite(r.nominal))) {
+        issues.push({ step: 'paintThickness', message: 'Enter the required paint thickness.', ref: 'nominal' })
+      }
+      readings.forEach((r, i) => {
+        if (r.actual === null || !Number.isFinite(r.actual)) {
+          issues.push({ step: 'paintThickness', message: `Reading ${i + 1} is missing.`, ref: `reading-${i + 1}` })
+        }
+      })
+    }
+  }
+
   // §5.6 — PT step rules.
-  if (isPTWorkCenter(wc)) {
+  if (process === 'welding') {
     const pt = draft.pt
     if (!pt) {
       issues.push({ step: 'pt', message: 'PT / weld inspection details are required.' })
@@ -308,6 +362,18 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
           })
         }
       }
+      const lengths = pt.testedLengths ?? []
+      if (lengths.length === 0) {
+        issues.push({ step: 'pt', message: 'Enter at least one tested weld length.', ref: 'testedLengths' })
+      }
+      lengths.forEach((l, i) => {
+        if (!(l.lengthMm > 0)) {
+          issues.push({ step: 'pt', message: `Tested length ${i + 1} must be greater than zero.`, ref: `length-${i + 1}` })
+        }
+        if (!l.verdict) {
+          issues.push({ step: 'pt', message: `Choose Accept or Reject / Repair for tested length ${i + 1}.`, ref: `length-${i + 1}` })
+        }
+      })
     }
   }
 

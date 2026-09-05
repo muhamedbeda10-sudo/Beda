@@ -32,6 +32,7 @@ mkdirSync(out, { recursive: true })
 cpSync(path.join(root, 'server/dist'), path.join(out, 'dist'), { recursive: true })
 cpSync(path.join(root, 'client/dist'), path.join(out, 'public'), { recursive: true })
 cpSync(path.join(root, 'server/migrations'), path.join(out, 'migrations'), { recursive: true })
+cpSync(path.join(root, 'server/seed'), path.join(out, 'seed'), { recursive: true })
 
 const serverPkg = JSON.parse(readFileSync(path.join(root, 'server/package.json'), 'utf8'))
 const deps = { ...serverPkg.dependencies }

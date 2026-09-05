@@ -11,6 +11,7 @@ import { migrate } from './db/migrate'
 import { createApp } from './app'
 import { AzureBlobImageStorage, LocalImageStorage, type ImageStorage } from './images/storage'
 import { RateLimiter } from './lib/rateLimit'
+import { seedWorkInstructionsIfEmpty } from './db/seedWorkInstructions'
 
 function readVersion(): string {
   try {
@@ -35,13 +36,22 @@ const images: ImageStorage =
     ? new AzureBlobImageStorage(config.AZURE_STORAGE_CONNECTION_STRING!, config.AZURE_STORAGE_CONTAINER)
     : new LocalImageStorage(path.resolve(config.IMAGE_LOCAL_DIR))
 
-const app = createApp({
+const ctx = {
   config,
   db,
   images,
   loginLimiter: new RateLimiter(10, 15 * 60_000),
   version: readVersion(),
-})
+}
+const app = createApp(ctx)
+
+// The shipped work instructions go in once, on an empty table.
+try {
+  const loaded = await seedWorkInstructionsIfEmpty(ctx)
+  if (loaded > 0) console.log(`[seed] loaded ${loaded} shipped work instruction(s)`)
+} catch (e) {
+  console.warn('[seed] work instructions were not loaded:', e)
+}
 
 const server = app.listen(config.PORT, () => {
   console.log(`[api] listening on :${config.PORT} (${config.NODE_ENV}, images=${config.IMAGE_STORAGE_DRIVER})`)

@@ -93,9 +93,17 @@ describe('master data', () => {
   it('bulk-imports machines on the code and defects on machine + name', async () => {
     const machines = await app.api<ImportResult>('POST', '/api/master/machines/import', {
       token: admin.token,
-      body: { rows: [{ code: 'RF-01', name: 'Roll Former 1', factory: 'Factory A' }, { code: 'RF-02', name: 'Roll Former 2', factory: 'Factory A', line: 'L2' }] },
+      body: {
+        rows: [
+          { code: 'RF-01', name: 'Roll Former 1', factory: 'Factory A' },
+          { code: 'RF-02', name: 'Roll Former 2', factory: 'Factory A', line: 'L2' },
+          // No process column: guessed from the name. A synonym in the sheet is accepted.
+          { code: 'WL-03', name: 'Shuttle Welding Cell', factory: 'Factory A' },
+          { code: 'PL-04', name: 'Line 4', factory: 'Factory A', process: 'Painting' },
+        ],
+      },
     })
-    expect(machines.body).toEqual({ inserted: 2, updated: 0 })
+    expect(machines.body).toEqual({ inserted: 4, updated: 0 })
     const again = await app.api<ImportResult>('POST', '/api/master/machines/import', {
       token: admin.token,
       body: { rows: [{ code: 'rf-01', name: 'Roll Former One' }] },
@@ -106,7 +114,14 @@ describe('master data', () => {
     expect(one.name).toBe('Roll Former One')
     expect(one.factory).toBe('Factory A')
     expect(one.displayName).toBe('RF-01-Roll Former One')
+    expect(one.process).toBe('forming')
     expect(list.body.find((m) => m.code === 'RF-02')!.displayName).toBe('RF-02-Roll Former 2-L2')
+    expect(list.body.find((m) => m.code === 'WL-03')!.process).toBe('welding')
+    expect(list.body.find((m) => m.code === 'PL-04')!.process).toBe('paint')
+    // A re-import without the column keeps the process the register already has.
+    await app.api('POST', '/api/master/machines/import', { token: admin.token, body: { rows: [{ code: 'WL-03', name: 'Cell 3' }] } })
+    const kept = await app.api<Machine[]>('GET', '/api/master/machines?factory=Factory%20A', { token: inspector.token })
+    expect(kept.body.find((m) => m.code === 'WL-03')!.process).toBe('welding')
 
     const keys = await app.api<ExistingKeysResponse>('POST', '/api/master/machines/existing-keys', { token: admin.token, body: { keys: ['RF-01', 'nope'] } })
     expect(keys.body.existing).toEqual(['rf-01'])

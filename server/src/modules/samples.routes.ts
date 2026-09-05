@@ -6,7 +6,7 @@
 
 import { Router } from 'express'
 import { z } from 'zod'
-import { DISPOSITIONS, type DefectResult, type DimensionResult, type PTRecord, type PaintSampleRecord, type SampleCoil } from '@qc/shared/types'
+import { DISPOSITIONS, type DefectResult, type DimensionResult, type PTRecord, type PTTestedLength, type PaintSampleRecord, type SampleCoil } from '@qc/shared/types'
 import { can, dimensionStatus } from '@qc/shared/rules'
 import type { SampleDetail } from '@qc/shared/api'
 import type { AppContext } from '../context'
@@ -32,7 +32,7 @@ const DEFECT_SELECT = `
 async function loadSampleDetail(q: Queryable, id: string): Promise<SampleDetail | null> {
   const sample = (await q.query<SampleRow>(`SELECT ${SAMPLE_SELECT} FROM inspection_samples sm WHERE sm.id = $1 AND sm.deleted_at IS NULL`, [id])).rows[0]
   if (!sample) return null
-  const [dims, defects, coils, paint, pt] = await Promise.all([
+  const [dims, defects, coils, paint, pt, lengths] = await Promise.all([
     q.query<DimensionResult>(`SELECT ${DIMENSION_SELECT} FROM dimension_results WHERE sample_id = $1 AND deleted_at IS NULL ORDER BY sequence, name`, [id]),
     q.query<DefectResult>(`SELECT ${DEFECT_SELECT} FROM defect_results d WHERE d.sample_id = $1 AND d.deleted_at IS NULL ORDER BY d.updated_at, d.id`, [id]),
     q.query<SampleCoil>(
@@ -55,6 +55,13 @@ async function loadSampleDetail(q: Queryable, id: string): Promise<SampleDetail 
          FROM pt_records p WHERE p.sample_id = $1 AND p.deleted_at IS NULL`,
       [id],
     ),
+    q.query<PTTestedLength>(
+      `SELECT l.id, l.seq, l.length_mm AS "lengthMm", l.verdict
+         FROM pt_tested_lengths l JOIN pt_records p ON p.id = l.pt_record_id
+        WHERE p.sample_id = $1 AND p.deleted_at IS NULL AND l.deleted_at IS NULL
+        ORDER BY l.seq`,
+      [id],
+    ),
   ])
   const ptRow = pt.rows[0]
   const ptRecord: PTRecord | null = ptRow
@@ -68,6 +75,7 @@ async function loadSampleDetail(q: Queryable, id: string): Promise<SampleDetail 
         indicationType: ptRow.indicationType,
         indicationSize: ptRow.indicationSize,
         weldingWireBatch: ptRow.weldingWireBatch,
+        testedLengths: lengths.rows,
         acceptOrRepair: ptRow.acceptOrRepair,
         finalResult: ptRow.finalResult,
         notes: ptRow.notes,

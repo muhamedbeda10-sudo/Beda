@@ -22,6 +22,7 @@ import { coilsRoutes } from './modules/coils.routes'
 import { sessionsRoutes } from './modules/sessions.routes'
 import { samplesRoutes } from './modules/samples.routes'
 import { imagesRoutes } from './modules/images.routes'
+import { workInstructionsRoutes } from './modules/workInstructions.routes'
 import { pdiRoutes } from './modules/pdi.routes'
 import { auditRoutes } from './modules/audit.routes'
 
@@ -76,6 +77,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/sessions', guard, sessionsRoutes(ctx))
   app.use('/api/samples', guard, samplesRoutes(ctx))
   app.use('/api/images', guard, imagesRoutes(ctx))
+  app.use('/api/work-instructions', guard, workInstructionsRoutes(ctx))
   app.use('/api/pdi', guard, pdiRoutes(ctx))
   app.use('/api/audit', guard, auditRoutes(ctx))
 

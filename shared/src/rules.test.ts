@@ -4,9 +4,10 @@ import {
   hourInTimeZone,
   shiftStartDate,
   dimensionStatus,
-  stepsForWorkCenter,
-  isPaintWorkCenter,
-  isPTWorkCenter,
+  stepsForProcess,
+  legacyProcessForCode,
+  processForMachine,
+  ptOverallVerdict,
   normaliseWorkCenter,
   normaliseGrade,
   buildGradeIndex,
@@ -110,45 +111,40 @@ describe('§8.2 dimension status', () => {
   })
 })
 
-describe('§5.1 work-center step gating', () => {
-  it('gives paint work centers the paint step and no PT step', () => {
-    for (const wc of ['7', '11', '48']) {
-      const steps = stepsForWorkCenter(wc)
-      expect(steps).toContain('paint')
-      expect(steps).not.toContain('pt')
-      expect(isPaintWorkCenter(wc)).toBe(true)
-    }
+describe('§5.1 step gating by process', () => {
+  it('gives paint machines photos, thickness readings and defects — no setup', () => {
+    expect(stepsForProcess('paint')).toEqual(['paint', 'paintThickness', 'defects', 'review'])
   })
 
-  it('gives weld work centers the PT step and no paint step', () => {
-    for (const wc of ['22', '58']) {
-      const steps = stepsForWorkCenter(wc)
-      expect(steps).toContain('pt')
-      expect(steps).not.toContain('paint')
-      expect(isPTWorkCenter(wc)).toBe(true)
-    }
+  it('gives welding machines setup, dimensions, VT defects and PT', () => {
+    expect(stepsForProcess('welding')).toEqual(['setup', 'dimensions', 'defects', 'pt', 'review'])
   })
 
-  it('gives other work centers neither', () => {
-    const steps = stepsForWorkCenter('31')
-    expect(steps).not.toContain('paint')
-    expect(steps).not.toContain('pt')
-    expect(steps).toEqual(['setup', 'dimensions', 'defects', 'review'])
+  it('gives forming and other machines the plain flow', () => {
+    expect(stepsForProcess('forming')).toEqual(['setup', 'dimensions', 'defects', 'review'])
+    expect(stepsForProcess('other')).toEqual(['setup', 'dimensions', 'defects', 'review'])
   })
 
   it('always keeps review last', () => {
-    for (const wc of ['7', '22', '31', '48', '58']) {
-      const steps = stepsForWorkCenter(wc)
+    for (const p of ['forming', 'welding', 'paint', 'other'] as const) {
+      const steps = stepsForProcess(p)
       expect(steps[steps.length - 1]).toBe('review')
-      expect(steps[0]).toBe('setup')
     }
   })
 
-  it('reads the code out of decorated work-center names', () => {
+  it('takes the process from the register and falls back to the legacy work-centre numbers', () => {
+    expect(processForMachine({ process: 'paint' }, '58')).toBe('paint')
+    expect(processForMachine(null, '58')).toBe('welding')
+    expect(processForMachine(undefined, '48-Painting Line-LM4')).toBe('paint')
+    expect(legacyProcessForCode('31')).toBe('forming')
     expect(normaliseWorkCenter('58-A. Welding Line-LM4')).toBe('58')
-    expect(normaliseWorkCenter('48-Painting Line-LM4')).toBe('48')
-    expect(isPTWorkCenter('58-A. Welding Line-LM4')).toBe(true)
-    expect(isPaintWorkCenter('48-Painting Line-LM4')).toBe(true)
+  })
+
+  it('rejects the PT record as soon as one tested length is rejected', () => {
+    expect(ptOverallVerdict([])).toBeNull()
+    expect(ptOverallVerdict([{ verdict: 'Accept' }, { verdict: null }])).toBeNull()
+    expect(ptOverallVerdict([{ verdict: 'Accept' }, { verdict: 'Accept' }])).toBe('Accept')
+    expect(ptOverallVerdict([{ verdict: 'Accept' }, { verdict: 'Reject / Repair' }])).toBe('Reject / Repair')
   })
 })
 
@@ -221,7 +217,7 @@ describe('§8.4 grade equivalence', () => {
 
 describe('save-time validation', () => {
   const base = {
-    workCenterCode: '31',
+    process: 'forming' as const,
     sampleQty: 1,
     drawing: 'DWG-1',
     coils: [],
@@ -251,21 +247,16 @@ describe('save-time validation', () => {
     ).toEqual([])
   })
 
-  it('requires at least one coil on PT work centers', () => {
-    const issues = validateSample({ ...base, workCenterCode: '58', coils: [], pt: ptOk() })
-    expect(issues.some((i) => i.message.includes('coil'))).toBe(true)
-  })
-
-  it('does not require coils on non-PT work centers', () => {
-    expect(validateSample({ ...base, workCenterCode: '48', coils: [] })).toEqual([])
+  it('never requires a coil: welding records a wire batch instead', () => {
+    expect(validateSample({ ...base, process: 'welding', coils: [], pt: ptOk() })).toEqual([])
+    expect(validateSample({ ...base, coils: [] })).toEqual([])
   })
 
   it('requires PT test frequency to be greater than 5%', () => {
     const withFreq = (pct: number) =>
       validateSample({
         ...base,
-        workCenterCode: '22',
-        coils: [{ coilNumber: 'C1' }],
+        process: 'welding',
         pt: { ...ptOk(), testFrequencyPct: pct },
       })
     expect(withFreq(5).some((i) => i.ref === 'testFrequencyPct')).toBe(true)
@@ -276,18 +267,62 @@ describe('save-time validation', () => {
   it('requires every consumable lot number', () => {
     const issues = validateSample({
       ...base,
-      workCenterCode: '22',
-      coils: [{ coilNumber: 'C1' }],
-      pt: { testFrequencyPct: 10, consumableLots: { Cleaner: 'L1' } },
+      process: 'welding',
+      pt: { ...ptOk(), consumableLots: { Cleaner: 'L1' } },
     })
     expect(issues.some((i) => i.ref === 'Penetrant')).toBe(true)
     expect(issues.some((i) => i.ref === 'Developer')).toBe(true)
     expect(issues.some((i) => i.ref === 'Cleaner')).toBe(false)
   })
 
+  it('requires at least one tested weld length, each with a length and a verdict', () => {
+    const none = validateSample({ ...base, process: 'welding', pt: { ...ptOk(), testedLengths: [] } })
+    expect(none.some((i) => i.ref === 'testedLengths')).toBe(true)
+    const bad = validateSample({
+      ...base,
+      process: 'welding',
+      pt: { ...ptOk(), testedLengths: [{ lengthMm: 0, verdict: 'Accept' }, { lengthMm: 120, verdict: null }] },
+    })
+    expect(bad.filter((i) => i.ref === 'length-1')).toHaveLength(1)
+    expect(bad.filter((i) => i.ref === 'length-2')).toHaveLength(1)
+  })
+
+  it('needs no drawing on a paint machine, but photos and three thickness readings', () => {
+    const paint = { ...base, process: 'paint' as const, drawing: '' }
+    const bare = validateSample(paint)
+    expect(bare.map((i) => i.step)).toEqual(['paint', 'paintThickness'])
+    const twoReadings = validateSample({
+      ...paint,
+      paint: { imageIds: ['img'] },
+      dimensions: [
+        { name: 'Paint thickness', nominal: 60, actual: 61 },
+        { name: 'Paint thickness', nominal: 60, actual: 59 },
+      ],
+    })
+    expect(twoReadings).toHaveLength(1)
+    expect(twoReadings[0].step).toBe('paintThickness')
+    const missingOne = validateSample({
+      ...paint,
+      paint: { imageIds: ['img'] },
+      dimensions: [
+        { name: 'paint thickness', nominal: 60, actual: 61 },
+        { name: 'Paint thickness', nominal: 60, actual: null },
+        { name: 'Paint thickness', nominal: null, actual: 62 },
+      ],
+    })
+    expect(missingOne.map((i) => i.ref)).toEqual(['nominal', 'reading-2'])
+    expect(
+      validateSample({
+        ...paint,
+        paint: { imageIds: ['img'] },
+        dimensions: [1, 2, 3].map(() => ({ name: 'Paint thickness', nominal: 60, actual: 61 })),
+      }),
+    ).toEqual([])
+  })
+
   it('collects every problem in one pass rather than one per attempt', () => {
     const issues = validateSample({
-      workCenterCode: '58',
+      process: 'welding',
       sampleQty: 0,
       drawing: '',
       coils: [],
@@ -305,6 +340,7 @@ describe('save-time validation', () => {
     return {
       testFrequencyPct: 10,
       consumableLots: { Cleaner: 'L1', Penetrant: 'L2', Developer: 'L3' },
+      testedLengths: [{ lengthMm: 150, verdict: 'Accept' as const }],
     }
   }
 })

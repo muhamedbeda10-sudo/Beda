@@ -62,6 +62,7 @@ const schema = z
     STATIC_DIR: z.string().default('public'),
     /** Upper bound on one uploaded photo after on-device compression. */
     MAX_IMAGE_BYTES: z.coerce.number().int().positive().default(8 * 1024 * 1024),
+    MAX_DOCUMENT_BYTES: z.coerce.number().int().positive().default(25 * 1024 * 1024),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.IMAGE_STORAGE_DRIVER === 'azure-blob' && !cfg.AZURE_STORAGE_CONNECTION_STRING) {

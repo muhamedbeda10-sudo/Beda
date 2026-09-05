@@ -17,14 +17,17 @@ import {
   CheckCircle2,
   CloudOff,
   Search,
+  Gauge,
+  Cable,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { CoilPicker } from '@/components/inspection/CoilPicker'
+import { WorkInstructionLinks } from '@/components/documents/WorkInstructionLinks'
 import { useWizardContext } from '@/services/queries'
 import { saveSample } from '@/services/mutations'
-import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect, type DraftCoil } from '@/services/draftStore'
+import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect, type DraftCoil, type DraftPT, type DraftDimension } from '@/services/draftStore'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn, uid, newSubmissionId } from '@/lib/utils'
@@ -32,14 +35,17 @@ import {
   DISPOSITIONS,
   type Disposition,
   type PTConsumableKind,
+  type PTVerdict,
+  type Process,
   type Coil,
   type ProductionOrder,
   type PTConsumableProduct,
   type ItemReferenceImage,
+  type WorkInstruction,
 } from '@qc/shared/types'
 import type { SaveSampleRequest } from '@qc/shared/api'
 import {
-  stepsForWorkCenter,
+  stepsForProcess,
   deriveShift,
   shiftName,
   dimensionStatus,
@@ -48,8 +54,11 @@ import {
   buildGradeIndex,
   findGradeMismatches,
   gradesEquivalent,
-  isPaintWorkCenter,
-  isPTWorkCenter,
+  isPaintThicknessName,
+  ptOverallVerdict,
+  PAINT_THICKNESS_NAME,
+  PAINT_THICKNESS_READINGS,
+  PAINT_THICKNESS_UNIT,
   type WizardStep,
 } from '@qc/shared/rules'
 
@@ -57,7 +66,8 @@ const STEP_META: Record<WizardStep, { label: string; icon: typeof Ruler }> = {
   setup: { label: 'Setup', icon: ClipboardList },
   dimensions: { label: 'Dimensions', icon: Ruler },
   defects: { label: 'Defects', icon: AlertTriangle },
-  paint: { label: 'Paint Sample', icon: Camera },
+  paint: { label: 'Paint sample', icon: Camera },
+  paintThickness: { label: 'Paint thickness', icon: Gauge },
   pt: { label: 'PT / Weld', icon: FlaskConical },
   review: { label: 'Review & Save', icon: Check },
 }
@@ -87,7 +97,11 @@ export function WizardPage() {
   const consumables = useMemo(() => ctx?.ptConsumables ?? [], [ctx])
   const priorSamples = useMemo(() => ctx?.samples ?? [], [ctx])
   const previousDims = useMemo(() => ctx?.previousDimensions ?? [], [ctx])
-  const steps = useMemo(() => stepsForWorkCenter(wc), [wc])
+  const instructions = useMemo(() => ctx?.workInstructions ?? [], [ctx])
+  // The machine's process decides the steps: the API resolved it from the register.
+  const process: Process = ctx?.process ?? 'forming'
+  const previousWire = ctx?.previousWeldingWireBatch ?? null
+  const steps = useMemo(() => stepsForProcess(process), [process])
 
   const [draft, setDraft] = useState<SampleDraft | null>(null)
   const [saving, setSaving] = useState(false)
@@ -122,35 +136,49 @@ export function WizardPage() {
       order: dimOrder,
       previous: previousDims,
     })
+    const toDraftRow = (r: (typeof rows)[number], sequence = r.sequence): DraftDimension => ({
+      name: r.name,
+      sequence,
+      nominal: r.nominal === null ? '' : String(r.nominal),
+      tolPlus: String(r.tolPlus),
+      tolMinus: String(r.tolMinus),
+      actual: '',
+      unit: r.unit,
+      source: r.source,
+    })
+    // A paint sample measures one thing three times: the configured (or
+    // remembered) "Paint thickness" row becomes three readings.
+    const dimensions: DraftDimension[] =
+      process === 'paint'
+        ? Array.from({ length: PAINT_THICKNESS_READINGS }, (_, i) => {
+            const rule = rows.find((r) => isPaintThicknessName(r.name))
+            return rule
+              ? toDraftRow(rule, i + 1)
+              : { name: PAINT_THICKNESS_NAME, sequence: i + 1, nominal: '', tolPlus: '', tolMinus: '', actual: '', unit: PAINT_THICKNESS_UNIT, source: 'manual' }
+          })
+        : rows.map((r) => toDraftRow(r))
     setDraft({
       sessionId: session.id,
       orderId: order.id,
       workCenterCode: session.workCenterCode,
+      process,
       submissionId: newSubmissionId(),
-      step: 'setup',
-      drawing: order.drawing ?? '',
+      step: stepsForProcess(process)[0],
+      drawing: process === 'paint' ? '' : (order.drawing ?? ''),
       drawingAlt: order.drawingAlt,
       issue: order.issue,
       sampleQty: '',
       coils: [],
-      dimensions: rows.map((r) => ({
-        name: r.name,
-        sequence: r.sequence,
-        nominal: r.nominal === null ? '' : String(r.nominal),
-        tolPlus: String(r.tolPlus),
-        tolMinus: String(r.tolMinus),
-        actual: '',
-        unit: r.unit,
-        source: r.source,
-      })),
+      dimensions,
       defects: [],
       paint: { imageIds: [] },
-      pt: isPTWorkCenter(session.workCenterCode)
-        ? { testFrequencyPct: '', consumableLots: {}, imageIds: [] }
-        : undefined,
+      pt:
+        process === 'welding'
+          ? { testFrequencyPct: '', consumableLots: {}, weldingWireBatch: previousWire ?? '', testedLengths: [], imageIds: [] }
+          : undefined,
       updatedAt: new Date().toISOString(),
     })
-  }, [session, order, draft, dimOrder, previousDims])
+  }, [session, order, draft, dimOrder, previousDims, process, previousWire])
 
   // Persist on every change so a reload or a dead network loses nothing (§9.6).
   const update = useCallback((patch: Partial<SampleDraft> | ((d: SampleDraft) => SampleDraft)) => {
@@ -175,7 +203,7 @@ export function WizardPage() {
   const issues = useMemo(() => {
     if (!draft) return []
     return validateSample({
-      workCenterCode: draft.workCenterCode,
+      process: draft.process,
       sampleQty: Number(draft.sampleQty),
       drawing: draft.drawing,
       coils: draft.coils.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade })),
@@ -184,8 +212,18 @@ export function WizardPage() {
         disposition: d.disposition,
         qty: Number(d.qty),
       })),
+      dimensions: draft.dimensions.map((d) => ({
+        name: d.name,
+        nominal: d.nominal.trim() === '' ? null : Number(d.nominal),
+        actual: d.actual.trim() === '' ? null : Number(d.actual),
+      })),
+      paint: { imageIds: draft.paint.imageIds },
       pt: draft.pt
-        ? { testFrequencyPct: Number(draft.pt.testFrequencyPct), consumableLots: draft.pt.consumableLots }
+        ? {
+            testFrequencyPct: Number(draft.pt.testFrequencyPct),
+            consumableLots: draft.pt.consumableLots,
+            testedLengths: draft.pt.testedLengths.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict ?? null })),
+          }
         : undefined,
     })
   }, [draft])
@@ -262,9 +300,9 @@ export function WizardPage() {
           yield: c.yield ? Number(c.yield) : undefined,
           notes: c.notes || undefined,
         })),
-        paint: isPaintWorkCenter(draft.workCenterCode) ? { notes: draft.paint.notes || undefined, imageIds: draft.paint.imageIds } : undefined,
+        paint: draft.process === 'paint' ? { notes: draft.paint.notes || undefined, imageIds: draft.paint.imageIds } : undefined,
         pt:
-          isPTWorkCenter(draft.workCenterCode) && draft.pt
+          draft.process === 'welding' && draft.pt
             ? {
                 testFrequencyPct: Number(draft.pt.testFrequencyPct),
                 consumableLots: {
@@ -272,13 +310,9 @@ export function WizardPage() {
                   Penetrant: draft.pt.consumableLots.Penetrant ?? '',
                   Developer: draft.pt.consumableLots.Developer ?? '',
                 },
-                sampleSize: draft.pt.sampleSize || undefined,
-                testedWeldLength: draft.pt.testedWeldLength || undefined,
-                indicationType: draft.pt.indicationType || undefined,
-                indicationSize: draft.pt.indicationSize || undefined,
-                weldingWireBatch: draft.pt.weldingWireBatch || undefined,
-                acceptOrRepair: draft.pt.acceptOrRepair,
-                finalResult: draft.pt.finalResult || undefined,
+                weldingWireBatch: draft.pt.weldingWireBatch?.trim() || undefined,
+                // validateSample has already refused a missing verdict or length.
+                testedLengths: draft.pt.testedLengths.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict as PTVerdict })),
                 notes: draft.pt.notes || undefined,
                 imageIds: draft.pt.imageIds,
               }
@@ -391,15 +425,37 @@ export function WizardPage() {
         </h2>
 
         {current === 'setup' && (
-          <SetupStep draft={draft} order={order} update={update} shift={shift} gradeIndex={gradeIndex} />
+          <SetupStep draft={draft} order={order} update={update} shift={shift} gradeIndex={gradeIndex} instructions={instructions} />
         )}
-        {current === 'dimensions' && <DimensionsStep draft={draft} update={update} order={order} refImages={refImages} />}
+        {current === 'dimensions' && (
+          <>
+            <WorkInstructionLinks instructions={instructions} step="dimensions" />
+            <DimensionsStep draft={draft} update={update} order={order} refImages={refImages} />
+          </>
+        )}
         {current === 'defects' && (
-          <DefectsStep draft={draft} update={update} options={defectOptions} sessionId={session.id} orderId={order.id} />
+          <>
+            <WorkInstructionLinks instructions={instructions} step="defects" />
+            <DefectsStep draft={draft} update={update} options={defectOptions} sessionId={session.id} orderId={order.id} />
+          </>
         )}
-        {current === 'paint' && <PaintStep draft={draft} update={update} sessionId={session.id} orderId={order.id} />}
+        {current === 'paint' && (
+          <>
+            <WorkInstructionLinks instructions={instructions} step="paint" />
+            <PaintStep draft={draft} update={update} sessionId={session.id} orderId={order.id} />
+          </>
+        )}
+        {current === 'paintThickness' && (
+          <>
+            <WorkInstructionLinks instructions={instructions} step="paintThickness" />
+            <PaintThicknessStep draft={draft} update={update} order={order} refImages={refImages} />
+          </>
+        )}
         {current === 'pt' && (
-          <PTStep draft={draft} update={update} consumables={consumables} sessionId={session.id} orderId={order.id} />
+          <>
+            <WorkInstructionLinks instructions={instructions} step="pt" />
+            <PTStep draft={draft} update={update} consumables={consumables} sessionId={session.id} orderId={order.id} />
+          </>
         )}
         {current === 'review' && <ReviewStep draft={draft} order={order} issues={issues} update={update} />}
       </Card>
@@ -496,14 +552,18 @@ function SetupStep({
   update,
   shift,
   gradeIndex,
+  instructions,
 }: {
   draft: SampleDraft
   order: ProductionOrder
   update: Updater
   shift: 'A' | 'B' | 'C'
   gradeIndex: Map<string, string>
+  instructions: WorkInstruction[]
 }) {
   const [picking, setPicking] = useState(false)
+  // A welding machine records the wire, not the coil (§5.2).
+  const welding = draft.process === 'welding'
 
   const setCoil = (i: number, patch: Partial<DraftCoil>) =>
     update((d) => {
@@ -534,6 +594,7 @@ function SetupStep({
 
   return (
     <div className="space-y-4">
+      <WorkInstructionLinks instructions={instructions} step="setup" />
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Drawing">
           <Select value={draft.drawing} onChange={(e) => update({ drawing: e.target.value })} className="min-h-[48px]">
@@ -566,21 +627,34 @@ function SetupStep({
         </div>
       </div>
 
+      {welding && (
+        <div className="rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
+          <Field label="Welding wire batch number" hint="Remembered from the previous sample of this session; change it when a new spool goes on.">
+            <div className="relative">
+              <Cable className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={draft.pt?.weldingWireBatch ?? ''}
+                onChange={(e) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), weldingWireBatch: e.target.value } }))}
+                className="min-h-[48px] pl-9"
+                placeholder="e.g. WW-24-0388"
+                autoCapitalize="characters"
+              />
+            </div>
+          </Field>
+        </div>
+      )}
+
+      {!welding && (
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <span className="label !mb-0">
-            Coils{' '}
-            {isPTWorkCenter(draft.workCenterCode) && (
-              <span className="text-rose-500">· at least one required on this machine</span>
-            )}
-          </span>
+          <span className="label !mb-0">Coils</span>
           <Button variant="secondary" className="min-h-[44px]" onClick={() => setPicking(true)}>
             <Plus className="h-4 w-4" /> Add coil
           </Button>
         </div>
         {draft.coils.length === 0 ? (
           <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-sm text-slate-400 dark:border-slate-700">
-            No coils added. {isPTWorkCenter(draft.workCenterCode) ? 'Pick one from the register to continue.' : 'Optional on this machine.'}
+            No coils added. Optional on this machine.
           </p>
         ) : (
           <div className="space-y-3">
@@ -651,6 +725,7 @@ function SetupStep({
           </div>
         )}
       </div>
+      )}
 
       <CoilPicker
         open={picking}
@@ -1060,6 +1135,10 @@ function DefectsStep({
   )
 }
 
+function emptyPT(): DraftPT {
+  return { testFrequencyPct: '', consumableLots: {}, weldingWireBatch: '', testedLengths: [], imageIds: [] }
+}
+
 function PaintStep({
   draft,
   update,
@@ -1074,8 +1153,8 @@ function PaintStep({
   return (
     <div className="space-y-4">
       {draft.paint.imageIds.length === 0 && (
-        <p className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-center text-sm text-slate-400 dark:border-slate-700">
-          Take or upload photos of the paint sample using the buttons below.
+        <p className="rounded-xl border border-dashed border-rose-300 bg-rose-50/40 px-3 py-4 text-center text-sm text-rose-600 dark:border-rose-500/40 dark:bg-rose-500/5 dark:text-rose-300">
+          Photograph the paint sample first — at least one photo is required before the thickness readings.
         </p>
       )}
       <div>
@@ -1099,6 +1178,127 @@ function PaintStep({
   )
 }
 
+/**
+ * Three readings of the dry film thickness against one required value. The
+ * value and tolerance come from the item's configuration when it has a
+ * "Paint thickness" row, or from the previous sample; otherwise the inspector
+ * types them once and they apply to all three readings.
+ */
+function PaintThicknessStep({
+  draft,
+  update,
+  order,
+  refImages,
+}: {
+  draft: SampleDraft
+  update: Updater
+  order: ProductionOrder
+  refImages: ItemReferenceImage[]
+}) {
+  const readings = draft.dimensions.map((d, i) => ({ d, i })).filter(({ d }) => isPaintThicknessName(d.name))
+  const first = readings[0]?.d
+  const configured = !!first && first.source === 'item-order' && first.nominal.trim() !== ''
+
+  /** The required value and tolerance are one setting shared by all readings. */
+  const setShared = (patch: Partial<Pick<DraftDimension, 'nominal' | 'tolPlus' | 'tolMinus' | 'unit'>>) =>
+    update((dd) => ({
+      ...dd,
+      dimensions: dd.dimensions.map((x) => (isPaintThicknessName(x.name) ? { ...x, ...patch } : x)),
+    }))
+  const setActual = (index: number, actual: string) =>
+    update((dd) => {
+      const dimensions = [...dd.dimensions]
+      dimensions[index] = { ...dimensions[index], actual }
+      return { ...dd, dimensions }
+    })
+
+  if (!first) return <Empty>No thickness readings on this draft.</Empty>
+
+  return (
+    <div className="space-y-4">
+      {refImages.length > 0 && (
+        <div>
+          <span className="label">Reference photos for {order.itemCode}</span>
+          <ImagePicker imageIds={refImages.map((r) => r.imageId)} onChange={() => {}} readOnly />
+        </div>
+      )}
+
+      <div className="rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <span className="label !mb-0">Required thickness</span>
+          {configured ? <Badge tone="green">From configuration</Badge> : first.source === 'carry-forward' || first.nominal ? <Badge tone="blue">Remembered</Badge> : <Badge tone="amber">Type it once</Badge>}
+        </div>
+        <div className="grid grid-cols-[1.4fr_1fr_1fr_auto] items-end gap-2">
+          <label className="block">
+            <span className="label">Nominal</span>
+            <input
+              value={first.nominal}
+              onChange={(e) => setShared({ nominal: e.target.value })}
+              inputMode="decimal"
+              type="number"
+              step="any"
+              className={cn('input min-h-[48px] text-right text-lg font-bold tabular-nums', first.nominal.trim() === '' && 'border-rose-400')}
+            />
+          </label>
+          <label className="block">
+            <span className="label">+ tol</span>
+            <input value={first.tolPlus} onChange={(e) => setShared({ tolPlus: e.target.value })} inputMode="decimal" type="number" step="any" className="input min-h-[48px] text-right tabular-nums" />
+          </label>
+          <label className="block">
+            <span className="label">- tol</span>
+            <input value={first.tolMinus} onChange={(e) => setShared({ tolMinus: e.target.value })} inputMode="decimal" type="number" step="any" className="input min-h-[48px] text-right tabular-nums" />
+          </label>
+          <span className="pb-3 text-sm font-semibold text-slate-400">{first.unit || PAINT_THICKNESS_UNIT}</span>
+        </div>
+      </div>
+
+      <div>
+        <span className="label">Readings</span>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {readings.map(({ d, i }, n) => {
+            const status = dimensionStatus({
+              nominal: d.nominal.trim() === '' ? NaN : Number(d.nominal),
+              tolPlus: Number(d.tolPlus),
+              tolMinus: Number(d.tolMinus),
+              actual: d.actual.trim() === '' ? null : Number(d.actual),
+            })
+            return (
+              <label
+                key={i}
+                className={cn(
+                  'block rounded-2xl border p-3',
+                  status === 'Fail'
+                    ? 'border-rose-300 bg-rose-50/60 dark:border-rose-500/40 dark:bg-rose-500/5'
+                    : status === 'Warning'
+                      ? 'border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-500/5'
+                      : 'border-slate-200 dark:border-slate-700',
+                )}
+              >
+                <span className="flex items-center justify-between">
+                  <span className="text-sm font-bold">Reading {n + 1}</span>
+                  <Badge tone={status === 'Pass' ? 'green' : status === 'Fail' ? 'red' : status === 'Warning' ? 'amber' : 'neutral'}>{status}</Badge>
+                </span>
+                <input
+                  value={d.actual}
+                  onChange={(e) => setActual(i, e.target.value)}
+                  inputMode="decimal"
+                  type="number"
+                  step="any"
+                  placeholder="—"
+                  className={cn(
+                    'input mt-2 min-h-[56px] text-center text-2xl font-bold tabular-nums',
+                    status === 'Fail' ? 'border-rose-400' : status === 'Warning' ? 'border-amber-400' : '',
+                  )}
+                />
+              </label>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function PTStep({
   draft,
   update,
@@ -1112,14 +1312,22 @@ function PTStep({
   sessionId: string
   orderId: string
 }) {
-  const pt = draft.pt ?? { testFrequencyPct: '', consumableLots: {}, imageIds: [] }
-  const setPT = (patch: Partial<typeof pt>) => update((d) => ({ ...d, pt: { ...pt, ...patch } }))
+  const pt = draft.pt ?? emptyPT()
+  const setPT = (patch: Partial<DraftPT>) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), ...patch } }))
   const freq = Number(pt.testFrequencyPct)
   const freqBad = pt.testFrequencyPct.trim() !== '' && !(freq > 5)
+  const setLength = (key: string, patch: Partial<DraftPT['testedLengths'][number]>) =>
+    setPT({ testedLengths: pt.testedLengths.map((l) => (l.key === key ? { ...l, ...patch } : l)) })
+  const overall = ptOverallVerdict(pt.testedLengths.map((l) => ({ verdict: l.verdict })))
 
   return (
     <div className="space-y-4">
-      <Field label="Test frequency % (must be greater than 5)">
+      <div className="rounded-2xl border-l-4 border-l-brand-500 bg-brand-50/60 p-3 text-sm text-brand-900 dark:bg-brand-500/10 dark:text-brand-100">
+        <p className="font-bold">PT test frequency requirement</p>
+        <p>Test frequency must be more than 5% of the welds.</p>
+      </div>
+
+      <Field label="Test frequency %">
         <Input
           type="number"
           inputMode="decimal"
@@ -1136,7 +1344,7 @@ function PTStep({
       </Field>
 
       <div>
-        <span className="label">Consumables used — lot / batch is mandatory</span>
+        <span className="label">PT materials — lot / batch is mandatory</span>
         <div className="grid gap-2 sm:grid-cols-3">
           {CONSUMABLE_KINDS.map((kind) => {
             const opts = consumables.filter((c) => c.kind === kind)
@@ -1161,44 +1369,89 @@ function PTStep({
         </div>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <Field label="Sample size">
-          <Input value={pt.sampleSize ?? ''} onChange={(e) => setPT({ sampleSize: e.target.value })} className="min-h-[48px]" />
-        </Field>
-        <Field label="Tested weld length">
-          <Input value={pt.testedWeldLength ?? ''} onChange={(e) => setPT({ testedWeldLength: e.target.value })} className="min-h-[48px]" />
-        </Field>
-        <Field label="Type of indication">
-          <Input value={pt.indicationType ?? ''} onChange={(e) => setPT({ indicationType: e.target.value })} className="min-h-[48px]" />
-        </Field>
-        <Field label="Size">
-          <Input value={pt.indicationSize ?? ''} onChange={(e) => setPT({ indicationSize: e.target.value })} className="min-h-[48px]" />
-        </Field>
-        <Field label="Welding wire batch number">
-          <Input value={pt.weldingWireBatch ?? ''} onChange={(e) => setPT({ weldingWireBatch: e.target.value })} className="min-h-[48px]" />
-        </Field>
-        <Field label="Accept / Reject-Repair">
-          <Select
-            value={pt.acceptOrRepair ?? ''}
-            onChange={(e) => setPT({ acceptOrRepair: (e.target.value || undefined) as 'Accept' | 'Reject / Repair' | undefined })}
-            className="min-h-[48px]"
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <span className="label !mb-0">
+            Tested weld lengths {pt.testedLengths.length === 0 && <span className="text-rose-500">· at least one</span>}
+          </span>
+          <Button
+            variant="secondary"
+            className="min-h-[44px]"
+            onClick={() => setPT({ testedLengths: [...pt.testedLengths, { key: uid(), lengthMm: '' }] })}
           >
-            <option value="">—</option>
-            <option value="Accept">Accept</option>
-            <option value="Reject / Repair">Reject / Repair</option>
-          </Select>
-        </Field>
-        <Field label="Final result">
-          <Input value={pt.finalResult ?? ''} onChange={(e) => setPT({ finalResult: e.target.value })} className="min-h-[48px]" />
-        </Field>
+            <Plus className="h-4 w-4" /> Add length
+          </Button>
+        </div>
+        {pt.testedLengths.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-sm text-slate-400 dark:border-slate-700">
+            Add each weld length you tested and give it a verdict.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {pt.testedLengths.map((l, n) => {
+              const bad = l.lengthMm.trim() !== '' && !(Number(l.lengthMm) > 0)
+              return (
+                <div key={l.key} className="grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-slate-200 p-2.5 dark:border-slate-700 sm:grid-cols-[auto_1fr_auto_auto]">
+                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-slate-100 text-sm font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{n + 1}</span>
+                  <label className="block">
+                    <span className="sr-only">Length {n + 1} in mm</span>
+                    <div className="relative">
+                      <input
+                        value={l.lengthMm}
+                        onChange={(e) => setLength(l.key, { lengthMm: e.target.value })}
+                        inputMode="decimal"
+                        type="number"
+                        step="any"
+                        placeholder="Length"
+                        className={cn('input min-h-[48px] pr-12 text-lg font-bold tabular-nums', bad && 'border-rose-400')}
+                      />
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">mm</span>
+                    </div>
+                  </label>
+                  <div className="col-span-3 flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:col-span-1">
+                    {(['Accept', 'Reject / Repair'] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setLength(l.key, { verdict: v })}
+                        className={cn(
+                          'min-h-[40px] flex-1 rounded-lg px-3 text-sm font-semibold transition-colors',
+                          l.verdict === v
+                            ? v === 'Accept'
+                              ? 'bg-emerald-600 text-white shadow-sm'
+                              : 'bg-rose-600 text-white shadow-sm'
+                            : 'text-slate-600 dark:text-slate-300',
+                        )}
+                      >
+                        {v}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPT({ testedLengths: pt.testedLengths.filter((x) => x.key !== l.key) })}
+                    className="hidden h-10 w-10 place-items-center rounded-xl text-slate-300 hover:text-rose-500 sm:grid"
+                    aria-label={`Remove length ${n + 1}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              )
+            })}
+            <p className="flex items-center gap-2 text-sm">
+              <span className="font-semibold text-slate-500">PT verdict:</span>
+              {overall ? <Badge tone={overall === 'Accept' ? 'green' : 'red'}>{overall}</Badge> : <Badge tone="neutral">pending</Badge>}
+            </p>
+          </div>
+        )}
       </div>
 
       <Field label="Notes">
-        <textarea dir="auto" className="input min-h-[80px]" value={pt.notes ?? ''} onChange={(e) => setPT({ notes: e.target.value })} />
+        <textarea dir="auto" className="input min-h-[80px]" placeholder="PT inspection notes…" value={pt.notes ?? ''} onChange={(e) => setPT({ notes: e.target.value })} />
       </Field>
 
       <div>
-        <span className="label">Attachments</span>
+        <span className="label">Photos</span>
         <ImagePicker imageIds={pt.imageIds} onChange={(ids) => setPT({ imageIds: ids })} sessionId={sessionId} orderId={orderId} />
       </div>
     </div>
@@ -1252,11 +1505,13 @@ function ReviewStep({
         <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
           <Row label="Order" value={order.orderNumber} />
           <Row label="Item" value={order.item} />
-          <Row label="Drawing" value={draft.drawing} />
+          {draft.process !== 'paint' && <Row label="Drawing" value={draft.drawing || '—'} />}
+          {draft.process === 'welding' && <Row label="Welding wire" value={draft.pt?.weldingWireBatch?.trim() || '—'} />}
           <Row label="Sample qty" value={draft.sampleQty || '—'} />
         </dl>
       </Section>
 
+      {draft.process !== 'paint' && draft.process !== 'welding' && (
       <Section title={`Coils (${draft.coils.length})`}>
         {draft.coils.length === 0 ? (
           <Empty>No coils recorded.</Empty>
@@ -1274,8 +1529,9 @@ function ReviewStep({
           </ul>
         )}
       </Section>
+      )}
 
-      <Section title={`Dimensions (${measured.length} measured)`}>
+      <Section title={draft.process === 'paint' ? `Paint thickness (${measured.length} of ${PAINT_THICKNESS_READINGS} readings)` : `Dimensions (${measured.length} measured)`}>
         {measured.length === 0 ? (
           <Empty>No measurements entered.</Empty>
         ) : (
@@ -1293,7 +1549,7 @@ function ReviewStep({
                     <tr key={i}>
                       <td className="py-2 font-semibold">{d.name}</td>
                       <td className="py-2 text-right tabular-nums text-slate-500">
-                        {d.nominal} +{d.tolPlus}/-{d.tolMinus}
+                        {d.nominal.trim() === '' ? '— (no nominal)' : `${d.nominal} +${d.tolPlus || 0}/-${d.tolMinus || 0}`}
                       </td>
                       <td className="py-2 text-right font-bold tabular-nums">{d.actual}</td>
                       <td className="py-2 pl-3 text-right">
@@ -1335,20 +1591,24 @@ function ReviewStep({
         )}
       </Section>
 
-      {isPaintWorkCenter(draft.workCenterCode) && (
+      {draft.process === 'paint' && (
         <Section title="Paint sample">
           {draft.paint.imageIds.length === 0 ? <Empty>No paint photos.</Empty> : <p className="text-sm">{draft.paint.imageIds.length} photo(s)</p>}
         </Section>
       )}
 
-      {isPTWorkCenter(draft.workCenterCode) && draft.pt && (
+      {draft.process === 'welding' && draft.pt && (
         <Section title="PT / weld">
           <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
             <Row label="Frequency" value={`${draft.pt.testFrequencyPct}%`} />
             <Row label="Cleaner lot" value={draft.pt.consumableLots.Cleaner ?? '—'} />
             <Row label="Penetrant lot" value={draft.pt.consumableLots.Penetrant ?? '—'} />
             <Row label="Developer lot" value={draft.pt.consumableLots.Developer ?? '—'} />
-            <Row label="Result" value={draft.pt.finalResult || '—'} />
+            <Row
+              label="Tested lengths"
+              value={draft.pt.testedLengths.map((l) => `${l.lengthMm || '?'} mm ${l.verdict === 'Reject / Repair' ? '✕' : l.verdict === 'Accept' ? '✓' : '?'}`).join(', ') || '—'}
+            />
+            <Row label="PT verdict" value={ptOverallVerdict(draft.pt.testedLengths.map((l) => ({ verdict: l.verdict }))) ?? 'pending'} />
           </dl>
         </Section>
       )}

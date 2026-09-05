@@ -23,18 +23,22 @@ import type {
   ItemDimensionOrder,
   ItemReferenceImage,
   Machine,
+  PaintSampleRecord,
   PDIDocument,
+  Process,
+  ProductionOrder,
   PTConsumableKind,
   PTConsumableProduct,
   PTRecord,
   PTVerdict,
-  PaintSampleRecord,
-  ProductionOrder,
   Role,
   SampleCoil,
   SessionStatus,
   UserProfile,
   WorkCenterDefect,
+  WorkInstruction,
+  WorkInstructionScope,
+  WorkInstructionStep,
 } from './types'
 
 // ---- Errors ----------------------------------------------------------------
@@ -285,6 +289,33 @@ export interface WizardContext {
    *  machine — this session's own latest sample when it has one — so the
    *  nominal the inspector typed once is offered again. */
   previousDimensions: PreviousDimension[]
+  /** The process the session's machine runs; decides the wizard's steps. */
+  process: Process
+  /** The welding wire batch of this session's latest sample, offered again. */
+  previousWeldingWireBatch: string | null
+  /** The controlled documents that apply to this process, by step. */
+  workInstructions: WorkInstruction[]
+}
+
+// ---- Work instructions -----------------------------------------------------
+
+/** Multipart fields sent with the PDF (`file`) when uploading a work instruction. */
+export interface UploadWorkInstructionFields {
+  code: string
+  title: string
+  issueNo: string
+  issueDate?: string
+  process: WorkInstructionScope
+  step: WorkInstructionStep
+}
+
+export interface UpdateWorkInstructionRequest {
+  title?: string
+  issueNo?: string
+  issueDate?: string | null
+  process?: WorkInstructionScope
+  step?: WorkInstructionStep
+  sortOrder?: number
 }
 
 /** A dimension row as it was saved on an earlier sample. */
@@ -339,13 +370,10 @@ export interface SaveCoilInput {
 export interface SavePTInput {
   testFrequencyPct: number
   consumableLots: Record<PTConsumableKind, string>
-  sampleSize?: string
-  testedWeldLength?: string
-  indicationType?: string
-  indicationSize?: string
+  /** The welding wire batch number, entered on the setup step. */
   weldingWireBatch?: string
-  acceptOrRepair?: PTVerdict
-  finalResult?: string
+  /** At least one tested length, each with its verdict. */
+  testedLengths: Array<{ lengthMm: number; verdict: PTVerdict }>
   notes?: string
   imageIds: string[]
 }

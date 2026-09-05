@@ -1,0 +1,42 @@
+[
+  {
+    "code": "WI-PD-03-01",
+    "title": "Acceptance limits for common welding imperfections (ISO 5817 level B, CSA W59)",
+    "issueNo": "02",
+    "issueDate": "2025-01-02",
+    "process": "welding",
+    "step": "defects",
+    "sortOrder": 1,
+    "file": "WI-PD-03-01-acceptance-limits.pdf"
+  },
+  {
+    "code": "WI-PD-03-02",
+    "title": "Repairs instructions for welding defects",
+    "issueNo": "02",
+    "issueDate": "2025-01-02",
+    "process": "welding",
+    "step": "defects",
+    "sortOrder": 2,
+    "file": "WI-PD-03-02-repairs-instructions.pdf"
+  },
+  {
+    "code": "WI-PD-03-04",
+    "title": "Visual test method, instructions and tolerances (ISO 17637, ISO 5817 level B, CSA W59)",
+    "issueNo": "01",
+    "issueDate": "2025-01-02",
+    "process": "welding",
+    "step": "defects",
+    "sortOrder": 3,
+    "file": "WI-PD-03-04-visual-test-method.pdf"
+  },
+  {
+    "code": "WI-PD-03-03",
+    "title": "Penetrant test method, instructions and tolerances (ISO 3452-1, ISO 23277)",
+    "issueNo": "02",
+    "issueDate": "2025-01-02",
+    "process": "welding",
+    "step": "pt",
+    "sortOrder": 1,
+    "file": "WI-PD-03-03-penetrant-test-method.pdf"
+  }
+]
