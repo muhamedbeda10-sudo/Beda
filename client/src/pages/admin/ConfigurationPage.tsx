@@ -6,7 +6,6 @@ import { CsvImporter } from '@/components/admin/CsvImporter'
 import { PasteImporter } from '@/components/admin/PasteImporter'
 import { DEFECTS_IMPORTER, MACHINES_IMPORTER, PRODUCTION_IMPORTER, type Importer } from '@/components/admin/importers'
 import { DimensionOrderSection } from '@/components/admin/config/DimensionOrderSection'
-import { ItemMasterSection } from '@/components/admin/config/ItemMasterSection'
 import { ReferenceImagesSection } from '@/components/admin/config/ReferenceImagesSection'
 import { MachineDefectsSection } from '@/components/admin/config/MachineDefectsSection'
 import { MachinesSection } from '@/components/admin/config/MachinesSection'
@@ -23,7 +22,6 @@ import { cn } from '@/lib/utils'
 const SECTIONS: Array<{ key: string; label: string; icon: typeof Ruler; panel: ReactNode; importer?: Importer }> = [
   { key: 'machines', label: 'Machines', icon: Factory, panel: <MachinesSection />, importer: MACHINES_IMPORTER },
   { key: 'dimensions', label: 'Item dimensions', icon: ListOrdered, panel: <DimensionOrderSection />, importer: PRODUCTION_IMPORTER },
-  { key: 'master-dimensions', label: 'Master dimensions', icon: Ruler, panel: <ItemMasterSection /> },
   { key: 'reference-images', label: 'Reference images', icon: ImageIcon, panel: <ReferenceImagesSection /> },
   { key: 'defects', label: 'Machine defects', icon: AlertTriangle, panel: <MachineDefectsSection />, importer: DEFECTS_IMPORTER },
   { key: 'grades', label: 'Grade mappings', icon: Shuffle, panel: <GradeMappingsSection /> },

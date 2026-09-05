@@ -338,15 +338,6 @@ export interface DimensionOrderRule {
   unit: string
 }
 
-export interface DimensionMasterRule {
-  itemCode: string
-  dimensionName: string
-  nominal?: number | null
-  tolPlus: number
-  tolMinus: number
-  unit: string
-}
-
 /** Item codes and machine codes are matched without regard to case or
  *  surrounding whitespace — the ERP export is not consistent about either. */
 export function normaliseCode(code: string | null | undefined): string {
@@ -357,9 +348,8 @@ export function normaliseCode(code: string | null | undefined): string {
  * Resolve the dimension rows for an item on a machine. First match wins:
  *   1. the item's dimension-order entry specific to this machine
  *   2. the item's dimension-order entry that applies to every machine
- *   3. the item's master dimension record
- *   4. carry-forward from the previous sample of the same item
- *   5. nothing — the inspector types it
+ *   3. carry-forward from the previous sample of the same item
+ *   4. nothing — the inspector types it
  *
  * A machine-specific entry therefore replaces the general entry of the same
  * dimension name and keeps its own sequence; general entries the machine does
@@ -369,12 +359,11 @@ export function resolveDimensions(input: {
   itemCode: string
   workCenterCode: string
   order: DimensionOrderRule[]
-  master: DimensionMasterRule[]
   previous: Array<{ name: string; nominal: number; tolPlus: number; tolMinus: number; unit: string }>
   /** Optional filter — paint work centers only offer their configured dims. */
   allowedNames?: string[]
 }): ResolvedDimension[] {
-  const { order, master, previous, allowedNames } = input
+  const { order, previous, allowedNames } = input
   const itemCode = normaliseCode(input.itemCode)
   const machine = normaliseCode(input.workCenterCode)
   const allow = allowedNames?.length ? new Set(allowedNames.map((n) => n.toLowerCase())) : null
@@ -404,17 +393,6 @@ export function resolveDimensions(input: {
     })
   }
   let next = out.size + 1
-  for (const m of master.filter((x) => normaliseCode(x.itemCode) === itemCode)) {
-    add({
-      name: m.dimensionName,
-      sequence: next++,
-      nominal: m.nominal ?? null,
-      tolPlus: m.tolPlus,
-      tolMinus: m.tolMinus,
-      unit: m.unit,
-      source: 'item-master',
-    })
-  }
   for (const p of previous) {
     add({
       name: p.name,

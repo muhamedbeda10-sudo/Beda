@@ -11,6 +11,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import {
   EXISTING_KEYS_MAX,
+  type ClearOrdersResult,
   type ExistingKeysResponse,
   type ImportResult,
   type OrderHistory,
@@ -191,6 +192,37 @@ export function ordersRoutes(ctx: AppContext): Router {
     ])
     const body: OrderHistory = { sessions: sessions.rows.map(dropNulls), samples: samples.rows }
     res.json(body)
+  })
+
+  /**
+   * Retire the whole catalogue before a fresh ERP export is loaded. Lines are
+   * marked deleted, never erased (§10): sessions recorded against them keep
+   * their order, and a line the new export still carries comes back through
+   * the import's upsert. Only an administrator, and the count is audited.
+   */
+  r.post('/clear', requireCapability('manage-admin-data'), async (req, res) => {
+    const user = requireUser(req)
+    const result = await withTransaction(ctx.db, async (tx) => {
+      const { rowCount } = await tx.query(
+        `UPDATE production_orders SET deleted_at = now(), deleted_by_id = $1 WHERE deleted_at IS NULL`,
+        [user.id],
+      )
+      await writeAudit(tx, [
+        {
+          at: new Date().toISOString(),
+          userId: user.id,
+          userName: user.name,
+          action: 'delete',
+          entity: 'ProductionOrder',
+          entityId: 'all',
+          field: 'clear',
+          newValue: `${rowCount ?? 0} order lines marked deleted before a fresh import`,
+        },
+      ])
+      const body: ClearOrdersResult = { removed: rowCount ?? 0 }
+      return body
+    })
+    res.json(result)
   })
 
   /** Which line keys already exist — the importer's new-vs-update preview. */

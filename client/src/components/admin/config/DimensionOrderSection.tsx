@@ -36,7 +36,7 @@ export function DimensionOrderSection() {
   return (
     <MasterDataPanel<'item-dimension-order', DimOrderDraft>
       title="Dimension order"
-      description="Per-item dimensions, keyed by item code, in the order they are measured."
+      description="Per-item dimensions, keyed by item ID, in the order they are measured."
       hint={
         <>
           A row with <strong>Every machine</strong> applies wherever the item is produced. A row that names a

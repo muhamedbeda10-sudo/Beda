@@ -1,6 +1,6 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import { EXISTING_KEYS_MAX, type ApiErrorBody, type AuditListResponse, type ImportResult, type ExistingKeysResponse, type OrderHistory, type CoilUsage } from '@qc/shared/api'
-import type { OrderNumberSummary } from '@qc/shared/api'
+import type { ClearOrdersResult, OrderNumberSummary } from '@qc/shared/api'
 import type { Machine, ProductionOrder, Coil, WorkCenterDefect, ItemDimensionOrder } from '@qc/shared/types'
 import { TestApp, type Session } from './harness'
 
@@ -272,6 +272,21 @@ describe('production orders', () => {
     const history = await app.api<OrderHistory>('GET', `/api/orders/${ids[0]}/history`, { token: inspector.token })
     expect(history.body).toEqual({ sessions: [], samples: [] })
     expect((await app.api('GET', `/api/orders/00000000-0000-0000-0000-000000000000`, { token: inspector.token })).status).toBe(404)
+  })
+
+  it('clears the catalogue by marking every line deleted, then a re-import brings lines back', async () => {
+    expect((await app.api('POST', '/api/orders/clear', { token: inspector.token })).status).toBe(403)
+    const cleared = await app.api<ClearOrdersResult>('POST', '/api/orders/clear', { token: admin.token })
+    expect(cleared.status).toBe(200)
+    expect(cleared.body.removed).toBe(5)
+    expect((await app.api<ProductionOrder[]>('GET', '/api/orders?includeCancelled=true', { token: inspector.token })).body).toHaveLength(0)
+    const { rows } = await app.db.query('SELECT count(*)::int AS n FROM production_orders WHERE deleted_at IS NOT NULL')
+    expect(rows[0].n).toBe(5)
+    // The fresh export still carries L-1: the upsert restores it in place.
+    const again = await app.api<ImportResult>('POST', '/api/orders/import', { token: admin.token, body: { rows: [{ lineKey: 'L-1', finishedQty: 1200 }] } })
+    expect(again.body).toEqual({ inserted: 0, updated: 1 })
+    const back = await app.api<ProductionOrder[]>('GET', '/api/orders', { token: inspector.token })
+    expect(back.body.map((o) => [o.lineKey, o.finishedQty])).toEqual([['L-1', 1200]])
   })
 
   it('does not let an inspector import', async () => {

@@ -15,7 +15,6 @@ import {
   PT_CONSUMABLE_KINDS,
   type GradeMapping,
   type InspectionSession,
-  type ItemDimensionMaster,
   type ItemDimensionOrder,
   type ItemReferenceImage,
   type Machine,
@@ -279,7 +278,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const [order] = await fetchOrdersByIds(db, [session.orderId])
     if (!order) throw notFound('The session’s order')
     const wc = session.workCenterCode
-    const [machine, dimOrder, dimMaster, refImages, wcDefects, grades, consumables, samples] = await Promise.all([
+    const [machine, dimOrder, refImages, wcDefects, grades, consumables, samples] = await Promise.all([
       db.query<Machine>(
         `SELECT id, code, name, line, display_name AS "displayName", machine_number AS "machineNumber", factory
            FROM machines WHERE lower(code) = lower($1) AND deleted_at IS NULL LIMIT 1`,
@@ -295,11 +294,6 @@ export function sessionsRoutes(ctx: AppContext): Router {
             AND (work_center_code IS NULL OR lower(work_center_code) = lower($2))
           ORDER BY sequence`,
         [order.itemCode, wc],
-      ),
-      db.query<ItemDimensionMaster>(
-        `SELECT id, item_code AS "itemCode", item, dimension_name AS "dimensionName", nominal, tol_plus AS "tolPlus", tol_minus AS "tolMinus", unit
-           FROM item_dimension_master WHERE lower(item_code) = lower($1) AND deleted_at IS NULL ORDER BY dimension_name`,
-        [order.itemCode],
       ),
       // The item's general photos plus those specific to this machine.
       db.query<ItemReferenceImage>(
@@ -330,7 +324,6 @@ export function sessionsRoutes(ctx: AppContext): Router {
       order,
       machine: machine.rows[0] ? dropNulls(machine.rows[0]) : null,
       dimensionOrder: dimOrder.rows.map(dropNulls),
-      dimensionMaster: dimMaster.rows.map(dropNulls),
       referenceImages: refImages.rows.map(dropNulls),
       workCenterDefects: wcDefects.rows,
       gradeMappings: grades.rows,

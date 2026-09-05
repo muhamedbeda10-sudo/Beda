@@ -6,6 +6,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import {
   EXISTING_KEYS_MAX,
+  type ClearOrdersResult,
   type CloseSessionRequest,
   type CorrectDefectRequest,
   type CorrectDimensionRequest,
@@ -102,6 +103,14 @@ export async function updateMaster<K extends MasterKind>(
 export async function deleteMaster(qc: QueryClient, kind: MasterKind, id: string): Promise<void> {
   await api<void>(`/master/${kind}/${id}`, { method: 'DELETE' })
   await qc.invalidateQueries({ queryKey: ['master', kind] })
+}
+
+/** Mark every order line deleted ahead of a fresh ERP export. */
+export async function clearOrders(qc: QueryClient): Promise<ClearOrdersResult> {
+  const result = await api<ClearOrdersResult>('/orders/clear', { method: 'POST' })
+  await qc.invalidateQueries({ queryKey: ['orders'] })
+  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  return result
 }
 
 // ---- Bulk import -----------------------------------------------------------
