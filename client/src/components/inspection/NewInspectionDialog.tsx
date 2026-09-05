@@ -27,6 +27,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
   const [machineCode, setMachineCode] = useState('')
   const [orderTerm, setOrderTerm] = useState('')
   const [orderNumber, setOrderNumber] = useState('')
+  const [itemTerm, setItemTerm] = useState('')
   const [picked, setPicked] = useState<ProductionOrder | null>(null)
   const [startQty, setStartQty] = useState('')
   const [busy, setBusy] = useState(false)
@@ -57,6 +58,13 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]))
   }, [machines])
 
+  /** The order's items on this machine, narrowed by what was typed. */
+  const visibleLines = useMemo(() => {
+    const t = itemTerm.trim().toLowerCase()
+    if (!t) return lines
+    return lines.filter((o) => [o.itemCode, o.item, o.lineKey].some((v) => v.toLowerCase().includes(t)))
+  }, [lines, itemTerm])
+
   /** Samples already recorded against the picked line (§4). */
   const previousSamples = useMemo(
     () => [...(history?.samples ?? [])].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
@@ -68,6 +76,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     setStartQty('')
     setOrderTerm('')
     setOrderNumber('')
+    setItemTerm('')
     setMachineCode('')
   }
 
@@ -75,6 +84,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     setMachineCode(code)
     setOrderNumber('')
     setOrderTerm('')
+    setItemTerm('')
   }
 
   async function start() {
@@ -124,6 +134,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-lg font-bold">{picked.orderNumber}</p>
               <Badge tone="neutral">Order ID {picked.lineKey}</Badge>
+              {statusBadge(picked.erpStatus)}
               {isPaintWorkCenter(picked.workCenterCode) && <Badge tone="violet">Paint sample step</Badge>}
               {isPTWorkCenter(picked.workCenterCode) && <Badge tone="amber">PT / weld step</Badge>}
             </div>
@@ -285,15 +296,36 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
               <p className="text-sm">
                 <span className="text-slate-500 dark:text-slate-400">Order</span> <span className="font-bold">{orderNumber}</span>
               </p>
-              <Button variant="ghost" className="min-h-[40px]" onClick={() => setOrderNumber('')}>
+              <Button
+                variant="ghost"
+                className="min-h-[40px]"
+                onClick={() => {
+                  setOrderNumber('')
+                  setItemTerm('')
+                }}
+              >
                 <ArrowLeft className="h-4 w-4" /> Change order
               </Button>
             </div>
+            {lines.length > 8 && (
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  autoFocus
+                  value={itemTerm}
+                  onChange={(e) => setItemTerm(e.target.value)}
+                  placeholder={`Filter ${lines.length} items by code, name or Order ID…`}
+                  className="min-h-[48px] pl-9"
+                />
+              </div>
+            )}
             <div className="max-h-[42vh] space-y-2 overflow-y-auto pr-1">
-              {lines.length === 0 && (
-                <p className="py-8 text-center text-sm text-slate-400">{linesLoading ? 'Loading…' : 'This order has no items on this machine.'}</p>
+              {visibleLines.length === 0 && (
+                <p className="py-8 text-center text-sm text-slate-400">
+                  {linesLoading ? 'Loading…' : itemTerm ? 'No item on this machine matches that.' : 'This order has no items on this machine.'}
+                </p>
               )}
-              {lines.map((o) => (
+              {visibleLines.map((o) => (
                 <button
                   key={o.id}
                   onClick={() => {
@@ -306,7 +338,10 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
                     <Package className="h-5 w-5" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="font-bold">{o.itemCode}</p>
+                    <p className="flex flex-wrap items-center gap-2 font-bold">
+                      {o.itemCode || <span className="text-slate-400">no item code</span>}
+                      {statusBadge(o.erpStatus)}
+                    </p>
                     <p className="truncate text-sm text-slate-500 dark:text-slate-400">
                       {o.item || '—'} · Order ID {o.lineKey}
                       {o.expectedGrade ? ` · ${o.expectedGrade}` : ''}
@@ -324,6 +359,13 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
       </div>
     </Modal>
   )
+}
+
+/** Hold and Stock lines are still inspectable but worth noticing; Active needs no badge. */
+function statusBadge(status: string) {
+  const s = status.trim().toLowerCase()
+  if (!s || s === 'active') return null
+  return <Badge tone={s === 'hold' ? 'amber' : 'neutral'}>{status}</Badge>
 }
 
 function Crumb({ n, label, active, done }: { n: number; label: string; active: boolean; done: boolean }) {

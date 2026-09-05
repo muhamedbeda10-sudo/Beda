@@ -126,11 +126,13 @@ export function useOrderNumbers(machine: string, term: string, limit = 40, enabl
   })
 }
 
-/** The lines (items) of one order on one machine — step three. */
+/** The lines (items) of one order on one machine — step three. An order can
+ *  have well over a hundred items on one machine, so the whole set is asked
+ *  for and narrowed on the screen. */
 export function useOrderLines(machine: string, orderNumber: string, enabled = true) {
   return useQuery({
     queryKey: keys.orderLines(`${machine}|${orderNumber}`),
-    queryFn: () => api<ProductionOrder[]>(`/orders${qs({ machine, orderNumber, limit: 100 })}`),
+    queryFn: () => api<ProductionOrder[]>(`/orders${qs({ machine, orderNumber, limit: 500 })}`),
     enabled: enabled && machine !== '' && orderNumber !== '',
   })
 }

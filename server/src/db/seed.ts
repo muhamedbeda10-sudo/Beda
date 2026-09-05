@@ -102,8 +102,8 @@ export async function seedDemoDataIfEmpty(db: Db): Promise<boolean> {
       await tx.query(
         `INSERT INTO production_orders
            (line_key, order_number, item, item_code, work_center_code, machine_id, required_qty, finished_qty,
-            drawing, drawing_alt, issue, material, expected_grade, customer, type, colour)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Rev C','Steel',$11,$12,'Export','RAL7016')`,
+            drawing, drawing_alt, issue, material, expected_grade, customer, type, colour, erp_status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Rev C','Steel',$11,$12,'Export','RAL7016','Active')`,
         [lineKey, orderNumber, it.item, it.code, wc, machineIds.get(wc) ?? null, required, finished, `BS9059/${wc}`, `BS9059/${wc}-ALT`, it.grade, customer],
       )
     }

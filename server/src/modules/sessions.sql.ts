@@ -19,7 +19,8 @@ export const SESSION_SELECT = `
 /** Requires the alias `o` for production_orders (LEFT JOINed). */
 export const ORDER_SUMMARY_SELECT = `
   o.id AS "o_id", o.line_key AS "o_lineKey", o.order_number AS "o_orderNumber", o.item AS "o_item", o.item_code AS "o_itemCode",
-  o.work_center_code AS "o_workCenterCode", o.customer AS "o_customer", o.expected_grade AS "o_expectedGrade"`
+  o.work_center_code AS "o_workCenterCode", o.customer AS "o_customer", o.expected_grade AS "o_expectedGrade",
+  o.erp_status AS "o_erpStatus"`
 
 /** Requires the alias `sm` for inspection_samples. */
 export const SAMPLE_SUMMARY_SELECT = `
@@ -68,6 +69,7 @@ export interface OrderSummaryRow {
   o_workCenterCode: string | null
   o_customer: string | null
   o_expectedGrade: string | null
+  o_erpStatus: string | null
 }
 
 export function toSession(r: SessionRow): InspectionSession {
@@ -104,6 +106,7 @@ export function toOrderSummary(r: OrderSummaryRow): OrderSummary | null {
     workCenterCode: r.o_workCenterCode ?? '',
     customer: r.o_customer ?? '',
     expectedGrade: r.o_expectedGrade ?? '',
+    erpStatus: r.o_erpStatus ?? '',
   }
 }
 
