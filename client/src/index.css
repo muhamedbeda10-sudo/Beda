@@ -17,15 +17,15 @@ body {
   @apply bg-slate-100 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
   /* A faint brand wash behind the page keeps white cards from floating on flat grey. */
   background-image:
-    radial-gradient(1200px 600px at 50% -200px, rgba(36, 95, 168, 0.10), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(244, 95, 12, 0.05), transparent 60%);
+    radial-gradient(1200px 600px at 50% -200px, rgba(30, 70, 168, 0.10), transparent 60%),
+    radial-gradient(800px 400px at 100% 100%, rgba(227, 32, 42, 0.05), transparent 60%);
   background-attachment: fixed;
   -webkit-tap-highlight-color: transparent;
 }
 .dark body {
   background-image:
-    radial-gradient(1200px 600px at 50% -200px, rgba(74, 128, 196, 0.16), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(244, 95, 12, 0.06), transparent 60%);
+    radial-gradient(1200px 600px at 50% -200px, rgba(84, 121, 216, 0.16), transparent 60%),
+    radial-gradient(800px 400px at 100% 100%, rgba(227, 32, 42, 0.06), transparent 60%);
 }
 
 /* Respect iOS safe areas on mobile */

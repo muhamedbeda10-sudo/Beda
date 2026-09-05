@@ -5,33 +5,32 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Brand palette — a deep industrial navy for the primary and a
-        // safety-orange accent. Every tone is defined here once; swap the
-        // values to re-brand and nothing else needs to change.
+        // Brand palette, taken from the LinkMisr logo: the royal blue of
+        // "LINK" and the red of "MISR". Every tone is defined here once.
         brand: {
-          50: '#eef4fb',
-          100: '#d9e6f5',
-          200: '#b3ccea',
-          300: '#7fa8d9',
-          400: '#4a80c4',
-          500: '#245fa8',
-          600: '#164a8a',
-          700: '#113a6e',
-          800: '#0d2c54',
-          900: '#0a2142',
-          950: '#06152b',
+          50: '#eef3fc',
+          100: '#d9e4f9',
+          200: '#b4c8f2',
+          300: '#85a4e8',
+          400: '#5479d8',
+          500: '#3357c2',
+          600: '#1e46a8',
+          700: '#193a8a',
+          800: '#162f6d',
+          900: '#12275a',
+          950: '#0b1839',
         },
         accent: {
-          50: '#fff4ec',
-          100: '#ffe4d1',
-          200: '#ffc7a3',
-          300: '#ffa168',
-          400: '#ff7a2e',
-          500: '#f45f0c',
-          600: '#d94d03',
-          700: '#b03c05',
-          800: '#8c300c',
-          900: '#712a0e',
+          50: '#fdecec',
+          100: '#fbd5d6',
+          200: '#f6a9ab',
+          300: '#ef7276',
+          400: '#e84a50',
+          500: '#e3202a',
+          600: '#c4161f',
+          700: '#a2131a',
+          800: '#841418',
+          900: '#6e1418',
         },
       },
       fontFamily: {
@@ -39,11 +38,11 @@ export default {
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       boxShadow: {
-        card: '0 1px 2px rgba(10,33,66,0.06), 0 1px 3px rgba(10,33,66,0.08)',
-        hover: '0 10px 30px -10px rgba(10,33,66,0.25), 0 4px 10px -4px rgba(10,33,66,0.12)',
-        lift: '0 18px 40px -12px rgba(10,33,66,0.35)',
-        glow: '0 0 0 1px rgba(36,95,168,0.25), 0 8px 24px -8px rgba(36,95,168,0.45)',
-        inset: 'inset 0 1px 2px rgba(10,33,66,0.08)',
+        card: '0 1px 2px rgba(18,39,90,0.06), 0 1px 3px rgba(18,39,90,0.08)',
+        hover: '0 10px 30px -10px rgba(18,39,90,0.25), 0 4px 10px -4px rgba(18,39,90,0.12)',
+        lift: '0 18px 40px -12px rgba(18,39,90,0.35)',
+        glow: '0 0 0 1px rgba(30,70,168,0.25), 0 8px 24px -8px rgba(30,70,168,0.45)',
+        inset: 'inset 0 1px 2px rgba(18,39,90,0.08)',
       },
       keyframes: {
         'fade-in': { from: { opacity: '0' }, to: { opacity: '1' } },
