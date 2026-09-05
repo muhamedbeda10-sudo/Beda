@@ -41,6 +41,7 @@ import {
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Stat } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
+import { ReferenceImageBulkUpload } from '@/components/admin/ReferenceImageBulkUpload'
 import { useMaster, useUsers } from '@/services/queries'
 import {
   createMaster,
@@ -201,6 +202,8 @@ interface PanelProps<K extends MasterKind, D> {
   toRecord: (draft: D) => Omit<MasterRecordByKind[K], 'id'>
   renderForm: (draft: D, patch: (p: Partial<D>) => void) => ReactNode
   describe: (row: MasterRecordByKind[K]) => string
+  /** Extra header buttons, rendered before the add button. */
+  extraActions?: ReactNode
   sort?: (a: MasterRecordByKind[K], b: MasterRecordByKind[K]) => number
   groupBy?: (row: MasterRecordByKind[K]) => string
   groupLabel?: (group: string) => string
@@ -336,13 +339,16 @@ function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>) {
               <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{props.description}</p>
             </div>
           </div>
-          <Button
-            variant="primary"
-            className="min-h-[48px]"
-            onClick={() => setEditing({ id: null, draft: props.newDraft() })}
-          >
-            <Plus className="h-4 w-4" /> {props.addLabel}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {props.extraActions}
+            <Button
+              variant="primary"
+              className="min-h-[48px]"
+              onClick={() => setEditing({ id: null, draft: props.newDraft() })}
+            >
+              <Plus className="h-4 w-4" /> {props.addLabel}
+            </Button>
+          </div>
         </div>
 
         {props.hint && (
@@ -839,6 +845,7 @@ interface RefImageDraft {
 
 function ReferenceImagesTab() {
   const { data: rows = [], isLoading: loading } = useMaster('item-reference-images')
+  const [bulkOpen, setBulkOpen] = useState(false)
 
   const sort = useCallback(
     (a: ItemReferenceImage, b: ItemReferenceImage) =>
@@ -857,7 +864,15 @@ function ReferenceImagesTab() {
       loading={loading}
       sort={sort}
       addLabel="Add reference"
-      emptyHint="Attach a reference photo to an item so inspectors have something to compare against."
+      extraActions={
+        <>
+          <Button className="min-h-[48px]" onClick={() => setBulkOpen(true)}>
+            <UploadCloud className="h-4 w-4" /> Upload many
+          </Button>
+          <ReferenceImageBulkUpload open={bulkOpen} onClose={() => setBulkOpen(false)} />
+        </>
+      }
+      emptyHint="Attach a reference photo to an item so inspectors have something to compare against, or upload a folder of photos named after their item codes."
       minTableWidth="min-w-[34rem]"
       columns={[
         { key: 'itemCode', label: 'Item code', render: (r) => <span className="font-semibold">{r.itemCode}</span> },
