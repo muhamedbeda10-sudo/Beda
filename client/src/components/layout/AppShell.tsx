@@ -35,7 +35,7 @@ interface NavItem {
   hint?: string
 }
 
-/** The work an inspector does, at the end of the bar. */
+/** The work an inspector does: centred on a desktop, at the end of the bar on a tablet or phone. */
 const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/history', label: 'History', icon: History },
@@ -168,14 +168,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-full">
       <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/85 shadow-[0_1px_0_rgba(255,255,255,.6)_inset] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/85 safe-top">
-        <div className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:px-8">
+        {/* A desktop centres the tabs; a tablet, with less room, keeps them at the end next to the account. */}
+        <div className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:px-8">
           {/* Left — brand */}
-          <button type="button" onClick={() => navigate('/')} className="shrink-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" aria-label="Home">
+          <button type="button" onClick={() => navigate('/')} className="shrink-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 lg:justify-self-start" aria-label="Home">
             <Brand />
           </button>
 
-          {/* Right — the inspector's tabs, then theme, administration, account */}
-          <nav className="ml-auto hidden items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 md:flex dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
+          {/* The inspector's tabs — at the end on a tablet, centred on a desktop */}
+          <nav className="ml-auto hidden items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 md:flex lg:ml-0 lg:justify-self-center dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
             {NAV.map((n) => {
               const active = isActive(n)
               return (
@@ -197,8 +198,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             })}
           </nav>
 
-          <div className="ml-auto flex shrink-0 items-center gap-1 md:ml-2">
-            <div className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 md:block" />
+          {/* Right — theme, administration, account */}
+          <div className="ml-auto flex shrink-0 items-center gap-1 md:ml-2 lg:ml-0 lg:justify-self-end">
+            <div className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 md:block lg:hidden" />
             <button onClick={toggleTheme} className="icon-btn" aria-label="Toggle light or dark theme">
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
@@ -222,9 +224,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
           </div>
         </div>
-        {/* A phone has no room beside the brand: the tabs get their own row, at the end. */}
+        {/* A phone has no room beside the brand: the tabs get their own row, sitting at its end. */}
         <nav className="flex justify-end px-3 pb-2 md:hidden" aria-label="Main">
-          <div className="flex w-full max-w-sm items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 dark:bg-slate-800/70 dark:ring-slate-700/70">
+          <div className="flex items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 dark:bg-slate-800/70 dark:ring-slate-700/70">
             {NAV.map((n) => {
               const active = isActive(n)
               return (
@@ -233,7 +235,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   to={n.to}
                   end={n.end}
                   className={cn(
-                    'flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-xl px-3 text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
+                    'flex min-h-[40px] items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
                     active
                       ? 'bg-white text-brand-800 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:text-white dark:ring-slate-700'
                       : 'text-slate-600 dark:text-slate-300',

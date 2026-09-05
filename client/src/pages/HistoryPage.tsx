@@ -346,9 +346,10 @@ export function HistoryPage() {
       ) : (
         <>
           {/* Mobile — one card per session. */}
-          <div className="grid gap-3 sm:grid-cols-2 md:hidden">
+          {/* minmax(0,1fr) columns and min-w-0 keep a long item name inside the card instead of widening the page. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:hidden">
             {filtered.map((s) => (
-              <button key={s.id} onClick={() => setOpenSessionId(s.id)} className={cn('card-hover w-full p-4 text-left', sessionToneClass(s, 'block'))}>
+              <button key={s.id} onClick={() => setOpenSessionId(s.id)} className={cn('card-hover w-full min-w-0 p-4 text-left', sessionToneClass(s, 'block'))}>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
                   <span className="font-bold">{s.order?.orderNumber ?? '—'}</span>
