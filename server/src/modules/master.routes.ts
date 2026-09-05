@@ -126,12 +126,19 @@ const DEFS: Record<MasterKind, MasterDef> = {
     columns: [
       { field: 'itemCode', column: 'item_code' },
       { field: 'item', column: 'item' },
+      { field: 'workCenterCode', column: 'work_center_code' },
       { field: 'imageId', column: 'image_id' },
       { field: 'caption', column: 'caption' },
     ],
-    schema: z.object({ itemCode: text(120), item: z.string().trim().max(300).default(''), imageId: z.string().uuid(), caption: optText(300) }),
-    filters: { itemCode: 'lower(item_code)' },
-    orderBy: 'lower(item_code), created_at',
+    schema: z.object({
+      itemCode: text(120),
+      item: z.string().trim().max(300).default(''),
+      workCenterCode: optText(40),
+      imageId: z.string().uuid(),
+      caption: optText(300),
+    }),
+    filters: { itemCode: 'lower(item_code)', workCenterCode: 'lower(work_center_code)' },
+    orderBy: 'lower(item_code), work_center_code NULLS FIRST, created_at',
   },
   'work-center-defects': {
     table: 'work_center_defects',

@@ -151,6 +151,14 @@ describe('sessions', () => {
   })
 
   it('hands the wizard the machine-specific rows alongside the general ones', async () => {
+    // One photo of the item for every machine, one only for the paint line.
+    const general = await uploadImage(admin, 11)
+    const paintOnly = await uploadImage(admin, 12)
+    await app.api('POST', '/api/master/item-reference-images', { token: admin.token, body: { itemCode: '125185TA3', imageId: general.id } })
+    await app.api('POST', '/api/master/item-reference-images', { token: admin.token, body: { itemCode: '125185ta3', workCenterCode: '48', imageId: paintOnly.id } })
+    const weld = await app.api<WizardContext>('GET', `/api/sessions/${session.id}/wizard`, { token: inspector.token })
+    expect(weld.body.referenceImages.map((r) => r.imageId)).toEqual([general.id])
+
     const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: paintBeamOrder.id, startQty: 5 } })
     expect(started.status).toBe(201)
     const ctx = await app.api<WizardContext>('GET', `/api/sessions/${started.body.id}/wizard`, { token: inspector.token })
@@ -158,6 +166,10 @@ describe('sessions', () => {
       ['Paint thickness', 60, '48'],
       ['Width', 125, null],
       ['Width', 127, '48'],
+    ])
+    expect(ctx.body.referenceImages.map((r) => [r.imageId, r.workCenterCode ?? null])).toEqual([
+      [general.id, null],
+      [paintOnly.id, '48'],
     ])
     expect((await app.api('DELETE', `/api/sessions/${started.body.id}`, { token: supervisor.token })).status).toBe(204)
   })

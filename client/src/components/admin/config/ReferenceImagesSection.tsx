@@ -4,7 +4,7 @@
 
 import { useCallback, useState } from 'react'
 import { Image as ImageIcon, UploadCloud } from 'lucide-react'
-import { Button, Field, Input } from '@/components/ui'
+import { Badge, Button, Field, Input } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { ReferenceImageBulkUpload } from '@/components/admin/ReferenceImageBulkUpload'
 import { useMaster } from '@/services/queries'
@@ -15,6 +15,7 @@ import { type ItemReferenceImage } from '@qc/shared/types'
 interface RefImageDraft {
   itemCode: string
   item: string
+  workCenterCode: string
   caption: string
   imageId: string
 }
@@ -52,7 +53,11 @@ export function ReferenceImagesSection() {
       minTableWidth="min-w-[34rem]"
       columns={[
         { key: 'itemCode', label: 'Item code', render: (r) => <span className="font-semibold">{r.itemCode}</span> },
-        { key: 'item', label: 'Item', render: (r) => r.item || '—' },
+        {
+          key: 'machine',
+          label: 'Machine',
+          render: (r) => (r.workCenterCode ? <Badge tone="blue">{r.workCenterCode}</Badge> : <span className="text-slate-400">every machine</span>),
+        },
         { key: 'caption', label: 'Caption', render: (r) => <span dir="auto">{r.caption || '—'}</span> },
         {
           key: 'image',
@@ -62,15 +67,16 @@ export function ReferenceImagesSection() {
           ),
         },
       ]}
-      describe={(r) => `${r.itemCode}${r.caption ? ` · ${r.caption}` : ''}`}
-      newDraft={() => ({ itemCode: '', item: '', caption: '', imageId: '' })}
-      toDraft={(r) => ({ itemCode: r.itemCode, item: r.item ?? '', caption: r.caption ?? '', imageId: r.imageId })}
+      describe={(r) => `${r.itemCode}${r.workCenterCode ? ` on ${r.workCenterCode}` : ''}${r.caption ? ` · ${r.caption}` : ''}`}
+      newDraft={() => ({ itemCode: '', item: '', workCenterCode: '', caption: '', imageId: '' })}
+      toDraft={(r) => ({ itemCode: r.itemCode, item: r.item ?? '', workCenterCode: r.workCenterCode ?? '', caption: r.caption ?? '', imageId: r.imageId })}
       validate={(d) =>
         requireText(d.itemCode, 'Item code') ?? (d.imageId.trim() ? null : 'Choose a reference image.')
       }
       toRecord={(d) => ({
         itemCode: d.itemCode.trim(),
         item: d.item.trim(),
+        workCenterCode: d.workCenterCode.trim() || null,
         imageId: d.imageId,
         caption: d.caption.trim() || undefined,
       })}
@@ -84,6 +90,9 @@ export function ReferenceImagesSection() {
               <Input value={d.item} onChange={(e) => patch({ item: e.target.value })} />
             </Field>
           </div>
+          <Field label="Machine" hint="Leave on every machine unless this photo only applies on one.">
+            <MachineSelect value={d.workCenterCode} onChange={(code) => patch({ workCenterCode: code })} allowAny />
+          </Field>
           <Field label="Caption" hint="Optional — what the inspector should be looking at.">
             <Input dir="auto" value={d.caption} onChange={(e) => patch({ caption: e.target.value })} />
           </Field>

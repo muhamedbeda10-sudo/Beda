@@ -301,10 +301,14 @@ export function sessionsRoutes(ctx: AppContext): Router {
            FROM item_dimension_master WHERE lower(item_code) = lower($1) AND deleted_at IS NULL ORDER BY dimension_name`,
         [order.itemCode],
       ),
+      // The item's general photos plus those specific to this machine.
       db.query<ItemReferenceImage>(
-        `SELECT id, item_code AS "itemCode", item, image_id AS "imageId", caption
-           FROM item_reference_images WHERE lower(item_code) = lower($1) AND deleted_at IS NULL ORDER BY created_at`,
-        [order.itemCode],
+        `SELECT id, item_code AS "itemCode", item, work_center_code AS "workCenterCode", image_id AS "imageId", caption
+           FROM item_reference_images
+          WHERE lower(item_code) = lower($1) AND deleted_at IS NULL
+            AND (work_center_code IS NULL OR lower(work_center_code) = lower($2))
+          ORDER BY work_center_code NULLS FIRST, created_at`,
+        [order.itemCode, wc],
       ),
       db.query<WorkCenterDefect>(
         `SELECT id, work_center_code AS "workCenterCode", defect_name AS "defectName"
