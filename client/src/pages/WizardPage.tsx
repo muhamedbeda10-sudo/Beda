@@ -86,6 +86,7 @@ export function WizardPage() {
   const gradeMappings = useMemo(() => ctx?.gradeMappings ?? [], [ctx])
   const consumables = useMemo(() => ctx?.ptConsumables ?? [], [ctx])
   const priorSamples = useMemo(() => ctx?.samples ?? [], [ctx])
+  const previousDims = useMemo(() => ctx?.previousDimensions ?? [], [ctx])
   const steps = useMemo(() => stepsForWorkCenter(wc), [wc])
 
   const [draft, setDraft] = useState<SampleDraft | null>(null)
@@ -113,12 +114,13 @@ export function WizardPage() {
       return
     }
     // The item's dimensions on THIS machine: machine-specific rows override
-    // the general ones (§8.3).
+    // the general ones (§8.3), and a row with no configured nominal takes the
+    // one typed on the previous sample, so it is entered once.
     const rows = resolveDimensions({
       itemCode: order.itemCode,
       workCenterCode: session.workCenterCode,
       order: dimOrder,
-      previous: [],
+      previous: previousDims,
     })
     setDraft({
       sessionId: session.id,
@@ -148,7 +150,7 @@ export function WizardPage() {
         : undefined,
       updatedAt: new Date().toISOString(),
     })
-  }, [session, order, draft, dimOrder])
+  }, [session, order, draft, dimOrder, previousDims])
 
   // Persist on every change so a reload or a dead network loses nothing (§9.6).
   const update = useCallback((patch: Partial<SampleDraft> | ((d: SampleDraft) => SampleDraft)) => {

@@ -164,3 +164,10 @@ export async function updateUser(qc: QueryClient, id: string, body: UpdateUserRe
   await qc.invalidateQueries({ queryKey: ['users'] })
   return user
 }
+
+/** Remove an account: it leaves the list, is signed out everywhere and its
+ *  username is freed. History keeps the person's name. */
+export async function deleteUser(qc: QueryClient, id: string): Promise<void> {
+  await api<void>(`/users/${id}`, { method: 'DELETE' })
+  await qc.invalidateQueries({ queryKey: ['users'] })
+}

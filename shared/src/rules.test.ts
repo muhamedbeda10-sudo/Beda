@@ -14,6 +14,7 @@ import {
   findGradeMismatches,
   validateSample,
   resolveDimensions,
+  sessionTone,
   can,
 } from './rules'
 
@@ -360,6 +361,25 @@ describe('§8.3 dimension resolution', () => {
     expect(on22Rows.map((r) => r.nominal)).toEqual([125, 2500])
   })
 
+  it('takes the nominal the previous sample saved for a configured row that has none', () => {
+    const unconfiguredNominal = [
+      { itemCode: 'BM-1', dimensionName: 'Length', sequence: 2, nominal: null, tolPlus: 2, tolMinus: 2, unit: 'mm' },
+      { itemCode: 'BM-1', dimensionName: 'Width', sequence: 1, nominal: 125, tolPlus: 0.5, tolMinus: 0.5, unit: 'mm' },
+    ]
+    const remembered = [
+      { name: ' length ', nominal: 2498, tolPlus: 1, tolMinus: 1, unit: 'mm' },
+      { name: 'Width', nominal: 130, tolPlus: 1, tolMinus: 1, unit: 'mm' },
+    ]
+    const rows = resolveDimensions({ ...on58, order: unconfiguredNominal, previous: remembered })
+    const length = rows.find((r) => r.name === 'Length')!
+    // The remembered nominal, the configured tolerance, still a configured row.
+    expect(length.nominal).toBe(2498)
+    expect(length.tolPlus).toBe(2)
+    expect(length.source).toBe('item-order')
+    // A configured nominal is never overridden by what was typed before.
+    expect(rows.find((r) => r.name === 'Width')!.nominal).toBe(125)
+  })
+
   it('filters to the allowed names on paint work centers', () => {
     const rows = resolveDimensions({
       ...on58,
@@ -371,9 +391,20 @@ describe('§8.3 dimension resolution', () => {
   })
 })
 
+describe('session colouring', () => {
+  it('ranks hold above defects above prior defects elsewhere', () => {
+    expect(sessionTone({ defectCount: 2, holdCount: 1, priorDefectsElsewhere: true })).toBe('hold')
+    expect(sessionTone({ defectCount: 2, holdCount: 0, priorDefectsElsewhere: true })).toBe('defect')
+    expect(sessionTone({ defectCount: 0, holdCount: 0, priorDefectsElsewhere: true })).toBe('prior')
+    expect(sessionTone({ defectCount: 0, holdCount: 0, priorDefectsElsewhere: false })).toBeNull()
+    expect(sessionTone({})).toBeNull()
+  })
+})
+
 describe('§14 q2 permissions', () => {
   it('lets inspectors record but not edit closed sessions', () => {
     expect(can('inspector', 'record-inspection')).toBe(true)
+    expect(can('inspector', 'view-all-sessions')).toBe(false)
     expect(can('inspector', 'edit-closed-session')).toBe(false)
     expect(can('inspector', 'override-grade-mismatch')).toBe(false)
     expect(can('inspector', 'purge-audit-logs')).toBe(false)
@@ -381,6 +412,8 @@ describe('§14 q2 permissions', () => {
 
   it('lets supervisors correct closed sessions and override grade mismatches', () => {
     expect(can('supervisor', 'edit-closed-session')).toBe(true)
+    expect(can('supervisor', 'view-all-sessions')).toBe(true)
+    expect(can('admin', 'view-all-sessions')).toBe(true)
     expect(can('supervisor', 'override-grade-mismatch')).toBe(true)
     expect(can('supervisor', 'delete-defect')).toBe(true)
     expect(can('supervisor', 'purge-audit-logs')).toBe(false)

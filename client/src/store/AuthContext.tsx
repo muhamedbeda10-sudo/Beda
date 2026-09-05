@@ -13,8 +13,8 @@ interface AuthValue {
   selfRegistrationOpen: boolean
   /** IANA zone the factory runs on — shifts are shown in it, as the API stores them. */
   factoryTimeZone: string
-  signIn: (email: string, password: string) => Promise<void>
-  signUp: (email: string, password: string, name: string) => Promise<void>
+  signIn: (username: string, password: string) => Promise<void>
+  signUp: (username: string, password: string, name: string) => Promise<void>
   signOutUser: () => Promise<void>
   /** Re-read the profile (after an admin changed a role, or a password change). */
   reloadProfile: () => Promise<void>
@@ -77,10 +77,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const signIn = useCallback(
-    async (email: string, password: string) => {
+    async (username: string, password: string) => {
       setError(null)
       try {
-        const body: LoginRequest = { email, password }
+        const body: LoginRequest = { username, password }
         accept(await api<AuthResponse>('/auth/login', { method: 'POST', body, noRetry: true }))
       } catch (e) {
         setError(friendlyError(e))
@@ -91,10 +91,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const signUp = useCallback(
-    async (email: string, password: string, name: string) => {
+    async (username: string, password: string, name: string) => {
       setError(null)
       try {
-        const body: RegisterRequest = { email, password, name }
+        const body: RegisterRequest = { username, password, name }
         accept(await api<AuthResponse>('/auth/register', { method: 'POST', body, noRetry: true }))
         setSelfRegistrationOpen((open) => open)
       } catch (e) {

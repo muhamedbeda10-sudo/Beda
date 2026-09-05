@@ -105,14 +105,14 @@ export class TestApp {
     return { status: res.status, body: parsed as T, headers: res.headers, cookies: res.headers.getSetCookie() }
   }
 
-  async register(email: string, name: string, password = 'Password#1'): Promise<Session> {
-    const res = await this.api<AuthResponse>('POST', '/api/auth/register', { body: { email, password, name } })
+  async register(username: string, name: string, password = 'Password#1'): Promise<Session> {
+    const res = await this.api<AuthResponse>('POST', '/api/auth/register', { body: { username, password, name } })
     if (res.status !== 201) throw new Error(`register failed: ${res.status} ${JSON.stringify(res.body)}`)
     return { token: res.body.accessToken, user: res.body.user, cookie: cookieOf(res.cookies) }
   }
 
-  async login(email: string, password = 'Password#1'): Promise<Session> {
-    const res = await this.api<AuthResponse>('POST', '/api/auth/login', { body: { email, password } })
+  async login(username: string, password = 'Password#1'): Promise<Session> {
+    const res = await this.api<AuthResponse>('POST', '/api/auth/login', { body: { username, password } })
     if (res.status !== 200) throw new Error(`login failed: ${res.status} ${JSON.stringify(res.body)}`)
     return { token: res.body.accessToken, user: res.body.user, cookie: cookieOf(res.cookies) }
   }

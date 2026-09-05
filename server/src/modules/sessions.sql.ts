@@ -7,14 +7,34 @@
 import type { OrderSummary, SampleSummary, SessionWithOrder } from '@qc/shared/api'
 import type { InspectionSample, InspectionSession } from '@qc/shared/types'
 
-/** Requires the alias `s` for inspection_sessions. */
+/**
+ * Requires the alias `s` for inspection_sessions. Besides the row, three
+ * signals the lists colour a session by: how many defects it holds, how many
+ * of them are on Hold, and whether the same item of the same order already
+ * showed defects elsewhere — on another machine, or in an earlier session.
+ */
 export const SESSION_SELECT = `
   s.id, s.seq, s.order_id AS "orderId", s.work_center_code AS "workCenterCode",
   s.inspector_id AS "inspectorId", s.inspector_name AS "inspectorName", s.started_at AS "startedAt", s.status,
   s.start_qty AS "startQty", s.start_qty_by_id AS "startQtyById", s.start_qty_by_name AS "startQtyByName",
   s.start_qty_at AS "startQtyAt", s.final_qty AS "finalQty", s.closed_at AS "closedAt",
   s.closed_by_id AS "closedById", s.version, s.deleted_at AS "deletedAt",
-  (SELECT count(*)::int FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "sampleCount"`
+  (SELECT count(*)::int FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "sampleCount",
+  (SELECT count(*)::int FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+    WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL) AS "defectCount",
+  (SELECT count(*)::int FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+    WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL AND d.disposition = 'Hold') AS "holdCount",
+  EXISTS (
+    SELECT 1
+      FROM production_orders o1
+      JOIN production_orders o2
+        ON lower(o2.order_number) = lower(o1.order_number) AND lower(o2.item_code) = lower(o1.item_code)
+      JOIN inspection_sessions s2 ON s2.order_id = o2.id AND s2.id <> s.id AND s2.deleted_at IS NULL
+      JOIN inspection_samples x2 ON x2.session_id = s2.id AND x2.deleted_at IS NULL
+      JOIN defect_results d2 ON d2.sample_id = x2.id AND d2.deleted_at IS NULL
+     WHERE o1.id = s.order_id AND btrim(o1.item_code) <> ''
+       AND (lower(s2.work_center_code) <> lower(s.work_center_code) OR s2.started_at < s.started_at)
+  ) AS "priorDefectsElsewhere"`
 
 /** Requires the alias `o` for production_orders (LEFT JOINed). */
 export const ORDER_SUMMARY_SELECT = `
@@ -58,6 +78,9 @@ export interface SessionRow {
   version: number
   deletedAt: string | null
   sampleCount: number
+  defectCount: number
+  holdCount: number
+  priorDefectsElsewhere: boolean
 }
 
 export interface OrderSummaryRow {
@@ -84,6 +107,9 @@ export function toSession(r: SessionRow): InspectionSession {
     status: r.status,
     version: r.version,
     sampleCount: r.sampleCount,
+    defectCount: r.defectCount,
+    holdCount: r.holdCount,
+    priorDefectsElsewhere: r.priorDefectsElsewhere,
   }
   if (r.startQty !== null && r.startQtyById && r.startQtyByName && r.startQtyAt) {
     out.startQtyConfirmed = { qty: r.startQty, byId: r.startQtyById, byName: r.startQtyByName, at: r.startQtyAt }

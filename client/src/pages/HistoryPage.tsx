@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -21,12 +21,13 @@ import {
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Stat } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
+import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
 import { useHistory, useMaster, useSampleDetail, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, isPTWorkCenter, isPaintWorkCenter, shiftName } from '@/domain'
-import { daysAgoISO, formatDate, formatDateTime } from '@/lib/utils'
+import { cn, daysAgoISO, formatDate, formatDateTime } from '@/lib/utils'
 import {
   DISPOSITIONS,
   type DefectResult,
@@ -138,6 +139,26 @@ export function HistoryPage() {
     return codes.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
   }, [sessions])
 
+  // The API hands an inspector only their own sessions; a supervisor or
+  // administrator gets everyone's and may narrow by who and where.
+  const seesAll = can(role, 'view-all-sessions')
+  const [inspectorFilter, setInspectorFilter] = useState('all')
+  const [factoryFilter, setFactoryFilter] = useState('all')
+  const factoryOf = useCallback((code: string) => machines.find((m) => m.code === code)?.factory?.trim() ?? '', [machines])
+  const inspectorOptions = useMemo(() => {
+    const byId = new Map<string, string>()
+    for (const s of sessions) byId.set(s.inspectorId, s.inspectorName)
+    return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [sessions])
+  const factoryOptions = useMemo(() => {
+    const names = new Set<string>()
+    for (const s of sessions) {
+      const f = machines.find((m) => m.code === s.workCenterCode)?.factory?.trim()
+      if (f) names.add(f)
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b))
+  }, [sessions, machines])
+
   const filtered = useMemo(() => {
     const t = term.trim().toLowerCase()
     const since = range === 'all' ? null : daysAgoISO(Number(range))
@@ -145,6 +166,8 @@ export function HistoryPage() {
       .filter((s) => {
         if (status !== 'All' && s.status !== status) return false
         if (workCenter !== 'all' && s.workCenterCode !== workCenter) return false
+        if (inspectorFilter !== 'all' && s.inspectorId !== inspectorFilter) return false
+        if (factoryFilter !== 'all' && factoryOf(s.workCenterCode) !== factoryFilter) return false
         if (since && s.startedAt < since) return false
         if (!t) return true
         return (
@@ -155,7 +178,7 @@ export function HistoryPage() {
         )
       })
       .sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : b.seq - a.seq))
-  }, [sessions, term, status, workCenter, range])
+  }, [sessions, term, status, workCenter, range, inspectorFilter, factoryFilter, factoryOf])
 
   const totals = useMemo(() => {
     let open = 0
@@ -256,7 +279,7 @@ export function HistoryPage() {
             aria-label="Search history"
           />
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className={cn('grid grid-cols-2 gap-3 sm:grid-cols-3', seesAll && 'lg:grid-cols-5')}>
           <Field label="Status">
             <Select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} className="min-h-[48px]">
               <option value="All">All</option>
@@ -273,18 +296,42 @@ export function HistoryPage() {
               ))}
             </Select>
           </Field>
-          <div className="col-span-2 sm:col-span-1">
-          <Field label="Machine">
-            <Select value={workCenter} onChange={(e) => setWorkCenter(e.target.value)} className="min-h-[48px]">
-              <option value="all">All machines</option>
-              {workCenterOptions.map((code) => (
-                <option key={code} value={code}>
-                  {workCenterName(code)}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          <div className={cn(!seesAll && 'col-span-2 sm:col-span-1')}>
+            <Field label="Machine">
+              <Select value={workCenter} onChange={(e) => setWorkCenter(e.target.value)} className="min-h-[48px]">
+                <option value="all">All machines</option>
+                {workCenterOptions.map((code) => (
+                  <option key={code} value={code}>
+                    {workCenterName(code)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
           </div>
+          {seesAll && (
+            <>
+              <Field label="Inspector">
+                <Select value={inspectorFilter} onChange={(e) => setInspectorFilter(e.target.value)} className="min-h-[48px]">
+                  <option value="all">All inspectors</option>
+                  {inspectorOptions.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Factory">
+                <Select value={factoryFilter} onChange={(e) => setFactoryFilter(e.target.value)} className="min-h-[48px]">
+                  <option value="all">All factories</option>
+                  {factoryOptions.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </>
+          )}
         </div>
       </Card>
 
@@ -301,11 +348,12 @@ export function HistoryPage() {
           {/* Mobile — one card per session. */}
           <div className="grid gap-3 sm:grid-cols-2 md:hidden">
             {filtered.map((s) => (
-              <button key={s.id} onClick={() => setOpenSessionId(s.id)} className="card-hover w-full p-4 text-left">
+              <button key={s.id} onClick={() => setOpenSessionId(s.id)} className={cn('card-hover w-full p-4 text-left', sessionToneClass(s, 'block'))}>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
                   <span className="font-bold">{s.order?.orderNumber ?? '—'}</span>
                   <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status.toUpperCase()}</Badge>
+                  <SessionToneBadge session={s} />
                 </div>
                 <p className="mt-1 truncate text-sm font-medium text-brand-600 dark:text-brand-400">{s.order?.item ?? 'Unknown item'}</p>
                 <p className="mt-0.5 text-xs text-slate-400">
@@ -346,7 +394,11 @@ export function HistoryPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {filtered.map((s) => (
-                    <tr key={s.id} onClick={() => setOpenSessionId(s.id)} className="cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                    <tr
+                      key={s.id}
+                      onClick={() => setOpenSessionId(s.id)}
+                      className={cn('cursor-pointer transition-colors', sessionToneClass(s, 'row', 'hover:bg-slate-50 dark:hover:bg-slate-800/50'))}
+                    >
                       <td className="px-4 py-3 tabular-nums text-slate-400">#{s.seq}</td>
                       <td className="px-4 py-3 font-bold">{s.order?.orderNumber ?? '—'}</td>
                       <td className="max-w-[220px] truncate px-4 py-3">{s.order?.item ?? '—'}</td>
@@ -354,7 +406,10 @@ export function HistoryPage() {
                       <td className="px-4 py-3">{s.inspectorName}</td>
                       <td className="px-4 py-3 tabular-nums">{formatDate(s.startedAt)}</td>
                       <td className="px-4 py-3">
-                        <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
+                          <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
+                          <SessionToneBadge session={s} />
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums">{num(s.sampleCount)}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{num(s.startQtyConfirmed?.qty)}</td>
