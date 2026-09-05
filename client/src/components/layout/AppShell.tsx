@@ -35,7 +35,7 @@ interface NavItem {
   hint?: string
 }
 
-/** The work an inspector does: centred on a desktop, at the end of the bar on a tablet or phone. */
+/** The work an inspector does: centred in the bar on a desktop, in the menu on a tablet or phone. */
 const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/history', label: 'History', icon: History },
@@ -168,15 +168,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-full">
       <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/85 shadow-[0_1px_0_rgba(255,255,255,.6)_inset] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/85 safe-top">
-        {/* A desktop centres the tabs; a tablet, with less room, keeps them at the end next to the account. */}
+        {/* A desktop centres the tabs and shows the gear and the account; a tablet or phone keeps all of that behind the menu button. */}
         <div className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:px-8">
           {/* Left — brand */}
           <button type="button" onClick={() => navigate('/')} className="shrink-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 lg:justify-self-start" aria-label="Home">
             <Brand />
           </button>
 
-          {/* The inspector's tabs — at the end on a tablet, centred on a desktop */}
-          <nav className="ml-auto hidden items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 md:flex lg:ml-0 lg:justify-self-center dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
+          {/* The inspector's tabs, centred — desktop only */}
+          <nav className="hidden items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 lg:flex lg:justify-self-center dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
             {NAV.map((n) => {
               const active = isActive(n)
               return (
@@ -199,18 +199,17 @@ export function AppShell({ children }: { children: ReactNode }) {
           </nav>
 
           {/* Right — theme, administration, account */}
-          <div className="ml-auto flex shrink-0 items-center gap-1 md:ml-2 lg:ml-0 lg:justify-self-end">
-            <div className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 md:block lg:hidden" />
+          <div className="ml-auto flex shrink-0 items-center gap-1 lg:ml-0 lg:justify-self-end">
             <button onClick={toggleTheme} className="icon-btn" aria-label="Toggle light or dark theme">
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
             {admin.length > 0 && (
-              <div className="hidden md:block">
+              <div className="hidden lg:block">
                 <AdminMenu items={admin} />
               </div>
             )}
-            <div className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 md:block" />
-            <div className="hidden items-center gap-2 md:flex">
+            <div className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 lg:block" />
+            <div className="hidden items-center gap-2 lg:flex">
               <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-xs font-bold text-white shadow-card" title={displayName}>
                 {initials || '?'}
               </span>
@@ -219,39 +218,15 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <LogOut className="h-5 w-5" />
               </button>
             </div>
-            <button onClick={() => setMenuOpen(true)} className="icon-btn md:hidden" aria-label="Open menu">
+            <button onClick={() => setMenuOpen(true)} className="icon-btn lg:hidden" aria-label="Open menu">
               <Menu className="h-6 w-6" />
             </button>
           </div>
         </div>
-        {/* A phone has no room beside the brand: the tabs get their own row, sitting at its end. */}
-        <nav className="flex justify-end px-3 pb-2 md:hidden" aria-label="Main">
-          <div className="flex items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 dark:bg-slate-800/70 dark:ring-slate-700/70">
-            {NAV.map((n) => {
-              const active = isActive(n)
-              return (
-                <NavLink
-                  key={n.to}
-                  to={n.to}
-                  end={n.end}
-                  className={cn(
-                    'flex min-h-[40px] items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
-                    active
-                      ? 'bg-white text-brand-800 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:text-white dark:ring-slate-700'
-                      : 'text-slate-600 dark:text-slate-300',
-                  )}
-                >
-                  <n.icon className={cn('h-4 w-4', active && 'text-accent-500')} />
-                  {n.label}
-                </NavLink>
-              )
-            })}
-          </div>
-        </nav>
       </header>
 
       {menuOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
+        <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fade-in" onClick={() => setMenuOpen(false)} />
           <div className="absolute right-0 top-0 h-full w-[85%] max-w-sm overflow-y-auto bg-white shadow-lift animate-slide-up dark:bg-slate-900 safe-top">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
