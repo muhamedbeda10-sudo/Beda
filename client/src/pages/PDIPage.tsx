@@ -70,7 +70,7 @@ export function PDIPage() {
           }
         />
       ) : (
-        <div className="space-y-3">
+        <div className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((d) => (
             <Card key={d.id} className="p-4">
               <div className="flex flex-wrap items-center gap-2">

@@ -67,7 +67,7 @@ export function CoilSearchPage() {
           hint={term ? 'Try a different coil number or supplier.' : 'The coil catalogue is empty — import coils from Admin.'}
         />
       ) : (
-        <div className="space-y-3">
+        <div className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
           {results.map((c) => {
             const used = usage.get(c.coilNumber.toLowerCase()) ?? []
             return (

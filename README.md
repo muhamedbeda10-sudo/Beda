@@ -73,13 +73,14 @@ The **first account created becomes the admin**. Afterwards, set
   corrections and optimistic concurrency (a stale edit is rejected).
 - **Coil search** — coil → sample → order → customer traceability.
 - **PDI documents** — pre-delivery photos attached to an order.
-- **Admin** — dimension order (by item code, optionally per machine), item
-  master dimensions, reference images, machine defects, the machine register,
-  grade mappings, PT consumables, **CSV / Excel bulk import** of machines,
-  order lines, coils, item dimensions and machine defects, each with a preview
-  (idempotent upsert on the business key), **Users**.
-- **Audit log** — every create / update / delete / acknowledge / purge, field by
-  field, with who and when. Append-only and undeletable at the database.
+- **Administration** (the gear, far right) — **Configuration**: the machine
+  register, item dimensions (by item code, optionally per machine), master
+  dimensions, reference images (single or bulk upload), machine defects, grade
+  mappings, PT consumables, each with its sheet importer where the ERP exports
+  one; **Data import**: order lines and coils, CSV or Excel, with a preview
+  (idempotent upsert on the business key); **Users**; **Audit log** — every
+  create / update / delete / acknowledge / purge, field by field, with who and
+  when, append-only and undeletable at the database.
 
 ## Data integrity — enforced by the database, not just the UI
 

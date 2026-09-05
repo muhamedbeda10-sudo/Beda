@@ -15,7 +15,17 @@ body,
 
 body {
   @apply bg-slate-100 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+  /* A faint brand wash behind the page keeps white cards from floating on flat grey. */
+  background-image:
+    radial-gradient(1200px 600px at 50% -200px, rgba(36, 95, 168, 0.10), transparent 60%),
+    radial-gradient(800px 400px at 100% 100%, rgba(244, 95, 12, 0.05), transparent 60%);
+  background-attachment: fixed;
   -webkit-tap-highlight-color: transparent;
+}
+.dark body {
+  background-image:
+    radial-gradient(1200px 600px at 50% -200px, rgba(74, 128, 196, 0.16), transparent 60%),
+    radial-gradient(800px 400px at 100% 100%, rgba(244, 95, 12, 0.06), transparent 60%);
 }
 
 /* Respect iOS safe areas on mobile */
@@ -28,28 +38,55 @@ body {
 
 @layer components {
   .card {
-    @apply rounded-2xl bg-white shadow-card ring-1 ring-slate-200/70 dark:bg-slate-900 dark:ring-slate-800;
+    @apply rounded-2xl bg-white shadow-card ring-1 ring-slate-200/70 transition-shadow duration-200 dark:bg-slate-900 dark:ring-slate-800;
+  }
+  /* A card the user can act on: lifts on hover, settles on press. */
+  .card-hover {
+    @apply card transition-[transform,box-shadow] duration-200 ease-out hover:-translate-y-0.5 hover:shadow-hover active:translate-y-0 active:shadow-card;
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-50 dark:focus-visible:ring-offset-slate-900;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-[background-color,color,box-shadow,transform] duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 dark:focus-visible:ring-offset-slate-900;
+  }
+  .btn > svg {
+    @apply transition-transform duration-200 ease-out;
+  }
+  .btn:hover:not(:disabled) > svg {
+    transform: translateY(-1px) scale(1.06);
   }
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
+    @apply btn bg-brand-600 text-white shadow-[0_1px_2px_rgba(10,33,66,.2),inset_0_1px_0_rgba(255,255,255,.12)] hover:bg-brand-700 hover:shadow-glow active:bg-brand-800;
   }
   .btn-secondary {
-    @apply btn bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700;
+    @apply btn bg-white text-slate-700 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 hover:ring-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700 dark:hover:bg-slate-700;
   }
   .btn-ghost {
     @apply btn hover:bg-slate-100 dark:hover:bg-slate-800;
   }
   .btn-danger {
-    @apply btn bg-rose-600 text-white hover:bg-rose-700;
+    @apply btn bg-rose-600 text-white hover:bg-rose-700 hover:shadow-[0_8px_24px_-8px_rgba(225,29,72,.5)];
+  }
+  /* Square icon-only control (header actions, row actions). */
+  .icon-btn {
+    @apply grid h-11 w-11 place-items-center rounded-xl text-slate-500 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-brand-700 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white;
+  }
+  .icon-btn > svg {
+    @apply transition-transform duration-200 ease-out;
+  }
+  .icon-btn:hover > svg {
+    transform: scale(1.1);
   }
   .input {
-    @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500;
+    @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-inset transition-[border-color,box-shadow] duration-150 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500;
   }
   .label {
     @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400;
+  }
+  /* Loading placeholder that moves, so a wait reads as activity rather than a hang. */
+  .skeleton {
+    @apply rounded-xl bg-slate-200/70 dark:bg-slate-800;
+    background-image: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+    background-size: 200% 100%;
+    @apply animate-shimmer;
   }
 }
 
@@ -70,4 +107,15 @@ input[type='number']::-webkit-inner-spin-button,
 input[type='number']::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
+}
+
+/* Motion is a courtesy, not a requirement. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
