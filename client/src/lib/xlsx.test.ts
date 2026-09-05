@@ -181,6 +181,8 @@ describe('value conversion', () => {
     expect(serialToIso(46269, 'date', false)).toBe('2026-09-04')
     expect(serialToIso(46269.5, 'datetime', false)).toBe('2026-09-04 12:00:00')
     expect(serialToIso(0.75, 'time', false)).toBe('18:00:00')
+    // A time-formatted cell with a whole day part is really a timestamp.
+    expect(serialToIso(46264.41726851852, 'time', false)).toBe('2026-08-30 10:00:52')
     expect(serialToIso(1, 'date', true)).toBe('1904-01-02')
   })
 

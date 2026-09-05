@@ -35,7 +35,7 @@ describe('pasting from Excel', () => {
     expect(plan.valid[1].values).toEqual({ itemCode: 'DC.DR.FR.BD.', dimensionName: 'F', tolMinus: 1, sequence: 5, workCenterCode: '48' })
     expect(Array.from(plan.problems.keys())).toEqual([2, 3])
     expect(plan.problems.get(2)!.messages).toEqual(['Item ID is empty'])
-    expect(plan.problems.get(3)!.messages).toEqual(['Tolerance + is not a number'])
+    expect(plan.problems.get(3)!.messages).toEqual(['Tolerance + is not a number ("x")'])
   })
 
   it('treats a repeated key inside one paste as an update of the earlier row', () => {

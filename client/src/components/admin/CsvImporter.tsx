@@ -12,7 +12,7 @@ import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
 import { cn, downloadText, parseCSV } from '@/lib/utils'
 import { isLegacyExcelFile, isZipFile, readWorkbook, WorkbookReadError, type WorkbookSheet } from '@/lib/xlsx'
-import { BATCH_SIZE, csvCell, normaliseHeader, normaliseKeyPart, type CellValue, type Importer } from '@/components/admin/importers'
+import { BATCH_SIZE, coerceCell, csvCell, normaliseHeader, normaliseKeyPart, type CellValue, type Importer } from '@/components/admin/importers'
 
 interface PlannedRow {
   rowNumber: number
@@ -254,16 +254,9 @@ export function CsvImporter({ importer }: { importer: Importer }) {
         if (col < 0) continue
         const raw = (row[col] ?? '').trim()
         if (raw === '') continue
-        if (f.kind === 'number') {
-          const n = Number(raw.replace(/,/g, ''))
-          if (!Number.isFinite(n)) {
-            problems.push(`${f.key} is not a number ("${raw}")`)
-            continue
-          }
-          values[f.key] = n
-        } else {
-          values[f.key] = raw
-        }
+        const cell = coerceCell(f, raw)
+        if ('error' in cell) problems.push(cell.error)
+        else values[f.key] = cell.value
       }
 
       const derived = importer.derive ? importer.derive(values) : values
@@ -478,7 +471,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
                     <Select
                       className="min-h-[48px]"
                       value={String(col)}
-                      disabled={locked}
+                      disabled={status === 'running'}
                       onChange={(e) => {
                         const next = Number(e.target.value)
                         setMapping((m) => ({ ...m, [f.key]: next }))
