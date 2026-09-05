@@ -126,15 +126,12 @@ export const PRODUCTION_IMPORTER: Importer = {
   businessKeys: ['itemCode', 'dimensionName'],
   optionalKeys: ['workCenterCode'],
   fields: [
-    { key: 'itemCode', label: 'Item code', kind: 'text', aliases: ['item id', 'code', 'part code'], sample: 'LB406015-5TA3' },
-    { key: 'item', label: 'Item name', kind: 'text', aliases: ['item', 'product', 'description'], sample: 'XL Light Beam' },
-    { key: 'workCenterCode', label: 'Machine code', kind: 'text', aliases: ['machine', 'machine code', 'work center', 'work centre', 'wc'], sample: '' },
+    { key: 'itemCode', label: 'Item ID', kind: 'text', aliases: ['item code', 'item id', 'code', 'part code'], sample: 'LB406015-5TA3' },
     { key: 'dimensionName', label: 'Dimension name', kind: 'text', aliases: ['dimension', 'name', 'characteristic'], sample: 'Width' },
-    { key: 'sequence', label: 'Sequence', kind: 'number', aliases: ['seq', 'order', 'no'], sample: '1' },
-    { key: 'nominal', label: 'Nominal', kind: 'number', aliases: ['target', 'nom'], sample: '125' },
-    { key: 'tolPlus', label: 'Tolerance +', kind: 'number', aliases: ['tol plus', 'upper', 'plus'], sample: '0.5' },
-    { key: 'tolMinus', label: 'Tolerance −', kind: 'number', aliases: ['tol minus', 'lower', 'minus'], sample: '0.5' },
-    { key: 'unit', label: 'Unit', kind: 'text', aliases: ['uom'], sample: 'mm' },
+    { key: 'tolPlus', label: 'Tolerance +', kind: 'number', aliases: ['tol plus', 'tolerance plus', 'upper', 'plus'], sample: '0.5' },
+    { key: 'tolMinus', label: 'Tolerance −', kind: 'number', aliases: ['tol minus', 'tolerance minus', 'lower', 'minus'], sample: '0.5' },
+    { key: 'sequence', label: 'Sequence', kind: 'number', aliases: ['seq', 'order', 'no', 'sequence number'], sample: '1' },
+    { key: 'workCenterCode', label: 'Machine (optional)', kind: 'text', aliases: ['machine', 'machine code', 'work center', 'work centre', 'wc'], sample: '' },
   ],
 }
 
@@ -146,11 +143,9 @@ export const MACHINES_IMPORTER: Importer = {
   templateFile: 'machines-template.csv',
   businessKeys: ['code'],
   fields: [
-    { key: 'code', label: 'Machine code', kind: 'text', aliases: ['machine code', 'code', 'work center', 'work centre', 'wc'], sample: '58' },
-    { key: 'name', label: 'Machine name', kind: 'text', aliases: ['machine', 'machine name', 'name'], sample: 'A. Welding Line' },
-    { key: 'factory', label: 'Factory', kind: 'text', aliases: ['plant', 'site'], sample: 'Factory 1' },
-    { key: 'line', label: 'Line', kind: 'text', sample: 'LM4' },
-    { key: 'machineNumber', label: 'Machine number', kind: 'text', aliases: ['machine no', 'number'], sample: '' },
+    { key: 'code', label: 'Machine code', kind: 'text', aliases: ['machine code', 'code', 'machine number', 'work center', 'work centre', 'wc'], sample: '58' },
+    { key: 'name', label: 'Machine name', kind: 'text', aliases: ['machine', 'machine name', 'name', 'line'], sample: 'A. Welding Line' },
+    { key: 'factory', label: 'Factory', kind: 'text', aliases: ['plant', 'site'], sample: 'LM4' },
   ],
 }
 

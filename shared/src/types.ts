@@ -369,6 +369,8 @@ export interface ItemReferenceImage {
   itemCode: string
   /** Item name, for display only. */
   item: string
+  /** Machine the photo is specific to; unset means every machine. */
+  workCenterCode?: string | null
   imageId: ID
   caption?: string
   deletedAt?: ISODate | null

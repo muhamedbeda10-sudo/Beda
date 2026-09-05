@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { Navigate, NavLink, useParams } from 'react-router-dom'
-import { AlertTriangle, ChevronDown, Factory, FlaskConical, Image as ImageIcon, ListOrdered, Ruler, Shuffle, UploadCloud } from 'lucide-react'
+import { AlertTriangle, ClipboardPaste, Factory, FileSpreadsheet, FlaskConical, Image as ImageIcon, ListOrdered, Ruler, Shuffle } from 'lucide-react'
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { CsvImporter } from '@/components/admin/CsvImporter'
+import { PasteImporter } from '@/components/admin/PasteImporter'
 import { DEFECTS_IMPORTER, MACHINES_IMPORTER, PRODUCTION_IMPORTER, type Importer } from '@/components/admin/importers'
 import { DimensionOrderSection } from '@/components/admin/config/DimensionOrderSection'
 import { ItemMasterSection } from '@/components/admin/config/ItemMasterSection'
@@ -32,7 +33,8 @@ const SECTIONS: Array<{ key: string; label: string; icon: typeof Ruler; panel: R
 export function ConfigurationPage() {
   const { section = '' } = useParams()
   const current = SECTIONS.find((s) => s.key === section)
-  const [importOpen, setImportOpen] = useState(false)
+  /** The grid is the everyday way in; a file is there for a large export. */
+  const [fileMode, setFileMode] = useState(false)
 
   if (!current) return <Navigate to={`/admin/configuration/${SECTIONS[0].key}`} replace />
 
@@ -44,7 +46,7 @@ export function ConfigurationPage() {
             <NavLink
               key={s.key}
               to={`/admin/configuration/${s.key}`}
-              onClick={() => setImportOpen(false)}
+              onClick={() => setFileMode(false)}
               className={({ isActive }) =>
                 cn(
                   'group inline-flex min-h-[44px] shrink-0 items-center gap-2 rounded-xl px-3.5 text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
@@ -61,34 +63,37 @@ export function ConfigurationPage() {
         </div>
 
         <div key={current.key} className="animate-page-in space-y-4">
-          {current.panel}
-
           {current.importer && (
-            <div className="card overflow-hidden">
-              <Button
-                variant="ghost"
-                className="w-full justify-between rounded-none px-5 py-4 text-left"
-                onClick={() => setImportOpen((o) => !o)}
-                aria-expanded={importOpen}
-              >
-                <span className="flex items-center gap-3">
-                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-100 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200">
-                    <UploadCloud className="h-4 w-4" />
+            <div className="card space-y-4 p-4 sm:p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200">
+                    {fileMode ? <FileSpreadsheet className="h-5 w-5" /> : <ClipboardPaste className="h-5 w-5" />}
                   </span>
-                  <span className="leading-tight">
-                    <span className="block text-sm font-bold">Import {current.label.toLowerCase()} from a sheet</span>
-                    <span className="block text-xs font-normal text-slate-500 dark:text-slate-400">{current.importer.description}</span>
-                  </span>
-                </span>
-                <ChevronDown className={cn('h-5 w-5 text-slate-400 transition-transform duration-300', importOpen && 'rotate-180')} />
-              </Button>
-              {importOpen && (
-                <div className="border-t border-slate-100 p-4 animate-fade-in dark:border-slate-800">
-                  <CsvImporter importer={current.importer} />
+                  <div className="min-w-0">
+                    <h3 className="text-base font-bold">{fileMode ? `Load ${current.label.toLowerCase()} from a file` : `Paste ${current.label.toLowerCase()} from Excel`}</h3>
+                    <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                      Columns: {current.importer.fields.map((f) => f.label).join(' · ')}. {current.importer.description}
+                    </p>
+                  </div>
                 </div>
-              )}
+                <Button className="min-h-[44px]" onClick={() => setFileMode((m) => !m)}>
+                  {fileMode ? (
+                    <>
+                      <ClipboardPaste className="h-4 w-4" /> Paste instead
+                    </>
+                  ) : (
+                    <>
+                      <FileSpreadsheet className="h-4 w-4" /> Load a file instead
+                    </>
+                  )}
+                </Button>
+              </div>
+              {fileMode ? <CsvImporter importer={current.importer} /> : <PasteImporter importer={current.importer} />}
             </div>
           )}
+
+          {current.panel}
         </div>
       </div>
     </AdminLayout>

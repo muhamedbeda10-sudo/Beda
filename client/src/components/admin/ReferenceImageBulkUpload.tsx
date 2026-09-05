@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { AlertCircle, CheckCircle2, ImagePlus, Loader2, Trash2, UploadCloud } from 'lucide-react'
-import { Badge, Button, Input, Modal } from '@/components/ui'
+import { Badge, Button, Field, Input, Modal } from '@/components/ui'
+import { MachineSelect } from '@/components/admin/MasterDataPanel'
 import { uploadImage } from '@/services/uploadImage'
 import { ImageRejected } from '@/services/imageStore'
 import { createMaster } from '@/services/mutations'
@@ -24,6 +25,8 @@ export function ReferenceImageBulkUpload({ open, onClose }: { open: boolean; onC
   const [rows, setRows] = useState<PendingImage[]>([])
   const [running, setRunning] = useState(false)
   const [dragging, setDragging] = useState(false)
+  /** Empty = the photos apply on every machine. */
+  const [machine, setMachine] = useState('')
 
   const pending = rows.filter((r) => r.status !== 'done')
   const ready = pending.filter((r) => r.itemCode.trim() !== '')
@@ -54,6 +57,7 @@ export function ReferenceImageBulkUpload({ open, onClose }: { open: boolean; onC
           await createMaster(queryClient, 'item-reference-images', {
             itemCode: row.itemCode.trim(),
             item: '',
+            workCenterCode: machine.trim() || null,
             imageId: asset.id,
             caption: row.file.name,
           })
@@ -73,6 +77,7 @@ export function ReferenceImageBulkUpload({ open, onClose }: { open: boolean; onC
   function close() {
     if (running) return
     setRows([])
+    setMachine('')
     onClose()
   }
 
@@ -96,6 +101,9 @@ export function ReferenceImageBulkUpload({ open, onClose }: { open: boolean; onC
       }
     >
       <div className="space-y-3">
+        <Field label="Machine" hint="Applies to every photo in this batch. Leave on every machine unless these photos belong to one machine only.">
+          <MachineSelect value={machine} onChange={setMachine} allowAny />
+        </Field>
         <div
           onDragOver={(e) => {
             e.preventDefault()
