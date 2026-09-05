@@ -18,7 +18,7 @@ export const SESSION_SELECT = `
 
 /** Requires the alias `o` for production_orders (LEFT JOINed). */
 export const ORDER_SUMMARY_SELECT = `
-  o.id AS "o_id", o.order_number AS "o_orderNumber", o.item AS "o_item", o.item_code AS "o_itemCode",
+  o.id AS "o_id", o.line_key AS "o_lineKey", o.order_number AS "o_orderNumber", o.item AS "o_item", o.item_code AS "o_itemCode",
   o.work_center_code AS "o_workCenterCode", o.customer AS "o_customer", o.expected_grade AS "o_expectedGrade"`
 
 /** Requires the alias `sm` for inspection_samples. */
@@ -61,6 +61,7 @@ export interface SessionRow {
 
 export interface OrderSummaryRow {
   o_id: string | null
+  o_lineKey: string | null
   o_orderNumber: string | null
   o_item: string | null
   o_itemCode: string | null
@@ -96,6 +97,7 @@ export function toOrderSummary(r: OrderSummaryRow): OrderSummary | null {
   if (!r.o_id) return null
   return {
     id: r.o_id,
+    lineKey: r.o_lineKey ?? '',
     orderNumber: r.o_orderNumber ?? '',
     item: r.o_item ?? '',
     itemCode: r.o_itemCode ?? '',

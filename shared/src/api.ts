@@ -128,32 +128,50 @@ export interface MasterRecordByKind {
   'pt-consumables': PTConsumableProduct
 }
 
-/** Filters a screen may apply server-side. Unknown filters are rejected. */
+/** Filters a screen may apply server-side. Unknown filters are ignored. */
 export interface MasterListQuery {
-  item?: string
+  itemCode?: string
   workCenterCode?: string
+  factory?: string
 }
 
 // ---- Orders & coils --------------------------------------------------------
 
 export interface OrderSearchQuery {
-  /** Prefix matched against the order number and the item code. */
+  /** Prefix matched against the order number, the item code and the line key. */
   search?: string
+  /** Only lines produced on this machine. */
+  machine?: string
+  /** Only the lines of this order (exact, case-insensitive). */
+  orderNumber?: string
   limit?: number
 }
 
-/** Rows as they appear in a CSV import. Unset fields leave the existing value
- *  alone so a partial file can correct one column without wiping the rest. */
-export type OrderImportRow = Partial<Omit<ProductionOrder, 'id' | 'deletedAt' | 'machineId'>> & {
+/** One order as the new-inspection screen lists it: the number plus how many
+ *  lines it has on the machine being filtered. */
+export interface OrderNumberSummary {
   orderNumber: string
+  customer: string
+  lineCount: number
+}
+
+/** Rows as they appear in a CSV import. Unset fields leave the existing value
+ *  alone so a partial file can correct one column without wiping the rest.
+ *  A line that does not exist yet must carry its order number. */
+export type OrderImportRow = Partial<Omit<ProductionOrder, 'id' | 'deletedAt' | 'machineId'>> & {
+  lineKey: string
 }
 
 export type CoilImportRow = Partial<Omit<Coil, 'id' | 'deletedAt'>> & { coilNumber: string }
 
 export type DimensionOrderImportRow = Partial<Omit<ItemDimensionOrder, 'id' | 'deletedAt'>> & {
-  item: string
+  itemCode: string
   dimensionName: string
 }
+
+export type MachineImportRow = Partial<Omit<Machine, 'id' | 'deletedAt'>> & { code: string; name: string }
+
+export type DefectImportRow = { workCenterCode: string; defectName: string }
 
 export interface ImportRequest<Row> {
   rows: Row[]
@@ -195,7 +213,7 @@ export interface CoilUsage {
 /** The order fields every session list needs alongside the session. */
 export type OrderSummary = Pick<
   ProductionOrder,
-  'id' | 'orderNumber' | 'item' | 'itemCode' | 'workCenterCode' | 'customer' | 'expectedGrade'
+  'id' | 'lineKey' | 'orderNumber' | 'item' | 'itemCode' | 'workCenterCode' | 'customer' | 'expectedGrade'
 >
 
 export type SampleSummary = Pick<
@@ -241,11 +259,14 @@ export interface CloseSessionRequest {
   version: number
 }
 
-/** What the wizard needs to open: the session, its order, and the configuration
- *  for that order's item and work centre, in one round trip. */
+/** What the wizard needs to open: the session, its order line, and the
+ *  configuration for that line's item and machine, in one round trip. */
 export interface WizardContext {
   session: InspectionSession
   order: ProductionOrder
+  /** The machine the line runs on, when it is in the register. */
+  machine: Machine | null
+  /** General rows for the item plus the rows specific to this machine. */
   dimensionOrder: ItemDimensionOrder[]
   dimensionMaster: ItemDimensionMaster[]
   referenceImages: ItemReferenceImage[]
@@ -284,6 +305,8 @@ export interface SaveDefectInput {
 }
 
 export interface SaveCoilInput {
+  /** The catalogue coil that was picked. Omitted for a number typed by hand. */
+  coilId?: string
   coilNumber: string
   grade?: string
   smType?: string

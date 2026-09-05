@@ -18,6 +18,7 @@ import {
   type ItemDimensionMaster,
   type ItemDimensionOrder,
   type ItemReferenceImage,
+  type Machine,
   type PTConsumableProduct,
   type ProductionOrder,
   type WorkCenterDefect,
@@ -61,6 +62,15 @@ import {
 
 const uuid = z.string().uuid()
 
+/** A coil picked from the catalogue must still be in it. A typed coil has no id
+ *  and is not checked — the register may simply not have received it yet. */
+async function assertCoilsUsable(q: Queryable, coilIds: string[]): Promise<void> {
+  const wanted = Array.from(new Set(coilIds))
+  if (wanted.length === 0) return
+  const { rows } = await q.query<{ id: string }>(`SELECT id FROM coils WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`, [wanted])
+  if (rows.length !== wanted.length) throw badRequest('One of the coils is no longer in the coil register. Remove it and pick it again.')
+}
+
 const startSchema = z.object({ orderId: uuid, startQty: z.coerce.number().min(0) })
 const closeSchema = z.object({ finalQty: z.coerce.number().min(0), version: z.coerce.number().int().min(0) })
 
@@ -101,6 +111,7 @@ const saveSampleSchema = z.object({
   coils: z
     .array(
       z.object({
+        coilId: uuid.optional(),
         coilNumber: z.string().trim().min(1, 'Every coil needs a coil ID.').max(120),
         grade: optText(60),
         smType: optText(60),
@@ -267,24 +278,38 @@ export function sessionsRoutes(ctx: AppContext): Router {
     if (!session) throw notFound('That session')
     const [order] = await fetchOrdersByIds(db, [session.orderId])
     if (!order) throw notFound('The session’s order')
-    const [dimOrder, dimMaster, refImages, wcDefects, grades, consumables, samples] = await Promise.all([
+    const wc = session.workCenterCode
+    const [machine, dimOrder, dimMaster, refImages, wcDefects, grades, consumables, samples] = await Promise.all([
+      db.query<Machine>(
+        `SELECT id, code, name, line, display_name AS "displayName", machine_number AS "machineNumber", factory
+           FROM machines WHERE lower(code) = lower($1) AND deleted_at IS NULL LIMIT 1`,
+        [wc],
+      ),
+      // The item's general rows plus the rows specific to this machine; the
+      // shared resolver decides which wins (§8.3).
       db.query<ItemDimensionOrder>(
-        `SELECT id, item, dimension_name AS "dimensionName", sequence, nominal, tol_plus AS "tolPlus", tol_minus AS "tolMinus", unit
-           FROM item_dimension_order WHERE item = $1 AND deleted_at IS NULL ORDER BY sequence`,
-        [order.item],
+        `SELECT id, item_code AS "itemCode", item, work_center_code AS "workCenterCode", dimension_name AS "dimensionName",
+                sequence, nominal, tol_plus AS "tolPlus", tol_minus AS "tolMinus", unit
+           FROM item_dimension_order
+          WHERE lower(item_code) = lower($1) AND deleted_at IS NULL
+            AND (work_center_code IS NULL OR lower(work_center_code) = lower($2))
+          ORDER BY sequence`,
+        [order.itemCode, wc],
       ),
       db.query<ItemDimensionMaster>(
-        `SELECT id, item, dimension_name AS "dimensionName", nominal, tol_plus AS "tolPlus", tol_minus AS "tolMinus", unit
-           FROM item_dimension_master WHERE item = $1 AND deleted_at IS NULL ORDER BY dimension_name`,
-        [order.item],
+        `SELECT id, item_code AS "itemCode", item, dimension_name AS "dimensionName", nominal, tol_plus AS "tolPlus", tol_minus AS "tolMinus", unit
+           FROM item_dimension_master WHERE lower(item_code) = lower($1) AND deleted_at IS NULL ORDER BY dimension_name`,
+        [order.itemCode],
       ),
       db.query<ItemReferenceImage>(
-        `SELECT id, item, image_id AS "imageId", caption FROM item_reference_images WHERE item = $1 AND deleted_at IS NULL ORDER BY created_at`,
-        [order.item],
+        `SELECT id, item_code AS "itemCode", item, image_id AS "imageId", caption
+           FROM item_reference_images WHERE lower(item_code) = lower($1) AND deleted_at IS NULL ORDER BY created_at`,
+        [order.itemCode],
       ),
       db.query<WorkCenterDefect>(
-        `SELECT id, work_center_code AS "workCenterCode", defect_name AS "defectName" FROM work_center_defects WHERE work_center_code = $1 AND deleted_at IS NULL ORDER BY defect_name`,
-        [session.workCenterCode],
+        `SELECT id, work_center_code AS "workCenterCode", defect_name AS "defectName"
+           FROM work_center_defects WHERE lower(work_center_code) = lower($1) AND deleted_at IS NULL ORDER BY defect_name`,
+        [wc],
       ),
       db.query<GradeMapping>(`SELECT id, grade_a AS "gradeA", grade_b AS "gradeB" FROM grade_mappings WHERE deleted_at IS NULL`),
       db.query<PTConsumableProduct>(
@@ -299,6 +324,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const body: WizardContext = {
       session: plain,
       order,
+      machine: machine.rows[0] ? dropNulls(machine.rows[0]) : null,
       dimensionOrder: dimOrder.rows.map(dropNulls),
       dimensionMaster: dimMaster.rows.map(dropNulls),
       referenceImages: refImages.rows.map(dropNulls),
@@ -474,11 +500,12 @@ export function sessionsRoutes(ctx: AppContext): Router {
         )).rows[0].id
         await linkImages(tx, 'defect_images', 'defect_id', defectId, d.imageIds)
       }
+      await assertCoilsUsable(tx, body.coils.flatMap((c) => (c.coilId ? [c.coilId] : [])))
       for (const c of body.coils) {
         await tx.query(
-          `INSERT INTO sample_coils (sample_id, coil_number, grade, sm_type, supplier, thickness, width, yield, notes)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [sampleId, c.coilNumber, c.grade ?? null, c.smType ?? null, c.supplier ?? null, c.thickness ?? null, c.width ?? null, c.yield ?? null, c.notes ?? null],
+          `INSERT INTO sample_coils (sample_id, coil_id, coil_number, grade, sm_type, supplier, thickness, width, yield, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [sampleId, c.coilId ?? null, c.coilNumber, c.grade ?? null, c.smType ?? null, c.supplier ?? null, c.thickness ?? null, c.width ?? null, c.yield ?? null, c.notes ?? null],
         )
       }
       if (body.paint && isPaintWorkCenter(wc)) {

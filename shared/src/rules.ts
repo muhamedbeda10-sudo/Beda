@@ -249,8 +249,9 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
   if (!draft.drawing?.trim()) {
     issues.push({ step: 'setup', message: 'Select a drawing.' })
   }
+  // §5.7 — the sample quantity is entered last, on the review step.
   if (!(draft.sampleQty > 0)) {
-    issues.push({ step: 'setup', message: 'Sample quantity must be greater than zero.' })
+    issues.push({ step: 'review', message: 'Sample quantity must be greater than zero.' })
   }
 
   // §5.2 — PT/weld work centers require at least one coil.
@@ -325,22 +326,57 @@ export interface ResolvedDimension {
   source: DimensionSource
 }
 
+export interface DimensionOrderRule {
+  itemCode: string
+  /** Machine the rule is specific to; unset or empty means every machine. */
+  workCenterCode?: string | null
+  dimensionName: string
+  sequence: number
+  nominal?: number | null
+  tolPlus: number
+  tolMinus: number
+  unit: string
+}
+
+export interface DimensionMasterRule {
+  itemCode: string
+  dimensionName: string
+  nominal?: number | null
+  tolPlus: number
+  tolMinus: number
+  unit: string
+}
+
+/** Item codes and machine codes are matched without regard to case or
+ *  surrounding whitespace — the ERP export is not consistent about either. */
+export function normaliseCode(code: string | null | undefined): string {
+  return String(code ?? '').trim().toLowerCase()
+}
+
 /**
- * Resolve the dimension rows for an item. First match wins:
- *   1. the item's configured dimension order entry (also gives sequence)
- *   2. the item's master dimension record
- *   3. carry-forward from the previous sample of the same item
- *   4. nothing — the inspector types it
+ * Resolve the dimension rows for an item on a machine. First match wins:
+ *   1. the item's dimension-order entry specific to this machine
+ *   2. the item's dimension-order entry that applies to every machine
+ *   3. the item's master dimension record
+ *   4. carry-forward from the previous sample of the same item
+ *   5. nothing — the inspector types it
+ *
+ * A machine-specific entry therefore replaces the general entry of the same
+ * dimension name and keeps its own sequence; general entries the machine does
+ * not override are still offered.
  */
 export function resolveDimensions(input: {
-  item: string
-  order: Array<{ item: string; dimensionName: string; sequence: number; nominal?: number | null; tolPlus: number; tolMinus: number; unit: string }>
-  master: Array<{ item: string; dimensionName: string; nominal?: number | null; tolPlus: number; tolMinus: number; unit: string }>
+  itemCode: string
+  workCenterCode: string
+  order: DimensionOrderRule[]
+  master: DimensionMasterRule[]
   previous: Array<{ name: string; nominal: number; tolPlus: number; tolMinus: number; unit: string }>
   /** Optional filter — paint work centers only offer their configured dims. */
   allowedNames?: string[]
 }): ResolvedDimension[] {
-  const { item, order, master, previous, allowedNames } = input
+  const { order, master, previous, allowedNames } = input
+  const itemCode = normaliseCode(input.itemCode)
+  const machine = normaliseCode(input.workCenterCode)
   const allow = allowedNames?.length ? new Set(allowedNames.map((n) => n.toLowerCase())) : null
   const out = new Map<string, ResolvedDimension>()
 
@@ -351,7 +387,12 @@ export function resolveDimensions(input: {
     out.set(key, r)
   }
 
-  for (const o of order.filter((x) => x.item === item).sort((a, b) => a.sequence - b.sequence)) {
+  const forItem = order.filter((x) => normaliseCode(x.itemCode) === itemCode)
+  const specific = forItem.filter((x) => normaliseCode(x.workCenterCode) !== '' && normaliseCode(x.workCenterCode) === machine)
+  const general = forItem.filter((x) => normaliseCode(x.workCenterCode) === '')
+  const bySequence = (a: DimensionOrderRule, b: DimensionOrderRule) => a.sequence - b.sequence
+
+  for (const o of [...specific.sort(bySequence), ...general.sort(bySequence)]) {
     add({
       name: o.dimensionName,
       sequence: o.sequence,
@@ -363,7 +404,7 @@ export function resolveDimensions(input: {
     })
   }
   let next = out.size + 1
-  for (const m of master.filter((x) => x.item === item)) {
+  for (const m of master.filter((x) => normaliseCode(x.itemCode) === itemCode)) {
     add({
       name: m.dimensionName,
       sequence: next++,
@@ -386,6 +427,8 @@ export function resolveDimensions(input: {
     })
   }
 
+  // Configured sequence first; ties (a machine row and a general row that
+  // share a number) keep the order they were added in, so the machine's wins.
   return Array.from(out.values()).sort((a, b) => a.sequence - b.sequence)
 }
 

@@ -36,7 +36,7 @@ async function loadSampleDetail(q: Queryable, id: string): Promise<SampleDetail 
     q.query<DimensionResult>(`SELECT ${DIMENSION_SELECT} FROM dimension_results WHERE sample_id = $1 AND deleted_at IS NULL ORDER BY sequence, name`, [id]),
     q.query<DefectResult>(`SELECT ${DEFECT_SELECT} FROM defect_results d WHERE d.sample_id = $1 AND d.deleted_at IS NULL ORDER BY d.updated_at, d.id`, [id]),
     q.query<SampleCoil>(
-      `SELECT id, sample_id AS "sampleId", coil_number AS "coilNumber", grade, sm_type AS "smType", supplier, thickness, width, yield, notes
+      `SELECT id, sample_id AS "sampleId", coil_id AS "coilId", coil_number AS "coilNumber", grade, sm_type AS "smType", supplier, thickness, width, yield, notes
          FROM sample_coils WHERE sample_id = $1 AND deleted_at IS NULL ORDER BY id`,
       [id],
     ),
