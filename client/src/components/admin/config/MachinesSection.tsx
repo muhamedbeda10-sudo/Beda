@@ -13,7 +13,6 @@ import { PROCESSES, PROCESS_LABEL, type Machine, type Process } from '@qc/shared
 interface MachineDraft {
   code: string
   name: string
-  line: string
   factory: string
   process: Process
 }
@@ -26,8 +25,7 @@ export function MachinesSection() {
   const sort = useCallback(
     (a: Machine, b: Machine) =>
       (a.factory ?? '').localeCompare(b.factory ?? '') ||
-      a.code.localeCompare(b.code, undefined, { numeric: true }) ||
-      a.line.localeCompare(b.line, undefined, { numeric: true }),
+      a.code.localeCompare(b.code, undefined, { numeric: true }),
     [],
   )
   const groupBy = useCallback((r: Machine) => r.factory?.trim() || '', [])
@@ -44,12 +42,11 @@ export function MachinesSection() {
       loading={loading}
       sort={sort}
       addLabel="Add machine"
-      emptyHint="Add the machines and lines used on the shop floor."
-      minTableWidth="min-w-[52rem]"
+      emptyHint="Add the machines used on the shop floor."
+      minTableWidth="min-w-[46rem]"
       columns={[
         { key: 'code', label: 'Code', render: (r) => <Badge tone="blue">{r.code}</Badge> },
         { key: 'name', label: 'Machine', render: (r) => r.name },
-        { key: 'line', label: 'Line', render: (r) => r.line || '—' },
         { key: 'process', label: 'Process', render: (r) => <Badge tone={PROCESS_TONE[r.process ?? 'forming']}>{PROCESS_LABEL[r.process ?? 'forming']}</Badge> },
         {
           key: 'displayName',
@@ -58,21 +55,20 @@ export function MachinesSection() {
         },
       ]}
       describe={(r) => r.displayName || r.name}
-      newDraft={() => ({ code: '', name: '', line: '', factory: '', process: 'forming' })}
-      toDraft={(r) => ({ code: r.code, name: r.name, line: r.line, factory: r.factory ?? '', process: r.process ?? 'forming' })}
+      newDraft={() => ({ code: '', name: '', factory: '', process: 'forming' })}
+      toDraft={(r) => ({ code: r.code, name: r.name, factory: r.factory ?? '', process: r.process ?? 'forming' })}
       validate={(d) => requireText(d.code, 'Machine code') ?? requireText(d.name, 'Machine name')}
       toRecord={(d) => {
         const code = d.code.trim()
         const name = d.name.trim()
-        const line = d.line.trim()
         return {
           code,
           name,
-          line,
+          line: '',
           factory: d.factory.trim() || undefined,
           process: d.process,
-          // The label the shop floor recognises: "58-A. Welding Line-LM4".
-          displayName: [code, name, line].filter(Boolean).join('-'),
+          // The label the shop floor recognises: "58-A. Welding Line".
+          displayName: [code, name].filter(Boolean).join('-'),
         }
       }}
       renderForm={(d, patch) => (
@@ -85,14 +81,9 @@ export function MachinesSection() {
               <Input value={d.factory} onChange={(e) => patch({ factory: e.target.value })} placeholder="Factory 1" />
             </Field>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Machine name" hint='Shown as "{code}-{name}-{line}"'>
-              <Input value={d.name} onChange={(e) => patch({ name: e.target.value })} placeholder="A. Welding Line" />
-            </Field>
-            <Field label="Line" hint="Optional.">
-              <Input value={d.line} onChange={(e) => patch({ line: e.target.value })} placeholder="LM4" />
-            </Field>
-          </div>
+          <Field label="Machine name" hint='Shown as "{code}-{name}"'>
+            <Input value={d.name} onChange={(e) => patch({ name: e.target.value })} placeholder="A. Welding Line" />
+          </Field>
           <Field label="Process" hint="Decides the inspection steps: welding adds VT documents and PT, paint records sample photos and thickness readings.">
             <Select value={d.process} onChange={(e) => patch({ process: e.target.value as Process })} className="min-h-[48px]">
               {PROCESSES.map((p) => (
