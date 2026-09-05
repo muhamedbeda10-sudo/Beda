@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 200" role="img" aria-label="LinkMisr — Advanced Storage Solutions">
+  <style>
+    .w { font-family: Inter, 'Segoe UI', Arial, sans-serif; font-weight: 800; font-size: 118px; letter-spacing: -2px; }
+    .t { font-family: Inter, 'Segoe UI', Arial, sans-serif; font-weight: 600; font-size: 26px; letter-spacing: 6px; fill: #1e46a8; }
+  </style>
+  <text x="0" y="120" class="w"><tspan fill="#1e46a8">LINK</tspan><tspan fill="#e3202a">MISR</tspan></text>
+  <text x="2" y="172" class="t">ADVANCED STORAGE SOLUTIONS</text>
+</svg>

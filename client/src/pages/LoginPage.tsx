@@ -39,11 +39,8 @@ export function LoginPage() {
       <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 dark:bg-slate-950">
         <div className="w-full max-w-md">
           <div className="mb-6 flex flex-col items-center text-center animate-scale-in">
-            <Brand size="lg" withText={false} />
-            <h1 className="mt-4 text-2xl font-extrabold tracking-tight text-brand-900 dark:text-white">
-              Link<span className="text-accent-500">Misr</span> Quality Control
-            </h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Inspection Recorder</p>
+            <Brand size="lg" />
+            <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Inspection Recorder</p>
           </div>
 
           <div className="card p-6 shadow-hover">
