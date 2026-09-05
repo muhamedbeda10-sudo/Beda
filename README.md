@@ -73,6 +73,9 @@ The **first account created becomes the admin**. Afterwards, set
   corrections and optimistic concurrency (a stale edit is rejected).
 - **Coil search** — coil → sample → order → customer traceability.
 - **PDI documents** — pre-delivery photos attached to an order.
+- **Installable** — a Progressive Web App: "Install" on Android and desktop
+  Chrome/Edge, "Add to Home Screen" from Safari's share sheet on iPhone and
+  iPad. The shell is precached so it opens instantly; the API is never cached.
 - **Administration** (the gear, far right) — **Configuration**: the machine
   register, item dimensions (by item code, optionally per machine), master
   dimensions, reference images (single or bulk upload), machine defects, grade

@@ -7,6 +7,11 @@ import { AppProvider } from './store/AppContext'
 import { AuthProvider } from './store/AuthContext'
 import { ApiError } from './lib/api'
 import './index.css'
+import { registerSW } from 'virtual:pwa-register'
+
+// The service worker that makes the app installable and keeps its shell
+// ready. A new deploy is picked up on the next load without asking.
+registerSW({ immediate: true })
 
 // Reads are cached per screen and re-fetched when the tab regains focus, so a
 // tablet that was asleep shows current data without a manual reload. A 4xx is
