@@ -15,6 +15,8 @@ import type { Disposition, PTConsumableKind, ShiftLetter } from '@qc/shared/type
 const PREFIX = 'qc-draft-v2:'
 
 export interface DraftCoil {
+  /** Set when the coil was picked from the register; absent when typed by hand. */
+  coilId?: string
   coilNumber: string
   grade?: string
   smType?: string

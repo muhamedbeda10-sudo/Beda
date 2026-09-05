@@ -21,9 +21,10 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
+import { CoilPicker } from '@/components/inspection/CoilPicker'
 import { useWizardContext } from '@/services/queries'
 import { saveSample } from '@/services/mutations'
-import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect } from '@/services/draftStore'
+import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect, type DraftCoil } from '@/services/draftStore'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn, uid, newSubmissionId } from '@/lib/utils'
@@ -31,6 +32,7 @@ import {
   DISPOSITIONS,
   type Disposition,
   type PTConsumableKind,
+  type Coil,
   type ProductionOrder,
   type PTConsumableProduct,
   type ItemReferenceImage,
@@ -45,6 +47,7 @@ import {
   validateSample,
   buildGradeIndex,
   findGradeMismatches,
+  gradesEquivalent,
   isPaintWorkCenter,
   isPTWorkCenter,
   type WizardStep,
@@ -69,11 +72,12 @@ export function WizardPage() {
   const { factoryTimeZone } = useAuth()
 
   // The wizard needs exactly one session and one order, plus the configuration
-  // for that order's item and work centre. The API answers all of it in one
+  // for that line's item and machine. The API answers all of it in one
   // round trip; nothing here reads a whole table.
   const { data: ctx, isLoading: sessionsLoading, error: loadError } = useWizardContext(sessionId)
   const session = ctx?.session
   const order = ctx?.order
+  const machine = ctx?.machine ?? null
   const wc = session?.workCenterCode ?? ''
 
   const dimOrder = useMemo(() => ctx?.dimensionOrder ?? [], [ctx])
@@ -109,8 +113,11 @@ export function WizardPage() {
       setDraft(existing)
       return
     }
+    // The item's dimensions on THIS machine: machine-specific rows override
+    // the general ones (§8.3).
     const rows = resolveDimensions({
-      item: order.item,
+      itemCode: order.itemCode,
+      workCenterCode: session.workCenterCode,
       order: dimOrder,
       master: dimMaster,
       previous: [],
@@ -124,7 +131,7 @@ export function WizardPage() {
       drawing: order.drawing ?? '',
       drawingAlt: order.drawingAlt,
       issue: order.issue,
-      sampleQty: '1',
+      sampleQty: '',
       coils: [],
       dimensions: rows.map((r) => ({
         name: r.name,
@@ -245,6 +252,7 @@ export function WizardPage() {
           imageIds: d.imageIds,
         })),
         coils: draft.coils.map((c) => ({
+          coilId: c.coilId || undefined,
           coilNumber: c.coilNumber,
           grade: c.grade || undefined,
           smType: c.smType || undefined,
@@ -332,7 +340,7 @@ export function WizardPage() {
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-bold">{order.orderNumber}</span>
-          <Badge tone="blue">WC {session.workCenterCode}</Badge>
+          <Badge tone="blue">{machine?.displayName ?? `Machine ${session.workCenterCode}`}</Badge>
           <Badge tone="neutral">
             Shift {shift} · {shiftName(shift)}
           </Badge>
@@ -344,7 +352,8 @@ export function WizardPage() {
           )}
         </div>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          {order.item} · {order.itemCode}
+          {order.itemCode}
+          {order.item ? ` · ${order.item}` : ''} · Order ID {order.lineKey}
         </p>
       </Card>
 
@@ -380,9 +389,9 @@ export function WizardPage() {
         </h2>
 
         {current === 'setup' && (
-          <SetupStep draft={draft} order={order} update={update} shift={shift} refImages={refImages} />
+          <SetupStep draft={draft} order={order} update={update} shift={shift} gradeIndex={gradeIndex} />
         )}
-        {current === 'dimensions' && <DimensionsStep draft={draft} update={update} />}
+        {current === 'dimensions' && <DimensionsStep draft={draft} update={update} order={order} refImages={refImages} />}
         {current === 'defects' && (
           <DefectsStep draft={draft} update={update} options={defectOptions} sessionId={session.id} orderId={order.id} />
         )}
@@ -390,7 +399,7 @@ export function WizardPage() {
         {current === 'pt' && (
           <PTStep draft={draft} update={update} consumables={consumables} sessionId={session.id} orderId={order.id} />
         )}
-        {current === 'review' && <ReviewStep draft={draft} order={order} issues={issues} />}
+        {current === 'review' && <ReviewStep draft={draft} order={order} issues={issues} update={update} />}
       </Card>
 
       {/* Sticky navigation */}
@@ -477,15 +486,43 @@ function SetupStep({
   order,
   update,
   shift,
-  refImages,
+  gradeIndex,
 }: {
   draft: SampleDraft
   order: ProductionOrder
   update: Updater
   shift: 'A' | 'B' | 'C'
-  refImages: ItemReferenceImage[]
+  gradeIndex: Map<string, string>
 }) {
-  const itemRefs = refImages.filter((r) => r.item === order.item)
+  const [picking, setPicking] = useState(false)
+
+  const setCoil = (i: number, patch: Partial<DraftCoil>) =>
+    update((d) => {
+      const coils = [...d.coils]
+      coils[i] = { ...coils[i], ...patch }
+      return { ...d, coils }
+    })
+
+  /** A register coil is copied onto the sample as a snapshot (§5.2). */
+  function addFromRegister(c: Coil) {
+    update((d) => ({
+      ...d,
+      coils: [
+        ...d.coils,
+        {
+          coilId: c.id,
+          coilNumber: c.coilNumber,
+          grade: c.grade ?? '',
+          smType: c.smType ?? '',
+          supplier: c.supplier ?? '',
+          thickness: c.thickness === undefined ? '' : String(c.thickness),
+          width: c.width === undefined ? '' : String(c.width),
+          yield: c.yield === undefined ? '' : String(c.yield),
+        },
+      ],
+    }))
+  }
+
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -506,159 +543,139 @@ function SetupStep({
             placeholder="Rev C"
           />
         </Field>
-        <Field label="Sample quantity">
-          <Input
-            type="number"
-            inputMode="numeric"
-            value={draft.sampleQty}
-            onChange={(e) => update({ sampleQty: e.target.value })}
-            className="min-h-[48px] text-lg"
-          />
-        </Field>
         <div>
           <span className="label">Shift (derived)</span>
           <div className="flex min-h-[48px] items-center rounded-xl bg-slate-100 px-3.5 font-semibold dark:bg-slate-800">
             {shift} · {shiftName(shift)}
           </div>
         </div>
-      </div>
-
-      {itemRefs.length > 0 && (
         <div>
-          <span className="label">Reference photos for {order.item}</span>
-          <ImagePicker imageIds={itemRefs.map((r) => r.imageId)} onChange={() => {}} readOnly />
+          <span className="label">Expected grade</span>
+          <div className="flex min-h-[48px] items-center rounded-xl bg-slate-100 px-3.5 font-semibold dark:bg-slate-800">
+            {order.expectedGrade || '—'}
+          </div>
         </div>
-      )}
+      </div>
 
       <div>
         <div className="mb-2 flex items-center justify-between">
           <span className="label !mb-0">
             Coils{' '}
             {isPTWorkCenter(draft.workCenterCode) && (
-              <span className="text-rose-500">· at least one required on this work center</span>
+              <span className="text-rose-500">· at least one required on this machine</span>
             )}
           </span>
-          <Button
-            variant="secondary"
-            className="min-h-[44px]"
-            onClick={() => update((d) => ({ ...d, coils: [...d.coils, { coilNumber: '' }] }))}
-          >
+          <Button variant="secondary" className="min-h-[44px]" onClick={() => setPicking(true)}>
             <Plus className="h-4 w-4" /> Add coil
           </Button>
         </div>
         {draft.coils.length === 0 ? (
           <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-sm text-slate-400 dark:border-slate-700">
-            No coils added. {isPTWorkCenter(draft.workCenterCode) ? 'Add one to continue.' : 'Optional on this work center.'}
+            No coils added. {isPTWorkCenter(draft.workCenterCode) ? 'Pick one from the register to continue.' : 'Optional on this machine.'}
           </p>
         ) : (
           <div className="space-y-3">
-            {draft.coils.map((c, i) => (
-              <div key={i} className="rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
-                <div className="grid gap-2 sm:grid-cols-3">
-                  <Field label="Coil ID *">
-                    <Input
-                      value={c.coilNumber}
-                      onChange={(e) =>
-                        update((d) => {
-                          const coils = [...d.coils]
-                          coils[i] = { ...coils[i], coilNumber: e.target.value }
-                          return { ...d, coils }
-                        })
-                      }
-                      className="min-h-[48px]"
-                    />
-                  </Field>
-                  <Field label="Grade">
-                    <Input
-                      value={c.grade ?? ''}
-                      onChange={(e) =>
-                        update((d) => {
-                          const coils = [...d.coils]
-                          coils[i] = { ...coils[i], grade: e.target.value }
-                          return { ...d, coils }
-                        })
-                      }
-                      className="min-h-[48px]"
-                    />
-                  </Field>
-                  <Field label="Supplier">
-                    <Input
-                      value={c.supplier ?? ''}
-                      onChange={(e) =>
-                        update((d) => {
-                          const coils = [...d.coils]
-                          coils[i] = { ...coils[i], supplier: e.target.value }
-                          return { ...d, coils }
-                        })
-                      }
-                      className="min-h-[48px]"
-                    />
-                  </Field>
-                  <Field label="Thickness">
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      value={c.thickness ?? ''}
-                      onChange={(e) =>
-                        update((d) => {
-                          const coils = [...d.coils]
-                          coils[i] = { ...coils[i], thickness: e.target.value }
-                          return { ...d, coils }
-                        })
-                      }
-                      className="min-h-[48px]"
-                    />
-                  </Field>
-                  <Field label="Width">
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      value={c.width ?? ''}
-                      onChange={(e) =>
-                        update((d) => {
-                          const coils = [...d.coils]
-                          coils[i] = { ...coils[i], width: e.target.value }
-                          return { ...d, coils }
-                        })
-                      }
-                      className="min-h-[48px]"
-                    />
-                  </Field>
-                  <Field label="Yield">
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      value={c.yield ?? ''}
-                      onChange={(e) =>
-                        update((d) => {
-                          const coils = [...d.coils]
-                          coils[i] = { ...coils[i], yield: e.target.value }
-                          return { ...d, coils }
-                        })
-                      }
-                      className="min-h-[48px]"
-                    />
-                  </Field>
+            {draft.coils.map((c, i) => {
+              const fromRegister = !!c.coilId
+              const mismatch =
+                !!order.expectedGrade && !!c.grade?.trim() && !gradesEquivalent(order.expectedGrade, c.grade, gradeIndex)
+              return (
+                <div
+                  key={`${c.coilId ?? 'typed'}-${c.coilNumber}-${i}`}
+                  className={cn(
+                    'rounded-2xl border p-3',
+                    mismatch ? 'border-amber-300 bg-amber-50/50 dark:border-amber-500/40 dark:bg-amber-500/5' : 'border-slate-200 dark:border-slate-700',
+                  )}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-base font-bold">{c.coilNumber}</p>
+                      {fromRegister ? <Badge tone="green">From register</Badge> : <Badge tone="amber">Typed by hand</Badge>}
+                      {c.grade ? <Badge tone={mismatch ? 'red' : 'neutral'}>{c.grade}</Badge> : null}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      className="min-h-[44px] text-rose-500"
+                      onClick={() => update((d) => ({ ...d, coils: d.coils.filter((_, j) => j !== i) }))}
+                    >
+                      <Trash2 className="h-4 w-4" /> Remove
+                    </Button>
+                  </div>
+
+                  {mismatch && (
+                    <p className="mt-2 flex items-start gap-1.5 rounded-xl bg-amber-100/70 px-3 py-2 text-sm font-semibold text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      This coil is grade {c.grade}, but the order expects {order.expectedGrade}. You will be asked to acknowledge
+                      this when saving.
+                    </p>
+                  )}
+
+                  {fromRegister ? (
+                    <dl className="mt-2 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                      <CoilFact label="Supplier" value={c.supplier} />
+                      <CoilFact label="Thickness" value={c.thickness} unit="mm" />
+                      <CoilFact label="Width" value={c.width} unit="mm" />
+                      <CoilFact label="Yield" value={c.yield} />
+                    </dl>
+                  ) : (
+                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                      <Field label="Grade">
+                        <Input value={c.grade ?? ''} onChange={(e) => setCoil(i, { grade: e.target.value })} className="min-h-[48px]" />
+                      </Field>
+                      <Field label="Supplier">
+                        <Input value={c.supplier ?? ''} onChange={(e) => setCoil(i, { supplier: e.target.value })} className="min-h-[48px]" />
+                      </Field>
+                      <Field label="Thickness">
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          value={c.thickness ?? ''}
+                          onChange={(e) => setCoil(i, { thickness: e.target.value })}
+                          className="min-h-[48px]"
+                        />
+                      </Field>
+                    </div>
+                  )}
                 </div>
-                <div className="mt-2 flex justify-end">
-                  <Button
-                    variant="ghost"
-                    className="min-h-[44px] text-rose-500"
-                    onClick={() => update((d) => ({ ...d, coils: d.coils.filter((_, j) => j !== i) }))}
-                  >
-                    <Trash2 className="h-4 w-4" /> Remove
-                  </Button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
+
+      <CoilPicker
+        open={picking}
+        onClose={() => setPicking(false)}
+        onPick={addFromRegister}
+        onTyped={(coilNumber) => update((d) => ({ ...d, coils: [...d.coils, { coilNumber }] }))}
+        expectedGrade={order.expectedGrade}
+        gradeIndex={gradeIndex}
+        alreadyChosen={draft.coils.map((c) => c.coilNumber)}
+      />
     </div>
   )
 }
 
-function DimensionsStep({ draft, update }: { draft: SampleDraft; update: Updater }) {
+function CoilFact({ label, value, unit }: { label: string; value?: string; unit?: string }) {
+  return (
+    <div>
+      <dt className="text-xs font-semibold uppercase text-slate-400">{label}</dt>
+      <dd className="font-semibold tabular-nums">{value ? `${value}${unit ? ` ${unit}` : ''}` : '—'}</dd>
+    </div>
+  )
+}
+
+function DimensionsStep({
+  draft,
+  update,
+  order,
+  refImages,
+}: {
+  draft: SampleDraft
+  update: Updater
+  order: ProductionOrder
+  refImages: ItemReferenceImage[]
+}) {
   const setRow = (i: number, patch: Partial<SampleDraft['dimensions'][number]>) =>
     update((d) => {
       const dimensions = [...d.dimensions]
@@ -666,12 +683,23 @@ function DimensionsStep({ draft, update }: { draft: SampleDraft; update: Updater
       return { ...d, dimensions }
     })
 
+  // The approved photo of the item sits next to the measurements, so the
+  // inspector compares the part in front of them while measuring it.
+  const reference =
+    refImages.length > 0 ? (
+      <div>
+        <span className="label">Reference photos for {order.itemCode}</span>
+        <ImagePicker imageIds={refImages.map((r) => r.imageId)} onChange={() => {}} readOnly />
+      </div>
+    ) : null
+
   if (draft.dimensions.length === 0) {
     return (
       <div className="space-y-3">
+        {reference}
         <EmptyState
           icon={<Ruler className="h-10 w-10" />}
-          title="No dimensions configured for this item"
+          title="No dimensions configured for this item on this machine"
           hint="Add one below, or configure them in Admin so they pre-fill next time."
         />
         <AddDimensionButton update={update} />
@@ -681,6 +709,7 @@ function DimensionsStep({ draft, update }: { draft: SampleDraft; update: Updater
 
   return (
     <div className="space-y-3">
+      {reference}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[560px] text-sm">
           <thead className="text-xs uppercase text-slate-400">
@@ -837,13 +866,13 @@ function DefectsStep({
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search this work centre's defects…"
+            placeholder="Search this machine's defects…"
             className="min-h-[48px] pl-9"
           />
         </div>
         {options.length === 0 ? (
           <p className="mt-2 rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-slate-400 dark:border-slate-700">
-            No defects are configured for work center {draft.workCenterCode} yet.
+            No defects are configured for machine {draft.workCenterCode} yet.
           </p>
         ) : (
           <div className="mt-2 flex max-h-44 flex-wrap gap-2 overflow-y-auto">
@@ -1103,14 +1132,32 @@ function ReviewStep({
   draft,
   order,
   issues,
+  update,
 }: {
   draft: SampleDraft
   order: ProductionOrder
   issues: { step: WizardStep; message: string }[]
+  update: Updater
 }) {
   const measured = draft.dimensions.filter((d) => d.actual.trim() !== '')
+  const qty = Number(draft.sampleQty)
+  const qtyBad = !(draft.sampleQty.trim() !== '' && qty > 0)
   return (
     <div className="space-y-4">
+      {/* §5.7 — the quantity actually taken is known only once the inspection is done. */}
+      <Field label="Sample quantity taken" hint="How many pieces this inspection covered.">
+        <Input
+          autoFocus
+          type="number"
+          inputMode="numeric"
+          min={1}
+          value={draft.sampleQty}
+          onChange={(e) => update({ sampleQty: e.target.value })}
+          placeholder="e.g. 5"
+          className={cn('min-h-[52px] text-lg', qtyBad && 'border-rose-400')}
+        />
+      </Field>
+
       {issues.length > 0 && (
         <div className="rounded-2xl border border-rose-300 bg-rose-50 p-4 dark:border-rose-500/40 dark:bg-rose-500/10">
           <p className="flex items-center gap-2 font-bold text-rose-700 dark:text-rose-400">
@@ -1129,7 +1176,7 @@ function ReviewStep({
           <Row label="Order" value={order.orderNumber} />
           <Row label="Item" value={order.item} />
           <Row label="Drawing" value={draft.drawing} />
-          <Row label="Sample qty" value={draft.sampleQty} />
+          <Row label="Sample qty" value={draft.sampleQty || '—'} />
         </dl>
       </Section>
 
@@ -1139,9 +1186,12 @@ function ReviewStep({
         ) : (
           <ul className="space-y-1 text-sm">
             {draft.coils.map((c, i) => (
-              <li key={i} className="flex justify-between rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/50">
+              <li key={i} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/50">
                 <span className="font-semibold">{c.coilNumber || '(no id)'}</span>
-                <span className="text-slate-500">{c.grade || '—'}</span>
+                <span className="flex items-center gap-2">
+                  {!c.coilId && <Badge tone="amber">typed</Badge>}
+                  <span className="text-slate-500">{c.grade || '—'}</span>
+                </span>
               </li>
             ))}
           </ul>

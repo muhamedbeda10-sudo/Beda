@@ -51,24 +51,33 @@ The **first account created becomes the admin**. Afterwards, set
 
 ## Features
 
-- **Inspections (home)** — open sessions grouped by work centre; New Inspection
-  flow (search the order catalogue, confirm the starting quantity); continue,
-  close (with final quantity) or delete a session; a Hold-defect badge.
-- **Inspection wizard** — Setup (drawing, sample qty, coils), Dimensions
-  (nominal ± tolerance with automatic Pass / Warning / Fail), Defects (bilingual
-  EN/AR names, quantity, mandatory disposition, photos), Paint Sample step
-  (work centres 7, 11, 48), PT / Weld step (22, 58: test frequency > 5 %,
-  consumable lots), Review & **atomic save** — the whole sample is written in
-  one transaction or not at all. Drafts survive reloads and dead Wi-Fi.
+- **Order lines** — the ERP exports one row per (order, item, machine), each
+  with its own Order ID. That row is what an inspection is recorded against:
+  the order number repeats across the lines of one order.
+- **Inspections (home)** — open sessions grouped by machine; New Inspection
+  flow (machine → the orders on it → the order's items on that machine →
+  confirm the starting quantity); continue, close (with final quantity) or
+  delete a session; a Hold-defect badge.
+- **Inspection wizard** — Setup (drawing, coils picked from the coil register
+  with an immediate grade warning), Dimensions (the item's rows for this
+  machine — a machine-specific row overrides the general one — next to the
+  item's reference photos; nominal ± tolerance with automatic Pass / Warning /
+  Fail), Defects (the machine's list, bilingual EN/AR names, quantity,
+  mandatory disposition, photos), Paint Sample step (work centres 7, 11, 48),
+  PT / Weld step (22, 58: test frequency > 5 %, consumable lots), Review &
+  **atomic save** with the sample quantity taken — the whole sample is written
+  in one transaction or not at all. Drafts survive reloads and dead Wi-Fi.
 - **Grade check** — coil grades are compared with the order's expected grade
   (with transitive equivalences); a mismatch must be acknowledged and is audited.
 - **History** — the latest sessions → samples → the full record, with audited
   corrections and optimistic concurrency (a stale edit is rejected).
 - **Coil search** — coil → sample → order → customer traceability.
 - **PDI documents** — pre-delivery photos attached to an order.
-- **Admin** — dimension order, item master dimensions, reference images,
-  work-centre defects, machines, grade mappings, PT consumables, **CSV / Excel bulk
-  import** with preview (idempotent upsert on the business key), **Users**.
+- **Admin** — dimension order (by item code, optionally per machine), item
+  master dimensions, reference images, machine defects, the machine register,
+  grade mappings, PT consumables, **CSV / Excel bulk import** of machines,
+  order lines, coils, item dimensions and machine defects, each with a preview
+  (idempotent upsert on the business key), **Users**.
 - **Audit log** — every create / update / delete / acknowledge / purge, field by
   field, with who and when. Append-only and undeletable at the database.
 
@@ -157,8 +166,8 @@ in `shared/src/api.ts`.
 | -------- | ------------------------------------------------------------------------------------------- |
 | Auth     | `POST /auth/register` `POST /auth/login` `POST /auth/refresh` `POST /auth/logout` `GET /auth/me` |
 | Users    | `GET/POST /users` `PATCH /users/:id` (admin)                                                 |
-| Master   | `GET/POST /master/:kind` `PUT/DELETE /master/:kind/:id` `POST /master/item-dimension-order/import` |
-| Orders   | `GET /orders?search=` `GET /orders/:id` `GET /orders/:id/history` `POST /orders/import`     |
+| Master   | `GET/POST /master/:kind` `PUT/DELETE /master/:kind/:id` `POST /master/{item-dimension-order,machines,work-center-defects}/{import,existing-keys}` |
+| Orders   | `GET /orders?search=&machine=&orderNumber=` `GET /orders/numbers?machine=` `GET /orders/:id` `GET /orders/:id/history` `POST /orders/import` `POST /orders/existing-keys` |
 | Coils    | `GET /coils?search=` `GET /coils/usage` `POST /coils/import`                                |
 | Sessions | `GET /sessions/open` `GET /sessions/history` `POST /sessions` `GET /sessions/:id/wizard` `POST /sessions/:id/close` `DELETE /sessions/:id` `POST /sessions/:id/samples` |
 | Samples  | `GET /samples/:id` `PATCH /samples/dimensions/:id` `PATCH /samples/defects/:id`             |

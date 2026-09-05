@@ -227,7 +227,7 @@ export function AuditPage() {
                     <span className="font-medium text-slate-500 dark:text-slate-400">{e.userName}</span>
                     {e.orderNumber && <Badge tone="neutral">{e.orderNumber}</Badge>}
                     {e.item && <span>{e.item}</span>}
-                    {e.workCenterCode && <span>WC {e.workCenterCode}</span>}
+                    {e.workCenterCode && <span>Machine {e.workCenterCode}</span>}
                   </div>
                 </div>
                 <span className="shrink-0 whitespace-nowrap text-xs text-slate-400">{formatDateTime(e.at)}</span>

@@ -20,6 +20,7 @@ import type {
   MasterRecordByKind,
   OpenSessionsResponse,
   OrderHistory,
+  OrderNumberSummary,
   PDIWithOrder,
   SampleDetail,
   SampleSummary,
@@ -37,6 +38,8 @@ export const keys = {
   sessionSamples: (id: string) => ['sessions', id, 'samples'] as const,
   sample: (id: string) => ['samples', id] as const,
   orderSearch: (term: string) => ['orders', 'search', term] as const,
+  orderNumbers: (key: string) => ['orders', 'numbers', key] as const,
+  orderLines: (key: string) => ['orders', 'lines', key] as const,
   orderHistory: (id: string) => ['orders', id, 'history'] as const,
   coilSearch: (term: string) => ['coils', 'search', term] as const,
   coilUsage: (numbers: string) => ['coils', 'usage', numbers] as const,
@@ -106,6 +109,29 @@ export function useOrderSearch(term: string, limit = 40, enabled = true) {
     queryFn: () => api<ProductionOrder[]>(`/orders${qs({ search: t, limit })}`),
     enabled,
     placeholderData: keepPreviousData,
+  })
+}
+
+/**
+ * The order numbers that have lines on a machine, prefix-searched — step two
+ * of the new-inspection screen. Nothing is fetched until a machine is chosen.
+ */
+export function useOrderNumbers(machine: string, term: string, limit = 40, enabled = true) {
+  const t = useDebounced(term.trim())
+  return useQuery({
+    queryKey: keys.orderNumbers(`${machine}|${t}|${limit}`),
+    queryFn: () => api<OrderNumberSummary[]>(`/orders/numbers${qs({ machine, search: t, limit })}`),
+    enabled: enabled && machine !== '',
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** The lines (items) of one order on one machine — step three. */
+export function useOrderLines(machine: string, orderNumber: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.orderLines(`${machine}|${orderNumber}`),
+    queryFn: () => api<ProductionOrder[]>(`/orders${qs({ machine, orderNumber, limit: 100 })}`),
+    enabled: enabled && machine !== '' && orderNumber !== '',
   })
 }
 

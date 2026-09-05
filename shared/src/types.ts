@@ -23,7 +23,11 @@ export const PT_WORK_CENTERS: readonly WorkCenterCode[] = ['22', '58']
 
 export interface Machine {
   id: ID
-  /** Work-center code, e.g. "58" */
+  /**
+   * The machine's code — unique across active machines. Orders, defects and
+   * machine-specific dimensions refer to it. The leading digits are the
+   * work-centre number that decides which wizard steps appear.
+   */
   code: string
   /** Work-centre / process name, e.g. "A. Welding Line". */
   name: string
@@ -38,12 +42,20 @@ export interface Machine {
 
 // ---- Production orders -----------------------------------------------------
 
+/**
+ * One ORDER LINE: an item produced on one machine under an order. The ERP
+ * exports one row per line, each with its own Order ID; an order number
+ * therefore repeats across the lines of one order.
+ */
 export interface ProductionOrder {
   id: ID
-  /** Business key used by imports (upsert matches on this). */
+  /** The ERP's Order ID — unique per line. Imports match on this. */
+  lineKey: string
+  /** The order the line belongs to. Repeats across the order's lines. */
   orderNumber: string
   item: string
   itemCode: string
+  /** Code of the machine the line is produced on (see Machine.code). */
   workCenterCode: string
   machineId?: ID | null
   requiredQty: number
@@ -218,6 +230,8 @@ export interface Coil {
 export interface SampleCoil {
   id: ID
   sampleId: ID
+  /** The catalogue coil that was picked; unset when the number was typed by hand. */
+  coilId?: ID | null
   coilNumber: string
   grade?: string
   smType?: string
@@ -310,10 +324,19 @@ export interface PDIDocument {
 
 // ---- Admin / master data ---------------------------------------------------
 
-/** Dimension order per item — drives pre-fill and display sequence (§7). */
+/**
+ * Dimension order per item — drives pre-fill and display sequence (§7).
+ * Keyed by item code. A row that names a machine applies to that machine only
+ * and overrides the general row of the same dimension; a row without one
+ * applies to every machine.
+ */
 export interface ItemDimensionOrder {
   id: ID
+  itemCode: string
+  /** Item name, for display only. */
   item: string
+  /** Machine the row is specific to; unset means every machine. */
+  workCenterCode?: string | null
   dimensionName: string
   sequence: number
   nominal?: number | null
@@ -326,6 +349,8 @@ export interface ItemDimensionOrder {
 /** Item master dimension — fallback when no per-item order entry exists. */
 export interface ItemDimensionMaster {
   id: ID
+  itemCode: string
+  /** Item name, for display only. */
   item: string
   dimensionName: string
   /** Optional: the source may carry tolerances only. */
@@ -338,6 +363,8 @@ export interface ItemDimensionMaster {
 
 export interface ItemReferenceImage {
   id: ID
+  itemCode: string
+  /** Item name, for display only. */
   item: string
   imageId: ID
   caption?: string

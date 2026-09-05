@@ -106,33 +106,39 @@ export async function deleteMaster(qc: QueryClient, kind: MasterKind, id: string
 
 // ---- Bulk import -----------------------------------------------------------
 
-export type ImportTarget = 'orders' | 'coils' | 'item-dimension-order'
+export type ImportTarget = 'orders' | 'coils' | 'item-dimension-order' | 'machines' | 'work-center-defects'
 
-export async function existingKeys(target: ImportTarget, keys: string[]): Promise<Set<string>> {
-  if (target === 'item-dimension-order') {
-    // Small configuration table: the list itself is the lookup.
-    const rows = await api<MasterRecordByKind['item-dimension-order'][]>('/master/item-dimension-order')
-    return new Set(rows.map((r) => `${r.item.trim().toLowerCase()}||${r.dimensionName.trim().toLowerCase()}`))
+/** Where each importer lives on the API, and which cached reads it changes. */
+function importEndpoint(target: ImportTarget): { path: string; invalidates: readonly string[] } {
+  switch (target) {
+    case 'orders':
+    case 'coils':
+      return { path: `/${target}`, invalidates: [target] }
+    default:
+      return { path: `/master/${target}`, invalidates: ['master', target] }
   }
-  // A file from the ERP can hold tens of thousands of keys; the API answers
-  // at most EXISTING_KEYS_MAX per request, so ask in slices and merge.
+}
+
+/**
+ * Which of the file's business keys already exist. Composite keys are sent
+ * joined with "||", the same normalised form the API answers with. A file
+ * from the ERP can hold tens of thousands of keys; the API answers at most
+ * EXISTING_KEYS_MAX per request, so ask in slices and merge.
+ */
+export async function existingKeys(target: ImportTarget, keys: string[]): Promise<Set<string>> {
+  const { path } = importEndpoint(target)
   const existing = new Set<string>()
   for (const slice of chunk(keys, EXISTING_KEYS_MAX)) {
-    const res = await api<ExistingKeysResponse>(`/${target}/existing-keys`, { method: 'POST', body: { keys: slice } })
+    const res = await api<ExistingKeysResponse>(`${path}/existing-keys`, { method: 'POST', body: { keys: slice } })
     for (const key of res.existing) existing.add(key)
   }
   return existing
 }
 
 export async function importRows(qc: QueryClient, target: ImportTarget, rows: unknown[]): Promise<ImportResult> {
-  let result: ImportResult
-  if (target === 'item-dimension-order') {
-    result = await api<ImportResult>('/master/item-dimension-order/import', { method: 'POST', body: { rows } })
-    await qc.invalidateQueries({ queryKey: ['master', 'item-dimension-order'] })
-  } else {
-    result = await api<ImportResult>(`/${target}/import`, { method: 'POST', body: { rows } })
-    await qc.invalidateQueries({ queryKey: [target] })
-  }
+  const { path, invalidates } = importEndpoint(target)
+  const result = await api<ImportResult>(`${path}/import`, { method: 'POST', body: { rows } })
+  await qc.invalidateQueries({ queryKey: [...invalidates] })
   return result
 }
 

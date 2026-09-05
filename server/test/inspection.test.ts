@@ -16,7 +16,7 @@ import type {
   SessionWithOrder,
   WizardContext,
 } from '@qc/shared/api'
-import type { DefectResult, DimensionResult, ImageAsset, ProductionOrder } from '@qc/shared/types'
+import type { Coil, DefectResult, DimensionResult, ImageAsset, ProductionOrder } from '@qc/shared/types'
 import { TestApp, tinyJpeg, type Session } from './harness'
 
 const app = new TestApp()
@@ -25,6 +25,7 @@ let inspector: Session
 let supervisor: Session
 let weldOrder: ProductionOrder
 let paintOrder: ProductionOrder
+let paintBeamOrder: ProductionOrder
 
 async function uploadImage(s: Session, seed: number, extra: Record<string, string> = {}): Promise<ImageAsset> {
   const bytes = tinyJpeg(seed)
@@ -73,7 +74,11 @@ beforeAll(async () => {
 
   await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '58', name: 'A. Welding Line', line: 'LM4', displayName: '58-A. Welding Line-LM4' } })
   await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '48', name: 'Painting Line', line: 'LM4', displayName: '48-Painting Line-LM4' } })
-  await app.api('POST', '/api/master/item-dimension-order', { token: admin.token, body: { item: 'XL Light Beam', dimensionName: 'Width', sequence: 1, nominal: 125, tolPlus: 0.5, tolMinus: 0.5, unit: 'mm' } })
+  await app.api('POST', '/api/master/item-dimension-order', { token: admin.token, body: { itemCode: '125185TA3', item: 'XL Light Beam', dimensionName: 'Width', sequence: 1, nominal: 125, tolPlus: 0.5, tolMinus: 0.5, unit: 'mm' } })
+  // The same item measured differently on the paint line, and a dimension only that line has.
+  await app.api('POST', '/api/master/item-dimension-order', { token: admin.token, body: { itemCode: '125185ta3', workCenterCode: '48', dimensionName: 'Width', sequence: 2, nominal: 127, tolPlus: 1, tolMinus: 1, unit: 'mm' } })
+  await app.api('POST', '/api/master/item-dimension-order', { token: admin.token, body: { itemCode: '125185TA3', workCenterCode: '48', dimensionName: 'Paint thickness', sequence: 1, nominal: 60, tolPlus: 10, tolMinus: 5, unit: 'µm' } })
+  await app.api('POST', '/api/master/item-dimension-master', { token: admin.token, body: { itemCode: '125185TA3', dimensionName: 'Squareness', nominal: 90, tolPlus: 0.5, tolMinus: 0.5, unit: 'deg' } })
   await app.api('POST', '/api/master/work-center-defects', { token: admin.token, body: { workCenterCode: '58', defectName: 'عيب لحام' } })
   await app.api('POST', '/api/master/grade-mappings', { token: admin.token, body: { gradeA: 'S355JR', gradeB: 'ST52-3' } })
   await app.api('POST', '/api/master/pt-consumables', { token: admin.token, body: { kind: 'Cleaner', productName: 'SKC-S', lotBatch: 'B24-0388' } })
@@ -81,14 +86,17 @@ beforeAll(async () => {
     token: admin.token,
     body: {
       rows: [
-        { orderNumber: '20095-QC1-HYH', item: 'XL Light Beam', itemCode: '125185TA3', workCenterCode: '58', requiredQty: 2500, finishedQty: 2000, customer: 'Beta Storage', expectedGrade: 'S355JR', drawing: 'BS9059/58', drawingAlt: 'BS9059/58-ALT' },
-        { orderNumber: '20480-Ph1.4-SMA', item: 'Shuttle Beam', itemCode: 'LB406015-5TA3', workCenterCode: '48', requiredQty: 1350, finishedQty: 900, customer: 'Alpha Racking', expectedGrade: 'ST52-3', drawing: 'BS9059/48' },
+        { lineKey: 'L-1', orderNumber: '20095-QC1-HYH', item: 'XL Light Beam', itemCode: '125185TA3', workCenterCode: '58', requiredQty: 2500, finishedQty: 2000, customer: 'Beta Storage', expectedGrade: 'S355JR', drawing: 'BS9059/58', drawingAlt: 'BS9059/58-ALT' },
+        { lineKey: 'L-2', orderNumber: '20480-Ph1.4-SMA', item: 'Shuttle Beam', itemCode: 'LB406015-5TA3', workCenterCode: '48', requiredQty: 1350, finishedQty: 900, customer: 'Alpha Racking', expectedGrade: 'ST52-3', drawing: 'BS9059/48' },
+        { lineKey: 'L-3', orderNumber: '20480-Ph1.4-SMA', item: 'XL Light Beam', itemCode: '125185TA3', workCenterCode: '48', requiredQty: 100, finishedQty: 0, customer: 'Alpha Racking', expectedGrade: 'S355JR', drawing: 'BS9059/48' },
       ],
     },
   })
+  await app.api('POST', '/api/coils/import', { token: admin.token, body: { rows: [{ coilNumber: 'C10021', grade: 'S355JR', supplier: 'Ezz Steel', thickness: 2.5 }] } })
   const orders = (await app.api<ProductionOrder[]>('GET', '/api/orders', { token: admin.token })).body
-  weldOrder = orders.find((o) => o.workCenterCode === '58')!
-  paintOrder = orders.find((o) => o.workCenterCode === '48')!
+  weldOrder = orders.find((o) => o.lineKey === 'L-1')!
+  paintOrder = orders.find((o) => o.lineKey === 'L-2')!
+  paintBeamOrder = orders.find((o) => o.lineKey === 'L-3')!
 })
 afterAll(() => app.stop())
 
@@ -132,11 +140,26 @@ describe('sessions', () => {
     const ctx = await app.api<WizardContext>('GET', `/api/sessions/${session.id}/wizard`, { token: inspector.token })
     expect(ctx.status).toBe(200)
     expect(ctx.body.order.orderNumber).toBe('20095-QC1-HYH')
-    expect(ctx.body.dimensionOrder.map((d) => d.dimensionName)).toEqual(['Width'])
+    expect(ctx.body.machine?.displayName).toBe('58-A. Welding Line-LM4')
+    // Only the item's general rows: the paint-line rows belong to machine 48.
+    expect(ctx.body.dimensionOrder.map((d) => [d.dimensionName, d.nominal])).toEqual([['Width', 125]])
+    expect(ctx.body.dimensionMaster.map((d) => d.dimensionName)).toEqual(['Squareness'])
     expect(ctx.body.workCenterDefects.map((d) => d.defectName)).toEqual(['عيب لحام'])
     expect(ctx.body.gradeMappings).toHaveLength(1)
     expect(ctx.body.ptConsumables).toHaveLength(1)
     expect(ctx.body.samples).toEqual([])
+  })
+
+  it('hands the wizard the machine-specific rows alongside the general ones', async () => {
+    const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: paintBeamOrder.id, startQty: 5 } })
+    expect(started.status).toBe(201)
+    const ctx = await app.api<WizardContext>('GET', `/api/sessions/${started.body.id}/wizard`, { token: inspector.token })
+    expect(ctx.body.dimensionOrder.map((d) => [d.dimensionName, d.nominal, d.workCenterCode ?? null])).toEqual([
+      ['Paint thickness', 60, '48'],
+      ['Width', 125, null],
+      ['Width', 127, '48'],
+    ])
+    expect((await app.api('DELETE', `/api/sessions/${started.body.id}`, { token: supervisor.token })).status).toBe(204)
   })
 })
 
@@ -180,10 +203,23 @@ describe('the atomic sample save', () => {
     expect(res.body.error.message).toMatch(/photos is missing/)
   })
 
+  it('rejects a coil that claims to come from the register but is not in it', async () => {
+    const res = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/samples`, {
+      token: inspector.token,
+      body: weldSample('55555555-5555-4555-8555-555555555555', {
+        coils: [{ coilId: '00000000-0000-4000-8000-000000000000', coilNumber: 'C99999' }],
+      }),
+    })
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toMatch(/coil register/)
+  })
+
   it('saves the whole sample as one unit', async () => {
     const photo = await uploadImage(inspector, 7, { sessionId })
+    const catalogueCoil = (await app.api<Coil[]>('GET', '/api/coils?search=C10021', { token: inspector.token })).body[0]
     const body = weldSample(submissionId, {
       defects: [{ defectName: 'عيب لحام', qty: 2, disposition: 'Hold', imageIds: [photo.id] }],
+      coils: [{ coilId: catalogueCoil.id, coilNumber: 'C10021', grade: 'S355JR', supplier: 'Ezz Steel', thickness: 2.5 }],
       gradeAcknowledgement: { coilNumbers: ['C10021'], expectedGrade: 'S355JR', foundGrades: ['S275'], at: new Date().toISOString() },
     })
     const res = await app.api<SaveSampleResponse>('POST', `/api/sessions/${sessionId}/samples`, { token: inspector.token, body })
@@ -213,6 +249,7 @@ describe('the atomic sample save', () => {
     expect(defects[0].disposition).toBe('Hold')
     expect(defects[0].imageIds).toEqual([photo.id])
     expect(coils[0].coilNumber).toBe('C10021')
+    expect(coils[0].coilId).toBe(catalogueCoil.id)
     expect(pt?.consumableLots).toEqual({ Cleaner: 'B24-0388', Penetrant: 'B24-0417', Developer: 'B24-0511' })
     expect(pt?.acceptOrRepair).toBe('Accept')
     expect(paint).toBeNull()

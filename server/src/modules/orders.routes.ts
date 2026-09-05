@@ -1,16 +1,26 @@
 // ============================================================================
-// Production orders — the catalogue an inspection is recorded against.
+// Production order LINES — the catalogue an inspection is recorded against.
+// One row per (order, item, machine), keyed by the ERP's Order ID (line_key);
+// the order number repeats across the lines of one order.
+//
 // Tens of thousands of rows: every read here is a prefix search, a lookup by
 // id, or a bounded page. Never the whole table.
 // ============================================================================
 
 import { Router } from 'express'
 import { z } from 'zod'
-import { EXISTING_KEYS_MAX, type ExistingKeysResponse, type ImportResult, type OrderHistory, type SampleSummary } from '@qc/shared/api'
+import {
+  EXISTING_KEYS_MAX,
+  type ExistingKeysResponse,
+  type ImportResult,
+  type OrderHistory,
+  type OrderNumberSummary,
+  type SampleSummary,
+} from '@qc/shared/api'
 import type { InspectionSession, ProductionOrder } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
-import { notFound } from '../lib/errors'
+import { badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { requireCapability, requireUser } from '../auth/middleware'
 import { writeAudit } from '../audit/service'
@@ -18,16 +28,17 @@ import { dropNulls, normaliseKey } from '../lib/rows'
 import { SAMPLE_SUMMARY_SELECT, SESSION_SELECT } from './sessions.sql'
 
 export const ORDER_SELECT = `
-  id, order_number AS "orderNumber", item, item_code AS "itemCode", work_center_code AS "workCenterCode",
+  id, line_key AS "lineKey", order_number AS "orderNumber", item, item_code AS "itemCode", work_center_code AS "workCenterCode",
   machine_id AS "machineId", required_qty AS "requiredQty", finished_qty AS "finishedQty",
   drawing, drawing_alt AS "drawingAlt", issue, material, expected_grade AS "expectedGrade",
   customer, type, colour, order_date AS "date", deleted_at AS "deletedAt"`
 
 const importRow = z.object({
-  orderNumber: z.string().trim().min(1).max(120),
+  lineKey: z.string().trim().min(1).max(120),
+  orderNumber: z.string().trim().min(1).max(120).optional(),
   item: z.string().trim().max(300).optional(),
   itemCode: z.string().trim().max(120).optional(),
-  workCenterCode: z.string().trim().max(20).optional(),
+  workCenterCode: z.string().trim().max(40).optional(),
   requiredQty: z.coerce.number().min(0).optional(),
   finishedQty: z.coerce.number().min(0).optional(),
   drawing: z.string().trim().max(200).optional(),
@@ -49,6 +60,11 @@ const importRow = z.object({
 const importSchema = z.object({ rows: z.array(importRow).min(1).max(1000) })
 const existingKeysSchema = z.object({ keys: z.array(z.string().trim().min(1)).max(EXISTING_KEYS_MAX) })
 
+/** A LIKE pattern matching values that start with `term`, wildcards escaped. */
+function likePrefix(term: string): string {
+  return `${term.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+}
+
 export async function fetchOrdersByIds(q: Queryable, ids: string[]): Promise<ProductionOrder[]> {
   if (ids.length === 0) return []
   const { rows } = await q.query<ProductionOrder>(`SELECT ${ORDER_SELECT} FROM production_orders WHERE id = ANY($1::uuid[])`, [ids])
@@ -58,22 +74,83 @@ export async function fetchOrdersByIds(q: Queryable, ids: string[]): Promise<Pro
 export function ordersRoutes(ctx: AppContext): Router {
   const r = Router()
 
-  /** Prefix search on order number and item code, capped. */
+  /**
+   * Order lines. Three ways in, all bounded:
+   *   • `orderNumber` (+ `machine`) — the lines of one order, exact match:
+   *     the item list on the new-inspection screen.
+   *   • `search` (+ `machine`) — prefix search on the order number, the item
+   *     code and the line key.
+   *   • neither — the first page, for screens that browse.
+   */
   r.get('/', async (req, res) => {
     const q = parse(
-      z.object({ search: z.string().trim().max(120).default(''), limit: z.coerce.number().int().min(1).max(100).default(40) }),
+      z.object({
+        search: z.string().trim().max(120).default(''),
+        machine: z.string().trim().max(40).default(''),
+        orderNumber: z.string().trim().max(120).default(''),
+        limit: z.coerce.number().int().min(1).max(100).default(40),
+      }),
       req.query,
     )
-    const prefix = `${q.search.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+    const where: string[] = ['deleted_at IS NULL']
+    const params: unknown[] = []
+    if (q.machine) {
+      params.push(q.machine.toLowerCase())
+      where.push(`lower(work_center_code) = $${params.length}`)
+    }
+    if (q.orderNumber) {
+      params.push(q.orderNumber.toLowerCase())
+      where.push(`lower(order_number) = $${params.length}`)
+    } else if (q.search) {
+      params.push(likePrefix(q.search))
+      where.push(`(lower(order_number) LIKE $${params.length} OR lower(item_code) LIKE $${params.length} OR lower(line_key) LIKE $${params.length})`)
+    }
+    params.push(q.limit)
     const { rows } = await ctx.db.query<ProductionOrder>(
       `SELECT ${ORDER_SELECT} FROM production_orders
-        WHERE deleted_at IS NULL
-          AND (lower(order_number) LIKE $1 OR ($2 <> '' AND lower(item_code) LIKE $1))
-        ORDER BY order_number
-        LIMIT $3`,
-      [prefix, q.search, q.limit],
+        WHERE ${where.join(' AND ')}
+        ORDER BY order_number, item_code, work_center_code
+        LIMIT $${params.length}`,
+      params,
     )
     res.json(rows.map(dropNulls))
+  })
+
+  /**
+   * The distinct order numbers that have lines on a machine (or anywhere),
+   * with how many lines each has there. This is what the new-inspection
+   * screen offers once a machine is chosen.
+   */
+  r.get('/numbers', async (req, res) => {
+    const q = parse(
+      z.object({
+        search: z.string().trim().max(120).default(''),
+        machine: z.string().trim().max(40).default(''),
+        limit: z.coerce.number().int().min(1).max(100).default(40),
+      }),
+      req.query,
+    )
+    const where: string[] = ['deleted_at IS NULL']
+    const params: unknown[] = []
+    if (q.machine) {
+      params.push(q.machine.toLowerCase())
+      where.push(`lower(work_center_code) = $${params.length}`)
+    }
+    if (q.search) {
+      params.push(likePrefix(q.search))
+      where.push(`lower(order_number) LIKE $${params.length}`)
+    }
+    params.push(q.limit)
+    const { rows } = await ctx.db.query<OrderNumberSummary>(
+      `SELECT min(order_number) AS "orderNumber", min(customer) AS customer, count(*)::int AS "lineCount"
+         FROM production_orders
+        WHERE ${where.join(' AND ')}
+        GROUP BY lower(order_number)
+        ORDER BY lower(order_number)
+        LIMIT $${params.length}`,
+      params,
+    )
+    res.json(rows)
   })
 
   r.get('/by-ids', async (req, res) => {
@@ -106,12 +183,12 @@ export function ordersRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
-  /** Which order numbers already exist — the importer's new-vs-update preview. */
+  /** Which line keys already exist — the importer's new-vs-update preview. */
   r.post('/existing-keys', requireCapability('manage-admin-data'), async (req, res) => {
     const { keys } = parse(existingKeysSchema, req.body)
     const wanted = Array.from(new Set(keys.map(normaliseKey)))
     const { rows } = await ctx.db.query<{ key: string }>(
-      `SELECT lower(order_number) AS key FROM production_orders WHERE lower(order_number) = ANY($1::text[])`,
+      `SELECT lower(line_key) AS key FROM production_orders WHERE lower(line_key) = ANY($1::text[])`,
       [wanted],
     )
     const body: ExistingKeysResponse = { existing: rows.map((x) => x.key) }
@@ -119,24 +196,36 @@ export function ordersRoutes(ctx: AppContext): Router {
   })
 
   /**
-   * §7.7 — idempotent bulk upsert on the order number (matched without regard
-   * to case; the stored spelling is kept). A field the file does not carry
-   * leaves the stored value alone; an order that had been marked deleted comes
-   * back, because the ERP says it is current.
+   * §7.7 — idempotent bulk upsert on the line key, the ERP's Order ID (matched
+   * without regard to case; the stored spelling is kept). A field the file
+   * does not carry leaves the stored value alone; a line that had been marked
+   * deleted comes back, because the ERP says it is current. A line seen for
+   * the first time must name its order number.
    */
   r.post('/import', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
     const { rows } = parse(importSchema, req.body)
-    // Last occurrence of a key wins, so a file that repeats an order number is
+    // Last occurrence of a key wins, so a file that repeats a line key is
     // applied in its own order rather than colliding inside one statement.
     const byKey = new Map<string, z.infer<typeof importRow>>()
-    for (const row of rows) byKey.set(normaliseKey(row.orderNumber), row)
+    for (const row of rows) byKey.set(normaliseKey(row.lineKey), row)
     const unique = Array.from(byKey.values())
 
     const result = await withTransaction(ctx.db, async (tx) => {
+      const known = new Set(
+        (
+          await tx.query<{ key: string }>(`SELECT lower(line_key) AS key FROM production_orders WHERE lower(line_key) = ANY($1::text[])`, [
+            unique.map((o) => normaliseKey(o.lineKey)),
+          ])
+        ).rows.map((x) => x.key),
+      )
+      const orphan = unique.find((o) => !known.has(normaliseKey(o.lineKey)) && !o.orderNumber)
+      if (orphan) throw badRequest(`Order ID "${orphan.lineKey}" is new, so its row must carry the order number.`)
+
       const payload = JSON.stringify(
         unique.map((o) => ({
-          order_number: o.orderNumber,
+          line_key: o.lineKey,
+          order_number: o.orderNumber ?? null,
           item: o.item ?? null,
           item_code: o.itemCode ?? null,
           work_center_code: o.workCenterCode ?? null,
@@ -154,12 +243,13 @@ export function ordersRoutes(ctx: AppContext): Router {
         })),
       )
       const recordset = `jsonb_to_recordset($1::jsonb) AS i(
-        order_number text, item text, item_code text, work_center_code text, required_qty numeric,
+        line_key text, order_number text, item text, item_code text, work_center_code text, required_qty numeric,
         finished_qty numeric, drawing text, drawing_alt text, issue text, material text,
         expected_grade text, customer text, type text, colour text, order_date timestamptz)`
 
       const updated = await tx.query<{ id: string }>(
         `UPDATE production_orders p SET
+            order_number = COALESCE(i.order_number, p.order_number),
             item = COALESCE(i.item, p.item),
             item_code = COALESCE(i.item_code, p.item_code),
             work_center_code = COALESCE(i.work_center_code, p.work_center_code),
@@ -176,20 +266,20 @@ export function ordersRoutes(ctx: AppContext): Router {
             order_date = COALESCE(i.order_date, p.order_date),
             deleted_at = NULL, deleted_by_id = NULL
           FROM ${recordset}
-         WHERE lower(p.order_number) = lower(i.order_number)
+         WHERE lower(p.line_key) = lower(i.line_key)
          RETURNING p.id`,
         [payload],
       )
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO production_orders
-            (order_number, item, item_code, work_center_code, required_qty, finished_qty, drawing, drawing_alt,
+            (line_key, order_number, item, item_code, work_center_code, required_qty, finished_qty, drawing, drawing_alt,
              issue, material, expected_grade, customer, type, colour, order_date)
-         SELECT i.order_number, COALESCE(i.item, ''), COALESCE(i.item_code, ''), COALESCE(i.work_center_code, ''),
+         SELECT i.line_key, i.order_number, COALESCE(i.item, ''), COALESCE(i.item_code, ''), COALESCE(i.work_center_code, ''),
                 COALESCE(i.required_qty, 0), COALESCE(i.finished_qty, 0), COALESCE(i.drawing, ''), i.drawing_alt,
                 i.issue, COALESCE(i.material, ''), COALESCE(i.expected_grade, ''), COALESCE(i.customer, ''),
                 COALESCE(i.type, ''), COALESCE(i.colour, ''), COALESCE(i.order_date, now())
            FROM ${recordset}
-          WHERE NOT EXISTS (SELECT 1 FROM production_orders p WHERE lower(p.order_number) = lower(i.order_number))
+          WHERE NOT EXISTS (SELECT 1 FROM production_orders p WHERE lower(p.line_key) = lower(i.line_key))
          RETURNING id`,
         [payload],
       )

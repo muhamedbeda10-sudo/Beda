@@ -295,6 +295,11 @@ describe('save-time validation', () => {
     expect(issues.length).toBeGreaterThanOrEqual(4)
   })
 
+  it('points a missing sample quantity at the review step, where it is entered', () => {
+    const issues = validateSample({ ...base, sampleQty: 0 })
+    expect(issues).toEqual([{ step: 'review', message: 'Sample quantity must be greater than zero.' }])
+  })
+
   function ptOk() {
     return {
       testFrequencyPct: 10,
@@ -305,40 +310,68 @@ describe('save-time validation', () => {
 
 describe('§8.3 dimension resolution', () => {
   const order = [
-    { item: 'Beam', dimensionName: 'Length', sequence: 2, nominal: 2500, tolPlus: 2, tolMinus: 2, unit: 'mm' },
-    { item: 'Beam', dimensionName: 'Width', sequence: 1, nominal: 125, tolPlus: 0.5, tolMinus: 0.5, unit: 'mm' },
+    { itemCode: 'BM-1', dimensionName: 'Length', sequence: 2, nominal: 2500, tolPlus: 2, tolMinus: 2, unit: 'mm' },
+    { itemCode: 'BM-1', dimensionName: 'Width', sequence: 1, nominal: 125, tolPlus: 0.5, tolMinus: 0.5, unit: 'mm' },
   ]
   const master = [
-    { item: 'Beam', dimensionName: 'Thickness', nominal: 2.5, tolPlus: 0.1, tolMinus: 0.1, unit: 'mm' },
-    { item: 'Beam', dimensionName: 'Length', nominal: 9999, tolPlus: 9, tolMinus: 9, unit: 'mm' },
+    { itemCode: 'BM-1', dimensionName: 'Thickness', nominal: 2.5, tolPlus: 0.1, tolMinus: 0.1, unit: 'mm' },
+    { itemCode: 'BM-1', dimensionName: 'Length', nominal: 9999, tolPlus: 9, tolMinus: 9, unit: 'mm' },
   ]
   const previous = [{ name: 'Hole pitch', nominal: 40, tolPlus: 0.3, tolMinus: 0.3, unit: 'mm' }]
+  const on58 = { itemCode: 'BM-1', workCenterCode: '58' }
 
   it('orders by the configured sequence', () => {
-    const rows = resolveDimensions({ item: 'Beam', order, master: [], previous: [] })
+    const rows = resolveDimensions({ ...on58, order, master: [], previous: [] })
     expect(rows.map((r) => r.name)).toEqual(['Width', 'Length'])
   })
 
   it('prefers the item order entry over the master record', () => {
-    const rows = resolveDimensions({ item: 'Beam', order, master, previous: [] })
+    const rows = resolveDimensions({ ...on58, order, master, previous: [] })
     const length = rows.find((r) => r.name === 'Length')!
     expect(length.nominal).toBe(2500)
     expect(length.source).toBe('item-order')
   })
 
   it('falls back to master, then carry-forward', () => {
-    const rows = resolveDimensions({ item: 'Beam', order, master, previous })
+    const rows = resolveDimensions({ ...on58, order, master, previous })
     expect(rows.find((r) => r.name === 'Thickness')!.source).toBe('item-master')
     expect(rows.find((r) => r.name === 'Hole pitch')!.source).toBe('carry-forward')
   })
 
   it('returns nothing for an item with no configuration at all', () => {
-    expect(resolveDimensions({ item: 'Unknown', order, master, previous: [] })).toEqual([])
+    expect(resolveDimensions({ itemCode: 'NOPE', workCenterCode: '58', order, master, previous: [] })).toEqual([])
+  })
+
+  it('matches item codes without regard to case or whitespace', () => {
+    const rows = resolveDimensions({ itemCode: ' bm-1 ', workCenterCode: '58', order, master: [], previous: [] })
+    expect(rows).toHaveLength(2)
+  })
+
+  it('lets a machine-specific row override the general row of the same name', () => {
+    const withMachine = [
+      ...order,
+      { itemCode: 'BM-1', workCenterCode: '58', dimensionName: 'Width', sequence: 1, nominal: 130, tolPlus: 1, tolMinus: 1, unit: 'mm' },
+      { itemCode: 'BM-1', workCenterCode: '48', dimensionName: 'Paint thickness', sequence: 1, nominal: 60, tolPlus: 10, tolMinus: 5, unit: 'µm' },
+    ]
+    const on58Rows = resolveDimensions({ ...on58, order: withMachine, master: [], previous: [] })
+    expect(on58Rows.map((r) => [r.name, r.nominal])).toEqual([
+      ['Width', 130],
+      ['Length', 2500],
+    ])
+    const on48Rows = resolveDimensions({ itemCode: 'BM-1', workCenterCode: '48', order: withMachine, master: [], previous: [] })
+    expect(on48Rows.map((r) => [r.name, r.nominal])).toEqual([
+      ['Paint thickness', 60],
+      ['Width', 125],
+      ['Length', 2500],
+    ])
+    // A machine with no rows of its own gets the general set unchanged.
+    const on22Rows = resolveDimensions({ itemCode: 'BM-1', workCenterCode: '22', order: withMachine, master: [], previous: [] })
+    expect(on22Rows.map((r) => r.nominal)).toEqual([125, 2500])
   })
 
   it('filters to the allowed names on paint work centers', () => {
     const rows = resolveDimensions({
-      item: 'Beam',
+      ...on58,
       order,
       master,
       previous,

@@ -72,7 +72,6 @@ import {
   type WorkCenterDefect,
 } from '@qc/shared/types'
 
-const WORK_CENTER_CODES = ['7', '11', '22', '48', '58'] as const
 const PT_KINDS: readonly PTConsumableKind[] = ['Cleaner', 'Penetrant', 'Developer']
 
 // ---------------------------------------------------------------------------
@@ -83,7 +82,7 @@ const TABS = [
   { key: 'dimension-order', label: 'Dimension order', icon: ListOrdered },
   { key: 'item-master', label: 'Item master dimensions', icon: Ruler },
   { key: 'reference-images', label: 'Reference images', icon: ImageIcon },
-  { key: 'defects', label: 'Work-center defects', icon: AlertTriangle },
+  { key: 'defects', label: 'Machine defects', icon: AlertTriangle },
   { key: 'machines', label: 'Machines', icon: Factory },
   { key: 'grades', label: 'Grade mappings', icon: Shuffle },
   { key: 'pt-consumables', label: 'PT consumables', icon: FlaskConical },
@@ -470,12 +469,51 @@ function requireNumber(v: string, label: string): string | null {
   return numberOrNull(v) === null ? `${label} must be a number.` : null
 }
 
+/**
+ * A machine chosen from the register. Codes are what orders, defects and
+ * dimension rows carry, so the register is the only place they may come from.
+ */
+function MachineSelect({
+  value,
+  onChange,
+  allowAny,
+  autoFocus,
+}: {
+  value: string
+  onChange: (code: string) => void
+  /** Offer "every machine" as the empty choice (dimension rows). */
+  allowAny?: boolean
+  autoFocus?: boolean
+}) {
+  const { data: machines = [] } = useMaster('machines')
+  const sorted = useMemo(
+    () => [...machines].sort((a, b) => (a.factory ?? '').localeCompare(b.factory ?? '') || a.code.localeCompare(b.code, undefined, { numeric: true })),
+    [machines],
+  )
+  const known = sorted.some((m) => m.code.trim().toLowerCase() === value.trim().toLowerCase())
+  return (
+    <Select className="min-h-[48px]" value={value} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus}>
+      <option value="">{allowAny ? 'Every machine' : '— choose a machine —'}</option>
+      {/* A code the register no longer lists is kept selectable so the row can still be edited. */}
+      {value && !known && <option value={value}>{value} (not in the machine register)</option>}
+      {sorted.map((m) => (
+        <option key={m.id} value={m.code}>
+          {m.displayName}
+          {m.factory ? ` — ${m.factory}` : ''}
+        </option>
+      ))}
+    </Select>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // 1. Dimension order
 // ---------------------------------------------------------------------------
 
 interface DimOrderDraft {
+  itemCode: string
   item: string
+  workCenterCode: string
   dimensionName: string
   sequence: string
   nominal: string
@@ -489,21 +527,27 @@ function DimensionOrderTab() {
 
   const sort = useCallback(
     (a: ItemDimensionOrder, b: ItemDimensionOrder) =>
-      a.item.localeCompare(b.item) || a.sequence - b.sequence,
+      a.itemCode.localeCompare(b.itemCode, undefined, { numeric: true }) ||
+      (a.workCenterCode ?? '').localeCompare(b.workCenterCode ?? '', undefined, { numeric: true }) ||
+      a.sequence - b.sequence,
     [],
   )
+  const groupBy = useCallback((r: ItemDimensionOrder) => r.itemCode, [])
 
   return (
     <MasterDataPanel<'item-dimension-order', DimOrderDraft>
       title="Dimension order"
-      description="Per-item dimensions, in the order they are measured."
+      description="Per-item dimensions, keyed by item code, in the order they are measured."
       hint={
         <>
-          <strong>Sequence</strong> controls the order the inspector measures in — the wizard lists
-          the dimensions from the lowest sequence to the highest, so put the measurement that is
-          taken first at the machine at 1. These entries also pre-fill nominal and tolerance.
+          A row with <strong>Every machine</strong> applies wherever the item is produced. A row that names a
+          machine applies only there and replaces the general row of the same dimension. <strong>Sequence</strong>{' '}
+          controls the order the inspector measures in — put the measurement taken first at 1. These entries also
+          pre-fill nominal and tolerance.
         </>
       }
+      groupBy={groupBy}
+      groupLabel={(g) => `Item ${g}`}
       icon={<ListOrdered className="h-5 w-5" />}
       kind='item-dimension-order'
       rows={rows}
@@ -511,9 +555,14 @@ function DimensionOrderTab() {
       sort={sort}
       addLabel="Add dimension"
       emptyHint="Add the dimensions for an item, or load them from the Bulk import tab."
-      minTableWidth="min-w-[46rem]"
+      minTableWidth="min-w-[50rem]"
       columns={[
-        { key: 'item', label: 'Item', render: (r) => <span className="font-semibold">{r.item}</span> },
+        { key: 'item', label: 'Item', render: (r) => <span className="font-semibold">{r.item || r.itemCode}</span> },
+        {
+          key: 'machine',
+          label: 'Machine',
+          render: (r) => (r.workCenterCode ? <Badge tone="blue">{r.workCenterCode}</Badge> : <span className="text-slate-400">every machine</span>),
+        },
         { key: 'name', label: 'Dimension', render: (r) => <span dir="auto">{r.dimensionName}</span> },
         {
           key: 'seq',
@@ -535,9 +584,11 @@ function DimensionOrderTab() {
         },
         { key: 'unit', label: 'Unit', render: (r) => r.unit || '—' },
       ]}
-      describe={(r) => `${r.item} · ${r.dimensionName}`}
+      describe={(r) => `${r.itemCode}${r.workCenterCode ? ` on ${r.workCenterCode}` : ''} · ${r.dimensionName}`}
       newDraft={() => ({
+        itemCode: '',
         item: '',
+        workCenterCode: '',
         dimensionName: '',
         sequence: '1',
         nominal: '',
@@ -546,7 +597,9 @@ function DimensionOrderTab() {
         unit: 'mm',
       })}
       toDraft={(r) => ({
-        item: r.item,
+        itemCode: r.itemCode,
+        item: r.item ?? '',
+        workCenterCode: r.workCenterCode ?? '',
         dimensionName: r.dimensionName,
         sequence: String(r.sequence),
         nominal: r.nominal === undefined || r.nominal === null ? '' : String(r.nominal),
@@ -555,7 +608,7 @@ function DimensionOrderTab() {
         unit: r.unit,
       })}
       validate={(d) =>
-        requireText(d.item, 'Item') ??
+        requireText(d.itemCode, 'Item code') ??
         requireText(d.dimensionName, 'Dimension name') ??
         requireNumber(d.sequence, 'Sequence') ??
         (d.nominal.trim() !== '' && numberOrNull(d.nominal) === null
@@ -566,7 +619,9 @@ function DimensionOrderTab() {
         requireText(d.unit, 'Unit')
       }
       toRecord={(d) => ({
+        itemCode: d.itemCode.trim(),
         item: d.item.trim(),
+        workCenterCode: d.workCenterCode.trim() || null,
         dimensionName: d.dimensionName.trim(),
         sequence: Number(d.sequence),
         nominal: numberOrNull(d.nominal),
@@ -576,12 +631,16 @@ function DimensionOrderTab() {
       })}
       renderForm={(d, patch) => (
         <>
-          <Field label="Item">
-            <Input
-              value={d.item}
-              onChange={(e) => patch({ item: e.target.value })}
-              placeholder="XL Light Beam"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Item code">
+              <Input value={d.itemCode} onChange={(e) => patch({ itemCode: e.target.value })} placeholder="LB406015-5TA3" />
+            </Field>
+            <Field label="Item name" hint="Optional, for display.">
+              <Input value={d.item} onChange={(e) => patch({ item: e.target.value })} placeholder="XL Light Beam" />
+            </Field>
+          </div>
+          <Field label="Machine" hint="Leave on every machine unless this dimension differs on one.">
+            <MachineSelect value={d.workCenterCode} onChange={(code) => patch({ workCenterCode: code })} allowAny />
           </Field>
           <Field label="Dimension name">
             <Input
@@ -637,6 +696,7 @@ function DimensionOrderTab() {
 // ---------------------------------------------------------------------------
 
 interface DimMasterDraft {
+  itemCode: string
   item: string
   dimensionName: string
   nominal: string
@@ -650,7 +710,7 @@ function ItemMasterTab() {
 
   const sort = useCallback(
     (a: ItemDimensionMaster, b: ItemDimensionMaster) =>
-      a.item.localeCompare(b.item) || a.dimensionName.localeCompare(b.dimensionName),
+      a.itemCode.localeCompare(b.itemCode, undefined, { numeric: true }) || a.dimensionName.localeCompare(b.dimensionName),
     [],
   )
 
@@ -667,7 +727,8 @@ function ItemMasterTab() {
       addLabel="Add dimension"
       emptyHint="Add the master dimensions inspectors should fall back to."
       columns={[
-        { key: 'item', label: 'Item', render: (r) => <span className="font-semibold">{r.item}</span> },
+        { key: 'itemCode', label: 'Item code', render: (r) => <span className="font-semibold">{r.itemCode}</span> },
+        { key: 'item', label: 'Item', render: (r) => r.item || '—' },
         { key: 'name', label: 'Dimension', render: (r) => <span dir="auto">{r.dimensionName}</span> },
         { key: 'nominal', label: 'Nominal', className: 'tabular-nums', render: (r) => (r.nominal === undefined || r.nominal === null ? '—' : r.nominal) },
         {
@@ -678,8 +739,9 @@ function ItemMasterTab() {
         },
         { key: 'unit', label: 'Unit', render: (r) => r.unit || '—' },
       ]}
-      describe={(r) => `${r.item} · ${r.dimensionName}`}
+      describe={(r) => `${r.itemCode} · ${r.dimensionName}`}
       newDraft={() => ({
+        itemCode: '',
         item: '',
         dimensionName: '',
         nominal: '0',
@@ -688,7 +750,8 @@ function ItemMasterTab() {
         unit: 'mm',
       })}
       toDraft={(r) => ({
-        item: r.item,
+        itemCode: r.itemCode,
+        item: r.item ?? '',
         dimensionName: r.dimensionName,
         nominal: r.nominal === undefined || r.nominal === null ? '' : String(r.nominal),
         tolPlus: String(r.tolPlus),
@@ -696,7 +759,7 @@ function ItemMasterTab() {
         unit: r.unit,
       })}
       validate={(d) =>
-        requireText(d.item, 'Item') ??
+        requireText(d.itemCode, 'Item code') ??
         requireText(d.dimensionName, 'Dimension name') ??
         requireNumber(d.nominal, 'Nominal') ??
         requireNumber(d.tolPlus, 'Tolerance +') ??
@@ -704,6 +767,7 @@ function ItemMasterTab() {
         requireText(d.unit, 'Unit')
       }
       toRecord={(d) => ({
+        itemCode: d.itemCode.trim(),
         item: d.item.trim(),
         dimensionName: d.dimensionName.trim(),
         nominal: Number(d.nominal),
@@ -713,9 +777,14 @@ function ItemMasterTab() {
       })}
       renderForm={(d, patch) => (
         <>
-          <Field label="Item">
-            <Input value={d.item} onChange={(e) => patch({ item: e.target.value })} />
-          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Item code">
+              <Input value={d.itemCode} onChange={(e) => patch({ itemCode: e.target.value })} />
+            </Field>
+            <Field label="Item name" hint="Optional, for display.">
+              <Input value={d.item} onChange={(e) => patch({ item: e.target.value })} />
+            </Field>
+          </div>
           <Field label="Dimension name">
             <Input
               dir="auto"
@@ -762,6 +831,7 @@ function ItemMasterTab() {
 // ---------------------------------------------------------------------------
 
 interface RefImageDraft {
+  itemCode: string
   item: string
   caption: string
   imageId: string
@@ -772,7 +842,7 @@ function ReferenceImagesTab() {
 
   const sort = useCallback(
     (a: ItemReferenceImage, b: ItemReferenceImage) =>
-      a.item.localeCompare(b.item) || (a.caption ?? '').localeCompare(b.caption ?? ''),
+      a.itemCode.localeCompare(b.itemCode, undefined, { numeric: true }) || (a.caption ?? '').localeCompare(b.caption ?? ''),
     [],
   )
 
@@ -780,7 +850,7 @@ function ReferenceImagesTab() {
     <MasterDataPanel<'item-reference-images', RefImageDraft>
       title="Item reference images"
       description="The approved photo an inspector compares the real part against."
-      hint="These images are shown to inspectors during inspection, so they can compare the part in front of them with the reference before judging it."
+      hint="Keyed by item code. These images are shown to inspectors on the Dimensions step, so they can compare the part in front of them with the reference while measuring it."
       icon={<ImageIcon className="h-5 w-5" />}
       kind='item-reference-images'
       rows={rows}
@@ -790,7 +860,8 @@ function ReferenceImagesTab() {
       emptyHint="Attach a reference photo to an item so inspectors have something to compare against."
       minTableWidth="min-w-[34rem]"
       columns={[
-        { key: 'item', label: 'Item', render: (r) => <span className="font-semibold">{r.item}</span> },
+        { key: 'itemCode', label: 'Item code', render: (r) => <span className="font-semibold">{r.itemCode}</span> },
+        { key: 'item', label: 'Item', render: (r) => r.item || '—' },
         { key: 'caption', label: 'Caption', render: (r) => <span dir="auto">{r.caption || '—'}</span> },
         {
           key: 'image',
@@ -800,22 +871,28 @@ function ReferenceImagesTab() {
           ),
         },
       ]}
-      describe={(r) => `${r.item}${r.caption ? ` · ${r.caption}` : ''}`}
-      newDraft={() => ({ item: '', caption: '', imageId: '' })}
-      toDraft={(r) => ({ item: r.item, caption: r.caption ?? '', imageId: r.imageId })}
+      describe={(r) => `${r.itemCode}${r.caption ? ` · ${r.caption}` : ''}`}
+      newDraft={() => ({ itemCode: '', item: '', caption: '', imageId: '' })}
+      toDraft={(r) => ({ itemCode: r.itemCode, item: r.item ?? '', caption: r.caption ?? '', imageId: r.imageId })}
       validate={(d) =>
-        requireText(d.item, 'Item') ?? (d.imageId.trim() ? null : 'Choose a reference image.')
+        requireText(d.itemCode, 'Item code') ?? (d.imageId.trim() ? null : 'Choose a reference image.')
       }
       toRecord={(d) => ({
+        itemCode: d.itemCode.trim(),
         item: d.item.trim(),
         imageId: d.imageId,
         caption: d.caption.trim() || undefined,
       })}
       renderForm={(d, patch) => (
         <>
-          <Field label="Item">
-            <Input value={d.item} onChange={(e) => patch({ item: e.target.value })} />
-          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Item code">
+              <Input value={d.itemCode} onChange={(e) => patch({ itemCode: e.target.value })} />
+            </Field>
+            <Field label="Item name" hint="Optional, for display.">
+              <Input value={d.item} onChange={(e) => patch({ item: e.target.value })} />
+            </Field>
+          </div>
           <Field label="Caption" hint="Optional — what the inspector should be looking at.">
             <Input dir="auto" value={d.caption} onChange={(e) => patch({ caption: e.target.value })} />
           </Field>
@@ -836,7 +913,7 @@ function ReferenceImagesTab() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Work-center defects
+// 4. Machine defects
 // ---------------------------------------------------------------------------
 
 interface DefectDraft {
@@ -852,13 +929,13 @@ function WorkCenterDefectsTab() {
     [],
   )
   const groupBy = useCallback((r: WorkCenterDefect) => r.workCenterCode, [])
-  const groupLabel = useCallback((g: string) => `Work centre ${g}`, [])
+  const groupLabel = useCallback((g: string) => `Machine ${g}`, [])
 
   return (
     <MasterDataPanel<'work-center-defects', DefectDraft>
-      title="Work-center defects"
-      description="The defect names offered on each work centre, grouped by centre."
-      hint="Inspectors only ever see the defects listed for their own work centre, so keep each list short and specific. Arabic names are supported and display right-to-left automatically."
+      title="Machine defects"
+      description="The defect names offered on each machine, grouped by machine code."
+      hint="Inspectors only ever see the defects listed for the machine they are inspecting at, so keep each list short and specific. Arabic names are supported and display right-to-left automatically."
       icon={<AlertTriangle className="h-5 w-5" />}
       kind='work-center-defects'
       rows={rows}
@@ -881,34 +958,24 @@ function WorkCenterDefectsTab() {
         },
         {
           key: 'wc',
-          label: 'Work centre',
+          label: 'Machine',
           render: (r) => <Badge tone="neutral">{r.workCenterCode}</Badge>,
         },
       ]}
-      describe={(r) => `${r.defectName} (work centre ${r.workCenterCode})`}
-      newDraft={() => ({ workCenterCode: WORK_CENTER_CODES[0], defectName: '' })}
+      describe={(r) => `${r.defectName} (machine ${r.workCenterCode})`}
+      newDraft={() => ({ workCenterCode: '', defectName: '' })}
       toDraft={(r) => ({ workCenterCode: r.workCenterCode, defectName: r.defectName })}
       validate={(d) =>
-        requireText(d.workCenterCode, 'Work centre') ?? requireText(d.defectName, 'Defect name')
+        requireText(d.workCenterCode, 'Machine') ?? requireText(d.defectName, 'Defect name')
       }
       toRecord={(d) => ({
-        workCenterCode: d.workCenterCode,
+        workCenterCode: d.workCenterCode.trim(),
         defectName: d.defectName.trim(),
       })}
       renderForm={(d, patch) => (
         <>
-          <Field label="Work centre">
-            <Select
-              className="min-h-[48px]"
-              value={d.workCenterCode}
-              onChange={(e) => patch({ workCenterCode: e.target.value })}
-            >
-              {WORK_CENTER_CODES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </Select>
+          <Field label="Machine">
+            <MachineSelect value={d.workCenterCode} onChange={(code) => patch({ workCenterCode: code })} autoFocus />
           </Field>
           <Field label="Defect name" hint="Arabic or English.">
             <Input
@@ -932,6 +999,7 @@ interface MachineDraft {
   code: string
   name: string
   line: string
+  factory: string
 }
 
 function MachinesTab() {
@@ -939,16 +1007,21 @@ function MachinesTab() {
 
   const sort = useCallback(
     (a: Machine, b: Machine) =>
+      (a.factory ?? '').localeCompare(b.factory ?? '') ||
       a.code.localeCompare(b.code, undefined, { numeric: true }) ||
       a.line.localeCompare(b.line, undefined, { numeric: true }),
     [],
   )
+  const groupBy = useCallback((r: Machine) => r.factory?.trim() || '', [])
+  const groupLabel = useCallback((g: string) => (g ? g : 'No factory set'), [])
 
   return (
     <MasterDataPanel<'machines', MachineDraft>
       title="Machines"
-      description="The machines and lines an order can be produced on."
-      hint="The work-centre code decides which wizard steps appear — paint centres get the paint sample step, PT centres get the weld inspection step."
+      description="The machine register: every machine an order line can be produced on, by its code."
+      hint="The code is what orders, defects and machine-specific dimensions refer to, so it must match the ERP exactly. Its leading digits are the work-centre number that decides which wizard steps appear — 7, 11 and 48 get the paint sample step, 22 and 58 get the weld inspection step."
+      groupBy={groupBy}
+      groupLabel={groupLabel}
       icon={<Factory className="h-5 w-5" />}
       kind='machines'
       rows={rows}
@@ -958,8 +1031,8 @@ function MachinesTab() {
       emptyHint="Add the machines and lines used on the shop floor."
       minTableWidth="min-w-[42rem]"
       columns={[
-        { key: 'code', label: 'Work centre', render: (r) => <Badge tone="blue">{r.code}</Badge> },
-        { key: 'name', label: 'Work-centre name', render: (r) => r.name },
+        { key: 'code', label: 'Code', render: (r) => <Badge tone="blue">{r.code}</Badge> },
+        { key: 'name', label: 'Machine', render: (r) => r.name },
         { key: 'line', label: 'Line', render: (r) => r.line || '—' },
         {
           key: 'displayName',
@@ -968,13 +1041,9 @@ function MachinesTab() {
         },
       ]}
       describe={(r) => r.displayName || r.name}
-      newDraft={() => ({ code: WORK_CENTER_CODES[0], name: '', line: '' })}
-      toDraft={(r) => ({ code: r.code, name: r.name, line: r.line })}
-      validate={(d) =>
-        requireText(d.code, 'Work-centre code') ??
-        requireText(d.name, 'Work-centre name') ??
-        requireText(d.line, 'Line')
-      }
+      newDraft={() => ({ code: '', name: '', line: '', factory: '' })}
+      toDraft={(r) => ({ code: r.code, name: r.name, line: r.line, factory: r.factory ?? '' })}
+      validate={(d) => requireText(d.code, 'Machine code') ?? requireText(d.name, 'Machine name')}
       toRecord={(d) => {
         const code = d.code.trim()
         const name = d.name.trim()
@@ -983,6 +1052,7 @@ function MachinesTab() {
           code,
           name,
           line,
+          factory: d.factory.trim() || undefined,
           // The label the shop floor recognises: "58-A. Welding Line-LM4".
           displayName: [code, name, line].filter(Boolean).join('-'),
         }
@@ -990,30 +1060,21 @@ function MachinesTab() {
       renderForm={(d, patch) => (
         <>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Work-centre code">
-              <Select
-                className="min-h-[48px]"
-                value={d.code}
-                onChange={(e) => patch({ code: e.target.value })}
-              >
-                {WORK_CENTER_CODES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </Select>
+            <Field label="Machine code" hint="As it appears in the ERP order export.">
+              <Input value={d.code} onChange={(e) => patch({ code: e.target.value })} placeholder="58" autoCapitalize="characters" />
             </Field>
-            <Field label="Line">
+            <Field label="Factory" hint="Optional.">
+              <Input value={d.factory} onChange={(e) => patch({ factory: e.target.value })} placeholder="Factory 1" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Machine name" hint='Shown as "{code}-{name}-{line}"'>
+              <Input value={d.name} onChange={(e) => patch({ name: e.target.value })} placeholder="A. Welding Line" />
+            </Field>
+            <Field label="Line" hint="Optional.">
               <Input value={d.line} onChange={(e) => patch({ line: e.target.value })} placeholder="LM4" />
             </Field>
           </div>
-          <Field label="Work-centre name" hint='Shown as "{code}-{name}-{line}", e.g. 58-A. Welding Line-LM4'>
-            <Input
-              value={d.name}
-              onChange={(e) => patch({ name: e.target.value })}
-              placeholder="A. Welding Line"
-            />
-          </Field>
         </>
       )}
     />
@@ -1219,6 +1280,9 @@ interface Importer {
   fields: ImportField[]
   /** Fields that together form the business key. Import is blocked if unmapped. */
   businessKeys: string[]
+  /** Further key parts that may be empty (or unmapped) — e.g. the machine of a
+   *  dimension row, where empty means "every machine". */
+  optionalKeys?: string[]
 }
 
 /** Rows sent per request. The API merges each batch in one transaction. */
@@ -1239,15 +1303,17 @@ function csvCell(v: string): string {
 const ORDERS_IMPORTER: Importer = {
   id: 'orders',
   title: 'Production orders',
-  description: 'Existing orders are matched and updated on the order number.',
+  description:
+    'One row per order line: an item on a machine under an order. Lines are matched and updated on the Order ID; the order number repeats across the lines of one order.',
   target: 'orders',
   templateFile: 'production-orders-template.csv',
-  businessKeys: ['orderNumber'],
+  businessKeys: ['lineKey'],
   fields: [
-    { key: 'orderNumber', label: 'Order number', kind: 'text', aliases: ['order', 'order no', 'ordernr', 'po'], sample: '20480-Ph1.4-SMA' },
-    { key: 'item', label: 'Item', kind: 'text', aliases: ['item name', 'description'], sample: 'Shuttle Beam' },
-    { key: 'itemCode', label: 'Item code', kind: 'text', aliases: ['code', 'part code'], sample: 'LB406015-5TA3' },
-    { key: 'workCenterCode', label: 'Work centre', kind: 'text', aliases: ['work center', 'work centre', 'wc'], sample: '48' },
+    { key: 'lineKey', label: 'Order ID', kind: 'text', aliases: ['order id', 'orderid', 'id', 'line id', 'line'], sample: '100245' },
+    { key: 'orderNumber', label: 'Order number', kind: 'text', aliases: ['order', 'order name', 'order no', 'ordernr', 'po'], sample: '20480-Ph1.4-SMA' },
+    { key: 'itemCode', label: 'Item code', kind: 'text', aliases: ['item id', 'code', 'part code'], sample: 'LB406015-5TA3' },
+    { key: 'item', label: 'Item name', kind: 'text', aliases: ['item', 'description'], sample: 'Shuttle Beam' },
+    { key: 'workCenterCode', label: 'Machine code', kind: 'text', aliases: ['machine', 'machine code', 'work center', 'work centre', 'wc'], sample: '48' },
     { key: 'requiredQty', label: 'Required qty', kind: 'number', aliases: ['required', 'quantity'], sample: '1350' },
     { key: 'finishedQty', label: 'Finished qty', kind: 'number', aliases: ['finished', 'produced'], sample: '900' },
     { key: 'drawing', label: 'Drawing', kind: 'text', aliases: ['dwg'], sample: 'BS9059/48' },
@@ -1283,13 +1349,17 @@ const COILS_IMPORTER: Importer = {
 
 const PRODUCTION_IMPORTER: Importer = {
   id: 'production',
-  title: 'Production data',
-  description: 'Item dimensions and the sequence they are measured in. Matched on item + dimension name.',
+  title: 'Item dimensions',
+  description:
+    'Item dimensions and the sequence they are measured in, keyed by item code. Leave the machine column empty for a dimension that applies on every machine; fill it to make the row specific to one machine.',
   target: 'item-dimension-order',
-  templateFile: 'production-data-template.csv',
-  businessKeys: ['item', 'dimensionName'],
+  templateFile: 'item-dimensions-template.csv',
+  businessKeys: ['itemCode', 'dimensionName'],
+  optionalKeys: ['workCenterCode'],
   fields: [
-    { key: 'item', label: 'Item', kind: 'text', aliases: ['item name', 'product'], sample: 'XL Light Beam' },
+    { key: 'itemCode', label: 'Item code', kind: 'text', aliases: ['item id', 'code', 'part code'], sample: 'LB406015-5TA3' },
+    { key: 'item', label: 'Item name', kind: 'text', aliases: ['item', 'product', 'description'], sample: 'XL Light Beam' },
+    { key: 'workCenterCode', label: 'Machine code', kind: 'text', aliases: ['machine', 'machine code', 'work center', 'work centre', 'wc'], sample: '' },
     { key: 'dimensionName', label: 'Dimension name', kind: 'text', aliases: ['dimension', 'name', 'characteristic'], sample: 'Width' },
     { key: 'sequence', label: 'Sequence', kind: 'number', aliases: ['seq', 'order', 'no'], sample: '1' },
     { key: 'nominal', label: 'Nominal', kind: 'number', aliases: ['target', 'nom'], sample: '125' },
@@ -1299,13 +1369,44 @@ const PRODUCTION_IMPORTER: Importer = {
   ],
 }
 
+const MACHINES_IMPORTER: Importer = {
+  id: 'machines',
+  title: 'Machines',
+  description: 'The machine register. Existing machines are matched and updated on the machine code.',
+  target: 'machines',
+  templateFile: 'machines-template.csv',
+  businessKeys: ['code'],
+  fields: [
+    { key: 'code', label: 'Machine code', kind: 'text', aliases: ['machine code', 'code', 'work center', 'work centre', 'wc'], sample: '58' },
+    { key: 'name', label: 'Machine name', kind: 'text', aliases: ['machine', 'machine name', 'name'], sample: 'A. Welding Line' },
+    { key: 'factory', label: 'Factory', kind: 'text', aliases: ['plant', 'site'], sample: 'Factory 1' },
+    { key: 'line', label: 'Line', kind: 'text', sample: 'LM4' },
+    { key: 'machineNumber', label: 'Machine number', kind: 'text', aliases: ['machine no', 'number'], sample: '' },
+  ],
+}
+
+const DEFECTS_IMPORTER: Importer = {
+  id: 'defects',
+  title: 'Machine defects',
+  description: 'The defect names offered on each machine. Matched on machine code + defect name.',
+  target: 'work-center-defects',
+  templateFile: 'machine-defects-template.csv',
+  businessKeys: ['workCenterCode', 'defectName'],
+  fields: [
+    { key: 'workCenterCode', label: 'Machine code', kind: 'text', aliases: ['machine', 'machine code', 'work center', 'work centre', 'wc'], sample: '58' },
+    { key: 'defectName', label: 'Defect name', kind: 'text', aliases: ['defect', 'name'], sample: 'عيب لحام' },
+  ],
+}
+
 function BulkImportTab() {
-  const [which, setWhich] = useState<'orders' | 'coils' | 'production'>('orders')
+  const [which, setWhich] = useState<'orders' | 'coils' | 'production' | 'machines' | 'defects'>('orders')
 
   const SOURCES = [
+    { key: 'machines', label: 'Machines', icon: Factory },
     { key: 'orders', label: 'Production orders', icon: Layers },
     { key: 'coils', label: 'Coils', icon: Table2 },
-    { key: 'production', label: 'Production data', icon: Ruler },
+    { key: 'production', label: 'Item dimensions', icon: Ruler },
+    { key: 'defects', label: 'Machine defects', icon: AlertTriangle },
   ] as const
 
   return (
@@ -1352,6 +1453,8 @@ function BulkImportTab() {
       {which === 'orders' && <CsvImporter key="orders" importer={ORDERS_IMPORTER} />}
       {which === 'coils' && <CsvImporter key="coils" importer={COILS_IMPORTER} />}
       {which === 'production' && <CsvImporter key="production" importer={PRODUCTION_IMPORTER} />}
+      {which === 'machines' && <CsvImporter key="machines" importer={MACHINES_IMPORTER} />}
+      {which === 'defects' && <CsvImporter key="defects" importer={DEFECTS_IMPORTER} />}
     </div>
   )
 }
@@ -1518,17 +1621,21 @@ function CsvImporter({ importer }: { importer: Importer }) {
 
   const missingKeys = useMemo(() => importer.businessKeys.filter((k) => (mapping[k] ?? -1) < 0), [importer.businessKeys, mapping])
 
+  /** All parts of the business key, required ones first. */
+  const keyParts = useMemo(() => [...importer.businessKeys, ...(importer.optionalKeys ?? [])], [importer.businessKeys, importer.optionalKeys])
+
   /** The distinct business keys in this file — the only keys the API is asked about. */
   const lookupKeys = useMemo(() => {
     if (missingKeys.length > 0 || dataRows.length === 0) return []
     const seen = new Set<string>()
     for (const row of dataRows) {
-      const parts = importer.businessKeys.map((k) => (row[mapping[k]] ?? '').trim())
-      if (parts.some((p) => p === '')) continue
-      seen.add(parts.join('||'))
+      const required = importer.businessKeys.map((k) => (row[mapping[k]] ?? '').trim())
+      if (required.some((p) => p === '')) continue
+      const optional = (importer.optionalKeys ?? []).map((k) => ((mapping[k] ?? -1) >= 0 ? (row[mapping[k]] ?? '').trim() : ''))
+      seen.add([...required, ...optional].join('||'))
     }
     return Array.from(seen)
-  }, [dataRows, mapping, importer.businessKeys, missingKeys])
+  }, [dataRows, mapping, importer.businessKeys, importer.optionalKeys, missingKeys])
 
   /** Identifies one lookup exactly, so the resolved set can never be read
    *  against a different file, mapping or target. */
@@ -1549,10 +1656,7 @@ function CsvImporter({ importer }: { importer: Importer }) {
     setResolvedFor(null)
     void (async () => {
       try {
-        const found = await existingKeys(
-          importer.target,
-          lookupKeys.map((k) => k.split('||')[0]),
-        )
+        const found = await existingKeys(importer.target, lookupKeys)
         if (cancelled) return
         setExisting(found)
         setResolvedFor(lookupSignature)
@@ -1618,7 +1722,7 @@ function CsvImporter({ importer }: { importer: Importer }) {
         return
       }
 
-      const key = importer.businessKeys.map((k) => normaliseKeyPart(values[k])).join('||')
+      const key = keyParts.map((k) => normaliseKeyPart(values[k])).join('||')
       const mode: 'new' | 'update' = existing.has(key) || seenKeys.has(key) ? 'update' : 'new'
       seenKeys.add(key)
       if (mode === 'new') newCount += 1
@@ -1627,7 +1731,7 @@ function CsvImporter({ importer }: { importer: Importer }) {
     })
 
     return { valid, errors, newCount, updateCount }
-  }, [headers, dataRows, mapping, missingKeys, importer, existing, resolvedFor, lookupSignature])
+  }, [headers, dataRows, mapping, missingKeys, importer, keyParts, existing, resolvedFor, lookupSignature])
 
   const mappedFields = useMemo(() => importer.fields.filter((f) => (mapping[f.key] ?? -1) >= 0), [importer.fields, mapping])
 

@@ -1,60 +1,63 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { Search, Package, Play, ArrowLeft, CheckCircle2, Boxes, Factory } from 'lucide-react'
+import { Search, Package, Play, ArrowLeft, CheckCircle2, Boxes, Factory, ChevronRight, Layers } from 'lucide-react'
 import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
-import { useMaster, useOrderHistory, useOrderSearch } from '@/services/queries'
+import { useMaster, useOrderHistory, useOrderLines, useOrderNumbers } from '@/services/queries'
 import { startSession } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { isPaintWorkCenter, isPTWorkCenter } from '@qc/shared/rules'
-import { remainingQty, type ProductionOrder } from '@qc/shared/types'
+import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
 
 /**
  * §4 — New Inspection.
- * Cascading filters narrow to one order; the inspector then confirms the order
- * context and the starting production quantity before any session exists. That
- * confirmation is the baseline every later quantity is judged against.
+ *
+ * The inspector stands at a machine, so the machine comes first. It narrows
+ * the order catalogue to the orders that have lines on that machine; the
+ * chosen order then offers only its lines (items) on that machine. Picking a
+ * line shows the order context and asks for the starting production quantity
+ * before any session exists — that confirmation is the baseline every later
+ * quantity is judged against.
  */
 export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useApp()
 
+  const [machineCode, setMachineCode] = useState('')
   const [orderTerm, setOrderTerm] = useState('')
-  const [itemFilter, setItemFilter] = useState('')
-  const [wcFilter, setWcFilter] = useState('')
+  const [orderNumber, setOrderNumber] = useState('')
   const [picked, setPicked] = useState<ProductionOrder | null>(null)
   const [startQty, setStartQty] = useState('')
   const [busy, setBusy] = useState(false)
 
-  // The order catalogue is tens of thousands of rows, so it is searched on the
-  // server — the API matches the term as a prefix of the order number and of
-  // the item code.
-  const { data: found = [] } = useOrderSearch(orderTerm, 40, open)
   const { data: machines = [] } = useMaster('machines', undefined, open)
-  // Only the picked order's history is needed, never every session or sample.
+  // Order numbers are searched on the server, restricted to the machine —
+  // the catalogue is tens of thousands of lines and is never loaded whole.
+  const { data: orders = [], isFetching: ordersLoading } = useOrderNumbers(machineCode, orderTerm, 40, open)
+  const { data: lines = [], isFetching: linesLoading } = useOrderLines(machineCode, orderNumber, open)
+  // Only the picked line's history is needed, never every session or sample.
   const { data: history } = useOrderHistory(picked?.id ?? null)
 
-  /** Work centres come from the machine register, which is master data. */
-  const wcOptions = useMemo(
-    () => Array.from(new Set(machines.map((m) => m.code))).sort((a, b) => Number(a) - Number(b)),
-    [machines],
+  const machine = useMemo(
+    () => machines.find((m) => m.code.trim().toLowerCase() === machineCode.trim().toLowerCase()) ?? null,
+    [machines, machineCode],
   )
 
-  /** Items present in what the search returned — not the whole catalogue. */
-  const itemOptions = useMemo(() => Array.from(new Set(found.map((o) => o.item))).sort(), [found])
+  /** Machines grouped by factory so a multi-site register stays readable. */
+  const machineGroups = useMemo(() => {
+    const groups = new Map<string, Machine[]>()
+    for (const m of machines) {
+      const g = m.factory?.trim() || ''
+      const arr = groups.get(g) ?? []
+      arr.push(m)
+      groups.set(g, arr)
+    }
+    for (const arr of groups.values()) arr.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }))
+    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+  }, [machines])
 
-  const results = useMemo(
-    () =>
-      found
-        .filter((o) => !itemFilter || o.item === itemFilter)
-        .filter((o) => !wcFilter || o.workCenterCode === wcFilter)
-        .sort((a, b) => a.orderNumber.localeCompare(b.orderNumber))
-        .slice(0, 40),
-    [found, itemFilter, wcFilter],
-  )
-
-  /** Samples already recorded against the picked order (§4). */
+  /** Samples already recorded against the picked line (§4). */
   const previousSamples = useMemo(
     () => [...(history?.samples ?? [])].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
     [history],
@@ -64,8 +67,14 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     setPicked(null)
     setStartQty('')
     setOrderTerm('')
-    setItemFilter('')
-    setWcFilter('')
+    setOrderNumber('')
+    setMachineCode('')
+  }
+
+  function chooseMachine(code: string) {
+    setMachineCode(code)
+    setOrderNumber('')
+    setOrderTerm('')
   }
 
   async function start() {
@@ -75,7 +84,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     setBusy(true)
     try {
       const session = await startSession(queryClient, { orderId: picked.id, startQty: qty })
-      toast(`Session started for ${picked.orderNumber}.`, 'success')
+      toast(`Session started for ${picked.orderNumber} · ${picked.itemCode}.`, 'success')
       reset()
       onClose()
       navigate(`/wizard/${session.id}`)
@@ -86,9 +95,8 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     }
   }
 
-  // ---- Step 2: confirm the order and the starting quantity -----------------
+  // ---- Step 4: confirm the line and the starting quantity ------------------
   if (picked) {
-    const machine = machines.find((m) => m.code === picked.workCenterCode)
     const remaining = remainingQty(picked)
     const qty = Number(startQty)
     const valid = startQty.trim() !== '' && !Number.isNaN(qty) && qty >= 0
@@ -115,6 +123,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
           <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/50">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-lg font-bold">{picked.orderNumber}</p>
+              <Badge tone="neutral">Order ID {picked.lineKey}</Badge>
               {isPaintWorkCenter(picked.workCenterCode) && <Badge tone="violet">Paint sample step</Badge>}
               {isPTWorkCenter(picked.workCenterCode) && <Badge tone="amber">PT / weld step</Badge>}
             </div>
@@ -129,7 +138,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             </div>
 
             <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-              <Detail label="Work center" value={machine?.name ?? picked.workCenterCode} />
+              <Detail label="Machine" value={machine?.displayName ?? picked.workCenterCode} />
               <Detail label="Drawing" value={picked.drawing} />
               <Detail label="Material" value={picked.material} />
               <Detail label="Grade" value={picked.expectedGrade} />
@@ -153,7 +162,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
 
           <div>
             <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-slate-400">
-              <Boxes className="h-3.5 w-3.5" /> Previous samples on this order
+              <Boxes className="h-3.5 w-3.5" /> Previous samples on this item
             </p>
             {previousSamples.length === 0 ? (
               <p className="rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-slate-400 dark:border-slate-700">
@@ -179,7 +188,9 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     )
   }
 
-  // ---- Step 1: cascading filters -------------------------------------------
+  // ---- Steps 1–3: machine → order → item -----------------------------------
+  const stage: 'machine' | 'order' | 'item' = !machineCode ? 'machine' : !orderNumber ? 'order' : 'item'
+
   return (
     <Modal
       open={open}
@@ -192,60 +203,143 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
       size="lg"
     >
       <div className="space-y-3">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <Input
-            autoFocus
-            value={orderTerm}
-            onChange={(e) => setOrderTerm(e.target.value)}
-            placeholder="Order number or item code…"
-            className="min-h-[48px] pl-9"
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} className="min-h-[48px]">
-            <option value="">All items found</option>
-            {itemOptions.map((i) => (
-              <option key={i} value={i}>
-                {i}
-              </option>
-            ))}
-          </Select>
-          <Select value={wcFilter} onChange={(e) => setWcFilter(e.target.value)} className="min-h-[48px]">
-            <option value="">All work centers</option>
-            {wcOptions.map((w) => (
-              <option key={w} value={w}>
-                {machines.find((m) => m.code === w)?.displayName ?? `Work center ${w}`}
-              </option>
-            ))}
-          </Select>
-        </div>
+        <ol className="flex flex-wrap items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
+          <Crumb n={1} label="Machine" active={stage === 'machine'} done={stage !== 'machine'} />
+          <ChevronRight className="h-3.5 w-3.5" />
+          <Crumb n={2} label="Order" active={stage === 'order'} done={stage === 'item'} />
+          <ChevronRight className="h-3.5 w-3.5" />
+          <Crumb n={3} label="Item" active={stage === 'item'} done={false} />
+        </ol>
 
-        <div className="max-h-[46vh] space-y-2 overflow-y-auto pr-1">
-          {results.length === 0 && <p className="py-8 text-center text-sm text-slate-400">No orders match those filters.</p>}
-          {results.map((o) => (
-            <button
-              key={o.id}
-              onClick={() => {
-                setPicked(o)
-                setStartQty(String(remainingQty(o)))
-              }}
-              className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 p-3 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/50 dark:border-slate-800 dark:hover:border-brand-500/50 dark:hover:bg-brand-500/5"
-            >
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
-                <Package className="h-5 w-5" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="font-bold">{o.orderNumber}</p>
-                <p className="truncate text-sm text-slate-500 dark:text-slate-400">
-                  {o.item} · {o.itemCode} · WC {o.workCenterCode}
+        <Field label="Machine">
+          <Select value={machineCode} onChange={(e) => chooseMachine(e.target.value)} className="min-h-[48px]" autoFocus>
+            <option value="">— choose the machine you are at —</option>
+            {machineGroups.map(([factory, group]) =>
+              factory ? (
+                <optgroup key={factory} label={factory}>
+                  {group.map((m) => (
+                    <option key={m.id} value={m.code}>
+                      {m.displayName}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : (
+                group.map((m) => (
+                  <option key={m.id} value={m.code}>
+                    {m.displayName}
+                  </option>
+                ))
+              ),
+            )}
+          </Select>
+        </Field>
+        {machines.length === 0 && (
+          <p className="rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-slate-400 dark:border-slate-700">
+            No machines are registered yet. Load the machine sheet in Admin → Bulk import.
+          </p>
+        )}
+
+        {stage === 'order' && (
+          <>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                autoFocus
+                value={orderTerm}
+                onChange={(e) => setOrderTerm(e.target.value)}
+                placeholder="Order number…"
+                className="min-h-[48px] pl-9"
+              />
+            </div>
+            <div className="max-h-[42vh] space-y-2 overflow-y-auto pr-1">
+              {orders.length === 0 && (
+                <p className="py-8 text-center text-sm text-slate-400">
+                  {ordersLoading ? 'Searching…' : orderTerm ? 'No orders on this machine match that number.' : 'No orders have lines on this machine.'}
                 </p>
-              </div>
-            </button>
-          ))}
-        </div>
+              )}
+              {orders.map((o) => (
+                <button
+                  key={o.orderNumber}
+                  onClick={() => setOrderNumber(o.orderNumber)}
+                  className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 p-3 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/50 dark:border-slate-800 dark:hover:border-brand-500/50 dark:hover:bg-brand-500/5"
+                >
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
+                    <Layers className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-bold">{o.orderNumber}</p>
+                    <p className="truncate text-sm text-slate-500 dark:text-slate-400">{o.customer || '—'}</p>
+                  </div>
+                  <Badge tone="neutral">
+                    {o.lineCount} {o.lineCount === 1 ? 'item' : 'items'}
+                  </Badge>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {stage === 'item' && (
+          <>
+            <div className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800/50">
+              <p className="text-sm">
+                <span className="text-slate-500 dark:text-slate-400">Order</span> <span className="font-bold">{orderNumber}</span>
+              </p>
+              <Button variant="ghost" className="min-h-[40px]" onClick={() => setOrderNumber('')}>
+                <ArrowLeft className="h-4 w-4" /> Change order
+              </Button>
+            </div>
+            <div className="max-h-[42vh] space-y-2 overflow-y-auto pr-1">
+              {lines.length === 0 && (
+                <p className="py-8 text-center text-sm text-slate-400">{linesLoading ? 'Loading…' : 'This order has no items on this machine.'}</p>
+              )}
+              {lines.map((o) => (
+                <button
+                  key={o.id}
+                  onClick={() => {
+                    setPicked(o)
+                    setStartQty(String(remainingQty(o)))
+                  }}
+                  className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 p-3 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/50 dark:border-slate-800 dark:hover:border-brand-500/50 dark:hover:bg-brand-500/5"
+                >
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
+                    <Package className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-bold">{o.itemCode}</p>
+                    <p className="truncate text-sm text-slate-500 dark:text-slate-400">
+                      {o.item || '—'} · Order ID {o.lineKey}
+                      {o.expectedGrade ? ` · ${o.expectedGrade}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-right text-xs tabular-nums text-slate-500 dark:text-slate-400">
+                    <span className="block font-bold text-brand-600 dark:text-brand-400">{remainingQty(o)}</span>
+                    remaining
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </Modal>
+  )
+}
+
+function Crumb({ n, label, active, done }: { n: number; label: string; active: boolean; done: boolean }) {
+  return (
+    <li
+      className={
+        active
+          ? 'flex items-center gap-1.5 text-brand-600 dark:text-brand-400'
+          : done
+            ? 'flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400'
+            : 'flex items-center gap-1.5'
+      }
+    >
+      <span className="grid h-5 w-5 place-items-center rounded-full bg-current/10 text-[11px]">{done ? '✓' : n}</span>
+      {label}
+    </li>
   )
 }
 
