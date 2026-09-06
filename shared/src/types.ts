@@ -67,13 +67,6 @@ export interface Machine {
    * from the previous one's rows. Defaults to on.
    */
   usesItemDimensions: boolean
-  /**
-   * Set on a machine that produces for stock rather than for an order: the
-   * one item it makes, e.g. "Connector (right + left)". A session on such a
-   * machine is started without picking an order. Both fields or neither.
-   */
-  stockItem?: string
-  stockItemCode?: string
   deletedAt?: ISODate | null
 }
 

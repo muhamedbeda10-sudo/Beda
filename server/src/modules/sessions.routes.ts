@@ -30,7 +30,7 @@ import {
   ptOverallVerdict,
   can,
   validateSample,
-  isStockMachine,
+  stockProductionOf,
   isStockOrder,
   stockLineKey,
   STOCK_ORDER_NUMBER,
@@ -200,7 +200,7 @@ async function loadPreviousSetup(q: Queryable, sessionId: string): Promise<Previ
 async function loadMachine(q: Queryable, code: string): Promise<Machine | null> {
   const { rows } = await q.query<Machine>(
     `SELECT id, code, name, line, display_name AS "displayName", machine_number AS "machineNumber", factory, process,
-            uses_item_dimensions AS "usesItemDimensions", stock_item AS "stockItem", stock_item_code AS "stockItemCode"
+            uses_item_dimensions AS "usesItemDimensions"
        FROM machines WHERE lower(code) = lower($1) AND deleted_at IS NULL LIMIT 1`,
     [code],
   )
@@ -209,13 +209,14 @@ async function loadMachine(q: Queryable, code: string): Promise<Machine | null> 
 
 /**
  * The one fixed STOCK line of a make-to-stock machine, created on first use
- * and brought back (with the machine's current item) after a catalogue clear
- * retired it. Refused on a machine that works to order.
+ * and brought back after a catalogue clear retired it. Refused on a machine
+ * that works to order.
  */
 async function ensureStockLine(tx: Queryable, workCenterCode: string): Promise<string> {
+  const production = stockProductionOf(workCenterCode)
+  if (!production) throw badRequest('This machine works to order: pick the order and the item to inspect.')
   const machine = await loadMachine(tx, workCenterCode)
   if (!machine) throw badRequest('That machine is not in the register.')
-  if (!isStockMachine(machine)) throw badRequest('This machine works to order: pick the order and the item to inspect.')
   const { rows } = await tx.query<{ id: string }>(
     `INSERT INTO production_orders (line_key, order_number, item, item_code, work_center_code, machine_id, erp_status)
      VALUES ($1, $2, $3, $4, $5, $6, 'Stock')
@@ -223,7 +224,7 @@ async function ensureStockLine(tx: Queryable, workCenterCode: string): Promise<s
        SET item = EXCLUDED.item, item_code = EXCLUDED.item_code, work_center_code = EXCLUDED.work_center_code,
            machine_id = EXCLUDED.machine_id, deleted_at = NULL, deleted_by_id = NULL
      RETURNING id`,
-    [stockLineKey(machine.code), STOCK_ORDER_NUMBER, machine.stockItem, machine.stockItemCode, machine.code, machine.id],
+    [stockLineKey(machine.code), STOCK_ORDER_NUMBER, production.item, production.itemCode, machine.code, machine.id],
   )
   return rows[0].id
 }

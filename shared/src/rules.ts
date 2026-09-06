@@ -531,9 +531,36 @@ export function stockLineKey(machineCode: string): string {
   return `STOCK-${machineCode.trim().toUpperCase()}`
 }
 
-/** A machine that produces for stock names the one item it makes. */
-export function isStockMachine(m: { stockItem?: string | null; stockItemCode?: string | null } | null | undefined): boolean {
-  return Boolean(m && (m.stockItem ?? '').trim() !== '' && (m.stockItemCode ?? '').trim() !== '')
+/** What a make-to-stock machine produces: two items made together, one quantity. */
+export interface StockProduction {
+  /** Machine code in the register. */
+  machineCode: string
+  /** The line the sessions are recorded against, as shown on every screen. */
+  item: string
+  itemCode: string
+  /** The items made together; the quantity entered counts one of each. */
+  pieces: readonly string[]
+}
+
+/**
+ * The machines that produce for stock. There is exactly one: the 400-ton
+ * press in Factory 3, which makes right and left connectors together — the
+ * quantity of one is the quantity of the other, so a session records one
+ * number and inspects them as one item. Not configurable on purpose.
+ */
+export const STOCK_MACHINES: readonly StockProduction[] = [
+  { machineCode: '400', item: 'Connector (right + left)', itemCode: 'CONNECTOR-RL', pieces: ['Right connector', 'Left connector'] },
+]
+
+/** The stock production of a machine, or null for a machine that works to order. */
+export function stockProductionOf(machineCode: string | null | undefined): StockProduction | null {
+  const code = (machineCode ?? '').trim().toLowerCase()
+  return STOCK_MACHINES.find((m) => m.machineCode.toLowerCase() === code) ?? null
+}
+
+/** A machine that produces for stock — sessions on it are started without an order. */
+export function isStockMachine(machineCode: string | null | undefined): boolean {
+  return stockProductionOf(machineCode) !== null
 }
 
 /** A stock line (or a session's order summary of one). */
