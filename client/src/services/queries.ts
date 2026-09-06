@@ -43,6 +43,8 @@ export const keys = {
   orderNumbers: (key: string) => ['orders', 'numbers', key] as const,
   orderLines: (key: string) => ['orders', 'lines', key] as const,
   orderHistory: (id: string) => ['orders', id, 'history'] as const,
+  order: (id: string) => ['orders', id] as const,
+  orderNotes: (id: string) => ['orders', id, 'notes'] as const,
   coilSearch: (term: string) => ['coils', 'search', term] as const,
   coilUsage: (numbers: string) => ['coils', 'usage', numbers] as const,
   images: (ids: string) => ['images', ids] as const,
@@ -145,6 +147,29 @@ export function useOrderLines(machine: string, orderNumber: string, enabled = tr
     queryKey: keys.orderLines(`${machine}|${orderNumber}`),
     queryFn: () => api<ProductionOrder[]>(`/orders${qs({ machine, orderNumber, limit: 500 })}`),
     enabled: enabled && machine !== '' && orderNumber !== '',
+  })
+}
+
+/** One order line in full — everything the ERP export carried for it. */
+export function useOrder(orderId: string | null) {
+  return useQuery({ queryKey: keys.order(orderId ?? ''), queryFn: () => api<ProductionOrder>(`/orders/${orderId}`), enabled: !!orderId })
+}
+
+/** Every line of an order, on every machine, cancelled ones included. */
+export function useOrderAllLines(orderNumber: string | null) {
+  return useQuery({
+    queryKey: keys.orderLines(`all|${orderNumber ?? ''}`),
+    queryFn: () => api<ProductionOrder[]>(`/orders${qs({ orderNumber, includeCancelled: true, limit: 500 })}`),
+    enabled: !!orderNumber,
+  })
+}
+
+/** Notes written about an order on any of its lines, newest first. */
+export function useOrderNotes(orderId: string | null) {
+  return useQuery({
+    queryKey: keys.orderNotes(orderId ?? ''),
+    queryFn: async () => (await api<SessionNotesResponse>(`/orders/${orderId}/notes`)).notes,
+    enabled: !!orderId,
   })
 }
 

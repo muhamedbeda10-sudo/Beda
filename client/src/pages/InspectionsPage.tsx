@@ -14,11 +14,13 @@ import {
   CheckCircle2,
   ClipboardCheck,
   MessageSquareText,
+  ChevronRight,
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
 import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
 import { SampleDetail } from '@/components/inspection/SampleDetail'
+import { OrderDetailsPanel } from '@/components/inspection/OrderDetailsPanel'
 import { InstallBanner } from '@/components/layout/InstallBanner'
 import { useMaster, useOpenBoard, useSampleDetail } from '@/services/queries'
 import { closeSession } from '@/services/mutations'
@@ -47,6 +49,8 @@ export function InspectionsPage() {
 
   const [newOpen, setNewOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  /** The session whose order is open in full, in the side panel. */
+  const [details, setDetails] = useState<SessionWithOrder | null>(null)
 
   // ---- Who sees what (§14) ------------------------------------------------
   // The API already hands an inspector only their own sessions. A supervisor
@@ -264,6 +268,20 @@ export function InspectionsPage() {
                     const sessionSamples = samplesBySession.get(s.id) ?? []
                     return (
                       <div key={s.id} className={cn('px-4 py-3.5', sessionToneClass(s, 'block'))}>
+                        {/* The card's head opens the order in full; buttons and chips keep their own job. */}
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setDetails(s)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              setDetails(s)
+                            }
+                          }}
+                          className="group -mx-2 -mt-1 cursor-pointer rounded-xl px-2 pt-1 pb-1 transition-colors hover:bg-white/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 dark:hover:bg-slate-800/60"
+                          aria-label={`Order details for ${order?.orderNumber ?? 'this session'}`}
+                        >
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-bold">{order?.orderNumber ?? '—'}</span>
                           <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
@@ -286,9 +304,15 @@ export function InspectionsPage() {
                         <p className="mt-1 truncate text-sm font-medium text-brand-600 dark:text-brand-400">
                           {order?.item} · {order?.itemCode}
                         </p>
-                        <p className="mt-0.5 text-xs text-slate-400">
-                          {formatDate(s.startedAt)} · {s.inspectorName}
+                        <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-400">
+                          <span>
+                            {formatDate(s.startedAt)} · {s.inspectorName}
+                          </span>
+                          <span className="ml-auto inline-flex items-center gap-0.5 font-semibold text-brand-600 opacity-70 transition-[opacity,transform] group-hover:translate-x-0.5 group-hover:opacity-100 dark:text-brand-400">
+                            Order details <ChevronRight className="h-3.5 w-3.5" />
+                          </span>
                         </p>
+                        </div>
 
                         {/* A closed session on Hold is here to be seen, not continued; deleting is an administrator's act, from History. */}
                         {s.status === 'Open' && (
@@ -343,6 +367,20 @@ export function InspectionsPage() {
       )}
 
       <NewInspectionDialog open={newOpen} onClose={() => setNewOpen(false)} />
+
+      <OrderDetailsPanel
+        session={details}
+        samples={details ? (samplesBySession.get(details.id) ?? []) : []}
+        machines={machines}
+        canRecord={can(role, 'record-inspection')}
+        onClose={() => setDetails(null)}
+        onContinue={(s) => navigate(`/wizard/${s.id}`)}
+        onCloseSession={(s) => {
+          setDetails(null)
+          setClosing(s)
+        }}
+        onOpenSample={(s, sm) => setViewing({ session: s, sample: sm })}
+      />
 
       {closing && (
         <CloseSessionDialog
