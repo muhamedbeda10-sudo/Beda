@@ -17,6 +17,7 @@ import {
   resolveDimensions,
   sessionTone,
   can,
+  stockProductionOf, isStockMachine, normaliseMachineCode,
 } from './rules'
 
 // Local time is what the factory clock shows, so build dates in local time.
@@ -505,5 +506,19 @@ describe('deriveShift in a named time zone', () => {
   it('hourInTimeZone returns 0..23', () => {
     expect(hourInTimeZone(new Date('2026-01-15T23:30:00Z'), 'UTC')).toBe(23)
     expect(hourInTimeZone(new Date('2026-01-15T00:10:00Z'), 'UTC')).toBe(0)
+  })
+})
+
+describe('the make-to-stock press', () => {
+  it('is found by its code however the register spells it', () => {
+    for (const code of ['21', ' 21 ', '021', '٢١', '۲۱']) {
+      expect(stockProductionOf(code)?.item).toBe('Connector (right + left)')
+      expect(isStockMachine(code)).toBe(true)
+    }
+    expect(stockProductionOf('58')).toBeNull()
+    expect(stockProductionOf('')).toBeNull()
+    expect(stockProductionOf(null)).toBeNull()
+    expect(normaliseMachineCode('٠٥٨')).toBe('58')
+    expect(normaliseMachineCode('LM-4 ')).toBe('lm-4')
   })
 })
