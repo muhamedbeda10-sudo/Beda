@@ -549,7 +549,7 @@ export interface StockProduction {
  * number and inspects them as one item. Not configurable on purpose.
  */
 export const STOCK_MACHINES: readonly StockProduction[] = [
-  { machineCode: '400', item: 'Connector (right + left)', itemCode: 'CONNECTOR-RL', pieces: ['Right connector', 'Left connector'] },
+  { machineCode: '21', item: 'Connector (right + left)', itemCode: 'CONNECTOR-RL', pieces: ['Right connector', 'Left connector'] },
 ]
 
 /** The stock production of a machine, or null for a machine that works to order. */

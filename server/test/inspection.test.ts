@@ -722,27 +722,27 @@ describe('a make-to-stock machine', () => {
   beforeAll(async () => {
     await app.api('POST', '/api/master/machines', {
       token: admin.token,
-      body: { code: '400', name: '400T Press', displayName: '400-400T Press', factory: 'Factory 3', process: 'forming' },
+      body: { code: '21', name: '400T Press', displayName: '21-400T Press', factory: 'Factory 3', process: 'forming' },
     })
-    await app.api('POST', '/api/master/work-center-defects', { token: admin.token, body: { workCenterCode: '400', defectName: 'Crack' } })
+    await app.api('POST', '/api/master/work-center-defects', { token: admin.token, body: { workCenterCode: '21', defectName: 'Crack' } })
   })
 
   it('starts a session without an order, on the machine’s fixed STOCK line, with the quantity produced', async () => {
-    const res = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '400', producedQty: 120 } })
+    const res = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '21', producedQty: 120 } })
     expect(res.status).toBe(201)
     sid = res.body.id
     expect(res.body.seq).toBe(1)
-    expect(res.body.workCenterCode).toBe('400')
+    expect(res.body.workCenterCode).toBe('21')
     expect(res.body.producedQty).toBe(120)
     expect(res.body.startQtyConfirmed).toBeUndefined()
     expect(res.body.order?.orderNumber).toBe('STOCK')
-    expect(res.body.order?.lineKey).toBe('STOCK-400')
+    expect(res.body.order?.lineKey).toBe('STOCK-21')
     expect(res.body.order?.item).toBe('Connector (right + left)')
     expect(res.body.order?.itemCode).toBe('CONNECTOR-RL')
     stockOrderId = res.body.orderId
 
     // The next session lands on the same line with the next seq.
-    const again = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '400', producedQty: 80 } })
+    const again = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '21', producedQty: 80 } })
     expect(again.body.orderId).toBe(stockOrderId)
     expect(again.body.seq).toBe(2)
     await app.api('DELETE', `/api/sessions/${again.body.id}`, { token: admin.token })
@@ -781,7 +781,7 @@ describe('a make-to-stock machine', () => {
   it('brings the STOCK line back after a catalogue clear retired it', async () => {
     // What POST /orders/clear does to every line, applied to this one only.
     await app.db.query(`UPDATE production_orders SET deleted_at = now() WHERE id = $1`, [stockOrderId])
-    const res = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '400', producedQty: 10 } })
+    const res = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '21', producedQty: 10 } })
     expect(res.status).toBe(201)
     expect(res.body.orderId).toBe(stockOrderId)
     await app.api('DELETE', `/api/sessions/${res.body.id}`, { token: admin.token })
