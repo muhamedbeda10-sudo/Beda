@@ -846,9 +846,16 @@ function DimensionsStep({
                     className="input min-h-[48px] text-right tabular-nums"
                   />
                 </label>
-                <span className="pb-3 text-xs tabular-nums text-slate-400">
-                  +{d.tolPlus}/-{d.tolMinus}
-                </span>
+                {d.source === 'item-order' ? (
+                  <span className="pb-3 text-xs tabular-nums text-slate-400">
+                    +{d.tolPlus}/-{d.tolMinus}
+                  </span>
+                ) : (
+                  <span className="flex flex-col gap-1">
+                    <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" placeholder="+tol" className="w-16 rounded-lg border border-slate-300 px-1.5 py-1 text-right text-xs tabular-nums dark:border-slate-600 dark:bg-slate-800" />
+                    <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" placeholder="-tol" className="w-16 rounded-lg border border-slate-300 px-1.5 py-1 text-right text-xs tabular-nums dark:border-slate-600 dark:bg-slate-800" />
+                  </span>
+                )}
                 <label className="block">
                   <span className="label">Actual</span>
                   <input
@@ -907,7 +914,18 @@ function DimensionsStep({
                     />
                   </td>
                   <td className="whitespace-nowrap px-2 py-2 text-center text-xs text-slate-400">
-                    +{d.tolPlus}/-{d.tolMinus}
+                    {d.source === 'item-order' ? (
+                      <>
+                        +{d.tolPlus}/-{d.tolMinus}
+                      </>
+                    ) : (
+                      <span className="inline-flex items-center gap-1">
+                        +
+                        <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" className="w-14 rounded-lg border border-slate-300 px-1.5 py-2 text-right text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                        / -
+                        <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" className="w-14 rounded-lg border border-slate-300 px-1.5 py-2 text-right text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                      </span>
+                    )}
                   </td>
                   <td className="px-2 py-2 text-center">
                     <input
@@ -954,42 +972,86 @@ function DimensionsStep({
   )
 }
 
+/**
+ * A dimension the configuration does not know: the inspector names it and
+ * gives its nominal and tolerance on the first sample. The next sample of
+ * this item on this machine carries them forward, so only the actual is
+ * typed from then on (§8.3).
+ */
 function AddDimensionButton({ update }: { update: Updater }) {
+  const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
-  return (
-    <div className="flex flex-wrap gap-2">
-      <Input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="Add a dimension not in the configuration…"
-        className="min-h-[48px] flex-1"
-      />
-      <Button
-        variant="secondary"
-        className="min-h-[48px]"
-        disabled={!name.trim()}
-        onClick={() => {
-          update((d) => ({
-            ...d,
-            dimensions: [
-              ...d.dimensions,
-              {
-                name: name.trim(),
-                sequence: d.dimensions.length + 1,
-                nominal: '',
-                tolPlus: '0',
-                tolMinus: '0',
-                actual: '',
-                unit: 'mm',
-                source: 'manual' as const,
-              },
-            ],
-          }))
-          setName('')
-        }}
-      >
-        <Plus className="h-4 w-4" /> Add
+  const [nominal, setNominal] = useState('')
+  const [tolPlus, setTolPlus] = useState('')
+  const [tolMinus, setTolMinus] = useState('')
+  const [unit, setUnit] = useState('mm')
+  const valid = name.trim() !== '' && nominal.trim() !== '' && Number.isFinite(Number(nominal))
+
+  function add() {
+    update((d) => ({
+      ...d,
+      dimensions: [
+        ...d.dimensions,
+        {
+          name: name.trim(),
+          sequence: d.dimensions.length + 1,
+          nominal: nominal.trim(),
+          tolPlus: tolPlus.trim() || '0',
+          tolMinus: tolMinus.trim() || tolPlus.trim() || '0',
+          actual: '',
+          unit: unit.trim() || 'mm',
+          source: 'manual' as const,
+        },
+      ],
+    }))
+    setName('')
+    setNominal('')
+    setTolPlus('')
+    setTolMinus('')
+    setOpen(false)
+  }
+
+  if (!open) {
+    return (
+      <Button variant="secondary" className="min-h-[48px]" onClick={() => setOpen(true)}>
+        <Plus className="h-4 w-4" /> Add a dimension not in the configuration
       </Button>
+    )
+  }
+
+  return (
+    <div className="rounded-2xl border border-dashed border-brand-300 bg-brand-50/40 p-3 dark:border-brand-500/40 dark:bg-brand-500/5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-[2fr_1fr_1fr_1fr_0.8fr]">
+        <label className="col-span-2 block sm:col-span-1">
+          <span className="label">Dimension</span>
+          <Input autoFocus dir="auto" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Hole pitch" className="min-h-[48px]" />
+        </label>
+        <label className="block">
+          <span className="label">Nominal</span>
+          <Input value={nominal} onChange={(e) => setNominal(e.target.value)} inputMode="decimal" type="number" step="any" className="min-h-[48px] text-right tabular-nums" />
+        </label>
+        <label className="block">
+          <span className="label">+ tol</span>
+          <Input value={tolPlus} onChange={(e) => setTolPlus(e.target.value)} inputMode="decimal" type="number" step="any" placeholder="0" className="min-h-[48px] text-right tabular-nums" />
+        </label>
+        <label className="block">
+          <span className="label">- tol</span>
+          <Input value={tolMinus} onChange={(e) => setTolMinus(e.target.value)} inputMode="decimal" type="number" step="any" placeholder={tolPlus || '0'} className="min-h-[48px] text-right tabular-nums" />
+        </label>
+        <label className="block">
+          <span className="label">Unit</span>
+          <Input value={unit} onChange={(e) => setUnit(e.target.value)} className="min-h-[48px]" />
+        </label>
+      </div>
+      <div className="mt-2 flex justify-end gap-2">
+        <Button className="min-h-[44px]" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+        <Button variant="primary" className="min-h-[44px]" disabled={!valid} onClick={add}>
+          <Plus className="h-4 w-4" /> Add
+        </Button>
+      </div>
+      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Entered once: the next sample of this item on this machine keeps the nominal and tolerance, and asks only for the actual.</p>
     </div>
   )
 }
