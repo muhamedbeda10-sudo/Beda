@@ -152,6 +152,13 @@ export function stepsForProcess(process: Process): WizardStep[] {
   }
 }
 
+/** The name a defect outside the machine's configured list is recorded under; its description goes in the notes. */
+export const OTHER_DEFECT_NAME = 'Other'
+
+export function isOtherDefect(name: string): boolean {
+  return name.trim().toLowerCase() === OTHER_DEFECT_NAME.toLowerCase()
+}
+
 /** The dimension name the paint-thickness readings are saved under (§5.5). */
 export const PAINT_THICKNESS_NAME = 'Paint thickness'
 /** How many thickness readings a paint sample carries. */
@@ -268,7 +275,7 @@ export interface SampleDraftForValidation {
   sampleQty: number
   drawing: string
   coils: Array<{ coilNumber: string; grade?: string }>
-  defects: Array<{ defectName: string; disposition: Disposition | null; qty: number }>
+  defects: Array<{ defectName: string; disposition: Disposition | null; qty: number; notes?: string | null }>
   /** The measurement rows; a paint sample's thickness readings live here. */
   dimensions?: Array<{ name: string; nominal: number | null; actual: number | null }>
   paint?: { imageIds: string[] }
@@ -304,7 +311,11 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
   }
 
   // §5.4 / §8.5 — no defect saves without a disposition, and say which one.
+  // A defect outside the machine's list is recorded as "Other" and must be described.
   for (const d of draft.defects) {
+    if (isOtherDefect(d.defectName) && !d.notes?.trim()) {
+      issues.push({ step: 'defects', message: 'Describe the "Other" defect.', ref: d.defectName })
+    }
     if (!d.disposition) {
       issues.push({
         step: 'defects',
