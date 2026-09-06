@@ -197,6 +197,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
     return { clause: `s.inspector_id = $${firstParam}`, params: [user.id] }
   }
 
+  /** The board: every open session, plus a closed one that still holds a defect on Hold. */
   r.get('/open', async (req, res) => {
     const user = requireUser(req)
     const q = parse(z.object({ limit: z.coerce.number().int().min(1).max(500).default(200) }), req.query)
@@ -205,8 +206,11 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const sessions = await db.query<SessionRow & OrderSummaryRow>(
       `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
          FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
-        WHERE s.status = 'Open' AND s.deleted_at IS NULL AND ${visible.clause}
-        ORDER BY s.started_at DESC LIMIT $1`,
+        WHERE s.deleted_at IS NULL AND ${visible.clause}
+          AND (s.status = 'Open' OR EXISTS (
+                SELECT 1 FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+                 WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL AND d.disposition = 'Hold'))
+        ORDER BY s.status = 'Open' DESC, s.started_at DESC LIMIT $1`,
       [q.limit, ...visible.params],
     )
     const ids = sessions.rows.map((s) => s.id)

@@ -11,6 +11,7 @@ import {
   Info,
   Layers,
   Lock,
+  Trash2,
   Package2,
   Pencil,
   Ruler,
@@ -24,7 +25,7 @@ import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
 import { Attr, SampleDetail, Section, SectionEmpty, dispositionToneOf, num, statusToneOf } from '@/components/inspection/SampleDetail'
 import { useHistory, useMaster, useSampleDetail, useSessionSamples } from '@/services/queries'
-import { correctDefect, correctDimension } from '@/services/mutations'
+import { correctDefect, correctDimension, deleteSample, deleteSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, processForMachine, shiftName } from '@/domain'
@@ -87,6 +88,30 @@ export function HistoryPage() {
   const [editingDim, setEditingDim] = useState<DimensionResult | null>(null)
   const [editingDefect, setEditingDefect] = useState<DefectResult | null>(null)
   const [saving, setSaving] = useState(false)
+  /** What an administrator asked to delete; confirmed in its own dialog. */
+  const [removing, setRemoving] = useState<{ kind: 'session'; id: string; label: string } | { kind: 'sample'; id: string; label: string } | null>(null)
+  const canDelete = can(role, 'delete-session')
+
+  async function confirmRemove() {
+    if (!removing) return
+    setSaving(true)
+    try {
+      if (removing.kind === 'session') {
+        await deleteSession(queryClient, removing.id)
+        toast('Session marked deleted. Nothing was erased.', 'success')
+        closeDrilldown()
+      } else {
+        await deleteSample(queryClient, removing.id)
+        toast('Sample marked deleted. Nothing was erased.', 'success')
+        setOpenSampleId(null)
+      }
+      setRemoving(null)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not delete.', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   /** The Inspections page links here as `/history?disposition=Hold` so a
    *  supervisor lands straight on the sessions that still owe a decision. */
@@ -416,14 +441,35 @@ export function HistoryPage() {
             <span className="flex flex-wrap items-center gap-2">
               <span>{openSession.order?.orderNumber ?? 'Session'}</span>
               <span className="text-sm font-semibold text-slate-400">#{openSession.seq}</span>
-              {openSample && <span className="text-sm font-semibold text-brand-600 dark:text-brand-400">· Sample #{openSample.index}</span>}
+              {openSample && (
+                <span className="text-sm font-semibold text-brand-600 dark:text-brand-400">
+                  · Sample {openSession.seq}-{openSample.index}
+                </span>
+              )}
             </span>
           ) : null
         }
         footer={
-          <Button className="min-h-[48px]" onClick={closeDrilldown}>
-            Close
-          </Button>
+          <>
+            {canDelete && openSession && (
+              <Button
+                variant="danger"
+                className="mr-auto min-h-[48px]"
+                onClick={() =>
+                  setRemoving(
+                    openSample
+                      ? { kind: 'sample', id: openSample.id, label: `sample ${openSession.seq}-${openSample.index}` }
+                      : { kind: 'session', id: openSession.id, label: `session #${openSession.seq} of ${openSession.order?.orderNumber ?? 'this order'}` },
+                  )
+                }
+              >
+                <Trash2 className="h-4 w-4" /> {openSample ? 'Delete sample' : 'Delete session'}
+              </Button>
+            )}
+            <Button className="min-h-[48px]" onClick={closeDrilldown}>
+              Close
+            </Button>
+          </>
         }
       >
         {openSession && (
@@ -480,8 +526,8 @@ export function HistoryPage() {
                         onClick={() => setOpenSampleId(sm.id)}
                         className="flex min-h-[48px] w-full items-center gap-3 rounded-2xl px-4 py-3 text-left ring-1 ring-slate-200 transition-colors hover:bg-slate-50 dark:ring-slate-700 dark:hover:bg-slate-800/60"
                       >
-                        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-sm font-bold tabular-nums text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
-                          #{sm.index}
+                        <span className="grid h-10 min-w-[2.5rem] shrink-0 place-items-center rounded-xl bg-brand-100 px-1.5 text-sm font-bold tabular-nums text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+                          {openSession.seq}-{sm.index}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block font-bold">
@@ -525,6 +571,31 @@ export function HistoryPage() {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={removing !== null}
+        onClose={() => {
+          if (!saving) setRemoving(null)
+        }}
+        title={removing ? `Delete ${removing.label}?` : 'Delete'}
+        icon={<Trash2 className="h-5 w-5" />}
+        size="sm"
+        footer={
+          <>
+            <Button className="min-h-[48px]" onClick={() => setRemoving(null)} disabled={saving}>
+              Keep it
+            </Button>
+            <Button variant="danger" className="min-h-[48px]" onClick={() => void confirmRemove()} disabled={saving}>
+              <Trash2 className="h-4 w-4" /> Delete
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          It is marked as deleted and leaves every list and count. Nothing is erased: the measurements, defects and photos stay in the record,
+          and this deletion is written to the audit log with your name.
+        </p>
       </Modal>
 
       {editingDim && <DimensionEditDialog dimension={editingDim} saving={saving} onClose={() => setEditingDim(null)} onSave={(actual) => saveDimension(editingDim, actual)} />}

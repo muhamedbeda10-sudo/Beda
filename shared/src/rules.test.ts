@@ -460,6 +460,8 @@ describe('§14 q2 permissions', () => {
     expect(can('admin', 'view-all-sessions')).toBe(true)
     expect(can('supervisor', 'override-grade-mismatch')).toBe(true)
     expect(can('supervisor', 'delete-defect')).toBe(true)
+    expect(can('supervisor', 'delete-session')).toBe(false)
+    expect(can('supervisor', 'delete-sample')).toBe(false)
     expect(can('supervisor', 'purge-audit-logs')).toBe(false)
     expect(can('supervisor', 'manage-admin-data')).toBe(false)
   })
@@ -467,6 +469,8 @@ describe('§14 q2 permissions', () => {
   it('gives admins everything including audit purging', () => {
     expect(can('admin', 'manage-admin-data')).toBe(true)
     expect(can('admin', 'purge-audit-logs')).toBe(true)
+    expect(can('admin', 'delete-session')).toBe(true)
+    expect(can('admin', 'delete-sample')).toBe(true)
   })
 
   it('denies everything to an unknown role', () => {
