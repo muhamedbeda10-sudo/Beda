@@ -36,6 +36,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<InspectionsPage />} />
         <Route path="/wizard/:sessionId" element={<WizardPage />} />
+        <Route path="/wizard/:sessionId/edit/:sampleId" element={<WizardPage />} />
         <Route path="/coils" element={<CoilSearchPage />} />
         <Route path="/pdi" element={<PDIPage />} />
         <Route path="/history" element={<HistoryPage />} />

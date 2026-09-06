@@ -25,8 +25,8 @@ import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { CoilPicker } from '@/components/inspection/CoilPicker'
 import { WorkInstructionLinks } from '@/components/documents/WorkInstructionLinks'
-import { useWizardContext } from '@/services/queries'
-import { saveSample } from '@/services/mutations'
+import { useSampleDetail, useWizardContext } from '@/services/queries'
+import { reRecordSample, saveSample } from '@/services/mutations'
 import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect, type DraftCoil, type DraftPT, type DraftDimension } from '@/services/draftStore'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
@@ -43,7 +43,7 @@ import {
   type ItemReferenceImage,
   type WorkInstruction,
 } from '@qc/shared/types'
-import type { SaveSampleRequest } from '@qc/shared/api'
+import type { SampleDetail, SaveSampleRequest } from '@qc/shared/api'
 import {
   stepsForProcess,
   deriveShift,
@@ -77,7 +77,7 @@ const STEP_META: Record<WizardStep, { label: string; icon: typeof Ruler }> = {
 const CONSUMABLE_KINDS: PTConsumableKind[] = ['Cleaner', 'Penetrant', 'Developer']
 
 export function WizardPage() {
-  const { sessionId = '' } = useParams()
+  const { sessionId = '', sampleId: editingSampleId } = useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useApp()
@@ -87,6 +87,8 @@ export function WizardPage() {
   // for that line's item and machine. The API answers all of it in one
   // round trip; nothing here reads a whole table.
   const { data: ctx, isLoading: sessionsLoading, error: loadError } = useWizardContext(sessionId)
+  // Re-recording from History: the existing sample is the draft's starting point.
+  const { data: editing, isLoading: editingLoading } = useSampleDetail(editingSampleId ?? null)
   const session = ctx?.session
   const order = ctx?.order
   const machine = ctx?.machine ?? null
@@ -124,9 +126,14 @@ export function WizardPage() {
   // Build (or resume) the draft once the session and its configuration load.
   useEffect(() => {
     if (!session || !order || draft) return
-    const existing = loadDraft(session.id)
-    if (existing) {
+    if (editingSampleId && !editing) return
+    const existing = loadDraft(session.id, editingSampleId)
+    if (existing && (!editing || existing.editingVersion === editing.sample.version)) {
       setDraft(existing)
+      return
+    }
+    if (editing) {
+      setDraft(draftFromSample(editing, session.id, session.workCenterCode, process))
       return
     }
     // The item's dimensions on THIS machine: machine-specific rows override
@@ -184,7 +191,7 @@ export function WizardPage() {
           : undefined,
       updatedAt: new Date().toISOString(),
     })
-  }, [session, order, draft, dimOrder, previousDims, process, previousWire])
+  }, [session, order, draft, dimOrder, previousDims, process, previousWire, editing, editingSampleId])
 
   // Persist on every change so a reload or a dead network loses nothing (§9.6).
   const update = useCallback((patch: Partial<SampleDraft> | ((d: SampleDraft) => SampleDraft)) => {
@@ -235,7 +242,7 @@ export function WizardPage() {
     })
   }, [draft])
 
-  if (sessionsLoading) return <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
+  if (sessionsLoading || (editingSampleId && editingLoading)) return <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
   if (!session || !order || loadError) {
     return (
       <EmptyState
@@ -334,6 +341,17 @@ export function WizardPage() {
           : undefined,
       }
 
+      if (draft.editingSampleId) {
+        // Re-recording: the whole sample is replaced as one unit; History shows the result.
+        const { submissionId: _drop, ...rest } = body
+        const result = await reRecordSample(queryClient, session.id, draft.editingSampleId, { ...rest, version: draft.editingVersion ?? 0 })
+        clearDraft(session.id, draft.editingSampleId)
+        setDraft(null)
+        toast(`Sample ${session.seq}-${result.index} re-recorded.`, 'success')
+        navigate('/history')
+        return
+      }
+
       const result = await saveSample(queryClient, session.id, body)
 
       // The sample is on record: leave the wizard. The session stays open on
@@ -377,10 +395,10 @@ export function WizardPage() {
     // wide screen while list pages use the whole of it.
     <div className="mx-auto max-w-5xl space-y-4 pb-32">
       <button
-        onClick={() => navigate('/')}
+        onClick={() => navigate(draft.editingSampleId ? '/history' : '/')}
         className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400"
       >
-        <ArrowLeft className="h-4 w-4" /> Inspections
+        <ArrowLeft className="h-4 w-4" /> {draft.editingSampleId ? 'History' : 'Inspections'}
       </button>
 
       <Card className="p-4">
@@ -390,7 +408,11 @@ export function WizardPage() {
           <Badge tone="neutral">
             Shift {shift} · {shiftName(shift)}
           </Badge>
-          <Badge tone="neutral">Sample {session.seq}-{priorSamples.length + 1}</Badge>
+          {draft.editingSampleId && editing ? (
+            <Badge tone="amber">Re-recording sample {session.seq}-{editing.sample.index}</Badge>
+          ) : (
+            <Badge tone="neutral">Sample {session.seq}-{priorSamples.length + 1}</Badge>
+          )}
           {!online && (
             <Badge tone="amber" icon={<CloudOff className="h-3 w-3" />}>
               Offline — your work is saved on this device
@@ -1235,6 +1257,69 @@ function DefectsStep({
       )}
     </div>
   )
+}
+
+/** The draft that re-records an existing sample: every row as it stands, ready to be changed. */
+function draftFromSample(detail: SampleDetail, sessionId: string, workCenterCode: string, process: Process): SampleDraft {
+  const { sample, dimensions, defects, coils, paint, pt } = detail
+  const str = (v: number | null | undefined) => (v === null || v === undefined ? '' : String(v))
+  return {
+    sessionId,
+    orderId: sample.orderId,
+    workCenterCode,
+    process,
+    submissionId: newSubmissionId(),
+    editingSampleId: sample.id,
+    editingVersion: sample.version,
+    step: stepsForProcess(process)[0],
+    drawing: sample.drawing,
+    drawingAlt: sample.drawingAlt,
+    issue: sample.issue,
+    sampleQty: String(sample.sampleQty),
+    coils: coils.map((c) => ({
+      coilId: c.coilId ?? undefined,
+      coilNumber: c.coilNumber,
+      grade: c.grade ?? '',
+      smType: c.smType ?? '',
+      supplier: c.supplier ?? '',
+      thickness: str(c.thickness),
+      width: str(c.width),
+      yield: str(c.yield),
+      notes: c.notes ?? '',
+    })),
+    dimensions: dimensions.map((d) => ({
+      name: d.name,
+      sequence: d.sequence,
+      nominal: str(d.nominal),
+      tolPlus: str(d.tolPlus),
+      tolMinus: str(d.tolMinus),
+      actual: str(d.actual),
+      unit: d.unit,
+      source: d.source,
+    })),
+    defects: defects.map((d) => ({ key: uid('dk'), defectName: d.defectName, qty: String(d.qty), disposition: d.disposition, notes: d.notes ?? '', imageIds: d.imageIds })),
+    paint: { notes: paint?.notes ?? '', imageIds: paint?.imageIds ?? [] },
+    pt:
+      process === 'welding'
+        ? {
+            testFrequencyPct: str(pt?.testFrequencyPct),
+            consumableLots: pt?.consumableLots ?? {},
+            weldingWireBatch: pt?.weldingWireBatch ?? '',
+            testedLengths: (pt?.testedLengths ?? []).map((l) => ({ key: uid('tl'), lengthMm: String(l.lengthMm), verdict: l.verdict })),
+            notes: pt?.notes ?? '',
+            imageIds: pt?.imageIds ?? [],
+          }
+        : undefined,
+    gradeAcknowledged: sample.gradeAcknowledgement
+      ? {
+          coilNumbers: sample.gradeAcknowledgement.coilNumbers,
+          expectedGrade: sample.gradeAcknowledgement.expectedGrade,
+          foundGrades: sample.gradeAcknowledgement.foundGrades,
+          at: sample.gradeAcknowledgement.at,
+        }
+      : undefined,
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 function emptyPT(): DraftPT {

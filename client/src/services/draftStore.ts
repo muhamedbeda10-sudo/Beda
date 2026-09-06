@@ -71,6 +71,10 @@ export interface SampleDraft {
   workCenterCode: string
   /** The machine's process when the draft was started; decides the steps. */
   process: Process
+  /** Set when the draft re-records an existing sample from History. */
+  editingSampleId?: string
+  /** The version of the sample being re-recorded, for the conflict check. */
+  editingVersion?: number
   /** Stable across retries — the server dedupes on it (§9.3). */
   submissionId: string
   step: string
@@ -93,13 +97,13 @@ export interface SampleDraft {
   updatedAt: string
 }
 
-function key(sessionId: string): string {
-  return `${PREFIX}${sessionId}`
+function key(sessionId: string, editingSampleId?: string): string {
+  return editingSampleId ? `${PREFIX}${sessionId}:edit:${editingSampleId}` : `${PREFIX}${sessionId}`
 }
 
-export function loadDraft(sessionId: string): SampleDraft | null {
+export function loadDraft(sessionId: string, editingSampleId?: string): SampleDraft | null {
   try {
-    const raw = localStorage.getItem(key(sessionId))
+    const raw = localStorage.getItem(key(sessionId, editingSampleId))
     if (!raw) return null
     const parsed = JSON.parse(raw) as SampleDraft
     if (!parsed?.sessionId) return null
@@ -111,7 +115,7 @@ export function loadDraft(sessionId: string): SampleDraft | null {
 
 export function saveDraft(draft: SampleDraft): void {
   try {
-    localStorage.setItem(key(draft.sessionId), JSON.stringify({ ...draft, updatedAt: new Date().toISOString() }))
+    localStorage.setItem(key(draft.sessionId, draft.editingSampleId), JSON.stringify({ ...draft, updatedAt: new Date().toISOString() }))
   } catch {
     // Storage full or unavailable — the inspector keeps working in memory.
     // Losing the draft is bad; blocking data entry over it would be worse.
@@ -119,9 +123,9 @@ export function saveDraft(draft: SampleDraft): void {
   }
 }
 
-export function clearDraft(sessionId: string): void {
+export function clearDraft(sessionId: string, editingSampleId?: string): void {
   try {
-    localStorage.removeItem(key(sessionId))
+    localStorage.removeItem(key(sessionId, editingSampleId))
   } catch {
     /* nothing to do */
   }

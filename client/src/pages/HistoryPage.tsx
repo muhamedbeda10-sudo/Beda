@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
@@ -11,9 +11,11 @@ import {
   Info,
   Layers,
   Lock,
+  LockOpen,
+  Pencil,
+  Plus,
   Trash2,
   Package2,
-  Pencil,
   Ruler,
   Search,
   ShieldCheck,
@@ -25,7 +27,7 @@ import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
 import { Attr, SampleDetail, Section, SectionEmpty, dispositionToneOf, num, statusToneOf } from '@/components/inspection/SampleDetail'
 import { useHistory, useMaster, useSampleDetail, useSessionSamples } from '@/services/queries'
-import { correctDefect, correctDimension, deleteSample, deleteSession } from '@/services/mutations'
+import { correctDefect, correctDimension, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, processForMachine, shiftName } from '@/domain'
@@ -74,6 +76,7 @@ const RANGE_LABEL: Record<RangeFilter, string> = {
 
 export function HistoryPage() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const { role } = useAuth()
   const { toast } = useApp()
   const [params, setParams] = useSearchParams()
@@ -91,6 +94,19 @@ export function HistoryPage() {
   /** What an administrator asked to delete; confirmed in its own dialog. */
   const [removing, setRemoving] = useState<{ kind: 'session'; id: string; label: string } | { kind: 'sample'; id: string; label: string } | null>(null)
   const canDelete = can(role, 'delete-session')
+
+  async function reopen() {
+    if (!openSession) return
+    setSaving(true)
+    try {
+      await reopenSession(queryClient, openSession.id, openSession.version)
+      toast('Session reopened. Samples can be added again.', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not reopen the session.', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function confirmRemove() {
     if (!removing) return
@@ -451,6 +467,21 @@ export function HistoryPage() {
         }
         footer={
           <>
+            {openSession && openSample && editable && (
+              <Button variant="secondary" className="min-h-[48px]" onClick={() => navigate(`/wizard/${openSession.id}/edit/${openSample.id}`)}>
+                <Pencil className="h-4 w-4" /> Edit sample
+              </Button>
+            )}
+            {openSession && !openSample && openSession.status === 'Open' && can(role, 'record-inspection') && (
+              <Button variant="secondary" className="min-h-[48px]" onClick={() => navigate(`/wizard/${openSession.id}`)}>
+                <Plus className="h-4 w-4" /> New sample
+              </Button>
+            )}
+            {openSession && !openSample && openSession.status === 'Closed' && can(role, 'edit-closed-session') && (
+              <Button variant="secondary" className="min-h-[48px]" disabled={saving} onClick={() => void reopen()}>
+                <LockOpen className="h-4 w-4" /> Reopen session
+              </Button>
+            )}
             {canDelete && openSession && (
               <Button
                 variant="danger"

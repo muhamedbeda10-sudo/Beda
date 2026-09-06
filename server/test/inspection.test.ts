@@ -9,6 +9,7 @@ import type {
   OpenSessionsResponse,
   OrderHistory,
   PDIWithOrder,
+  ReRecordSampleResponse,
   SampleDetail,
   SampleSummary,
   SaveSampleRequest,
@@ -509,6 +510,56 @@ describe('corrections (§9.4, §14)', () => {
     expect(repair.body.sessions).toHaveLength(1)
     const hold = await app.api<HistoryResponse>('GET', '/api/sessions/history?disposition=Hold', { token: inspector.token })
     expect(hold.body.sessions).toHaveLength(0)
+  })
+
+  it('re-records a sample as one unit from History, keeping its number and auditing the change', async () => {
+    const list = await app.api<SampleSummary[]>('GET', `/api/sessions/${sessionId}/samples`, { token: inspector.token })
+    const first = list.body.find((sm) => sm.index === 1)!
+    const before = await app.api<SampleDetail>('GET', `/api/samples/${first.id}`, { token: inspector.token })
+    const body = {
+      ...weldSample('99999999-9999-4999-8999-999999999999'),
+      drawing: 'BS9059/58-ALT',
+      sampleQty: 4,
+      dimensions: [{ name: 'Width', sequence: 1, nominal: 125, tolPlus: 0.5, tolMinus: 0.5, actual: 124.2, unit: 'mm', source: 'item-order' as const }],
+      defects: [],
+      version: before.body.sample.version,
+    }
+    const { submissionId: _drop, ...reRecord } = body
+    // A closed session: the inspector may not, a supervisor may.
+    expect((await app.api('PUT', `/api/sessions/${sessionId}/samples/${first.id}`, { token: inspector.token, body: reRecord })).status).toBe(403)
+    const stale = await app.api<ApiErrorBody>('PUT', `/api/sessions/${sessionId}/samples/${first.id}`, { token: supervisor.token, body: { ...reRecord, version: 99 } })
+    expect(stale.status).toBe(409)
+    const ok = await app.api<ReRecordSampleResponse>('PUT', `/api/sessions/${sessionId}/samples/${first.id}`, { token: supervisor.token, body: reRecord })
+    expect(ok.status).toBe(200)
+    expect(ok.body.index).toBe(1)
+    expect(ok.body.version).toBe(before.body.sample.version + 1)
+
+    const after = await app.api<SampleDetail>('GET', `/api/samples/${first.id}`, { token: inspector.token })
+    expect(after.body.sample.drawing).toBe('BS9059/58-ALT')
+    expect(after.body.sample.sampleQty).toBe(4)
+    expect(after.body.dimensions.map((d) => [d.name, d.actual, d.status])).toEqual([['Width', 124.2, 'Fail']])
+    expect(after.body.defects).toEqual([])
+    expect(after.body.pt?.testedLengths.map((l) => l.lengthMm)).toEqual([150, 90])
+    // The retired rows are still there, marked deleted.
+    const { rows } = await app.db.query<{ n: number }>('SELECT count(*)::int AS n FROM dimension_results WHERE sample_id = $1 AND deleted_at IS NOT NULL', [first.id])
+    expect(rows[0].n).toBe(3)
+    const audit = await app.api<AuditListResponse>('GET', '/api/audit', { token: supervisor.token })
+    const mine = audit.body.entries.filter((e) => e.entityId === first.id && e.action === 'update')
+    expect(mine.some((e) => e.field === 'drawing' && e.newValue === 'BS9059/58-ALT')).toBe(true)
+    expect(mine.some((e) => e.field === 'reRecorded')).toBe(true)
+  })
+
+  it('reopens a closed session for a supervisor so samples can be added again', async () => {
+    const closed = await app.api<SessionWithOrder>('GET', `/api/sessions/${sessionId}`, { token: inspector.token })
+    expect(closed.body.status).toBe('Closed')
+    expect((await app.api('POST', `/api/sessions/${sessionId}/reopen`, { token: inspector.token, body: { version: closed.body.version } })).status).toBe(403)
+    const reopened = await app.api<SessionWithOrder>('POST', `/api/sessions/${sessionId}/reopen`, { token: supervisor.token, body: { version: closed.body.version } })
+    expect(reopened.status).toBe(200)
+    expect(reopened.body.status).toBe('Open')
+    expect(reopened.body.closedAt).toBeUndefined()
+    // Close it again so the tests below see a closed session.
+    const again = await app.api<SessionWithOrder>('POST', `/api/sessions/${sessionId}/close`, { token: inspector.token, body: { finalQty: 480, version: reopened.body.version } })
+    expect(again.status).toBe(200)
   })
 })
 
