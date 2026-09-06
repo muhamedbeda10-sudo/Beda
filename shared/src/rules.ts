@@ -552,10 +552,22 @@ export const STOCK_MACHINES: readonly StockProduction[] = [
   { machineCode: '21', item: 'Connector (right + left)', itemCode: 'CONNECTOR-RL', pieces: ['Right connector', 'Left connector'] },
 ]
 
+/**
+ * A machine code as typed in the register, made comparable: Arabic-Indic
+ * digits become Western ones, spaces go, and a purely numeric code loses its
+ * leading zeros — so "٢١", " 021 " and "21" are the same machine.
+ */
+export function normaliseMachineCode(code: string | null | undefined): string {
+  const western = (code ?? '').replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x6f0))
+  const compact = western.replace(/\s+/g, '').toLowerCase()
+  return /^\d+$/.test(compact) ? String(Number(compact)) : compact
+}
+
 /** The stock production of a machine, or null for a machine that works to order. */
 export function stockProductionOf(machineCode: string | null | undefined): StockProduction | null {
-  const code = (machineCode ?? '').trim().toLowerCase()
-  return STOCK_MACHINES.find((m) => m.machineCode.toLowerCase() === code) ?? null
+  const code = normaliseMachineCode(machineCode)
+  if (code === '') return null
+  return STOCK_MACHINES.find((m) => normaliseMachineCode(m.machineCode) === code) ?? null
 }
 
 /** A machine that produces for stock — sessions on it are started without an order. */

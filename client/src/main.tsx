@@ -11,7 +11,16 @@ import { registerSW } from 'virtual:pwa-register'
 
 // The service worker that makes the app installable and keeps its shell
 // ready. A new deploy is picked up on the next load without asking.
-registerSW({ immediate: true })
+// A tablet on the floor stays open for a whole shift: besides the check on
+// each load, ask for a new build every hour so a deploy reaches it without
+// anyone reloading. autoUpdate then swaps it in and reloads.
+registerSW({
+  immediate: true,
+  onRegisteredSW(_url, registration) {
+    if (!registration) return
+    window.setInterval(() => void registration.update(), 60 * 60 * 1000)
+  },
+})
 
 // Reads are cached per screen and re-fetched when the tab regains focus, so a
 // tablet that was asleep shows current data without a manual reload. A 4xx is
