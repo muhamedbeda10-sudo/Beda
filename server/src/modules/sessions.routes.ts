@@ -41,6 +41,7 @@ import type {
   SaveCoilInput,
   SampleSummary,
   SaveSampleResponse,
+  SessionNotesResponse,
   SessionWithOrder,
   WizardContext,
 } from '@qc/shared/api'
@@ -54,6 +55,7 @@ import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/ser
 import { auditEvent } from '@qc/shared/audit'
 import { dropNulls } from '../lib/rows'
 import { assertImagesUsable, linkImages } from './images.links'
+import { loadOrderNotes, loadSessionNotes, noteIsEmpty, writeSessionNote } from './notes'
 import { fetchOrdersByIds } from './orders.routes'
 import {
   ORDER_SUMMARY_SELECT,
@@ -146,6 +148,7 @@ const saveSampleSchema = z.object({
       imageIds: z.array(uuid).max(50).default([]),
     })
     .optional(),
+  note: z.object({ text: optText(4000), imageIds: z.array(uuid).max(30).default([]) }).optional(),
   gradeAcknowledgement: z
     .object({
       coilNumbers: z.array(z.string().trim().min(1)).min(1),
@@ -354,7 +357,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const wc = session.workCenterCode
     const machine = await loadMachine(db, wc)
     const process = processForMachine(machine, wc)
-    const [dimOrder, refImages, wcDefects, grades, consumables, samples, previousDims, previousWire, instructions, previousSetup] = await Promise.all([
+    const [dimOrder, refImages, wcDefects, grades, consumables, samples, previousDims, previousWire, instructions, previousSetup, orderNotes] = await Promise.all([
       // The item's general rows plus the rows specific to this machine; the
       // shared resolver decides which wins (§8.3).
       db.query<ItemDimensionOrder>(
@@ -418,6 +421,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       ),
       instructionsInForce(db, process),
       loadPreviousSetup(db, id),
+      loadOrderNotes(db, session.orderId),
     ])
     const { order: _summary, ...plain } = session
     const body: WizardContext = {
@@ -435,8 +439,37 @@ export function sessionsRoutes(ctx: AppContext): Router {
       previousWeldingWireBatch: previousWire.rows[0]?.batch ?? null,
       previousSetup,
       workInstructions: instructions,
+      orderNotes,
     }
     res.json(body)
+  })
+
+  /** §5.8 — the notes written during this session, newest first. */
+  r.get('/:id/notes', async (req, res) => {
+    const id = parse(uuid, req.params.id)
+    const session = await loadSessionWithOrder(db, id)
+    if (!session) throw notFound('That session')
+    const body: SessionNotesResponse = { notes: await loadSessionNotes(db, id) }
+    res.json(body)
+  })
+
+  /** Mark a note deleted — administrators only; the row and its photos stay. */
+  r.delete('/:id/notes/:noteId', requireCapability('delete-note'), async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    const noteId = parse(uuid, req.params.noteId)
+    await withTransaction(db, async (tx) => {
+      const session = await loadSessionWithOrder(tx, id)
+      if (!session) throw notFound('That session')
+      const { rows } = await tx.query<{ id: string; sample_id: string | null }>(
+        `UPDATE session_notes SET deleted_at = now(), deleted_by_id = $3
+          WHERE id = $1 AND session_id = $2 AND deleted_at IS NULL RETURNING id, sample_id`,
+        [noteId, id, user.id],
+      )
+      if (!rows[0]) throw notFound('That note')
+      await auditDelete(tx, auditCtxFor(user, session, 'SessionNote', noteId, rows[0].sample_id ?? undefined))
+    })
+    res.status(204).end()
   })
 
   r.get('/:id/samples', async (req, res) => {
@@ -566,6 +599,11 @@ export function sessionsRoutes(ctx: AppContext): Router {
       const auditCtx = auditCtxFor(user, session, 'InspectionSample', sampleId, sampleId)
       const at = now.toISOString()
       const entries = [auditEvent('create', auditCtx, at)]
+      // §5.8 — a remark about the order rides along with the sample, as one unit.
+      if (!noteIsEmpty(body.note)) {
+        const noteId = await writeSessionNote(tx, { sessionId, orderId: session.orderId, sampleId, author: user, note: body.note })
+        entries.push(auditEvent('create', auditCtxFor(user, session, 'SessionNote', noteId, sampleId), at))
+      }
       // §8.4 — an overridden grade mismatch is itself evidence.
       if (ack) {
         entries.push(
@@ -654,7 +692,14 @@ export function sessionsRoutes(ctx: AppContext): Router {
           coils: body.coils.length,
         },
       )
-      await writeAudit(tx, [auditEvent('update', auditCtx, new Date().toISOString(), { field: 'reRecorded', newValue: 'The whole sample was re-recorded from History.' })])
+      const at = new Date().toISOString()
+      const entries = [auditEvent('update', auditCtx, at, { field: 'reRecorded', newValue: 'The whole sample was re-recorded from History.' })]
+      // A note written while re-recording is a new remark; earlier ones stand.
+      if (!noteIsEmpty(body.note)) {
+        const noteId = await writeSessionNote(tx, { sessionId, orderId: session.orderId, sampleId, author: user, note: body.note })
+        entries.push(auditEvent('create', auditCtxFor(user, session, 'SessionNote', noteId, sampleId), at))
+      }
+      await writeAudit(tx, entries)
       return { sampleId, index: before.index, version: before.version + 1 }
     })
     res.json(outcome)
@@ -710,7 +755,8 @@ async function validateSampleBody(
   if (process === 'paint' && !body.paint) throw badRequest('A paint sample record is required on this machine.')
 
   const imageIds = [...body.defects.flatMap((d) => d.imageIds), ...(body.paint?.imageIds ?? []), ...(body.pt?.imageIds ?? [])]
-  await assertImagesUsable(tx, imageIds)
+  // The note's photos must exist too, but they belong to the session, not the sample.
+  await assertImagesUsable(tx, [...imageIds, ...(body.note?.imageIds ?? [])])
   return { imageIds }
 }
 

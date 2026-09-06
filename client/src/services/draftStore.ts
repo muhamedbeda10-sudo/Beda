@@ -65,6 +65,11 @@ export interface DraftPT {
   imageIds: string[]
 }
 
+export interface DraftNote {
+  text: string
+  imageIds: string[]
+}
+
 export interface SampleDraft {
   sessionId: string
   orderId: string
@@ -88,6 +93,9 @@ export interface SampleDraft {
   defects: DraftDefect[]
   paint: { notes?: string; imageIds: string[] }
   pt?: DraftPT
+  /** A remark about the order, written on the Review step; saved with the
+   *  sample when it has text or a photo. Absent on drafts from before it existed. */
+  note?: DraftNote
   gradeAcknowledged?: {
     coilNumbers: string[]
     expectedGrade: string

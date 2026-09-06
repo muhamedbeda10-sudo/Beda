@@ -14,8 +14,8 @@ export async function assertImagesUsable(q: Queryable, imageIds: string[]): Prom
 /** Write an ordered image list into one of the junction tables. */
 export async function linkImages(
   q: Queryable,
-  table: 'defect_images' | 'paint_sample_images' | 'pt_record_images' | 'pdi_images',
-  ownerColumn: 'defect_id' | 'paint_sample_id' | 'pt_record_id' | 'pdi_id',
+  table: 'defect_images' | 'paint_sample_images' | 'pt_record_images' | 'pdi_images' | 'session_note_images',
+  ownerColumn: 'defect_id' | 'paint_sample_id' | 'pt_record_id' | 'pdi_id' | 'note_id',
   ownerId: string,
   imageIds: string[],
 ): Promise<void> {

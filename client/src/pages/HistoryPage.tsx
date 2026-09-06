@@ -12,6 +12,7 @@ import {
   Layers,
   Lock,
   LockOpen,
+  MessageSquareText,
   Pencil,
   Plus,
   Trash2,
@@ -26,8 +27,9 @@ import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Stat } fr
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
 import { Attr, SampleDetail, Section, SectionEmpty, dispositionToneOf, num, statusToneOf } from '@/components/inspection/SampleDetail'
-import { useHistory, useMaster, useSampleDetail, useSessionSamples } from '@/services/queries'
-import { correctDefect, correctDimension, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
+import { OrderNoteList } from '@/components/inspection/OrderNotes'
+import { useHistory, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
+import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, processForMachine, shiftName } from '@/domain'
@@ -92,8 +94,11 @@ export function HistoryPage() {
   const [editingDefect, setEditingDefect] = useState<DefectResult | null>(null)
   const [saving, setSaving] = useState(false)
   /** What an administrator asked to delete; confirmed in its own dialog. */
-  const [removing, setRemoving] = useState<{ kind: 'session'; id: string; label: string } | { kind: 'sample'; id: string; label: string } | null>(null)
+  const [removing, setRemoving] = useState<
+    { kind: 'session'; id: string; label: string } | { kind: 'sample'; id: string; label: string } | { kind: 'note'; id: string; label: string } | null
+  >(null)
   const canDelete = can(role, 'delete-session')
+  const canDeleteNote = can(role, 'delete-note')
 
   async function reopen() {
     if (!openSession) return
@@ -116,6 +121,9 @@ export function HistoryPage() {
         await deleteSession(queryClient, removing.id)
         toast('Session marked deleted. Nothing was erased.', 'success')
         closeDrilldown()
+      } else if (removing.kind === 'note') {
+        if (openSession) await deleteNote(queryClient, openSession.id, removing.id)
+        toast('Note marked deleted. Nothing was erased.', 'success')
       } else {
         await deleteSample(queryClient, removing.id)
         toast('Sample marked deleted. Nothing was erased.', 'success')
@@ -146,6 +154,7 @@ export function HistoryPage() {
   // ---- The drill-down ------------------------------------------------------
   // Children load for what is open and nothing else.
   const { data: samples = [], isLoading: samplesLoading } = useSessionSamples(openSessionId)
+  const { data: sessionNotes = [], isLoading: notesLoading } = useSessionNotes(openSessionId)
   const { data: detail, isLoading: sampleLoading } = useSampleDetail(openSampleId)
 
   /** The open session's samples, in the order they were taken. */
@@ -589,6 +598,21 @@ export function HistoryPage() {
                     ))}
                   </div>
                 )}
+
+                {/* §5.8 — remarks about the order written during this session. */}
+                <Section icon={<MessageSquareText className="h-4 w-4" />} title="Notes about the order" count={sessionNotes.length}>
+                  {notesLoading ? (
+                    <SectionEmpty message="Loading the notes…" />
+                  ) : (
+                    <OrderNoteList
+                      notes={sessionNotes}
+                      emptyMessage="No notes were written in this session."
+                      machineLabel={workCenterName}
+                      onDelete={canDeleteNote ? (n) => setRemoving({ kind: 'note', id: n.id, label: `the note by ${n.authorName}` }) : undefined}
+                      deleting={saving}
+                    />
+                  )}
+                </Section>
               </>
             )}
 

@@ -19,6 +19,7 @@ import {
   Search,
   Gauge,
   Cable,
+  MessageSquareText,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
@@ -27,7 +28,8 @@ import { CoilPicker } from '@/components/inspection/CoilPicker'
 import { WorkInstructionLinks } from '@/components/documents/WorkInstructionLinks'
 import { useSampleDetail, useWizardContext } from '@/services/queries'
 import { reRecordSample, saveSample } from '@/services/mutations'
-import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect, type DraftCoil, type DraftPT, type DraftDimension } from '@/services/draftStore'
+import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect, type DraftCoil, type DraftPT, type DraftDimension, type DraftNote } from '@/services/draftStore'
+import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn, uid, newSubmissionId } from '@/lib/utils'
@@ -41,6 +43,7 @@ import {
   type ProductionOrder,
   type PTConsumableProduct,
   type ItemReferenceImage,
+  type SessionNote,
   type WorkInstruction,
 } from '@qc/shared/types'
 import type { SampleDetail, SaveSampleRequest } from '@qc/shared/api'
@@ -106,6 +109,7 @@ export function WizardPage() {
   const process: Process = ctx?.process ?? 'forming'
   const previousWire = ctx?.previousWeldingWireBatch ?? null
   const previousSetup = ctx?.previousSetup ?? null
+  const orderNotes = useMemo(() => ctx?.orderNotes ?? [], [ctx])
   const steps = useMemo(() => stepsForProcess(process), [process])
 
   const [draft, setDraft] = useState<SampleDraft | null>(null)
@@ -204,6 +208,7 @@ export function WizardPage() {
       dimensions,
       defects: [],
       paint: { imageIds: [] },
+      note: { text: '', imageIds: [] },
       pt:
         process === 'welding'
           ? { testFrequencyPct: '', consumableLots: {}, weldingWireBatch: previousWire ?? '', testedLengths: [], imageIds: [] }
@@ -349,6 +354,11 @@ export function WizardPage() {
                 notes: draft.pt.notes || undefined,
                 imageIds: draft.pt.imageIds,
               }
+            : undefined,
+        // A remark about the order goes with the sample only when it says something.
+        note:
+          draft.note && (draft.note.text.trim() !== '' || draft.note.imageIds.length > 0)
+            ? { text: draft.note.text.trim() || undefined, imageIds: draft.note.imageIds }
             : undefined,
         gradeAcknowledgement: acknowledged
           ? {
@@ -508,7 +518,9 @@ export function WizardPage() {
             <PTStep draft={draft} update={update} consumables={consumables} sessionId={session.id} orderId={order.id} />
           </>
         )}
-        {current === 'review' && <ReviewStep draft={draft} order={order} issues={issues} update={update} />}
+        {current === 'review' && (
+          <ReviewStep draft={draft} order={order} issues={issues} update={update} orderNotes={orderNotes} sessionId={session.id} orderId={order.id} />
+        )}
       </Card>
 
       {/* Sticky navigation */}
@@ -1318,6 +1330,7 @@ function draftFromSample(detail: SampleDetail, sessionId: string, workCenterCode
     })),
     defects: defects.map((d) => ({ key: uid('dk'), defectName: d.defectName, qty: String(d.qty), disposition: d.disposition, notes: d.notes ?? '', imageIds: d.imageIds })),
     paint: { notes: paint?.notes ?? '', imageIds: paint?.imageIds ?? [] },
+    note: { text: '', imageIds: [] },
     pt:
       process === 'welding'
         ? {
@@ -1597,15 +1610,24 @@ function ReviewStep({
   order,
   issues,
   update,
+  orderNotes,
+  sessionId,
+  orderId,
 }: {
   draft: SampleDraft
   order: ProductionOrder
   issues: { step: WizardStep; message: string }[]
   update: Updater
+  /** Every note written about this order so far, newest first. */
+  orderNotes: SessionNote[]
+  sessionId: string
+  orderId: string
 }) {
   const measured = draft.dimensions.filter((d) => d.actual.trim() !== '')
   const qty = Number(draft.sampleQty)
   const qtyBad = !(draft.sampleQty.trim() !== '' && qty > 0)
+  const note: DraftNote = draft.note ?? { text: '', imageIds: [] }
+  const setNote = (patch: Partial<DraftNote>) => update((d) => ({ ...d, note: { ...(d.note ?? { text: '', imageIds: [] }), ...patch } }))
   return (
     <div className="space-y-4">
       {/* §5.7 — the quantity actually taken is known only once the inspection is done. */}
@@ -1759,9 +1781,35 @@ function ReviewStep({
         </Section>
       )}
 
+      {/* §5.8 — a remark about the order as a whole: not this sample, the order. */}
+      <Section title="Notes about this order">
+        <div className="space-y-3 rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
+          <Field label="Note" hint="Anything about the order in general — packing, customer requests, what the next shift should know. Optional.">
+            <textarea
+              dir="auto"
+              className="input min-h-[96px]"
+              maxLength={4000}
+              value={note.text}
+              onChange={(e) => setNote({ text: e.target.value })}
+              placeholder="Write a note about the order…"
+            />
+          </Field>
+          <Field label="Photos" hint="Photos of the order in general, not of a defect.">
+            <ImagePicker imageIds={note.imageIds} onChange={(ids) => setNote({ imageIds: ids })} sessionId={sessionId} orderId={orderId} />
+          </Field>
+        </div>
+        <div className="mt-3">
+          <p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            <MessageSquareText className="h-3.5 w-3.5" /> Earlier notes on this order
+            {orderNotes.length > 0 && <Badge tone="neutral">{orderNotes.length}</Badge>}
+          </p>
+          <OrderNoteList notes={orderNotes} emptyMessage="No notes on this order yet." />
+        </div>
+      </Section>
+
       <p className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-3 text-sm text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
         <Layers className="mt-0.5 h-4 w-4 shrink-0" />
-        Saving writes the sample, its measurements, defects, coils and attachments as one unit. If anything
+        Saving writes the sample, its measurements, defects, coils, attachments and your note as one unit. If anything
         fails, nothing is written and your entries stay on this screen.
       </p>
     </div>

@@ -24,6 +24,7 @@ export const SESSION_SELECT = `
     WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL) AS "defectCount",
   (SELECT count(*)::int FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
     WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL AND d.disposition = 'Hold') AS "holdCount",
+  (SELECT count(*)::int FROM session_notes n WHERE n.session_id = s.id AND n.deleted_at IS NULL) AS "noteCount",
   EXISTS (
     SELECT 1
       FROM production_orders o1
@@ -80,6 +81,7 @@ export interface SessionRow {
   sampleCount: number
   defectCount: number
   holdCount: number
+  noteCount: number
   priorDefectsElsewhere: boolean
 }
 
@@ -109,6 +111,7 @@ export function toSession(r: SessionRow): InspectionSession {
     sampleCount: r.sampleCount,
     defectCount: r.defectCount,
     holdCount: r.holdCount,
+    noteCount: r.noteCount,
     priorDefectsElsewhere: r.priorDefectsElsewhere,
   }
   if (r.startQty !== null && r.startQtyById && r.startQtyByName && r.startQtyAt) {

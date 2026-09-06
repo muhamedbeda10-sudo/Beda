@@ -108,6 +108,32 @@ export function remainingQty(o: Pick<ProductionOrder, 'requiredQty' | 'finishedQ
 
 export type SessionStatus = 'Open' | 'Closed'
 
+/**
+ * A general remark about the order — text, photos, or both — written on the
+ * Review step. It belongs to the session that wrote it (who, when, which
+ * machine, while saving which sample) and is shown to every later session on
+ * the same order.
+ */
+export interface SessionNote {
+  id: ID
+  sessionId: ID
+  orderId: ID
+  /** The sample whose save carried the note, when written from the wizard. */
+  sampleId?: ID | null
+  text: string
+  authorId: ID
+  authorName: string
+  createdAt: ISODate
+  imageIds: ID[]
+  /** Where the note was written, so a note from another machine reads in context. */
+  sessionSeq: number
+  workCenterCode: string
+  sampleIndex?: number | null
+  item: string
+  itemCode: string
+  version: number
+}
+
 export interface InspectionSession {
   id: ID
   seq: number
@@ -138,6 +164,8 @@ export interface InspectionSession {
   /** The same item of the same order already showed defects on another
    *  machine or in an earlier session. Computed by the API. */
   priorDefectsElsewhere?: boolean
+  /** Notes about the order written during this session. Computed by the API. */
+  noteCount?: number
   /** Optimistic-concurrency token (§9.4). */
   version: number
 }

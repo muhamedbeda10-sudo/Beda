@@ -74,6 +74,12 @@ export async function deleteSample(qc: QueryClient, sampleId: string): Promise<v
   await qc.invalidateQueries({ queryKey: ['samples'] })
 }
 
+/** Mark a note about an order deleted — administrators only; nothing is erased. */
+export async function deleteNote(qc: QueryClient, sessionId: string, noteId: string): Promise<void> {
+  await api<void>(`/sessions/${sessionId}/notes/${noteId}`, { method: 'DELETE' })
+  await qc.invalidateQueries({ queryKey: ['sessions'] })
+}
+
 export async function saveSample(qc: QueryClient, sessionId: string, body: SaveSampleRequest): Promise<SaveSampleResponse> {
   const result = await api<SaveSampleResponse>(`/sessions/${sessionId}/samples`, { method: 'POST', body })
   await qc.invalidateQueries({ queryKey: ['sessions'] })
