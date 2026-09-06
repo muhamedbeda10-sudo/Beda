@@ -19,6 +19,7 @@ import {
   type ItemReferenceImage,
   type Machine,
   type PTConsumableProduct,
+  type Process,
   type ProductionOrder,
   type WorkCenterDefect,
 } from '@qc/shared/types'
@@ -35,6 +36,7 @@ import type {
   HistoryResponse,
   OpenSessionsResponse,
   PreviousDimension,
+  ReRecordSampleResponse,
   SampleSummary,
   SaveSampleResponse,
   SessionWithOrder,
@@ -59,6 +61,9 @@ import {
   toSessionWithOrder,
   type OrderSummaryRow,
   type SessionRow,
+  SAMPLE_SELECT,
+  toSample,
+  type SampleRow,
 } from './sessions.sql'
 
 const uuid = z.string().uuid()
@@ -74,6 +79,7 @@ async function assertCoilsUsable(q: Queryable, coilIds: string[]): Promise<void>
 
 const startSchema = z.object({ orderId: uuid, startQty: z.coerce.number().min(0) })
 const closeSchema = z.object({ finalQty: z.coerce.number().min(0), version: z.coerce.number().int().min(0) })
+const reopenSchema = z.object({ version: z.coerce.number().int().min(0) })
 
 const optText = (max: number) => z.string().trim().max(max).optional().transform((v) => (v ? v : undefined))
 const nullableNum = z.union([z.number().finite(), z.null()])
@@ -473,29 +479,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       const wc = session.workCenterCode
       const process = processForMachine(await loadMachine(tx, wc), wc)
 
-      // The same business rules the wizard applies, enforced where they cannot
-      // be bypassed (§5, §8).
-      const issues = validateSample({
-        process,
-        sampleQty: body.sampleQty,
-        drawing: body.drawing,
-        coils: body.coils.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade })),
-        defects: body.defects.map((d) => ({ defectName: d.defectName, disposition: d.disposition as never, qty: d.qty, notes: d.notes })),
-        dimensions: body.dimensions.map((d) => ({ name: d.name, nominal: d.nominal ?? null, actual: d.actual ?? null })),
-        paint: body.paint ? { imageIds: body.paint.imageIds } : { imageIds: [] },
-        pt: body.pt
-          ? { testFrequencyPct: body.pt.testFrequencyPct, consumableLots: body.pt.consumableLots, testedLengths: body.pt.testedLengths }
-          : undefined,
-      })
-      if (issues.length > 0) throw badRequest(issues[0].message, issues)
-      if (process === 'paint' && !body.paint) throw badRequest('A paint sample record is required on this machine.')
-
-      const imageIds = [
-        ...body.defects.flatMap((d) => d.imageIds),
-        ...(body.paint?.imageIds ?? []),
-        ...(body.pt?.imageIds ?? []),
-      ]
-      await assertImagesUsable(tx, imageIds)
+      const { imageIds } = await validateSampleBody(tx, process, body)
 
       const index = (await tx.query<{ next: number }>(
         `SELECT COALESCE(max(index), 0) + 1 AS next FROM inspection_samples WHERE session_id = $1`,
@@ -543,78 +527,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
         throw e
       }
 
-      for (const d of body.dimensions) {
-        await tx.query(
-          `INSERT INTO dimension_results (sample_id, name, sequence, nominal, tol_plus, tol_minus, actual, unit, status, source)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-          [
-            sampleId,
-            d.name,
-            d.sequence,
-            d.nominal,
-            d.tolPlus,
-            d.tolMinus,
-            d.actual,
-            d.unit,
-            dimensionStatus({ nominal: d.nominal, tolPlus: d.tolPlus, tolMinus: d.tolMinus, actual: d.actual }),
-            d.source,
-          ],
-        )
-      }
-      for (const d of body.defects) {
-        const defectId = (await tx.query<{ id: string }>(
-          `INSERT INTO defect_results (sample_id, defect_name, qty, disposition, notes) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-          [sampleId, d.defectName, d.qty, d.disposition, d.notes ?? null],
-        )).rows[0].id
-        await linkImages(tx, 'defect_images', 'defect_id', defectId, d.imageIds)
-      }
-      await assertCoilsUsable(tx, body.coils.flatMap((c) => (c.coilId ? [c.coilId] : [])))
-      for (const c of body.coils) {
-        await tx.query(
-          `INSERT INTO sample_coils (sample_id, coil_id, coil_number, grade, sm_type, supplier, thickness, width, yield, notes)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-          [sampleId, c.coilId ?? null, c.coilNumber, c.grade ?? null, c.smType ?? null, c.supplier ?? null, c.thickness ?? null, c.width ?? null, c.yield ?? null, c.notes ?? null],
-        )
-      }
-      if (body.paint && process === 'paint') {
-        const paintId = (await tx.query<{ id: string }>(
-          `INSERT INTO paint_samples (sample_id, notes) VALUES ($1, $2) RETURNING id`,
-          [sampleId, body.paint.notes ?? null],
-        )).rows[0].id
-        await linkImages(tx, 'paint_sample_images', 'paint_sample_id', paintId, body.paint.imageIds)
-      }
-      if (body.pt && process === 'welding') {
-        const pt = body.pt
-        // The record's verdict follows its lengths: Reject / Repair as soon as one is.
-        const verdict = ptOverallVerdict(pt.testedLengths)
-        const ptId = (await tx.query<{ id: string }>(
-          `INSERT INTO pt_records
-             (sample_id, test_frequency_pct, cleaner_lot, penetrant_lot, developer_lot, welding_wire_batch, accept_or_repair, notes)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-          [
-            sampleId,
-            pt.testFrequencyPct,
-            pt.consumableLots.Cleaner,
-            pt.consumableLots.Penetrant,
-            pt.consumableLots.Developer,
-            pt.weldingWireBatch ?? null,
-            verdict,
-            pt.notes ?? null,
-          ],
-        )).rows[0].id
-        for (const [i, l] of pt.testedLengths.entries()) {
-          await tx.query(`INSERT INTO pt_tested_lengths (pt_record_id, seq, length_mm, verdict) VALUES ($1, $2, $3, $4)`, [
-            ptId,
-            i + 1,
-            l.lengthMm,
-            l.verdict,
-          ])
-        }
-        await linkImages(tx, 'pt_record_images', 'pt_record_id', ptId, pt.imageIds)
-      }
-      if (imageIds.length > 0) {
-        await tx.query(`UPDATE images SET sample_id = $1 WHERE id = ANY($2::uuid[]) AND sample_id IS NULL`, [sampleId, imageIds])
-      }
+      await writeSampleChildren(tx, sampleId, process, body, imageIds)
 
       const auditCtx = auditCtxFor(user, session, 'InspectionSample', sampleId, sampleId)
       const at = now.toISOString()
@@ -641,7 +554,211 @@ export function sessionsRoutes(ctx: AppContext): Router {
     res.status(outcome.deduped ? 200 : 201).json(outcome)
   })
 
+  /**
+   * Re-record a sample from History (§9.4): the whole record is replaced as
+   * one unit. The previous child rows are marked deleted — never erased — and
+   * the new ones written; the sample keeps its number, shift, time and
+   * inspector, and every scalar change is audited field by field.
+   */
+  r.put('/:id/samples/:sampleId', requireCapability('record-inspection'), async (req, res) => {
+    const user = requireUser(req)
+    const sessionId = parse(uuid, req.params.id)
+    const sampleId = parse(uuid, req.params.sampleId)
+    const body = parse(reRecordSchema, req.body)
+
+    const outcome = await withTransaction(db, async (tx): Promise<ReRecordSampleResponse> => {
+      const session = await loadSessionWithOrder(tx, sessionId, true)
+      if (!session) throw notFound('That session')
+      // An open session may be corrected by anyone who records; a closed one
+      // only by a role allowed to correct closed records (§14).
+      const capability = session.status === 'Open' ? 'edit-open-session' : 'edit-closed-session'
+      if (!can(user.role, capability)) throw forbidden()
+
+      const before = (
+        await tx.query<SampleRow>(`SELECT ${SAMPLE_SELECT} FROM inspection_samples sm WHERE sm.id = $1 AND sm.session_id = $2 AND sm.deleted_at IS NULL FOR UPDATE`, [
+          sampleId,
+          sessionId,
+        ])
+      ).rows[0]
+      if (!before) throw notFound('That sample')
+      if (before.version !== body.version) throw new ConflictError(dropNulls(toSample(before)))
+
+      const wc = session.workCenterCode
+      const process = processForMachine(await loadMachine(tx, wc), wc)
+      const { imageIds } = await validateSampleBody(tx, process, body)
+
+      // Retire the current child rows; nothing is erased.
+      const counts = await retireSampleChildren(tx, sampleId, user.id)
+      await tx.query(
+        `UPDATE inspection_samples
+            SET drawing = $2, drawing_alt = $3, issue = $4, sample_qty = $5, version = version + 1
+          WHERE id = $1`,
+        [sampleId, body.drawing, body.drawingAlt ?? null, body.issue ?? null, body.sampleQty],
+      )
+      await writeSampleChildren(tx, sampleId, process, body, imageIds)
+
+      const auditCtx = auditCtxFor(user, session, 'InspectionSample', sampleId, sampleId)
+      await auditChanges(
+        tx,
+        auditCtx,
+        {
+          drawing: before.drawing,
+          drawingAlt: before.drawingAlt,
+          issue: before.issue,
+          sampleQty: before.sampleQty,
+          dimensions: counts.dimensions,
+          defects: counts.defects,
+          coils: counts.coils,
+        },
+        {
+          drawing: body.drawing,
+          drawingAlt: body.drawingAlt ?? null,
+          issue: body.issue ?? null,
+          sampleQty: body.sampleQty,
+          dimensions: body.dimensions.length,
+          defects: body.defects.length,
+          coils: body.coils.length,
+        },
+      )
+      await writeAudit(tx, [auditEvent('update', auditCtx, new Date().toISOString(), { field: 'reRecorded', newValue: 'The whole sample was re-recorded from History.' })])
+      return { sampleId, index: before.index, version: before.version + 1 }
+    })
+    res.json(outcome)
+  })
+
+  /** Reopen a closed session so samples can be added again. Closed-record rights required. */
+  r.post('/:id/reopen', requireCapability('edit-closed-session'), async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    const body = parse(reopenSchema, req.body)
+    const reopened = await withTransaction(db, async (tx) => {
+      const before = await loadSessionWithOrder(tx, id, true)
+      if (!before) throw notFound('That session')
+      if (before.version !== body.version) throw new ConflictError(before)
+      if (before.status === 'Open') throw badRequest('This session is already open.')
+      await tx.query(`UPDATE inspection_sessions SET status = 'Open', closed_at = NULL, closed_by_id = NULL, version = version + 1 WHERE id = $1`, [id])
+      const after = (await loadSessionWithOrder(tx, id))!
+      await auditChanges(
+        tx,
+        auditCtxFor(user, before, 'InspectionSession', id),
+        { status: before.status, closedAt: before.closedAt, closedById: before.closedById },
+        { status: after.status, closedAt: after.closedAt, closedById: after.closedById },
+      )
+      return after
+    })
+    res.json(reopened)
+  })
+
   return r
+}
+
+const reRecordSchema = saveSampleSchema.omit({ submissionId: true }).extend({ version: z.coerce.number().int().min(0) })
+
+/** The same business rules the wizard applies, enforced where they cannot be bypassed (§5, §8). */
+async function validateSampleBody(
+  tx: Queryable,
+  process: Process,
+  body: Omit<z.infer<typeof saveSampleSchema>, 'submissionId'>,
+): Promise<{ imageIds: string[] }> {
+  const issues = validateSample({
+    process,
+    sampleQty: body.sampleQty,
+    drawing: body.drawing,
+    coils: body.coils.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade })),
+    defects: body.defects.map((d) => ({ defectName: d.defectName, disposition: d.disposition as never, qty: d.qty, notes: d.notes })),
+    dimensions: body.dimensions.map((d) => ({ name: d.name, nominal: d.nominal ?? null, actual: d.actual ?? null })),
+    paint: body.paint ? { imageIds: body.paint.imageIds } : { imageIds: [] },
+    pt: body.pt
+      ? { testFrequencyPct: body.pt.testFrequencyPct, consumableLots: body.pt.consumableLots, testedLengths: body.pt.testedLengths }
+      : undefined,
+  })
+  if (issues.length > 0) throw badRequest(issues[0].message, issues)
+  if (process === 'paint' && !body.paint) throw badRequest('A paint sample record is required on this machine.')
+
+  const imageIds = [...body.defects.flatMap((d) => d.imageIds), ...(body.paint?.imageIds ?? []), ...(body.pt?.imageIds ?? [])]
+  await assertImagesUsable(tx, imageIds)
+  return { imageIds }
+}
+
+/** Mark every child row of a sample deleted, returning how many of each were live. */
+async function retireSampleChildren(tx: Queryable, sampleId: string, byId: string): Promise<{ dimensions: number; defects: number; coils: number }> {
+  const dims = await tx.query(`UPDATE dimension_results SET deleted_at = now(), deleted_by_id = $2 WHERE sample_id = $1 AND deleted_at IS NULL`, [sampleId, byId])
+  const defects = await tx.query(`UPDATE defect_results SET deleted_at = now(), deleted_by_id = $2 WHERE sample_id = $1 AND deleted_at IS NULL`, [sampleId, byId])
+  const coils = await tx.query(`UPDATE sample_coils SET deleted_at = now(), deleted_by_id = $2 WHERE sample_id = $1 AND deleted_at IS NULL`, [sampleId, byId])
+  await tx.query(`UPDATE paint_samples SET deleted_at = now(), deleted_by_id = $2 WHERE sample_id = $1 AND deleted_at IS NULL`, [sampleId, byId])
+  await tx.query(
+    `UPDATE pt_tested_lengths l SET deleted_at = now(), deleted_by_id = $2
+       FROM pt_records p WHERE p.id = l.pt_record_id AND p.sample_id = $1 AND l.deleted_at IS NULL`,
+    [sampleId, byId],
+  )
+  await tx.query(`UPDATE pt_records SET deleted_at = now(), deleted_by_id = $2 WHERE sample_id = $1 AND deleted_at IS NULL`, [sampleId, byId])
+  return { dimensions: dims.rowCount ?? 0, defects: defects.rowCount ?? 0, coils: coils.rowCount ?? 0 }
+}
+
+/** Write a sample's measurements, defects, coils, paint and PT rows, and claim its photos. */
+async function writeSampleChildren(
+  tx: Queryable,
+  sampleId: string,
+  process: Process,
+  body: Omit<z.infer<typeof saveSampleSchema>, 'submissionId'>,
+  imageIds: string[],
+): Promise<void> {
+  for (const d of body.dimensions) {
+    await tx.query(
+      `INSERT INTO dimension_results (sample_id, name, sequence, nominal, tol_plus, tol_minus, actual, unit, status, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [
+        sampleId,
+        d.name,
+        d.sequence,
+        d.nominal,
+        d.tolPlus,
+        d.tolMinus,
+        d.actual,
+        d.unit,
+        dimensionStatus({ nominal: d.nominal, tolPlus: d.tolPlus, tolMinus: d.tolMinus, actual: d.actual }),
+        d.source,
+      ],
+    )
+  }
+  for (const d of body.defects) {
+    const defectId = (await tx.query<{ id: string }>(
+      `INSERT INTO defect_results (sample_id, defect_name, qty, disposition, notes) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      [sampleId, d.defectName, d.qty, d.disposition, d.notes ?? null],
+    )).rows[0].id
+    await linkImages(tx, 'defect_images', 'defect_id', defectId, d.imageIds)
+  }
+  await assertCoilsUsable(tx, body.coils.flatMap((c) => (c.coilId ? [c.coilId] : [])))
+  for (const c of body.coils) {
+    await tx.query(
+      `INSERT INTO sample_coils (sample_id, coil_id, coil_number, grade, sm_type, supplier, thickness, width, yield, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [sampleId, c.coilId ?? null, c.coilNumber, c.grade ?? null, c.smType ?? null, c.supplier ?? null, c.thickness ?? null, c.width ?? null, c.yield ?? null, c.notes ?? null],
+    )
+  }
+  if (body.paint && process === 'paint') {
+    const paintId = (await tx.query<{ id: string }>(`INSERT INTO paint_samples (sample_id, notes) VALUES ($1, $2) RETURNING id`, [sampleId, body.paint.notes ?? null]))
+      .rows[0].id
+    await linkImages(tx, 'paint_sample_images', 'paint_sample_id', paintId, body.paint.imageIds)
+  }
+  if (body.pt && process === 'welding') {
+    const pt = body.pt
+    // The record's verdict follows its lengths: Reject / Repair as soon as one is.
+    const verdict = ptOverallVerdict(pt.testedLengths)
+    const ptId = (await tx.query<{ id: string }>(
+      `INSERT INTO pt_records
+         (sample_id, test_frequency_pct, cleaner_lot, penetrant_lot, developer_lot, welding_wire_batch, accept_or_repair, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [sampleId, pt.testFrequencyPct, pt.consumableLots.Cleaner, pt.consumableLots.Penetrant, pt.consumableLots.Developer, pt.weldingWireBatch ?? null, verdict, pt.notes ?? null],
+    )).rows[0].id
+    for (const [i, l] of pt.testedLengths.entries()) {
+      await tx.query(`INSERT INTO pt_tested_lengths (pt_record_id, seq, length_mm, verdict) VALUES ($1, $2, $3, $4)`, [ptId, i + 1, l.lengthMm, l.verdict])
+    }
+    await linkImages(tx, 'pt_record_images', 'pt_record_id', ptId, pt.imageIds)
+  }
+  if (imageIds.length > 0) {
+    await tx.query(`UPDATE images SET sample_id = $1 WHERE id = ANY($2::uuid[]) AND sample_id IS NULL`, [sampleId, imageIds])
+  }
 }
 
 class DuplicateSubmission extends Error {

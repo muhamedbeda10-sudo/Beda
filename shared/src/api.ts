@@ -402,6 +402,26 @@ export interface SaveSampleRequest {
   }
 }
 
+/**
+ * Re-record a sample from History: the whole record is replaced as one unit.
+ * The previous measurements, defects, coils, paint and PT rows are marked
+ * deleted and the new ones written; the sample keeps its number, shift,
+ * time and inspector. Refused when the sample moved since it was loaded.
+ */
+export interface ReRecordSampleRequest extends Omit<SaveSampleRequest, 'submissionId'> {
+  version: number
+}
+
+export interface ReRecordSampleResponse {
+  sampleId: string
+  index: number
+  version: number
+}
+
+export interface ReopenSessionRequest {
+  version: number
+}
+
 export interface SaveSampleResponse {
   sampleId: string
   index: number

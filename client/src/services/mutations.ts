@@ -25,6 +25,9 @@ import {
   type UpdateUserRequest,
   type UpdateWorkInstructionRequest,
   type UploadWorkInstructionFields,
+  type ReRecordSampleRequest,
+  type ReRecordSampleResponse,
+  type ReopenSessionRequest,
 } from '@qc/shared/api'
 import type { DefectResult, DimensionResult, UserProfile, WorkInstruction } from '@qc/shared/types'
 import { api } from '@/lib/api'
@@ -46,6 +49,22 @@ export async function closeSession(qc: QueryClient, sessionId: string, body: Clo
 export async function deleteSession(qc: QueryClient, sessionId: string): Promise<void> {
   await api<void>(`/sessions/${sessionId}`, { method: 'DELETE' })
   await qc.invalidateQueries({ queryKey: ['sessions'] })
+}
+
+/** Re-record a whole sample from History; refused with a conflict if it moved. */
+export async function reRecordSample(qc: QueryClient, sessionId: string, sampleId: string, body: ReRecordSampleRequest): Promise<ReRecordSampleResponse> {
+  const result = await api<ReRecordSampleResponse>(`/sessions/${sessionId}/samples/${sampleId}`, { method: 'PUT', body })
+  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  await qc.invalidateQueries({ queryKey: ['samples'] })
+  await qc.invalidateQueries({ queryKey: ['audit'] })
+  return result
+}
+
+/** Reopen a closed session so samples can be added again (closed-record rights). */
+export async function reopenSession(qc: QueryClient, sessionId: string, version: number): Promise<SessionWithOrder> {
+  const session = await api<SessionWithOrder>(`/sessions/${sessionId}/reopen`, { method: 'POST', body: { version } satisfies ReopenSessionRequest })
+  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  return session
 }
 
 /** Mark a sample deleted (administrators only). The rows stay; the sample leaves every list. */
