@@ -336,12 +336,15 @@ export function WizardPage() {
 
       const result = await saveSample(queryClient, session.id, body)
 
+      // The sample is on record: leave the wizard. The session stays open on
+      // the board, and "Continue" starts the next sample from a fresh draft.
       clearDraft(session.id)
       setDraft(null)
       toast(
         result.deduped ? 'That sample was already saved — no duplicate was created.' : `Sample #${result.index || index} saved.`,
         'success',
       )
+      navigate('/')
     } catch (e) {
       // One clear error, and everything the inspector typed is still here (§5.7).
       toast(e instanceof Error ? e.message : 'The sample could not be saved. Nothing was written — try again.', 'error')
@@ -1070,7 +1073,8 @@ function DefectsStep({
   orderId: string
 }) {
   const [search, setSearch] = useState('')
-  const filtered = options.filter((o) => o.toLowerCase().includes(search.trim().toLowerCase()))
+  const typed = search.trim()
+  const filtered = options.filter((o) => o.toLowerCase().includes(typed.toLowerCase()))
 
   const setDefect = (key: string, patch: Partial<DraftDefect>) =>
     update((d) => ({
@@ -1092,16 +1096,29 @@ function DefectsStep({
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search this machine's defects…"
+            placeholder={options.length === 0 ? 'Type the defect name…' : "Search this machine's defects, or type a new name…"}
             className="min-h-[48px] pl-9"
           />
         </div>
         {options.length === 0 && (
           <p className="mt-2 rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-slate-400 dark:border-slate-700">
-            No defects are configured for machine {draft.workCenterCode} yet.
+            No defects are configured for machine {draft.workCenterCode} yet — type the defect's name above and add it.
           </p>
         )}
         <div className="mt-2 flex max-h-44 flex-wrap gap-2 overflow-y-auto">
+          {/* A name the list does not carry is added as typed, so a machine without a list still gets named defects. */}
+          {typed && !options.some((o) => o.trim().toLowerCase() === typed.toLowerCase()) && (
+            <button
+              dir="auto"
+              onClick={() => {
+                addDefect(typed)
+                setSearch('')
+              }}
+              className="min-h-[44px] rounded-xl bg-brand-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-brand-700"
+            >
+              + Add "{typed}"
+            </button>
+          )}
           {filtered.map((name) => (
             <button
               key={name}
