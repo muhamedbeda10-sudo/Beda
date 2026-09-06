@@ -528,6 +528,8 @@ export type Capability =
   /** Mark a session or a sample deleted — administrators only, from History. */
   | 'delete-session'
   | 'delete-sample'
+  /** Mark a note about an order deleted — administrators only. */
+  | 'delete-note'
   | 'override-grade-mismatch'
   | 'manage-admin-data'
   | 'purge-audit-logs'
@@ -550,6 +552,7 @@ const CAPABILITIES: Record<Role, Capability[]> = {
     'delete-defect',
     'delete-session',
     'delete-sample',
+    'delete-note',
     'override-grade-mismatch',
     'manage-admin-data',
     'purge-audit-logs',

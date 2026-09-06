@@ -26,6 +26,7 @@ import type {
   SampleSummary,
   SessionWithOrder,
   WizardContext,
+  SessionNotesResponse,
 } from '@qc/shared/api'
 import type { Coil, Disposition, ImageAsset, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
@@ -36,6 +37,7 @@ export const keys = {
   session: (id: string) => ['sessions', id] as const,
   wizard: (id: string) => ['sessions', id, 'wizard'] as const,
   sessionSamples: (id: string) => ['sessions', id, 'samples'] as const,
+  sessionNotes: (id: string) => ['sessions', id, 'notes'] as const,
   sample: (id: string) => ['samples', id] as const,
   orderSearch: (term: string) => ['orders', 'search', term] as const,
   orderNumbers: (key: string) => ['orders', 'numbers', key] as const,
@@ -93,6 +95,14 @@ export function useSessionSamples(sessionId: string | null) {
   return useQuery({
     queryKey: keys.sessionSamples(sessionId ?? ''),
     queryFn: () => api<SampleSummary[]>(`/sessions/${sessionId}/samples`),
+    enabled: !!sessionId,
+  })
+}
+
+export function useSessionNotes(sessionId: string | null) {
+  return useQuery({
+    queryKey: keys.sessionNotes(sessionId ?? ''),
+    queryFn: async () => (await api<SessionNotesResponse>(`/sessions/${sessionId}/notes`)).notes,
     enabled: !!sessionId,
   })
 }

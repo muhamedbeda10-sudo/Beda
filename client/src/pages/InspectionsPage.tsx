@@ -13,6 +13,7 @@ import {
   Lock,
   CheckCircle2,
   ClipboardCheck,
+  MessageSquareText,
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
@@ -274,6 +275,11 @@ export function InspectionsPage() {
                           {s.startQtyConfirmed && (
                             <Badge tone="blue" icon={<CheckCircle2 className="h-3 w-3" />}>
                               Rejected before release {s.startQtyConfirmed.qty}
+                            </Badge>
+                          )}
+                          {(s.noteCount ?? 0) > 0 && (
+                            <Badge tone="neutral" icon={<MessageSquareText className="h-3 w-3" />}>
+                              {s.noteCount} note{s.noteCount === 1 ? '' : 's'}
                             </Badge>
                           )}
                         </div>

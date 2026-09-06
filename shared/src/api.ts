@@ -39,6 +39,7 @@ import type {
   WorkInstruction,
   WorkInstructionScope,
   WorkInstructionStep,
+  SessionNote,
 } from './types'
 
 // ---- Errors ----------------------------------------------------------------
@@ -298,6 +299,9 @@ export interface WizardContext {
    *  the next sample starts from it and skips the Setup step. Null on the
    *  first sample. */
   previousSetup: PreviousSetup | null
+  /** Every note written about this order so far — by any session, on any
+   *  machine — newest first, so the Review step shows what is already known. */
+  orderNotes: SessionNote[]
   /** The controlled documents that apply to this process, by step. */
   workInstructions: WorkInstruction[]
 }
@@ -407,6 +411,9 @@ export interface SaveSampleRequest {
   coils: SaveCoilInput[]
   paint?: { notes?: string; imageIds: string[] }
   pt?: SavePTInput
+  /** A remark about the order, written on the Review step. Ignored when it
+   *  has neither text nor photos; otherwise saved with the sample as one unit. */
+  note?: SaveNoteInput
   gradeAcknowledgement?: {
     coilNumbers: string[]
     expectedGrade: string
@@ -461,6 +468,18 @@ export interface CorrectDefectRequest {
   disposition: Disposition
   qty: number
   version: number
+}
+
+// ---- Order notes -----------------------------------------------------------
+
+export interface SaveNoteInput {
+  text?: string
+  imageIds: string[]
+}
+
+/** Notes written during one session, newest first. */
+export interface SessionNotesResponse {
+  notes: SessionNote[]
 }
 
 // ---- History ---------------------------------------------------------------

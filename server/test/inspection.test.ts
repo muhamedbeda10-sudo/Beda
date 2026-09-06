@@ -14,6 +14,7 @@ import type {
   SampleSummary,
   SaveSampleRequest,
   SaveSampleResponse,
+  SessionNotesResponse,
   SessionWithOrder,
   WizardContext,
 } from '@qc/shared/api'
@@ -629,6 +630,88 @@ describe('paint machine', () => {
   })
 })
 
+describe('notes about the order (§5.8)', () => {
+  let sid: string
+  let noteId: string
+
+  beforeAll(async () => {
+    const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrder.id, startQty: 20 } })
+    sid = started.body.id
+  })
+
+  it('saves a note with its photo together with the sample, on the session', async () => {
+    const photo = await uploadImage(inspector, 21, { sessionId: sid })
+    const res = await app.api<SaveSampleResponse>('POST', `/api/sessions/${sid}/samples`, {
+      token: inspector.token,
+      body: weldSample('99999999-9999-4999-8999-999999999901', { note: { text: '  Customer wants the beams strapped in fives.  ', imageIds: [photo.id] } }),
+    })
+    expect(res.status).toBe(201)
+
+    const notes = await app.api<SessionNotesResponse>('GET', `/api/sessions/${sid}/notes`, { token: inspector.token })
+    expect(notes.status).toBe(200)
+    expect(notes.body.notes).toHaveLength(1)
+    const [note] = notes.body.notes
+    noteId = note.id
+    expect(note.text).toBe('Customer wants the beams strapped in fives.')
+    expect(note.imageIds).toEqual([photo.id])
+    expect(note.authorName).toBe('Inspector One')
+    expect(note.sampleId).toBe(res.body.sampleId)
+    expect(note.sampleIndex).toBe(1)
+    expect(note.workCenterCode).toBe('58')
+    expect(note.itemCode).toBe('125185TA3')
+
+    const session = await app.api<SessionWithOrder>('GET', `/api/sessions/${sid}`, { token: inspector.token })
+    expect(session.body.noteCount).toBe(1)
+  })
+
+  it('writes nothing for a note with neither text nor photos', async () => {
+    const res = await app.api<SaveSampleResponse>('POST', `/api/sessions/${sid}/samples`, {
+      token: inspector.token,
+      body: weldSample('99999999-9999-4999-8999-999999999902', { note: { text: '   ', imageIds: [] } }),
+    })
+    expect(res.status).toBe(201)
+    const notes = await app.api<SessionNotesResponse>('GET', `/api/sessions/${sid}/notes`, { token: inspector.token })
+    expect(notes.body.notes).toHaveLength(1)
+  })
+
+  it('refuses a note whose photo does not exist, writing nothing', async () => {
+    const before = (await app.db.query('SELECT count(*)::int AS n FROM inspection_samples WHERE session_id = $1', [sid])).rows[0].n
+    const res = await app.api<ApiErrorBody>('POST', `/api/sessions/${sid}/samples`, {
+      token: inspector.token,
+      body: weldSample('99999999-9999-4999-8999-999999999903', { note: { text: 'x', imageIds: ['00000000-0000-4000-8000-000000000000'] } }),
+    })
+    expect(res.status).toBe(400)
+    const after = (await app.db.query('SELECT count(*)::int AS n FROM inspection_samples WHERE session_id = $1', [sid])).rows[0].n
+    expect(after).toBe(before)
+  })
+
+  it('shows the note to a later session on another line of the same order', async () => {
+    const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: weldOrderOnPaintLine.id, startQty: 0 } })
+    const ctx = await app.api<WizardContext>('GET', `/api/sessions/${started.body.id}/wizard`, { token: supervisor.token })
+    expect(ctx.status).toBe(200)
+    const fromWelding = ctx.body.orderNotes.find((n) => n.id === noteId)
+    expect(fromWelding?.workCenterCode).toBe('58')
+    expect(fromWelding?.sessionSeq).toBeGreaterThan(0)
+    // A different order sees none of it.
+    const other = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: paintOrder.id, startQty: 0 } })
+    const otherCtx = await app.api<WizardContext>('GET', `/api/sessions/${other.body.id}/wizard`, { token: supervisor.token })
+    expect(otherCtx.body.orderNotes.find((n) => n.id === noteId)).toBeUndefined()
+    await app.api('DELETE', `/api/sessions/${started.body.id}`, { token: admin.token })
+    await app.api('DELETE', `/api/sessions/${other.body.id}`, { token: admin.token })
+  })
+
+  it('lets only an administrator mark a note deleted, and audits it', async () => {
+    expect((await app.api('DELETE', `/api/sessions/${sid}/notes/${noteId}`, { token: supervisor.token })).status).toBe(403)
+    expect((await app.api('DELETE', `/api/sessions/${sid}/notes/${noteId}`, { token: admin.token })).status).toBe(204)
+    expect((await app.api('DELETE', `/api/sessions/${sid}/notes/${noteId}`, { token: admin.token })).status).toBe(404)
+    const notes = await app.api<SessionNotesResponse>('GET', `/api/sessions/${sid}/notes`, { token: inspector.token })
+    expect(notes.body.notes).toHaveLength(0)
+    const audit = await app.api<AuditListResponse>('GET', '/api/audit', { token: admin.token })
+    expect(audit.body.entries.some((e) => e.entity === 'SessionNote' && e.entityId === noteId && e.action === 'delete')).toBe(true)
+    expect(audit.body.entries.some((e) => e.entity === 'SessionNote' && e.entityId === noteId && e.action === 'create')).toBe(true)
+  })
+})
+
 describe('work instructions', () => {
   const pdf = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n')
   let firstId: string
@@ -765,7 +848,7 @@ describe('audit trail protection (§11)', () => {
 
 describe('evidence cannot be hard-deleted', () => {
   it('blocks DELETE on every evidence table', async () => {
-    for (const table of ['inspection_sessions', 'inspection_samples', 'dimension_results', 'defect_results', 'sample_coils', 'pt_records', 'images', 'pdi_documents']) {
+    for (const table of ['inspection_sessions', 'inspection_samples', 'dimension_results', 'defect_results', 'sample_coils', 'pt_records', 'images', 'pdi_documents', 'session_notes', 'session_note_images']) {
       await expect(app.db.query(`DELETE FROM ${table}`)).rejects.toThrow(/Hard delete is not allowed/)
     }
   })
