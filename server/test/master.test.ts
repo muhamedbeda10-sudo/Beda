@@ -83,6 +83,20 @@ describe('master data', () => {
     expect((await app.api('DELETE', `/api/master/machines/${machineId}`, { token: admin.token })).status).toBe(404)
   })
 
+  it('marks many records deleted at once, each with its audit entry', async () => {
+    const a = await app.api<{ id: string }>('POST', '/api/master/grade-mappings', { token: admin.token, body: { gradeA: 'DX51D', gradeB: 'DX51D+Z' } })
+    const b = await app.api<{ id: string }>('POST', '/api/master/grade-mappings', { token: admin.token, body: { gradeA: 'S235JR', gradeB: 'ST37-2' } })
+    expect((await app.api('POST', '/api/master/grade-mappings/delete-many', { token: inspector.token, body: { ids: [a.body.id] } })).status).toBe(403)
+    const res = await app.api<{ deleted: number }>('POST', '/api/master/grade-mappings/delete-many', {
+      token: admin.token,
+      body: { ids: [a.body.id, b.body.id, b.body.id, '00000000-0000-4000-8000-000000000000'] },
+    })
+    expect(res.status).toBe(200)
+    expect(res.body.deleted).toBe(2)
+    const list = await app.api<unknown[]>('GET', '/api/master/grade-mappings', { token: inspector.token })
+    expect(list.body).toHaveLength(0)
+  })
+
   it('filters by machine, matching the code without regard to case', async () => {
     await app.api('POST', '/api/master/work-center-defects', { token: admin.token, body: { workCenterCode: '58-A', defectName: 'عيب لحام' } })
     await app.api('POST', '/api/master/work-center-defects', { token: admin.token, body: { workCenterCode: '48', defectName: 'خدش سطحى' } })

@@ -133,6 +133,13 @@ export async function deleteMaster(qc: QueryClient, kind: MasterKind, id: string
   await qc.invalidateQueries({ queryKey: ['master', kind] })
 }
 
+/** Mark many records of one table deleted in one request. */
+export async function deleteManyMaster(qc: QueryClient, kind: MasterKind, ids: string[]): Promise<number> {
+  const { deleted } = await api<{ deleted: number }>(`/master/${kind}/delete-many`, { method: 'POST', body: { ids } })
+  await qc.invalidateQueries({ queryKey: ['master', kind] })
+  return deleted
+}
+
 /** Mark every order line deleted ahead of a fresh ERP export. */
 export async function clearOrders(qc: QueryClient): Promise<ClearOrdersResult> {
   const result = await api<ClearOrdersResult>('/orders/clear', { method: 'POST' })
