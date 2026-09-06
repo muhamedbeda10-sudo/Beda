@@ -6,7 +6,7 @@ import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
 import { useMaster, useOrderHistory, useOrderLines, useOrderNumbers } from '@/services/queries'
 import { startSession } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
-import { isStockMachine, processForMachine } from '@qc/shared/rules'
+import { processForMachine, stockProductionOf } from '@qc/shared/rules'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
 
 /**
@@ -46,6 +46,9 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     () => machines.find((m) => m.code.trim().toLowerCase() === machineCode.trim().toLowerCase()) ?? null,
     [machines, machineCode],
   )
+
+  /** The fixed stock items of the machine, or null for one that works to order. */
+  const production = stockProductionOf(machine?.code)
 
   /** Machines grouped by factory so a multi-site register stays readable. */
   const machineGroups = useMemo(() => {
@@ -99,7 +102,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     setBusy(true)
     try {
       const session = await startSession(queryClient, { workCenterCode: machine.code, producedQty: qty })
-      toast(`Session started on ${machine.displayName} · ${machine.stockItem}.`, 'success')
+      toast(`Session started on ${machine.displayName} · ${production?.item ?? 'stock'}.`, 'success')
       reset()
       onClose()
       navigate(`/wizard/${session.id}`)
@@ -223,7 +226,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
   }
 
   // ---- Steps 1–3: machine → order → item; a stock machine has only step 1 ---
-  const stock = isStockMachine(machine)
+  const stock = production !== null
   const stage: 'machine' | 'order' | 'item' | 'stock' = !machineCode ? 'machine' : stock ? 'stock' : !orderNumber ? 'order' : 'item'
   const producedValid = producedQty.trim() !== '' && !Number.isNaN(Number(producedQty)) && Number(producedQty) >= 0
 
@@ -288,19 +291,26 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
           </p>
         )}
 
-        {stage === 'stock' && machine && (
+        {stage === 'stock' && machine && production && (
           <div className="space-y-4">
-            {/* No order on this machine: it makes one item for stock. */}
+            {/* No order on this machine: it makes its fixed items for stock. */}
             <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/50">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-lg font-bold">{machine.stockItem}</p>
+                <p className="text-lg font-bold">{production.item}</p>
                 <Badge tone="violet">For stock · no order</Badge>
               </div>
               <p className="text-sm text-brand-600 dark:text-brand-400">
-                {machine.displayName} · <span className="font-mono">{machine.stockItemCode}</span>
+                {machine.displayName} · <span className="font-mono">{production.itemCode}</span>
               </p>
+              <ul className="mt-2 flex flex-wrap gap-2">
+                {production.pieces.map((piece) => (
+                  <li key={piece} className="rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700">
+                    {piece}
+                  </li>
+                ))}
+              </ul>
               <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                Right and left are made together, so one quantity covers both. The inspection then runs as usual: setup with the coils, samples, dimensions and defects.
+                Made together, so one quantity covers both. The inspection then runs as usual: setup with the coils, samples, dimensions and defects.
               </p>
             </div>
             <Field label="Quantity produced (pairs)" hint="How many came out of the press for this session — right = left, entered once. Confirmed again when the session is closed.">

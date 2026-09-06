@@ -722,7 +722,7 @@ describe('a make-to-stock machine', () => {
   beforeAll(async () => {
     await app.api('POST', '/api/master/machines', {
       token: admin.token,
-      body: { code: '400', name: '400T Press', displayName: '400-400T Press', factory: 'Factory 3', process: 'forming', stockItem: 'Connector (right + left)', stockItemCode: 'CONN-RL' },
+      body: { code: '400', name: '400T Press', displayName: '400-400T Press', factory: 'Factory 3', process: 'forming' },
     })
     await app.api('POST', '/api/master/work-center-defects', { token: admin.token, body: { workCenterCode: '400', defectName: 'Crack' } })
   })
@@ -738,7 +738,7 @@ describe('a make-to-stock machine', () => {
     expect(res.body.order?.orderNumber).toBe('STOCK')
     expect(res.body.order?.lineKey).toBe('STOCK-400')
     expect(res.body.order?.item).toBe('Connector (right + left)')
-    expect(res.body.order?.itemCode).toBe('CONN-RL')
+    expect(res.body.order?.itemCode).toBe('CONNECTOR-RL')
     stockOrderId = res.body.orderId
 
     // The next session lands on the same line with the next seq.
@@ -757,7 +757,7 @@ describe('a make-to-stock machine', () => {
   it('records a sample with coils and defects but no drawing', async () => {
     const ctx = await app.api<WizardContext>('GET', `/api/sessions/${sid}/wizard`, { token: inspector.token })
     expect(ctx.status).toBe(200)
-    expect(ctx.body.machine?.stockItem).toBe('Connector (right + left)')
+    expect(ctx.body.order.orderNumber).toBe('STOCK')
     expect(ctx.body.workCenterDefects.map((d) => d.defectName)).toEqual(['Crack'])
     const res = await app.api<SaveSampleResponse>('POST', `/api/sessions/${sid}/samples`, {
       token: inspector.token,
