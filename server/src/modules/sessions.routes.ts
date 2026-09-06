@@ -36,7 +36,9 @@ import type {
   HistoryResponse,
   OpenSessionsResponse,
   PreviousDimension,
+  PreviousSetup,
   ReRecordSampleResponse,
+  SaveCoilInput,
   SampleSummary,
   SaveSampleResponse,
   SessionWithOrder,
@@ -153,6 +155,36 @@ const saveSampleSchema = z.object({
     })
     .optional(),
 })
+
+/**
+ * The setup of a session's latest sample: drawing, issue, coils and an
+ * acknowledged grade mismatch. Setup is entered once per session (§5.1), so
+ * the next sample starts from it. Null until the session has a sample.
+ */
+async function loadPreviousSetup(q: Queryable, sessionId: string): Promise<PreviousSetup | null> {
+  const last = (
+    await q.query<{ id: string; drawing: string; drawingAlt: string | null; issue: string | null; coilNumbers: string[] | null; expectedGrade: string | null; foundGrades: string[] | null }>(
+      `SELECT id, drawing, drawing_alt AS "drawingAlt", issue, grade_ack_coil_numbers AS "coilNumbers",
+              grade_ack_expected_grade AS "expectedGrade", grade_ack_found_grades AS "foundGrades"
+         FROM inspection_samples WHERE session_id = $1 AND deleted_at IS NULL
+        ORDER BY created_at DESC, index DESC LIMIT 1`,
+      [sessionId],
+    )
+  ).rows[0]
+  if (!last) return null
+  const coils = await q.query<SaveCoilInput>(
+    `SELECT coil_id AS "coilId", coil_number AS "coilNumber", grade, sm_type AS "smType", supplier, thickness, width, yield, notes
+       FROM sample_coils WHERE sample_id = $1 AND deleted_at IS NULL ORDER BY id`,
+    [last.id],
+  )
+  return {
+    drawing: last.drawing,
+    drawingAlt: last.drawingAlt,
+    issue: last.issue,
+    coils: coils.rows.map(dropNulls),
+    gradeAcknowledgement: last.coilNumbers ? { coilNumbers: last.coilNumbers, expectedGrade: last.expectedGrade ?? '', foundGrades: last.foundGrades ?? [] } : null,
+  }
+}
 
 /** The register's row for a machine code, or null when the code is not registered. */
 async function loadMachine(q: Queryable, code: string): Promise<Machine | null> {
@@ -322,7 +354,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const wc = session.workCenterCode
     const machine = await loadMachine(db, wc)
     const process = processForMachine(machine, wc)
-    const [dimOrder, refImages, wcDefects, grades, consumables, samples, previousDims, previousWire, instructions] = await Promise.all([
+    const [dimOrder, refImages, wcDefects, grades, consumables, samples, previousDims, previousWire, instructions, previousSetup] = await Promise.all([
       // The item's general rows plus the rows specific to this machine; the
       // shared resolver decides which wins (§8.3).
       db.query<ItemDimensionOrder>(
@@ -385,6 +417,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
         [id],
       ),
       instructionsInForce(db, process),
+      loadPreviousSetup(db, id),
     ])
     const { order: _summary, ...plain } = session
     const body: WizardContext = {
@@ -400,6 +433,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       previousDimensions: previousDims.rows,
       process,
       previousWeldingWireBatch: previousWire.rows[0]?.batch ?? null,
+      previousSetup,
       workInstructions: instructions,
     }
     res.json(body)
