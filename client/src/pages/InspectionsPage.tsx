@@ -7,7 +7,6 @@ import {
   FileText,
   Factory,
   Play,
-  Trash2,
   ChevronDown,
   AlertTriangle,
   Boxes,
@@ -21,7 +20,7 @@ import { SessionToneBadge, sessionToneClass } from '@/components/inspection/Sess
 import { SampleDetail } from '@/components/inspection/SampleDetail'
 import { InstallBanner } from '@/components/layout/InstallBanner'
 import { useMaster, useOpenBoard, useSampleDetail } from '@/services/queries'
-import { closeSession, deleteSession } from '@/services/mutations'
+import { closeSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, processForMachine, shiftName } from '@/domain'
@@ -102,7 +101,6 @@ export function InspectionsPage() {
   }, [seesAll, openSessions, term, inspectorFilter, factoryFilter, machineFilter, machineOf])
   const filtering = seesAll && (term.trim() !== '' || inspectorFilter !== 'all' || factoryFilter !== 'all' || machineFilter !== 'all')
   const [closing, setClosing] = useState<SessionWithOrder | null>(null)
-  const [deleting, setDeleting] = useState<SessionWithOrder | null>(null)
   /** A sample opened from its chip on the card: the full record, read-only here. */
   const [viewing, setViewing] = useState<{ session: SessionWithOrder; sample: SampleSummary } | null>(null)
   const { data: viewingDetail, isLoading: viewingLoading } = useSampleDetail(viewing?.sample.id ?? null)
@@ -267,7 +265,8 @@ export function InspectionsPage() {
                       <div key={s.id} className={cn('px-4 py-3.5', sessionToneClass(s, 'block'))}>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-bold">{order?.orderNumber ?? '—'}</span>
-                          <Badge tone="green">OPEN</Badge>
+                          <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
+                          {s.status === 'Open' ? <Badge tone="green">OPEN</Badge> : <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>CLOSED · stays while on Hold</Badge>}
                           <SessionToneBadge session={s} />
                           <Badge tone="neutral">
                             {sessionSamples.length} sample{sessionSamples.length === 1 ? '' : 's'}
@@ -285,24 +284,18 @@ export function InspectionsPage() {
                           {formatDate(s.startedAt)} · {s.inspectorName}
                         </p>
 
-                        <div className="mt-3 flex items-center gap-2">
-                          <Button variant="primary" className="min-h-[48px] flex-1" onClick={() => navigate(`/wizard/${s.id}`)}>
-                            <Play className="h-4 w-4" /> Continue
-                          </Button>
-                          <Button variant="secondary" className="min-h-[48px]" onClick={() => setClosing(s)} aria-label="Close session">
-                            <Lock className="h-4 w-4" />
-                            <span className="hidden sm:inline">Close</span>
-                          </Button>
-                          {can(role, 'delete-session') && (
-                            <button
-                              onClick={() => setDeleting(s)}
-                              className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-rose-500 ring-1 ring-rose-200 transition-colors hover:bg-rose-50 dark:ring-rose-500/30 dark:hover:bg-rose-500/10"
-                              aria-label="Delete session"
-                            >
-                              <Trash2 className="h-5 w-5" />
-                            </button>
-                          )}
-                        </div>
+                        {/* A closed session on Hold is here to be seen, not continued; deleting is an administrator's act, from History. */}
+                        {s.status === 'Open' && (
+                          <div className="mt-3 flex items-center gap-2">
+                            <Button variant="primary" className="min-h-[48px] flex-1" onClick={() => navigate(`/wizard/${s.id}`)}>
+                              <Play className="h-4 w-4" /> Continue
+                            </Button>
+                            <Button variant="secondary" className="min-h-[48px]" onClick={() => setClosing(s)} aria-label="Close session">
+                              <Lock className="h-4 w-4" />
+                              <span className="hidden sm:inline">Close</span>
+                            </Button>
+                          </div>
+                        )}
 
                         {sessionSamples.length > 0 && (
                           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
@@ -319,7 +312,7 @@ export function InspectionsPage() {
                                   className="min-h-[36px] rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20"
                                   aria-label={`Open sample ${sm.index}`}
                                 >
-                                  #{sm.index} · {sm.shift}
+                                  {s.seq}-{sm.index}
                                 </button>
                               ))}
                           </div>
@@ -370,7 +363,7 @@ export function InspectionsPage() {
           viewing ? (
             <span className="flex flex-wrap items-center gap-2">
               {viewing.session.order?.orderNumber ?? '—'}
-              <span className="text-sm font-semibold text-slate-400">Sample #{viewing.sample.index}</span>
+              <span className="text-sm font-semibold text-slate-400">Sample {viewing.session.seq}-{viewing.sample.index}</span>
               <Badge tone="neutral">
                 {shiftName(viewing.sample.shift)} shift · {formatDateTime(viewing.sample.createdAt)}
               </Badge>
@@ -405,40 +398,6 @@ export function InspectionsPage() {
         )}
       </Modal>
 
-      <Modal
-        open={!!deleting}
-        onClose={() => setDeleting(null)}
-        title="Delete this session?"
-        icon={<Trash2 className="h-5 w-5" />}
-        size="sm"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setDeleting(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              onClick={async () => {
-                if (!deleting) return
-                try {
-                  await deleteSession(queryClient, deleting.id)
-                  toast('Session marked deleted. Nothing was erased.', 'success')
-                } catch (e) {
-                  toast(e instanceof Error ? e.message : 'Could not delete.', 'error')
-                }
-                setDeleting(null)
-              }}
-            >
-              <Trash2 className="h-4 w-4" /> Delete
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          The session is marked as deleted and hidden from this list. Nothing is erased — the samples, measurements and photos stay in the
-          record, and this deletion is written to the audit log.
-        </p>
-      </Modal>
     </div>
   )
 }

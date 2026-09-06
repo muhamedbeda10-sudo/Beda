@@ -48,6 +48,13 @@ export async function deleteSession(qc: QueryClient, sessionId: string): Promise
   await qc.invalidateQueries({ queryKey: ['sessions'] })
 }
 
+/** Mark a sample deleted (administrators only). The rows stay; the sample leaves every list. */
+export async function deleteSample(qc: QueryClient, sampleId: string): Promise<void> {
+  await api<void>(`/samples/${sampleId}`, { method: 'DELETE' })
+  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  await qc.invalidateQueries({ queryKey: ['samples'] })
+}
+
 export async function saveSample(qc: QueryClient, sessionId: string, body: SaveSampleRequest): Promise<SaveSampleResponse> {
   const result = await api<SaveSampleResponse>(`/sessions/${sessionId}/samples`, { method: 'POST', body })
   await qc.invalidateQueries({ queryKey: ['sessions'] })

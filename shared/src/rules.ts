@@ -525,7 +525,9 @@ export type Capability =
   | 'edit-open-session'
   | 'edit-closed-session'
   | 'delete-defect'
+  /** Mark a session or a sample deleted — administrators only, from History. */
   | 'delete-session'
+  | 'delete-sample'
   | 'override-grade-mismatch'
   | 'manage-admin-data'
   | 'purge-audit-logs'
@@ -538,7 +540,6 @@ const CAPABILITIES: Record<Role, Capability[]> = {
     'edit-open-session',
     'edit-closed-session',
     'delete-defect',
-    'delete-session',
     'override-grade-mismatch',
   ],
   admin: [
@@ -548,6 +549,7 @@ const CAPABILITIES: Record<Role, Capability[]> = {
     'edit-closed-session',
     'delete-defect',
     'delete-session',
+    'delete-sample',
     'override-grade-mismatch',
     'manage-admin-data',
     'purge-audit-logs',

@@ -13,8 +13,8 @@ import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
 import { ConflictError, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireUser, type AuthUser } from '../auth/middleware'
-import { auditChanges } from '../audit/service'
+import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
+import { auditChanges, auditDelete } from '../audit/service'
 import { dropNulls } from '../lib/rows'
 import { SAMPLE_SELECT, toSample, type SampleRow } from './sessions.sql'
 import { auditCtxFor, loadSessionWithOrder } from './sessions.routes'
@@ -111,6 +111,23 @@ export function samplesRoutes(ctx: AppContext): Router {
     const detail = await loadSampleDetail(db, parse(uuid, req.params.id))
     if (!detail) throw notFound('That sample')
     res.json(detail)
+  })
+
+  /** Mark a sample deleted (§10): it leaves every list and count; the rows stay. */
+  r.delete('/:id', requireCapability('delete-sample'), async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    await withTransaction(db, async (tx) => {
+      const row = (
+        await tx.query<{ sessionId: string }>(`SELECT session_id AS "sessionId" FROM inspection_samples WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [id])
+      ).rows[0]
+      if (!row) throw notFound('That sample')
+      const session = await loadSessionWithOrder(tx, row.sessionId, true)
+      if (!session) throw notFound('That session')
+      await tx.query(`UPDATE inspection_samples SET deleted_at = now(), deleted_by_id = $2 WHERE id = $1`, [id, user.id])
+      await auditDelete(tx, auditCtxFor(user, session, 'InspectionSample', id, id))
+    })
+    res.status(204).end()
   })
 
   r.patch('/dimensions/:id', async (req, res) => {

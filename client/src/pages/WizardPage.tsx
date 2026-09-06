@@ -341,7 +341,7 @@ export function WizardPage() {
       clearDraft(session.id)
       setDraft(null)
       toast(
-        result.deduped ? 'That sample was already saved — no duplicate was created.' : `Sample #${result.index || index} saved.`,
+        result.deduped ? 'That sample was already saved — no duplicate was created.' : `Sample ${session.seq}-${result.index || index} saved.`,
         'success',
       )
       navigate('/')
@@ -390,7 +390,7 @@ export function WizardPage() {
           <Badge tone="neutral">
             Shift {shift} · {shiftName(shift)}
           </Badge>
-          <Badge tone="neutral">Sample #{priorSamples.length + 1}</Badge>
+          <Badge tone="neutral">Sample {session.seq}-{priorSamples.length + 1}</Badge>
           {!online && (
             <Badge tone="amber" icon={<CloudOff className="h-3 w-3" />}>
               Offline — your work is saved on this device
