@@ -67,13 +67,28 @@ describe('master data', () => {
     expect(put.status).toBe(200)
     expect(put.body.machineNumber).toBe('M-58')
     expect(put.body.usesItemDimensions).toBe(false)
-
     const audit = await app.api<AuditListResponse>('GET', '/api/audit', { token: admin.token })
     const entry = audit.body.entries.find((e) => e.entity === 'Machine' && e.action === 'update')
     expect(entry).toBeDefined()
     expect(entry!.field).toBe('machineNumber')
     expect(entry!.oldValue).toBe('')
     expect(entry!.newValue).toBe('M-58')
+  })
+
+  it('names the item a make-to-stock machine makes, both fields or neither', async () => {
+    // A make-to-stock machine names its item; half a definition is refused.
+    const half = await app.api<ApiErrorBody>('PUT', `/api/master/machines/${machineId}`, {
+      token: admin.token,
+      body: { code: '58', name: 'A. Welding Line', displayName: '58-A. Welding Line-LM4', stockItem: 'Connector' },
+    })
+    expect(half.status).toBe(400)
+    const stock = await app.api<Machine>('PUT', `/api/master/machines/${machineId}`, {
+      token: admin.token,
+      body: { code: '58', name: 'A. Welding Line', displayName: '58-A. Welding Line-LM4', stockItem: 'Connector', stockItemCode: 'CONN-RL' },
+    })
+    expect(stock.status).toBe(200)
+    expect(stock.body.stockItem).toBe('Connector')
+    expect(stock.body.stockItemCode).toBe('CONN-RL')
   })
 
   it('soft-deletes: hidden from the list, still in the database', async () => {

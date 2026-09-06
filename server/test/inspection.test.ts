@@ -715,6 +715,79 @@ describe('notes about the order (§5.8)', () => {
   })
 })
 
+describe('a make-to-stock machine', () => {
+  let stockOrderId: string
+  let sid: string
+
+  beforeAll(async () => {
+    await app.api('POST', '/api/master/machines', {
+      token: admin.token,
+      body: { code: '400', name: '400T Press', displayName: '400-400T Press', factory: 'Factory 3', process: 'forming', stockItem: 'Connector (right + left)', stockItemCode: 'CONN-RL' },
+    })
+    await app.api('POST', '/api/master/work-center-defects', { token: admin.token, body: { workCenterCode: '400', defectName: 'Crack' } })
+  })
+
+  it('starts a session without an order, on the machine’s fixed STOCK line, with the quantity produced', async () => {
+    const res = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '400', producedQty: 120 } })
+    expect(res.status).toBe(201)
+    sid = res.body.id
+    expect(res.body.seq).toBe(1)
+    expect(res.body.workCenterCode).toBe('400')
+    expect(res.body.producedQty).toBe(120)
+    expect(res.body.startQtyConfirmed).toBeUndefined()
+    expect(res.body.order?.orderNumber).toBe('STOCK')
+    expect(res.body.order?.lineKey).toBe('STOCK-400')
+    expect(res.body.order?.item).toBe('Connector (right + left)')
+    expect(res.body.order?.itemCode).toBe('CONN-RL')
+    stockOrderId = res.body.orderId
+
+    // The next session lands on the same line with the next seq.
+    const again = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '400', producedQty: 80 } })
+    expect(again.body.orderId).toBe(stockOrderId)
+    expect(again.body.seq).toBe(2)
+    await app.api('DELETE', `/api/sessions/${again.body.id}`, { token: admin.token })
+  })
+
+  it('refuses a stock start on a machine that works to order', async () => {
+    const res = await app.api<ApiErrorBody>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '58', producedQty: 1 } })
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toMatch(/works to order/)
+  })
+
+  it('records a sample with coils and defects but no drawing', async () => {
+    const ctx = await app.api<WizardContext>('GET', `/api/sessions/${sid}/wizard`, { token: inspector.token })
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.machine?.stockItem).toBe('Connector (right + left)')
+    expect(ctx.body.workCenterDefects.map((d) => d.defectName)).toEqual(['Crack'])
+    const res = await app.api<SaveSampleResponse>('POST', `/api/sessions/${sid}/samples`, {
+      token: inspector.token,
+      body: {
+        submissionId: '99999999-9999-4999-8999-999999999911',
+        drawing: '',
+        sampleQty: 3,
+        dimensions: [{ name: 'Hole pitch', sequence: 1, nominal: 40, tolPlus: 0.5, tolMinus: 0.5, actual: 40.2, unit: 'mm', source: 'manual' }],
+        defects: [{ defectName: 'Crack', qty: 1, disposition: 'Rejected', imageIds: [] }],
+        coils: [{ coilNumber: 'C10021', grade: 'S355JR' }],
+      },
+    })
+    expect(res.status).toBe(201)
+    expect(res.body.index).toBe(1)
+    const board = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: inspector.token })
+    const mine = board.body.sessions.find((s) => s.id === sid)
+    expect(mine?.defectCount).toBe(1)
+    expect(mine?.producedQty).toBe(120)
+  })
+
+  it('brings the STOCK line back after a catalogue clear retired it', async () => {
+    // What POST /orders/clear does to every line, applied to this one only.
+    await app.db.query(`UPDATE production_orders SET deleted_at = now() WHERE id = $1`, [stockOrderId])
+    const res = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '400', producedQty: 10 } })
+    expect(res.status).toBe(201)
+    expect(res.body.orderId).toBe(stockOrderId)
+    await app.api('DELETE', `/api/sessions/${res.body.id}`, { token: admin.token })
+  })
+})
+
 describe('a machine that takes dimensions from the inspector', () => {
   it('hands the wizard no configured dimensions while switched off, and them again once on', async () => {
     const machines = await app.api<Machine[]>('GET', '/api/master/machines', { token: admin.token })

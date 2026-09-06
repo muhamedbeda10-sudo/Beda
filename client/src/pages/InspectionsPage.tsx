@@ -26,7 +26,7 @@ import { useMaster, useOpenBoard, useSampleDetail } from '@/services/queries'
 import { closeSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can, processForMachine, shiftName } from '@/domain'
+import { can, isStockOrder, processForMachine, shiftName } from '@/domain'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import type { SampleSummary, SessionWithOrder } from '@qc/shared/api'
 import type { Machine } from '@qc/shared/types'
@@ -283,7 +283,11 @@ export function InspectionsPage() {
                           aria-label={`Order details for ${order?.orderNumber ?? 'this session'}`}
                         >
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-bold">{order?.orderNumber ?? '—'}</span>
+                          {isStockOrder(order) ? (
+                            <Badge tone="violet">For stock</Badge>
+                          ) : (
+                            <span className="font-bold">{order?.orderNumber ?? '—'}</span>
+                          )}
                           <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
                           {s.status === 'Open' ? <Badge tone="green">OPEN</Badge> : <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>CLOSED · stays while on Hold</Badge>}
                           <SessionToneBadge session={s} />
@@ -293,6 +297,11 @@ export function InspectionsPage() {
                           {s.startQtyConfirmed && (
                             <Badge tone="blue" icon={<CheckCircle2 className="h-3 w-3" />}>
                               Rejected before release {s.startQtyConfirmed.qty}
+                            </Badge>
+                          )}
+                          {s.producedQty !== undefined && (
+                            <Badge tone="blue" icon={<Boxes className="h-3 w-3" />}>
+                              Produced {s.producedQty} pairs
                             </Badge>
                           )}
                           {(s.noteCount ?? 0) > 0 && (
@@ -455,7 +464,9 @@ function CloseSessionDialog({
   onClose: () => void
   onConfirm: (qty: number) => void
 }) {
-  const [qty, setQty] = useState(String(session.startQtyConfirmed?.qty ?? ''))
+  // A stock session confirms the quantity that came out; an order session its starting count.
+  const stock = isStockOrder(session.order)
+  const [qty, setQty] = useState(String(stock ? (session.producedQty ?? '') : (session.startQtyConfirmed?.qty ?? '')))
   const parsed = Number(qty)
   const valid = qty.trim() !== '' && !Number.isNaN(parsed) && parsed >= 0
 
@@ -478,7 +489,7 @@ function CloseSessionDialog({
       }
     >
       <div className="space-y-3">
-        <Field label="Final produced quantity" hint="Recorded against this session and audited.">
+        <Field label={stock ? 'Final quantity produced (pairs)' : 'Final produced quantity'} hint="Recorded against this session and audited.">
           <Input autoFocus type="number" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} className="min-h-[48px] text-lg" />
         </Field>
         <p className="text-sm text-slate-500 dark:text-slate-400">

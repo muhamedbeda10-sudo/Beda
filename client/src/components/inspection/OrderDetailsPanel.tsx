@@ -28,6 +28,7 @@ import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { useOrder, useOrderAllLines, useOrderHistory, useOrderNotes } from '@/services/queries'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
+import { isStockOrder } from '@qc/shared/rules'
 import type { SampleSummary, SessionWithOrder } from '@qc/shared/api'
 
 export function OrderDetailsPanel({
@@ -55,13 +56,14 @@ export function OrderDetailsPanel({
   const { data: lines = [] } = useOrderAllLines(session?.order?.orderNumber ?? null)
   const { data: notes = [], isLoading: notesLoading } = useOrderNotes(orderId)
   const machineLabel = (code: string) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`
+  const stock = isStockOrder(session?.order)
 
   return (
     <Drawer
       open={session !== null}
       onClose={onClose}
       icon={<Package2 className="h-5 w-5" />}
-      title={session?.order?.orderNumber ?? 'Order'}
+      title={stock ? (session?.order?.item ?? 'Stock item') : (session?.order?.orderNumber ?? 'Order')}
       subtitle={
         session && (
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -108,14 +110,13 @@ export function OrderDetailsPanel({
               </Badge>
             )}
             <SessionToneBadge session={session} />
-            {order && erpBadge(order.erpStatus)}
+            {stock ? <Badge tone="violet">For stock · no order</Badge> : order && erpBadge(order.erpStatus)}
           </Reveal>
 
-          {/* Quantities — the numbers a planner asks about first. */}
-          <Reveal index={1}>
-            {order ? <Quantities order={order} /> : <Skeleton rows={2} />}
-          </Reveal>
+          {/* Quantities — the numbers a planner asks about first. A stock line has none. */}
+          {!stock && <Reveal index={1}>{order ? <Quantities order={order} /> : <Skeleton rows={2} />}</Reveal>}
 
+          {!stock && (
           <Reveal index={2}>
             <Section icon={<FileText className="h-4 w-4" />} title="Order line">
               {order ? (
@@ -138,6 +139,7 @@ export function OrderDetailsPanel({
               )}
             </Section>
           </Reveal>
+          )}
 
           <Reveal index={3}>
             <Section icon={<ClipboardList className="h-4 w-4" />} title="This session">
@@ -145,7 +147,11 @@ export function OrderDetailsPanel({
                 <Attr label="Inspector" value={session.inspectorName} />
                 <Attr label="Started" value={formatDateTime(session.startedAt)} />
                 <Attr label="Status" value={session.status} />
-                <Attr label="Rejected before release" value={session.startQtyConfirmed ? String(session.startQtyConfirmed.qty) : ''} />
+                {stock ? (
+                  <Attr label="Quantity produced (pairs)" value={session.producedQty !== undefined ? String(session.producedQty) : ''} />
+                ) : (
+                  <Attr label="Rejected before release" value={session.startQtyConfirmed ? String(session.startQtyConfirmed.qty) : ''} />
+                )}
                 <Attr label="Final qty" value={session.finalQty !== undefined ? String(session.finalQty) : ''} />
                 <Attr label="Closed" value={session.closedAt ? formatDateTime(session.closedAt) : ''} />
               </dl>
@@ -213,6 +219,7 @@ export function OrderDetailsPanel({
             </Section>
           </Reveal>
 
+          {!stock && (
           <Reveal index={5}>
             <Section icon={<Layers className="h-4 w-4" />} title="Lines of this order" count={lines.length}>
               {lines.length === 0 ? (
@@ -253,6 +260,7 @@ export function OrderDetailsPanel({
               )}
             </Section>
           </Reveal>
+          )}
 
           <Reveal index={6}>
             <Section icon={<MessageSquareText className="h-4 w-4" />} title="Notes about the order" count={notes.length}>

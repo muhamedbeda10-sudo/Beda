@@ -36,7 +36,7 @@ import { chunk } from '@/lib/utils'
 export async function startSession(qc: QueryClient, body: StartSessionRequest): Promise<SessionWithOrder> {
   const session = await api<SessionWithOrder>('/sessions', { method: 'POST', body })
   await qc.invalidateQueries({ queryKey: ['sessions'] })
-  await qc.invalidateQueries({ queryKey: ['orders', body.orderId] })
+  if ('orderId' in body) await qc.invalidateQueries({ queryKey: ['orders', body.orderId] })
   return session
 }
 

@@ -260,10 +260,12 @@ export interface SessionListQuery {
   limit?: number
 }
 
-export interface StartSessionRequest {
-  orderId: string
-  startQty: number
-}
+/**
+ * Start a session. Against an order line: the line and the quantity already
+ * rejected before release. On a make-to-stock machine: the machine and how
+ * many pieces came out — the API keeps the machine's fixed STOCK line.
+ */
+export type StartSessionRequest = { orderId: string; startQty: number } | { workCenterCode: string; producedQty: number }
 
 export interface CloseSessionRequest {
   finalQty: number

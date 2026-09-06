@@ -30,6 +30,10 @@ import {
   ptOverallVerdict,
   can,
   validateSample,
+  isStockMachine,
+  isStockOrder,
+  stockLineKey,
+  STOCK_ORDER_NUMBER,
 } from '@qc/shared/rules'
 import { instructionsInForce } from './workInstructions.routes'
 import type {
@@ -81,7 +85,10 @@ async function assertCoilsUsable(q: Queryable, coilIds: string[]): Promise<void>
   if (rows.length !== wanted.length) throw badRequest('One of the coils is no longer in the coil register. Remove it and pick it again.')
 }
 
-const startSchema = z.object({ orderId: uuid, startQty: z.coerce.number().min(0) })
+const startSchema = z.union([
+  z.object({ orderId: uuid, startQty: z.coerce.number().min(0) }),
+  z.object({ workCenterCode: z.string().trim().min(1).max(40), producedQty: z.coerce.number().min(0) }),
+])
 const closeSchema = z.object({ finalQty: z.coerce.number().min(0), version: z.coerce.number().int().min(0) })
 const reopenSchema = z.object({ version: z.coerce.number().int().min(0) })
 
@@ -193,11 +200,32 @@ async function loadPreviousSetup(q: Queryable, sessionId: string): Promise<Previ
 async function loadMachine(q: Queryable, code: string): Promise<Machine | null> {
   const { rows } = await q.query<Machine>(
     `SELECT id, code, name, line, display_name AS "displayName", machine_number AS "machineNumber", factory, process,
-            uses_item_dimensions AS "usesItemDimensions"
+            uses_item_dimensions AS "usesItemDimensions", stock_item AS "stockItem", stock_item_code AS "stockItemCode"
        FROM machines WHERE lower(code) = lower($1) AND deleted_at IS NULL LIMIT 1`,
     [code],
   )
   return rows[0] ? dropNulls(rows[0]) : null
+}
+
+/**
+ * The one fixed STOCK line of a make-to-stock machine, created on first use
+ * and brought back (with the machine's current item) after a catalogue clear
+ * retired it. Refused on a machine that works to order.
+ */
+async function ensureStockLine(tx: Queryable, workCenterCode: string): Promise<string> {
+  const machine = await loadMachine(tx, workCenterCode)
+  if (!machine) throw badRequest('That machine is not in the register.')
+  if (!isStockMachine(machine)) throw badRequest('This machine works to order: pick the order and the item to inspect.')
+  const { rows } = await tx.query<{ id: string }>(
+    `INSERT INTO production_orders (line_key, order_number, item, item_code, work_center_code, machine_id, erp_status)
+     VALUES ($1, $2, $3, $4, $5, $6, 'Stock')
+     ON CONFLICT (lower(line_key) text_pattern_ops) DO UPDATE
+       SET item = EXCLUDED.item, item_code = EXCLUDED.item_code, work_center_code = EXCLUDED.work_center_code,
+           machine_id = EXCLUDED.machine_id, deleted_at = NULL, deleted_by_id = NULL
+     RETURNING id`,
+    [stockLineKey(machine.code), STOCK_ORDER_NUMBER, machine.stockItem, machine.stockItemCode, machine.code, machine.id],
+  )
+  return rows[0].id
 }
 
 async function loadSessionWithOrder(q: Queryable, id: string, lock = false): Promise<SessionWithOrder | null> {
@@ -318,23 +346,34 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const user = requireUser(req)
     const body = parse(startSchema, req.body)
     const created = await withTransaction(db, async (tx) => {
+      // A make-to-stock machine has no order to pick: its one fixed STOCK line
+      // is kept (or restored, after a catalogue clear) and the session opens
+      // against it with the quantity that came out.
+      const orderId = 'orderId' in body ? body.orderId : await ensureStockLine(tx, body.workCenterCode)
       // Lock the order so two inspectors starting at once get distinct seqs.
       const order = (await tx.query<ProductionOrder>(
         `SELECT id, order_number AS "orderNumber", item, work_center_code AS "workCenterCode"
            FROM production_orders WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
-        [body.orderId],
+        [orderId],
       )).rows[0]
       if (!order) throw badRequest('That order does not exist.')
       const seq = (await tx.query<{ next: number }>(
         `SELECT COALESCE(max(seq), 0) + 1 AS next FROM inspection_sessions WHERE order_id = $1`,
         [order.id],
       )).rows[0].next
-      const { rows } = await tx.query<{ id: string }>(
-        `INSERT INTO inspection_sessions
-           (seq, order_id, work_center_code, inspector_id, inspector_name, start_qty, start_qty_by_id, start_qty_by_name, start_qty_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $4, $5, now()) RETURNING id`,
-        [seq, order.id, order.workCenterCode, user.id, user.name, body.startQty],
-      )
+      const { rows } =
+        'orderId' in body
+          ? await tx.query<{ id: string }>(
+              `INSERT INTO inspection_sessions
+                 (seq, order_id, work_center_code, inspector_id, inspector_name, start_qty, start_qty_by_id, start_qty_by_name, start_qty_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $4, $5, now()) RETURNING id`,
+              [seq, order.id, order.workCenterCode, user.id, user.name, body.startQty],
+            )
+          : await tx.query<{ id: string }>(
+              `INSERT INTO inspection_sessions (seq, order_id, work_center_code, inspector_id, inspector_name, produced_qty)
+               VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+              [seq, order.id, order.workCenterCode, user.id, user.name, body.producedQty],
+            )
       const session = (await loadSessionWithOrder(tx, rows[0].id))!
       await auditCreate(tx, auditCtxFor(user, session, 'InspectionSession', session.id))
       return session
@@ -550,7 +589,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       const wc = session.workCenterCode
       const process = processForMachine(await loadMachine(tx, wc), wc)
 
-      const { imageIds } = await validateSampleBody(tx, process, body)
+      const { imageIds } = await validateSampleBody(tx, process, body, !isStockOrder(order))
 
       const index = (await tx.query<{ next: number }>(
         `SELECT COALESCE(max(index), 0) + 1 AS next FROM inspection_samples WHERE session_id = $1`,
@@ -661,7 +700,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
 
       const wc = session.workCenterCode
       const process = processForMachine(await loadMachine(tx, wc), wc)
-      const { imageIds } = await validateSampleBody(tx, process, body)
+      const { imageIds } = await validateSampleBody(tx, process, body, !isStockOrder(session.order))
 
       // Retire the current child rows; nothing is erased.
       const counts = await retireSampleChildren(tx, sampleId, user.id)
@@ -742,9 +781,11 @@ async function validateSampleBody(
   tx: Queryable,
   process: Process,
   body: Omit<z.infer<typeof saveSampleSchema>, 'submissionId'>,
+  drawingRequired = true,
 ): Promise<{ imageIds: string[] }> {
   const issues = validateSample({
     process,
+    drawingRequired,
     sampleQty: body.sampleQty,
     drawing: body.drawing,
     coils: body.coils.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade })),

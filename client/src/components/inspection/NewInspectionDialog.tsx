@@ -6,7 +6,7 @@ import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
 import { useMaster, useOrderHistory, useOrderLines, useOrderNumbers } from '@/services/queries'
 import { startSession } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
-import { processForMachine } from '@qc/shared/rules'
+import { isStockMachine, processForMachine } from '@qc/shared/rules'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
 
 /**
@@ -30,6 +30,8 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
   const [itemTerm, setItemTerm] = useState('')
   const [picked, setPicked] = useState<ProductionOrder | null>(null)
   const [startQty, setStartQty] = useState('')
+  /** On a make-to-stock machine: how many pieces (pairs) came out. */
+  const [producedQty, setProducedQty] = useState('')
   const [busy, setBusy] = useState(false)
 
   const { data: machines = [] } = useMaster('machines', undefined, open)
@@ -74,6 +76,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
   function reset() {
     setPicked(null)
     setStartQty('')
+    setProducedQty('')
     setOrderTerm('')
     setOrderNumber('')
     setItemTerm('')
@@ -85,6 +88,26 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     setOrderNumber('')
     setOrderTerm('')
     setItemTerm('')
+    setProducedQty('')
+  }
+
+  /** A make-to-stock machine: no order to pick, only the quantity that came out. */
+  async function startStock() {
+    if (!machine) return
+    const qty = Number(producedQty)
+    if (producedQty.trim() === '' || Number.isNaN(qty) || qty < 0) return
+    setBusy(true)
+    try {
+      const session = await startSession(queryClient, { workCenterCode: machine.code, producedQty: qty })
+      toast(`Session started on ${machine.displayName} · ${machine.stockItem}.`, 'success')
+      reset()
+      onClose()
+      navigate(`/wizard/${session.id}`)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not start the session.', 'error')
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function start() {
@@ -199,8 +222,10 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     )
   }
 
-  // ---- Steps 1–3: machine → order → item -----------------------------------
-  const stage: 'machine' | 'order' | 'item' = !machineCode ? 'machine' : !orderNumber ? 'order' : 'item'
+  // ---- Steps 1–3: machine → order → item; a stock machine has only step 1 ---
+  const stock = isStockMachine(machine)
+  const stage: 'machine' | 'order' | 'item' | 'stock' = !machineCode ? 'machine' : stock ? 'stock' : !orderNumber ? 'order' : 'item'
+  const producedValid = producedQty.trim() !== '' && !Number.isNaN(Number(producedQty)) && Number(producedQty) >= 0
 
   return (
     <Modal
@@ -212,14 +237,27 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
       title="New inspection"
       icon={<Package className="h-5 w-5" />}
       size="lg"
+      footer={
+        stage === 'stock' ? (
+          <Button variant="primary" disabled={!producedValid || busy} onClick={startStock} className="min-h-[48px]">
+            <Play className="h-4 w-4" /> {busy ? 'Starting…' : 'Start inspection'}
+          </Button>
+        ) : undefined
+      }
     >
       <div className="space-y-3">
         <ol className="flex flex-wrap items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
           <Crumb n={1} label="Machine" active={stage === 'machine'} done={stage !== 'machine'} />
           <ChevronRight className="h-3.5 w-3.5" />
-          <Crumb n={2} label="Order" active={stage === 'order'} done={stage === 'item'} />
-          <ChevronRight className="h-3.5 w-3.5" />
-          <Crumb n={3} label="Item" active={stage === 'item'} done={false} />
+          {stage === 'stock' ? (
+            <Crumb n={2} label="Quantity produced" active done={false} />
+          ) : (
+            <>
+              <Crumb n={2} label="Order" active={stage === 'order'} done={stage === 'item'} />
+              <ChevronRight className="h-3.5 w-3.5" />
+              <Crumb n={3} label="Item" active={stage === 'item'} done={false} />
+            </>
+          )}
         </ol>
 
         <Field label="Machine">
@@ -248,6 +286,44 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
           <p className="rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-slate-400 dark:border-slate-700">
             No machines are registered yet. Load the machine sheet in Admin → Bulk import.
           </p>
+        )}
+
+        {stage === 'stock' && machine && (
+          <div className="space-y-4">
+            {/* No order on this machine: it makes one item for stock. */}
+            <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/50">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-lg font-bold">{machine.stockItem}</p>
+                <Badge tone="violet">For stock · no order</Badge>
+              </div>
+              <p className="text-sm text-brand-600 dark:text-brand-400">
+                {machine.displayName} · <span className="font-mono">{machine.stockItemCode}</span>
+              </p>
+              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                Right and left are made together, so one quantity covers both. The inspection then runs as usual: setup with the coils, samples, dimensions and defects.
+              </p>
+            </div>
+            <Field label="Quantity produced (pairs)" hint="How many came out of the press for this session — right = left, entered once. Confirmed again when the session is closed.">
+              <Input
+                autoFocus
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={producedQty}
+                onChange={(e) => setProducedQty(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && producedValid && !busy) void startStock()
+                }}
+                placeholder="e.g. 120"
+                className="min-h-[48px] text-lg"
+              />
+            </Field>
+            {producedValid && Number(producedQty) > 0 && (
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                = <b className="tabular-nums">{Number(producedQty)}</b> right + <b className="tabular-nums">{Number(producedQty)}</b> left
+              </p>
+            )}
+          </div>
         )}
 
         {stage === 'order' && (
