@@ -60,6 +60,13 @@ export interface Machine {
   factory?: string
   /** Decides the inspection flow on this machine. */
   process: Process
+  /**
+   * Whether the wizard loads the item's configured dimensions on this
+   * machine. Off for machines where the inspector measures what the part
+   * needs and types nominal and tolerance once; the next sample then starts
+   * from the previous one's rows. Defaults to on.
+   */
+  usesItemDimensions: boolean
   deletedAt?: ISODate | null
 }
 

@@ -27,6 +27,7 @@ describe('master data', () => {
     expect(created.status).toBe(201)
     expect(created.body.id).toMatch(/^[0-9a-f-]{36}$/)
     expect(created.body.machineNumber).toBeUndefined()
+    expect(created.body.usesItemDimensions).toBe(true)
     machineId = created.body.id
 
     const list = await app.api<Machine[]>('GET', '/api/master/machines', { token: inspector.token })
@@ -61,10 +62,11 @@ describe('master data', () => {
   it('edits with a field-level audit trail', async () => {
     const put = await app.api<Machine>('PUT', `/api/master/machines/${machineId}`, {
       token: admin.token,
-      body: { code: '58', name: 'A. Welding Line', line: 'LM4', displayName: '58-A. Welding Line-LM4', machineNumber: 'M-58' },
+      body: { code: '58', name: 'A. Welding Line', line: 'LM4', displayName: '58-A. Welding Line-LM4', machineNumber: 'M-58', usesItemDimensions: false },
     })
     expect(put.status).toBe(200)
     expect(put.body.machineNumber).toBe('M-58')
+    expect(put.body.usesItemDimensions).toBe(false)
 
     const audit = await app.api<AuditListResponse>('GET', '/api/audit', { token: admin.token })
     const entry = audit.body.entries.find((e) => e.entity === 'Machine' && e.action === 'update')

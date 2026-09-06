@@ -18,7 +18,7 @@ import type {
   SessionWithOrder,
   WizardContext,
 } from '@qc/shared/api'
-import type { Coil, DefectResult, DimensionResult, ImageAsset, ProductionOrder, WorkInstruction } from '@qc/shared/types'
+import type { Coil, DefectResult, DimensionResult, ImageAsset, Machine, ProductionOrder, WorkInstruction } from '@qc/shared/types'
 import { TestApp, tinyJpeg, type Session } from './harness'
 
 const app = new TestApp()
@@ -709,6 +709,32 @@ describe('notes about the order (§5.8)', () => {
     const audit = await app.api<AuditListResponse>('GET', '/api/audit', { token: admin.token })
     expect(audit.body.entries.some((e) => e.entity === 'SessionNote' && e.entityId === noteId && e.action === 'delete')).toBe(true)
     expect(audit.body.entries.some((e) => e.entity === 'SessionNote' && e.entityId === noteId && e.action === 'create')).toBe(true)
+  })
+})
+
+describe('a machine that takes dimensions from the inspector', () => {
+  it('hands the wizard no configured dimensions while switched off, and them again once on', async () => {
+    const machines = await app.api<Machine[]>('GET', '/api/master/machines', { token: admin.token })
+    const weld = machines.body.find((m) => m.code === '58')!
+    expect(weld.usesItemDimensions).toBe(true)
+    const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrder.id, startQty: 0 } })
+    const sid = started.body.id
+    const before = await app.api<WizardContext>('GET', `/api/sessions/${sid}/wizard`, { token: inspector.token })
+    expect(before.body.dimensionOrder.length).toBeGreaterThan(0)
+
+    const { id: _id, deletedAt: _d, ...fields } = weld
+    const off = await app.api<Machine>('PUT', `/api/master/machines/${weld.id}`, { token: admin.token, body: { ...fields, usesItemDimensions: false } })
+    expect(off.status).toBe(200)
+    const manual = await app.api<WizardContext>('GET', `/api/sessions/${sid}/wizard`, { token: inspector.token })
+    expect(manual.body.machine?.usesItemDimensions).toBe(false)
+    expect(manual.body.dimensionOrder).toEqual([])
+    // What the inspector typed on the last sample still carries forward.
+    expect(manual.body.previousDimensions.length).toBeGreaterThan(0)
+
+    await app.api('PUT', `/api/master/machines/${weld.id}`, { token: admin.token, body: { ...fields, usesItemDimensions: true } })
+    const again = await app.api<WizardContext>('GET', `/api/sessions/${sid}/wizard`, { token: inspector.token })
+    expect(again.body.dimensionOrder.length).toBeGreaterThan(0)
+    await app.api('DELETE', `/api/sessions/${sid}`, { token: admin.token })
   })
 })
 
