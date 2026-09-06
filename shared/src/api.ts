@@ -293,8 +293,21 @@ export interface WizardContext {
   process: Process
   /** The welding wire batch of this session's latest sample, offered again. */
   previousWeldingWireBatch: string | null
+  /** The setup of this session's latest sample — drawing, issue, coils and
+   *  an acknowledged grade mismatch. Setup is entered once per session, so
+   *  the next sample starts from it and skips the Setup step. Null on the
+   *  first sample. */
+  previousSetup: PreviousSetup | null
   /** The controlled documents that apply to this process, by step. */
   workInstructions: WorkInstruction[]
+}
+
+export interface PreviousSetup {
+  drawing: string
+  drawingAlt: string | null
+  issue: string | null
+  coils: SaveCoilInput[]
+  gradeAcknowledgement: { coilNumbers: string[]; expectedGrade: string; foundGrades: string[] } | null
 }
 
 // ---- Work instructions -----------------------------------------------------

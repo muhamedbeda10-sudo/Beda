@@ -358,6 +358,11 @@ describe('the atomic sample save', () => {
       ['Thickness', 2.5],
       ['Length', 2500],
     ])
+    // Setup is entered once per session: the latest sample's is offered to the next one.
+    expect(ctx.body.previousSetup?.drawing).toBe('BS9059/58')
+    expect(ctx.body.previousSetup?.coils.map((c) => c.coilNumber)).toEqual(['C10021'])
+    // Sample 2 carried a matching grade, so there is no acknowledgement to carry.
+    expect(ctx.body.previousSetup?.gradeAcknowledgement).toBeNull()
 
     // The same item of the same order on ANOTHER machine (line L-4) is grey:
     // defects before. The same item on a different order (line L-3) is not.

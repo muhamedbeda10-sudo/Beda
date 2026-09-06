@@ -105,6 +105,7 @@ export function WizardPage() {
   // The machine's process decides the steps: the API resolved it from the register.
   const process: Process = ctx?.process ?? 'forming'
   const previousWire = ctx?.previousWeldingWireBatch ?? null
+  const previousSetup = ctx?.previousSetup ?? null
   const steps = useMemo(() => stepsForProcess(process), [process])
 
   const [draft, setDraft] = useState<SampleDraft | null>(null)
@@ -170,18 +171,36 @@ export function WizardPage() {
             source: 'manual' as const,
           }))
         : rows.map((r) => toDraftRow(r))
+    // Setup — drawing, issue, coils — is entered once per session: the next
+    // sample starts from the previous one's and opens past the Setup step.
+    const steps = stepsForProcess(process)
+    const carried = previousSetup && steps[0] === 'setup' ? previousSetup : null
+    const str = (v: number | null | undefined) => (v === null || v === undefined ? '' : String(v))
     setDraft({
       sessionId: session.id,
       orderId: order.id,
       workCenterCode: session.workCenterCode,
       process,
       submissionId: newSubmissionId(),
-      step: stepsForProcess(process)[0],
-      drawing: process === 'paint' ? '' : (order.drawing ?? ''),
-      drawingAlt: order.drawingAlt,
-      issue: order.issue,
+      step: carried ? steps[1] : steps[0],
+      drawing: carried ? carried.drawing : process === 'paint' ? '' : (order.drawing ?? ''),
+      drawingAlt: carried ? (carried.drawingAlt ?? undefined) : order.drawingAlt,
+      issue: carried ? (carried.issue ?? undefined) : order.issue,
       sampleQty: '',
-      coils: [],
+      coils: (carried?.coils ?? []).map((c) => ({
+        coilId: c.coilId ?? undefined,
+        coilNumber: c.coilNumber,
+        grade: c.grade ?? '',
+        smType: c.smType ?? '',
+        supplier: c.supplier ?? '',
+        thickness: str(c.thickness),
+        width: str(c.width),
+        yield: str(c.yield),
+        notes: c.notes ?? '',
+      })),
+      gradeAcknowledged: carried?.gradeAcknowledgement
+        ? { ...carried.gradeAcknowledgement, at: new Date().toISOString() }
+        : undefined,
       dimensions,
       defects: [],
       paint: { imageIds: [] },
@@ -191,7 +210,7 @@ export function WizardPage() {
           : undefined,
       updatedAt: new Date().toISOString(),
     })
-  }, [session, order, draft, dimOrder, previousDims, process, previousWire, editing, editingSampleId])
+  }, [session, order, draft, dimOrder, previousDims, process, previousWire, previousSetup, editing, editingSampleId])
 
   // Persist on every change so a reload or a dead network loses nothing (§9.6).
   const update = useCallback((patch: Partial<SampleDraft> | ((d: SampleDraft) => SampleDraft)) => {
