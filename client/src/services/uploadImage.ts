@@ -12,6 +12,7 @@ import type { ImageAsset } from '@qc/shared/types'
 import type { UploadImageFields } from '@qc/shared/api'
 import { api, apiBlob } from '@/lib/api'
 import { prepareImage, type PreparedImage } from './imageStore'
+import { cachedBlob } from './mediaCache'
 
 export interface UploadContext {
   sessionId?: string
@@ -49,7 +50,8 @@ export async function resolveImageUrl(asset: Pick<ImageAsset, 'id' | 'thumbnailD
   const cached = objectUrls.get(asset.id)
   if (cached) return cached
   try {
-    const blob = await apiBlob(`/images/${asset.id}/content`)
+    // Fetched once per device; a photo never changes once stored.
+    const blob = await cachedBlob(`/images/${asset.id}/content`, () => apiBlob(`/images/${asset.id}/content`))
     const url = URL.createObjectURL(blob)
     objectUrls.set(asset.id, url)
     return url

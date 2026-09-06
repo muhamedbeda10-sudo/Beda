@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, FileText, Loader2, Minus, Plus, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { apiBlob } from '@/lib/api'
+import { cachedBlob } from '@/services/mediaCache'
 import { cn } from '@/lib/utils'
 import type { WorkInstruction } from '@qc/shared/types'
 
@@ -36,7 +37,8 @@ export function WorkInstructionViewer({ instruction, onClose }: { instruction: W
       try {
         const pdfjs = await import('pdfjs-dist')
         pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).href
-        const blob = await apiBlob(`/work-instructions/${instruction.id}/content`)
+        // A controlled document is immutable per revision: fetched once per device.
+        const blob = await cachedBlob(`/work-instructions/${instruction.id}/content`, () => apiBlob(`/work-instructions/${instruction.id}/content`))
         const data = new Uint8Array(await blob.arrayBuffer())
         opened = await pdfjs.getDocument({ data }).promise
         if (cancelled) return
