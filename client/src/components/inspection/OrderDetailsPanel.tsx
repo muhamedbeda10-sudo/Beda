@@ -1,0 +1,378 @@
+// ============================================================================
+// Everything about an order, from the session card on the board: the line as
+// the ERP export carried it, its quantities, this session, the inspection
+// history on the line, the order's other lines and the notes written about
+// it. Read in full while the board stays behind it.
+// ============================================================================
+
+import { useEffect, useState, type ReactNode } from 'react'
+import {
+  Boxes,
+  Calendar,
+  ClipboardList,
+  FileText,
+  Factory,
+  Layers,
+  Lock,
+  MessageSquareText,
+  Package2,
+  Palette,
+  Play,
+  ShieldCheck,
+  Tag,
+  User,
+} from 'lucide-react'
+import { Badge, Button, Drawer, type BadgeTone } from '@/components/ui'
+import { SessionToneBadge } from '@/components/inspection/SessionTone'
+import { OrderNoteList } from '@/components/inspection/OrderNotes'
+import { useOrder, useOrderAllLines, useOrderHistory, useOrderNotes } from '@/services/queries'
+import { cn, formatDate, formatDateTime } from '@/lib/utils'
+import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
+import type { SampleSummary, SessionWithOrder } from '@qc/shared/api'
+
+export function OrderDetailsPanel({
+  session,
+  samples,
+  machines,
+  canRecord,
+  onClose,
+  onContinue,
+  onCloseSession,
+  onOpenSample,
+}: {
+  session: SessionWithOrder | null
+  samples: SampleSummary[]
+  machines: Machine[]
+  canRecord: boolean
+  onClose: () => void
+  onContinue: (session: SessionWithOrder) => void
+  onCloseSession: (session: SessionWithOrder) => void
+  onOpenSample: (session: SessionWithOrder, sample: SampleSummary) => void
+}) {
+  const orderId = session?.orderId ?? null
+  const { data: order } = useOrder(orderId)
+  const { data: history } = useOrderHistory(orderId)
+  const { data: lines = [] } = useOrderAllLines(session?.order?.orderNumber ?? null)
+  const { data: notes = [], isLoading: notesLoading } = useOrderNotes(orderId)
+  const machineLabel = (code: string) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`
+
+  return (
+    <Drawer
+      open={session !== null}
+      onClose={onClose}
+      icon={<Package2 className="h-5 w-5" />}
+      title={session?.order?.orderNumber ?? 'Order'}
+      subtitle={
+        session && (
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span dir="auto" className="font-semibold text-slate-700 dark:text-slate-200">
+              {session.order?.item ?? '—'}
+            </span>
+            <span className="text-slate-400">·</span>
+            <span className="font-mono text-xs">{session.order?.itemCode ?? '—'}</span>
+          </span>
+        )
+      }
+      footer={
+        session && (
+          <>
+            {session.status === 'Open' && canRecord && (
+              <Button variant="primary" className="min-h-[48px]" onClick={() => onContinue(session)}>
+                <Play className="h-4 w-4" /> Continue inspection
+              </Button>
+            )}
+            {session.status === 'Open' && canRecord && (
+              <Button className="min-h-[48px]" onClick={() => onCloseSession(session)}>
+                <Lock className="h-4 w-4" /> Close session
+              </Button>
+            )}
+            <Button className="min-h-[48px]" onClick={onClose}>
+              Close
+            </Button>
+          </>
+        )
+      }
+    >
+      {session && (
+        <div className="space-y-5">
+          {/* Badges: the state of the line and of this session, at a glance. */}
+          <Reveal index={0} className="flex flex-wrap items-center gap-2">
+            <Badge tone="blue" icon={<Factory className="h-3 w-3" />}>
+              {machineLabel(session.workCenterCode)}
+            </Badge>
+            {session.status === 'Open' ? (
+              <Badge tone="green">Session #{session.seq} · OPEN</Badge>
+            ) : (
+              <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>
+                Session #{session.seq} · CLOSED
+              </Badge>
+            )}
+            <SessionToneBadge session={session} />
+            {order && erpBadge(order.erpStatus)}
+          </Reveal>
+
+          {/* Quantities — the numbers a planner asks about first. */}
+          <Reveal index={1}>
+            {order ? <Quantities order={order} /> : <Skeleton rows={2} />}
+          </Reveal>
+
+          <Reveal index={2}>
+            <Section icon={<FileText className="h-4 w-4" />} title="Order line">
+              {order ? (
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+                  <Attr icon={<Tag className="h-3.5 w-3.5" />} label="Order ID" value={order.lineKey} mono />
+                  <Attr icon={<User className="h-3.5 w-3.5" />} label="Customer" value={order.customer} />
+                  <Attr icon={<Calendar className="h-3.5 w-3.5" />} label="Order date" value={order.date ? formatDate(order.date) : ''} />
+                  <Attr icon={<Layers className="h-3.5 w-3.5" />} label="Type" value={order.type} />
+                  <Attr icon={<Palette className="h-3.5 w-3.5" />} label="Colour" value={order.colour} />
+                  <Attr icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Material" value={order.material} />
+                  <Attr label="Expected grade" value={order.expectedGrade} />
+                  <Attr label="Drawing" value={order.drawing} mono />
+                  <Attr label="Alt. drawing" value={order.drawingAlt} mono />
+                  <Attr label="Issue" value={order.issue} />
+                  <Attr label="ERP status" value={order.erpStatus} />
+                  <Attr label="Machine" value={machineLabel(order.workCenterCode)} />
+                </dl>
+              ) : (
+                <Skeleton rows={4} />
+              )}
+            </Section>
+          </Reveal>
+
+          <Reveal index={3}>
+            <Section icon={<ClipboardList className="h-4 w-4" />} title="This session">
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+                <Attr label="Inspector" value={session.inspectorName} />
+                <Attr label="Started" value={formatDateTime(session.startedAt)} />
+                <Attr label="Status" value={session.status} />
+                <Attr label="Rejected before release" value={session.startQtyConfirmed ? String(session.startQtyConfirmed.qty) : ''} />
+                <Attr label="Final qty" value={session.finalQty !== undefined ? String(session.finalQty) : ''} />
+                <Attr label="Closed" value={session.closedAt ? formatDateTime(session.closedAt) : ''} />
+              </dl>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Chip tone="blue" label="Samples" value={samples.length} />
+                <Chip tone={(session.defectCount ?? 0) > 0 ? 'red' : 'neutral'} label="Defects" value={session.defectCount ?? 0} />
+                <Chip tone={(session.holdCount ?? 0) > 0 ? 'amber' : 'neutral'} label="On Hold" value={session.holdCount ?? 0} />
+                <Chip tone="neutral" label="Notes" value={session.noteCount ?? 0} />
+              </div>
+              {samples.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="flex items-center gap-1 text-xs font-bold uppercase text-slate-400">
+                    <Boxes className="h-3.5 w-3.5" /> Open a sample
+                  </span>
+                  {[...samples]
+                    .sort((a, b) => a.index - b.index)
+                    .map((sm) => (
+                      <button
+                        key={sm.id}
+                        type="button"
+                        onClick={() => onOpenSample(session, sm)}
+                        className="min-h-[36px] rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20"
+                      >
+                        {session.seq}-{sm.index}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </Section>
+          </Reveal>
+
+          <Reveal index={4}>
+            <Section icon={<ClipboardList className="h-4 w-4" />} title="Inspections on this line" count={history?.sessions.length}>
+              {!history ? (
+                <Skeleton rows={2} />
+              ) : history.sessions.length === 0 ? (
+                <Empty>No session has been recorded on this line yet.</Empty>
+              ) : (
+                <ul className="space-y-1.5">
+                  {history.sessions.map((s) => {
+                    const current = s.id === session.id
+                    return (
+                      <li
+                        key={s.id}
+                        className={cn(
+                          'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-3 py-2 text-sm ring-1',
+                          current ? 'bg-brand-50 ring-brand-200 dark:bg-brand-500/10 dark:ring-brand-500/30' : 'bg-slate-50 ring-slate-200/70 dark:bg-slate-800/50 dark:ring-slate-700',
+                        )}
+                      >
+                        <span className="font-bold tabular-nums">#{s.seq}</span>
+                        <span className="text-slate-600 dark:text-slate-300">{s.inspectorName}</span>
+                        <span className="text-xs text-slate-400">{formatDateTime(s.startedAt)}</span>
+                        <span className="ml-auto flex items-center gap-1.5">
+                          {current && <Badge tone="blue">this one</Badge>}
+                          <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
+                          <Badge tone="neutral">{s.sampleCount ?? 0} samples</Badge>
+                          {(s.defectCount ?? 0) > 0 && <Badge tone="red">{s.defectCount} defects</Badge>}
+                          {(s.holdCount ?? 0) > 0 && <Badge tone="amber">{s.holdCount} on Hold</Badge>}
+                        </span>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </Section>
+          </Reveal>
+
+          <Reveal index={5}>
+            <Section icon={<Layers className="h-4 w-4" />} title="Lines of this order" count={lines.length}>
+              {lines.length === 0 ? (
+                <Empty>Only this line is known for the order.</Empty>
+              ) : (
+                <div className="overflow-x-auto rounded-xl ring-1 ring-slate-200/70 dark:ring-slate-700">
+                  <table className="w-full min-w-[30rem] text-sm">
+                    <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:bg-slate-800/60">
+                      <tr>
+                        <th className="px-3 py-2">Item</th>
+                        <th className="px-3 py-2">Machine</th>
+                        <th className="px-3 py-2 text-right">Required</th>
+                        <th className="px-3 py-2 text-right">Finished</th>
+                        <th className="px-3 py-2">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {lines.map((l) => {
+                        const current = l.id === session.orderId
+                        return (
+                          <tr key={l.id} className={cn(current && 'bg-brand-50/60 dark:bg-brand-500/10')}>
+                            <td className="px-3 py-2">
+                              <span dir="auto" className="block font-semibold">
+                                {l.item || '—'}
+                              </span>
+                              <span className="font-mono text-xs text-slate-400">{l.itemCode}</span>
+                            </td>
+                            <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{machineLabel(l.workCenterCode)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{l.requiredQty}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{l.finishedQty}</td>
+                            <td className="px-3 py-2">{erpBadge(l.erpStatus) ?? <Badge tone="green">Active</Badge>}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Section>
+          </Reveal>
+
+          <Reveal index={6}>
+            <Section icon={<MessageSquareText className="h-4 w-4" />} title="Notes about the order" count={notes.length}>
+              {notesLoading ? <Skeleton rows={2} /> : <OrderNoteList notes={notes} emptyMessage="No notes on this order yet." machineLabel={machineLabel} />}
+            </Section>
+          </Reveal>
+        </div>
+      )}
+    </Drawer>
+  )
+}
+
+// ---- Pieces ----------------------------------------------------------------
+
+/** Sections arrive one after another, so the panel reads top to bottom as it opens. */
+function Reveal({ index, className, children }: { index: number; className?: string; children: ReactNode }) {
+  return (
+    <div className={cn('animate-page-in', className)} style={{ animationDelay: `${80 + index * 55}ms`, animationFillMode: 'both' }}>
+      {children}
+    </div>
+  )
+}
+
+function Quantities({ order }: { order: ProductionOrder }) {
+  const remaining = remainingQty(order)
+  const pct = order.requiredQty > 0 ? Math.min(100, Math.round((order.finishedQty / order.requiredQty) * 100)) : 0
+  // The bar fills after the panel has landed, so the eye is drawn to it.
+  const [armed, setArmed] = useState(false)
+  useEffect(() => {
+    const t = window.setTimeout(() => setArmed(true), 120)
+    return () => window.clearTimeout(t)
+  }, [])
+  return (
+    <div className="rounded-2xl bg-gradient-to-br from-brand-600 to-brand-800 p-4 text-white shadow-glow">
+      <div className="grid grid-cols-3 gap-3">
+        <Metric label="Required" value={order.requiredQty} />
+        <Metric label="Finished" value={order.finishedQty} />
+        <Metric label="Remaining" value={remaining} accent />
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/20">
+        <div
+          className={cn('h-full origin-left rounded-full bg-white transition-[width] duration-700 ease-out', armed && 'animate-grow-x')}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <p className="mt-1.5 text-xs font-semibold text-white/80">{pct}% of the required quantity finished in the ERP</p>
+    </div>
+  )
+}
+
+function Metric({ label, value, accent }: { label: string; value: number; accent?: boolean }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-white/70">{label}</p>
+      <p className={cn('mt-0.5 text-2xl font-extrabold tabular-nums', accent && 'text-amber-200')}>{value}</p>
+    </div>
+  )
+}
+
+function Section({ icon, title, count, children }: { icon: ReactNode; title: string; count?: number; children: ReactNode }) {
+  return (
+    <section>
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-slate-400">{icon}</span>
+        <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{title}</h3>
+        {count !== undefined && count > 0 && <Badge tone="neutral">{count}</Badge>}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function Attr({ icon, label, value, mono }: { icon?: ReactNode; label: string; value?: string | null; mono?: boolean }) {
+  const empty = value === undefined || value === null || value.trim() === ''
+  return (
+    <div className="min-w-0">
+      <dt className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        {icon}
+        {label}
+      </dt>
+      <dd dir="auto" className={cn('truncate font-semibold', mono && 'font-mono text-sm', empty && 'text-slate-300 dark:text-slate-600')}>
+        {empty ? '—' : value}
+      </dd>
+    </div>
+  )
+}
+
+function Chip({ tone, label, value }: { tone: BadgeTone; label: string; value: number }) {
+  const bg: Record<BadgeTone, string> = {
+    neutral: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+    green: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400',
+    blue: 'bg-brand-100 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300',
+    amber: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400',
+    red: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400',
+    violet: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300',
+  }
+  return (
+    <span className={cn('inline-flex items-baseline gap-1.5 rounded-xl px-3 py-1.5', bg[tone])}>
+      <span className="text-lg font-extrabold tabular-nums">{value}</span>
+      <span className="text-xs font-semibold uppercase tracking-wide">{label}</span>
+    </span>
+  )
+}
+
+function Empty({ children }: { children: ReactNode }) {
+  return <p className="rounded-xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-400 dark:border-slate-700">{children}</p>
+}
+
+function Skeleton({ rows }: { rows: number }) {
+  return (
+    <div className="space-y-2">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="skeleton h-5" style={{ width: `${88 - i * 14}%` }} />
+      ))}
+    </div>
+  )
+}
+
+function erpBadge(status: string) {
+  const s = status.trim().toLowerCase()
+  if (!s || s === 'active') return null
+  return <Badge tone={s === 'hold' ? 'amber' : s === 'cancel' ? 'red' : 'neutral'}>ERP: {status}</Badge>
+}

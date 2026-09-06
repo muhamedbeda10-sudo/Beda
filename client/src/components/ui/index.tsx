@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import type { DimensionStatus, Disposition, SessionStatus } from '@qc/shared/types'
 
 // ---- Badge -----------------------------------------------------------------
-type BadgeTone = 'neutral' | 'green' | 'blue' | 'amber' | 'red' | 'violet'
+export type BadgeTone = 'neutral' | 'green' | 'blue' | 'amber' | 'red' | 'violet'
 const badgeTones: Record<BadgeTone, string> = {
   neutral: 'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700',
   green: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20',
@@ -167,6 +167,75 @@ export function Modal({
           </div>
         )}
         <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
+        {footer && (
+          <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-3.5 dark:border-slate-800 safe-bottom">
+            {footer}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+// ---- Drawer ----------------------------------------------------------------
+/**
+ * A panel that slides in from the right on a wide screen and up from the
+ * bottom on a phone. For a record the user reads in full while the list it
+ * came from stays in view behind it.
+ */
+export function Drawer({
+  open,
+  onClose,
+  title,
+  subtitle,
+  icon,
+  children,
+  footer,
+}: {
+  open: boolean
+  onClose: () => void
+  title?: ReactNode
+  subtitle?: ReactNode
+  icon?: ReactNode
+  children: ReactNode
+  footer?: ReactNode
+}) {
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    document.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = ''
+    }
+  }, [open, onClose])
+
+  if (!open) return null
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-end justify-end sm:items-stretch">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in" onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="relative z-10 flex max-h-[92vh] w-full flex-col rounded-t-3xl bg-white shadow-lift ring-1 ring-slate-200 animate-slide-up dark:bg-slate-900 dark:ring-slate-800 sm:h-full sm:max-h-none sm:max-w-2xl sm:rounded-none sm:rounded-l-3xl sm:animate-slide-in-right"
+      >
+        <div className="flex items-start gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+          {icon && <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-brand-600 text-white shadow-glow">{icon}</span>}
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-xl font-extrabold leading-tight">{title}</h2>
+            {subtitle && <div className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{subtitle}</div>}
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
           <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-3.5 dark:border-slate-800 safe-bottom">
             {footer}

@@ -17,6 +17,7 @@ import {
   type OrderHistory,
   type OrderNumberSummary,
   type SampleSummary,
+  type SessionNotesResponse,
 } from '@qc/shared/api'
 import type { InspectionSession, ProductionOrder } from '@qc/shared/types'
 import type { AppContext } from '../context'
@@ -27,6 +28,7 @@ import { requireCapability, requireUser } from '../auth/middleware'
 import { writeAudit } from '../audit/service'
 import { dropNulls, normaliseKey } from '../lib/rows'
 import { SAMPLE_SUMMARY_SELECT, SESSION_SELECT } from './sessions.sql'
+import { loadOrderNotes } from './notes'
 
 export const ORDER_SELECT = `
   id, line_key AS "lineKey", order_number AS "orderNumber", item, item_code AS "itemCode", work_center_code AS "workCenterCode",
@@ -191,6 +193,15 @@ export function ordersRoutes(ctx: AppContext): Router {
       ),
     ])
     const body: OrderHistory = { sessions: sessions.rows.map(dropNulls), samples: samples.rows }
+    res.json(body)
+  })
+
+  /** §5.8 — every note written about this order, on any of its lines, newest first. */
+  r.get('/:id/notes', async (req, res) => {
+    const id = parse(z.string().uuid(), req.params.id)
+    const [order] = await fetchOrdersByIds(ctx.db, [id])
+    if (!order) throw notFound('That order')
+    const body: SessionNotesResponse = { notes: await loadOrderNotes(ctx.db, id) }
     res.json(body)
   })
 

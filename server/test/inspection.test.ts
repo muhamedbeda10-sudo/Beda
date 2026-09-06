@@ -691,6 +691,9 @@ describe('notes about the order (§5.8)', () => {
     expect(ctx.status).toBe(200)
     const fromWelding = ctx.body.orderNotes.find((n) => n.id === noteId)
     expect(fromWelding?.workCenterCode).toBe('58')
+    // The order's own notes endpoint reads the same set from either line.
+    const viaOrder = await app.api<SessionNotesResponse>('GET', `/api/orders/${weldOrderOnPaintLine.id}/notes`, { token: inspector.token })
+    expect(viaOrder.body.notes.some((n) => n.id === noteId)).toBe(true)
     expect(fromWelding?.sessionSeq).toBeGreaterThan(0)
     // A different order sees none of it.
     const other = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: paintOrder.id, startQty: 0 } })
