@@ -59,6 +59,7 @@ import {
   gradesEquivalent,
   isPaintThicknessName,
   isOtherDefect,
+  isStockOrder,
   OTHER_DEFECT_NAME,
   ptOverallVerdict,
   PAINT_THICKNESS_NAME,
@@ -241,6 +242,8 @@ export function WizardPage() {
     if (!draft) return []
     return validateSample({
       process: draft.process,
+      // A stock item has no order drawing to pick.
+      drawingRequired: !isStockOrder(order),
       sampleQty: Number(draft.sampleQty),
       drawing: draft.drawing,
       coils: draft.coils.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade })),
@@ -432,7 +435,7 @@ export function WizardPage() {
 
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-bold">{order.orderNumber}</span>
+          {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{order.orderNumber}</span>}
           <Badge tone="blue">{machine?.displayName ?? `Machine ${session.workCenterCode}`}</Badge>
           <Badge tone="neutral">
             Shift {shift} · {shiftName(shift)}
@@ -659,15 +662,21 @@ function SetupStep({
     <div className="space-y-4">
       <WorkInstructionLinks instructions={instructions} step="setup" />
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Drawing">
-          <Select value={draft.drawing} onChange={(e) => update({ drawing: e.target.value })} className="min-h-[48px]">
-            {[order.drawing, order.drawingAlt].filter(Boolean).map((d) => (
-              <option key={d} value={d!}>
-                {d}
-              </option>
-            ))}
-          </Select>
-        </Field>
+        {isStockOrder(order) ? (
+          <Field label="Drawing" hint="Optional on a stock item.">
+            <Input value={draft.drawing} onChange={(e) => update({ drawing: e.target.value })} className="min-h-[48px]" placeholder="—" />
+          </Field>
+        ) : (
+          <Field label="Drawing">
+            <Select value={draft.drawing} onChange={(e) => update({ drawing: e.target.value })} className="min-h-[48px]">
+              {[order.drawing, order.drawingAlt].filter(Boolean).map((d) => (
+                <option key={d} value={d!}>
+                  {d}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         <Field label="Issue / revision">
           <Input
             value={draft.issue ?? ''}

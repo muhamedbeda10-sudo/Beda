@@ -67,6 +67,13 @@ export interface Machine {
    * from the previous one's rows. Defaults to on.
    */
   usesItemDimensions: boolean
+  /**
+   * Set on a machine that produces for stock rather than for an order: the
+   * one item it makes, e.g. "Connector (right + left)". A session on such a
+   * machine is started without picking an order. Both fields or neither.
+   */
+  stockItem?: string
+  stockItemCode?: string
   deletedAt?: ISODate | null
 }
 
@@ -159,6 +166,9 @@ export interface InspectionSession {
   }
   /** Final produced quantity captured when closing. */
   finalQty?: number
+  /** On a make-to-stock machine: how many pieces (pairs, for a right/left
+   *  item) came out, entered when the session is started. */
+  producedQty?: number
   closedAt?: ISODate
   closedById?: ID
   deletedAt?: ISODate | null

@@ -274,6 +274,8 @@ export interface SampleDraftForValidation {
   process: Process
   sampleQty: number
   drawing: string
+  /** False on a make-to-stock line, where there is no order drawing to pick. Default true. */
+  drawingRequired?: boolean
   coils: Array<{ coilNumber: string; grade?: string }>
   defects: Array<{ defectName: string; disposition: Disposition | null; qty: number; notes?: string | null }>
   /** The measurement rows; a paint sample's thickness readings live here. */
@@ -295,7 +297,8 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
   const process = draft.process
   const steps = stepsForProcess(process)
 
-  if (steps.includes('setup') && !draft.drawing?.trim()) {
+  // A stock item has no order drawing to pick; anything else must name one.
+  if (steps.includes('setup') && draft.drawingRequired !== false && !draft.drawing?.trim()) {
     issues.push({ step: 'setup', message: 'Select a drawing.' })
   }
   // §5.7 — the sample quantity is entered last, on the review step.
@@ -517,6 +520,26 @@ export function sessionTone(s: { defectCount?: number; holdCount?: number; prior
 // ---- §14 q2 Permissions ----------------------------------------------------
 
 import type { Role } from './types'
+
+// ---- Make-to-stock machines ------------------------------------------------
+
+/** The order number of every fixed stock line; never an ERP order. */
+export const STOCK_ORDER_NUMBER = 'STOCK'
+
+/** The Order ID of the one stock line kept for a make-to-stock machine. */
+export function stockLineKey(machineCode: string): string {
+  return `STOCK-${machineCode.trim().toUpperCase()}`
+}
+
+/** A machine that produces for stock names the one item it makes. */
+export function isStockMachine(m: { stockItem?: string | null; stockItemCode?: string | null } | null | undefined): boolean {
+  return Boolean(m && (m.stockItem ?? '').trim() !== '' && (m.stockItemCode ?? '').trim() !== '')
+}
+
+/** A stock line (or a session's order summary of one). */
+export function isStockOrder(o: { orderNumber?: string | null } | null | undefined): boolean {
+  return (o?.orderNumber ?? '').trim().toUpperCase() === STOCK_ORDER_NUMBER
+}
 
 export type Capability =
   | 'record-inspection'

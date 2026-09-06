@@ -32,7 +32,7 @@ import { useHistory, useMaster, useSampleDetail, useSessionNotes, useSessionSamp
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can, dimensionStatus, processForMachine, shiftName } from '@/domain'
+import { can, dimensionStatus, isStockOrder, processForMachine, shiftName } from '@/domain'
 import { cn, daysAgoISO, formatDate, formatDateTime } from '@/lib/utils'
 import {
   DISPOSITIONS,
@@ -380,7 +380,7 @@ export function HistoryPage() {
               <button key={s.id} onClick={() => setOpenSessionId(s.id)} className={cn('card-hover w-full min-w-0 p-4 text-left', sessionToneClass(s, 'block'))}>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
-                  <span className="font-bold">{s.order?.orderNumber ?? '—'}</span>
+                  {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{s.order?.orderNumber ?? '—'}</span>}
                   <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status.toUpperCase()}</Badge>
                   <SessionToneBadge session={s} />
                 </div>
@@ -394,6 +394,7 @@ export function HistoryPage() {
                       {s.sampleCount ?? 0} sample{s.sampleCount === 1 ? '' : 's'}
                     </Badge>
                     {s.startQtyConfirmed && <Badge tone="neutral">Rejected before release {s.startQtyConfirmed.qty}</Badge>}
+                    {s.producedQty !== undefined && <Badge tone="neutral">Produced {s.producedQty} pairs</Badge>}
                     {s.finalQty !== undefined && <Badge tone="blue">Final {s.finalQty}</Badge>}
                   </span>
                   <ChevronRight className="ml-auto h-5 w-5 shrink-0 text-slate-400" />
@@ -429,7 +430,7 @@ export function HistoryPage() {
                       className={cn('cursor-pointer transition-colors', sessionToneClass(s, 'row', 'hover:bg-slate-50 dark:hover:bg-slate-800/50'))}
                     >
                       <td className="px-4 py-3 tabular-nums text-slate-400">#{s.seq}</td>
-                      <td className="px-4 py-3 font-bold">{s.order?.orderNumber ?? '—'}</td>
+                      <td className="px-4 py-3 font-bold">{isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : (s.order?.orderNumber ?? '—')}</td>
                       <td className="max-w-[220px] truncate px-4 py-3">{s.order?.item ?? '—'}</td>
                       <td className="px-4 py-3">{workCenterName(s.workCenterCode)}</td>
                       <td className="px-4 py-3">{s.inspectorName}</td>
@@ -549,7 +550,11 @@ export function HistoryPage() {
                   <Attr label="Inspector" value={openSession.inspectorName} />
                   <Attr label="Started" value={formatDateTime(openSession.startedAt)} />
                   <Attr label="Status" value={openSession.status} />
-                  <Attr label="Rejected qty before release" value={openSession.startQtyConfirmed?.qty} />
+                  {isStockOrder(openSession.order) ? (
+                    <Attr label="Quantity produced (pairs)" value={openSession.producedQty} />
+                  ) : (
+                    <Attr label="Rejected qty before release" value={openSession.startQtyConfirmed?.qty} />
+                  )}
                   <Attr label="Final qty" value={openSession.finalQty} />
                   <Attr label="Closed" value={openSession.closedAt ? formatDateTime(openSession.closedAt) : '—'} />
                 </dl>
