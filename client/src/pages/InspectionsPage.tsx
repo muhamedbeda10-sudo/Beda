@@ -18,13 +18,14 @@ import {
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
 import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
+import { SampleDetail } from '@/components/inspection/SampleDetail'
 import { InstallBanner } from '@/components/layout/InstallBanner'
-import { useMaster, useOpenBoard } from '@/services/queries'
+import { useMaster, useOpenBoard, useSampleDetail } from '@/services/queries'
 import { closeSession, deleteSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can } from '@/domain'
-import { cn, formatDate } from '@/lib/utils'
+import { can, processForMachine, shiftName } from '@/domain'
+import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import type { SampleSummary, SessionWithOrder } from '@qc/shared/api'
 import type { Machine } from '@qc/shared/types'
 
@@ -102,6 +103,9 @@ export function InspectionsPage() {
   const filtering = seesAll && (term.trim() !== '' || inspectorFilter !== 'all' || factoryFilter !== 'all' || machineFilter !== 'all')
   const [closing, setClosing] = useState<SessionWithOrder | null>(null)
   const [deleting, setDeleting] = useState<SessionWithOrder | null>(null)
+  /** A sample opened from its chip on the card: the full record, read-only here. */
+  const [viewing, setViewing] = useState<{ session: SessionWithOrder; sample: SampleSummary } | null>(null)
+  const { data: viewingDetail, isLoading: viewingLoading } = useSampleDetail(viewing?.sample.id ?? null)
 
   const samplesBySession = useMemo(() => {
     const m = new Map<string, SampleSummary[]>()
@@ -270,7 +274,7 @@ export function InspectionsPage() {
                           </Badge>
                           {s.startQtyConfirmed && (
                             <Badge tone="blue" icon={<CheckCircle2 className="h-3 w-3" />}>
-                              Qty {s.startQtyConfirmed.qty}
+                              Rejected before release {s.startQtyConfirmed.qty}
                             </Badge>
                           )}
                         </div>
@@ -308,12 +312,15 @@ export function InspectionsPage() {
                             {[...sessionSamples]
                               .sort((a, b) => a.index - b.index)
                               .map((sm) => (
-                                <span
+                                <button
                                   key={sm.id}
-                                  className="rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20"
+                                  type="button"
+                                  onClick={() => setViewing({ session: s, sample: sm })}
+                                  className="min-h-[36px] rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20"
+                                  aria-label={`Open sample ${sm.index}`}
                                 >
                                   #{sm.index} · {sm.shift}
-                                </span>
+                                </button>
                               ))}
                           </div>
                         )}
@@ -353,6 +360,50 @@ export function InspectionsPage() {
           }}
         />
       )}
+
+      <Modal
+        open={viewing !== null}
+        onClose={() => setViewing(null)}
+        size="xl"
+        icon={<Boxes className="h-5 w-5" />}
+        title={
+          viewing ? (
+            <span className="flex flex-wrap items-center gap-2">
+              {viewing.session.order?.orderNumber ?? '—'}
+              <span className="text-sm font-semibold text-slate-400">Sample #{viewing.sample.index}</span>
+              <Badge tone="neutral">
+                {shiftName(viewing.sample.shift)} shift · {formatDateTime(viewing.sample.createdAt)}
+              </Badge>
+            </span>
+          ) : (
+            'Sample'
+          )
+        }
+        footer={
+          <Button className="min-h-[48px]" onClick={() => setViewing(null)}>
+            Close
+          </Button>
+        }
+      >
+        {viewing && viewingDetail ? (
+          <SampleDetail
+            session={viewing.session}
+            process={processForMachine(machines.find((m) => m.code === viewing.session.workCenterCode) ?? null, viewing.session.workCenterCode)}
+            sample={viewingDetail.sample}
+            dimensions={viewingDetail.dimensions}
+            defects={viewingDetail.defects}
+            coils={viewingDetail.coils}
+            paint={viewingDetail.paint ?? undefined}
+            pt={viewingDetail.pt ?? undefined}
+            loading={viewingLoading}
+            editable={false}
+            onEditDimension={() => {}}
+            onEditDefect={() => {}}
+          />
+        ) : (
+          <p className="py-10 text-center text-sm text-slate-400">Loading the sample…</p>
+        )}
+      </Modal>
 
       <Modal
         open={!!deleting}

@@ -159,7 +159,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             </dl>
           </div>
 
-          <Field label="Starting production quantity" hint="Confirmed once per session — the baseline every later quantity is judged against.">
+          <Field label="Rejected qty before release" hint="Pieces already rejected on this line before the release inspection. Confirmed once per session.">
             <Input
               autoFocus
               type="number"
