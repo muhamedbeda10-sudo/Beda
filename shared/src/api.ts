@@ -278,7 +278,8 @@ export interface WizardContext {
   order: ProductionOrder
   /** The machine the line runs on, when it is in the register. */
   machine: Machine | null
-  /** General rows for the item plus the rows specific to this machine. */
+  /** General rows for the item plus the rows specific to this machine.
+   *  Empty when the machine is set to take dimensions from the inspector. */
   dimensionOrder: ItemDimensionOrder[]
   referenceImages: ItemReferenceImage[]
   workCenterDefects: WorkCenterDefect[]

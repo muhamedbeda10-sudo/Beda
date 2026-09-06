@@ -491,7 +491,7 @@ export function WizardPage() {
         {current === 'dimensions' && (
           <>
             <WorkInstructionLinks instructions={instructions} step="dimensions" />
-            <DimensionsStep draft={draft} update={update} order={order} refImages={refImages} />
+            <DimensionsStep draft={draft} update={update} order={order} refImages={refImages} typedByInspector={machine?.usesItemDimensions === false} />
           </>
         )}
         {current === 'defects' && (
@@ -817,11 +817,14 @@ function DimensionsStep({
   update,
   order,
   refImages,
+  typedByInspector,
 }: {
   draft: SampleDraft
   update: Updater
   order: ProductionOrder
   refImages: ItemReferenceImage[]
+  /** The machine is set to take dimensions from the inspector, not from item setup. */
+  typedByInspector: boolean
 }) {
   const setRow = (i: number, patch: Partial<SampleDraft['dimensions'][number]>) =>
     update((d) => {
@@ -846,10 +849,14 @@ function DimensionsStep({
         {reference}
         <EmptyState
           icon={<Ruler className="h-10 w-10" />}
-          title="No dimensions configured for this item on this machine"
-          hint="Add one below, or configure them in Admin so they pre-fill next time."
+          title={typedByInspector ? 'This machine takes dimensions from you' : 'No dimensions configured for this item on this machine'}
+          hint={
+            typedByInspector
+              ? 'Add what the part needs — name, nominal and tolerance are typed once; the next sample starts from them.'
+              : 'Add one below, or configure them in Admin so they pre-fill next time.'
+          }
         />
-        <AddDimensionButton update={update} />
+        <AddDimensionButton update={update} label={typedByInspector ? 'Add a dimension' : undefined} />
       </div>
     )
   }
@@ -1023,7 +1030,7 @@ function DimensionsStep({
           </tbody>
         </table>
       </div>
-      <AddDimensionButton update={update} />
+      <AddDimensionButton update={update} label={typedByInspector ? 'Add a dimension' : undefined} />
     </div>
   )
 }
@@ -1034,7 +1041,7 @@ function DimensionsStep({
  * this item on this machine carries them forward, so only the actual is
  * typed from then on (§8.3).
  */
-function AddDimensionButton({ update }: { update: Updater }) {
+function AddDimensionButton({ update, label = 'Add a dimension not in the configuration' }: { update: Updater; label?: string }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [nominal, setNominal] = useState('')
@@ -1070,7 +1077,7 @@ function AddDimensionButton({ update }: { update: Updater }) {
   if (!open) {
     return (
       <Button variant="secondary" className="min-h-[48px]" onClick={() => setOpen(true)}>
-        <Plus className="h-4 w-4" /> Add a dimension not in the configuration
+        <Plus className="h-4 w-4" /> {label}
       </Button>
     )
   }

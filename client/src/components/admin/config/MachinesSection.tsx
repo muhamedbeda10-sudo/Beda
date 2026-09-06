@@ -15,6 +15,8 @@ interface MachineDraft {
   name: string
   factory: string
   process: Process
+  /** 'item' — the configured item dimensions pre-fill; 'inspector' — the inspector types them. */
+  dimensions: 'item' | 'inspector'
 }
 
 const PROCESS_TONE: Record<Process, 'neutral' | 'amber' | 'violet' | 'blue'> = { forming: 'blue', welding: 'amber', paint: 'violet', other: 'neutral' }
@@ -49,14 +51,25 @@ export function MachinesSection() {
         { key: 'name', label: 'Machine', render: (r) => r.name },
         { key: 'process', label: 'Process', render: (r) => <Badge tone={PROCESS_TONE[r.process ?? 'forming']}>{PROCESS_LABEL[r.process ?? 'forming']}</Badge> },
         {
+          key: 'dimensions',
+          label: 'Dimensions',
+          render: (r) => (r.usesItemDimensions === false ? <Badge tone="amber">Typed by inspector</Badge> : <Badge tone="neutral">From item setup</Badge>),
+        },
+        {
           key: 'displayName',
           label: 'Shown as',
           render: (r) => <span className="font-semibold">{r.displayName}</span>,
         },
       ]}
       describe={(r) => r.displayName || r.name}
-      newDraft={() => ({ code: '', name: '', factory: '', process: 'forming' })}
-      toDraft={(r) => ({ code: r.code, name: r.name, factory: r.factory ?? '', process: r.process ?? 'forming' })}
+      newDraft={() => ({ code: '', name: '', factory: '', process: 'forming', dimensions: 'item' })}
+      toDraft={(r) => ({
+        code: r.code,
+        name: r.name,
+        factory: r.factory ?? '',
+        process: r.process ?? 'forming',
+        dimensions: r.usesItemDimensions === false ? 'inspector' : 'item',
+      })}
       validate={(d) => requireText(d.code, 'Machine code') ?? requireText(d.name, 'Machine name')}
       toRecord={(d) => {
         const code = d.code.trim()
@@ -67,6 +80,7 @@ export function MachinesSection() {
           line: '',
           factory: d.factory.trim() || undefined,
           process: d.process,
+          usesItemDimensions: d.dimensions === 'item',
           // The label the shop floor recognises: "58-A. Welding Line".
           displayName: [code, name].filter(Boolean).join('-'),
         }
@@ -93,6 +107,17 @@ export function MachinesSection() {
               ))}
             </Select>
           </Field>
+          {d.process !== 'paint' && (
+            <Field
+              label="Dimensions"
+              hint="From item setup: the item's configured dimensions pre-fill the wizard. Typed by inspector: nothing is loaded; the inspector adds what the part needs, and the next sample starts from the previous one."
+            >
+              <Select value={d.dimensions} onChange={(e) => patch({ dimensions: e.target.value as MachineDraft['dimensions'] })} className="min-h-[48px]">
+                <option value="item">From item setup</option>
+                <option value="inspector">Typed by inspector</option>
+              </Select>
+            </Field>
+          )}
         </>
       )}
     />

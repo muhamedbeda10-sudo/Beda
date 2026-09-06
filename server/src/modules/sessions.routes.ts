@@ -192,7 +192,8 @@ async function loadPreviousSetup(q: Queryable, sessionId: string): Promise<Previ
 /** The register's row for a machine code, or null when the code is not registered. */
 async function loadMachine(q: Queryable, code: string): Promise<Machine | null> {
   const { rows } = await q.query<Machine>(
-    `SELECT id, code, name, line, display_name AS "displayName", machine_number AS "machineNumber", factory, process
+    `SELECT id, code, name, line, display_name AS "displayName", machine_number AS "machineNumber", factory, process,
+            uses_item_dimensions AS "usesItemDimensions"
        FROM machines WHERE lower(code) = lower($1) AND deleted_at IS NULL LIMIT 1`,
     [code],
   )
@@ -424,11 +425,14 @@ export function sessionsRoutes(ctx: AppContext): Router {
       loadOrderNotes(db, session.orderId),
     ])
     const { order: _summary, ...plain } = session
+    // A machine switched off in Configuration takes no configured dimensions:
+    // the inspector types them, and the previous sample's rows carry forward.
+    const loadsDimensions = machine?.usesItemDimensions !== false
     const body: WizardContext = {
       session: plain,
       order,
       machine,
-      dimensionOrder: dimOrder.rows.map(dropNulls),
+      dimensionOrder: loadsDimensions ? dimOrder.rows.map(dropNulls) : [],
       referenceImages: refImages.rows.map(dropNulls),
       workCenterDefects: wcDefects.rows,
       gradeMappings: grades.rows,

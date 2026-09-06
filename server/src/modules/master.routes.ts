@@ -72,6 +72,7 @@ const DEFS: Record<MasterKind, MasterDef> = {
       { field: 'machineNumber', column: 'machine_number' },
       { field: 'factory', column: 'factory' },
       { field: 'process', column: 'process' },
+      { field: 'usesItemDimensions', column: 'uses_item_dimensions' },
     ],
     schema: z.object({
       code: text(40),
@@ -81,6 +82,7 @@ const DEFS: Record<MasterKind, MasterDef> = {
       machineNumber: optText(60),
       factory: optText(120),
       process: processSchema.default('forming'),
+      usesItemDimensions: z.boolean().default(true),
     }),
     filters: { factory: 'factory' },
     orderBy: 'factory, code, line',
