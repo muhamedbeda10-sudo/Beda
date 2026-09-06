@@ -202,6 +202,15 @@ describe('the atomic sample save', () => {
     expect(rows[0].n).toBe(0)
   })
 
+  it('rejects an "Other" defect without a description', async () => {
+    const bare = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/samples`, {
+      token: inspector.token,
+      body: weldSample('33333333-3333-4333-8333-333333333334', { defects: [{ defectName: 'Other', qty: 1, disposition: 'Hold', imageIds: [] }] }),
+    })
+    expect(bare.status).toBe(400)
+    expect(bare.body.error.message).toMatch(/describe/i)
+  })
+
   it('rejects a defect without a disposition', async () => {
     const res = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/samples`, {
       token: inspector.token,

@@ -238,6 +238,13 @@ describe('save-time validation', () => {
     expect(issues[0].message).toContain('Scratch')
   })
 
+  it('requires a description for a defect recorded as Other', () => {
+    const bare = validateSample({ ...base, defects: [{ defectName: 'Other', disposition: 'Hold', qty: 1 }] })
+    expect(bare).toHaveLength(1)
+    expect(bare[0].message).toMatch(/describe/i)
+    expect(validateSample({ ...base, defects: [{ defectName: ' other ', disposition: 'Hold', qty: 1, notes: 'Paint run on the flange' }] })).toEqual([])
+  })
+
   it('accepts a defect once a disposition is chosen', () => {
     expect(
       validateSample({

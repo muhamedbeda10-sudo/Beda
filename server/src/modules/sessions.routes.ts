@@ -476,7 +476,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
         sampleQty: body.sampleQty,
         drawing: body.drawing,
         coils: body.coils.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade })),
-        defects: body.defects.map((d) => ({ defectName: d.defectName, disposition: d.disposition as never, qty: d.qty })),
+        defects: body.defects.map((d) => ({ defectName: d.defectName, disposition: d.disposition as never, qty: d.qty, notes: d.notes })),
         dimensions: body.dimensions.map((d) => ({ name: d.name, nominal: d.nominal ?? null, actual: d.actual ?? null })),
         paint: body.paint ? { imageIds: body.paint.imageIds } : { imageIds: [] },
         pt: body.pt

@@ -55,6 +55,8 @@ import {
   findGradeMismatches,
   gradesEquivalent,
   isPaintThicknessName,
+  isOtherDefect,
+  OTHER_DEFECT_NAME,
   ptOverallVerdict,
   PAINT_THICKNESS_NAME,
   PAINT_THICKNESS_READINGS,
@@ -215,6 +217,7 @@ export function WizardPage() {
         defectName: d.defectName,
         disposition: d.disposition,
         qty: Number(d.qty),
+        notes: d.notes,
       })),
       dimensions: draft.dimensions.map((d) => ({
         name: d.name,
@@ -1012,6 +1015,11 @@ function DefectsStep({
       ...d,
       defects: d.defects.map((x) => (x.key === key ? { ...x, ...patch } : x)),
     }))
+  const addDefect = (defectName: string) =>
+    update((d) => ({
+      ...d,
+      defects: [...d.defects, { key: uid('dk'), defectName, qty: '1', disposition: null, imageIds: [] }],
+    }))
 
   return (
     <div className="space-y-4">
@@ -1026,32 +1034,30 @@ function DefectsStep({
             className="min-h-[48px] pl-9"
           />
         </div>
-        {options.length === 0 ? (
+        {options.length === 0 && (
           <p className="mt-2 rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-slate-400 dark:border-slate-700">
             No defects are configured for machine {draft.workCenterCode} yet.
           </p>
-        ) : (
-          <div className="mt-2 flex max-h-44 flex-wrap gap-2 overflow-y-auto">
-            {filtered.map((name) => (
-              <button
-                key={name}
-                dir="auto"
-                onClick={() =>
-                  update((d) => ({
-                    ...d,
-                    defects: [
-                      ...d.defects,
-                      { key: uid('dk'), defectName: name, qty: '1', disposition: null, imageIds: [] },
-                    ],
-                  }))
-                }
-                className="min-h-[44px] rounded-xl bg-slate-100 px-3 text-sm font-semibold hover:bg-brand-100 hover:text-brand-700 dark:bg-slate-800 dark:hover:bg-brand-500/20"
-              >
-                + {name}
-              </button>
-            ))}
-          </div>
         )}
+        <div className="mt-2 flex max-h-44 flex-wrap gap-2 overflow-y-auto">
+          {filtered.map((name) => (
+            <button
+              key={name}
+              dir="auto"
+              onClick={() => addDefect(name)}
+              className="min-h-[44px] rounded-xl bg-slate-100 px-3 text-sm font-semibold hover:bg-brand-100 hover:text-brand-700 dark:bg-slate-800 dark:hover:bg-brand-500/20"
+            >
+              + {name}
+            </button>
+          ))}
+          {/* Anything the list does not name is recorded as "Other" and must be described. */}
+          <button
+            onClick={() => addDefect(OTHER_DEFECT_NAME)}
+            className="min-h-[44px] rounded-xl border border-dashed border-amber-400 bg-amber-50 px-3 text-sm font-semibold text-amber-800 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20"
+          >
+            + Other (not in the list)
+          </button>
+        </div>
       </div>
 
       {draft.defects.length === 0 ? (
@@ -1069,8 +1075,9 @@ function DefectsStep({
               )}
             >
               <div className="flex items-start justify-between gap-2">
-                <p dir="auto" className="font-bold">
+                <p dir="auto" className="flex items-center gap-2 font-bold">
                   {d.defectName}
+                  {isOtherDefect(d.defectName) && <Badge tone="amber">describe it</Badge>}
                 </p>
                 <button
                   onClick={() => update((dd) => ({ ...dd, defects: dd.defects.filter((x) => x.key !== d.key) }))}
@@ -1113,14 +1120,26 @@ function DefectsStep({
                 </p>
               )}
 
-              <Field label="Notes">
-                <Input
-                  dir="auto"
-                  value={d.notes ?? ''}
-                  onChange={(e) => setDefect(d.key, { notes: e.target.value })}
-                  className="min-h-[48px]"
-                />
-              </Field>
+              {isOtherDefect(d.defectName) ? (
+                <Field label="Describe the defect *">
+                  <textarea
+                    dir="auto"
+                    value={d.notes ?? ''}
+                    onChange={(e) => setDefect(d.key, { notes: e.target.value })}
+                    placeholder="What was found, where on the part, how big…"
+                    className={cn('input min-h-[88px]', !d.notes?.trim() && 'border-rose-400')}
+                  />
+                </Field>
+              ) : (
+                <Field label="Notes">
+                  <Input
+                    dir="auto"
+                    value={d.notes ?? ''}
+                    onChange={(e) => setDefect(d.key, { notes: e.target.value })}
+                    className="min-h-[48px]"
+                  />
+                </Field>
+              )}
 
               <div className="mt-2">
                 <span className="label">Photos</span>
@@ -1514,8 +1533,9 @@ function ReviewStep({
           <ul className="space-y-1.5 text-sm">
             {draft.defects.map((d) => (
               <li key={d.key} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/50">
-                <span dir="auto" className="font-semibold">
+                <span dir="auto" className="min-w-0 font-semibold">
                   {d.defectName}
+                  {isOtherDefect(d.defectName) && d.notes && <span className="block truncate text-xs font-normal text-slate-500">{d.notes}</span>}
                 </span>
                 <span className="flex items-center gap-2">
                   <Badge tone="neutral">Qty {d.qty}</Badge>
