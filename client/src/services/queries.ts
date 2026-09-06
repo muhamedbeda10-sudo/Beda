@@ -204,7 +204,9 @@ export function useImages(ids: string[]) {
     queryKey: keys.images(key),
     queryFn: () => api<ImageAsset[]>(`/images${qs({ ids: key })}`),
     enabled: key.length > 0,
-    staleTime: 5 * 60_000,
+    // Metadata and thumbnails never change once stored; an hour keeps a
+    // History session from re-asking for the same thumbnails on every open.
+    staleTime: 60 * 60_000,
   })
 }
 
