@@ -498,6 +498,22 @@ export function masterRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
+  /** Mark many records deleted at once — one transaction, one audit entry each. */
+  r.post('/:kind/delete-many', requireCapability('manage-admin-data'), async (req, res) => {
+    const def = kindOf(String(req.params.kind))
+    const user = requireUser(req)
+    const { ids } = parse(z.object({ ids: z.array(uuid).min(1).max(1000) }), req.body)
+    const deleted = await withTransaction(ctx.db, async (tx) => {
+      const { rows } = await tx.query<{ id: string }>(
+        `UPDATE ${def.table} SET deleted_at = now(), deleted_by_id = $2 WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL RETURNING id`,
+        [Array.from(new Set(ids)), user.id],
+      )
+      for (const row of rows) await auditDelete(tx, { userId: user.id, userName: user.name, entity: def.entity, entityId: row.id })
+      return rows.length
+    })
+    res.json({ deleted })
+  })
+
   r.delete('/:kind/:id', requireCapability('manage-admin-data'), async (req, res) => {
     const def = kindOf(String(req.params.kind))
     const user = requireUser(req)
