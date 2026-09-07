@@ -769,11 +769,23 @@ describe('a make-to-stock machine', () => {
         sampleQty: 3,
         dimensions: [{ name: 'Hole pitch', sequence: 1, nominal: 40, tolPlus: 0.5, tolMinus: 0.5, actual: 40.2, unit: 'mm', source: 'manual' }],
         defects: [{ defectName: 'Crack', qty: 1, disposition: 'Rejected', imageIds: [] }],
-        coils: [{ coilNumber: 'C10021', grade: 'S355JR' }],
+        // A coil typed by hand, not yet in the register: the number alone.
+        coils: [{ coilNumber: 'C55555' }],
       },
     })
     expect(res.status).toBe(201)
     expect(res.body.index).toBe(1)
+
+    // Recorded by number alone: marked as typed, nothing to fill in yet.
+    const before = await app.api<SampleDetail>('GET', `/api/samples/${res.body.sampleId}`, { token: inspector.token })
+    expect(before.body.coils[0].coilId).toBeUndefined()
+    expect(before.body.coils[0].grade).toBeUndefined()
+    expect(before.body.coils[0].register).toBeUndefined()
+    // Once the coil sheet arrives, the register's details show next to it; the record itself is unchanged.
+    await app.api('POST', '/api/coils/import', { token: admin.token, body: { rows: [{ coilNumber: 'c55555', grade: 'S235JR', supplier: 'Ezz Steel', thickness: 3 }] } })
+    const after = await app.api<SampleDetail>('GET', `/api/samples/${res.body.sampleId}`, { token: inspector.token })
+    expect(after.body.coils[0].grade).toBeUndefined()
+    expect(after.body.coils[0].register).toEqual({ grade: 'S235JR', supplier: 'Ezz Steel', thickness: 3 })
     const board = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: inspector.token })
     const mine = board.body.sessions.find((s) => s.id === sid)
     expect(mine?.defectCount).toBe(1)

@@ -227,17 +227,38 @@ export function SampleDetail({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {coils.map((c) => (
-                  <tr key={c.id}>
-                    <td className="py-2.5 pr-3 font-semibold">{c.coilNumber}</td>
-                    <td className="py-2.5 pr-3">{c.grade ?? '—'}</td>
-                    <td className="py-2.5 pr-3">{c.smType ?? '—'}</td>
-                    <td className="py-2.5 pr-3">{c.supplier ?? '—'}</td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums">{num(c.thickness)}</td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums">{num(c.width)}</td>
-                    <td className="py-2.5 text-right tabular-nums">{num(c.yield)}</td>
-                  </tr>
-                ))}
+                {coils.map((c) => {
+                  // What the sample recorded comes first; where it recorded nothing,
+                  // what the register says today fills in, and says so.
+                  const reg = c.register
+                  const cell = (own: string | number | undefined, fromRegister: string | number | undefined) =>
+                    own !== undefined && own !== '' ? (
+                      <span>{typeof own === 'number' ? num(own) : own}</span>
+                    ) : fromRegister !== undefined && fromRegister !== '' ? (
+                      <span className="text-slate-500 dark:text-slate-400" title="From the coil register today, not recorded with the sample">
+                        {typeof fromRegister === 'number' ? num(fromRegister) : fromRegister}
+                      </span>
+                    ) : (
+                      '—'
+                    )
+                  return (
+                    <tr key={c.id}>
+                      <td className="py-2.5 pr-3 font-semibold">
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          {c.coilNumber}
+                          {!c.coilId && <Badge tone="amber">typed</Badge>}
+                          {reg && <Badge tone="neutral">from register</Badge>}
+                        </span>
+                      </td>
+                      <td className="py-2.5 pr-3">{cell(c.grade, reg?.grade)}</td>
+                      <td className="py-2.5 pr-3">{cell(c.smType, reg?.smType)}</td>
+                      <td className="py-2.5 pr-3">{cell(c.supplier, reg?.supplier)}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums">{cell(c.thickness, reg?.thickness)}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums">{cell(c.width, reg?.width)}</td>
+                      <td className="py-2.5 text-right tabular-nums">{cell(c.yield, reg?.yield)}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
