@@ -213,34 +213,62 @@ export function InspectionsPage() {
     <div className="space-y-5">
       <InstallBanner />
 
-      {/* §4 — three primary actions */}
-      <div className="grid grid-cols-3 gap-3">
-        <QuickAction icon={<Plus className="h-6 w-6" />} title="New" subtitle="Inspection" onClick={() => setNewOpen(true)} />
-        <QuickAction icon={<Search className="h-6 w-6" />} title="Coil" subtitle="Search" onClick={() => navigate('/coils')} />
-        <QuickAction icon={<FileText className="h-6 w-6" />} title="PDI" subtitle="Documents" onClick={() => navigate('/pdi')} />
+      {/* §4 — three primary actions: tiles on a phone, one toolbar row on a wide screen,
+          with the Hold notice filling the rest of that row instead of its own band. */}
+      <div className="grid grid-cols-3 gap-3 lg:flex lg:items-stretch">
+        <QuickAction icon={<Plus className="h-6 w-6 lg:h-5 lg:w-5" />} title="New" subtitle="Inspection" onClick={() => setNewOpen(true)} />
+        <QuickAction icon={<Search className="h-6 w-6 lg:h-5 lg:w-5" />} title="Coil" subtitle="Search" onClick={() => navigate('/coils')} />
+        <QuickAction icon={<FileText className="h-6 w-6 lg:h-5 lg:w-5" />} title="PDI" subtitle="Documents" onClick={() => navigate('/pdi')} />
+        {holdCount > 0 && (
+          <Card className="col-span-3 flex items-center gap-3 border-l-4 border-l-amber-400 p-4 lg:ml-auto lg:min-w-0 lg:flex-1 lg:py-2.5">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400">
+              <AlertTriangle className="h-5 w-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-bold">
+                {holdCount} defect{holdCount === 1 ? '' : 's'} on Hold
+              </p>
+              <p className="truncate text-sm text-slate-500 dark:text-slate-400">Open business items — they stay here until a disposition resolves them.</p>
+            </div>
+            <Button variant="secondary" onClick={() => navigate('/history?disposition=Hold')}>
+              Review
+            </Button>
+          </Card>
+        )}
       </div>
 
-      {holdCount > 0 && (
-        <Card className="flex items-center gap-3 border-l-4 border-l-amber-400 p-4">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400">
-            <AlertTriangle className="h-5 w-5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="font-bold">
-              {holdCount} defect{holdCount === 1 ? '' : 's'} on Hold
-            </p>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Open business items — they stay here until a disposition resolves them.</p>
-          </div>
-          <Button variant="secondary" onClick={() => navigate('/history?disposition=Hold')}>
-            Review
-          </Button>
-        </Card>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
         <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
         <Badge tone="blue">{filtering ? `${shown} of ${openSessions.length}` : openSessions.length}</Badge>
-        <div className="ml-auto flex items-center gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800" role="group" aria-label="Board view">
+        {seesAll && openSessions.length > 0 && (
+          // Search and the inspector filter: their own row on a phone, the right end of this row on a wide screen.
+          <div className="order-last grid w-full grid-cols-1 gap-2 sm:grid-cols-[1fr_auto] lg:order-none lg:ml-auto lg:flex lg:w-auto">
+            <div className="relative lg:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={term}
+                onChange={(e) => setTerm(e.target.value)}
+                placeholder="Order number, item or customer…"
+                className="min-h-[44px] pl-9 pr-9"
+                aria-label="Search open sessions"
+              />
+              {term && (
+                <button type="button" onClick={() => setTerm('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:text-slate-600">
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <Select value={inspectorFilter} onChange={(e) => setInspectorFilter(e.target.value)} className="min-h-[44px] sm:min-w-[12rem]" aria-label="Inspector">
+              <option value="all">All inspectors</option>
+              {inspectorOptions.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
+        <div className={cn('flex items-center gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800', seesAll && openSessions.length > 0 ? 'ml-auto lg:ml-0' : 'ml-auto')} role="group" aria-label="Board view">
           {(
             [
               { key: 'cards', label: 'Cards', icon: <LayoutGrid className="h-4 w-4" /> },
@@ -266,37 +294,10 @@ export function InspectionsPage() {
         </div>
       </div>
 
-      {seesAll && openSessions.length > 0 && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input
-              value={term}
-              onChange={(e) => setTerm(e.target.value)}
-              placeholder="Order number, item or customer…"
-              className="min-h-[48px] pl-9 pr-9"
-              aria-label="Search open sessions"
-            />
-            {term && (
-              <button type="button" onClick={() => setTerm('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:text-slate-600">
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-          <Select value={inspectorFilter} onChange={(e) => setInspectorFilter(e.target.value)} className="min-h-[48px] sm:min-w-[14rem]" aria-label="Inspector">
-            <option value="all">All inspectors</option>
-            {inspectorOptions.map((i) => (
-              <option key={i.id} value={i.id}>
-                {i.name}
-              </option>
-            ))}
-          </Select>
-        </div>
-      )}
-
-      {/* Factory tabs: the first way in. A tablet keeps its factory across shifts. */}
+      {/* Factory tabs, then machine chips: two scrolling rows on a phone, one wrapping row on a wide screen. */}
+      <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center lg:gap-x-3">
       {factoryTabs.length > 0 && (
-        <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Factory">
+        <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:overflow-visible lg:pb-0" role="tablist" aria-label="Factory">
           {[{ key: 'all', label: 'All factories', count: base.length }, ...factoryTabs].map((t) => {
             const active = activeFactory === t.key
             return (
@@ -323,8 +324,9 @@ export function InspectionsPage() {
       )}
 
       {/* Machine chips: only the machines with something open, coloured by the worst signal on them. */}
+      {groupsInFactory.length > 1 && factoryTabs.length > 0 && <span className="hidden h-7 w-px bg-slate-200 lg:block dark:bg-slate-700" aria-hidden="true" />}
       {groupsInFactory.length > 1 && (
-        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Machine">
+        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:flex-1 lg:flex-wrap lg:overflow-visible lg:pb-0" role="tablist" aria-label="Machine">
           <button role="tab" aria-selected={activeMachine === 'all'} onClick={() => setMachinePick('all')} className={chipTone(null, activeMachine === 'all')}>
             All machines
           </button>
@@ -337,6 +339,7 @@ export function InspectionsPage() {
           ))}
         </div>
       )}
+      </div>
 
       {isLoading ? (
         <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
@@ -438,7 +441,7 @@ export function InspectionsPage() {
         </Card>
       ) : (
         // Several machines side by side on a wide screen; one column on a phone.
-        <div className={cn('grid items-start gap-4', density === 'cards' ? 'grid-cols-1 md:grid-cols-2 2xl:grid-cols-3' : 'grid-cols-1')}>
+        <div className={cn('grid items-start gap-4', density === 'cards' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4' : 'grid-cols-1 xl:grid-cols-2')}>
           {groups.map((g) => {
             const isCollapsed = collapsed[g.code] === true
             const isExpanded = expanded[g.code]
@@ -468,18 +471,18 @@ export function InspectionsPage() {
                       <Factory className="h-5 w-5" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-lg font-extrabold leading-tight">{g.label}</span>
-                      {activeFactory === 'all' && g.factory !== NO_FACTORY && <span className="block text-xs text-slate-400">{g.factory}</span>}
+                      {/* The full machine name, on two lines if it must; the counts sit under it so a narrow column never clips it. */}
+                      <span className="line-clamp-2 text-base font-extrabold leading-tight" title={g.label}>
+                        {g.label}
+                      </span>
+                      <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400">
+                        {activeFactory === 'all' && g.factory !== NO_FACTORY && <span>{g.factory}</span>}
+                        <span className="tabular-nums">
+                          {g.sessions.length} session{g.sessions.length === 1 ? '' : 's'} · {g.sampleCount} sample{g.sampleCount === 1 ? '' : 's'}
+                        </span>
+                      </span>
                     </span>
-                    <span className="flex shrink-0 items-center gap-1.5">
-                      <Badge tone="neutral">
-                        {g.sessions.length} session{g.sessions.length === 1 ? '' : 's'}
-                      </Badge>
-                      <Badge tone="neutral">
-                        {g.sampleCount} sample{g.sampleCount === 1 ? '' : 's'}
-                      </Badge>
-                      {isCollapsed ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronUp className="h-4 w-4 text-slate-400" />}
-                    </span>
+                    {isCollapsed ? <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" /> : <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" />}
                   </button>
                   <button
                     type="button"
@@ -769,13 +772,19 @@ function CloseSessionDialog({
 
 function QuickAction({ icon, title, subtitle, onClick }: { icon: ReactNodeLike; title: string; subtitle: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="card-hover group flex min-h-[112px] flex-col items-center justify-center gap-2 p-4">
-      <span className="grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-white shadow-card transition-transform duration-300 ease-out group-hover:scale-110 group-hover:rotate-3">
+    <button
+      onClick={onClick}
+      className="card-hover group flex min-h-[112px] flex-col items-center justify-center gap-2 p-4 lg:min-h-0 lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:py-2.5"
+    >
+      <span className="grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-white shadow-card transition-transform duration-300 ease-out group-hover:scale-110 group-hover:rotate-3 lg:h-10 lg:w-10">
         {icon}
       </span>
-      <div className="text-center leading-tight">
-        <p className="font-bold">{title}</p>
-        <p className="text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>
+      <div className="text-center leading-tight lg:text-left">
+        <p className="font-bold">
+          {title}
+          <span className="hidden lg:inline"> {subtitle}</span>
+        </p>
+        <p className="text-sm text-slate-500 dark:text-slate-400 lg:hidden">{subtitle}</p>
       </div>
     </button>
   )
