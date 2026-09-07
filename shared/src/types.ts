@@ -298,6 +298,16 @@ export interface Coil {
 }
 
 /** A coil as attached to one sample (snapshot — the catalogue may change later). */
+/** What the coil register knows about a coil today, as opposed to what the sample recorded. */
+export interface CoilRegisterDetails {
+  grade?: string
+  smType?: string
+  supplier?: string
+  thickness?: number
+  width?: number
+  yield?: number
+}
+
 export interface SampleCoil {
   id: ID
   sampleId: ID
@@ -311,6 +321,13 @@ export interface SampleCoil {
   width?: number
   yield?: number
   notes?: string
+  /**
+   * The register's current row for this number, attached only when the
+   * sample's own snapshot carries no details (a coil typed by hand, or picked
+   * before its sheet was loaded). The snapshot above is what was recorded;
+   * this is what the register says now.
+   */
+  register?: CoilRegisterDetails
   deletedAt?: ISODate | null
 }
 

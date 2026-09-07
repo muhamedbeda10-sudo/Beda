@@ -6,7 +6,7 @@
 
 import { Router } from 'express'
 import { z } from 'zod'
-import { DISPOSITIONS, type DefectResult, type DimensionResult, type PTRecord, type PTTestedLength, type PaintSampleRecord, type SampleCoil } from '@qc/shared/types'
+import { DISPOSITIONS, type CoilRegisterDetails, type DefectResult, type DimensionResult, type PTRecord, type PTTestedLength, type PaintSampleRecord, type SampleCoil } from '@qc/shared/types'
 import { can, dimensionStatus } from '@qc/shared/rules'
 import type { SampleDetail } from '@qc/shared/api'
 import type { AppContext } from '../context'
@@ -28,6 +28,36 @@ const DIMENSION_SELECT = `
 const DEFECT_SELECT = `
   d.id, d.sample_id AS "sampleId", d.defect_name AS "defectName", d.qty, d.disposition, d.notes, d.version, d.deleted_at AS "deletedAt",
   COALESCE((SELECT array_agg(di.image_id ORDER BY di.position) FROM defect_images di WHERE di.defect_id = d.id), '{}') AS "imageIds"`
+
+/** True when the sample recorded nothing about the coil beyond its number. */
+function hasNoDetails(c: SampleCoil): boolean {
+  return [c.grade, c.smType, c.supplier, c.thickness, c.width, c.yield].every((v) => v === null || v === undefined || v === '')
+}
+
+/**
+ * For coils the sample recorded by number alone — typed by hand, or picked
+ * before the coil sheet carried details — attach what the register says about
+ * that number today. The sample's own snapshot is never changed.
+ */
+async function attachRegisterDetails(q: Queryable, coils: SampleCoil[]): Promise<SampleCoil[]> {
+  const bare = coils.filter(hasNoDetails)
+  if (bare.length === 0) return coils.map(dropNulls)
+  const numbers = Array.from(new Set(bare.map((c) => c.coilNumber.trim().toLowerCase())))
+  const { rows } = await q.query<CoilRegisterDetails & { coilNumber: string }>(
+    `SELECT DISTINCT ON (lower(coil_number)) lower(coil_number) AS "coilNumber", grade, sm_type AS "smType", supplier, thickness, width, yield
+       FROM coils WHERE lower(coil_number) = ANY($1::text[]) AND deleted_at IS NULL
+      ORDER BY lower(coil_number), created_at DESC`,
+    [numbers],
+  )
+  const byNumber = new Map(rows.map((r) => [r.coilNumber, r]))
+  return coils.map((c) => {
+    const found = hasNoDetails(c) ? byNumber.get(c.coilNumber.trim().toLowerCase()) : undefined
+    if (!found) return dropNulls(c)
+    const { coilNumber: _n, ...details } = found
+    const register = dropNulls(details) as CoilRegisterDetails
+    return Object.keys(register).length > 0 ? { ...dropNulls(c), register } : dropNulls(c)
+  })
+}
 
 async function loadSampleDetail(q: Queryable, id: string): Promise<SampleDetail | null> {
   const sample = (await q.query<SampleRow>(`SELECT ${SAMPLE_SELECT} FROM inspection_samples sm WHERE sm.id = $1 AND sm.deleted_at IS NULL`, [id])).rows[0]
@@ -63,6 +93,7 @@ async function loadSampleDetail(q: Queryable, id: string): Promise<SampleDetail 
       [id],
     ),
   ])
+  const withRegister = await attachRegisterDetails(q, coils.rows)
   const ptRow = pt.rows[0]
   const ptRecord: PTRecord | null = ptRow
     ? (dropNulls({
@@ -86,7 +117,7 @@ async function loadSampleDetail(q: Queryable, id: string): Promise<SampleDetail 
     sample: toSample(sample),
     dimensions: dims.rows.map(dropNulls),
     defects: defects.rows.map(dropNulls),
-    coils: coils.rows.map(dropNulls),
+    coils: withRegister,
     paint: paint.rows[0] ? dropNulls(paint.rows[0]) : null,
     pt: ptRecord,
   }
