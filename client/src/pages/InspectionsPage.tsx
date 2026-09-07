@@ -211,18 +211,20 @@ export function InspectionsPage() {
     <div className="space-y-5">
       <InstallBanner />
 
-      {/* §4 — three primary actions: tiles on a phone, one toolbar row on a wide screen. */}
-      <div className="grid grid-cols-3 gap-3 lg:flex lg:items-stretch">
-        <QuickAction icon={<Plus className="h-6 w-6 lg:h-5 lg:w-5" />} title="New" subtitle="Inspection" onClick={() => setNewOpen(true)} />
-        <QuickAction icon={<Search className="h-6 w-6 lg:h-5 lg:w-5" />} title="Coil" subtitle="Search" onClick={() => navigate('/coils')} />
-        <QuickAction icon={<FileText className="h-6 w-6 lg:h-5 lg:w-5" />} title="PDI" subtitle="Documents" onClick={() => navigate('/pdi')} />
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
-        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
-        <Badge tone="blue">{filtering ? `${shown} of ${openSessions.length}` : openSessions.length}</Badge>
+      {/* §4 — one toolbar: the three primary actions, then search, inspector and the view toggle.
+          On a phone the actions are tiles and the rest stacks under them; on a wide screen it is one row. */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="grid w-full grid-cols-3 gap-3 lg:flex lg:w-auto lg:items-stretch">
+          <QuickAction icon={<Plus className="h-6 w-6 lg:h-5 lg:w-5" />} title="New" subtitle="Inspection" onClick={() => setNewOpen(true)} />
+          <QuickAction icon={<Search className="h-6 w-6 lg:h-5 lg:w-5" />} title="Coil" subtitle="Search" onClick={() => navigate('/coils')} />
+          <QuickAction icon={<FileText className="h-6 w-6 lg:h-5 lg:w-5" />} title="PDI" subtitle="Documents" onClick={() => navigate('/pdi')} />
+        </div>
+        <div className="flex items-center gap-2 lg:hidden">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
+          <Badge tone="blue">{filtering ? `${shown} of ${openSessions.length}` : openSessions.length}</Badge>
+        </div>
         {seesAll && openSessions.length > 0 && (
-          // Search and the inspector filter: their own row on a phone, the right end of this row on a wide screen.
+          // Search and the inspector filter: their own row on a phone, the right end of the toolbar on a wide screen.
           <div className="order-last grid w-full grid-cols-1 gap-2 sm:grid-cols-[1fr_auto] lg:order-none lg:ml-auto lg:flex lg:w-auto">
             <div className="relative lg:w-72">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -249,7 +251,7 @@ export function InspectionsPage() {
             </Select>
           </div>
         )}
-        <div className={cn('flex items-center gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800', seesAll && openSessions.length > 0 ? 'ml-auto lg:ml-0' : 'ml-auto')} role="group" aria-label="Board view">
+        <div className={cn('flex items-center gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 lg:order-last', seesAll && openSessions.length > 0 ? 'ml-auto lg:ml-0' : 'ml-auto')} role="group" aria-label="Board view">
           {(
             [
               { key: 'cards', label: 'Cards', icon: <LayoutGrid className="h-4 w-4" /> },
@@ -275,8 +277,12 @@ export function InspectionsPage() {
         </div>
       </div>
 
-      {/* Factory tabs, then machine chips: two scrolling rows on a phone, one wrapping row on a wide screen. */}
+      {/* Factory tabs, then machine chips: two scrolling rows on a phone, one wrapping row on a wide screen, led by the title. */}
       <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center lg:gap-x-3">
+      <div className="hidden items-center gap-2 lg:flex">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
+        <Badge tone="blue">{filtering ? `${shown} of ${openSessions.length}` : openSessions.length}</Badge>
+      </div>
       {factoryTabs.length > 0 && (
         <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:overflow-visible lg:pb-0" role="tablist" aria-label="Factory">
           {[{ key: 'all', label: 'All factories', count: base.length }, ...factoryTabs].map((t) => {
