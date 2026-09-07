@@ -8,6 +8,7 @@ import {
   Factory,
   Play,
   ChevronDown,
+  ChevronUp,
   AlertTriangle,
   Boxes,
   Lock,
@@ -15,6 +16,11 @@ import {
   ClipboardCheck,
   MessageSquareText,
   ChevronRight,
+  Star,
+  LayoutGrid,
+  LayoutList,
+  Table2,
+  X,
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
@@ -26,12 +32,28 @@ import { useMaster, useOpenBoard, useSampleDetail } from '@/services/queries'
 import { closeSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can, isStockOrder, processForMachine, shiftName } from '@/domain'
+import { can, isStockOrder, processForMachine, sessionTone, shiftName, type SessionTone } from '@/domain'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
+import { usePersistedState } from '@/lib/usePersistedState'
 import type { SampleSummary, SessionWithOrder } from '@qc/shared/api'
 import type { Machine } from '@qc/shared/types'
 
 const COLLAPSE_AFTER = 3
+/** Sessions on a machine without a factory gather under this tab. */
+const NO_FACTORY = '__none__'
+/** Machines are ordered by the worst thing on them: Hold before defects before the rest. */
+const TONE_RANK: Record<NonNullable<SessionTone> | 'none', number> = { hold: 0, defect: 1, prior: 2, none: 3 }
+
+interface MachineGroup {
+  code: string
+  machine?: Machine
+  label: string
+  factory: string
+  sessions: SessionWithOrder[]
+  sampleCount: number
+  tone: SessionTone
+  latest: string
+}
 
 export function InspectionsPage() {
   const navigate = useNavigate()
@@ -52,14 +74,19 @@ export function InspectionsPage() {
   /** The session whose order is open in full, in the side panel. */
   const [details, setDetails] = useState<SessionWithOrder | null>(null)
 
+  // ---- How this device likes the board (kept across shifts) ----------------
+  const [factoryTab, setFactoryTab] = usePersistedState<string>('qc-board:factory', 'all')
+  const [machinePick, setMachinePick] = usePersistedState<string>('qc-board:machine', 'all')
+  const [collapsed, setCollapsed] = usePersistedState<Record<string, boolean>>('qc-board:collapsed', {})
+  const [favourite, setFavourite] = usePersistedState<string | null>('qc-board:favourite', null)
+  const [density, setDensity] = usePersistedState<'cards' | 'compact' | 'table'>('qc-board:density', 'cards')
+
   // ---- Who sees what (§14) ------------------------------------------------
   // The API already hands an inspector only their own sessions. A supervisor
-  // or administrator gets everyone's, and these filters to find their way.
+  // or administrator gets everyone's, plus a search and an inspector filter.
   const seesAll = can(role, 'view-all-sessions')
   const [term, setTerm] = useState('')
   const [inspectorFilter, setInspectorFilter] = useState('all')
-  const [factoryFilter, setFactoryFilter] = useState('all')
-  const [machineFilter, setMachineFilter] = useState('all')
 
   const machineOf = useMemo(() => new Map(machines.map((m) => [m.code, m])), [machines])
   const machineLabel = useCallback(
@@ -69,32 +96,20 @@ export function InspectionsPage() {
     },
     [machineOf],
   )
+  const factoryOf = useCallback((code: string) => machineOf.get(code)?.factory?.trim() || NO_FACTORY, [machineOf])
 
   const inspectorOptions = useMemo(() => {
     const byId = new Map<string, string>()
     for (const s of openSessions) byId.set(s.inspectorId, s.inspectorName)
     return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
   }, [openSessions])
-  const factoryOptions = useMemo(() => {
-    const names = new Set<string>()
-    for (const s of openSessions) {
-      const f = machineOf.get(s.workCenterCode)?.factory?.trim()
-      if (f) names.add(f)
-    }
-    return Array.from(names).sort((a, b) => a.localeCompare(b))
-  }, [openSessions, machineOf])
-  const machineOptions = useMemo(() => {
-    const codes = Array.from(new Set(openSessions.map((s) => s.workCenterCode)))
-    return codes.sort((a, b) => machineLabel(a).localeCompare(machineLabel(b), undefined, { numeric: true }))
-  }, [openSessions, machineLabel])
 
-  const filtered = useMemo(() => {
+  /** Sessions after the supervisor's search and inspector filter; the tabs count these. */
+  const base = useMemo(() => {
     if (!seesAll) return openSessions
     const t = term.trim().toLowerCase()
     return openSessions.filter((s) => {
       if (inspectorFilter !== 'all' && s.inspectorId !== inspectorFilter) return false
-      if (factoryFilter !== 'all' && (machineOf.get(s.workCenterCode)?.factory?.trim() ?? '') !== factoryFilter) return false
-      if (machineFilter !== 'all' && s.workCenterCode !== machineFilter) return false
       if (!t) return true
       return (
         (s.order?.orderNumber ?? '').toLowerCase().includes(t) ||
@@ -103,12 +118,30 @@ export function InspectionsPage() {
         (s.order?.customer ?? '').toLowerCase().includes(t)
       )
     })
-  }, [seesAll, openSessions, term, inspectorFilter, factoryFilter, machineFilter, machineOf])
-  const filtering = seesAll && (term.trim() !== '' || inspectorFilter !== 'all' || factoryFilter !== 'all' || machineFilter !== 'all')
-  const [closing, setClosing] = useState<SessionWithOrder | null>(null)
-  /** A sample opened from its chip on the card: the full record, read-only here. */
-  const [viewing, setViewing] = useState<{ session: SessionWithOrder; sample: SampleSummary } | null>(null)
-  const { data: viewingDetail, isLoading: viewingLoading } = useSampleDetail(viewing?.sample.id ?? null)
+  }, [seesAll, openSessions, term, inspectorFilter])
+
+  /** Every factory in the register, with how many open sessions it holds now. */
+  const factoryTabs = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const m of machines) {
+      const f = m.factory?.trim()
+      if (f) counts.set(f, 0)
+    }
+    let unassigned = 0
+    for (const s of base) {
+      const f = factoryOf(s.workCenterCode)
+      if (f === NO_FACTORY) unassigned++
+      else counts.set(f, (counts.get(f) ?? 0) + 1)
+    }
+    const tabs = Array.from(counts, ([name, count]) => ({ key: name, label: name, count })).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+    if (unassigned > 0) tabs.push({ key: NO_FACTORY, label: 'No factory', count: unassigned })
+    return tabs
+  }, [machines, base, factoryOf])
+  const factoryKnown = factoryTab === 'all' || factoryTabs.some((t) => t.key === factoryTab)
+  const activeFactory = factoryKnown ? factoryTab : 'all'
+
+  /** Sessions in the chosen factory; the machine chips count these. */
+  const inFactory = useMemo(() => (activeFactory === 'all' ? base : base.filter((s) => factoryOf(s.workCenterCode) === activeFactory)), [base, activeFactory, factoryOf])
 
   const samplesBySession = useMemo(() => {
     const m = new Map<string, SampleSummary[]>()
@@ -120,20 +153,61 @@ export function InspectionsPage() {
     return m
   }, [samples])
 
-  /** Group by work center / line, the way the inspector thinks about the floor. */
-  const groups = useMemo(() => {
-    const sorted = [...filtered].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
-    const byWc = new Map<string, { machine?: Machine; label: string; sessions: SessionWithOrder[]; sampleCount: number }>()
-    for (const s of sorted) {
-      const machine = machines.find((m) => m.code === s.workCenterCode)
-      const label = machine?.displayName || machine?.name || `Machine ${s.workCenterCode}`
-      const g = byWc.get(s.workCenterCode) ?? { machine, label, sessions: [], sampleCount: 0 }
+  /** One group per machine with open sessions: the worst signal on it decides its place. */
+  const groupsInFactory = useMemo<MachineGroup[]>(() => {
+    const byWc = new Map<string, MachineGroup>()
+    for (const s of [...inFactory].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))) {
+      const machine = machineOf.get(s.workCenterCode)
+      const g = byWc.get(s.workCenterCode) ?? {
+        code: s.workCenterCode,
+        machine,
+        label: machineLabel(s.workCenterCode),
+        factory: factoryOf(s.workCenterCode),
+        sessions: [],
+        sampleCount: 0,
+        tone: null,
+        latest: s.startedAt,
+      }
       g.sessions.push(s)
       g.sampleCount += samplesBySession.get(s.id)?.length ?? 0
+      const tone = sessionTone(s)
+      if (TONE_RANK[tone ?? 'none'] < TONE_RANK[g.tone ?? 'none']) g.tone = tone
+      if (s.startedAt > g.latest) g.latest = s.startedAt
       byWc.set(s.workCenterCode, g)
     }
-    return Array.from(byWc.values()).sort((a, b) => a.label.localeCompare(b.label))
-  }, [filtered, machines, samplesBySession])
+    return Array.from(byWc.values()).sort((a, b) => {
+      // The machine this device watches comes first, whatever its state.
+      if (a.code === favourite) return -1
+      if (b.code === favourite) return 1
+      const rank = TONE_RANK[a.tone ?? 'none'] - TONE_RANK[b.tone ?? 'none']
+      if (rank !== 0) return rank
+      return a.latest < b.latest ? 1 : -1
+    })
+  }, [inFactory, machineOf, machineLabel, factoryOf, samplesBySession, favourite])
+
+  const machinePickKnown = machinePick === 'all' || groupsInFactory.some((g) => g.code === machinePick)
+  const activeMachine = machinePickKnown ? machinePick : 'all'
+  const groups = activeMachine === 'all' ? groupsInFactory : groupsInFactory.filter((g) => g.code === activeMachine)
+  const shown = groups.reduce((n, g) => n + g.sessions.length, 0)
+  const narrowed = seesAll && (term.trim() !== '' || inspectorFilter !== 'all')
+  const filtering = narrowed || activeFactory !== 'all' || activeMachine !== 'all'
+
+  const [closing, setClosing] = useState<SessionWithOrder | null>(null)
+  /** A sample opened from its chip on the card: the full record, read-only here. */
+  const [viewing, setViewing] = useState<{ session: SessionWithOrder; sample: SampleSummary } | null>(null)
+  const { data: viewingDetail, isLoading: viewingLoading } = useSampleDetail(viewing?.sample.id ?? null)
+
+  const chipTone = (tone: SessionTone, active: boolean) =>
+    cn(
+      'inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-sm font-semibold ring-1 transition-colors',
+      active
+        ? 'bg-brand-600 text-white ring-brand-600 shadow-glow'
+        : tone === 'hold'
+          ? 'bg-amber-50 text-amber-800 ring-amber-300 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/40'
+          : tone === 'defect'
+            ? 'bg-rose-50 text-rose-800 ring-rose-300 hover:bg-rose-100 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-500/40'
+            : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700 dark:hover:bg-slate-800',
+    )
 
   return (
     <div className="space-y-5">
@@ -163,58 +237,105 @@ export function InspectionsPage() {
         </Card>
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
-        <Badge tone="blue">{filtering ? `${filtered.length} of ${openSessions.length}` : openSessions.length}</Badge>
+        <Badge tone="blue">{filtering ? `${shown} of ${openSessions.length}` : openSessions.length}</Badge>
+        <div className="ml-auto flex items-center gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800" role="group" aria-label="Board view">
+          {(
+            [
+              { key: 'cards', label: 'Cards', icon: <LayoutGrid className="h-4 w-4" /> },
+              { key: 'compact', label: 'Compact', icon: <LayoutList className="h-4 w-4" /> },
+              { key: 'table', label: 'Table', icon: <Table2 className="h-4 w-4" /> },
+            ] as const
+          ).map((v) => (
+            <button
+              key={v.key}
+              type="button"
+              onClick={() => setDensity(v.key)}
+              aria-pressed={density === v.key}
+              aria-label={`${v.label} view`}
+              title={`${v.label} view`}
+              className={cn(
+                'inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold transition-colors',
+                density === v.key ? 'bg-white text-brand-700 shadow-card dark:bg-slate-900 dark:text-brand-300' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200',
+              )}
+            >
+              {v.icon} <span className="hidden sm:inline">{v.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {seesAll && openSessions.length > 0 && (
-        <Card className="space-y-3 p-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <Input
               value={term}
               onChange={(e) => setTerm(e.target.value)}
               placeholder="Order number, item or customer…"
-              className="min-h-[48px] pl-9"
+              className="min-h-[48px] pl-9 pr-9"
               aria-label="Search open sessions"
             />
+            {term && (
+              <button type="button" onClick={() => setTerm('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:text-slate-600">
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Field label="Inspector">
-              <Select value={inspectorFilter} onChange={(e) => setInspectorFilter(e.target.value)} className="min-h-[48px]">
-                <option value="all">All inspectors</option>
-                {inspectorOptions.map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Factory">
-              <Select value={factoryFilter} onChange={(e) => setFactoryFilter(e.target.value)} className="min-h-[48px]">
-                <option value="all">All factories</option>
-                {factoryOptions.map((f) => (
-                  <option key={f} value={f}>
-                    {f}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <div className="col-span-2 sm:col-span-1">
-              <Field label="Machine">
-                <Select value={machineFilter} onChange={(e) => setMachineFilter(e.target.value)} className="min-h-[48px]">
-                  <option value="all">All machines</option>
-                  {machineOptions.map((code) => (
-                    <option key={code} value={code}>
-                      {machineLabel(code)}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-          </div>
-        </Card>
+          <Select value={inspectorFilter} onChange={(e) => setInspectorFilter(e.target.value)} className="min-h-[48px] sm:min-w-[14rem]" aria-label="Inspector">
+            <option value="all">All inspectors</option>
+            {inspectorOptions.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+      )}
+
+      {/* Factory tabs: the first way in. A tablet keeps its factory across shifts. */}
+      {factoryTabs.length > 0 && (
+        <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Factory">
+          {[{ key: 'all', label: 'All factories', count: base.length }, ...factoryTabs].map((t) => {
+            const active = activeFactory === t.key
+            return (
+              <button
+                key={t.key}
+                role="tab"
+                aria-selected={active}
+                onClick={() => {
+                  setFactoryTab(t.key)
+                  setMachinePick('all')
+                }}
+                className={cn(
+                  'inline-flex min-h-[44px] shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-4 text-sm font-bold transition-colors',
+                  active ? 'bg-brand-600 text-white shadow-glow' : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800',
+                )}
+              >
+                <Factory className="h-4 w-4" />
+                {t.label}
+                <span className={cn('rounded-full px-2 py-0.5 text-xs tabular-nums', active ? 'bg-white/20' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')}>{t.count}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Machine chips: only the machines with something open, coloured by the worst signal on them. */}
+      {groupsInFactory.length > 1 && (
+        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Machine">
+          <button role="tab" aria-selected={activeMachine === 'all'} onClick={() => setMachinePick('all')} className={chipTone(null, activeMachine === 'all')}>
+            All machines
+          </button>
+          {groupsInFactory.map((g) => (
+            <button key={g.code} role="tab" aria-selected={activeMachine === g.code} onClick={() => setMachinePick(activeMachine === g.code ? 'all' : g.code)} className={chipTone(g.tone, activeMachine === g.code)}>
+              {g.code === favourite && <Star className="h-3.5 w-3.5 fill-current" />}
+              {g.label}
+              <span className={cn('rounded-full px-1.5 py-0.5 text-xs tabular-nums', activeMachine === g.code ? 'bg-white/20' : 'bg-black/5 dark:bg-white/10')}>{g.sessions.length}</span>
+            </button>
+          ))}
+        </div>
       )}
 
       {isLoading ? (
@@ -222,19 +343,19 @@ export function InspectionsPage() {
       ) : groups.length === 0 ? (
         <EmptyState
           icon={<ClipboardCheck className="h-10 w-10" />}
-          title={filtering ? 'No open session matches' : 'Nothing is open right now'}
-          hint={filtering ? 'Clear a filter to see the rest.' : 'Start a new inspection to begin recording samples.'}
+          title={filtering ? 'No open session here' : 'Nothing is open right now'}
+          hint={filtering ? 'Pick another factory or machine, or clear the search.' : 'Start a new inspection to begin recording samples.'}
           action={
             filtering ? (
               <Button
                 onClick={() => {
                   setTerm('')
                   setInspectorFilter('all')
-                  setFactoryFilter('all')
-                  setMachineFilter('all')
+                  setFactoryTab('all')
+                  setMachinePick('all')
                 }}
               >
-                Clear filters
+                Show everything
               </Button>
             ) : (
               <Button variant="primary" onClick={() => setNewOpen(true)}>
@@ -243,25 +364,170 @@ export function InspectionsPage() {
             )
           }
         />
+      ) : density === 'table' ? (
+        // Every open session in one flat table, machine by machine in the same order as the cards.
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[60rem] text-sm">
+              <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:bg-slate-800/60">
+                <tr>
+                  <th className="px-4 py-3">Machine</th>
+                  <th className="px-4 py-3">Order</th>
+                  <th className="px-4 py-3">Item</th>
+                  <th className="px-4 py-3">Inspector</th>
+                  <th className="px-4 py-3">Started</th>
+                  <th className="px-4 py-3 text-right">Samples</th>
+                  <th className="px-4 py-3 text-right">Defects</th>
+                  <th className="px-4 py-3">State</th>
+                  <th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {groups.flatMap((g) =>
+                  g.sessions.map((s) => {
+                    const order = s.order
+                    const count = samplesBySession.get(s.id)?.length ?? 0
+                    return (
+                      <tr key={s.id} onClick={() => setDetails(s)} className={cn('cursor-pointer transition-colors', sessionToneClass(s, 'row', 'hover:bg-slate-50 dark:hover:bg-slate-800/50'))}>
+                        <td className="px-4 py-2.5">
+                          <span className="flex items-center gap-1.5 font-semibold">
+                            {g.code === favourite && <Star className="h-3.5 w-3.5 fill-current text-amber-500" />}
+                            {g.label}
+                          </span>
+                          {activeFactory === 'all' && g.factory !== NO_FACTORY && <span className="block text-xs text-slate-400">{g.factory}</span>}
+                        </td>
+                        <td className="px-4 py-2.5 font-bold">
+                          {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : (order?.orderNumber ?? '—')}
+                          <span className="ml-1.5 text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
+                        </td>
+                        <td className="max-w-[220px] truncate px-4 py-2.5">
+                          <span className="block truncate">{order?.item ?? '—'}</span>
+                          <span className="block truncate font-mono text-xs text-slate-400">{order?.itemCode ?? ''}</span>
+                        </td>
+                        <td className="px-4 py-2.5">{s.inspectorName}</td>
+                        <td className="px-4 py-2.5 tabular-nums text-slate-500 dark:text-slate-400">{formatDateTime(s.startedAt)}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{count}</td>
+                        <td className={cn('px-4 py-2.5 text-right tabular-nums', (s.defectCount ?? 0) > 0 && 'font-bold text-rose-600 dark:text-rose-400')}>{s.defectCount ?? 0}</td>
+                        <td className="px-4 py-2.5">
+                          <span className="inline-flex flex-wrap items-center gap-1.5">
+                            {s.status === 'Open' ? <Badge tone="green">OPEN</Badge> : <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>CLOSED</Badge>}
+                            <SessionToneBadge session={s} />
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          {s.status === 'Open' && (
+                            <Button
+                              variant="primary"
+                              className="min-h-[40px]"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                navigate(`/wizard/${s.id}`)
+                              }}
+                            >
+                              <Play className="h-4 w-4" /> Continue
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  }),
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       ) : (
         // Several machines side by side on a wide screen; one column on a phone.
-        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 2xl:grid-cols-3">
+        <div className={cn('grid items-start gap-4', density === 'cards' ? 'grid-cols-1 md:grid-cols-2 2xl:grid-cols-3' : 'grid-cols-1')}>
           {groups.map((g) => {
-            const isExpanded = expanded[g.label]
-            const visible = isExpanded ? g.sessions : g.sessions.slice(0, COLLAPSE_AFTER)
+            const isCollapsed = collapsed[g.code] === true
+            const isExpanded = expanded[g.code]
+            const visible = isExpanded || density === 'compact' ? g.sessions : g.sessions.slice(0, COLLAPSE_AFTER)
             const hidden = g.sessions.length - visible.length
+            const isFavourite = g.code === favourite
             return (
-              <Card key={g.label} className="overflow-hidden">
-                <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3.5 dark:border-slate-800">
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
-                    <Factory className="h-5 w-5" />
-                  </span>
-                  <h3 className="flex-1 text-lg font-extrabold leading-tight">{g.label}</h3>
-                  <Badge tone="neutral">
-                    {g.sampleCount} sample{g.sampleCount === 1 ? '' : 's'}
-                  </Badge>
+              <Card key={g.code} className={cn('overflow-hidden', isFavourite && 'ring-2 ring-brand-300 dark:ring-brand-500/50')}>
+                <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setCollapsed((c) => ({ ...c, [g.code]: !isCollapsed }))}
+                    aria-expanded={!isCollapsed}
+                    aria-label={isCollapsed ? `Expand ${g.label}` : `Collapse ${g.label}`}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  >
+                    <span
+                      className={cn(
+                        'grid h-10 w-10 shrink-0 place-items-center rounded-xl',
+                        g.tone === 'hold'
+                          ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400'
+                          : g.tone === 'defect'
+                            ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
+                            : 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300',
+                      )}
+                    >
+                      <Factory className="h-5 w-5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-lg font-extrabold leading-tight">{g.label}</span>
+                      {activeFactory === 'all' && g.factory !== NO_FACTORY && <span className="block text-xs text-slate-400">{g.factory}</span>}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1.5">
+                      <Badge tone="neutral">
+                        {g.sessions.length} session{g.sessions.length === 1 ? '' : 's'}
+                      </Badge>
+                      <Badge tone="neutral">
+                        {g.sampleCount} sample{g.sampleCount === 1 ? '' : 's'}
+                      </Badge>
+                      {isCollapsed ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronUp className="h-4 w-4 text-slate-400" />}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFavourite(isFavourite ? null : g.code)}
+                    aria-pressed={isFavourite}
+                    aria-label={isFavourite ? `Stop pinning ${g.label}` : `Pin ${g.label} as my machine`}
+                    title={isFavourite ? 'My machine — pinned first on this device' : 'Pin as my machine on this device'}
+                    className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl transition-colors', isFavourite ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-500/10' : 'text-slate-300 hover:bg-slate-100 hover:text-amber-500 dark:text-slate-600 dark:hover:bg-slate-800')}
+                  >
+                    <Star className={cn('h-5 w-5', isFavourite && 'fill-current')} />
+                  </button>
                 </div>
 
+                {!isCollapsed && density === 'compact' ? (
+                  <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {visible.map((s) => {
+                      const order = s.order
+                      const count = samplesBySession.get(s.id)?.length ?? 0
+                      return (
+                        <li key={s.id} className={cn('flex items-center gap-3 px-4 py-2.5', sessionToneClass(s, 'row'))}>
+                          <button type="button" onClick={() => setDetails(s)} className="min-w-0 flex-1 text-left" aria-label={`Order details for ${order?.orderNumber ?? 'this session'}`}>
+                            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                              {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{order?.orderNumber ?? '—'}</span>}
+                              <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
+                              <span className="truncate text-sm text-brand-600 dark:text-brand-400">{order?.item ?? '—'}</span>
+                            </span>
+                            <span className="block truncate text-xs text-slate-400">
+                              {s.inspectorName} · {formatDate(s.startedAt)} · {count} sample{count === 1 ? '' : 's'}
+                              {s.startQtyConfirmed ? ` · rejected before release ${s.startQtyConfirmed.qty}` : ''}
+                              {s.producedQty !== undefined ? ` · produced ${s.producedQty} pairs` : ''}
+                            </span>
+                          </button>
+                          <SessionToneBadge session={s} className="hidden sm:inline-flex" />
+                          {s.status === 'Open' ? (
+                            <Button variant="primary" className="min-h-[40px] shrink-0" onClick={() => navigate(`/wizard/${s.id}`)} aria-label="Continue">
+                              <Play className="h-4 w-4" />
+                              <span className="hidden sm:inline">Continue</span>
+                            </Button>
+                          ) : (
+                            <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>
+                              CLOSED
+                            </Badge>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : !isCollapsed ? (
                 <div className="divide-y divide-slate-100 dark:divide-slate-800">
                   {visible.map((s) => {
                     const order = s.order
@@ -360,10 +626,11 @@ export function InspectionsPage() {
                     )
                   })}
                 </div>
+                ) : null}
 
-                {hidden > 0 && (
+                {!isCollapsed && density === 'cards' && hidden > 0 && (
                   <button
-                    onClick={() => setExpanded((e) => ({ ...e, [g.label]: true }))}
+                    onClick={() => setExpanded((e) => ({ ...e, [g.code]: true }))}
                     className="flex w-full items-center justify-center gap-1.5 border-t border-slate-100 py-3 text-sm font-semibold text-brand-600 hover:bg-slate-50 dark:border-slate-800 dark:text-brand-400 dark:hover:bg-slate-800/50"
                   >
                     <ChevronDown className="h-4 w-4" /> View {hidden} more
