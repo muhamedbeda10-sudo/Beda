@@ -196,7 +196,7 @@ export function ordersRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
-  /** §5.8 — every note written about this order, on any of its lines, newest first. */
+  /** §5.8 — every note written on this order line, across its sessions, newest first. */
   r.get('/:id/notes', async (req, res) => {
     const id = parse(z.string().uuid(), req.params.id)
     const [order] = await fetchOrdersByIds(ctx.db, [id])

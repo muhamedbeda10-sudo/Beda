@@ -302,8 +302,9 @@ export interface WizardContext {
    *  the next sample starts from it and skips the Setup step. Null on the
    *  first sample. */
   previousSetup: PreviousSetup | null
-  /** Every note written about this order so far — by any session, on any
-   *  machine — newest first, so the Review step shows what is already known. */
+  /** Every note written on this order line so far — the same order, item and
+   *  machine, across its sessions — newest first, so the Review step shows
+   *  what is already known here. */
   orderNotes: SessionNote[]
   /** The controlled documents that apply to this process, by step. */
   workInstructions: WorkInstruction[]

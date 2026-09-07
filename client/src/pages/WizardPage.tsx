@@ -1816,10 +1816,10 @@ function ReviewStep({
         </div>
         <div className="mt-3">
           <p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            <MessageSquareText className="h-3.5 w-3.5" /> Earlier notes on this order
+            <MessageSquareText className="h-3.5 w-3.5" /> Earlier notes on this item here
             {orderNotes.length > 0 && <Badge tone="neutral">{orderNotes.length}</Badge>}
           </p>
-          <OrderNoteList notes={orderNotes} emptyMessage="No notes on this order yet." />
+          <OrderNoteList notes={orderNotes} emptyMessage="No notes on this item on this machine yet." />
         </div>
       </Section>
 

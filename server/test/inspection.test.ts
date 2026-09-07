@@ -685,22 +685,24 @@ describe('notes about the order (§5.8)', () => {
     expect(after).toBe(before)
   })
 
-  it('shows the note to a later session on another line of the same order', async () => {
-    const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: weldOrderOnPaintLine.id, startQty: 0 } })
-    const ctx = await app.api<WizardContext>('GET', `/api/sessions/${started.body.id}/wizard`, { token: supervisor.token })
+  it('shows the note to a later session on the same line, but not on another machine of the same order', async () => {
+    // The same line again: the note is there, with where it was written.
+    const sameLine = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: weldOrder.id, startQty: 0 } })
+    const ctx = await app.api<WizardContext>('GET', `/api/sessions/${sameLine.body.id}/wizard`, { token: supervisor.token })
     expect(ctx.status).toBe(200)
     const fromWelding = ctx.body.orderNotes.find((n) => n.id === noteId)
     expect(fromWelding?.workCenterCode).toBe('58')
-    // The order's own notes endpoint reads the same set from either line.
-    const viaOrder = await app.api<SessionNotesResponse>('GET', `/api/orders/${weldOrderOnPaintLine.id}/notes`, { token: inspector.token })
-    expect(viaOrder.body.notes.some((n) => n.id === noteId)).toBe(true)
     expect(fromWelding?.sessionSeq).toBeGreaterThan(0)
-    // A different order sees none of it.
-    const other = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: paintOrder.id, startQty: 0 } })
-    const otherCtx = await app.api<WizardContext>('GET', `/api/sessions/${other.body.id}/wizard`, { token: supervisor.token })
+    const viaOrder = await app.api<SessionNotesResponse>('GET', `/api/orders/${weldOrder.id}/notes`, { token: inspector.token })
+    expect(viaOrder.body.notes.some((n) => n.id === noteId)).toBe(true)
+    // The same order and item on the paint line is another line: its notes are its own.
+    const otherMachine = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: weldOrderOnPaintLine.id, startQty: 0 } })
+    const otherCtx = await app.api<WizardContext>('GET', `/api/sessions/${otherMachine.body.id}/wizard`, { token: supervisor.token })
     expect(otherCtx.body.orderNotes.find((n) => n.id === noteId)).toBeUndefined()
-    await app.api('DELETE', `/api/sessions/${started.body.id}`, { token: admin.token })
-    await app.api('DELETE', `/api/sessions/${other.body.id}`, { token: admin.token })
+    const viaOther = await app.api<SessionNotesResponse>('GET', `/api/orders/${weldOrderOnPaintLine.id}/notes`, { token: inspector.token })
+    expect(viaOther.body.notes.some((n) => n.id === noteId)).toBe(false)
+    await app.api('DELETE', `/api/sessions/${sameLine.body.id}`, { token: admin.token })
+    await app.api('DELETE', `/api/sessions/${otherMachine.body.id}`, { token: admin.token })
   })
 
   it('lets only an administrator mark a note deleted, and audits it', async () => {

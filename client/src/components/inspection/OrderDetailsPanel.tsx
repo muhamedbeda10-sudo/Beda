@@ -263,8 +263,8 @@ export function OrderDetailsPanel({
           )}
 
           <Reveal index={6}>
-            <Section icon={<MessageSquareText className="h-4 w-4" />} title="Notes about the order" count={notes.length}>
-              {notesLoading ? <Skeleton rows={2} /> : <OrderNoteList notes={notes} emptyMessage="No notes on this order yet." machineLabel={machineLabel} />}
+            <Section icon={<MessageSquareText className="h-4 w-4" />} title="Notes on this line" count={notes.length}>
+              {notesLoading ? <Skeleton rows={2} /> : <OrderNoteList notes={notes} emptyMessage="No notes on this item on this machine yet." machineLabel={machineLabel} />}
             </Section>
           </Reveal>
         </div>
