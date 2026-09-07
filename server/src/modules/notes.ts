@@ -31,15 +31,17 @@ export async function loadSessionNotes(q: Queryable, sessionId: string): Promise
 }
 
 /**
- * Every live note on the order — any line of the same order number, any
- * machine, any session — newest first. The order is the unit the inspector
- * talks about ("the customer wants…"), so a note written on the welding line
- * is read on the paint line.
+ * Every live note on this order LINE — the same order number, item and
+ * machine, across all of its sessions — newest first. A note written on the
+ * welding line stays on the welding line: the paint line's own notes are
+ * its own. Matched on the line's identity rather than its row id, so a
+ * re-imported catalogue keeps the notes with the line.
  */
 export async function loadOrderNotes(q: Queryable, orderId: string): Promise<SessionNote[]> {
   const { rows } = await q.query<SessionNote>(
     `SELECT ${NOTE_SELECT} ${NOTE_FROM}
-        AND lower(o.order_number) = (SELECT lower(order_number) FROM production_orders WHERE id = $1)
+        AND (lower(o.order_number), lower(o.item_code), lower(o.work_center_code)) =
+            (SELECT lower(order_number), lower(item_code), lower(work_center_code) FROM production_orders WHERE id = $1)
       ORDER BY n.created_at DESC`,
     [orderId],
   )
