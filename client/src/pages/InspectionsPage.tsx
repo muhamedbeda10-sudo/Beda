@@ -9,7 +9,6 @@ import {
   Play,
   ChevronDown,
   ChevronUp,
-  AlertTriangle,
   Boxes,
   Lock,
   CheckCircle2,
@@ -67,7 +66,6 @@ export function InspectionsPage() {
   const { data: machines = [] } = useMaster('machines')
   const openSessions = board?.sessions ?? []
   const samples = board?.samples ?? []
-  const holdCount = board?.holdCount ?? 0
 
   const [newOpen, setNewOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
@@ -213,28 +211,11 @@ export function InspectionsPage() {
     <div className="space-y-5">
       <InstallBanner />
 
-      {/* §4 — three primary actions: tiles on a phone, one toolbar row on a wide screen,
-          with the Hold notice filling the rest of that row instead of its own band. */}
+      {/* §4 — three primary actions: tiles on a phone, one toolbar row on a wide screen. */}
       <div className="grid grid-cols-3 gap-3 lg:flex lg:items-stretch">
         <QuickAction icon={<Plus className="h-6 w-6 lg:h-5 lg:w-5" />} title="New" subtitle="Inspection" onClick={() => setNewOpen(true)} />
         <QuickAction icon={<Search className="h-6 w-6 lg:h-5 lg:w-5" />} title="Coil" subtitle="Search" onClick={() => navigate('/coils')} />
         <QuickAction icon={<FileText className="h-6 w-6 lg:h-5 lg:w-5" />} title="PDI" subtitle="Documents" onClick={() => navigate('/pdi')} />
-        {holdCount > 0 && (
-          <Card className="col-span-3 flex items-center gap-3 border-l-4 border-l-amber-400 p-4 lg:ml-auto lg:min-w-0 lg:flex-1 lg:py-2.5">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400">
-              <AlertTriangle className="h-5 w-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="font-bold">
-                {holdCount} defect{holdCount === 1 ? '' : 's'} on Hold
-              </p>
-              <p className="truncate text-sm text-slate-500 dark:text-slate-400">Open business items — they stay here until a disposition resolves them.</p>
-            </div>
-            <Button variant="secondary" onClick={() => navigate('/history?disposition=Hold')}>
-              Review
-            </Button>
-          </Card>
-        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 lg:gap-3">
