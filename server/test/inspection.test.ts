@@ -717,6 +717,32 @@ describe('notes about the order (§5.8)', () => {
   })
 })
 
+describe('a session with no sample', () => {
+  it('cannot be closed, but its inspector can discard it', async () => {
+    const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrder.id, startQty: 5 } })
+    const sid = started.body.id
+    const close = await app.api<ApiErrorBody>('POST', `/api/sessions/${sid}/close`, { token: inspector.token, body: { finalQty: 5, version: 0 } })
+    expect(close.status).toBe(400)
+    expect(close.body.error.message).toMatch(/No sample/)
+    // Someone else's empty session is not an inspector's to discard; the owner's is.
+    const other = await app.register('insp2', 'Inspector Two')
+    expect((await app.api('POST', `/api/sessions/${sid}/discard`, { token: other.token })).status).toBe(403)
+    expect((await app.api('POST', `/api/sessions/${sid}/discard`, { token: inspector.token })).status).toBe(204)
+    const board = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: admin.token })
+    expect(board.body.sessions.some((s) => s.id === sid)).toBe(false)
+    const audit = await app.api<AuditListResponse>('GET', '/api/audit', { token: admin.token })
+    expect(audit.body.entries.some((e) => e.entity === 'InspectionSession' && e.entityId === sid && e.action === 'delete' && /Discarded/.test(e.newValue ?? ''))).toBe(true)
+  })
+
+  it('refuses to discard a session that has samples', async () => {
+    const board = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: admin.token })
+    const withSamples = board.body.sessions.find((s) => (s.sampleCount ?? 0) > 0)!
+    const res = await app.api<ApiErrorBody>('POST', `/api/sessions/${withSamples.id}/discard`, { token: admin.token })
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toMatch(/has samples/)
+  })
+})
+
 describe('a make-to-stock machine', () => {
   let stockOrderId: string
   let sid: string

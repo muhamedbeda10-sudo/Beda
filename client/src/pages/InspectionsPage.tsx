@@ -28,7 +28,7 @@ import { SampleDetail } from '@/components/inspection/SampleDetail'
 import { OrderDetailsPanel } from '@/components/inspection/OrderDetailsPanel'
 import { InstallBanner } from '@/components/layout/InstallBanner'
 import { useMaster, useOpenBoard, useSampleDetail } from '@/services/queries'
-import { closeSession } from '@/services/mutations'
+import { closeSession, discardSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, isStockOrder, processForMachine, sessionTone, shiftName, type SessionTone } from '@/domain'
@@ -661,6 +661,15 @@ export function InspectionsPage() {
             }
             setClosing(null)
           }}
+          onDiscard={async () => {
+            try {
+              await discardSession(queryClient, closing.id)
+              toast('Session discarded. Nothing was recorded in it.', 'success')
+            } catch (e) {
+              toast(e instanceof Error ? e.message : 'Could not discard the session.', 'error')
+            }
+            setClosing(null)
+          }}
         />
       )}
 
@@ -716,16 +725,46 @@ function CloseSessionDialog({
   session,
   onClose,
   onConfirm,
+  onDiscard,
 }: {
   session: SessionWithOrder
   onClose: () => void
   onConfirm: (qty: number) => void
+  onDiscard: () => void
 }) {
   // A stock session confirms the quantity that came out; an order session its starting count.
   const stock = isStockOrder(session.order)
   const [qty, setQty] = useState(String(stock ? (session.producedQty ?? '') : (session.startQtyConfirmed?.qty ?? '')))
   const parsed = Number(qty)
   const valid = qty.trim() !== '' && !Number.isNaN(parsed) && parsed >= 0
+
+  // With no sample there is nothing to close as a record: the session is discarded instead.
+  if ((session.sampleCount ?? 0) === 0) {
+    return (
+      <Modal
+        open
+        onClose={onClose}
+        title="Nothing recorded yet"
+        icon={<Lock className="h-5 w-5" />}
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={onClose}>
+              Keep it open
+            </Button>
+            <Button variant="danger" onClick={onDiscard}>
+              Discard session
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          This session has no sample, so it cannot be closed as an inspection record. Record a sample first, or discard the session: it leaves the board and
+          History, and the discard is written to the audit log with your name.
+        </p>
+      </Modal>
+    )
+  }
 
   return (
     <Modal

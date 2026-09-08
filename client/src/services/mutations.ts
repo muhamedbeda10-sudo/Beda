@@ -81,6 +81,12 @@ export async function deleteNote(qc: QueryClient, sessionId: string, noteId: str
   await qc.invalidateQueries({ queryKey: ['sessions'] })
 }
 
+/** Discard a session that recorded no sample; the API refuses one that did. */
+export async function discardSession(qc: QueryClient, sessionId: string): Promise<void> {
+  await api<void>(`/sessions/${sessionId}/discard`, { method: 'POST' })
+  await qc.invalidateQueries({ queryKey: ['sessions'] })
+}
+
 export async function saveSample(qc: QueryClient, sessionId: string, body: SaveSampleRequest): Promise<SaveSampleResponse> {
   const result = await api<SaveSampleResponse>(`/sessions/${sessionId}/samples`, { method: 'POST', body })
   // The next sample starts from what this one recorded (nominals, setup,
