@@ -27,7 +27,9 @@ import type {
   SessionWithOrder,
   WizardContext,
   SessionNotesResponse,
+  KpiThresholdsResponse,
 } from '@qc/shared/api'
+import type { KpiFilters, KpiOverview } from '@qc/shared/kpi'
 import type { Coil, Disposition, ImageAsset, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
@@ -54,6 +56,8 @@ export const keys = {
   auditStats: ['audit', 'stats'] as const,
   users: ['users'] as const,
   workInstructions: (process?: string, history?: boolean) => ['work-instructions', process ?? 'all', history ? 'history' : 'in-force'] as const,
+  kpiOverview: (filters: KpiFilters) => ['kpi', 'overview', filters] as const,
+  kpiThresholds: ['kpi', 'thresholds'] as const,
 }
 
 /** A value that settles `ms` after it stops changing, so typing an
@@ -241,4 +245,22 @@ export function useWorkInstructions(process?: WorkInstructionScope, history = fa
 
 export function useUsers() {
   return useQuery({ queryKey: keys.users, queryFn: () => api<UserProfile[]>('/users') })
+}
+
+// ---- §15 Dashboard ---------------------------------------------------------
+
+/** The whole overview for a period and its comparison; kept for a few minutes so
+ *  switching a tab and back does not re-run every query on the free tier. */
+export function useKpiOverview(filters: KpiFilters | null) {
+  return useQuery({
+    queryKey: keys.kpiOverview(filters ?? ({} as KpiFilters)),
+    queryFn: () => api<KpiOverview>(`/kpi/overview${qs({ ...filters })}`),
+    enabled: filters !== null,
+    staleTime: 5 * 60_000,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useKpiThresholds(enabled = true) {
+  return useQuery({ queryKey: keys.kpiThresholds, queryFn: () => api<KpiThresholdsResponse>('/kpi/thresholds'), enabled, staleTime: 5 * 60_000 })
 }
