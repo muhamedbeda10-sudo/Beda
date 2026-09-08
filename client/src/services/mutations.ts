@@ -54,6 +54,7 @@ export async function deleteSession(qc: QueryClient, sessionId: string): Promise
 /** Re-record a whole sample from History; refused with a conflict if it moved. */
 export async function reRecordSample(qc: QueryClient, sessionId: string, sampleId: string, body: ReRecordSampleRequest): Promise<ReRecordSampleResponse> {
   const result = await api<ReRecordSampleResponse>(`/sessions/${sessionId}/samples/${sampleId}`, { method: 'PUT', body })
+  qc.removeQueries({ queryKey: ['sessions', sessionId, 'wizard'] })
   await qc.invalidateQueries({ queryKey: ['sessions'] })
   await qc.invalidateQueries({ queryKey: ['samples'] })
   await qc.invalidateQueries({ queryKey: ['audit'] })
@@ -82,6 +83,9 @@ export async function deleteNote(qc: QueryClient, sessionId: string, noteId: str
 
 export async function saveSample(qc: QueryClient, sessionId: string, body: SaveSampleRequest): Promise<SaveSampleResponse> {
   const result = await api<SaveSampleResponse>(`/sessions/${sessionId}/samples`, { method: 'POST', body })
+  // The next sample starts from what this one recorded (nominals, setup,
+  // coils): drop the cached wizard context so it cannot be served stale.
+  qc.removeQueries({ queryKey: ['sessions', sessionId, 'wizard'] })
   await qc.invalidateQueries({ queryKey: ['sessions'] })
   await qc.invalidateQueries({ queryKey: ['orders'] })
   await qc.invalidateQueries({ queryKey: ['coils', 'usage'] })
