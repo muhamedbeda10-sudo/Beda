@@ -20,8 +20,10 @@ import {
   ScrollText,
   ChevronRight,
   BellRing,
+  MessagesSquare,
 } from 'lucide-react'
 import { NoticeBell } from '@/components/notices/NoticeBell'
+import { useChatUnread } from '@/services/queries'
 import { Brand } from '@/components/brand/Brand'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
@@ -42,6 +44,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/history', label: 'History', icon: History },
+  { to: '/chat', label: 'Chat', icon: MessagesSquare },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
 ]
 
@@ -161,6 +164,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
 
   const nav = NAV.filter((n) => !n.needs || can(role, n.needs))
+  const { data: chatUnread } = useChatUnread(!!profile)
+  const badgeOf = (n: NavItem) => (n.to === '/chat' ? chatUnread?.unreadTotal ?? 0 : 0)
   const admin = ADMIN_NAV.filter((n) => !n.needs || can(role, n.needs))
   const displayName = profile?.name || user
   const initials = (displayName ?? '?')
@@ -199,6 +204,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 >
                   <n.icon className={cn('h-4 w-4 transition-transform duration-200 group-hover:-translate-y-0.5', active && 'text-accent-500')} />
                   {n.label}
+                  {badgeOf(n) > 0 && <span className="ml-1 rounded-full bg-rose-600 px-1.5 text-[10px] font-bold leading-[16px] text-white">{badgeOf(n) > 99 ? '99+' : badgeOf(n)}</span>}
                 </NavLink>
               )
             })}
@@ -244,7 +250,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
             <nav className="flex flex-col gap-1 p-3">
               {nav.map((n) => (
-                <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
+                <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} badge={badgeOf(n)} />
               ))}
               {admin.length > 0 && (
                 <>
@@ -285,7 +291,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   )
 }
 
-function DrawerLink({ item, active, onClick }: { item: NavItem; active: boolean; onClick: () => void }) {
+function DrawerLink({ item, active, onClick, badge = 0 }: { item: NavItem; active: boolean; onClick: () => void; badge?: number }) {
   return (
     <NavLink
       to={item.to}
@@ -298,6 +304,7 @@ function DrawerLink({ item, active, onClick }: { item: NavItem; active: boolean;
     >
       <item.icon className="h-5 w-5" />
       {item.label}
+      {badge > 0 && <span className={cn('ml-auto rounded-full px-2 text-[11px] font-bold leading-[20px]', active ? 'bg-white/20 text-white' : 'bg-rose-600 text-white')}>{badge > 99 ? '99+' : badge}</span>}
     </NavLink>
   )
 }

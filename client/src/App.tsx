@@ -6,6 +6,7 @@ import { InspectionsPage } from '@/pages/InspectionsPage'
 import { WizardPage } from '@/pages/WizardPage'
 import { HistoryPage } from '@/pages/HistoryPage'
 import { DashboardPage } from '@/pages/DashboardPage'
+import { ChatPage } from '@/pages/ChatPage'
 import { CoilSearchPage } from '@/pages/CoilSearchPage'
 import { PDIPage } from '@/pages/PDIPage'
 import { LoginPage } from '@/pages/LoginPage'
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/pdi" element={<PDIPage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/chat/:conversationId?" element={<ChatPage />} />
         {/* Administration lives behind the gear; every section keeps its own address. */}
         <Route path="/admin" element={<Navigate to="/admin/configuration" replace />} />
         <Route path="/admin/configuration/:section?" element={<ConfigurationPage />} />

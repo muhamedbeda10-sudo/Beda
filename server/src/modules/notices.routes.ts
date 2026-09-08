@@ -74,7 +74,7 @@ const contextSchema = z
   .optional()
 
 /** What a file claims to be must match what its first bytes say. */
-function sniffNoticeFile(name: string, bytes: Buffer): keyof typeof NOTICE_FILE_TYPES {
+export function sniffNoticeFile(name: string, bytes: Buffer): keyof typeof NOTICE_FILE_TYPES {
   const ext = name.toLowerCase().slice(name.lastIndexOf('.') + 1)
   if (ext === 'pdf' && isPdf(bytes)) return 'pdf'
   if (ext === 'xlsx' && bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) return 'xlsx'
