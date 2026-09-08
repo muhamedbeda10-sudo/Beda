@@ -83,7 +83,8 @@ export function Composer({
   const trigger = useMemo(() => triggerAt(text, caret), [text, caret])
   const { data: users = [] } = useChatUsers(!!trigger && trigger.sigil === '@')
   const { data: machines = [] } = useMaster('machines', undefined, !!trigger && trigger.sigil === '#')
-  const { data: orders = [] } = useOrderSearch(trigger?.sigil === '#' ? trigger.query : '', 20, !!trigger && trigger.sigil === '#' && trigger.query.length >= 2)
+  // Order lines are searched by prefix from the first character: an order number, an item code or a line key.
+  const { data: orders = [] } = useOrderSearch(trigger?.sigil === '#' ? trigger.query : '', 20, !!trigger && trigger.sigil === '#' && trigger.query.length >= 1)
   const { data: board } = useOpenBoard()
 
   const suggestions = useMemo<Suggestion[]>(() => {
@@ -92,12 +93,12 @@ export function Composer({
     if (trigger.sigil === '@') {
       return users.filter((u) => !q || u.name.toLowerCase().includes(q) || u.username.toLowerCase().includes(q)).slice(0, 8).map((u) => ({ kind: 'user', value: u.id, label: u.name, sub: u.username }))
     }
+    // Orders first: that is what the floor points at most. Then the items of
+    // those orders, the open sessions, and the machines whose code starts
+    // with what was typed (a bare "#" lists the machines and open sessions).
     const out: Suggestion[] = []
-    for (const m of machines) {
-      if (!q || m.code.toLowerCase().startsWith(q) || m.displayName.toLowerCase().includes(q)) out.push({ kind: 'machine', value: m.code, label: m.displayName, sub: 'Machine' })
-    }
     const items = new Map<string, string>()
-    for (const o of orders) {
+    for (const o of orders.slice(0, 8)) {
       if (isStockOrder(o)) continue
       out.push({ kind: 'order', value: o.id, label: `${o.orderNumber} · ${o.item} · ${o.workCenterCode}`, sub: `Order line · ${o.itemCode}` })
       if (!items.has(o.itemCode.toLowerCase())) items.set(o.itemCode.toLowerCase(), o.item)
@@ -110,7 +111,10 @@ export function Composer({
       const label = `${s.order?.orderNumber ?? 'STOCK'} · ${s.order?.itemCode ?? ''} · ${s.workCenterCode} #${s.seq}`
       if (!q || label.toLowerCase().includes(q)) out.push({ kind: 'session', value: s.id, label, sub: `Session · ${s.inspectorName}` })
     }
-    return out.slice(0, 10)
+    for (const m of machines) {
+      if (!q || m.code.toLowerCase().startsWith(q) || m.displayName.toLowerCase().includes(q)) out.push({ kind: 'machine', value: m.code, label: m.displayName, sub: 'Machine' })
+    }
+    return out.slice(0, 12)
   }, [trigger, users, machines, orders, board])
 
   useEffect(() => setPick(0), [suggestions.length, trigger?.query])
