@@ -33,9 +33,13 @@ import {
   type MatchNoticesRequest,
   type MatchNoticesResponse,
   type SaveNoticeRequest,
+  type ChatMessagesResponse,
+  type CreateConversationRequest,
+  type SendChatMessageRequest,
+  type UpdateGroupRequest,
 } from '@qc/shared/api'
 import type { KpiThresholds } from '@qc/shared/kpi'
-import type { DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, UserProfile, WorkInstruction } from '@qc/shared/types'
+import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
 import { api } from '@/lib/api'
 import { chunk } from '@/lib/utils'
 
@@ -302,4 +306,58 @@ export async function withdrawNotice(qc: QueryClient, id: string): Promise<Notic
 export async function deleteNotice(qc: QueryClient, id: string): Promise<void> {
   await api<void>(`/notices/${id}`, { method: 'DELETE' })
   await qc.invalidateQueries({ queryKey: ['notices'] })
+}
+
+// ---- §17 Chat --------------------------------------------------------------
+
+/** Older messages of a conversation, before the given instant. */
+export async function loadOlderMessages(conversationId: string, before: string): Promise<ChatMessagesResponse> {
+  return api<ChatMessagesResponse>(`/chat/conversations/${conversationId}/messages?before=${encodeURIComponent(before)}`)
+}
+
+export async function sendChatMessage(qc: QueryClient, conversationId: string, body: SendChatMessageRequest): Promise<ChatMessage> {
+  const res = await api<ChatMessage>(`/chat/conversations/${conversationId}/messages`, { method: 'POST', body })
+  await qc.invalidateQueries({ queryKey: ['chat'] })
+  return res
+}
+
+export async function editChatMessage(qc: QueryClient, id: string, body: string): Promise<ChatMessage> {
+  const res = await api<ChatMessage>(`/chat/messages/${id}`, { method: 'PATCH', body: { body } })
+  await qc.invalidateQueries({ queryKey: ['chat'] })
+  return res
+}
+
+export async function deleteChatMessage(qc: QueryClient, id: string, scope: 'me' | 'everyone'): Promise<void> {
+  await api<void>(`/chat/messages/${id}?scope=${scope}`, { method: 'DELETE' })
+  await qc.invalidateQueries({ queryKey: ['chat'] })
+}
+
+export async function toggleReaction(qc: QueryClient, id: string, emoji: string): Promise<ChatMessage> {
+  const res = await api<ChatMessage>(`/chat/messages/${id}/reactions`, { method: 'POST', body: { emoji } })
+  await qc.invalidateQueries({ queryKey: ['chat', 'messages'] })
+  return res
+}
+
+export async function markConversationRead(qc: QueryClient, conversationId: string): Promise<void> {
+  await api<void>(`/chat/conversations/${conversationId}/read`, { method: 'POST' })
+  await qc.invalidateQueries({ queryKey: ['chat', 'unread'] })
+  await qc.invalidateQueries({ queryKey: ['chat', 'conversations'] })
+}
+
+export async function createConversation(qc: QueryClient, body: CreateConversationRequest): Promise<ChatConversation> {
+  const res = await api<ChatConversation>('/chat/conversations', { method: 'POST', body })
+  await qc.invalidateQueries({ queryKey: ['chat', 'conversations'] })
+  return res
+}
+
+export async function updateGroup(qc: QueryClient, id: string, body: UpdateGroupRequest): Promise<ChatConversation> {
+  const res = await api<ChatConversation>(`/chat/conversations/${id}`, { method: 'PATCH', body })
+  await qc.invalidateQueries({ queryKey: ['chat', 'conversations'] })
+  return res
+}
+
+export async function uploadChatFile(file: File): Promise<StoredFile> {
+  const form = new FormData()
+  form.set('file', file, file.name)
+  return api<StoredFile>('/chat/files', { method: 'POST', form })
 }

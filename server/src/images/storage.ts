@@ -62,6 +62,11 @@ export function buildNoticeFileStorageKey(id: string, ext: keyof typeof NOTICE_F
   return `documents/notices/${id}.${ext}`
 }
 
+/** Files sent in chat (§17). */
+export function buildChatFileStorageKey(id: string, ext: keyof typeof NOTICE_FILE_TYPES): string {
+  return `documents/chat/${id}.${ext}`
+}
+
 function assertSafeKey(key: string): void {
   const ok = /^images\/[A-Za-z0-9_./-]+\.jpg$/.test(key) || /^documents\/[A-Za-z0-9_./-]+\.(pdf|xlsx|xls)$/.test(key)
   if (!ok || key.includes('..')) {

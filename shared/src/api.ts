@@ -10,6 +10,8 @@
 
 import type { KpiThresholds } from './kpi'
 import type {
+  ChatConversation,
+  ChatMessage,
   NoticeForUser,
   NoticeSeverity,
   NoticeTarget,
@@ -594,4 +596,48 @@ export interface MatchNoticesResponse {
 
 export interface AcknowledgeNoticeRequest {
   context?: { sessionId?: string; workCenterCode?: string; orderNumber?: string; itemCode?: string }
+}
+
+// ---- §17 Chat --------------------------------------------------------------
+
+export interface ChatConversationsResponse {
+  conversations: ChatConversation[]
+  unreadTotal: number
+  mentionTotal: number
+}
+
+export interface ChatUnreadResponse {
+  unreadTotal: number
+  mentionTotal: number
+}
+
+export interface ChatMessagesResponse {
+  messages: ChatMessage[]
+  /** Older messages exist before the first one returned. */
+  hasMore: boolean
+}
+
+export interface SendChatMessageRequest {
+  /** Idempotency key made on the device, so a retried send never duplicates. */
+  clientId: string
+  body: string
+  replyToId?: string | null
+  imageIds?: string[]
+  fileIds?: string[]
+}
+
+export interface EditChatMessageRequest {
+  body: string
+}
+
+export type CreateConversationRequest = { kind: 'direct'; userId: string } | { kind: 'group'; name: string; memberIds: string[] }
+
+export interface UpdateGroupRequest {
+  name?: string
+  addMemberIds?: string[]
+  removeMemberIds?: string[]
+}
+
+export interface ToggleReactionRequest {
+  emoji: string
 }

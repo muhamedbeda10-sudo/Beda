@@ -1,0 +1,84 @@
+import { useMemo, useState } from 'react'
+import { AtSign, Hash, MessageSquarePlus, Search, Users } from 'lucide-react'
+import type { ChatConversation } from '@qc/shared/types'
+import { Input } from '@/components/ui'
+import { cn } from '@/lib/utils'
+
+const when = (iso: string | null) => {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const today = new Date()
+  const sameDay = d.toDateString() === today.toDateString()
+  return sameDay ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+}
+
+export function initialsOf(name: string): string {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('')
+}
+
+export function Avatar({ conversation: c, size = 'md' }: { conversation: Pick<ChatConversation, 'kind' | 'title'>; size?: 'sm' | 'md' }) {
+  const cls = cn('grid shrink-0 place-items-center rounded-full font-bold text-white shadow-card', size === 'md' ? 'h-11 w-11 text-sm' : 'h-8 w-8 text-xs')
+  if (c.kind === 'general') return <span className={cn(cls, 'bg-gradient-to-br from-accent-500 to-accent-700')}><Hash className="h-5 w-5" /></span>
+  if (c.kind === 'group') return <span className={cn(cls, 'bg-gradient-to-br from-violet-500 to-violet-700')}><Users className="h-5 w-5" /></span>
+  return <span className={cn(cls, 'bg-gradient-to-br from-brand-600 to-brand-800')}>{initialsOf(c.title) || '?'}</span>
+}
+
+export function ConversationList({ conversations, activeId, onPick, onNew, myId }: { conversations: ChatConversation[]; activeId: string | null; onPick: (c: ChatConversation) => void; onNew: () => void; myId: string }) {
+  const [term, setTerm] = useState('')
+  const list = useMemo(() => {
+    const q = term.trim().toLowerCase()
+    return q ? conversations.filter((c) => c.title.toLowerCase().includes(q) || c.members.some((m) => m.name.toLowerCase().includes(q))) : conversations
+  }, [conversations, term])
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center gap-2 px-3 pb-2 pt-3">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search" className="rounded-full pl-9" aria-label="Search conversations" />
+        </div>
+        <button type="button" onClick={onNew} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-card hover:bg-brand-700" aria-label="New chat">
+          <MessageSquarePlus className="h-5 w-5" />
+        </button>
+      </div>
+      <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        {list.map((c) => {
+          const active = c.id === activeId
+          const last = c.lastMessage
+          return (
+            <li key={c.id}>
+              <button
+                type="button"
+                onClick={() => onPick(c)}
+                className={cn('flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition-colors', active ? 'bg-brand-50 ring-1 ring-brand-200 dark:bg-brand-500/15 dark:ring-brand-500/30' : 'hover:bg-slate-100 dark:hover:bg-slate-800')}
+              >
+                <Avatar conversation={c} />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-baseline justify-between gap-2">
+                    <span className={cn('truncate text-sm', c.unreadCount > 0 ? 'font-bold' : 'font-semibold')}>{c.title}</span>
+                    <span className={cn('shrink-0 text-[11px] tabular-nums', c.unreadCount > 0 ? 'font-bold text-brand-700 dark:text-brand-300' : 'text-slate-400')}>{when(last?.createdAt ?? c.lastMessageAt)}</span>
+                  </span>
+                  <span className="flex items-center justify-between gap-2">
+                    <span className={cn('truncate text-xs', c.unreadCount > 0 ? 'text-slate-700 dark:text-slate-200' : 'text-slate-500 dark:text-slate-400')}>
+                      {last ? `${last.senderId === myId ? 'You' : c.kind === 'direct' ? '' : last.senderName}${last.senderId === myId || c.kind !== 'direct' ? ': ' : ''}${last.text}` : c.kind === 'group' ? `${c.members.length} members` : 'No messages yet'}
+                    </span>
+                    {c.unreadCount > 0 && (
+                      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-brand-600 px-1.5 text-[10px] font-bold leading-[18px] text-white">
+                        {c.mentionCount > 0 && <AtSign className="h-3 w-3" />}
+                        {c.unreadCount > 99 ? '99+' : c.unreadCount}
+                      </span>
+                    )}
+                  </span>
+                </span>
+              </button>
+            </li>
+          )
+        })}
+        {list.length === 0 && <li className="px-3 py-8 text-center text-sm text-slate-400">No conversation matches.</li>}
+      </ul>
+    </div>
+  )
+}

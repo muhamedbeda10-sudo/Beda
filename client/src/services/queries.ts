@@ -29,9 +29,12 @@ import type {
   SessionNotesResponse,
   KpiThresholdsResponse,
   NoticeInboxResponse,
+  ChatConversationsResponse,
+  ChatMessagesResponse,
+  ChatUnreadResponse,
 } from '@qc/shared/api'
 import type { KpiFilters, KpiOverview } from '@qc/shared/kpi'
-import type { Coil, Disposition, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
+import type { ChatUser, Coil, Disposition, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
 export const keys = {
@@ -62,6 +65,10 @@ export const keys = {
   noticeInbox: ['notices', 'inbox'] as const,
   noticesAdmin: ['notices', 'admin'] as const,
   noticeAcks: (id: string) => ['notices', id, 'acknowledgements'] as const,
+  chatUnread: ['chat', 'unread'] as const,
+  chatConversations: ['chat', 'conversations'] as const,
+  chatMessages: (id: string) => ['chat', 'messages', id] as const,
+  chatUsers: ['chat', 'users'] as const,
 }
 
 /** A value that settles `ms` after it stops changing, so typing an
@@ -291,4 +298,49 @@ export function useAdminNotices(enabled = true) {
 
 export function useNoticeAcknowledgements(id: string | null) {
   return useQuery({ queryKey: keys.noticeAcks(id ?? ''), queryFn: () => api<NoticeAcknowledgement[]>(`/notices/${id}/acknowledgements`), enabled: id !== null })
+}
+
+// ---- §17 Chat --------------------------------------------------------------
+
+/** The open conversation asks every 30 s; the tab's badge every 3 minutes; nothing in the background. */
+export const CHAT_POLL_MS = 30_000
+export const CHAT_BADGE_POLL_MS = 3 * 60_000
+
+export function useChatUnread(enabled = true) {
+  return useQuery({
+    queryKey: keys.chatUnread,
+    queryFn: () => api<ChatUnreadResponse>('/chat/unread'),
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: CHAT_BADGE_POLL_MS,
+    refetchIntervalInBackground: false,
+  })
+}
+
+export function useChatConversations(enabled = true) {
+  return useQuery({
+    queryKey: keys.chatConversations,
+    queryFn: () => api<ChatConversationsResponse>('/chat/conversations'),
+    enabled,
+    staleTime: 10_000,
+    refetchInterval: CHAT_POLL_MS,
+    refetchIntervalInBackground: false,
+  })
+}
+
+/** The latest page of a conversation, refreshed while it is open. Older pages are fetched by the thread as it scrolls up. */
+export function useChatMessages(conversationId: string | null) {
+  return useQuery({
+    queryKey: keys.chatMessages(conversationId ?? ''),
+    queryFn: () => api<ChatMessagesResponse>(`/chat/conversations/${conversationId}/messages`),
+    enabled: conversationId !== null,
+    staleTime: 5_000,
+    refetchInterval: CHAT_POLL_MS,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useChatUsers(enabled = true) {
+  return useQuery({ queryKey: keys.chatUsers, queryFn: () => api<ChatUser[]>('/chat/users'), enabled, staleTime: 5 * 60_000 })
 }

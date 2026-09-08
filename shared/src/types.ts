@@ -657,3 +657,98 @@ export interface NoticeAdminRow extends Notice {
   seenCount: number
   acknowledgedCount: number
 }
+
+// ---- Chat (§17) ------------------------------------------------------------
+
+/** A stored document (PDF or workbook) attached to a notice or a message. */
+export type StoredFile = NoticeFile
+
+export type ChatConversationKind = 'general' | 'direct' | 'group'
+
+export interface ChatUser {
+  id: ID
+  name: string
+  username: string
+  role: Role
+}
+
+export interface ChatMember extends ChatUser {
+  lastReadAt: ISODate | null
+}
+
+export interface ChatMessagePreview {
+  id: ID
+  senderId: ID
+  senderName: string
+  /** Plain text of the message, or a short stand-in for a deleted one or an attachment. */
+  text: string
+  createdAt: ISODate
+}
+
+export interface ChatConversation {
+  id: ID
+  kind: ChatConversationKind
+  /** How the reader sees it: the other person's name for a direct one, the group's name otherwise. */
+  title: string
+  createdById: ID | null
+  createdAt: ISODate
+  lastMessageAt: ISODate | null
+  members: ChatMember[]
+  unreadCount: number
+  /** Unread messages that mention the reader by name. */
+  mentionCount: number
+  lastMessage: ChatMessagePreview | null
+}
+
+/**
+ * A mention inside a message body: `@[Name](user:ID)` for a person,
+ * `#[Label](order:ID)`, `#[Code](item:CODE)`, `#[Code](machine:CODE)` or
+ * `#[Label](session:ID)` for a thing on the floor. The body keeps the
+ * tokens; the screen shows chips.
+ */
+export type ChatMentionKind = 'user' | 'order' | 'item' | 'machine' | 'session'
+export const CHAT_MENTION_KINDS: readonly ChatMentionKind[] = ['user', 'order', 'item', 'machine', 'session']
+
+export interface ChatMention {
+  kind: ChatMentionKind
+  value: string
+  label: string
+}
+
+export interface ChatReaction {
+  emoji: string
+  count: number
+  mine: boolean
+  names: string[]
+}
+
+export interface ChatReplyPreview {
+  id: ID
+  senderName: string
+  text: string
+}
+
+export interface ChatMessage {
+  id: ID
+  conversationId: ID
+  senderId: ID
+  senderName: string
+  body: string
+  replyTo: ChatReplyPreview | null
+  imageIds: ID[]
+  files: StoredFile[]
+  mentions: ChatMention[]
+  reactions: ChatReaction[]
+  createdAt: ISODate
+  editedAt: ISODate | null
+  /** Deleted for everyone: the body is gone, the row stays as "message deleted". */
+  deleted: boolean
+  /** Members other than the sender who have read up to this message. */
+  readBy: number
+  /** Members other than the sender. */
+  others: number
+}
+
+/** Edit and delete-for-everyone are allowed this long after sending. */
+export const CHAT_EDIT_WINDOW_MS = 60 * 60 * 1000
+export const CHAT_MAX_BODY = 4000

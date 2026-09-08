@@ -39,7 +39,8 @@ function fileSize(bytes: number): string {
 }
 
 /** A document attached to a notice: a PDF opens in the app, a workbook is downloaded. */
-export function NoticeFileRow({ file }: { file: NoticeFile }) {
+export function NoticeFileRow({ file, path, compact = false }: { file: NoticeFile; /** Where the bytes are served; a notice file by default. */ path?: string; compact?: boolean }) {
+  const src = path ?? `/notices/files/${file.id}/content`
   const { toast } = useApp()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -47,7 +48,7 @@ export function NoticeFileRow({ file }: { file: NoticeFile }) {
   const download = async () => {
     setBusy(true)
     try {
-      const blob = await apiBlob(`/notices/files/${file.id}/content`)
+      const blob = await apiBlob(src)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -65,7 +66,7 @@ export function NoticeFileRow({ file }: { file: NoticeFile }) {
       <button
         type="button"
         onClick={() => (pdf ? setOpen(true) : void download())}
-        className="flex w-full items-center gap-3 rounded-xl border border-slate-200 px-3 py-2 text-left transition-colors hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800/60"
+        className={cn('flex w-full items-center gap-3 rounded-xl border border-slate-200 text-left transition-colors hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800/60', compact ? 'px-2 py-1.5' : 'px-3 py-2')}
       >
         <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-lg', pdf ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300')}>
           {pdf ? <FileText className="h-4 w-4" /> : <FileSpreadsheet className="h-4 w-4" />}
@@ -78,7 +79,7 @@ export function NoticeFileRow({ file }: { file: NoticeFile }) {
         </span>
         {busy ? <Loader2 className="h-4 w-4 animate-spin text-slate-400" /> : <Download className="h-4 w-4 text-slate-400" />}
       </button>
-      {open && <PdfViewer path={`/notices/files/${file.id}/content`} title={file.originalFilename} subtitle={fileSize(file.byteSize)} onClose={() => setOpen(false)} />}
+      {open && <PdfViewer path={src} title={file.originalFilename} subtitle={fileSize(file.byteSize)} onClose={() => setOpen(false)} />}
     </>
   )
 }
