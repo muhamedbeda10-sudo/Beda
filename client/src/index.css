@@ -4,7 +4,13 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light dark;
+  /* Native controls follow the app's theme, never the phone's: the theme is
+     a class on <html>, so a dark phone showing the light app still gets light
+     inputs, and the numbers in them stay readable. */
+  color-scheme: light;
+}
+:root.dark {
+  color-scheme: dark;
 }
 
 html,
@@ -76,7 +82,11 @@ body {
     transform: scale(1.1);
   }
   .input {
-    @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-inset transition-[border-color,box-shadow] duration-150 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500;
+    @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-inset transition-[border-color,box-shadow] duration-150 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25 dark:border-brand-500/40 dark:bg-brand-950 dark:text-white dark:placeholder:text-brand-200/50 dark:focus:border-brand-400;
+  }
+  /* A measurement cell in the dimension table: the same colours as .input, sized by the caller. */
+  .input-cell {
+    @apply rounded-lg border border-slate-300 bg-white text-slate-900 tabular-nums placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25 dark:border-brand-500/40 dark:bg-brand-950 dark:text-white dark:placeholder:text-brand-200/50 dark:focus:border-brand-400;
   }
   .label {
     @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400;

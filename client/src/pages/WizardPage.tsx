@@ -964,8 +964,8 @@ function DimensionsStep({
                   </span>
                 ) : (
                   <span className="flex flex-col gap-1">
-                    <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" placeholder="+tol" className="w-16 rounded-lg border border-slate-300 px-1.5 py-1 text-right text-xs tabular-nums dark:border-slate-600 dark:bg-slate-800" />
-                    <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" placeholder="-tol" className="w-16 rounded-lg border border-slate-300 px-1.5 py-1 text-right text-xs tabular-nums dark:border-slate-600 dark:bg-slate-800" />
+                    <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" placeholder="+tol" className="input-cell w-16 px-1.5 py-1 text-right text-xs" />
+                    <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" placeholder="-tol" className="input-cell w-16 px-1.5 py-1 text-right text-xs" />
                   </span>
                 )}
                 <label className="block">
@@ -1022,7 +1022,7 @@ function DimensionsStep({
                       value={d.nominal}
                       onChange={(e) => setRow(i, { nominal: e.target.value })}
                       inputMode="decimal"
-                      className="w-20 rounded-lg border border-slate-300 px-2 py-2 text-right dark:border-slate-600 dark:bg-slate-800"
+                      className="input-cell w-20 px-2 py-2 text-right"
                     />
                   </td>
                   <td className="whitespace-nowrap px-2 py-2 text-center text-xs text-slate-400">
@@ -1033,9 +1033,9 @@ function DimensionsStep({
                     ) : (
                       <span className="inline-flex items-center gap-1">
                         +
-                        <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" className="w-14 rounded-lg border border-slate-300 px-1.5 py-2 text-right text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                        <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" className="input-cell w-14 px-1.5 py-2 text-right text-sm" />
                         / -
-                        <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" className="w-14 rounded-lg border border-slate-300 px-1.5 py-2 text-right text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                        <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" className="input-cell w-14 px-1.5 py-2 text-right text-sm" />
                       </span>
                     )}
                   </td>
@@ -1048,12 +1048,8 @@ function DimensionsStep({
                       step="any"
                       placeholder="—"
                       className={cn(
-                        'w-24 rounded-lg border px-2 py-3 text-center text-base tabular-nums focus:outline-none focus:ring-2',
-                        status === 'Fail'
-                          ? 'border-rose-400 focus:ring-rose-400/40 dark:bg-slate-800'
-                          : status === 'Warning'
-                            ? 'border-amber-400 focus:ring-amber-400/40 dark:bg-slate-800'
-                            : 'border-slate-300 focus:ring-brand-400/40 dark:border-slate-600 dark:bg-slate-800',
+                        'input-cell w-24 px-2 py-3 text-center text-base font-semibold',
+                        status === 'Fail' ? 'border-rose-400 focus:ring-rose-400/40 dark:border-rose-400' : status === 'Warning' ? 'border-amber-400 focus:ring-amber-400/40 dark:border-amber-400' : '',
                       )}
                     />
                   </td>
