@@ -7,7 +7,7 @@ import { useApp } from '@/store/AppContext'
 
 const MIN_PASSWORD_LENGTH = 8
 /** Mirrors the API's rule: 2–40 letters, digits, dots, dashes or underscores. */
-const USERNAME_PATTERN = '[A-Za-z0-9][A-Za-z0-9._\-]{1,39}'
+const USERNAME_PATTERN = '[A-Za-z0-9][A-Za-z0-9._\\-]{1,39}'
 
 export function LoginPage() {
   const { signIn, signUp, error, selfRegistrationOpen } = useAuth()

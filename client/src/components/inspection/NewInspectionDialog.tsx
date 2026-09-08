@@ -4,7 +4,9 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Search, Package, Play, ArrowLeft, CheckCircle2, Boxes, Factory, ChevronRight, Layers } from 'lucide-react'
 import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
 import { useMaster, useOrderHistory, useOrderLines, useOrderNumbers } from '@/services/queries'
-import { startSession } from '@/services/mutations'
+import { matchNotices, startSession } from '@/services/mutations'
+import { NoticeGate } from '@/components/notices/NoticeGate'
+import type { NoticeForUser } from '@qc/shared/types'
 import { useApp } from '@/store/AppContext'
 import { processForMachine, stockProductionOf } from '@qc/shared/rules'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
@@ -33,6 +35,8 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
   /** On a make-to-stock machine: how many pieces (pairs) came out. */
   const [producedQty, setProducedQty] = useState('')
   const [busy, setBusy] = useState(false)
+  /** Notices to read before the session starts (§16); `proceed` starts it once they are handled. */
+  const [gate, setGate] = useState<{ notices: NoticeForUser[]; context: { workCenterCode: string; orderNumber?: string; itemCode?: string }; proceed: () => Promise<void> } | null>(null)
 
   const { data: machines = [] } = useMaster('machines', undefined, open)
   // Order numbers are searched on the server, restricted to the machine —
@@ -95,12 +99,19 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
   }
 
   /** A make-to-stock machine: no order to pick, only the quantity that came out. */
-  async function startStock() {
+  async function startStock(afterGate = false) {
     if (!machine) return
     const qty = Number(producedQty)
     if (producedQty.trim() === '' || Number.isNaN(qty) || qty < 0) return
     setBusy(true)
     try {
+      if (!afterGate) {
+        const notices = await matchNotices({ workCenterCode: machine.code })
+        if (notices.length > 0) {
+          setGate({ notices, context: { workCenterCode: machine.code, orderNumber: 'STOCK', itemCode: production?.itemCode }, proceed: () => startStock(true) })
+          return
+        }
+      }
       const session = await startSession(queryClient, { workCenterCode: machine.code, producedQty: qty })
       toast(`Session started on ${machine.displayName} · ${production?.item ?? 'stock'}.`, 'success')
       reset()
@@ -113,12 +124,19 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     }
   }
 
-  async function start() {
+  async function start(afterGate = false) {
     if (!picked) return
     const qty = Number(startQty)
     if (Number.isNaN(qty) || qty < 0) return
     setBusy(true)
     try {
+      if (!afterGate) {
+        const notices = await matchNotices({ workCenterCode: picked.workCenterCode, orderId: picked.id })
+        if (notices.length > 0) {
+          setGate({ notices, context: { workCenterCode: picked.workCenterCode, orderNumber: picked.orderNumber, itemCode: picked.itemCode }, proceed: () => start(true) })
+          return
+        }
+      }
       const session = await startSession(queryClient, { orderId: picked.id, startQty: qty })
       toast(`Session started for ${picked.orderNumber} · ${picked.itemCode}.`, 'success')
       reset()
@@ -130,6 +148,23 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
       setBusy(false)
     }
   }
+
+  /** The gate sits above whichever step is open; it is a portal, so it renders anywhere. */
+  const gateEl = gate ? (
+    <NoticeGate
+      notices={gate.notices}
+      context={gate.context}
+      onDone={() => {
+        const proceed = gate.proceed
+        setGate(null)
+        void proceed()
+      }}
+      onCancel={() => {
+        setGate(null)
+        setBusy(false)
+      }}
+    />
+  ) : null
 
   // ---- Step 4: confirm the line and the starting quantity ------------------
   if (picked) {
@@ -149,12 +184,13 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             <Button variant="ghost" onClick={() => setPicked(null)}>
               <ArrowLeft className="h-4 w-4" /> Back
             </Button>
-            <Button variant="primary" disabled={!valid || busy} onClick={start} className="min-h-[48px]">
+            <Button variant="primary" disabled={!valid || busy} onClick={() => start()} className="min-h-[48px]">
               <Play className="h-4 w-4" /> {busy ? 'Starting…' : 'Start inspection'}
             </Button>
           </>
         }
       >
+        {gateEl}
         <div className="space-y-4">
           <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/50">
             <div className="flex flex-wrap items-center gap-2">
@@ -242,12 +278,13 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
       size="lg"
       footer={
         stage === 'stock' ? (
-          <Button variant="primary" disabled={!producedValid || busy} onClick={startStock} className="min-h-[48px]">
+          <Button variant="primary" disabled={!producedValid || busy} onClick={() => startStock()} className="min-h-[48px]">
             <Play className="h-4 w-4" /> {busy ? 'Starting…' : 'Start inspection'}
           </Button>
         ) : undefined
       }
     >
+      {gateEl}
       <div className="space-y-3">
         <ol className="flex flex-wrap items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
           <Crumb n={1} label="Machine" active={stage === 'machine'} done={stage !== 'machine'} />

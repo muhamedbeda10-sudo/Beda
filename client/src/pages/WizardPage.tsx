@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -27,7 +27,9 @@ import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { CoilPicker } from '@/components/inspection/CoilPicker'
 import { WorkInstructionLinks } from '@/components/documents/WorkInstructionLinks'
 import { useSampleDetail, useWizardContext } from '@/services/queries'
-import { discardSession, reRecordSample, saveSample } from '@/services/mutations'
+import { discardSession, matchNotices, reRecordSample, saveSample } from '@/services/mutations'
+import { NoticeGate } from '@/components/notices/NoticeGate'
+import type { NoticeForUser } from '@qc/shared/types'
 import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect, type DraftCoil, type DraftPT, type DraftDimension, type DraftNote } from '@/services/draftStore'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { useApp } from '@/store/AppContext'
@@ -119,6 +121,19 @@ export function WizardPage() {
   const [leaving, setLeaving] = useState(false)
   const [gradePrompt, setGradePrompt] = useState<null | { mismatches: { coilNumber: string; coilGrade: string }[] }>(null)
   const [online, setOnline] = useState(navigator.onLine)
+  /** Notices to read on opening this session (§16); asked once per session id. */
+  const [gate, setGate] = useState<NoticeForUser[] | null>(null)
+  const gatedFor = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!session || editingSampleId || gatedFor.current === sessionId) return
+    gatedFor.current = sessionId
+    matchNotices({ sessionId })
+      .then((notices) => {
+        if (notices.length > 0) setGate(notices)
+      })
+      .catch(() => undefined)
+  }, [session, sessionId, editingSampleId])
 
   useEffect(() => {
     const on = () => setOnline(true)
@@ -431,6 +446,17 @@ export function WizardPage() {
     // Forms read best at a bounded width, so the wizard is centred even on a
     // wide screen while list pages use the whole of it.
     <div className="mx-auto max-w-5xl space-y-4 pb-32">
+      {gate && (
+        <NoticeGate
+          notices={gate}
+          context={{ sessionId, workCenterCode: wc, orderNumber: order.orderNumber, itemCode: order.itemCode }}
+          onDone={() => setGate(null)}
+          onCancel={() => {
+            setGate(null)
+            navigate('/')
+          }}
+        />
+      )}
       <button
         onClick={() => {
           if (draft.editingSampleId) navigate('/history')

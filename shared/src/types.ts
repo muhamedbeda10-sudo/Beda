@@ -566,3 +566,94 @@ export interface UserProfile {
   createdAt?: ISODate
   lastLoginAt?: ISODate | null
 }
+
+// ---- Notices (§16) ---------------------------------------------------------
+
+export type NoticeSeverity = 'info' | 'warning' | 'critical'
+export const NOTICE_SEVERITIES: readonly NoticeSeverity[] = ['info', 'warning', 'critical']
+
+/**
+ * What a notice is aimed at. Values of one kind are alternatives (any of
+ * these machines); different kinds all have to hold (this machine AND this
+ * order). A notice with no target of a kind does not care about that kind.
+ */
+export type NoticeTargetKind = 'factory' | 'machine' | 'process' | 'order-number' | 'order-line' | 'item-code' | 'customer' | 'shift' | 'user' | 'role'
+export const NOTICE_TARGET_KINDS: readonly NoticeTargetKind[] = ['factory', 'machine', 'process', 'order-number', 'order-line', 'item-code', 'customer', 'shift', 'user', 'role']
+export const NOTICE_TARGET_LABEL: Record<NoticeTargetKind, string> = {
+  factory: 'Factory',
+  machine: 'Machine',
+  process: 'Process',
+  'order-number': 'Order number',
+  'order-line': 'Order line',
+  'item-code': 'Item code',
+  customer: 'Customer',
+  shift: 'Shift',
+  user: 'User',
+  role: 'Role',
+}
+
+export interface NoticeTarget {
+  kind: NoticeTargetKind
+  /** The matched value: a machine code, an order number, an order line id, a user id, a role. */
+  value: string
+  /** How the value reads to people, captured when the target was set. */
+  label: string
+}
+
+export interface NoticeFile {
+  id: ID
+  originalFilename: string
+  mimeType: string
+  byteSize: number
+  sha256: string
+  uploadedByName: string
+  uploadedAt: ISODate
+}
+
+export interface Notice {
+  id: ID
+  title: string
+  body: string
+  severity: NoticeSeverity
+  /** The reader must press Acknowledge; otherwise closing it is enough. */
+  requiresAck: boolean
+  /** Shown from this factory day. */
+  validFrom: string
+  /** Shown through this factory day; null until withdrawn. */
+  validTo: string | null
+  targets: NoticeTarget[]
+  imageIds: ID[]
+  files: NoticeFile[]
+  createdById: ID | null
+  createdByName: string
+  createdAt: ISODate
+  updatedAt: ISODate
+  withdrawnAt?: ISODate | null
+  withdrawnByName?: string | null
+}
+
+/** A notice as one reader sees it. */
+export interface NoticeForUser extends Notice {
+  /** Still shown today: within validity and not withdrawn. */
+  active: boolean
+  seenAt: ISODate | null
+  acknowledgedAt: ISODate | null
+  /** Still to be read (and acknowledged, when required) by this reader. */
+  pending: boolean
+}
+
+export interface NoticeAcknowledgement {
+  userId: ID
+  userName: string
+  seenAt: ISODate
+  acknowledgedAt: ISODate | null
+  /** Where the reader was when they read it, when it came up in context. */
+  context?: { sessionId?: string; workCenterCode?: string; orderNumber?: string; itemCode?: string } | null
+}
+
+/** A notice in the administrator's list with how far it has travelled. */
+export interface NoticeAdminRow extends Notice {
+  active: boolean
+  seenCount: number
+  acknowledgedCount: number
+}
