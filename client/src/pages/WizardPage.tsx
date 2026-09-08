@@ -27,7 +27,7 @@ import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { CoilPicker } from '@/components/inspection/CoilPicker'
 import { WorkInstructionLinks } from '@/components/documents/WorkInstructionLinks'
 import { useSampleDetail, useWizardContext } from '@/services/queries'
-import { reRecordSample, saveSample } from '@/services/mutations'
+import { discardSession, reRecordSample, saveSample } from '@/services/mutations'
 import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect, type DraftCoil, type DraftPT, type DraftDimension, type DraftNote } from '@/services/draftStore'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { useApp } from '@/store/AppContext'
@@ -115,6 +115,8 @@ export function WizardPage() {
 
   const [draft, setDraft] = useState<SampleDraft | null>(null)
   const [saving, setSaving] = useState(false)
+  /** Leaving a session that has no sample yet: keep it, or discard it. */
+  const [leaving, setLeaving] = useState(false)
   const [gradePrompt, setGradePrompt] = useState<null | { mismatches: { coilNumber: string; coilGrade: string }[] }>(null)
   const [online, setOnline] = useState(navigator.onLine)
 
@@ -430,11 +432,62 @@ export function WizardPage() {
     // wide screen while list pages use the whole of it.
     <div className="mx-auto max-w-5xl space-y-4 pb-32">
       <button
-        onClick={() => navigate(draft.editingSampleId ? '/history' : '/')}
+        onClick={() => {
+          if (draft.editingSampleId) navigate('/history')
+          else if (priorSamples.length === 0) setLeaving(true)
+          else navigate('/')
+        }}
         className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400"
       >
         <ArrowLeft className="h-4 w-4" /> {draft.editingSampleId ? 'History' : 'Inspections'}
       </button>
+
+      <Modal
+        open={leaving}
+        onClose={() => setLeaving(false)}
+        title="No sample recorded yet"
+        icon={<AlertTriangle className="h-5 w-5" />}
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setLeaving(false)}>
+              Stay
+            </Button>
+            <Button
+              onClick={() => {
+                setLeaving(false)
+                navigate('/')
+              }}
+            >
+              Leave, keep the session
+            </Button>
+            <Button
+              variant="danger"
+              disabled={saving}
+              onClick={async () => {
+                setSaving(true)
+                try {
+                  await discardSession(queryClient, session.id)
+                  clearDraft(session.id)
+                  toast('Session discarded. Nothing was recorded in it.', 'success')
+                  navigate('/')
+                } catch (e) {
+                  toast(e instanceof Error ? e.message : 'Could not discard the session.', 'error')
+                } finally {
+                  setSaving(false)
+                }
+              }}
+            >
+              Discard session
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          This session has no sample yet. Your entries so far stay on this device if you keep it; a session that never records a sample cannot be closed,
+          only discarded.
+        </p>
+      </Modal>
 
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -964,8 +1017,8 @@ function DimensionsStep({
                   </span>
                 ) : (
                   <span className="flex flex-col gap-1">
-                    <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" placeholder="+tol" className="w-16 rounded-lg border border-slate-300 px-1.5 py-1 text-right text-xs tabular-nums dark:border-slate-600 dark:bg-slate-800" />
-                    <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" placeholder="-tol" className="w-16 rounded-lg border border-slate-300 px-1.5 py-1 text-right text-xs tabular-nums dark:border-slate-600 dark:bg-slate-800" />
+                    <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" placeholder="+tol" className="input-cell w-16 px-1.5 py-1 text-right text-xs" />
+                    <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" placeholder="-tol" className="input-cell w-16 px-1.5 py-1 text-right text-xs" />
                   </span>
                 )}
                 <label className="block">
@@ -1022,7 +1075,7 @@ function DimensionsStep({
                       value={d.nominal}
                       onChange={(e) => setRow(i, { nominal: e.target.value })}
                       inputMode="decimal"
-                      className="w-20 rounded-lg border border-slate-300 px-2 py-2 text-right dark:border-slate-600 dark:bg-slate-800"
+                      className="input-cell w-20 px-2 py-2 text-right"
                     />
                   </td>
                   <td className="whitespace-nowrap px-2 py-2 text-center text-xs text-slate-400">
@@ -1033,9 +1086,9 @@ function DimensionsStep({
                     ) : (
                       <span className="inline-flex items-center gap-1">
                         +
-                        <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" className="w-14 rounded-lg border border-slate-300 px-1.5 py-2 text-right text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                        <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" className="input-cell w-14 px-1.5 py-2 text-right text-sm" />
                         / -
-                        <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" className="w-14 rounded-lg border border-slate-300 px-1.5 py-2 text-right text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                        <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" className="input-cell w-14 px-1.5 py-2 text-right text-sm" />
                       </span>
                     )}
                   </td>
@@ -1048,12 +1101,8 @@ function DimensionsStep({
                       step="any"
                       placeholder="—"
                       className={cn(
-                        'w-24 rounded-lg border px-2 py-3 text-center text-base tabular-nums focus:outline-none focus:ring-2',
-                        status === 'Fail'
-                          ? 'border-rose-400 focus:ring-rose-400/40 dark:bg-slate-800'
-                          : status === 'Warning'
-                            ? 'border-amber-400 focus:ring-amber-400/40 dark:bg-slate-800'
-                            : 'border-slate-300 focus:ring-brand-400/40 dark:border-slate-600 dark:bg-slate-800',
+                        'input-cell w-24 px-2 py-3 text-center text-base font-semibold',
+                        status === 'Fail' ? 'border-rose-400 focus:ring-rose-400/40 dark:border-rose-400' : status === 'Warning' ? 'border-amber-400 focus:ring-amber-400/40 dark:border-amber-400' : '',
                       )}
                     />
                   </td>

@@ -535,6 +535,9 @@ export function sessionsRoutes(ctx: AppContext): Router {
       if (!before) throw notFound('That session')
       if (before.version !== body.version) throw new ConflictError(before)
       if (before.status === 'Closed') throw badRequest('This session is already closed.')
+      // A session is an inspection record: with no sample it recorded nothing,
+      // so it cannot be closed as one — it is discarded instead.
+      if ((before.sampleCount ?? 0) === 0) throw badRequest('No sample has been recorded in this session. Record one before closing, or discard the session.')
       await tx.query(
         `UPDATE inspection_sessions SET status = 'Closed', final_qty = $2, closed_at = now(), closed_by_id = $3, version = version + 1 WHERE id = $1`,
         [id, body.finalQty, user.id],
@@ -552,6 +555,32 @@ export function sessionsRoutes(ctx: AppContext): Router {
   })
 
   /** §10 — a session is marked deleted, never erased. */
+  /**
+   * Discard a session that recorded nothing: no sample was saved in it. The
+   * inspector who opened it may discard it (a supervisor anyone's), so an
+   * inspection started by mistake does not linger on the board as an empty
+   * record. Marked deleted like everything else, and audited.
+   */
+  r.post('/:id/discard', requireCapability('record-inspection'), async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    await withTransaction(db, async (tx) => {
+      const session = await loadSessionWithOrder(tx, id, true)
+      if (!session) throw notFound('That session')
+      // The inspector who opened it, or a role that oversees everyone's sessions.
+      if (session.inspectorId !== user.id && !can(user.role, 'view-all-sessions')) throw forbidden()
+      if ((session.sampleCount ?? 0) > 0) throw badRequest('This session has samples: it is a record now. An administrator can delete it from History.')
+      await tx.query(`UPDATE inspection_sessions SET deleted_at = now(), deleted_by_id = $2 WHERE id = $1`, [id, user.id])
+      await writeAudit(tx, [
+        auditEvent('delete', auditCtxFor(user, session, 'InspectionSession', id), new Date().toISOString(), {
+          field: 'reason',
+          newValue: 'Discarded: no sample was recorded.',
+        }),
+      ])
+    })
+    res.status(204).end()
+  })
+
   r.delete('/:id', requireCapability('delete-session'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
