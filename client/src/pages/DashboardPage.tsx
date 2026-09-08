@@ -16,6 +16,7 @@ import {
   ClipboardList,
   FileSpreadsheet,
   Info,
+  Lightbulb,
   Loader2,
   Minus,
   PauseCircle,
@@ -24,6 +25,7 @@ import {
   Ruler,
   ShieldAlert,
   Sparkles,
+  Table2,
   Target,
   Users,
   X,
@@ -31,7 +33,7 @@ import {
 import { can, shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
 import { deltaPct, toneHighIsGood, toneLowIsGood, type KpiFilters, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
-import { Badge, Button, Card, EmptyState, Field, Input, Select, type BadgeTone } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { DonutChart, HorizontalBars, ParetoChart, TrendChart } from '@/components/dashboard/charts'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
@@ -300,6 +302,8 @@ export function DashboardPage() {
   )
 
   const { data, isLoading, isFetching, error, refetch } = useKpiOverview(allowed ? filters : null)
+  const [insightsOpen, setInsightsOpen] = useState(false)
+  const [showTables, setShowTables] = useState(false)
   const { data: machines = [] } = useMaster('machines', undefined, allowed)
   const { data: users = [] } = useUsers()
 
@@ -345,6 +349,7 @@ export function DashboardPage() {
   const cur = data?.current
   const prevT = data?.previous
   const holdPieces = data?.holds.reduce((n, h) => n + h.qty, 0) ?? 0
+  const attention = data?.insights.filter((i) => i.severity === 'critical' || i.severity === 'warning').length ?? 0
 
   return (
     <div className="mx-auto max-w-[110rem] space-y-5">
@@ -359,7 +364,26 @@ export function DashboardPage() {
             {data && <span className="hidden print:inline"> · generated {formatDateTime(data.generatedAt)}</span>}
           </p>
         </div>
-        <div className="print-hidden flex flex-wrap gap-2">
+        <div className="print-hidden flex flex-wrap items-center gap-2">
+          {data && (
+            <button
+              type="button"
+              onClick={() => setInsightsOpen(true)}
+              className={cn(
+                'relative grid h-11 w-11 place-items-center rounded-xl ring-1 transition-colors',
+                attention > 0 ? 'bg-amber-50 text-amber-700 ring-amber-200 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30' : 'bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30',
+              )}
+              aria-label={`Insights, ${data.insights.length} ${data.insights.length === 1 ? 'note' : 'notes'}`}
+            >
+              <Lightbulb className="h-5 w-5" />
+              <span className={cn('absolute -right-1.5 -top-1.5 grid min-w-[20px] place-items-center rounded-full px-1 text-[10px] font-bold leading-[20px] text-white ring-2 ring-white dark:ring-slate-900', attention > 0 ? 'bg-rose-600' : 'bg-emerald-600')}>
+                {attention > 0 ? attention : '✓'}
+              </span>
+            </button>
+          )}
+          <Button className="min-h-[44px]" onClick={() => setShowTables((v) => !v)} disabled={!data} aria-pressed={showTables}>
+            <Table2 className="h-4 w-4" /> {showTables ? 'Hide tables' : 'Tables'}
+          </Button>
           <Button className="min-h-[44px]" onClick={() => void refetch()} disabled={isFetching} aria-label="Refresh">
             <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} /> Refresh
           </Button>
@@ -505,10 +529,16 @@ export function DashboardPage() {
             <KpiTile label="Paint thickness" value={cur.paintMeanMicrons === null ? '—' : num(cur.paintMeanMicrons, 1)} unit="µm" current={cur.paintMeanMicrons} previous={prevT.paintMeanMicrons} goodWhen="none" sub={cur.paintReadings ? `${num(cur.paintReadings)} readings · min ${num(cur.paintMinMicrons, 1)} µm` : 'No paint readings'} icon={<Sparkles className="h-4 w-4" />} />
           </div>
 
-          {/* Insights */}
-          <Section title="Insights" hint="What the numbers say, by rule, not by guess. Most serious first." icon={<Sparkles className="h-4 w-4" />}>
+          {/* Insights live behind the bulb; on paper they print in full. */}
+          <Section title="Insights" hint="What the numbers say, by rule, not by guess. Most serious first." icon={<Sparkles className="h-4 w-4" />} className="hidden print:block">
             <InsightList insights={data.insights} onLink={onLink} />
           </Section>
+          {insightsOpen && (
+            <Modal open onClose={() => setInsightsOpen(false)} size="xl" icon={<Lightbulb className="h-5 w-5" />} title={<span>Insights <span className="ml-2 text-sm font-semibold text-slate-400">{describeRange(range)}</span></span>}>
+              <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">What the numbers say, by rule, not by guess. Most serious first.</p>
+              <InsightList insights={data.insights} onLink={(l) => { setInsightsOpen(false); onLink(l) }} />
+            </Modal>
+          )}
 
           {/* Trend + dispositions */}
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -543,6 +573,138 @@ export function DashboardPage() {
             </Section>
           </div>
 
+          {/* Who and what: one bar per row, coloured against the target. */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <Section title="Defect rate by shift" hint="Same machines, different hours." icon={<Users className="h-4 w-4" />}>
+              <HorizontalBars
+                unit="%"
+                rows={data.byShift.map((r) => ({
+                  label: `${r.label} · ${shiftName(r.key as ShiftLetter)}`,
+                  value: r.defectRatePct,
+                  tone: toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber),
+                  text: `${pctStr(r.defectRatePct)} · ${num(r.pieces)} pcs`,
+                  onClick: () => patch({ shift: r.key as ShiftLetter }),
+                }))}
+              />
+            </Section>
+            <Section title="Defect rate by inspector" hint="Tap a name to filter the page to them." icon={<Users className="h-4 w-4" />}>
+              <HorizontalBars
+                unit="%"
+                rows={data.byInspector.slice(0, 10).map((r) => ({
+                  label: r.label,
+                  value: r.defectRatePct,
+                  tone: toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber),
+                  text: `${pctStr(r.defectRatePct)} · ${num(r.samples)} samples`,
+                  onClick: () => patch({ inspectorId: r.key }),
+                }))}
+              />
+            </Section>
+            <Section title="Defect rate by item" hint="Tap an item to filter the page to it." icon={<ClipboardList className="h-4 w-4" />}>
+              <HorizontalBars
+                unit="%"
+                rows={data.byItem.slice(0, 10).map((r) => ({
+                  label: r.label,
+                  sub: r.key,
+                  value: r.defectRatePct,
+                  tone: toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber),
+                  text: `${pctStr(r.defectRatePct)} · ${num(r.pieces)} pcs`,
+                  onClick: () => patch({ itemCode: r.key }),
+                }))}
+              />
+            </Section>
+          </div>
+
+          {/* Process and materials */}
+          <div className="print-break grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <Section title="Capability (Cpk)" hint={`Per dimension, worst first; green from ${t.cpkGreen}, amber from ${t.cpkAmber}. Needs ${t.minReadingsForCpk} readings.`} icon={<Ruler className="h-4 w-4" />}>
+              <HorizontalBars
+                max={2}
+                rows={data.dimensions
+                  .filter((d) => d.cpk !== null)
+                  .slice(0, 10)
+                  .map((d) => ({
+                    label: `${d.name} · ${d.itemCode}`,
+                    sub: d.item,
+                    value: d.cpk === null ? null : Math.max(0, d.cpk),
+                    tone: toneHighIsGood(d.cpk, t.cpkGreen, t.cpkAmber),
+                    text: `Cpk ${num(d.cpk, 2)} · ${num(d.readings)} readings${d.centering !== null && Math.abs(d.centering) >= 0.5 ? ' · off centre' : ''}`,
+                    onClick: () => patch({ itemCode: d.itemCode }),
+                  }))}
+              />
+            </Section>
+            <Section title="Defect rate by coil supplier" hint="Pieces made from each supplier and grade." icon={<ClipboardList className="h-4 w-4" />}>
+              <HorizontalBars
+                unit="%"
+                rows={data.suppliers.slice(0, 10).map((s) => ({
+                  label: s.supplier,
+                  sub: s.grade,
+                  value: s.defectRatePct,
+                  tone: toneLowIsGood(s.defectRatePct, t.defectRateGreen, t.defectRateAmber),
+                  text: `${pctStr(s.defectRatePct)} · ${num(s.pieces)} pcs`,
+                }))}
+              />
+            </Section>
+            <Section title="PT rejects by wire batch" hint="Lengths rejected as a share of tested." icon={<Activity className="h-4 w-4" />}>
+              <HorizontalBars
+                unit="%"
+                rows={data.wireBatches.slice(0, 10).map((w) => ({
+                  label: w.batch,
+                  value: w.rejectPct,
+                  tone: toneLowIsGood(w.rejectPct, t.ptRejectGreen, t.ptRejectAmber),
+                  text: `${pctStr(w.rejectPct)} · ${num(w.lengthsRejected)} of ${num(w.lengthsTested)}`,
+                }))}
+              />
+            </Section>
+          </div>
+
+          {/* Waiting: Holds by age, machines without a sample */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Section
+              title="Hold ageing"
+              hint={`Days a defect has waited for a disposition; amber from ${t.holdAgeAmberDays}, red from ${t.holdAgeRedDays}. Tap to open the session.`}
+              icon={<PauseCircle className="h-4 w-4" />}
+              action={
+                data.holds.length > 0 && (
+                  <Button className="print-hidden min-h-[40px]" onClick={() => navigate('/history?disposition=Hold')}>
+                    Open in History
+                  </Button>
+                )
+              }
+            >
+              <HorizontalBars
+                unit=" d"
+                max={Math.max(t.holdAgeRedDays * 2, ...data.holds.map((h) => h.ageDays))}
+                rows={[...data.holds]
+                  .sort((a, b) => b.ageDays - a.ageDays)
+                  .slice(0, 10)
+                  .map((h) => ({
+                    label: `${h.orderNumber} · ${h.defectName}`,
+                    sub: `${h.item} · machine ${h.workCenterCode}`,
+                    value: h.ageDays,
+                    tone: h.ageDays >= t.holdAgeRedDays ? 'red' : h.ageDays >= t.holdAgeAmberDays ? 'amber' : 'neutral',
+                    text: `${num(h.ageDays)} d · ${num(h.qty)} pcs`,
+                    onClick: () => navigate(`/wizard/${h.sessionId}`),
+                  }))}
+              />
+            </Section>
+            <Section title="Idle machines" hint={`Open order lines and no sample for ${t.idleMachineDays}+ days. Tap to filter.`} icon={<PauseCircle className="h-4 w-4" />}>
+              <HorizontalBars
+                unit=" d"
+                max={Math.max(t.idleMachineDays * 4, ...data.idleMachines.map((m) => m.daysSinceSample ?? 0))}
+                rows={data.idleMachines.slice(0, 10).map((m) => ({
+                  label: m.label,
+                  sub: `${m.factory ? `${m.factory} · ` : ''}${num(m.openLines)} open line${m.openLines === 1 ? '' : 's'}`,
+                  value: m.daysSinceSample ?? Math.max(t.idleMachineDays * 4, ...data.idleMachines.map((x) => x.daysSinceSample ?? 0)),
+                  tone: m.daysSinceSample === null || m.daysSinceSample >= t.idleMachineDays * 2 ? 'red' : 'amber',
+                  text: m.daysSinceSample === null ? 'never inspected' : `${num(m.daysSinceSample)} d since last sample`,
+                  onClick: () => patch({ workCenterCode: m.workCenterCode }),
+                }))}
+              />
+            </Section>
+          </div>
+
+          {showTables && (
+            <>
           {/* Group tables */}
           <div className="print-break grid grid-cols-1 gap-4 xl:grid-cols-2">
             <Section title="By machine" icon={<Activity className="h-4 w-4" />}>
@@ -655,6 +817,9 @@ export function DashboardPage() {
               />
             </Section>
           </div>
+
+            </>
+          )}
 
           {/* Discipline */}
           <Section title="Recording discipline" hint="How the records themselves are kept. Not a KPI of the product; a KPI of the inspection." icon={<CheckCircle2 className="h-4 w-4" />}>
