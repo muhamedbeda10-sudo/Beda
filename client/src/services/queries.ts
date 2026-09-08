@@ -90,6 +90,8 @@ export function useWizardContext(sessionId: string) {
     queryFn: () => api<WizardContext>(`/sessions/${sessionId}/wizard`),
     enabled: !!sessionId,
     staleTime: 60_000,
+    // A draft is built from this once; it must be what the server knows now.
+    refetchOnMount: 'always',
   })
 }
 

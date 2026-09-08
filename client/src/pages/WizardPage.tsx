@@ -90,7 +90,7 @@ export function WizardPage() {
   // The wizard needs exactly one session and one order, plus the configuration
   // for that line's item and machine. The API answers all of it in one
   // round trip; nothing here reads a whole table.
-  const { data: ctx, isLoading: sessionsLoading, error: loadError } = useWizardContext(sessionId)
+  const { data: ctx, isLoading: sessionsLoading, isFetching: ctxFetching, error: loadError } = useWizardContext(sessionId)
   // Re-recording from History: the existing sample is the draft's starting point.
   const { data: editing, isLoading: editingLoading } = useSampleDetail(editingSampleId ?? null)
   const session = ctx?.session
@@ -133,6 +133,9 @@ export function WizardPage() {
   useEffect(() => {
     if (!session || !order || draft) return
     if (editingSampleId && !editing) return
+    // A cached context may predate the last save; wait for the fresh one so
+    // the nominals and setup the previous sample recorded are carried.
+    if (ctxFetching) return
     const existing = loadDraft(session.id, editingSampleId)
     if (existing && (!editing || existing.editingVersion === editing.sample.version)) {
       setDraft(existing)
@@ -216,7 +219,7 @@ export function WizardPage() {
           : undefined,
       updatedAt: new Date().toISOString(),
     })
-  }, [session, order, draft, dimOrder, previousDims, process, previousWire, previousSetup, editing, editingSampleId])
+  }, [session, order, draft, dimOrder, previousDims, process, previousWire, previousSetup, editing, editingSampleId, ctxFetching])
 
   // Persist on every change so a reload or a dead network loses nothing (§9.6).
   const update = useCallback((patch: Partial<SampleDraft> | ((d: SampleDraft) => SampleDraft)) => {
@@ -490,6 +493,9 @@ export function WizardPage() {
 
         {current === 'setup' && (
           <SetupStep draft={draft} order={order} update={update} shift={shift} gradeIndex={gradeIndex} instructions={instructions} />
+        )}
+        {current !== 'setup' && current !== 'review' && steps.includes('setup') && (
+          <SetupSummary draft={draft} onEdit={() => update({ step: 'setup' })} />
         )}
         {current === 'dimensions' && (
           <>
@@ -817,6 +823,40 @@ function CoilFact({ label, value, unit }: { label: string; value?: string; unit?
     <div>
       <dt className="text-xs font-semibold uppercase text-slate-400">{label}</dt>
       <dd className="font-semibold tabular-nums">{value ? `${value}${unit ? ` ${unit}` : ''}` : '—'}</dd>
+    </div>
+  )
+}
+
+/**
+ * What Setup holds, shown above the later steps: the drawing and the coils
+ * running now. A second coil often goes on mid-session, so adding one is a
+ * tap away without hunting for the Setup step on the rail.
+ */
+function SetupSummary({ draft, onEdit }: { draft: SampleDraft; onEdit: () => void }) {
+  const coils = draft.coils.map((c) => c.coilNumber).filter(Boolean)
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl bg-slate-50 px-3 py-2 text-sm dark:bg-slate-800/50">
+      <span className="text-xs font-bold uppercase tracking-wide text-slate-400">Setup</span>
+      {draft.drawing && (
+        <span>
+          <span className="text-slate-500 dark:text-slate-400">Drawing</span> <span className="font-semibold">{draft.drawing}</span>
+        </span>
+      )}
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span className="text-slate-500 dark:text-slate-400">Coils</span>
+        {coils.length === 0 ? (
+          <span className="font-semibold text-amber-600 dark:text-amber-400">none yet</span>
+        ) : (
+          coils.map((n) => (
+            <span key={n} className="rounded-md bg-white px-2 py-0.5 font-mono text-xs font-semibold ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
+              {n}
+            </span>
+          ))
+        )}
+      </span>
+      <Button variant="ghost" className="ml-auto min-h-[40px]" onClick={onEdit}>
+        <Plus className="h-4 w-4" /> {coils.length === 0 ? 'Add coil' : 'Add coil / change setup'}
+      </Button>
     </div>
   )
 }
