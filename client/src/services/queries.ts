@@ -155,15 +155,6 @@ export function useOrder(orderId: string | null) {
   return useQuery({ queryKey: keys.order(orderId ?? ''), queryFn: () => api<ProductionOrder>(`/orders/${orderId}`), enabled: !!orderId })
 }
 
-/** Every line of an order, on every machine, cancelled ones included. */
-export function useOrderAllLines(orderNumber: string | null) {
-  return useQuery({
-    queryKey: keys.orderLines(`all|${orderNumber ?? ''}`),
-    queryFn: () => api<ProductionOrder[]>(`/orders${qs({ orderNumber, includeCancelled: true, limit: 500 })}`),
-    enabled: !!orderNumber,
-  })
-}
-
 /** Notes written about an order on any of its lines, newest first. */
 export function useOrderNotes(orderId: string | null) {
   return useQuery({
