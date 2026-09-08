@@ -91,13 +91,17 @@ describe('notices', () => {
     expect(sup.body.notices).toHaveLength(0)
   })
 
-  it('shows in the bell with a pending count, and acknowledging clears it', async () => {
+  it('stays out of the bell until met at the machine; acknowledging then files it', async () => {
+    // Aimed at a place: nobody's bell lists it before they meet it there — not even the administrator's.
     const inbox = await app.api<NoticeInboxResponse>('GET', '/api/notices/inbox', { token: inspector.token })
-    expect(inbox.body.pendingCount).toBe(1)
-    expect(inbox.body.notices[0].active).toBe(true)
-    // Seeing is not enough when acknowledgement is required.
+    expect(inbox.body.pendingCount).toBe(0)
+    expect(inbox.body.notices).toHaveLength(0)
+    expect((await app.api<NoticeInboxResponse>('GET', '/api/notices/inbox', { token: admin.token })).body.notices).toHaveLength(0)
+    // Seeing it (the gate opened) lists it, but is not enough when acknowledgement is required.
     expect((await app.api('POST', `/api/notices/${notice.id}/seen`, { token: inspector.token })).status).toBe(204)
-    expect((await app.api<NoticeInboxResponse>('GET', '/api/notices/inbox', { token: inspector.token })).body.pendingCount).toBe(1)
+    const seen = await app.api<NoticeInboxResponse>('GET', '/api/notices/inbox', { token: inspector.token })
+    expect(seen.body.pendingCount).toBe(1)
+    expect(seen.body.notices[0].active).toBe(true)
     const ack = await app.api('POST', `/api/notices/${notice.id}/acknowledge`, { token: inspector.token, body: { context: { sessionId: weldSession.id, workCenterCode: '58' } } })
     expect(ack.status).toBe(204)
     const after = await app.api<NoticeInboxResponse>('GET', '/api/notices/inbox', { token: inspector.token })

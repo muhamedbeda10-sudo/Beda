@@ -133,15 +133,31 @@ export async function forReader(q: Queryable, notices: (NoticeRow & { targets: N
   })
 }
 
-/** Every notice a reader may see, newest first: active ones and the archive. */
+const READER_KINDS: readonly NoticeTargetKind[] = ['user', 'role']
+
+/** Whether a notice is aimed at a place (a machine, an order…) rather than only at people. */
+export function isPlaceBound(targets: NoticeTarget[]): boolean {
+  return targets.some((t) => !READER_KINDS.includes(t.kind))
+}
+
+/**
+ * The bell: newest first, active ones and the archive. A notice aimed only
+ * at people (a user, a role, or everyone) is listed at once. One aimed at a
+ * place is listed only after this reader has met it there — the gate is
+ * where it is shown — so nobody sees a notice that was not for them.
+ */
 export async function loadInbox(q: Queryable, tz: string, reader: NoticeReader, limit = 100): Promise<NoticeForUser[]> {
   const { rows } = await q.query<NoticeRow>(
     `SELECT ${NOTICE_SELECT} FROM notices n WHERE n.deleted_at IS NULL ORDER BY n.created_at DESC LIMIT $2`,
     [tz, limit * 3],
   )
   const withParts = await attachNoticeParts(q, rows)
-  const mine = withParts.filter((n) => noticeApplies(n.targets, reader, null)).slice(0, limit)
-  return forReader(q, mine, reader)
+  const mine = await forReader(
+    q,
+    withParts.filter((n) => noticeApplies(n.targets, reader, null)),
+    reader,
+  )
+  return mine.filter((n) => !isPlaceBound(n.targets) || n.seenAt !== null).slice(0, limit)
 }
 
 /** The notices still to be read by this reader in this place. */
