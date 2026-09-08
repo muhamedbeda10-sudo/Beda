@@ -25,6 +25,7 @@ import type {
   SampleDetail,
   SampleSummary,
   SessionWithOrder,
+  StartSessionRequest,
   WizardContext,
   SessionNotesResponse,
   KpiThresholdsResponse,
@@ -42,6 +43,7 @@ export const keys = {
   history: (disposition?: Disposition | null) => ['sessions', 'history', disposition ?? 'all'] as const,
   session: (id: string) => ['sessions', id] as const,
   wizard: (id: string) => ['sessions', id, 'wizard'] as const,
+  wizardPreview: (key: string) => ['sessions', 'preview', key] as const,
   sessionSamples: (id: string) => ['sessions', id, 'samples'] as const,
   sessionNotes: (id: string) => ['sessions', id, 'notes'] as const,
   sample: (id: string) => ['samples', id] as const,
@@ -106,6 +108,18 @@ export function useWizardContext(sessionId: string) {
     enabled: !!sessionId,
     staleTime: 60_000,
     // A draft is built from this once; it must be what the server knows now.
+    refetchOnMount: 'always',
+  })
+}
+
+/** The wizard's context for a line before its session exists (§4.4): the session is created with the first sample. */
+export function useWizardPreview(start: StartSessionRequest | null) {
+  const key = start ? ('orderId' in start ? `order:${start.orderId}` : `stock:${start.workCenterCode}`) : ''
+  return useQuery({
+    queryKey: keys.wizardPreview(key),
+    queryFn: () => api<WizardContext>(`/sessions/preview${qs({ ...start })}`),
+    enabled: start !== null,
+    staleTime: 60_000,
     refetchOnMount: 'always',
   })
 }

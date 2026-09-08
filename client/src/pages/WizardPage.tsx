@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft,
   ArrowRight,
@@ -26,8 +26,8 @@ import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { CoilPicker } from '@/components/inspection/CoilPicker'
 import { WorkInstructionLinks } from '@/components/documents/WorkInstructionLinks'
-import { useSampleDetail, useWizardContext } from '@/services/queries'
-import { discardSession, matchNotices, reRecordSample, saveSample } from '@/services/mutations'
+import { useSampleDetail, useWizardContext, useWizardPreview } from '@/services/queries'
+import { discardSession, matchNotices, reRecordSample, saveSample, startSessionWithSample } from '@/services/mutations'
 import { NoticeGate } from '@/components/notices/NoticeGate'
 import type { NoticeForUser } from '@qc/shared/types'
 import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect, type DraftCoil, type DraftPT, type DraftDimension, type DraftNote } from '@/services/draftStore'
@@ -48,7 +48,7 @@ import {
   type SessionNote,
   type WorkInstruction,
 } from '@qc/shared/types'
-import type { SampleDetail, SaveSampleRequest } from '@qc/shared/api'
+import type { SampleDetail, SaveSampleRequest, StartSessionRequest } from '@qc/shared/api'
 import {
   stepsForProcess,
   deriveShift,
@@ -84,21 +84,38 @@ const CONSUMABLE_KINDS: PTConsumableKind[] = ['Cleaner', 'Penetrant', 'Developer
 
 export function WizardPage() {
   const { sessionId = '', sampleId: editingSampleId } = useParams()
+  const [search] = useSearchParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useApp()
   const { factoryTimeZone } = useAuth()
 
+  // §4.4 — "/wizard/new" is a session that does not exist yet: the line and
+  // the starting quantity ride in the address, and the session is opened by
+  // the API together with the first sample.
+  const pending = useMemo<StartSessionRequest | null>(() => {
+    if (sessionId !== 'new') return null
+    const orderId = search.get('orderId')
+    if (orderId) return { orderId, startQty: Number(search.get('startQty') ?? 0) || 0 }
+    const workCenterCode = search.get('workCenterCode')
+    if (workCenterCode) return { workCenterCode, producedQty: Number(search.get('producedQty') ?? 0) || 0 }
+    return null
+  }, [sessionId, search])
+
   // The wizard needs exactly one session and one order, plus the configuration
   // for that line's item and machine. The API answers all of it in one
   // round trip; nothing here reads a whole table.
-  const { data: ctx, isLoading: sessionsLoading, isFetching: ctxFetching, error: loadError } = useWizardContext(sessionId)
+  const existing = useWizardContext(pending ? '' : sessionId)
+  const preview = useWizardPreview(pending)
+  const { data: ctx, isLoading: sessionsLoading, isFetching: ctxFetching, error: loadError } = pending ? preview : existing
   // Re-recording from History: the existing sample is the draft's starting point.
   const { data: editing, isLoading: editingLoading } = useSampleDetail(editingSampleId ?? null)
-  const session = ctx?.session
+  const session = ctx?.session ?? null
   const order = ctx?.order
   const machine = ctx?.machine ?? null
-  const wc = session?.workCenterCode ?? ''
+  const wc = session?.workCenterCode ?? order?.workCenterCode ?? ''
+  /** Where the draft lives on this device: the session's id, or the line's until the session exists. */
+  const draftKey = session ? session.id : pending ? ('orderId' in pending ? `new:${pending.orderId}` : `new:stock:${pending.workCenterCode}`) : ''
 
   const dimOrder = useMemo(() => ctx?.dimensionOrder ?? [], [ctx])
   const refImages = useMemo(() => ctx?.referenceImages ?? [], [ctx])
@@ -148,17 +165,17 @@ export function WizardPage() {
 
   // Build (or resume) the draft once the session and its configuration load.
   useEffect(() => {
-    if (!session || !order || draft) return
+    if ((!session && !pending) || !order || draft || !draftKey) return
     if (editingSampleId && !editing) return
     // A cached context may predate the last save; wait for the fresh one so
     // the nominals and setup the previous sample recorded are carried.
     if (ctxFetching) return
-    const existing = loadDraft(session.id, editingSampleId)
-    if (existing && (!editing || existing.editingVersion === editing.sample.version)) {
-      setDraft(existing)
+    const stored = loadDraft(draftKey, editingSampleId)
+    if (stored && (!editing || stored.editingVersion === editing.sample.version)) {
+      setDraft(stored)
       return
     }
-    if (editing) {
+    if (editing && session) {
       setDraft(draftFromSample(editing, session.id, session.workCenterCode, process))
       return
     }
@@ -167,7 +184,7 @@ export function WizardPage() {
     // one typed on the previous sample, so it is entered once.
     const rows = resolveDimensions({
       itemCode: order.itemCode,
-      workCenterCode: session.workCenterCode,
+      workCenterCode: wc,
       order: dimOrder,
       previous: previousDims,
     })
@@ -202,9 +219,9 @@ export function WizardPage() {
     const carried = previousSetup && steps[0] === 'setup' ? previousSetup : null
     const str = (v: number | null | undefined) => (v === null || v === undefined ? '' : String(v))
     setDraft({
-      sessionId: session.id,
+      sessionId: draftKey,
       orderId: order.id,
-      workCenterCode: session.workCenterCode,
+      workCenterCode: wc,
       process,
       submissionId: newSubmissionId(),
       step: carried ? steps[1] : steps[0],
@@ -236,7 +253,7 @@ export function WizardPage() {
           : undefined,
       updatedAt: new Date().toISOString(),
     })
-  }, [session, order, draft, dimOrder, previousDims, process, previousWire, previousSetup, editing, editingSampleId, ctxFetching])
+  }, [session, pending, draftKey, wc, order, draft, dimOrder, previousDims, process, previousWire, previousSetup, editing, editingSampleId, ctxFetching])
 
   // Persist on every change so a reload or a dead network loses nothing (§9.6).
   const update = useCallback((patch: Partial<SampleDraft> | ((d: SampleDraft) => SampleDraft)) => {
@@ -290,7 +307,7 @@ export function WizardPage() {
   }, [draft])
 
   if (sessionsLoading || (editingSampleId && editingLoading)) return <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
-  if (!session || !order || loadError) {
+  if (!order || (!session && !pending) || loadError) {
     return (
       <EmptyState
         title="Session not found"
@@ -317,7 +334,7 @@ export function WizardPage() {
   const shift = deriveShift(now, factoryTimeZone)
 
   async function performSave(acknowledged?: SampleDraft['gradeAcknowledged']) {
-    if (!draft || !session || !order) return
+    if (!draft || !order || (!session && !pending)) return
     setSaving(true)
     try {
       const index = priorSamples.length + 1
@@ -392,6 +409,25 @@ export function WizardPage() {
             }
           : undefined,
       }
+
+      if (pending && !session) {
+        // §4.4 — the first sample opens the session (or joins the one already
+        // open on this line), in one transaction with the sample itself.
+        const res = await startSessionWithSample(queryClient, { start: pending, sample: body })
+        clearDraft(draftKey)
+        setDraft(null)
+        toast(
+          res.sample.deduped
+            ? 'That sample was already saved — no duplicate was created.'
+            : res.joined
+              ? `Sample ${res.session.seq}-${res.sample.index} added to the open session on this line.`
+              : `Session ${res.session.seq} opened · sample ${res.session.seq}-${res.sample.index} saved.`,
+          'success',
+        )
+        navigate('/')
+        return
+      }
+      if (!session) return
 
       if (draft.editingSampleId) {
         // Re-recording: the whole sample is replaced as one unit; History shows the result.
@@ -485,12 +521,19 @@ export function WizardPage() {
                 navigate('/')
               }}
             >
-              Leave, keep the session
+              {session ? 'Leave, keep the session' : 'Leave, keep the entries'}
             </Button>
             <Button
               variant="danger"
               disabled={saving}
               onClick={async () => {
+                if (!session) {
+                  // Nothing exists on the server yet: only the entries on this device go.
+                  clearDraft(draftKey)
+                  toast('Entries discarded. No session was opened.', 'success')
+                  navigate('/')
+                  return
+                }
                 setSaving(true)
                 try {
                   await discardSession(queryClient, session.id)
@@ -504,28 +547,31 @@ export function WizardPage() {
                 }
               }}
             >
-              Discard session
+              {session ? 'Discard session' : 'Discard entries'}
             </Button>
           </>
         }
       >
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          This session has no sample yet. Your entries so far stay on this device if you keep it; a session that never records a sample cannot be closed,
-          only discarded.
+          {session
+            ? 'This session has no sample yet. Your entries so far stay on this device if you keep it; a session that never records a sample cannot be closed, only discarded.'
+            : 'No session exists yet: it is opened when the first sample is saved. Your entries so far stay on this device if you leave, and come back when you start this line again.'}
         </p>
       </Modal>
 
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-2">
           {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{order.orderNumber}</span>}
-          <Badge tone="blue">{machine?.displayName ?? `Machine ${session.workCenterCode}`}</Badge>
+          <Badge tone="blue">{machine?.displayName ?? `Machine ${wc}`}</Badge>
           <Badge tone="neutral">
             Shift {shift} · {shiftName(shift)}
           </Badge>
-          {draft.editingSampleId && editing ? (
+          {draft.editingSampleId && editing && session ? (
             <Badge tone="amber">Re-recording sample {session.seq}-{editing.sample.index}</Badge>
-          ) : (
+          ) : session ? (
             <Badge tone="neutral">Sample {session.seq}-{priorSamples.length + 1}</Badge>
+          ) : (
+            <Badge tone="violet">New session · opens with this sample</Badge>
           )}
           {!online && (
             <Badge tone="amber" icon={<CloudOff className="h-3 w-3" />}>
@@ -585,13 +631,13 @@ export function WizardPage() {
         {current === 'defects' && (
           <>
             <WorkInstructionLinks instructions={instructions} step="defects" />
-            <DefectsStep draft={draft} update={update} options={defectOptions} sessionId={session.id} orderId={order.id} />
+            <DefectsStep draft={draft} update={update} options={defectOptions} sessionId={session?.id} orderId={order.id} />
           </>
         )}
         {current === 'paint' && (
           <>
             <WorkInstructionLinks instructions={instructions} step="paint" />
-            <PaintStep draft={draft} update={update} sessionId={session.id} orderId={order.id} />
+            <PaintStep draft={draft} update={update} sessionId={session?.id} orderId={order.id} />
           </>
         )}
         {current === 'paintThickness' && (
@@ -603,11 +649,11 @@ export function WizardPage() {
         {current === 'pt' && (
           <>
             <WorkInstructionLinks instructions={instructions} step="pt" />
-            <PTStep draft={draft} update={update} consumables={consumables} sessionId={session.id} orderId={order.id} />
+            <PTStep draft={draft} update={update} consumables={consumables} sessionId={session?.id} orderId={order.id} />
           </>
         )}
         {current === 'review' && (
-          <ReviewStep draft={draft} order={order} issues={issues} update={update} orderNotes={orderNotes} sessionId={session.id} orderId={order.id} />
+          <ReviewStep draft={draft} order={order} issues={issues} update={update} orderNotes={orderNotes} sessionId={session?.id} orderId={order.id} />
         )}
       </Card>
 
@@ -1253,7 +1299,7 @@ function DefectsStep({
   draft: SampleDraft
   update: Updater
   options: string[]
-  sessionId: string
+  sessionId?: string
   orderId: string
 }) {
   const [search, setSearch] = useState('')
@@ -1497,7 +1543,7 @@ function PaintStep({
 }: {
   draft: SampleDraft
   update: Updater
-  sessionId: string
+  sessionId?: string
   orderId: string
 }) {
   return (
@@ -1627,7 +1673,7 @@ function PTStep({
   draft: SampleDraft
   update: Updater
   consumables: PTConsumableProduct[]
-  sessionId: string
+  sessionId?: string
   orderId: string
 }) {
   const pt = draft.pt ?? emptyPT()
@@ -1791,7 +1837,7 @@ function ReviewStep({
   update: Updater
   /** Every note written about this order so far, newest first. */
   orderNotes: SessionNote[]
-  sessionId: string
+  sessionId?: string
   orderId: string
 }) {
   const measured = draft.dimensions.filter((d) => d.actual.trim() !== '')

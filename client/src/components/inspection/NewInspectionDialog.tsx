@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Search, Package, Play, ArrowLeft, CheckCircle2, Boxes, Factory, ChevronRight, Layers } from 'lucide-react'
 import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
-import { useMaster, useOrderHistory, useOrderLines, useOrderNumbers } from '@/services/queries'
-import { matchNotices, startSession } from '@/services/mutations'
+import { useMaster, useOpenBoard, useOrderHistory, useOrderLines, useOrderNumbers } from '@/services/queries'
+import { matchNotices } from '@/services/mutations'
 import { NoticeGate } from '@/components/notices/NoticeGate'
 import type { NoticeForUser } from '@qc/shared/types'
 import { useApp } from '@/store/AppContext'
@@ -45,6 +45,8 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
   const { data: lines = [], isFetching: linesLoading } = useOrderLines(machineCode, orderNumber, open)
   // Only the picked line's history is needed, never every session or sample.
   const { data: history } = useOrderHistory(picked?.id ?? null)
+  // An open session on the line is joined, not doubled (§4.4).
+  const { data: board } = useOpenBoard()
 
   const machine = useMemo(
     () => machines.find((m) => m.code.trim().toLowerCase() === machineCode.trim().toLowerCase()) ?? null,
@@ -112,11 +114,16 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
           return
         }
       }
-      const session = await startSession(queryClient, { workCenterCode: machine.code, producedQty: qty })
-      toast(`Session started on ${machine.displayName} · ${production?.item ?? 'stock'}.`, 'success')
+      const open = board?.sessions.find((s) => s.status === 'Open' && s.order?.orderNumber === 'STOCK' && s.workCenterCode.trim().toLowerCase() === machine.code.trim().toLowerCase())
       reset()
       onClose()
-      navigate(`/wizard/${session.id}`)
+      if (open) {
+        toast(`Joining session #${open.seq} on ${machine.displayName}; your samples are recorded under your name.`, 'info')
+        navigate(`/wizard/${open.id}`)
+      } else {
+        // The session itself is opened when the first sample is saved (§4.4).
+        navigate(`/wizard/new?${new URLSearchParams({ workCenterCode: machine.code, producedQty: String(qty) })}`)
+      }
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Could not start the session.', 'error')
     } finally {
@@ -137,11 +144,16 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
           return
         }
       }
-      const session = await startSession(queryClient, { orderId: picked.id, startQty: qty })
-      toast(`Session started for ${picked.orderNumber} · ${picked.itemCode}.`, 'success')
+      const open = openOnLine
       reset()
       onClose()
-      navigate(`/wizard/${session.id}`)
+      if (open) {
+        toast(`Joining session #${open.seq} opened by ${open.inspectorName}; your samples are recorded under your name.`, 'info')
+        navigate(`/wizard/${open.id}`)
+      } else {
+        // The session itself is opened when the first sample is saved (§4.4).
+        navigate(`/wizard/new?${new URLSearchParams({ orderId: picked.id, startQty: String(qty) })}`)
+      }
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Could not start the session.', 'error')
     } finally {
@@ -166,11 +178,15 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     />
   ) : null
 
+  /** The session already open on the picked line, if any: the inspector joins it. */
+  const openOnLine = (history?.sessions ?? []).find((s) => s.status === 'Open') ?? board?.sessions.find((s) => s.status === 'Open' && s.orderId === picked?.id) ?? null
+
   // ---- Step 4: confirm the line and the starting quantity ------------------
   if (picked) {
     const remaining = remainingQty(picked)
     const qty = Number(startQty)
-    const valid = startQty.trim() !== '' && !Number.isNaN(qty) && qty >= 0
+    // Joining an open session asks nothing more: its starting quantity was confirmed when it opened.
+    const valid = openOnLine !== null || (startQty.trim() !== '' && !Number.isNaN(qty) && qty >= 0)
 
     return (
       <Modal
@@ -185,7 +201,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
               <ArrowLeft className="h-4 w-4" /> Back
             </Button>
             <Button variant="primary" disabled={!valid || busy} onClick={() => start()} className="min-h-[48px]">
-              <Play className="h-4 w-4" /> {busy ? 'Starting…' : 'Start inspection'}
+              <Play className="h-4 w-4" /> {busy ? 'Opening…' : openOnLine ? `Join session #${openOnLine.seq}` : 'Start inspection'}
             </Button>
           </>
         }
@@ -221,7 +237,16 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             </dl>
           </div>
 
-          <Field label="Rejected qty before release" hint="Pieces already rejected on this line before the release inspection. Confirmed once per session.">
+          {openOnLine && (
+            <div className="rounded-2xl border-l-4 border-l-brand-500 bg-brand-50/60 p-3 text-sm text-brand-900 dark:bg-brand-500/10 dark:text-brand-100">
+              <p className="font-bold">Session #{openOnLine.seq} is open on this line</p>
+              <p>
+                Opened by {openOnLine.inspectorName} · {openOnLine.sampleCount ?? 0} sample{(openOnLine.sampleCount ?? 0) === 1 ? '' : 's'} so far. Your samples are added to it under your name; nobody opens a second session on the same line.
+              </p>
+            </div>
+          )}
+          {!openOnLine && (
+          <Field label="Rejected qty before release" hint="Pieces already rejected on this line before the release inspection. The session is opened when the first sample is saved.">
             <Input
               autoFocus
               type="number"
@@ -232,6 +257,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
               className="min-h-[48px] text-lg"
             />
           </Field>
+          )}
 
           <div>
             <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-slate-400">
@@ -254,7 +280,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
 
           <div className="flex items-start gap-2 rounded-xl bg-brand-50 px-3 py-2.5 text-sm text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-            Who confirmed this quantity, and when, is recorded with the session.
+            {openOnLine ? 'Every sample is recorded under the name of whoever took it.' : 'Who confirmed this quantity, and when, is recorded with the session, which is opened by your first sample.'}
           </div>
         </div>
       </Modal>
