@@ -161,7 +161,7 @@ export function isOtherDefect(name: string): boolean {
 
 /** The dimension name the paint-thickness readings are saved under (§5.5). */
 export const PAINT_THICKNESS_NAME = 'Paint thickness'
-/** How many thickness readings a paint sample carries. */
+/** The least thickness readings a paint sample carries; more are added in threes. */
 export const PAINT_THICKNESS_READINGS = 3
 /** The unit used when no configuration row names one. */
 export const PAINT_THICKNESS_UNIT = 'µm'
@@ -346,7 +346,9 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
     if (readings.length < PAINT_THICKNESS_READINGS) {
       issues.push({ step: 'paintThickness', message: `Enter ${PAINT_THICKNESS_READINGS} paint thickness readings.` })
     } else {
-      readings.forEach((r, i) => {
+      // The first three are required; a reading added beyond them may be
+      // left empty, and an empty one is simply not saved.
+      readings.slice(0, PAINT_THICKNESS_READINGS).forEach((r, i) => {
         if (r.actual === null || !Number.isFinite(r.actual)) {
           issues.push({ step: 'paintThickness', message: `Reading ${i + 1} is missing.`, ref: `reading-${i + 1}` })
         }

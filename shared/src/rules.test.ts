@@ -320,6 +320,20 @@ describe('save-time validation', () => {
     })
     // Readings are recorded as measured: a missing nominal is not a problem, a missing reading is.
     expect(missingOne.map((i) => i.ref)).toEqual(['reading-2'])
+    // Readings added beyond the first three may be left empty; they are dropped, not flagged.
+    const extras = validateSample({
+      ...paint,
+      paint: { imageIds: ['img'] },
+      dimensions: [
+        { name: 'Paint thickness', nominal: null, actual: 61 },
+        { name: 'Paint thickness', nominal: null, actual: 60 },
+        { name: 'Paint thickness', nominal: null, actual: 62 },
+        { name: 'Paint thickness', nominal: null, actual: 63 },
+        { name: 'Paint thickness', nominal: null, actual: null },
+        { name: 'Paint thickness', nominal: null, actual: null },
+      ],
+    })
+    expect(extras).toEqual([])
     expect(
       validateSample({
         ...paint,
