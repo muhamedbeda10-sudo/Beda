@@ -1,7 +1,8 @@
 // ============================================================================
 // Everything about an order, from the session card on the board: the line as
 // the ERP export carried it, its quantities, this session, the inspection
-// history on the line, the order's other lines and the notes written about
+// history on the line and the notes written about it. Only THIS line — the same
+// order carries other items on other machines, and those are their own business.
 // it. Read in full while the board stays behind it.
 // ============================================================================
 
@@ -25,7 +26,7 @@ import {
 import { Badge, Button, Drawer, type BadgeTone } from '@/components/ui'
 import { SessionToneBadge } from '@/components/inspection/SessionTone'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
-import { useOrder, useOrderAllLines, useOrderHistory, useOrderNotes } from '@/services/queries'
+import { useOrder, useOrderHistory, useOrderNotes } from '@/services/queries'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
 import { isStockOrder } from '@qc/shared/rules'
@@ -53,7 +54,6 @@ export function OrderDetailsPanel({
   const orderId = session?.orderId ?? null
   const { data: order } = useOrder(orderId)
   const { data: history } = useOrderHistory(orderId)
-  const { data: lines = [] } = useOrderAllLines(session?.order?.orderNumber ?? null)
   const { data: notes = [], isLoading: notesLoading } = useOrderNotes(orderId)
   const machineLabel = (code: string) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`
   const stock = isStockOrder(session?.order)
@@ -219,50 +219,7 @@ export function OrderDetailsPanel({
             </Section>
           </Reveal>
 
-          {!stock && (
           <Reveal index={5}>
-            <Section icon={<Layers className="h-4 w-4" />} title="Lines of this order" count={lines.length}>
-              {lines.length === 0 ? (
-                <Empty>Only this line is known for the order.</Empty>
-              ) : (
-                <div className="overflow-x-auto rounded-xl ring-1 ring-slate-200/70 dark:ring-slate-700">
-                  <table className="w-full min-w-[30rem] text-sm">
-                    <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:bg-slate-800/60">
-                      <tr>
-                        <th className="px-3 py-2">Item</th>
-                        <th className="px-3 py-2">Machine</th>
-                        <th className="px-3 py-2 text-right">Required</th>
-                        <th className="px-3 py-2 text-right">Finished</th>
-                        <th className="px-3 py-2">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {lines.map((l) => {
-                        const current = l.id === session.orderId
-                        return (
-                          <tr key={l.id} className={cn(current && 'bg-brand-50/60 dark:bg-brand-500/10')}>
-                            <td className="px-3 py-2">
-                              <span dir="auto" className="block font-semibold">
-                                {l.item || '—'}
-                              </span>
-                              <span className="font-mono text-xs text-slate-400">{l.itemCode}</span>
-                            </td>
-                            <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{machineLabel(l.workCenterCode)}</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{l.requiredQty}</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{l.finishedQty}</td>
-                            <td className="px-3 py-2">{erpBadge(l.erpStatus) ?? <Badge tone="green">Active</Badge>}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Section>
-          </Reveal>
-          )}
-
-          <Reveal index={6}>
             <Section icon={<MessageSquareText className="h-4 w-4" />} title="Notes on this line" count={notes.length}>
               {notesLoading ? <Skeleton rows={2} /> : <OrderNoteList notes={notes} emptyMessage="No notes on this item on this machine yet." machineLabel={machineLabel} />}
             </Section>
