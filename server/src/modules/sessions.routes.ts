@@ -48,6 +48,8 @@ import type {
   SessionNotesResponse,
   SessionWithOrder,
   WizardContext,
+  StartSessionRequest,
+  StartWithSampleResponse,
 } from '@qc/shared/api'
 import type { AuditContext } from '@qc/shared/audit'
 import type { AppContext } from '../context'
@@ -60,7 +62,7 @@ import { auditEvent } from '@qc/shared/audit'
 import { dropNulls } from '../lib/rows'
 import { assertImagesUsable, linkImages } from './images.links'
 import { loadOrderNotes, loadSessionNotes, noteIsEmpty, writeSessionNote } from './notes'
-import { fetchOrdersByIds } from './orders.routes'
+import { ORDER_SELECT, fetchOrdersByIds } from './orders.routes'
 import {
   ORDER_SUMMARY_SELECT,
   SAMPLE_SUMMARY_SELECT,
@@ -268,12 +270,17 @@ export function sessionsRoutes(ctx: AppContext): Router {
     return { clause: `s.inspector_id = $${firstParam}`, params: [user.id] }
   }
 
-  /** The board: every open session, plus a closed one that still holds a defect on Hold. */
+  /**
+   * The board: every open session, plus a closed one that still holds a
+   * defect on Hold. Open sessions are everyone's to see and to join — two
+   * inspectors record on the same one, each sample under its own name —
+   * so the board is not narrowed to the viewer's own (§4.4).
+   */
   r.get('/open', async (req, res) => {
-    const user = requireUser(req)
+    requireUser(req)
     const q = parse(z.object({ limit: z.coerce.number().int().min(1).max(500).default(200) }), req.query)
-    const visible = visibleTo(user, 2)
-    const onlyVisible = visibleTo(user, 1)
+    const visible = { clause: 'TRUE', params: [] as unknown[] }
+    const onlyVisible = { clause: 'TRUE', params: [] as unknown[] }
     const sessions = await db.query<SessionRow & OrderSummaryRow>(
       `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
          FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
@@ -342,11 +349,13 @@ export function sessionsRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
-  /** §4 — start a session against an order, confirming the starting quantity. */
-  r.post('/', requireCapability('record-inspection'), async (req, res) => {
-    const user = requireUser(req)
-    const body = parse(startSchema, req.body)
-    const created = await withTransaction(db, async (tx) => {
+  /**
+   * §4 — open a session against an order, confirming the starting quantity.
+   * Called inside the transaction of the first sample (§4.4), so a session
+   * never exists without one.
+   */
+  async function createSession(tx: Queryable, user: AuthUser, body: StartSessionRequest): Promise<SessionWithOrder> {
+    {
       // A make-to-stock machine has no order to pick: its one fixed STOCK line
       // is kept (or restored, after a catalogue clear) and the session opens
       // against it with the quantity that came out.
@@ -378,8 +387,82 @@ export function sessionsRoutes(ctx: AppContext): Router {
       const session = (await loadSessionWithOrder(tx, rows[0].id))!
       await auditCreate(tx, auditCtxFor(user, session, 'InspectionSession', session.id))
       return session
-    })
+    }
+  }
+
+  /** Kept for the API's sake; the app itself opens a session with its first sample. */
+  r.post('/', requireCapability('record-inspection'), async (req, res) => {
+    const user = requireUser(req)
+    const body = parse(startSchema, req.body)
+    const created = await withTransaction(db, (tx) => createSession(tx, user, body))
     res.status(201).json(created)
+  })
+
+  /** §4.4 — the session and its first sample, written together or not at all. */
+  r.post('/start-with-sample', requireCapability('record-inspection'), async (req, res) => {
+    const user = requireUser(req)
+    const body = parse(z.object({ start: startSchema, sample: saveSampleSchema }), req.body)
+    const outcome = await withTransaction(db, async (tx): Promise<StartWithSampleResponse> => {
+      // A retry after the first attempt landed: answer with what exists.
+      const dup = (await tx.query<{ id: string; index: number; sessionId: string }>(
+        `SELECT id, index, session_id AS "sessionId" FROM inspection_samples WHERE submission_id = $1`,
+        [body.sample.submissionId],
+      )).rows[0]
+      if (dup) {
+        const session = await loadSessionWithOrder(tx, dup.sessionId)
+        if (!session) throw notFound('That session')
+        return { session, sample: { sampleId: dup.id, index: dup.index, deduped: true }, joined: false }
+      }
+      // One session per line at a time: if one is already open on it, the
+      // sample joins it under this inspector's name instead of opening a twin.
+      const lineId = 'orderId' in body.start ? body.start.orderId : (await tx.query<{ id: string }>(`SELECT id FROM production_orders WHERE lower(line_key) = lower($1) AND deleted_at IS NULL`, [stockLineKey(body.start.workCenterCode)])).rows[0]?.id
+      const open = lineId
+        ? (await tx.query<{ id: string }>(`SELECT id FROM inspection_sessions WHERE order_id = $1 AND status = 'Open' AND deleted_at IS NULL ORDER BY started_at DESC LIMIT 1 FOR UPDATE`, [lineId])).rows[0]
+        : undefined
+      const opened = open ? (await loadSessionWithOrder(tx, open.id, true))! : await createSession(tx, user, body.start)
+      const sample = await saveSampleInSession(tx, user, opened, body.sample)
+      const session = (await loadSessionWithOrder(tx, opened.id))!
+      return { session, sample, joined: !!open }
+    }).catch(async (e) => {
+      if (e instanceof DuplicateSubmission) {
+        const { rows } = await db.query<{ id: string; index: number; sessionId: string }>(`SELECT id, index, session_id AS "sessionId" FROM inspection_samples WHERE submission_id = $1`, [e.submissionId])
+        const session = rows[0] ? await loadSessionWithOrder(db, rows[0].sessionId) : null
+        if (rows[0] && session) return { session, sample: { sampleId: rows[0].id, index: rows[0].index, deduped: true }, joined: false } satisfies StartWithSampleResponse
+      }
+      throw e
+    })
+    res.status(outcome.sample.deduped ? 200 : 201).json(outcome)
+  })
+
+  /** What the wizard needs before a session exists: the line, the machine, the configuration (§4.4). */
+  r.get('/preview', async (req, res) => {
+    const start = parse(startSchema, req.query)
+    const orderId = 'orderId' in start ? start.orderId : null
+    const wc = 'orderId' in start ? null : start.workCenterCode
+    let order: ProductionOrder | undefined
+    if (orderId) [order] = await fetchOrdersByIds(db, [orderId])
+    else {
+      const stock = stockProductionOf(wc)
+      if (!stock) throw badRequest('That machine does not work to stock; pick an order line.')
+      // The STOCK line may not exist yet; the preview describes it without writing it.
+      const { rows } = await db.query<ProductionOrder>(`SELECT ${ORDER_SELECT} FROM production_orders WHERE lower(line_key) = lower($1) AND deleted_at IS NULL`, [stockLineKey(wc!)])
+      order = rows[0] ?? {
+        id: '',
+        lineKey: stockLineKey(wc!),
+        orderNumber: 'STOCK',
+        item: stock.item,
+        itemCode: stock.itemCode,
+        workCenterCode: wc!,
+        requiredQty: 0,
+        finishedQty: 0,
+        erpStatus: 'Active',
+        drawing: '',
+        expectedGrade: '',
+        customer: '',
+      } as ProductionOrder
+    }
+    if (!order) throw notFound('That order line')
+    res.json(await buildWizardContext(db, null, order))
   })
 
   r.get('/:id', async (req, res) => {
@@ -395,13 +478,19 @@ export function sessionsRoutes(ctx: AppContext): Router {
     if (!session) throw notFound('That session')
     const [order] = await fetchOrdersByIds(db, [session.orderId])
     if (!order) throw notFound('The session’s order')
-    const wc = session.workCenterCode
-    const machine = await loadMachine(db, wc)
+    res.json(await buildWizardContext(db, session, order))
+  })
+
+  /** The wizard's context for a session, or for one about to be opened on a line (session null). */
+  async function buildWizardContext(q: Queryable, session: SessionWithOrder | null, order: ProductionOrder): Promise<WizardContext> {
+    const id = session?.id ?? null
+    const wc = session?.workCenterCode ?? order.workCenterCode
+    const machine = await loadMachine(q, wc)
     const process = processForMachine(machine, wc)
     const [dimOrder, refImages, wcDefects, grades, consumables, samples, previousDims, previousWire, instructions, previousSetup, orderNotes] = await Promise.all([
       // The item's general rows plus the rows specific to this machine; the
       // shared resolver decides which wins (§8.3).
-      db.query<ItemDimensionOrder>(
+      q.query<ItemDimensionOrder>(
         `SELECT id, item_code AS "itemCode", item, work_center_code AS "workCenterCode", dimension_name AS "dimensionName",
                 sequence, nominal, tol_plus AS "tolPlus", tol_minus AS "tolMinus", unit
            FROM item_dimension_order
@@ -411,7 +500,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
         [order.itemCode, wc],
       ),
       // The item's general photos plus those specific to this machine.
-      db.query<ItemReferenceImage>(
+      q.query<ItemReferenceImage>(
         `SELECT id, item_code AS "itemCode", item, work_center_code AS "workCenterCode", image_id AS "imageId", caption
            FROM item_reference_images
           WHERE lower(item_code) = lower($1) AND deleted_at IS NULL
@@ -419,23 +508,23 @@ export function sessionsRoutes(ctx: AppContext): Router {
           ORDER BY work_center_code NULLS FIRST, created_at`,
         [order.itemCode, wc],
       ),
-      db.query<WorkCenterDefect>(
+      q.query<WorkCenterDefect>(
         `SELECT id, work_center_code AS "workCenterCode", defect_name AS "defectName"
            FROM work_center_defects WHERE lower(work_center_code) = lower($1) AND deleted_at IS NULL ORDER BY defect_name`,
         [wc],
       ),
-      db.query<GradeMapping>(`SELECT id, grade_a AS "gradeA", grade_b AS "gradeB" FROM grade_mappings WHERE deleted_at IS NULL`),
-      db.query<PTConsumableProduct>(
+      q.query<GradeMapping>(`SELECT id, grade_a AS "gradeA", grade_b AS "gradeB" FROM grade_mappings WHERE deleted_at IS NULL`),
+      q.query<PTConsumableProduct>(
         `SELECT id, kind, product_name AS "productName", lot_batch AS "lotBatch" FROM pt_consumables WHERE deleted_at IS NULL ORDER BY kind, product_name`,
       ),
-      db.query<SampleSummary>(
+      q.query<SampleSummary>(
         `SELECT ${SAMPLE_SUMMARY_SELECT} FROM inspection_samples sm WHERE sm.session_id = $1 AND sm.deleted_at IS NULL ORDER BY sm.index`,
         [id],
       ),
       // The nominal an inspector typed on the last sample of this item on
       // this machine — this session's own latest sample first — is offered
       // again on the next one, so it is typed once.
-      db.query<PreviousDimension>(
+      q.query<PreviousDimension>(
         `SELECT d.name, d.nominal, d.tol_plus AS "tolPlus", d.tol_minus AS "tolMinus", d.unit
            FROM dimension_results d
           WHERE d.deleted_at IS NULL
@@ -447,24 +536,25 @@ export function sessionsRoutes(ctx: AppContext): Router {
                WHERE sm.deleted_at IS NULL AND s.deleted_at IS NULL
                  AND lower(o.item_code) = lower($2) AND btrim(o.item_code) <> ''
                  AND lower(s.work_center_code) = lower($3)
-               ORDER BY (sm.session_id = $1) DESC, sm.created_at DESC
+               ORDER BY (sm.session_id = $1::uuid) DESC, sm.created_at DESC
                LIMIT 1)
           ORDER BY d.sequence, d.name`,
         [id, order.itemCode, wc],
       ),
       // The welding wire batch of this session's latest sample, offered again.
-      db.query<{ batch: string | null }>(
+      q.query<{ batch: string | null }>(
         `SELECT p.welding_wire_batch AS batch
            FROM pt_records p JOIN inspection_samples sm ON sm.id = p.sample_id
           WHERE sm.session_id = $1 AND sm.deleted_at IS NULL AND p.deleted_at IS NULL
           ORDER BY sm.created_at DESC LIMIT 1`,
         [id],
       ),
-      instructionsInForce(db, process),
-      loadPreviousSetup(db, id),
-      loadOrderNotes(db, session.orderId),
+      instructionsInForce(q, process),
+      id ? loadPreviousSetup(q, id) : Promise.resolve(null),
+      // A stock line that was never written yet has no id and no notes.
+      order.id ? loadOrderNotes(q, order.id) : Promise.resolve([]),
     ])
-    const { order: _summary, ...plain } = session
+    const plain = session ? (({ order: _summary, ...rest }) => rest)(session) : null
     // A machine switched off in Configuration takes no configured dimensions:
     // the inspector types them, and the previous sample's rows carry forward.
     const loadsDimensions = machine?.usesItemDimensions !== false
@@ -485,8 +575,8 @@ export function sessionsRoutes(ctx: AppContext): Router {
       workInstructions: instructions,
       orderNotes,
     }
-    res.json(body)
-  })
+    return body
+  }
 
   /** §5.8 — the notes written during this session, newest first. */
   r.get('/:id/notes', async (req, res) => {
@@ -613,7 +703,22 @@ export function sessionsRoutes(ctx: AppContext): Router {
         [body.submissionId],
       )).rows[0]
       if (dup) return { sampleId: dup.id, index: dup.index, deduped: true }
+      return saveSampleInSession(tx, user, session, body)
+    }).catch(async (e) => {
+      if (e instanceof DuplicateSubmission) {
+        const { rows } = await db.query<{ id: string; index: number }>(`SELECT id, index FROM inspection_samples WHERE submission_id = $1`, [e.submissionId])
+        if (rows[0]) return { sampleId: rows[0].id, index: rows[0].index, deduped: true } satisfies SaveSampleResponse
+      }
+      throw e
+    })
 
+    res.status(outcome.deduped ? 200 : 201).json(outcome)
+  })
+
+  /** The sample's rows and its audit, under the session's lock. */
+  async function saveSampleInSession(tx: Queryable, user: AuthUser, session: SessionWithOrder, body: z.infer<typeof saveSampleSchema>): Promise<SaveSampleResponse> {
+    const sessionId = session.id
+    {
       const [order] = await fetchOrdersByIds(tx, [session.orderId])
       if (!order) throw notFound('The session’s order')
       const wc = session.workCenterCode
@@ -688,16 +793,8 @@ export function sessionsRoutes(ctx: AppContext): Router {
       }
       await writeAudit(tx, entries)
       return { sampleId, index, deduped: false }
-    }).catch(async (e) => {
-      if (e instanceof DuplicateSubmission) {
-        const { rows } = await db.query<{ id: string; index: number }>(`SELECT id, index FROM inspection_samples WHERE submission_id = $1`, [e.submissionId])
-        if (rows[0]) return { sampleId: rows[0].id, index: rows[0].index, deduped: true } satisfies SaveSampleResponse
-      }
-      throw e
-    })
-
-    res.status(outcome.deduped ? 200 : 201).json(outcome)
-  })
+    }
+  }
 
   /**
    * Re-record a sample from History (§9.4): the whole record is replaced as

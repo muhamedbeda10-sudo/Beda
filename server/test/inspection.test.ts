@@ -320,14 +320,14 @@ describe('the atomic sample save', () => {
     expect(list.body.map((s) => s.index)).toEqual([1, 2])
   })
 
-  it('shows an inspector only their own sessions; a supervisor sees everyone’s', async () => {
+  it('shows every open session on the board to everyone; history stays the inspector’s own', async () => {
     // The supervisor opens a session of their own on the paint beam line.
     const theirs = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: paintBeamOrder.id, startQty: 5 } })
     expect(theirs.status).toBe(201)
 
+    // Open sessions are shared work (§4.4): an inspector sees and may join the supervisor's.
     const mine = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: inspector.token })
-    expect(mine.body.sessions.map((s) => s.id)).toEqual([sessionId])
-    expect(mine.body.samples.every((sm) => sm.sessionId === sessionId)).toBe(true)
+    expect(mine.body.sessions.map((s) => s.id).sort()).toEqual([sessionId, theirs.body.id].sort())
     expect(mine.body.holdCount).toBe(1)
 
     const all = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: supervisor.token })

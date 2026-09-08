@@ -22,6 +22,8 @@ import {
   type SaveSampleResponse,
   type SessionWithOrder,
   type StartSessionRequest,
+  type StartWithSampleRequest,
+  type StartWithSampleResponse,
   type UpdateUserRequest,
   type UpdateWorkInstructionRequest,
   type UploadWorkInstructionFields,
@@ -48,6 +50,14 @@ export async function startSession(qc: QueryClient, body: StartSessionRequest): 
   await qc.invalidateQueries({ queryKey: ['sessions'] })
   if ('orderId' in body) await qc.invalidateQueries({ queryKey: ['orders', body.orderId] })
   return session
+}
+
+/** §4.4 — the session and its first sample, as one request and one transaction. */
+export async function startSessionWithSample(qc: QueryClient, body: StartWithSampleRequest): Promise<StartWithSampleResponse> {
+  const res = await api<StartWithSampleResponse>('/sessions/start-with-sample', { method: 'POST', body })
+  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  await qc.invalidateQueries({ queryKey: ['orders'] })
+  return res
 }
 
 export async function closeSession(qc: QueryClient, sessionId: string, body: CloseSessionRequest): Promise<SessionWithOrder> {

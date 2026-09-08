@@ -273,6 +273,22 @@ export interface SessionListQuery {
  */
 export type StartSessionRequest = { orderId: string; startQty: number } | { workCenterCode: string; producedQty: number }
 
+/**
+ * §4.4 — a session exists only once it has recorded something: the start
+ * and the first sample arrive together and are written as one transaction.
+ */
+export interface StartWithSampleRequest {
+  start: StartSessionRequest
+  sample: SaveSampleRequest
+}
+
+export interface StartWithSampleResponse {
+  session: SessionWithOrder
+  sample: SaveSampleResponse
+  /** The line already had an open session and the sample was recorded in it. */
+  joined: boolean
+}
+
 export interface CloseSessionRequest {
   finalQty: number
   /** Version the client loaded — the close is rejected if it moved. */
@@ -282,7 +298,8 @@ export interface CloseSessionRequest {
 /** What the wizard needs to open: the session, its order line, and the
  *  configuration for that line's item and machine, in one round trip. */
 export interface WizardContext {
-  session: InspectionSession
+  /** Null in a preview: the session is created with the first sample (§4.4). */
+  session: InspectionSession | null
   order: ProductionOrder
   /** The machine the line runs on, when it is in the register. */
   machine: Machine | null
