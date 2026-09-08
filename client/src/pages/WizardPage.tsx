@@ -1529,17 +1529,41 @@ function PaintStep({
 }
 
 /**
- * Three readings of the dry film thickness, recorded as measured. The paint
- * line records what the gauge shows; no required value or tolerance is asked
- * for and no judgement is made on the readings.
+ * Readings of the dry film thickness, recorded as measured: three to start
+ * with, three more with every press of Add. The paint line records what the
+ * gauge shows; no required value or tolerance is asked for and no judgement
+ * is made on the readings. An added reading left empty is not saved.
  */
 function PaintThicknessStep({ draft, update }: { draft: SampleDraft; update: Updater }) {
   const readings = draft.dimensions.map((d, i) => ({ d, i })).filter(({ d }) => isPaintThicknessName(d.name))
+  const unit = readings[0]?.d.unit || PAINT_THICKNESS_UNIT
   const setActual = (index: number, actual: string) =>
     update((dd) => {
       const dimensions = [...dd.dimensions]
       dimensions[index] = { ...dimensions[index], actual }
       return { ...dd, dimensions }
+    })
+  const addThree = () =>
+    update((dd) => {
+      const mine = dd.dimensions.filter((d) => isPaintThicknessName(d.name))
+      const last = mine.reduce((n, d) => Math.max(n, d.sequence), 0)
+      const more: DraftDimension[] = Array.from({ length: PAINT_THICKNESS_READINGS }, (_, i) => ({
+        name: PAINT_THICKNESS_NAME,
+        sequence: last + i + 1,
+        nominal: '',
+        tolPlus: '',
+        tolMinus: '',
+        actual: '',
+        unit,
+        source: 'manual' as const,
+      }))
+      return { ...dd, dimensions: [...dd.dimensions, ...more] }
+    })
+  const removeFrom = (index: number) =>
+    update((dd) => {
+      const dimensions = dd.dimensions.filter((_, i) => i !== index)
+      let seq = 0
+      return { ...dd, dimensions: dimensions.map((d) => (isPaintThicknessName(d.name) ? { ...d, sequence: ++seq } : d)) }
     })
 
   if (readings.length === 0) return <Empty>No thickness readings on this draft.</Empty>
@@ -1548,16 +1572,24 @@ function PaintThicknessStep({ draft, update }: { draft: SampleDraft; update: Upd
     <div className="space-y-4">
       <div>
         <span className="label">
-          Thickness readings <span className="normal-case">({readings[0].d.unit || PAINT_THICKNESS_UNIT})</span>
+          Thickness readings <span className="normal-case">({unit})</span>
         </span>
         <div className="grid gap-2 sm:grid-cols-3">
           {readings.map(({ d, i }, n) => {
             const filled = d.actual.trim() !== ''
+            const required = n < PAINT_THICKNESS_READINGS
             return (
-              <label key={i} className={cn('block rounded-2xl border p-3', filled ? 'border-emerald-300 bg-emerald-50/40 dark:border-emerald-500/40 dark:bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700')}>
-                <span className="flex items-center justify-between">
+              <label key={i} className={cn('relative block rounded-2xl border p-3', filled ? 'border-emerald-300 bg-emerald-50/40 dark:border-emerald-500/40 dark:bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700')}>
+                <span className="flex items-center justify-between gap-2">
                   <span className="text-sm font-bold">Reading {n + 1}</span>
-                  {filled ? <Badge tone="green">Recorded</Badge> : <Badge tone="neutral">Required</Badge>}
+                  <span className="flex items-center gap-1">
+                    {filled ? <Badge tone="green">Recorded</Badge> : required ? <Badge tone="neutral">Required</Badge> : <Badge tone="neutral">Optional</Badge>}
+                    {!required && (
+                      <button type="button" onClick={(e) => { e.preventDefault(); removeFrom(i) }} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10" aria-label={`Remove reading ${n + 1}`}>
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </span>
                 </span>
                 <input
                   value={d.actual}
@@ -1571,6 +1603,14 @@ function PaintThicknessStep({ draft, update }: { draft: SampleDraft; update: Upd
               </label>
             )
           })}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <Button type="button" onClick={addThree} className="min-h-[44px]" disabled={readings.length >= 30}>
+            <Plus className="h-4 w-4" /> Add {PAINT_THICKNESS_READINGS} more readings
+          </Button>
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            {readings.filter(({ d }) => d.actual.trim() !== '').length} of {readings.length} recorded · the first {PAINT_THICKNESS_READINGS} are required, an empty extra one is not saved.
+          </span>
         </div>
       </div>
     </div>
@@ -1818,7 +1858,7 @@ function ReviewStep({
       </Section>
       )}
 
-      <Section title={draft.process === 'paint' ? `Paint thickness (${measured.length} of ${PAINT_THICKNESS_READINGS} readings)` : `Dimensions (${measured.length} measured)`}>
+      <Section title={draft.process === 'paint' ? `Paint thickness (${measured.length} reading${measured.length === 1 ? '' : 's'})` : `Dimensions (${measured.length} measured)`}>
         {measured.length === 0 ? (
           <Empty>No measurements entered.</Empty>
         ) : draft.process === 'paint' ? (
