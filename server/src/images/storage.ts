@@ -50,15 +50,28 @@ export function buildDocumentStorageKey(id: string): string {
   return `documents/work-instructions/${id}.pdf`
 }
 
+/** The document kinds a notice may carry, by extension, with the type they are served as. */
+export const NOTICE_FILE_TYPES: Record<'pdf' | 'xlsx' | 'xls', string> = {
+  pdf: 'application/pdf',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
+}
+
+/** Files attached to a notice (§16) live beside the work instructions. */
+export function buildNoticeFileStorageKey(id: string, ext: keyof typeof NOTICE_FILE_TYPES): string {
+  return `documents/notices/${id}.${ext}`
+}
+
 function assertSafeKey(key: string): void {
-  const ok = /^images\/[A-Za-z0-9_./-]+\.jpg$/.test(key) || /^documents\/[A-Za-z0-9_./-]+\.pdf$/.test(key)
+  const ok = /^images\/[A-Za-z0-9_./-]+\.jpg$/.test(key) || /^documents\/[A-Za-z0-9_./-]+\.(pdf|xlsx|xls)$/.test(key)
   if (!ok || key.includes('..')) {
     throw new Error(`Refusing unsafe storage key: ${key}`)
   }
 }
 
 function contentTypeForKey(key: string): string {
-  return key.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'
+  const ext = key.slice(key.lastIndexOf('.') + 1) as keyof typeof NOTICE_FILE_TYPES
+  return NOTICE_FILE_TYPES[ext] ?? 'image/jpeg'
 }
 
 // ---- Local filesystem ------------------------------------------------------

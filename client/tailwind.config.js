@@ -45,6 +45,7 @@ export default {
         inset: 'inset 0 1px 2px rgba(18,39,90,0.08)',
       },
       keyframes: {
+        wiggle: { '0%, 100%': { transform: 'rotate(0deg)' }, '20%, 60%': { transform: 'rotate(-14deg)' }, '40%, 80%': { transform: 'rotate(14deg)' } },
         'fade-in': { from: { opacity: '0' }, to: { opacity: '1' } },
         'scale-in': {
           from: { opacity: '0', transform: 'scale(.96) translateY(6px)' },

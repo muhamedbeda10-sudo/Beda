@@ -10,6 +10,9 @@
 
 import type { KpiThresholds } from './kpi'
 import type {
+  NoticeForUser,
+  NoticeSeverity,
+  NoticeTarget,
   AuditAction,
   AuditEntry,
   Coil,
@@ -560,4 +563,35 @@ export interface KpiThresholdsResponse {
   thresholds: KpiThresholds
   updatedAt?: string
   updatedByName?: string
+}
+
+// ---- §16 Notices -----------------------------------------------------------
+
+export interface SaveNoticeRequest {
+  title: string
+  body: string
+  severity: NoticeSeverity
+  requiresAck: boolean
+  validFrom: string
+  validTo: string | null
+  targets: NoticeTarget[]
+  imageIds: string[]
+  fileIds: string[]
+}
+
+export interface NoticeInboxResponse {
+  notices: NoticeForUser[]
+  /** Active notices still to be read or acknowledged. */
+  pendingCount: number
+}
+
+/** Where a reader is about to work: an existing session, or a machine and line before one starts. */
+export type MatchNoticesRequest = { sessionId: string } | { workCenterCode: string; orderId?: string }
+
+export interface MatchNoticesResponse {
+  notices: NoticeForUser[]
+}
+
+export interface AcknowledgeNoticeRequest {
+  context?: { sessionId?: string; workCenterCode?: string; orderNumber?: string; itemCode?: string }
 }

@@ -19,7 +19,9 @@ import {
   Users,
   ScrollText,
   ChevronRight,
+  BellRing,
 } from 'lucide-react'
+import { NoticeBell } from '@/components/notices/NoticeBell'
 import { Brand } from '@/components/brand/Brand'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
@@ -48,6 +50,7 @@ export const ADMIN_NAV: NavItem[] = [
   { to: '/admin/configuration', label: 'Configuration', icon: SlidersHorizontal, needs: 'manage-admin-data', hint: 'Machines, items, defects, grades' },
   { to: '/admin/import', label: 'Data import', icon: UploadCloud, needs: 'manage-admin-data', hint: 'Production orders and coils' },
   { to: '/admin/users', label: 'Users', icon: Users, needs: 'manage-admin-data', hint: 'Accounts and roles' },
+  { to: '/admin/notices', label: 'Notices', icon: BellRing, needs: 'manage-admin-data', hint: 'Targeted messages and who read them' },
   { to: '/admin/audit', label: 'Audit log', icon: ScrollText, needs: 'edit-closed-session', hint: 'Who changed what, and when' },
 ]
 
@@ -203,6 +206,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           {/* Right — theme, administration, account */}
           <div className="ml-auto flex shrink-0 items-center gap-1 lg:ml-0 lg:justify-self-end">
+            <NoticeBell />
             <button onClick={toggleTheme} className="icon-btn" aria-label="Toggle light or dark theme">
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>

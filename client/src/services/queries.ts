@@ -28,9 +28,10 @@ import type {
   WizardContext,
   SessionNotesResponse,
   KpiThresholdsResponse,
+  NoticeInboxResponse,
 } from '@qc/shared/api'
 import type { KpiFilters, KpiOverview } from '@qc/shared/kpi'
-import type { Coil, Disposition, ImageAsset, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
+import type { Coil, Disposition, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
 export const keys = {
@@ -58,6 +59,9 @@ export const keys = {
   workInstructions: (process?: string, history?: boolean) => ['work-instructions', process ?? 'all', history ? 'history' : 'in-force'] as const,
   kpiOverview: (filters: KpiFilters) => ['kpi', 'overview', filters] as const,
   kpiThresholds: ['kpi', 'thresholds'] as const,
+  noticeInbox: ['notices', 'inbox'] as const,
+  noticesAdmin: ['notices', 'admin'] as const,
+  noticeAcks: (id: string) => ['notices', id, 'acknowledgements'] as const,
 }
 
 /** A value that settles `ms` after it stops changing, so typing an
@@ -263,4 +267,28 @@ export function useKpiOverview(filters: KpiFilters | null) {
 
 export function useKpiThresholds(enabled = true) {
   return useQuery({ queryKey: keys.kpiThresholds, queryFn: () => api<KpiThresholdsResponse>('/kpi/thresholds'), enabled, staleTime: 5 * 60_000 })
+}
+
+// ---- §16 Notices -----------------------------------------------------------
+
+/** The bell polls quietly: every three minutes while the tab is visible, never in the background (free tier). */
+export const NOTICE_POLL_MS = 3 * 60_000
+
+export function useNoticeInbox(enabled = true) {
+  return useQuery({
+    queryKey: keys.noticeInbox,
+    queryFn: () => api<NoticeInboxResponse>('/notices/inbox'),
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: NOTICE_POLL_MS,
+    refetchIntervalInBackground: false,
+  })
+}
+
+export function useAdminNotices(enabled = true) {
+  return useQuery({ queryKey: keys.noticesAdmin, queryFn: () => api<NoticeAdminRow[]>('/notices/admin'), enabled })
+}
+
+export function useNoticeAcknowledgements(id: string | null) {
+  return useQuery({ queryKey: keys.noticeAcks(id ?? ''), queryFn: () => api<NoticeAcknowledgement[]>(`/notices/${id}/acknowledgements`), enabled: id !== null })
 }

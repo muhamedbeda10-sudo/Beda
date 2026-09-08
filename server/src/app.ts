@@ -26,6 +26,7 @@ import { workInstructionsRoutes } from './modules/workInstructions.routes'
 import { pdiRoutes } from './modules/pdi.routes'
 import { auditRoutes } from './modules/audit.routes'
 import { kpiRoutes } from './modules/kpi.routes'
+import { noticesRoutes } from './modules/notices.routes'
 
 export function createApp(ctx: AppContext): Express {
   const app = express()
@@ -82,6 +83,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/pdi', guard, pdiRoutes(ctx))
   app.use('/api/audit', guard, auditRoutes(ctx))
   app.use('/api/kpi', guard, kpiRoutes(ctx))
+  app.use('/api/notices', guard, noticesRoutes(ctx))
 
   app.all('/api/{*rest}', (_req, res) => {
     const body: ApiErrorBody = { error: { code: 'not_found', message: 'No such endpoint.' } }

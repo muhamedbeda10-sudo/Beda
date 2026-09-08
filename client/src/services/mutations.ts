@@ -29,9 +29,13 @@ import {
   type ReRecordSampleResponse,
   type ReopenSessionRequest,
   type KpiThresholdsResponse,
+  type AcknowledgeNoticeRequest,
+  type MatchNoticesRequest,
+  type MatchNoticesResponse,
+  type SaveNoticeRequest,
 } from '@qc/shared/api'
 import type { KpiThresholds } from '@qc/shared/kpi'
-import type { DefectResult, DimensionResult, UserProfile, WorkInstruction } from '@qc/shared/types'
+import type { DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, UserProfile, WorkInstruction } from '@qc/shared/types'
 import { api } from '@/lib/api'
 import { chunk } from '@/lib/utils'
 
@@ -257,4 +261,45 @@ export async function saveKpiThresholds(qc: QueryClient, body: KpiThresholds): P
   const res = await api<KpiThresholdsResponse>('/kpi/thresholds', { method: 'PUT', body })
   await qc.invalidateQueries({ queryKey: ['kpi'] })
   return res
+}
+
+// ---- §16 Notices -----------------------------------------------------------
+
+/** What is still to be read where the reader is about to work. */
+export async function matchNotices(body: MatchNoticesRequest): Promise<NoticeForUser[]> {
+  const res = await api<MatchNoticesResponse>('/notices/match', { method: 'POST', body })
+  return res.notices
+}
+
+export async function markNoticeSeen(qc: QueryClient, id: string, body: AcknowledgeNoticeRequest = {}): Promise<void> {
+  await api<void>(`/notices/${id}/seen`, { method: 'POST', body })
+  await qc.invalidateQueries({ queryKey: ['notices'] })
+}
+
+export async function acknowledgeNotice(qc: QueryClient, id: string, body: AcknowledgeNoticeRequest = {}): Promise<void> {
+  await api<void>(`/notices/${id}/acknowledge`, { method: 'POST', body })
+  await qc.invalidateQueries({ queryKey: ['notices'] })
+}
+
+export async function uploadNoticeFile(file: File): Promise<NoticeFile> {
+  const form = new FormData()
+  form.set('file', file, file.name)
+  return api<NoticeFile>('/notices/files', { method: 'POST', form })
+}
+
+export async function saveNotice(qc: QueryClient, id: string | null, body: SaveNoticeRequest): Promise<Notice> {
+  const res = id ? await api<Notice>(`/notices/${id}`, { method: 'PUT', body }) : await api<Notice>('/notices', { method: 'POST', body })
+  await qc.invalidateQueries({ queryKey: ['notices'] })
+  return res
+}
+
+export async function withdrawNotice(qc: QueryClient, id: string): Promise<Notice> {
+  const res = await api<Notice>(`/notices/${id}/withdraw`, { method: 'POST' })
+  await qc.invalidateQueries({ queryKey: ['notices'] })
+  return res
+}
+
+export async function deleteNotice(qc: QueryClient, id: string): Promise<void> {
+  await api<void>(`/notices/${id}`, { method: 'DELETE' })
+  await qc.invalidateQueries({ queryKey: ['notices'] })
 }
