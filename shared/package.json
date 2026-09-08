@@ -3,13 +3,14 @@
   "private": true,
   "version": "2.0.0",
   "type": "module",
-  "description": "Domain model and business rules shared by the QC client and API. Pure TypeScript — no I/O, no framework.",
+  "description": "Domain model and business rules shared by the QC client and API. Pure TypeScript \u2014 no I/O, no framework.",
   "exports": {
     ".": "./src/index.ts",
     "./types": "./src/types.ts",
     "./rules": "./src/rules.ts",
     "./audit": "./src/audit.ts",
-    "./api": "./src/api.ts"
+    "./api": "./src/api.ts",
+    "./kpi": "./src/kpi.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",

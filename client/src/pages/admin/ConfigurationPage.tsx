@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { Navigate, NavLink, useParams } from 'react-router-dom'
-import { AlertTriangle, BookOpen, ClipboardPaste, Factory, FileSpreadsheet, FlaskConical, Image as ImageIcon, ListOrdered, Ruler, Shuffle } from 'lucide-react'
+import { AlertTriangle, BookOpen, ClipboardPaste, Factory, FileSpreadsheet, FlaskConical, Gauge, Image as ImageIcon, ListOrdered, Ruler, Shuffle } from 'lucide-react'
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { CsvImporter } from '@/components/admin/CsvImporter'
 import { PasteImporter } from '@/components/admin/PasteImporter'
@@ -12,6 +12,7 @@ import { MachinesSection } from '@/components/admin/config/MachinesSection'
 import { GradeMappingsSection } from '@/components/admin/config/GradeMappingsSection'
 import { PTConsumablesSection } from '@/components/admin/config/PTConsumablesSection'
 import { WorkInstructionsSection } from '@/components/admin/config/WorkInstructionsSection'
+import { KpiTargetsSection } from '@/components/admin/config/KpiTargetsSection'
 import { Button } from '@/components/ui'
 import { cn } from '@/lib/utils'
 
@@ -28,6 +29,7 @@ const SECTIONS: Array<{ key: string; label: string; icon: typeof Ruler; panel: R
   { key: 'grades', label: 'Grade mappings', icon: Shuffle, panel: <GradeMappingsSection /> },
   { key: 'pt-consumables', label: 'PT consumables', icon: FlaskConical, panel: <PTConsumablesSection /> },
   { key: 'work-instructions', label: 'Work instructions', icon: BookOpen, panel: <WorkInstructionsSection /> },
+  { key: 'kpi-targets', label: 'KPI targets', icon: Gauge, panel: <KpiTargetsSection /> },
 ]
 
 export function ConfigurationPage() {

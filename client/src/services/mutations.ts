@@ -28,7 +28,9 @@ import {
   type ReRecordSampleRequest,
   type ReRecordSampleResponse,
   type ReopenSessionRequest,
+  type KpiThresholdsResponse,
 } from '@qc/shared/api'
+import type { KpiThresholds } from '@qc/shared/kpi'
 import type { DefectResult, DimensionResult, UserProfile, WorkInstruction } from '@qc/shared/types'
 import { api } from '@/lib/api'
 import { chunk } from '@/lib/utils'
@@ -247,4 +249,12 @@ export async function deleteWorkInstruction(qc: QueryClient, id: string): Promis
 export async function deleteUser(qc: QueryClient, id: string): Promise<void> {
   await api<void>(`/users/${id}`, { method: 'DELETE' })
   await qc.invalidateQueries({ queryKey: ['users'] })
+}
+
+// ---- §15 Dashboard ---------------------------------------------------------
+
+export async function saveKpiThresholds(qc: QueryClient, body: KpiThresholds): Promise<KpiThresholdsResponse> {
+  const res = await api<KpiThresholdsResponse>('/kpi/thresholds', { method: 'PUT', body })
+  await qc.invalidateQueries({ queryKey: ['kpi'] })
+  return res
 }

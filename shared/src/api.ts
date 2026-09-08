@@ -8,6 +8,7 @@
 // a sample together with its children, and so on).
 // ============================================================================
 
+import type { KpiThresholds } from './kpi'
 import type {
   AuditAction,
   AuditEntry,
@@ -551,4 +552,12 @@ export interface HealthResponse {
   ok: boolean
   version: string
   database: 'up' | 'down'
+}
+
+// ---- §15 Dashboard ---------------------------------------------------------
+
+export interface KpiThresholdsResponse {
+  thresholds: KpiThresholds
+  updatedAt?: string
+  updatedByName?: string
 }

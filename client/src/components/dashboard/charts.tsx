@@ -1,0 +1,337 @@
+// ============================================================================
+// Small SVG charts for the dashboard (§15). Hand-drawn rather than a chart
+// library: the shapes are few and fixed, the bundle stays small for a tablet
+// on the factory Wi-Fi, and they print as vectors. Each one scales with its
+// container through the viewBox and keeps its text legible in both themes
+// with currentColor and the brand palette.
+// ============================================================================
+
+import { useId, useState, type ReactNode } from 'react'
+import { cn } from '@/lib/utils'
+
+const fmt = (n: number, digits = 1): string => (Number.isInteger(n) ? String(n) : n.toFixed(digits))
+
+function niceMax(v: number): number {
+  if (!(v > 0)) return 1
+  const p = 10 ** Math.floor(Math.log10(v))
+  const m = v / p
+  const step = m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10
+  return step * p
+}
+
+/** Grid lines with their labels, five steps from 0 to max. */
+function Grid({ x0, x1, y0, y1, max, unit = '' }: { x0: number; x1: number; y0: number; y1: number; max: number; unit?: string }) {
+  const steps = 4
+  return (
+    <g className="text-slate-400 dark:text-slate-500" fontSize="10">
+      {Array.from({ length: steps + 1 }, (_, i) => {
+        const v = (max / steps) * i
+        const y = y1 - ((y1 - y0) * i) / steps
+        return (
+          <g key={i}>
+            <line x1={x0} x2={x1} y1={y} y2={y} stroke="currentColor" strokeOpacity={i === 0 ? 0.6 : 0.18} strokeDasharray={i === 0 ? undefined : '3 3'} />
+            <text x={x0 - 6} y={y + 3} textAnchor="end" fill="currentColor">
+              {fmt(v)}
+              {unit}
+            </text>
+          </g>
+        )
+      })}
+    </g>
+  )
+}
+
+export interface TrendPoint {
+  label: string
+  /** Bars, e.g. samples per day. */
+  bar: number
+  /** Line on its own axis, e.g. defect rate; null draws a gap. */
+  line: number | null
+}
+
+/** Bars for volume with a line for a rate over the same days. */
+export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height = 220 }: { points: TrendPoint[]; barLabel: string; lineLabel: string; lineUnit?: string; height?: number }) {
+  const [hover, setHover] = useState<number | null>(null)
+  const id = useId()
+  const W = 720
+  const H = height
+  const pad = { l: 40, r: 44, t: 16, b: 34 }
+  const x0 = pad.l
+  const x1 = W - pad.r
+  const y0 = pad.t
+  const y1 = H - pad.b
+  const n = points.length
+  if (n === 0) return <ChartEmpty height={height} />
+  const barMax = niceMax(Math.max(...points.map((p) => p.bar)))
+  const lineMax = niceMax(Math.max(...points.map((p) => p.line ?? 0)))
+  const slot = (x1 - x0) / n
+  const bw = Math.max(2, Math.min(28, slot * 0.6))
+  const xAt = (i: number) => x0 + slot * i + slot / 2
+  const yBar = (v: number) => y1 - ((y1 - y0) * v) / barMax
+  const yLine = (v: number) => y1 - ((y1 - y0) * v) / lineMax
+  const segments: string[] = []
+  let current: string[] = []
+  points.forEach((p, i) => {
+    if (p.line === null) {
+      if (current.length) segments.push(current.join(' '))
+      current = []
+    } else current.push(`${xAt(i)},${yLine(p.line)}`)
+  })
+  if (current.length) segments.push(current.join(' '))
+  const every = Math.max(1, Math.ceil(n / 12))
+  const h = hover !== null ? points[hover] : null
+  return (
+    <figure className="relative">
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
+        <title id={`${id}-t`}>
+          {barLabel} and {lineLabel} by day
+        </title>
+        <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={barMax} />
+        <g className="text-slate-400 dark:text-slate-500" fontSize="10">
+          {Array.from({ length: 5 }, (_, i) => {
+            const v = (lineMax / 4) * i
+            return (
+              <text key={i} x={x1 + 6} y={yLine(v) + 3} fill="currentColor">
+                {fmt(v)}
+                {lineUnit}
+              </text>
+            )
+          })}
+        </g>
+        {points.map((p, i) => (
+          <g key={p.label} onMouseEnter={() => setHover(i)}>
+            <rect x={xAt(i) - slot / 2} y={y0} width={slot} height={y1 - y0} fill="transparent" />
+            <rect x={xAt(i) - bw / 2} y={yBar(p.bar)} width={bw} height={Math.max(0, y1 - yBar(p.bar))} rx={3} className={cn('fill-brand-300 transition-opacity dark:fill-brand-600', hover !== null && hover !== i && 'opacity-50')} />
+            {i % every === 0 && (
+              <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-slate-500 dark:fill-slate-400">
+                {p.label}
+              </text>
+            )}
+          </g>
+        ))}
+        {segments.map((d, i) => (
+          <polyline key={i} points={d} fill="none" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" className="stroke-rose-500" />
+        ))}
+        {points.map((p, i) => p.line !== null && <circle key={p.label} cx={xAt(i)} cy={yLine(p.line)} r={hover === i ? 5 : 3} className="fill-white stroke-rose-500 dark:fill-slate-900" strokeWidth={2} />)}
+        {h && (
+          <line x1={xAt(hover!)} x2={xAt(hover!)} y1={y0} y2={y1} className="stroke-slate-400" strokeDasharray="3 3" />
+        )}
+      </svg>
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+        <span className="inline-flex items-center gap-1.5">
+          <i className="inline-block h-2.5 w-2.5 rounded-sm bg-brand-300 dark:bg-brand-600" /> {barLabel}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <i className="inline-block h-0.5 w-4 rounded bg-rose-500" /> {lineLabel}
+        </span>
+        {h && (
+          <span className="ml-auto font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+            {h.label}: {fmt(h.bar)} · {h.line === null ? '—' : `${fmt(h.line)}${lineUnit}`}
+          </span>
+        )}
+      </div>
+    </figure>
+  )
+}
+
+export interface ParetoBar {
+  label: string
+  value: number
+  cumulativePct: number
+}
+
+/** Bars sorted largest first with the running share drawn over them. */
+export function ParetoChart({ bars, height = 240 }: { bars: ParetoBar[]; height?: number }) {
+  const id = useId()
+  const [hover, setHover] = useState<number | null>(null)
+  const W = 720
+  const H = height
+  const pad = { l: 40, r: 40, t: 16, b: 58 }
+  const x0 = pad.l
+  const x1 = W - pad.r
+  const y0 = pad.t
+  const y1 = H - pad.b
+  const n = bars.length
+  if (n === 0) return <ChartEmpty height={height} />
+  const max = niceMax(Math.max(...bars.map((b) => b.value)))
+  const slot = (x1 - x0) / n
+  const bw = Math.max(4, Math.min(40, slot * 0.66))
+  const xAt = (i: number) => x0 + slot * i + slot / 2
+  const yBar = (v: number) => y1 - ((y1 - y0) * v) / max
+  const yPct = (v: number) => y1 - ((y1 - y0) * v) / 100
+  const line = bars.map((b, i) => `${xAt(i)},${yPct(b.cumulativePct)}`).join(' ')
+  const eighty = bars.findIndex((b) => b.cumulativePct >= 80)
+  return (
+    <figure>
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
+        <title id={`${id}-t`}>Pareto of defects</title>
+        <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} />
+        <g className="text-slate-400 dark:text-slate-500" fontSize="10">
+          {[0, 25, 50, 75, 100].map((v) => (
+            <text key={v} x={x1 + 6} y={yPct(v) + 3} fill="currentColor">
+              {v}%
+            </text>
+          ))}
+        </g>
+        <line x1={x0} x2={x1} y1={yPct(80)} y2={yPct(80)} className="stroke-amber-500" strokeDasharray="4 4" strokeOpacity={0.7} />
+        {bars.map((b, i) => {
+          const vital = eighty === -1 || i <= eighty
+          const label = b.label.length > 14 ? `${b.label.slice(0, 13)}…` : b.label
+          return (
+            <g key={b.label} onMouseEnter={() => setHover(i)}>
+              <rect x={xAt(i) - bw / 2} y={yBar(b.value)} width={bw} height={Math.max(0, y1 - yBar(b.value))} rx={4} className={cn(vital ? 'fill-rose-500' : 'fill-slate-300 dark:fill-slate-600', hover !== null && hover !== i && 'opacity-60')} />
+              <text x={xAt(i)} y={yBar(b.value) - 4} textAnchor="middle" fontSize="10" className="fill-slate-600 dark:fill-slate-300">
+                {fmt(b.value)}
+              </text>
+              <text transform={`translate(${xAt(i)} ${y1 + 8}) rotate(-28)`} textAnchor="end" fontSize="10" className="fill-slate-500 dark:fill-slate-400">
+                {label}
+              </text>
+            </g>
+          )
+        })}
+        <polyline points={line} fill="none" strokeWidth={2} className="stroke-brand-600 dark:stroke-brand-300" strokeLinejoin="round" />
+        {bars.map((b, i) => (
+          <circle key={b.label} cx={xAt(i)} cy={yPct(b.cumulativePct)} r={3} className="fill-white stroke-brand-600 dark:fill-slate-900 dark:stroke-brand-300" strokeWidth={2} />
+        ))}
+      </svg>
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+        <span className="inline-flex items-center gap-1.5">
+          <i className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> Vital few (to 80%)
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <i className="inline-block h-0.5 w-4 rounded bg-brand-600 dark:bg-brand-300" /> Cumulative share
+        </span>
+        {hover !== null && (
+          <span className="ml-auto font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+            {bars[hover].label}: {fmt(bars[hover].value)} pieces · {fmt(bars[hover].cumulativePct)}% cumulative
+          </span>
+        )}
+      </div>
+    </figure>
+  )
+}
+
+export interface Slice {
+  label: string
+  value: number
+  className: string
+}
+
+/** A donut with the total in the middle and the legend beside it. */
+export function DonutChart({ slices, centerLabel, size = 160 }: { slices: Slice[]; centerLabel: string; size?: number }) {
+  const total = slices.reduce((n, s) => n + s.value, 0)
+  const r = 46
+  const c = 2 * Math.PI * r
+  let offset = 0
+  return (
+    <div className="flex flex-wrap items-center gap-5">
+      <svg viewBox="0 0 120 120" width={size} height={size} role="img" aria-label={centerLabel}>
+        <circle cx="60" cy="60" r={r} fill="none" strokeWidth="16" className="stroke-slate-100 dark:stroke-slate-800" />
+        {total > 0 &&
+          slices
+            .filter((s) => s.value > 0)
+            .map((s) => {
+              const len = (s.value / total) * c
+              const el = (
+                <circle
+                  key={s.label}
+                  cx="60"
+                  cy="60"
+                  r={r}
+                  fill="none"
+                  strokeWidth="16"
+                  strokeDasharray={`${len} ${c - len}`}
+                  strokeDashoffset={-offset}
+                  transform="rotate(-90 60 60)"
+                  className={cn('transition-[stroke-dasharray] duration-500', s.className)}
+                />
+              )
+              offset += len
+              return el
+            })}
+        <text x="60" y="57" textAnchor="middle" fontSize="20" fontWeight="700" className="fill-slate-800 dark:fill-white">
+          {fmt(total)}
+        </text>
+        <text x="60" y="73" textAnchor="middle" fontSize="9" className="fill-slate-500 dark:fill-slate-400">
+          {centerLabel}
+        </text>
+      </svg>
+      <ul className="min-w-[10rem] flex-1 space-y-1.5 text-sm">
+        {slices.map((s) => (
+          <li key={s.label} className="flex items-center gap-2">
+            <i className={cn('inline-block h-2.5 w-2.5 rounded-full', s.className.replace(/stroke-/g, 'bg-'))} />
+            <span className="flex-1 text-slate-600 dark:text-slate-300">{s.label}</span>
+            <span className="font-semibold tabular-nums">{fmt(s.value)}</span>
+            <span className="w-12 text-right text-xs tabular-nums text-slate-400">{total > 0 ? `${Math.round((s.value / total) * 100)}%` : '—'}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+export interface HBar {
+  label: string
+  sub?: string
+  value: number | null
+  tone: 'green' | 'amber' | 'red' | 'neutral'
+  /** Text shown after the bar. */
+  text: string
+  onClick?: () => void
+}
+
+const TONE_BAR: Record<HBar['tone'], string> = {
+  green: 'bg-emerald-500',
+  amber: 'bg-amber-500',
+  red: 'bg-rose-500',
+  neutral: 'bg-slate-300 dark:bg-slate-600',
+}
+
+/** Horizontal bars, one per row, coloured by how the value compares with its target. */
+export function HorizontalBars({ rows, max, unit = '' }: { rows: HBar[]; max?: number; unit?: string }) {
+  if (rows.length === 0) return <ChartEmpty height={80} />
+  const top = max ?? niceMax(Math.max(...rows.map((r) => r.value ?? 0)))
+  return (
+    <ul className="space-y-2">
+      {rows.map((r) => {
+        const w = r.value === null ? 0 : Math.min(100, (r.value / top) * 100)
+        const inner = (
+          <>
+            <div className="flex items-baseline justify-between gap-2 text-sm">
+              <span className="truncate font-medium text-slate-700 dark:text-slate-200">
+                {r.label}
+                {r.sub && <span className="ml-1.5 text-xs font-normal text-slate-400">{r.sub}</span>}
+              </span>
+              <span className="shrink-0 text-xs tabular-nums text-slate-500 dark:text-slate-400">{r.text}</span>
+            </div>
+            <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+              <div className={cn('h-full rounded-full transition-[width] duration-500', TONE_BAR[r.tone])} style={{ width: `${w}%` }} aria-hidden />
+            </div>
+            <span className="sr-only">
+              {r.value === null ? 'no value' : `${fmt(r.value)}${unit}`}
+            </span>
+          </>
+        )
+        return (
+          <li key={r.label + (r.sub ?? '')}>
+            {r.onClick ? (
+              <button type="button" onClick={r.onClick} className="block w-full rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                {inner}
+              </button>
+            ) : (
+              <div className="px-1 py-0.5">{inner}</div>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+export function ChartEmpty({ height = 160, children = 'Nothing in this period.' }: { height?: number; children?: ReactNode }) {
+  return (
+    <div className="grid place-items-center rounded-xl border border-dashed border-slate-200 text-sm text-slate-400 dark:border-slate-700" style={{ minHeight: height }}>
+      {children}
+    </div>
+  )
+}

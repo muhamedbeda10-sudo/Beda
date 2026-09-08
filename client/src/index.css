@@ -129,3 +129,29 @@ input[type='number']::-webkit-outer-spin-button {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* §15 — the dashboard as a PDF: the browser's print dialog, landscape, without the chrome. */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #0f172a !important;
+  }
+  .print-hidden {
+    display: none !important;
+  }
+  .card {
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+  .print-break {
+    break-before: page;
+  }
+  main {
+    padding: 0 !important;
+  }
+}

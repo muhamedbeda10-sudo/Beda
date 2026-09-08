@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   ClipboardCheck,
   History,
+  LayoutDashboard,
   Settings,
   Sun,
   Moon,
@@ -39,6 +40,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/history', label: 'History', icon: History },
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
 ]
 
 /** Administration, behind the gear. Each entry is shown only to a role that may use it. */
@@ -155,6 +157,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
 
+  const nav = NAV.filter((n) => !n.needs || can(role, n.needs))
   const admin = ADMIN_NAV.filter((n) => !n.needs || can(role, n.needs))
   const displayName = profile?.name || user
   const initials = (displayName ?? '?')
@@ -167,7 +170,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-full">
-      <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/85 shadow-[0_1px_0_rgba(255,255,255,.6)_inset] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/85 safe-top">
+      <header className="print:hidden sticky top-0 z-40 border-b border-slate-200/80 bg-white/85 shadow-[0_1px_0_rgba(255,255,255,.6)_inset] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/85 safe-top">
         {/* A desktop centres the tabs and shows the gear and the account; a tablet or phone keeps all of that behind the menu button. */}
         <div className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:px-8">
           {/* Left — brand */}
@@ -177,7 +180,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           {/* The inspector's tabs, centred — desktop only */}
           <nav className="hidden items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 lg:flex lg:justify-self-center dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
-            {NAV.map((n) => {
+            {nav.map((n) => {
               const active = isActive(n)
               return (
                 <NavLink
@@ -236,7 +239,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </button>
             </div>
             <nav className="flex flex-col gap-1 p-3">
-              {NAV.map((n) => (
+              {nav.map((n) => (
                 <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
               ))}
               {admin.length > 0 && (

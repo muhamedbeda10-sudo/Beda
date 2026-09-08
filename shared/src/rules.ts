@@ -592,6 +592,8 @@ export type Capability =
   | 'delete-sample'
   /** Mark a note about an order deleted — administrators only. */
   | 'delete-note'
+  /** The quality dashboard: KPIs, trends, insights — administrators only. */
+  | 'view-dashboard'
   | 'override-grade-mismatch'
   | 'manage-admin-data'
   | 'purge-audit-logs'
@@ -615,6 +617,7 @@ const CAPABILITIES: Record<Role, Capability[]> = {
     'delete-session',
     'delete-sample',
     'delete-note',
+    'view-dashboard',
     'override-grade-mismatch',
     'manage-admin-data',
     'purge-audit-logs',
