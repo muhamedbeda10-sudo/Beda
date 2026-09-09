@@ -22,6 +22,8 @@ import {
   ShieldCheck,
   Tag,
   User,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { Badge, Button, Drawer, type BadgeTone } from '@/components/ui'
 import { SessionToneBadge } from '@/components/inspection/SessionTone'
@@ -54,6 +56,8 @@ export function OrderDetailsPanel({
   const orderId = session?.orderId ?? null
   const { data: order } = useOrder(orderId)
   const { data: history } = useOrderHistory(orderId)
+  /** Earlier sessions on the line whose samples are shown. */
+  const [openSessions, setOpenSessions] = useState<Set<string>>(() => new Set())
   const { data: notes = [], isLoading: notesLoading } = useOrderNotes(orderId)
   const machineLabel = (code: string) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`
   const stock = isStockOrder(session?.order)
@@ -193,24 +197,54 @@ export function OrderDetailsPanel({
                 <ul className="space-y-1.5">
                   {history.sessions.map((s) => {
                     const current = s.id === session.id
+                    const expanded = current || openSessions.has(s.id)
+                    const theirs = history.samples.filter((sm) => sm.sessionId === s.id).sort((a, b) => a.index - b.index)
                     return (
                       <li
                         key={s.id}
                         className={cn(
-                          'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-3 py-2 text-sm ring-1',
+                          'rounded-xl px-3 py-2 text-sm ring-1',
                           current ? 'bg-brand-50 ring-brand-200 dark:bg-brand-500/10 dark:ring-brand-500/30' : 'bg-slate-50 ring-slate-200/70 dark:bg-slate-800/50 dark:ring-slate-700',
                         )}
                       >
-                        <span className="font-bold tabular-nums">#{s.seq}</span>
-                        <span className="text-slate-600 dark:text-slate-300">{s.inspectorName}</span>
-                        <span className="text-xs text-slate-400">{formatDateTime(s.startedAt)}</span>
-                        <span className="ml-auto flex items-center gap-1.5">
-                          {current && <Badge tone="blue">this one</Badge>}
-                          <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
-                          <Badge tone="neutral">{s.sampleCount ?? 0} samples</Badge>
-                          {(s.defectCount ?? 0) > 0 && <Badge tone="red">{s.defectCount} defects</Badge>}
-                          {(s.holdCount ?? 0) > 0 && <Badge tone="amber">{s.holdCount} on Hold</Badge>}
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => !current && setOpenSessions((prev) => { const next = new Set(prev); if (next.has(s.id)) next.delete(s.id); else next.add(s.id); return next })}
+                          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 text-left"
+                          aria-expanded={expanded}
+                        >
+                          <span className="font-bold tabular-nums">#{s.seq}</span>
+                          <span className="text-slate-600 dark:text-slate-300">{s.inspectorName}</span>
+                          <span className="text-xs text-slate-400">{formatDateTime(s.startedAt)}</span>
+                          <span className="ml-auto flex items-center gap-1.5">
+                            {current && <Badge tone="blue">this one</Badge>}
+                            <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
+                            <Badge tone="neutral">{s.sampleCount ?? 0} samples</Badge>
+                            {(s.defectCount ?? 0) > 0 && <Badge tone="red">{s.defectCount} defects</Badge>}
+                            {(s.holdCount ?? 0) > 0 && <Badge tone="amber">{s.holdCount} on Hold</Badge>}
+                            {!current && (expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />)}
+                          </span>
+                        </button>
+                        {/* Any earlier session opens its samples here, read-only: the line's whole record is one tap away. */}
+                        {expanded && !current && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-200/70 pt-2 dark:border-slate-700">
+                            {theirs.length === 0 ? (
+                              <span className="text-xs text-slate-400">No sample in this session.</span>
+                            ) : (
+                              theirs.map((sm) => (
+                                <button
+                                  key={sm.id}
+                                  type="button"
+                                  onClick={() => onOpenSample({ ...s, order: session.order }, sm)}
+                                  className="min-h-[36px] rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-50 dark:bg-slate-900 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20"
+                                >
+                                  {s.seq}-{sm.index}
+                                  <span className="ml-1 font-normal text-slate-400">{sm.inspectorName.split(' ')[0]}</span>
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        )}
                       </li>
                     )
                   })}
