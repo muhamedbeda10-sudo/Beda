@@ -109,6 +109,23 @@ function key(sessionId: string, editingSampleId?: string): string {
   return editingSampleId ? `${PREFIX}${sessionId}:edit:${editingSampleId}` : `${PREFIX}${sessionId}`
 }
 
+/**
+ * Whether the inspector has recorded anything in a draft yet. A draft they
+ * only opened and left carries nothing worth keeping, and restoring it would
+ * hide what the server knows now — the nominal typed on the previous sample,
+ * a changed configuration — so such a draft is rebuilt rather than resumed.
+ */
+export function draftIsUntouched(d: SampleDraft): boolean {
+  if (d.editingSampleId) return false
+  if (d.sampleQty.trim() !== '') return false
+  if (d.dimensions.some((x) => x.actual.trim() !== '')) return false
+  if (d.defects.length > 0) return false
+  if (d.paint.imageIds.length > 0 || (d.paint.notes ?? '').trim() !== '') return false
+  if (d.note && (d.note.text.trim() !== '' || d.note.imageIds.length > 0)) return false
+  if (d.pt && (d.pt.testedLengths.length > 0 || d.pt.imageIds.length > 0 || d.pt.testFrequencyPct.trim() !== '')) return false
+  return true
+}
+
 export function loadDraft(sessionId: string, editingSampleId?: string): SampleDraft | null {
   try {
     const raw = localStorage.getItem(key(sessionId, editingSampleId))
