@@ -472,10 +472,15 @@ export function resolveDimensions(input: {
 
   for (const o of [...specific.sort(bySequence), ...general.sort(bySequence)]) {
     const remembered = previousByName.get(o.dimensionName.trim().toLowerCase())
+    // A configured nominal wins — unless it is missing or 0, which is how an
+    // ERP sheet says "not set": then the nominal the inspector typed on the
+    // previous sample is what the next one starts from.
+    const configured = o.nominal !== null && o.nominal !== undefined && o.nominal !== 0 ? o.nominal : null
+    const rememberedNominal = remembered?.nominal !== null && remembered?.nominal !== undefined ? remembered.nominal : null
     add({
       name: o.dimensionName,
       sequence: o.sequence,
-      nominal: o.nominal ?? remembered?.nominal ?? null,
+      nominal: configured ?? rememberedNominal ?? o.nominal ?? null,
       tolPlus: o.tolPlus,
       tolMinus: o.tolMinus,
       unit: o.unit,
