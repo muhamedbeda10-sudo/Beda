@@ -389,6 +389,29 @@ describe('§8.3 dimension resolution', () => {
     expect(rows.find((r) => r.name === 'Hole pitch')!.source).toBe('carry-forward')
   })
 
+  it('takes the nominal typed on the previous sample when the configured one is 0 or missing', () => {
+    // An ERP sheet writes 0 for "not set"; the inspector typed 1004 on the first sample.
+    const zeroed = [
+      { itemCode: 'UP-1', dimensionName: 'A', sequence: 1, nominal: 0, tolPlus: 1, tolMinus: 1, unit: 'mm' },
+      { itemCode: 'UP-1', dimensionName: 'K', sequence: 2, nominal: null, tolPlus: 0.5, tolMinus: 0.5, unit: 'mm' },
+      { itemCode: 'UP-1', dimensionName: 'B', sequence: 3, nominal: 80, tolPlus: 1, tolMinus: 1, unit: 'mm' },
+    ]
+    const typed = [
+      { name: 'A', nominal: 1004, tolPlus: 1, tolMinus: 1, unit: 'mm' },
+      { name: 'K', nominal: 42, tolPlus: 0.5, tolMinus: 0.5, unit: 'mm' },
+      { name: 'B', nominal: 999, tolPlus: 1, tolMinus: 1, unit: 'mm' },
+    ]
+    const rows = resolveDimensions({ itemCode: 'UP-1', workCenterCode: '24', order: zeroed, previous: typed })
+    expect(rows.map((r) => [r.name, r.nominal])).toEqual([
+      ['A', 1004],
+      ['K', 42],
+      // A real configured nominal still wins over what was typed.
+      ['B', 80],
+    ])
+    // With nothing typed yet, a 0 stays 0 so the inspector sees it is not set.
+    expect(resolveDimensions({ itemCode: 'UP-1', workCenterCode: '24', order: zeroed, previous: [] }).map((r) => r.nominal)).toEqual([0, null, 80])
+  })
+
   it('returns nothing for an item with no configuration at all', () => {
     expect(resolveDimensions({ itemCode: 'NOPE', workCenterCode: '58', order, previous: [] })).toEqual([])
   })
