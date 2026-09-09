@@ -30,7 +30,7 @@ import { useSampleDetail, useWizardContext, useWizardPreview } from '@/services/
 import { discardSession, matchNotices, reRecordSample, saveSample, startSessionWithSample } from '@/services/mutations'
 import { NoticeGate } from '@/components/notices/NoticeGate'
 import type { NoticeForUser } from '@qc/shared/types'
-import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect, type DraftCoil, type DraftPT, type DraftDimension, type DraftNote } from '@/services/draftStore'
+import { loadDraft, saveDraft, clearDraft, type SampleDraft, type DraftDefect, type DraftCoil, type DraftPT, type DraftDimension, type DraftNote, draftIsUntouched } from '@/services/draftStore'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
@@ -170,8 +170,11 @@ export function WizardPage() {
     // A cached context may predate the last save; wait for the fresh one so
     // the nominals and setup the previous sample recorded are carried.
     if (ctxFetching) return
+    // A draft the inspector has recorded something in is resumed; one they
+    // only opened is rebuilt, so the nominals and setup the server knows now
+    // are what they start from.
     const stored = loadDraft(draftKey, editingSampleId)
-    if (stored && (!editing || stored.editingVersion === editing.sample.version)) {
+    if (stored && !draftIsUntouched(stored) && (!editing || stored.editingVersion === editing.sample.version)) {
       setDraft(stored)
       return
     }
