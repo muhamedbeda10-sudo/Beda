@@ -550,12 +550,14 @@ export function sessionsRoutes(ctx: AppContext): Router {
                 JOIN inspection_sessions s ON s.id = sm.session_id
                 JOIN production_orders o ON o.id = sm.order_id
                WHERE sm.deleted_at IS NULL AND s.deleted_at IS NULL
-                 AND lower(o.item_code) = lower($2) AND btrim(o.item_code) <> ''
                  AND ${NORMALISED_CODE('s.work_center_code')} = $3
-               ORDER BY (sm.session_id = $1::uuid) DESC, sm.created_at DESC
+                 -- The same item by code, or — when the ERP export left the
+                 -- code blank — the same order line.
+                 AND ((btrim($2) <> '' AND lower(o.item_code) = lower($2)) OR sm.order_id = $4::uuid)
+               ORDER BY (sm.session_id = $1::uuid) DESC, (sm.order_id = $4::uuid) DESC, sm.created_at DESC
                LIMIT 1)
           ORDER BY d.sequence, d.name`,
-        [id, order.itemCode, normaliseMachineCode(wc)],
+        [id, order.itemCode, normaliseMachineCode(wc), order.id || null],
       ),
       // The welding wire batch of this session's latest sample, offered again.
       q.query<{ batch: string | null }>(

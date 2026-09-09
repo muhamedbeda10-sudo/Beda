@@ -154,6 +154,29 @@ describe('a session exists only with its first sample (§4.4)', () => {
     ])
   })
 
+  it('carries typed dimensions on a line whose ERP export left the item code blank', async () => {
+    await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '24', name: 'Stam Upright', line: 'LM1', displayName: '24-Stam Upright', process: 'forming', usesItemDimensions: false } })
+    await app.api('POST', '/api/orders/import', {
+      token: admin.token,
+      body: { rows: [{ lineKey: 'STAM-1', orderNumber: '20601-GMA', item: 'XL Upright (NP Punching) : 10040', itemCode: '', workCenterCode: '24', requiredQty: 100, finishedQty: 0, customer: 'GMA', expectedGrade: '', drawing: 'D-1' }] },
+    })
+    const line = (await app.api<ProductionOrder[]>('GET', '/api/orders', { token: admin.token })).body.find((o) => o.lineKey === 'STAM-1')!
+    const first = await app.api<StartWithSampleResponse>('POST', '/api/sessions/start-with-sample', {
+      token: ayman.token,
+      body: {
+        start: { orderId: line.id, startQty: 0 },
+        sample: sample({ drawing: 'D-1', pt: undefined, coils: [], dimensions: [{ name: 'Width', sequence: 1, nominal: 100, tolPlus: 1, tolMinus: 1, actual: 100.2, unit: 'mm', source: 'manual' }, { name: 'Height', sequence: 2, nominal: 80, tolPlus: 1, tolMinus: 1, actual: 80.1, unit: 'mm', source: 'manual' }] }),
+      },
+    })
+    expect(first.status).toBe(201)
+    const ctx = await app.api<WizardContext>('GET', `/api/sessions/${first.body.session.id}/wizard`, { token: ayman.token })
+    expect(ctx.body.dimensionOrder).toEqual([])
+    expect(ctx.body.previousDimensions.map((d) => [d.name, d.nominal])).toEqual([
+      ['Width', 100],
+      ['Height', 80],
+    ])
+  })
+
   it('opens a stock session with its first sample', async () => {
     const res = await app.api<StartWithSampleResponse>('POST', '/api/sessions/start-with-sample', {
       token: ayman.token,
