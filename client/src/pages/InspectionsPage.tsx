@@ -80,9 +80,9 @@ export function InspectionsPage() {
   const [density, setDensity] = usePersistedState<'cards' | 'compact' | 'table'>('qc-board:density', 'cards')
 
   // ---- Who sees what (§14) ------------------------------------------------
-  // The API already hands an inspector only their own sessions. A supervisor
-  // or administrator gets everyone's, plus a search and an inspector filter.
-  const seesAll = can(role, 'view-all-sessions')
+  // The board is everyone's: every open session, with a search and an
+  // inspector filter so a technician can narrow it to their own name.
+  const seesAll = true
   const [term, setTerm] = useState('')
   const [inspectorFilter, setInspectorFilter] = useState('all')
 

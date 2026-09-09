@@ -33,6 +33,7 @@ import {
   stockProductionOf,
   isStockOrder,
   stockLineKey,
+  normaliseMachineCode,
   STOCK_ORDER_NUMBER,
 } from '@qc/shared/rules'
 import { instructionsInForce } from './workInstructions.routes'
@@ -86,6 +87,17 @@ async function assertCoilsUsable(q: Queryable, coilIds: string[]): Promise<void>
   const { rows } = await q.query<{ id: string }>(`SELECT id FROM coils WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`, [wanted])
   if (rows.length !== wanted.length) throw badRequest('One of the coils is no longer in the coil register. Remove it and pick it again.')
 }
+
+/**
+ * A machine code as the floor writes it, compared the way `normaliseMachineCode`
+ * does: Arabic digits to Western, spaces dropped, lower case, and a purely
+ * numeric code without its leading zeros — so "STAM 24", "stam24" and "024"
+ * all find the same previous sample.
+ */
+const NORMALISED_CODE = (col: string) =>
+  `(CASE WHEN regexp_replace(lower(translate(${col}, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')), '\\s+', '', 'g') ~ '^[0-9]+$'
+         THEN COALESCE(NULLIF(ltrim(regexp_replace(lower(translate(${col}, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')), '\\s+', '', 'g'), '0'), ''), '0')
+         ELSE regexp_replace(lower(translate(${col}, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')), '\\s+', '', 'g') END)`
 
 const startSchema = z.union([
   z.object({ orderId: uuid, startQty: z.coerce.number().min(0) }),
@@ -265,9 +277,13 @@ export function sessionsRoutes(ctx: AppContext): Router {
    * they opened; a supervisor or administrator sees everyone's. The rule is
    * applied here, in SQL, so a list can never leak past the client's filters.
    */
-  function visibleTo(user: AuthUser, firstParam: number): { clause: string; params: unknown[] } {
-    if (can(user.role, 'view-all-sessions')) return { clause: 'TRUE', params: [] }
-    return { clause: `s.inspector_id = $${firstParam}`, params: [user.id] }
+  /**
+   * Sessions are the factory's record, not the inspector's: everyone signed
+   * in reads the board and the history in full (§14). What a role may change
+   * is still decided per action.
+   */
+  function visibleTo(_user: AuthUser, _firstParam: number): { clause: string; params: unknown[] } {
+    return { clause: 'TRUE', params: [] }
   }
 
   /**
@@ -535,11 +551,11 @@ export function sessionsRoutes(ctx: AppContext): Router {
                 JOIN production_orders o ON o.id = sm.order_id
                WHERE sm.deleted_at IS NULL AND s.deleted_at IS NULL
                  AND lower(o.item_code) = lower($2) AND btrim(o.item_code) <> ''
-                 AND lower(s.work_center_code) = lower($3)
+                 AND ${NORMALISED_CODE('s.work_center_code')} = $3
                ORDER BY (sm.session_id = $1::uuid) DESC, sm.created_at DESC
                LIMIT 1)
           ORDER BY d.sequence, d.name`,
-        [id, order.itemCode, wc],
+        [id, order.itemCode, normaliseMachineCode(wc)],
       ),
       // The welding wire batch of this session's latest sample, offered again.
       q.query<{ batch: string | null }>(

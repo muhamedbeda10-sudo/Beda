@@ -320,7 +320,7 @@ describe('the atomic sample save', () => {
     expect(list.body.map((s) => s.index)).toEqual([1, 2])
   })
 
-  it('shows every open session on the board to everyone; history stays the inspector’s own', async () => {
+  it('shows every session, open or in history, to everyone', async () => {
     // The supervisor opens a session of their own on the paint beam line.
     const theirs = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: paintBeamOrder.id, startQty: 5 } })
     expect(theirs.status).toBe(201)
@@ -333,8 +333,9 @@ describe('the atomic sample save', () => {
     const all = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: supervisor.token })
     expect(all.body.sessions.map((s) => s.id).sort()).toEqual([sessionId, theirs.body.id].sort())
 
+    // History is the factory's record too: an inspector reads everyone's.
     const myHistory = await app.api<HistoryResponse>('GET', '/api/sessions/history', { token: inspector.token })
-    expect(myHistory.body.sessions.map((s) => s.id)).toEqual([sessionId])
+    expect(myHistory.body.sessions.map((s) => s.id)).toContain(theirs.body.id)
     const myHold = await app.api<HistoryResponse>('GET', '/api/sessions/history?disposition=Hold', { token: inspector.token })
     expect(myHold.body.sessions.map((s) => s.id)).toEqual([sessionId])
     const allHistory = await app.api<HistoryResponse>('GET', '/api/sessions/history', { token: supervisor.token })
