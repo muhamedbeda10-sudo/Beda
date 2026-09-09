@@ -130,6 +130,30 @@ describe('a session exists only with its first sample (§4.4)', () => {
     expect(res.body.session.inspectorName).toBe('Mohamed Magdy')
   })
 
+  it('carries the nominal typed on the first sample to the next one, however the machine code is written', async () => {
+    // A line of the same item on the same machine, written with a leading zero, as an ERP export sometimes does.
+    await app.api('POST', '/api/orders/import', {
+      token: admin.token,
+      body: { rows: [{ lineKey: 'L-2', orderNumber: '20571-EHF', item: 'XL Light Beam', itemCode: '125185TA3', workCenterCode: '058', requiredQty: 50, finishedQty: 0, customer: 'Beta Storage', expectedGrade: 'S355JR', drawing: 'BS9059/58' }] },
+    })
+    const other = (await app.api<ProductionOrder[]>('GET', '/api/orders', { token: admin.token })).body.find((o) => o.lineKey === 'L-2')!
+    // The latest sample on machine 58 typed a manual "Length" nominal.
+    const res = await app.api<StartWithSampleResponse>('POST', '/api/sessions/start-with-sample', {
+      token: ayman.token,
+      body: {
+        start: { orderId: weldOrder.id, startQty: 1 },
+        sample: sample({ dimensions: [{ name: 'Width', sequence: 1, nominal: 125, tolPlus: 0.5, tolMinus: 0.5, actual: 125, unit: 'mm', source: 'item-order' }, { name: 'Length', sequence: 2, nominal: 2500, tolPlus: 2, tolMinus: 2, actual: 2501, unit: 'mm', source: 'manual' }] }),
+      },
+    })
+    expect(res.status).toBe(201)
+    const preview = await app.api<WizardContext>('GET', `/api/sessions/preview?orderId=${other.id}&startQty=0`, { token: magdy.token })
+    expect(preview.status).toBe(200)
+    expect(preview.body.previousDimensions.map((d) => [d.name, d.nominal])).toEqual([
+      ['Width', 125],
+      ['Length', 2500],
+    ])
+  })
+
   it('opens a stock session with its first sample', async () => {
     const res = await app.api<StartWithSampleResponse>('POST', '/api/sessions/start-with-sample', {
       token: ayman.token,

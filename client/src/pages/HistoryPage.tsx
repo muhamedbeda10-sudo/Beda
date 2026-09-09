@@ -167,9 +167,9 @@ export function HistoryPage() {
     return codes.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
   }, [sessions])
 
-  // The API hands an inspector only their own sessions; a supervisor or
-  // administrator gets everyone's and may narrow by who and where.
-  const seesAll = can(role, 'view-all-sessions')
+  // History is the factory's record: everyone reads all of it and may
+  // narrow by who and where.
+  const seesAll = true
   const [inspectorFilter, setInspectorFilter] = useState('all')
   const [factoryFilter, setFactoryFilter] = useState('all')
   const factoryOf = useCallback((code: string) => machines.find((m) => m.code === code)?.factory?.trim() ?? '', [machines])
