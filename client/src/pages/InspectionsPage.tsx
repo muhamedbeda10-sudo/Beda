@@ -25,17 +25,18 @@ import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
 import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
 import { SampleDetail } from '@/components/inspection/SampleDetail'
+import { DefectEditDialog, DimensionEditDialog } from '@/components/inspection/CorrectionDialogs'
 import { OrderDetailsPanel } from '@/components/inspection/OrderDetailsPanel'
 import { InstallBanner } from '@/components/layout/InstallBanner'
 import { useMaster, useOpenBoard, useSampleDetail } from '@/services/queries'
-import { closeSession, discardSession } from '@/services/mutations'
+import { closeSession, correctDefect, correctDimension, discardSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, isStockOrder, processForMachine, sessionTone, shiftName, type SessionTone } from '@/domain'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import { usePersistedState } from '@/lib/usePersistedState'
 import type { SampleSummary, SessionWithOrder } from '@qc/shared/api'
-import type { Machine } from '@qc/shared/types'
+import type { DefectResult, DimensionResult, Disposition, Machine } from '@qc/shared/types'
 
 const COLLAPSE_AFTER = 3
 /** Sessions on a machine without a factory gather under this tab. */
@@ -194,6 +195,37 @@ export function InspectionsPage() {
   /** A sample opened from its chip on the card: the full record, read-only here. */
   const [viewing, setViewing] = useState<{ session: SessionWithOrder; sample: SampleSummary } | null>(null)
   const { data: viewingDetail, isLoading: viewingLoading } = useSampleDetail(viewing?.sample.id ?? null)
+  /** §14 — an open session's sample is corrected by an inspector, a closed one's by a supervisor; the API enforces the same. */
+  const viewingEditable = viewing ? (viewing.session.status === 'Open' ? can(role, 'edit-open-session') : can(role, 'edit-closed-session')) : false
+  const [editingDim, setEditingDim] = useState<DimensionResult | null>(null)
+  const [editingDefect, setEditingDefect] = useState<DefectResult | null>(null)
+  const [correcting, setCorrecting] = useState(false)
+
+  async function saveDimension(dim: DimensionResult, actual: number | null) {
+    setCorrecting(true)
+    try {
+      await correctDimension(queryClient, dim.id, { actual, version: dim.version })
+      toast('Measurement corrected. The change is in the audit log.', 'success')
+      setEditingDim(null)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not save the correction.', 'error')
+    } finally {
+      setCorrecting(false)
+    }
+  }
+
+  async function saveDefect(defect: DefectResult, patch: { disposition: Disposition; qty: number }) {
+    setCorrecting(true)
+    try {
+      await correctDefect(queryClient, defect.id, { ...patch, version: defect.version })
+      toast('Defect corrected. The change is in the audit log.', 'success')
+      setEditingDefect(null)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not save the correction.', 'error')
+    } finally {
+      setCorrecting(false)
+    }
+  }
 
   const chipTone = (tone: SessionTone, active: boolean) =>
     cn(
@@ -692,9 +724,16 @@ export function InspectionsPage() {
           )
         }
         footer={
-          <Button className="min-h-[48px]" onClick={() => setViewing(null)}>
-            Close
-          </Button>
+          <>
+            {viewing && viewingEditable && (
+              <Button variant="secondary" className="min-h-[48px]" onClick={() => navigate(`/wizard/${viewing.session.id}/edit/${viewing.sample.id}`)}>
+                Re-record sample
+              </Button>
+            )}
+            <Button className="min-h-[48px]" onClick={() => setViewing(null)}>
+              Close
+            </Button>
+          </>
         }
       >
         {viewing && viewingDetail ? (
@@ -708,15 +747,17 @@ export function InspectionsPage() {
             paint={viewingDetail.paint ?? undefined}
             pt={viewingDetail.pt ?? undefined}
             loading={viewingLoading}
-            editable={false}
-            onEditDimension={() => {}}
-            onEditDefect={() => {}}
+            editable={viewingEditable}
+            onEditDimension={setEditingDim}
+            onEditDefect={setEditingDefect}
           />
         ) : (
           <p className="py-10 text-center text-sm text-slate-400">Loading the sample…</p>
         )}
       </Modal>
 
+      {editingDim && <DimensionEditDialog dimension={editingDim} saving={correcting} onClose={() => setEditingDim(null)} onSave={(actual) => saveDimension(editingDim, actual)} />}
+      {editingDefect && <DefectEditDialog defect={editingDefect} saving={correcting} onClose={() => setEditingDefect(null)} onSave={(patch) => saveDefect(editingDefect, patch)} />}
     </div>
   )
 }
