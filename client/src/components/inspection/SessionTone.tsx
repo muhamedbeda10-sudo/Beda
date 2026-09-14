@@ -30,7 +30,9 @@ const STYLE: Record<NonNullable<SessionTone>, { block: string; row: string; badg
   },
 }
 
-type Signals = Pick<InspectionSession, 'defectCount' | 'holdCount' | 'priorDefectsElsewhere'>
+type Signals = Pick<InspectionSession, 'defectCount' | 'defectPieces' | 'holdCount' | 'priorDefectsElsewhere'>
+
+const formatQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/\.?0+$/, ''))
 
 type SampleSignals = { defectCount?: number; holdCount?: number }
 
@@ -93,9 +95,13 @@ export function SessionToneBadge({ session, className, onHold }: { session: Sign
     )
   }
   if (tone === 'defect') {
+    // "2 defects · 200 pcs": the records, and the pieces they cover — the
+    // figure the dashboard adds up, so the two can be matched by eye.
+    const pieces = session.defectPieces ?? 0
     return (
       <Badge tone="red" className={className} icon={<AlertOctagon className="h-3 w-3" />}>
         {defects} defect{defects === 1 ? '' : 's'}
+        {pieces > 0 && pieces !== defects ? ` · ${formatQty(pieces)} pcs` : ''}
       </Badge>
     )
   }
