@@ -519,6 +519,8 @@ export interface HistoryQuery {
 
 export interface HistoryResponse {
   sessions: SessionWithOrder[]
+  /** Sessions older than the last one here exist; ask again with `before`. */
+  hasMore: boolean
 }
 
 // ---- Images ----------------------------------------------------------------

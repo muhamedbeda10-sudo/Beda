@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -29,7 +29,7 @@ import { SessionToneBadge, sessionToneClass } from '@/components/inspection/Sess
 import { Attr, SampleDetail, Section, SectionEmpty, dispositionToneOf, num, statusToneOf } from '@/components/inspection/SampleDetail'
 import { DefectEditDialog, DimensionEditDialog } from '@/components/inspection/CorrectionDialogs'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
-import { useHistory, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
+import { loadOlderSessions, useHistory, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
@@ -85,6 +85,7 @@ export function HistoryPage() {
   const [params, setParams] = useSearchParams()
 
   const [term, setTerm] = useState('')
+  const [olderHasMore, setOlderHasMore] = useState(false)
   const [status, setStatus] = useState<StatusFilter>('All')
   const [workCenter, setWorkCenter] = useState('all')
   const [range, setRange] = useState<RangeFilter>('all')
@@ -147,7 +148,36 @@ export function HistoryPage() {
   // One page of the newest sessions (or those owning a defect with the landing
   // disposition), each with its order. The filters below narrow this page.
   const { data: history, isLoading: loading } = useHistory(dispositionFilter, SESSION_PAGE)
-  const sessions = useMemo(() => history?.sessions ?? [], [history])
+  /** Pages walked back from the first one, so an older session is never out of reach. */
+  const [older, setOlder] = useState<SessionWithOrder[]>([])
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const sessions = useMemo(() => {
+    const first = history?.sessions ?? []
+    const seen = new Set(first.map((s) => s.id))
+    return [...first, ...older.filter((s) => !seen.has(s.id))]
+  }, [history, older])
+  const hasMore = older.length > 0 ? olderHasMore : (history?.hasMore ?? false)
+
+  // A different disposition is a different list: start again from its first page.
+  useEffect(() => {
+    setOlder([])
+    setOlderHasMore(false)
+  }, [dispositionFilter])
+
+  async function showOlder() {
+    const last = sessions[sessions.length - 1]
+    if (!last || loadingOlder) return
+    setLoadingOlder(true)
+    try {
+      const page = await loadOlderSessions(dispositionFilter, last.startedAt, SESSION_PAGE)
+      setOlder((prev) => [...prev, ...page.sessions])
+      setOlderHasMore(page.hasMore)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not load older sessions.', 'error')
+    } finally {
+      setLoadingOlder(false)
+    }
+  }
 
   // Master data — the work-centre names come from nowhere else.
   const { data: machines = [] } = useMaster('machines')
@@ -277,7 +307,7 @@ export function HistoryPage() {
           compact
           label="Sessions"
           value={totals.sessions}
-          sub={dispositionFilter ? `Dispositioned ${dispositionFilter}` : `Of the last ${SESSION_PAGE}`}
+          sub={dispositionFilter ? `Dispositioned ${dispositionFilter}` : `${sessions.length} loaded${hasMore ? ', older ones below' : ''}`}
           icon={<HistoryIcon className="h-5 w-5" />}
         />
         <Stat compact label="Open" value={totals.open} tone={totals.open > 0 ? 'green' : 'neutral'} icon={<ClipboardList className="h-5 w-5" />} />
@@ -370,7 +400,7 @@ export function HistoryPage() {
         <EmptyState
           icon={<HistoryIcon className="h-10 w-10" />}
           title="No sessions match"
-          hint={dispositionFilter ? `Nothing is currently dispositioned ${dispositionFilter}.` : 'Widen the date range or clear the search to see more.'}
+          hint={dispositionFilter ? `Nothing is currently dispositioned ${dispositionFilter}.` : 'Widen the date range, clear the search, or load older sessions.'}
         />
       ) : (
         <>
@@ -454,6 +484,14 @@ export function HistoryPage() {
               </table>
             </div>
           </Card>
+
+          {hasMore && (
+            <div className="flex justify-center pt-1">
+              <Button className="min-h-[48px]" onClick={() => void showOlder()} disabled={loadingOlder}>
+                {loadingOlder ? 'Loading…' : 'Show older sessions'}
+              </Button>
+            </div>
+          )}
         </>
       )}
 
