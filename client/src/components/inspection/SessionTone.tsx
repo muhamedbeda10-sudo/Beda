@@ -32,6 +32,29 @@ const STYLE: Record<NonNullable<SessionTone>, { block: string; row: string; badg
 
 type Signals = Pick<InspectionSession, 'defectCount' | 'holdCount' | 'priorDefectsElsewhere'>
 
+type SampleSignals = { defectCount?: number; holdCount?: number }
+
+/**
+ * A sample chip wears the sample's worst signal, the same colours as a
+ * session: amber with a defect on Hold, red with defects, otherwise the
+ * quiet brand blue it had. `onWhite` is the variant for a chip sitting on a
+ * white card rather than the page.
+ */
+export function sampleChipClass(sample: SampleSignals, onWhite = false): string {
+  if ((sample.holdCount ?? 0) > 0) return 'bg-amber-100 text-amber-800 ring-1 ring-amber-300 hover:bg-amber-200/70 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/40 dark:hover:bg-amber-500/25'
+  if ((sample.defectCount ?? 0) > 0) return 'bg-rose-100 text-rose-800 ring-1 ring-rose-300 hover:bg-rose-200/70 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-500/40 dark:hover:bg-rose-500/25'
+  return onWhite
+    ? 'bg-white text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 dark:bg-slate-900 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20'
+    : 'bg-brand-50 text-brand-700 ring-1 ring-brand-200 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20'
+}
+
+/** Why a sample chip is coloured, for its tooltip and label; empty when it is clean. */
+export function sampleChipTitle(sample: SampleSignals): string {
+  if ((sample.holdCount ?? 0) > 0) return 'A defect in this sample is on Hold'
+  if ((sample.defectCount ?? 0) > 0) return `This sample recorded ${sample.defectCount} defect${sample.defectCount === 1 ? '' : 's'}`
+  return ''
+}
+
 /** Classes for a card, list block or table row, on top of its own. */
 export function sessionToneClass(session: Signals, kind: 'block' | 'row', fallback = ''): string {
   const tone = sessionTone(session)

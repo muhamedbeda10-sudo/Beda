@@ -33,7 +33,7 @@ import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
-import { useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
+import { ColumnPicker, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, isStockOrder, processForMachine, shiftName } from '@/domain'
@@ -82,20 +82,82 @@ const RANGE_LABEL: Record<RangeFilter, string> = {
 }
 
 
-/** The table's columns and their starting widths; a desktop drags them (§11). */
+/** The table's columns and their starting widths; a desktop drags them, anyone hides them (§11). */
 const HISTORY_COLUMNS: ColumnDef[] = [
-  { key: 'seq', width: 72, min: 56 },
-  { key: 'order', width: 120, min: 80 },
-  { key: 'item', width: 240, min: 100 },
-  { key: 'machine', width: 150, min: 80 },
-  { key: 'inspector', width: 150, min: 80 },
-  { key: 'date', width: 130, min: 90 },
-  { key: 'status', width: 150, min: 90 },
-  { key: 'samples', width: 96, min: 72 },
-  { key: 'rejected', width: 150, min: 90 },
-  { key: 'final', width: 100, min: 80 },
-  { key: 'open', width: 48, min: 40 },
+  { key: 'seq', label: 'Seq', width: 72, min: 56 },
+  { key: 'order', label: 'Order', width: 120, min: 80 },
+  { key: 'item', label: 'Item', width: 240, min: 100 },
+  { key: 'machine', label: 'Machine', width: 150, min: 80 },
+  { key: 'inspector', label: 'Inspector', width: 150, min: 80 },
+  { key: 'date', label: 'Date', width: 130, min: 90 },
+  { key: 'status', label: 'Status', width: 150, min: 90 },
+  { key: 'samples', label: 'Samples', width: 96, min: 72, align: 'right' },
+  { key: 'rejected', label: 'Rejected before release', width: 150, min: 90, align: 'right' },
+  { key: 'final', label: 'Final qty', width: 100, min: 80, align: 'right' },
+  { key: 'open', label: '', width: 48, min: 40, hideable: false },
 ]
+
+/** One cell of the table. Fixed layout (a desktop): the cell shows what fits its column and the whole text on hover; dragging the column wider shows the rest. */
+function historyCell(key: string, s: SessionWithOrder, fixed: boolean, workCenterName: (code: string) => string): ReactNode {
+  const clip = fixed ? 'truncate' : ''
+  switch (key) {
+    case 'seq':
+      return <td key={key} className="px-4 py-3 tabular-nums text-slate-400">#{s.seq}</td>
+    case 'order':
+      return (
+        <td key={key} className={cn('px-4 py-3 font-bold', clip)} title={s.order?.orderNumber ?? undefined}>
+          {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : (s.order?.orderNumber ?? '—')}
+        </td>
+      )
+    case 'item':
+      return (
+        <td key={key} className={cn('px-4 py-3', fixed ? 'truncate' : 'max-w-[220px] truncate')} title={s.order?.item ?? undefined}>
+          {s.order?.item ?? '—'}
+        </td>
+      )
+    case 'machine':
+      return (
+        <td key={key} className={cn('px-4 py-3', clip)} title={workCenterName(s.workCenterCode)}>
+          {workCenterName(s.workCenterCode)}
+        </td>
+      )
+    case 'inspector':
+      return (
+        <td key={key} className={cn('px-4 py-3', clip)} title={s.inspectorName}>
+          {s.inspectorName}
+        </td>
+      )
+    case 'date':
+      return (
+        <td key={key} className={cn('px-4 py-3 tabular-nums', clip)}>
+          {formatDate(s.startedAt)}
+        </td>
+      )
+    case 'status':
+      return (
+        <td key={key} className="px-4 py-3">
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
+            <SessionToneBadge session={s} />
+          </span>
+        </td>
+      )
+    case 'samples':
+      return <td key={key} className="px-4 py-3 text-right tabular-nums">{num(s.sampleCount)}</td>
+    case 'rejected':
+      return <td key={key} className="px-4 py-3 text-right tabular-nums">{num(s.startQtyConfirmed?.qty)}</td>
+    case 'final':
+      return <td key={key} className="px-4 py-3 text-right tabular-nums">{num(s.finalQty)}</td>
+    case 'open':
+      return (
+        <td key={key} className="px-4 py-3 text-right">
+          <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
+        </td>
+      )
+    default:
+      return null
+  }
+}
 
 export function HistoryPage() {
   const queryClient = useQueryClient()
@@ -115,7 +177,7 @@ export function HistoryPage() {
   const [factoryFilter, setFactoryFilter] = usePersistedState('qc-history:factory', 'all')
 
   const [openSessionId, setOpenSessionId] = useState<string | null>(null)
-  const grid = useResizableColumns('qc-history:columns', HISTORY_COLUMNS)
+  const grid = useResizableColumns('qc-history:grid', HISTORY_COLUMNS)
   const [openSampleId, setOpenSampleId] = useState<string | null>(null)
   const [editingDim, setEditingDim] = useState<DimensionResult | null>(null)
   const [editingDefect, setEditingDefect] = useState<DefectResult | null>(null)
@@ -463,32 +525,21 @@ export function HistoryPage() {
             ))}
           </div>
 
-          {/* md+ — the same rows as a table. */}
+          {/* md+ — the same rows as a table; the columns are the person's to size and choose. */}
+          <div className="hidden justify-end md:flex">
+            <ColumnPicker grid={grid} />
+          </div>
           <Card className="hidden md:block">
             <div className="overflow-x-auto">
-              <table className={cn('w-full text-sm', !grid.enabled && 'min-w-[860px]')} style={grid.tableStyle}>
+              <table className={cn('w-full text-sm', !grid.enabled && 'min-w-[720px]')} style={grid.tableStyle}>
                 {grid.colgroup}
                 <thead>
                   <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
-                    {(
-                      [
-                        ['seq', 'Seq', ''],
-                        ['order', 'Order', ''],
-                        ['item', 'Item', ''],
-                        ['machine', 'Machine', ''],
-                        ['inspector', 'Inspector', ''],
-                        ['date', 'Date', ''],
-                        ['status', 'Status', ''],
-                        ['samples', 'Samples', 'text-right'],
-                        ['rejected', 'Rejected before release', 'text-right'],
-                        ['final', 'Final qty', 'text-right'],
-                        ['open', '', ''],
-                      ] as const
-                    ).map(([key, label, align]) => (
+                    {grid.visible.map((c) => (
                       // The cell stays overflow-visible so the grab zone can straddle its edge; only the label is clipped.
-                      <th key={key} className={cn('relative px-4 py-3', align, grid.dragging === key && 'bg-brand-50/60 dark:bg-brand-500/10')} title={grid.enabled && label ? label : undefined}>
-                        <span className={cn(grid.enabled && 'block truncate')}>{label}</span>
-                        {key !== 'open' && grid.handle(key)}
+                      <th key={c.key} className={cn('relative px-4 py-3', c.align === 'right' && 'text-right', grid.dragging === c.key && 'bg-brand-50/60 dark:bg-brand-500/10')} title={grid.enabled && c.label ? c.label : undefined}>
+                        <span className={cn(grid.enabled && 'block truncate')}>{c.label}</span>
+                        {c.hideable !== false && grid.handle(c.key)}
                       </th>
                     ))}
                   </tr>
@@ -500,29 +551,7 @@ export function HistoryPage() {
                       onClick={() => setOpenSessionId(s.id)}
                       className={cn('cursor-pointer transition-colors', sessionToneClass(s, 'row', 'hover:bg-slate-50 dark:hover:bg-slate-800/50'))}
                     >
-                      <td className="px-4 py-3 tabular-nums text-slate-400">#{s.seq}</td>
-                      <td className={cn('px-4 py-3 font-bold', grid.enabled && 'truncate')} title={s.order?.orderNumber ?? undefined}>
-                        {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : (s.order?.orderNumber ?? '—')}
-                      </td>
-                      {/* Fixed layout: the cell shows what fits its column and the whole name on hover; dragging the column wider shows the rest. */}
-                      <td className={cn('px-4 py-3', grid.enabled ? 'truncate' : 'max-w-[220px] truncate')} title={s.order?.item ?? undefined}>
-                        {s.order?.item ?? '—'}
-                      </td>
-                      <td className={cn('px-4 py-3', grid.enabled && 'truncate')} title={workCenterName(s.workCenterCode)}>{workCenterName(s.workCenterCode)}</td>
-                      <td className={cn('px-4 py-3', grid.enabled && 'truncate')} title={s.inspectorName}>{s.inspectorName}</td>
-                      <td className={cn('px-4 py-3 tabular-nums', grid.enabled && 'truncate')}>{formatDate(s.startedAt)}</td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex flex-wrap items-center gap-1.5">
-                          <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
-                          <SessionToneBadge session={s} />
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums">{num(s.sampleCount)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{num(s.startQtyConfirmed?.qty)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{num(s.finalQty)}</td>
-                      <td className="px-4 py-3 text-right">
-                        <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
-                      </td>
+                      {grid.visible.map((c) => historyCell(c.key, s, grid.enabled, workCenterName))}
                     </tr>
                   ))}
                 </tbody>
