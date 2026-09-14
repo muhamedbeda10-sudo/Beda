@@ -627,7 +627,7 @@ export function InspectionsPage() {
         <Badge tone="blue">{filtering ? `${shown} of ${openSessions.length}` : openSessions.length}</Badge>
       </div>
       {factoryTabs.length > 0 && (
-        <fieldset className="rounded-2xl border border-slate-200 px-3 pb-2.5 pt-1 dark:border-slate-700">
+        <fieldset className="min-w-0 max-w-full rounded-2xl border border-slate-200 px-3 pb-2.5 pt-1 dark:border-slate-700">
         <legend className="px-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Factories</legend>
         <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0" role="tablist" aria-label="Factory">
           {[{ key: 'all', label: 'All factories', count: base.length }, ...factoryTabs].map((t) => {
@@ -658,7 +658,7 @@ export function InspectionsPage() {
 
       {/* Machine chips: only the machines with something open, coloured by the worst signal on them. */}
       {groupsInFactory.length > 1 && (
-        <fieldset className="rounded-2xl border border-slate-200 px-3 pb-2.5 pt-1 dark:border-slate-700">
+        <fieldset className="min-w-0 max-w-full rounded-2xl border border-slate-200 px-3 pb-2.5 pt-1 dark:border-slate-700">
         <legend className="px-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Machines</legend>
         <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0" role="tablist" aria-label="Machine">
           <button role="tab" aria-selected={activeMachine === 'all'} onClick={() => setMachinePick('all')} className={chipTone(null, activeMachine === 'all')}>
@@ -710,7 +710,7 @@ export function InspectionsPage() {
           {sections.map((sec) => (
             <fieldset
               key={sec.key}
-              className={cn('rounded-2xl border px-3 pb-3 pt-1 sm:px-4 sm:pb-4', sec.pinned ? 'border-amber-300 dark:border-amber-500/40' : 'border-slate-200 dark:border-slate-700')}
+              className={cn('min-w-0 max-w-full rounded-2xl border px-3 pb-3 pt-1 sm:px-4 sm:pb-4', sec.pinned ? 'border-amber-300 dark:border-amber-500/40' : 'border-slate-200 dark:border-slate-700')}
             >
               <legend className="flex items-center gap-2 px-1.5 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                 {sec.pinned ? <Star className="h-3.5 w-3.5 fill-current text-amber-500" /> : <Factory className="h-3.5 w-3.5" />}

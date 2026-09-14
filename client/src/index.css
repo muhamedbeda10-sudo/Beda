@@ -131,6 +131,15 @@ input[type='number']::-webkit-outer-spin-button {
 }
 
 /* §15 — the dashboard as a PDF: the browser's print dialog, landscape, without the chrome. */
+/* A fieldset refuses to be narrower than its content by default
+   (min-inline-size: min-content), so a scrolling row of chips inside one
+   widened the whole page on a phone until the browser zoomed out to fit it.
+   Frames must shrink like any other box; the row inside them scrolls. */
+fieldset {
+  min-inline-size: 0;
+  max-width: 100%;
+}
+
 @media print {
   @page {
     size: A4 landscape;
