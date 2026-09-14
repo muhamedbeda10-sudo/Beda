@@ -66,6 +66,13 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
       ['Suppliers', o.suppliers.length, o.counts.suppliers],
       ['Wire batches', o.wireBatches.length, o.counts.wireBatches],
       ['Holds (oldest first)', o.holds.length, o.counts.holds],
+      [],
+      ['Inspector ranking weights', '', ''],
+      ['Completeness', `${Math.round(o.inspectorRanking.weights.completeness * 100)}%`, 'dimensions measured, coils from the register, final quantity, empty sessions'],
+      ['Coverage', `${Math.round(o.inspectorRanking.weights.coverage * 100)}%`, 'samples per day worked, pieces, order lines'],
+      ['Accuracy', `${Math.round(o.inspectorRanking.weights.accuracy * 100)}%`, 'corrections and re-records afterwards'],
+      ['Detection', `${Math.round(o.inspectorRanking.weights.detection * 100)}%`, 'defects found against peers on the same machine'],
+      ['Samples needed to be ranked', o.inspectorRanking.minSamples, 'below it: listed, not placed'],
     ],
   }
   const group = (name: string, rows: KpiOverview['byMachine']): SheetSpec => ({
@@ -92,6 +99,59 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
         ...o.pareto.map((p) => [p.defectName, p.pieces, p.records, p.sharePct, p.cumulativePct]),
         // The tail as one row, so the shares add to the period's own total.
         ...(o.paretoOthers ? [[`Others (${o.paretoOthers.types} types)`, o.paretoOthers.pieces, null, o.paretoOthers.sharePct, 100]] : []),
+      ],
+    },
+    {
+      // §16 — the ranking, overall then per factory, with the parts behind
+      // each score so the number can be argued with.
+      name: 'Inspector ranking',
+      header: [
+        'Scope',
+        'Rank',
+        'Inspector',
+        'Score',
+        'Completeness',
+        'Coverage',
+        'Accuracy',
+        'Detection',
+        'Samples',
+        'Per active day',
+        'Pieces',
+        'Lines',
+        'Dims measured %',
+        'Coils from register %',
+        'Final qty %',
+        'Corrections /100',
+        'Re-recorded /100',
+        'Detection index',
+      ],
+      rows: [
+        ...[{ factory: 'All factories', group: o.inspectorRanking.overall }, ...o.inspectorRanking.byFactory.map((g) => ({ factory: g.factory || 'No factory', group: g }))].flatMap(
+          ({ factory, group }) => [
+            ...group.ranked.map((r) => [
+              factory,
+              r.rank,
+              r.name,
+              r.score,
+              r.completenessScore,
+              r.coverageScore,
+              r.accuracyScore,
+              r.detectionScore,
+              r.samples,
+              r.samplesPerActiveDay,
+              r.pieces,
+              r.lines,
+              r.dimensionCompletionPct,
+              r.coilFromRegisterPct,
+              r.finalQtyPct,
+              r.correctionsPer100Samples,
+              r.reRecordedPer100Samples,
+              r.detectionIndex === null ? null : Math.round(r.detectionIndex * 100) / 100,
+            ]),
+            // Listed, never placed: under the minimum work to rank fairly.
+            ...group.unranked.map((r) => [factory, null, r.name, null, null, null, null, null, r.samples]),
+          ],
+        ),
       ],
     },
     group('Machines', o.byMachine),

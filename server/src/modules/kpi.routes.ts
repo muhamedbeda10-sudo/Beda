@@ -5,7 +5,18 @@
 
 import { Router } from 'express'
 import { z } from 'zod'
-import { DEFAULT_KPI_THRESHOLDS, pct, type KpiFilters, type KpiListCounts, type KpiOverview, type KpiThresholds } from '@qc/shared/kpi'
+import {
+  DEFAULT_KPI_THRESHOLDS,
+  RANKING_WEIGHTS,
+  pct,
+  rankInspectors,
+  type KpiFilters,
+  type KpiInspectorRanking,
+  type KpiInspectorRaw,
+  type KpiListCounts,
+  type KpiOverview,
+  type KpiThresholds,
+} from '@qc/shared/kpi'
 import type { KpiThresholdsResponse } from '@qc/shared/api'
 import type { AppContext } from '../context'
 import type { Queryable } from '../db/pool'
@@ -22,6 +33,7 @@ import {
   loadGroups,
   loadHolds,
   loadIdleMachines,
+  loadInspectorRaw,
   loadPareto,
   loadSuppliers,
   loadTotals,
@@ -65,6 +77,7 @@ const ThresholdsBody = z
     holdAgeRedDays: z.number().int().min(0).max(365),
     idleMachineDays: z.number().int().min(1).max(365),
     trendAlertPct: z.number().min(1).max(1000),
+    minSamplesForRanking: z.number().int().min(1).max(1000),
   })
   .strict()
   .superRefine((t, ctx) => {
@@ -114,6 +127,49 @@ export async function loadThresholds(q: Queryable): Promise<KpiThresholdsRespons
   return { thresholds, updatedAt: row?.updatedAt ?? undefined, updatedByName: row?.updatedByName ?? undefined }
 }
 
+/**
+ * §16 — one inspector's work across every factory, as a single row. Counts
+ * add up because a machine belongs to one factory and an order line to one
+ * machine; the days worked are taken from the period's own count, since an
+ * inspector on two factories on one day worked one day; and the detection
+ * index is re-weighted by the pieces behind each factory's figure.
+ */
+function foldFactories(perFactory: KpiInspectorRaw[], activeDays: Map<string, number>): KpiInspectorRaw[] {
+  const byInspector = new Map<string, KpiInspectorRaw[]>()
+  for (const row of perFactory) {
+    const rows = byInspector.get(row.inspectorId)
+    if (rows) rows.push(row)
+    else byInspector.set(row.inspectorId, [row])
+  }
+  return Array.from(byInspector, ([inspectorId, rows]) => {
+    const sum = (pick: (r: KpiInspectorRaw) => number) => rows.reduce((n, r) => n + pick(r), 0)
+    const weighed = rows.filter((r) => r.detectionIndex !== null)
+    const weighedPieces = weighed.reduce((n, r) => n + r.pieces, 0)
+    return {
+      inspectorId,
+      name: rows[0].name,
+      factory: '',
+      samples: sum((r) => r.samples),
+      pieces: sum((r) => r.pieces),
+      activeDays: activeDays.get(`${inspectorId}|`) ?? 0,
+      lines: sum((r) => r.lines),
+      machines: sum((r) => r.machines),
+      dimensionRows: sum((r) => r.dimensionRows),
+      dimensionsMeasured: sum((r) => r.dimensionsMeasured),
+      coilsUsed: sum((r) => r.coilsUsed),
+      coilsFromRegister: sum((r) => r.coilsFromRegister),
+      sessionsClosed: sum((r) => r.sessionsClosed),
+      sessionsClosedWithFinalQty: sum((r) => r.sessionsClosedWithFinalQty),
+      emptySessions: sum((r) => r.emptySessions),
+      sessionsOpened: sum((r) => r.sessionsOpened),
+      corrections: sum((r) => r.corrections),
+      reRecorded: sum((r) => r.reRecorded),
+      defectRecords: sum((r) => r.defectRecords),
+      detectionIndex: weighedPieces > 0 ? weighed.reduce((n, r) => n + (r.detectionIndex ?? 0) * r.pieces, 0) / weighedPieces : null,
+    }
+  })
+}
+
 export function kpiRoutes(ctx: AppContext): Router {
   const r = Router()
   r.use(requireCapability('view-dashboard'))
@@ -150,8 +206,23 @@ export function kpiRoutes(ctx: AppContext): Router {
     const cur: PeriodFilters = { ...common, from: q.from, to: q.to }
     const prev: PeriodFilters = { ...common, from: q.prevFrom, to: q.prevTo }
     const db = ctx.db
-    const [current, previous, daily, pareto, byMachine, byInspector, byShift, byItem, dimensions, suppliers, wireBatches, holds, idleMachines, disciplineRaw] =
-      await Promise.all([
+    const [
+      current,
+      previous,
+      daily,
+      pareto,
+      byMachine,
+      byInspector,
+      byShift,
+      byItem,
+      dimensions,
+      suppliers,
+      wireBatches,
+      holds,
+      idleMachines,
+      disciplineRaw,
+      inspectorRaw,
+    ] = await Promise.all([
         loadTotals(db, cur),
         loadTotals(db, prev),
         loadDaily(db, cur),
@@ -166,7 +237,25 @@ export function kpiRoutes(ctx: AppContext): Router {
         loadHolds(db, cur),
         loadIdleMachines(db, cur, thresholds.idleMachineDays),
         loadDiscipline(db, cur),
+        loadInspectorRaw(db, cur),
       ])
+
+    // §16 — the ranking: one list across everything the filters match, and one
+    // per factory, since the factories do not run the same work and a place
+    // won in one says little about another.
+    const factories = Array.from(new Set(inspectorRaw.perFactory.map((r) => r.factory))).sort((a, b) => a.localeCompare(b))
+    const inspectorRanking: KpiInspectorRanking = {
+      overall: rankInspectors(foldFactories(inspectorRaw.perFactory, inspectorRaw.activeDays), thresholds.minSamplesForRanking),
+      byFactory: factories.map((name) => ({
+        ...rankInspectors(
+          inspectorRaw.perFactory.filter((r) => r.factory === name),
+          thresholds.minSamplesForRanking,
+        ),
+        factory: name,
+      })),
+      minSamples: thresholds.minSamplesForRanking,
+      weights: RANKING_WEIGHTS,
+    }
     const filters: KpiFilters = {
       from: q.from,
       to: q.to,
@@ -235,6 +324,7 @@ export function kpiRoutes(ctx: AppContext): Router {
       holds: holds.rows,
       idleMachines,
       discipline,
+      inspectorRanking,
     }
     const body: KpiOverview = { ...draft, insights: buildInsights(draft, thresholds) }
     res.json(body)

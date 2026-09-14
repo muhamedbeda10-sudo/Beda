@@ -82,6 +82,11 @@ const GROUPS: { title: string; note: string; fields: FieldSpec[] }[] = [
       { key: 'trendAlertPct', label: 'Trend alert (%)', hint: 'Change vs previous period worth a line', step: '1' },
     ],
   },
+  {
+    title: 'Inspector ranking',
+    note: 'How much work an inspector must have recorded before a position means anything.',
+    fields: [{ key: 'minSamplesForRanking', label: 'Samples to be ranked', hint: 'Below it, listed but not placed', step: '1' }],
+  },
 ]
 
 function toDraft(t: KpiThresholds): Draft {

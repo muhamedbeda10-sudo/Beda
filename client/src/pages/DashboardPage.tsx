@@ -26,6 +26,7 @@ import {
   ShieldAlert,
   Sparkles,
   Target,
+  Trophy,
   Users,
   X,
 } from 'lucide-react'
@@ -33,6 +34,7 @@ import { can, shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
 import { deltaPct, toneHighIsGood, toneLowIsGood, type KpiFilters, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
+import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { DonutChart, HorizontalBars, ParetoChart, TrendChart } from '@/components/dashboard/charts'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
@@ -877,6 +879,16 @@ export function DashboardPage() {
               />
             </Section>
           </div>
+
+          {/* §16 — who inspected, and how well. Admin-only by the page itself. */}
+          <Section
+            title="Inspector ranking"
+            hint="Scored on the inspection: how much was covered, how completely it was recorded, how rarely it needed correcting, and what was found against peers on the same machine."
+            icon={<Trophy className="h-4 w-4" />}
+            className="print-break"
+          >
+            <InspectorRanking data={data.inspectorRanking} onPick={(id) => patch({ inspectorId: id })} />
+          </Section>
 
           {/* Discipline */}
           <Section title="Recording discipline" hint="How the records themselves are kept. Not a KPI of the product; a KPI of the inspection." icon={<CheckCircle2 className="h-4 w-4" />}>
