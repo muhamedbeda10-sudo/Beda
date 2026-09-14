@@ -263,10 +263,39 @@ export interface KpiInsight {
   link?: { kind: 'history-hold' | 'machine' | 'item' | 'session'; value: string }
 }
 
+/**
+ * Several lists on the dashboard are the largest few of something: the top
+ * defect types, machines, items, dimensions, suppliers, wire batches, and the
+ * oldest Holds. These are how many exist behind each one, so a table can say
+ * what it is showing instead of implying it is everything.
+ */
+export interface KpiListCounts {
+  defectTypes: number
+  machines: number
+  inspectors: number
+  shifts: number
+  items: number
+  dimensions: number
+  suppliers: number
+  wireBatches: number
+  holds: number
+}
+
+/** The defect types that did not fit on the Pareto chart, as one figure. */
+export interface KpiParetoOthers {
+  types: number
+  pieces: number
+  sharePct: number
+}
+
 export interface KpiOverview {
   filters: KpiFilters
   thresholds: KpiThresholds
   generatedAt: string
+  /** How many rows exist behind each capped list. */
+  counts: KpiListCounts
+  /** Present when defect types were left off the Pareto chart. */
+  paretoOthers?: KpiParetoOthers
   current: KpiTotals
   previous: KpiTotals
   daily: KpiDailyPoint[]

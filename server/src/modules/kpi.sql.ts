@@ -205,20 +205,47 @@ export async function loadDaily(q: Queryable, f: PeriodFilters): Promise<KpiDail
   }))
 }
 
-export async function loadPareto(q: Queryable, f: PeriodFilters): Promise<KpiParetoRow[]> {
-  const { rows } = await q.query<{ defectName: string; pieces: number; records: number }>(
-    `${BASE}
-     SELECT d.defect_name AS "defectName", COALESCE(sum(d.qty), 0)::float8 AS pieces, count(*)::int AS records
-       FROM defect_results d JOIN base b ON b.sample_id = d.sample_id
-      WHERE d.deleted_at IS NULL GROUP BY d.defect_name ORDER BY pieces DESC, records DESC LIMIT 15`,
+/** How many defect types the period holds, and how many pieces they carry in
+ *  total — so the share a bar shows is a share of everything, not of the
+ *  fifteen that fitted on the chart. */
+export interface ParetoResult {
+  rows: KpiParetoRow[]
+  /** Every defect type in the period, including those below the chart. */
+  types: number
+  /** Defect pieces across every type. */
+  totalPieces: number
+}
+
+/** The fifteen largest defect types. A Pareto whose shares were taken over
+ *  only the rows shown would always reach 100% at the last bar, which is the
+ *  one thing a Pareto must not say: the shares here are of the whole period. */
+export async function loadPareto(q: Queryable, f: PeriodFilters): Promise<ParetoResult> {
+  const { rows } = await q.query<{ defectName: string; pieces: number; records: number; types: number; totalPieces: number }>(
+    `${BASE},
+     by_defect AS (
+       SELECT d.defect_name AS "defectName", COALESCE(sum(d.qty), 0)::float8 AS pieces, count(*)::int AS records
+         FROM defect_results d JOIN base b ON b.sample_id = d.sample_id
+        WHERE d.deleted_at IS NULL GROUP BY d.defect_name)
+     SELECT "defectName", pieces, records,
+            (SELECT count(*) FROM by_defect)::int AS types,
+            (SELECT COALESCE(sum(pieces), 0) FROM by_defect)::float8 AS "totalPieces"
+       FROM by_defect ORDER BY pieces DESC, records DESC LIMIT 15`,
     params(f),
   )
-  const total = rows.reduce((n, r) => n + r.pieces, 0)
+  const types = rows[0]?.types ?? 0
+  const totalPieces = rows[0]?.totalPieces ?? 0
   let running = 0
-  return rows.map((r) => {
+  const out = rows.map((r): KpiParetoRow => {
     running += r.pieces
-    return { ...r, sharePct: pct(r.pieces, total) ?? 0, cumulativePct: pct(running, total) ?? 0 }
+    return {
+      defectName: r.defectName,
+      pieces: r.pieces,
+      records: r.records,
+      sharePct: pct(r.pieces, totalPieces) ?? 0,
+      cumulativePct: pct(running, totalPieces) ?? 0,
+    }
   })
+  return { rows: out, types, totalPieces }
 }
 
 type GroupKind = 'machine' | 'inspector' | 'shift' | 'item'
@@ -231,7 +258,14 @@ const GROUP_KEYS: Record<GroupKind, { group: string; key: string; label: string;
   item: { group: 'lower(item_code)', key: 'max(item_code)', label: 'max(item)', sub: 'max(item_code)' },
 }
 
-export async function loadGroups(q: Queryable, f: PeriodFilters, kind: GroupKind, limit = 25): Promise<KpiGroupRow[]> {
+/** A capped list with the size of the list it was cut from. */
+export interface CappedRows<T> {
+  rows: T[]
+  /** How many rows exist in the period, before the cap. */
+  total: number
+}
+
+export async function loadGroups(q: Queryable, f: PeriodFilters, kind: GroupKind, limit = 25): Promise<CappedRows<KpiGroupRow>> {
   const g = GROUP_KEYS[kind]
   const { rows } = await q.query<{
     key: string
@@ -244,9 +278,10 @@ export async function loadGroups(q: Queryable, f: PeriodFilters, kind: GroupKind
     firstPass: number
     dimsMeasured: number
     dimsFail: number
+    total: number
   }>(
     `${BASE}
-     SELECT ${g.key} AS key, ${g.label} AS label, ${g.sub} AS sub,
+     SELECT ${g.key} AS key, ${g.label} AS label, ${g.sub} AS sub, count(*) OVER ()::int AS total,
             count(DISTINCT session_id)::int AS sessions, count(*)::int AS samples, COALESCE(sum(sample_qty), 0)::float8 AS pieces,
             COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces",
             count(*) FILTER (WHERE defect_pieces = 0 AND dims_fail = 0)::int AS "firstPass",
@@ -254,21 +289,24 @@ export async function loadGroups(q: Queryable, f: PeriodFilters, kind: GroupKind
        FROM per_sample GROUP BY ${g.group} ORDER BY samples DESC, key LIMIT ${limit}`,
     params(f),
   )
-  return rows.map((r) => ({
-    key: r.key,
-    label: r.label,
-    sub: r.sub || undefined,
-    sessions: r.sessions,
-    samples: r.samples,
-    pieces: r.pieces,
-    defectPieces: r.defectPieces,
-    defectRatePct: pct(r.defectPieces, r.pieces),
-    fpyPct: pct(r.firstPass, r.samples),
-    dimFailPct: pct(r.dimsFail, r.dimsMeasured),
-  }))
+  return {
+    rows: rows.map((r) => ({
+      key: r.key,
+      label: r.label,
+      sub: r.sub || undefined,
+      sessions: r.sessions,
+      samples: r.samples,
+      pieces: r.pieces,
+      defectPieces: r.defectPieces,
+      defectRatePct: pct(r.defectPieces, r.pieces),
+      fpyPct: pct(r.firstPass, r.samples),
+      dimFailPct: pct(r.dimsFail, r.dimsMeasured),
+    })),
+    total: rows[0]?.total ?? 0,
+  }
 }
 
-export async function loadDimensions(q: Queryable, f: PeriodFilters, minReadingsForCpk: number): Promise<KpiDimensionRow[]> {
+export async function loadDimensions(q: Queryable, f: PeriodFilters, minReadingsForCpk: number): Promise<CappedRows<KpiDimensionRow>> {
   const { rows } = await q.query<{
     itemCode: string
     item: string
@@ -282,9 +320,10 @@ export async function loadDimensions(q: Queryable, f: PeriodFilters, minReadings
     tolMinus: number | null
     pass: number
     fail: number
+    total: number
   }>(
     `${BASE}
-     SELECT b.item_code AS "itemCode", max(b.item) AS item, r.name, max(r.unit) AS unit,
+     SELECT b.item_code AS "itemCode", max(b.item) AS item, r.name, max(r.unit) AS unit, count(*) OVER ()::int AS total,
             count(*)::int AS readings, avg(r.actual)::float8 AS mean, stddev_samp(r.actual)::float8 AS "stdDev",
             avg(r.nominal)::float8 AS nominal, avg(r.tol_plus)::float8 AS "tolPlus", avg(r.tol_minus)::float8 AS "tolMinus",
             count(*) FILTER (WHERE r.status = 'Pass')::int AS pass, count(*) FILTER (WHERE r.status = 'Fail')::int AS fail
@@ -316,49 +355,68 @@ export async function loadDimensions(q: Queryable, f: PeriodFilters, minReadings
     }
   })
   // The dimensions that need attention first: a known Cpk, lowest first; then by fail rate.
-  return out.sort((a, b) => {
+  out.sort((a, b) => {
     if (a.cpk !== null && b.cpk !== null) return a.cpk - b.cpk
     if (a.cpk !== null) return -1
     if (b.cpk !== null) return 1
     return b.failPct - a.failPct || b.readings - a.readings
   })
+  return { rows: out, total: rows[0]?.total ?? 0 }
 }
 
-export async function loadSuppliers(q: Queryable, f: PeriodFilters): Promise<KpiSupplierRow[]> {
-  const { rows } = await q.query<{ supplier: string; grade: string; samples: number; pieces: number; defectPieces: number }>(
+export async function loadSuppliers(q: Queryable, f: PeriodFilters): Promise<CappedRows<KpiSupplierRow>> {
+  const { rows } = await q.query<{ supplier: string; grade: string; samples: number; pieces: number; defectPieces: number; total: number }>(
     `${BASE},
      coil_samples AS (
        SELECT DISTINCT c.sample_id, COALESCE(NULLIF(btrim(c.supplier), ''), '(unknown supplier)') AS supplier,
                        COALESCE(NULLIF(btrim(c.grade), ''), '—') AS grade
          FROM sample_coils c JOIN base b ON b.sample_id = c.sample_id WHERE c.deleted_at IS NULL)
-     SELECT cs.supplier, cs.grade, count(*)::int AS samples, COALESCE(sum(ps.sample_qty), 0)::float8 AS pieces,
+     SELECT cs.supplier, cs.grade, count(*) OVER ()::int AS total, count(*)::int AS samples, COALESCE(sum(ps.sample_qty), 0)::float8 AS pieces,
             COALESCE(sum(ps.defect_pieces), 0)::float8 AS "defectPieces"
        FROM coil_samples cs JOIN per_sample ps ON ps.sample_id = cs.sample_id
       GROUP BY 1, 2 ORDER BY samples DESC LIMIT 15`,
     params(f),
   )
-  return rows.map((r) => ({ ...r, defectRatePct: pct(r.defectPieces, r.pieces) }))
+  return {
+    rows: rows.map((r) => ({
+      supplier: r.supplier,
+      grade: r.grade,
+      samples: r.samples,
+      pieces: r.pieces,
+      defectPieces: r.defectPieces,
+      defectRatePct: pct(r.defectPieces, r.pieces),
+    })),
+    total: rows[0]?.total ?? 0,
+  }
 }
 
-export async function loadWireBatches(q: Queryable, f: PeriodFilters): Promise<KpiWireBatchRow[]> {
-  const { rows } = await q.query<{ batch: string; lengthsTested: number; lengthsRejected: number }>(
+export async function loadWireBatches(q: Queryable, f: PeriodFilters): Promise<CappedRows<KpiWireBatchRow>> {
+  const { rows } = await q.query<{ batch: string; lengthsTested: number; lengthsRejected: number; total: number }>(
     `${BASE}
-     SELECT COALESCE(NULLIF(btrim(pr.welding_wire_batch), ''), '(no batch)') AS batch,
+     SELECT COALESCE(NULLIF(btrim(pr.welding_wire_batch), ''), '(no batch)') AS batch, count(*) OVER ()::int AS total,
             count(*)::int AS "lengthsTested", count(*) FILTER (WHERE l.verdict = 'Reject / Repair')::int AS "lengthsRejected"
        FROM pt_records pr JOIN base b ON b.sample_id = pr.sample_id
        JOIN pt_tested_lengths l ON l.pt_record_id = pr.id AND l.deleted_at IS NULL
       WHERE pr.deleted_at IS NULL GROUP BY 1 ORDER BY "lengthsTested" DESC LIMIT 15`,
     params(f),
   )
-  return rows.map((r) => ({ ...r, rejectPct: pct(r.lengthsRejected, r.lengthsTested) }))
+  return {
+    rows: rows.map((r) => ({
+      batch: r.batch,
+      lengthsTested: r.lengthsTested,
+      lengthsRejected: r.lengthsRejected,
+      rejectPct: pct(r.lengthsRejected, r.lengthsTested),
+    })),
+    total: rows[0]?.total ?? 0,
+  }
 }
 
 /** Defects on Hold right now — not a period figure: a Hold is open until someone decides. */
-export async function loadHolds(q: Queryable, f: PeriodFilters): Promise<KpiHoldRow[]> {
-  const { rows } = await q.query<KpiHoldRow>(
+export async function loadHolds(q: Queryable, f: PeriodFilters): Promise<CappedRows<KpiHoldRow>> {
+  const { rows } = await q.query<KpiHoldRow & { total: number }>(
     `SELECT d.id AS "defectId", sm.session_id AS "sessionId", sm.id AS "sampleId", o.order_number AS "orderNumber", o.item,
             s.work_center_code AS "workCenterCode", d.defect_name AS "defectName", d.qty::float8 AS qty,
-            floor(EXTRACT(EPOCH FROM (now() - sm.created_at)) / 86400)::int AS "ageDays"
+            floor(EXTRACT(EPOCH FROM (now() - sm.created_at)) / 86400)::int AS "ageDays", count(*) OVER ()::int AS total
        FROM defect_results d
        JOIN inspection_samples sm ON sm.id = d.sample_id AND sm.deleted_at IS NULL
        JOIN inspection_sessions s ON s.id = sm.session_id AND s.deleted_at IS NULL
@@ -373,7 +431,8 @@ export async function loadHolds(q: Queryable, f: PeriodFilters): Promise<KpiHold
       ORDER BY sm.created_at LIMIT 50`,
     [f.factory ?? null, f.workCenterCode ?? null, f.itemCode ?? null, f.inspectorId ?? null],
   )
-  return rows
+  // The oldest fifty: a Hold owes a decision, and the oldest owe it most.
+  return { rows: rows.map(({ total: _total, ...row }) => row), total: rows[0]?.total ?? 0 }
 }
 
 /** Machines with open order lines and no recent sample: work that is not being inspected. */

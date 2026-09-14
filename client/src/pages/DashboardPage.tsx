@@ -174,7 +174,22 @@ interface Column<T> {
   render: (row: T) => ReactNode
 }
 
-function Table<T>({ rows, columns, rowKey, empty = 'Nothing in this period.', maxRows }: { rows: T[]; columns: Column<T>[]; rowKey: (r: T) => string; empty?: string; maxRows?: number }) {
+function Table<T>({
+  rows,
+  columns,
+  rowKey,
+  empty = 'Nothing in this period.',
+  maxRows,
+  total,
+}: {
+  rows: T[]
+  columns: Column<T>[]
+  rowKey: (r: T) => string
+  empty?: string
+  maxRows?: number
+  /** How many rows exist in the period when `rows` is the largest few of them. */
+  total?: number
+}) {
   const [showAll, setShowAll] = useState(false)
   if (rows.length === 0) return <p className="py-6 text-center text-sm text-slate-400">{empty}</p>
   const visible = maxRows && !showAll ? rows.slice(0, maxRows) : rows
@@ -202,11 +217,20 @@ function Table<T>({ rows, columns, rowKey, empty = 'Nothing in this period.', ma
           ))}
         </tbody>
       </table>
-      {maxRows && rows.length > maxRows && (
-        <button type="button" onClick={() => setShowAll((s) => !s)} className="print-hidden mt-2 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
-          {showAll ? 'Show fewer' : `Show all ${rows.length}`}
-        </button>
-      )}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        {maxRows && rows.length > maxRows && (
+          <button type="button" onClick={() => setShowAll((s) => !s)} className="print-hidden text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
+            {showAll ? 'Show fewer' : `Show all ${rows.length}`}
+          </button>
+        )}
+        {/* The table holds the largest few; saying so is the difference between
+            a ranking and a claim that this is everything. */}
+        {total !== undefined && total > rows.length && (
+          <span className="text-xs text-slate-400">
+            The largest {rows.length} of {total} — narrow the filters for the rest.
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -270,6 +294,19 @@ const DEFAULT_FILTERS: DashFilters = {
   itemCode: '',
   inspectorId: '',
   shift: '',
+}
+
+/**
+ * What a "largest few" list is showing. Every headline figure on this page is
+ * counted over every record the filters match; these lists are the largest few
+ * of something, and a chart that does not say so reads as the whole truth.
+ *
+ * Nothing is added while a list is complete — nor while it is empty, where
+ * "0 of 4" would say less than the empty chart already does. `rank` names the
+ * order the few were picked in: the Holds are the oldest, not the largest.
+ */
+function showing(shown: number, total: number, rank: 'largest' | 'oldest' = 'largest'): string {
+  return shown > 0 && total > shown ? ` Showing the ${rank === 'oldest' ? `${shown} oldest` : `largest ${shown}`} of ${total}.` : ''
 }
 
 export function DashboardPage() {
@@ -555,10 +592,23 @@ export function DashboardPage() {
 
           {/* Pareto + machines */}
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-            <Section title="Pareto of defects" hint="Which few defects make most of the pieces." icon={<AlertTriangle className="h-4 w-4" />} className="xl:col-span-2">
-              <ParetoChart bars={data.pareto.map((p) => ({ label: p.defectName, value: p.pieces, cumulativePct: p.cumulativePct }))} />
+            <Section
+              title="Pareto of defects"
+              hint={`Which few defects make most of the pieces. Shares are of every defect piece in the period.${
+                data.paretoOthers ? ` ${data.paretoOthers.types} smaller types are grouped as "Others".` : ''
+              }`}
+              icon={<AlertTriangle className="h-4 w-4" />}
+              className="xl:col-span-2"
+            >
+              <ParetoChart
+                bars={[
+                  ...data.pareto.map((p) => ({ label: p.defectName, value: p.pieces, cumulativePct: p.cumulativePct })),
+                  // The tail as one bar, so the line reaches 100% where it truly does.
+                  ...(data.paretoOthers ? [{ label: `Others (${data.paretoOthers.types})`, value: data.paretoOthers.pieces, cumulativePct: 100 }] : []),
+                ]}
+              />
             </Section>
-            <Section title="Defect rate by machine" hint="Tap a machine to filter the page to it." icon={<Activity className="h-4 w-4" />}>
+            <Section title="Defect rate by machine" hint={`Tap a machine to filter the page to it.${showing(Math.min(12, data.byMachine.length), data.counts.machines)}`} icon={<Activity className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
                 rows={data.byMachine.slice(0, 12).map((m) => ({
@@ -587,7 +637,7 @@ export function DashboardPage() {
                 }))}
               />
             </Section>
-            <Section title="Defect rate by inspector" hint="Tap a name to filter the page to them." icon={<Users className="h-4 w-4" />}>
+            <Section title="Defect rate by inspector" hint={`Tap a name to filter the page to them.${showing(Math.min(10, data.byInspector.length), data.counts.inspectors)}`} icon={<Users className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
                 rows={data.byInspector.slice(0, 10).map((r) => ({
@@ -599,7 +649,7 @@ export function DashboardPage() {
                 }))}
               />
             </Section>
-            <Section title="Defect rate by item" hint="Tap an item to filter the page to it." icon={<ClipboardList className="h-4 w-4" />}>
+            <Section title="Defect rate by item" hint={`Tap an item to filter the page to it.${showing(Math.min(10, data.byItem.length), data.counts.items)}`} icon={<ClipboardList className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
                 rows={data.byItem.slice(0, 10).map((r) => ({
@@ -616,7 +666,14 @@ export function DashboardPage() {
 
           {/* Process and materials */}
           <div className="print-break grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <Section title="Capability (Cpk)" hint={`Per dimension, worst first; green from ${t.cpkGreen}, amber from ${t.cpkAmber}. Needs ${t.minReadingsForCpk} readings.`} icon={<Ruler className="h-4 w-4" />}>
+            <Section
+              title="Capability (Cpk)"
+              hint={`Per dimension, worst first; green from ${t.cpkGreen}, amber from ${t.cpkAmber}. Needs ${t.minReadingsForCpk} readings.${showing(
+                Math.min(10, data.dimensions.filter((d) => d.cpk !== null).length),
+                data.counts.dimensions,
+              )}`}
+              icon={<Ruler className="h-4 w-4" />}
+            >
               <HorizontalBars
                 max={2}
                 rows={data.dimensions
@@ -632,7 +689,7 @@ export function DashboardPage() {
                   }))}
               />
             </Section>
-            <Section title="Defect rate by coil supplier" hint="Pieces made from each supplier and grade." icon={<ClipboardList className="h-4 w-4" />}>
+            <Section title="Defect rate by coil supplier" hint={`Pieces made from each supplier and grade.${showing(Math.min(10, data.suppliers.length), data.counts.suppliers)}`} icon={<ClipboardList className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
                 rows={data.suppliers.slice(0, 10).map((s) => ({
@@ -644,7 +701,7 @@ export function DashboardPage() {
                 }))}
               />
             </Section>
-            <Section title="PT rejects by wire batch" hint="Lengths rejected as a share of tested." icon={<Activity className="h-4 w-4" />}>
+            <Section title="PT rejects by wire batch" hint={`Lengths rejected as a share of tested.${showing(Math.min(10, data.wireBatches.length), data.counts.wireBatches)}`} icon={<Activity className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
                 rows={data.wireBatches.slice(0, 10).map((w) => ({
@@ -661,7 +718,11 @@ export function DashboardPage() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Section
               title="Hold ageing"
-              hint={`Days a defect has waited for a disposition; amber from ${t.holdAgeAmberDays}, red from ${t.holdAgeRedDays}. Tap to open the session.`}
+              hint={`Days a defect has waited for a disposition; amber from ${t.holdAgeAmberDays}, red from ${t.holdAgeRedDays}. Tap to open the session.${showing(
+                Math.min(10, data.holds.length),
+                data.counts.holds,
+                'oldest',
+              )}`}
               icon={<PauseCircle className="h-4 w-4" />}
               action={
                 data.holds.length > 0 && (
@@ -708,16 +769,16 @@ export function DashboardPage() {
           {/* Group tables */}
           <div className="print-break grid grid-cols-1 gap-4 xl:grid-cols-2">
             <Section title="By machine" icon={<Activity className="h-4 w-4" />}>
-              <Table rows={data.byMachine} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Machine', render: (r) => (<span className="font-semibold">{r.label}{r.sub && <span className="ml-1 text-xs font-normal text-slate-400">{r.sub}</span>}</span>) })} />
+              <Table rows={data.byMachine} total={data.counts.machines} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Machine', render: (r) => (<span className="font-semibold">{r.label}{r.sub && <span className="ml-1 text-xs font-normal text-slate-400">{r.sub}</span>}</span>) })} />
             </Section>
             <Section title="By inspector" icon={<Users className="h-4 w-4" />}>
-              <Table rows={data.byInspector} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Inspector', render: (r) => <span className="font-semibold">{r.label}</span> })} />
+              <Table rows={data.byInspector} total={data.counts.inspectors} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Inspector', render: (r) => <span className="font-semibold">{r.label}</span> })} />
             </Section>
             <Section title="By shift" icon={<Users className="h-4 w-4" />}>
               <Table rows={data.byShift} rowKey={(r) => r.key} columns={groupColumns(t, { key: 'k', label: 'Shift', render: (r) => (<span className="font-semibold">{r.label} <span className="text-xs font-normal text-slate-400">{shiftName(r.key as ShiftLetter)}</span></span>) })} />
             </Section>
             <Section title="By item" icon={<ClipboardList className="h-4 w-4" />}>
-              <Table rows={data.byItem} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Item', render: (r) => (<span className="font-semibold">{r.label}<span className="ml-1 text-xs font-normal text-slate-400">{r.key}</span></span>) })} />
+              <Table rows={data.byItem} total={data.counts.items} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Item', render: (r) => (<span className="font-semibold">{r.label}<span className="ml-1 text-xs font-normal text-slate-400">{r.key}</span></span>) })} />
             </Section>
           </div>
 
@@ -725,6 +786,7 @@ export function DashboardPage() {
           <Section title="Process capability" hint={`Mean, spread and failures per dimension from the readings of the period; Cp and Cpk once a dimension has ${t.minReadingsForCpk} readings. Worst first.`} icon={<Ruler className="h-4 w-4" />} className="print-break">
             <Table
               rows={data.dimensions}
+              total={data.counts.dimensions}
               rowKey={(d) => `${d.itemCode}|${d.name}`}
               maxRows={12}
               empty="No dimension has enough readings in this period."
@@ -748,6 +810,7 @@ export function DashboardPage() {
             <Section title="Coil suppliers" hint="Defect rate of the pieces made from each supplier and grade." icon={<ClipboardList className="h-4 w-4" />}>
               <Table
                 rows={data.suppliers}
+                total={data.counts.suppliers}
                 rowKey={(s) => `${s.supplier}|${s.grade}`}
                 maxRows={10}
                 empty="No coil from the register was used in this period."
@@ -764,6 +827,7 @@ export function DashboardPage() {
             <Section title="Welding wire batches" hint="PT results per wire batch." icon={<Activity className="h-4 w-4" />}>
               <Table
                 rows={data.wireBatches}
+                total={data.counts.wireBatches}
                 rowKey={(w) => w.batch}
                 maxRows={10}
                 empty="No PT lengths in this period."
@@ -777,7 +841,9 @@ export function DashboardPage() {
             </Section>
             <Section
               title="On Hold"
-              hint={`Defects waiting for a disposition; amber from ${t.holdAgeAmberDays} days, red from ${t.holdAgeRedDays}.`}
+              hint={`Defects waiting for a disposition; amber from ${t.holdAgeAmberDays} days, red from ${t.holdAgeRedDays}.${
+                data.counts.holds > data.holds.length ? ` The oldest ${data.holds.length} of ${data.counts.holds} — all of them are in History.` : ''
+              }`}
               icon={<PauseCircle className="h-4 w-4" />}
               action={
                 data.holds.length > 0 && (
@@ -789,6 +855,7 @@ export function DashboardPage() {
             >
               <Table
                 rows={data.holds}
+                total={data.counts.holds}
                 rowKey={(h) => h.defectId}
                 maxRows={10}
                 empty="Nothing on Hold. Good."
