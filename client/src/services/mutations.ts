@@ -45,66 +45,78 @@ import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Noti
 import { api } from '@/lib/api'
 import { chunk } from '@/lib/utils'
 
+/**
+ * What a write to the inspection record makes stale.
+ *
+ * The dashboard counts that same record, so `['kpi']` is never left out: a
+ * session deleted in History must not keep its pieces on the dashboard's
+ * tiles, and a corrected measurement must not keep its old verdict in the
+ * capability table. Every write below goes through here rather than listing
+ * keys of its own, so a write added later cannot quietly forget it.
+ */
+async function recordChanged(qc: QueryClient, ...also: readonly string[][]): Promise<void> {
+  await Promise.all([
+    qc.invalidateQueries({ queryKey: ['sessions'] }),
+    qc.invalidateQueries({ queryKey: ['kpi'] }),
+    ...also.map((queryKey) => qc.invalidateQueries({ queryKey })),
+  ])
+}
+
 export async function startSession(qc: QueryClient, body: StartSessionRequest): Promise<SessionWithOrder> {
   const session = await api<SessionWithOrder>('/sessions', { method: 'POST', body })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
-  if ('orderId' in body) await qc.invalidateQueries({ queryKey: ['orders', body.orderId] })
+  await recordChanged(qc, ...('orderId' in body ? [['orders', body.orderId]] : []))
   return session
 }
 
 /** §4.4 — the session and its first sample, as one request and one transaction. */
 export async function startSessionWithSample(qc: QueryClient, body: StartWithSampleRequest): Promise<StartWithSampleResponse> {
   const res = await api<StartWithSampleResponse>('/sessions/start-with-sample', { method: 'POST', body })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
-  await qc.invalidateQueries({ queryKey: ['orders'] })
+  await recordChanged(qc, ['orders'])
   return res
 }
 
 export async function closeSession(qc: QueryClient, sessionId: string, body: CloseSessionRequest): Promise<SessionWithOrder> {
   const session = await api<SessionWithOrder>(`/sessions/${sessionId}/close`, { method: 'POST', body })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  await recordChanged(qc)
   return session
 }
 
 export async function deleteSession(qc: QueryClient, sessionId: string): Promise<void> {
   await api<void>(`/sessions/${sessionId}`, { method: 'DELETE' })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  await recordChanged(qc)
 }
 
 /** Re-record a whole sample from History; refused with a conflict if it moved. */
 export async function reRecordSample(qc: QueryClient, sessionId: string, sampleId: string, body: ReRecordSampleRequest): Promise<ReRecordSampleResponse> {
   const result = await api<ReRecordSampleResponse>(`/sessions/${sessionId}/samples/${sampleId}`, { method: 'PUT', body })
   qc.removeQueries({ queryKey: ['sessions', sessionId, 'wizard'] })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
-  await qc.invalidateQueries({ queryKey: ['samples'] })
-  await qc.invalidateQueries({ queryKey: ['audit'] })
+  await recordChanged(qc, ['samples'], ['audit'])
   return result
 }
 
 /** Reopen a closed session so samples can be added again (closed-record rights). */
 export async function reopenSession(qc: QueryClient, sessionId: string, version: number): Promise<SessionWithOrder> {
   const session = await api<SessionWithOrder>(`/sessions/${sessionId}/reopen`, { method: 'POST', body: { version } satisfies ReopenSessionRequest })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  await recordChanged(qc)
   return session
 }
 
 /** Mark a sample deleted (administrators only). The rows stay; the sample leaves every list. */
 export async function deleteSample(qc: QueryClient, sampleId: string): Promise<void> {
   await api<void>(`/samples/${sampleId}`, { method: 'DELETE' })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
-  await qc.invalidateQueries({ queryKey: ['samples'] })
+  await recordChanged(qc, ['samples'])
 }
 
 /** Mark a note about an order deleted — administrators only; nothing is erased. */
 export async function deleteNote(qc: QueryClient, sessionId: string, noteId: string): Promise<void> {
   await api<void>(`/sessions/${sessionId}/notes/${noteId}`, { method: 'DELETE' })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  await recordChanged(qc)
 }
 
 /** Discard a session that recorded no sample; the API refuses one that did. */
 export async function discardSession(qc: QueryClient, sessionId: string): Promise<void> {
   await api<void>(`/sessions/${sessionId}/discard`, { method: 'POST' })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  await recordChanged(qc)
 }
 
 export async function saveSample(qc: QueryClient, sessionId: string, body: SaveSampleRequest): Promise<SaveSampleResponse> {
@@ -112,24 +124,20 @@ export async function saveSample(qc: QueryClient, sessionId: string, body: SaveS
   // The next sample starts from what this one recorded (nominals, setup,
   // coils): drop the cached wizard context so it cannot be served stale.
   qc.removeQueries({ queryKey: ['sessions', sessionId, 'wizard'] })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
-  await qc.invalidateQueries({ queryKey: ['orders'] })
-  await qc.invalidateQueries({ queryKey: ['coils', 'usage'] })
+  await recordChanged(qc, ['orders'], ['coils', 'usage'])
   return result
 }
 
 export async function correctDimension(qc: QueryClient, id: string, body: CorrectDimensionRequest): Promise<DimensionResult> {
   const row = await api<DimensionResult>(`/samples/dimensions/${id}`, { method: 'PATCH', body })
-  await qc.invalidateQueries({ queryKey: ['samples', row.sampleId] })
-  await qc.invalidateQueries({ queryKey: ['audit'] })
+  // A corrected measurement changes the dimension figures the dashboard reports.
+  await recordChanged(qc, ['samples', row.sampleId], ['audit'])
   return row
 }
 
 export async function correctDefect(qc: QueryClient, id: string, body: CorrectDefectRequest): Promise<DefectResult> {
   const row = await api<DefectResult>(`/samples/defects/${id}`, { method: 'PATCH', body })
-  await qc.invalidateQueries({ queryKey: ['samples', row.sampleId] })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
-  await qc.invalidateQueries({ queryKey: ['audit'] })
+  await recordChanged(qc, ['samples', row.sampleId], ['audit'])
   return row
 }
 
@@ -146,10 +154,12 @@ export async function purgeAudit(qc: QueryClient, body: PurgeAuditRequest): Prom
 }
 
 // ---- Master data -----------------------------------------------------------
+// A machine's factory or display name decides which dashboard list a figure
+// belongs to, so a master write refreshes the dashboard along with the list.
 
 export async function createMaster<K extends MasterKind>(qc: QueryClient, kind: K, body: Omit<MasterRecordByKind[K], 'id'>): Promise<MasterRecordByKind[K]> {
   const row = await api<MasterRecordByKind[K]>(`/master/${kind}`, { method: 'POST', body })
-  await qc.invalidateQueries({ queryKey: ['master', kind] })
+  await Promise.all([qc.invalidateQueries({ queryKey: ['master', kind] }), qc.invalidateQueries({ queryKey: ['kpi'] })])
   return row
 }
 
@@ -160,27 +170,26 @@ export async function updateMaster<K extends MasterKind>(
   body: Omit<MasterRecordByKind[K], 'id'>,
 ): Promise<MasterRecordByKind[K]> {
   const row = await api<MasterRecordByKind[K]>(`/master/${kind}/${id}`, { method: 'PUT', body })
-  await qc.invalidateQueries({ queryKey: ['master', kind] })
+  await Promise.all([qc.invalidateQueries({ queryKey: ['master', kind] }), qc.invalidateQueries({ queryKey: ['kpi'] })])
   return row
 }
 
 export async function deleteMaster(qc: QueryClient, kind: MasterKind, id: string): Promise<void> {
   await api<void>(`/master/${kind}/${id}`, { method: 'DELETE' })
-  await qc.invalidateQueries({ queryKey: ['master', kind] })
+  await Promise.all([qc.invalidateQueries({ queryKey: ['master', kind] }), qc.invalidateQueries({ queryKey: ['kpi'] })])
 }
 
 /** Mark many records of one table deleted in one request. */
 export async function deleteManyMaster(qc: QueryClient, kind: MasterKind, ids: string[]): Promise<number> {
   const { deleted } = await api<{ deleted: number }>(`/master/${kind}/delete-many`, { method: 'POST', body: { ids } })
-  await qc.invalidateQueries({ queryKey: ['master', kind] })
+  await Promise.all([qc.invalidateQueries({ queryKey: ['master', kind] }), qc.invalidateQueries({ queryKey: ['kpi'] })])
   return deleted
 }
 
 /** Mark every order line deleted ahead of a fresh ERP export. */
 export async function clearOrders(qc: QueryClient): Promise<ClearOrdersResult> {
   const result = await api<ClearOrdersResult>('/orders/clear', { method: 'POST' })
-  await qc.invalidateQueries({ queryKey: ['orders'] })
-  await qc.invalidateQueries({ queryKey: ['sessions'] })
+  await recordChanged(qc, ['orders'])
   return result
 }
 
@@ -188,7 +197,10 @@ export async function clearOrders(qc: QueryClient): Promise<ClearOrdersResult> {
 
 export type ImportTarget = 'orders' | 'coils' | 'item-dimension-order' | 'machines' | 'work-center-defects'
 
-/** Where each importer lives on the API, and which cached reads it changes. */
+/** Where each importer lives on the API, and which cached reads it changes.
+ *  The dashboard reads all of them — an order line imported changes coverage,
+ *  a machine's factory changes which list a figure belongs to — so `['kpi']`
+ *  is invalidated alongside whatever the target names. */
 function importEndpoint(target: ImportTarget): { path: string; invalidates: readonly string[] } {
   switch (target) {
     case 'orders':
@@ -218,7 +230,7 @@ export async function existingKeys(target: ImportTarget, keys: string[]): Promis
 export async function importRows(qc: QueryClient, target: ImportTarget, rows: unknown[]): Promise<ImportResult> {
   const { path, invalidates } = importEndpoint(target)
   const result = await api<ImportResult>(`${path}/import`, { method: 'POST', body: { rows } })
-  await qc.invalidateQueries({ queryKey: [...invalidates] })
+  await Promise.all([qc.invalidateQueries({ queryKey: [...invalidates] }), qc.invalidateQueries({ queryKey: ['kpi'] })])
   return result
 }
 
