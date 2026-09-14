@@ -36,7 +36,7 @@ import type { Disposition, ShiftLetter } from '@qc/shared/types'
 import { deltaPct, toneHighIsGood, toneLowIsGood, type KpiFilters, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
-import { DonutChart, HorizontalBars, ParetoChart, TrendChart } from '@/components/dashboard/charts'
+import { ColumnChart, DonutChart, HorizontalBars, PairedBarChart, ParetoChart } from '@/components/dashboard/charts'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
@@ -345,6 +345,8 @@ export function DashboardPage() {
   /** Which half of the dashboard is on screen. Printing renders both, so the
    *  PDF is the whole dashboard whichever tab is open. */
   const [view, setView] = useState<'overview' | 'inspectors'>('overview')
+  /** The Pareto can be read for one machine without narrowing the whole page. */
+  const [paretoMachine, setParetoMachine] = useState('')
   const { data: machines = [] } = useMaster('machines', undefined, allowed)
   const { data: users = [] } = useUsers()
 
@@ -358,6 +360,11 @@ export function DashboardPage() {
    * this?" can still be asked; and someone whose account was removed but
    * whose inspections remain is offered from the record itself.
    */
+  const machinePareto = useMemo(
+    () => (paretoMachine ? data?.paretoByMachine.find((m) => m.workCenterCode === paretoMachine) : undefined),
+    [data, paretoMachine],
+  )
+
   const inspectorChoices = useMemo(() => {
     const ranking = data ? [...data.inspectorRanking.overall.ranked, ...data.inspectorRanking.overall.unranked] : []
     const recorded = new Map(ranking.map((r) => [r.inspectorId, r.name]))
@@ -402,10 +409,10 @@ export function DashboardPage() {
   const dailyPoints = useMemo(() => {
     if (!data) return []
     const byDay = new Map(data.daily.map((d) => [d.day, d]))
-    const out: { label: string; bar: number; line: number | null }[] = []
+    const out: { label: string; total: number; part: number }[] = []
     for (let day = data.filters.from; day <= data.filters.to && out.length < 400; day = addDays(day, 1)) {
       const d = byDay.get(day)
-      out.push({ label: shortDay(day), bar: d?.samples ?? 0, line: d?.defectRatePct ?? null })
+      out.push({ label: shortDay(day), total: d?.pieces ?? 0, part: d?.defectPieces ?? 0 })
     }
     return out
   }, [data])
@@ -478,48 +485,46 @@ export function DashboardPage() {
       </div>
 
       {/* Filters */}
-      <Card className="print-hidden p-4">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-          <Field label="Period">
-            <Select value={f.preset} onChange={(e) => patch({ preset: e.target.value as PeriodPreset, customFrom: f.customFrom || range.from, customTo: f.customTo || range.to })}>
-              {PERIOD_PRESETS.map((p) => (
+      <Card className="print-hidden space-y-3 p-4">
+        {/* The period is a row of buttons, one tap each, with the dates shown
+            only when "Custom" is chosen. */}
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Period">
+          <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Period</span>
+          {PERIOD_PRESETS.map((p) => {
+            const active = f.preset === p.key
+            return (
+              <button
+                key={p.key}
+                type="button"
+                aria-pressed={active}
+                onClick={() => patch({ preset: p.key, customFrom: f.customFrom || range.from, customTo: f.customTo || range.to })}
+                className={cn(
+                  'min-h-[40px] rounded-xl px-3 text-sm font-semibold ring-1 transition-colors',
+                  active ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800',
+                )}
+              >
+                {p.label}
+              </button>
+            )
+          })}
+          {f.preset === 'custom' && (
+            <span className="inline-flex flex-wrap items-center gap-2">
+              <Input type="date" value={f.customFrom} max={today} onChange={(e) => patch({ customFrom: e.target.value })} aria-label="From" className="min-h-[40px]" />
+              <span className="text-xs text-slate-400">to</span>
+              <Input type="date" value={f.customTo} max={today} onChange={(e) => patch({ customTo: e.target.value })} aria-label="To" className="min-h-[40px]" />
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <Field label="Compare with">
+            <Select value={f.compare} onChange={(e) => patch({ compare: e.target.value as ComparePreset })}>
+              {COMPARE_PRESETS.map((p) => (
                 <option key={p.key} value={p.key}>
                   {p.label}
                 </option>
               ))}
             </Select>
           </Field>
-          {f.preset === 'custom' ? (
-            <>
-              <Field label="From">
-                <Input type="date" value={f.customFrom} max={today} onChange={(e) => patch({ customFrom: e.target.value })} />
-              </Field>
-              <Field label="To">
-                <Input type="date" value={f.customTo} max={today} onChange={(e) => patch({ customTo: e.target.value })} />
-              </Field>
-            </>
-          ) : (
-            <Field label="Compare with">
-              <Select value={f.compare} onChange={(e) => patch({ compare: e.target.value as ComparePreset })}>
-                {COMPARE_PRESETS.map((p) => (
-                  <option key={p.key} value={p.key}>
-                    {p.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          )}
-          {f.preset === 'custom' && (
-            <Field label="Compare with">
-              <Select value={f.compare} onChange={(e) => patch({ compare: e.target.value as ComparePreset })}>
-                {COMPARE_PRESETS.map((p) => (
-                  <option key={p.key} value={p.key}>
-                    {p.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          )}
           <Field label="Factory">
             <Select value={f.factory} onChange={(e) => patch({ factory: e.target.value, workCenterCode: '' })}>
               <option value="">All factories</option>
@@ -612,15 +617,13 @@ export function DashboardPage() {
               tab is open; still printed, so the PDF stays the whole dashboard. */}
           <div className={cn('space-y-5', view !== 'overview' && '[@media_screen]:hidden')}>
           {/* Tiles */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             <KpiTile label="Defect rate" value={pctStr(cur.defectRatePct)} current={cur.defectRatePct} previous={prevT.defectRatePct} goodWhen="down" tone={toneLowIsGood(cur.defectRatePct, t.defectRateGreen, t.defectRateAmber)} sub={`${num(cur.defectPieces)} defect pcs in ${num(cur.pieces)} inspected · target ≤ ${t.defectRateGreen}%`} icon={<AlertTriangle className="h-4 w-4" />} />
             <KpiTile label="First-pass yield" value={pctStr(cur.fpyPct)} current={cur.fpyPct} previous={prevT.fpyPct} goodWhen="up" tone={toneHighIsGood(cur.fpyPct, t.fpyGreen, t.fpyAmber)} sub={`${num(cur.samples)} samples · target ≥ ${t.fpyGreen}%`} icon={<Target className="h-4 w-4" />} />
             <KpiTile label="Dimensions out of tolerance" value={pctStr(cur.dimFailPct)} current={cur.dimFailPct} previous={prevT.dimFailPct} goodWhen="down" tone={toneLowIsGood(cur.dimFailPct, t.dimFailGreen, t.dimFailAmber)} sub={`${num(cur.dimensionsFail)} fail · ${num(cur.dimensionsWarning)} warning of ${num(cur.dimensionsMeasured)} measured`} icon={<Ruler className="h-4 w-4" />} />
-            <KpiTile label="PT weld rejects" value={pctStr(cur.ptRejectPct)} current={cur.ptRejectPct} previous={prevT.ptRejectPct} goodWhen="down" tone={toneLowIsGood(cur.ptRejectPct, t.ptRejectGreen, t.ptRejectAmber)} sub={`${num(cur.ptLengthsRejected)} of ${num(cur.ptLengthsTested)} lengths`} icon={<Activity className="h-4 w-4" />} />
             <KpiTile label="Pieces inspected" value={num(cur.pieces)} current={cur.pieces} previous={prevT.pieces} goodWhen="up" sub={`${num(cur.samples)} samples · ${num(cur.samplesPerSession, 1)} per session`} icon={<ClipboardList className="h-4 w-4" />} />
             <KpiTile label="Sessions" value={num(cur.sessions)} current={cur.sessions} previous={prevT.sessions} goodWhen="none" sub={`${num(cur.sessionsClosed)} closed · ${num(cur.machinesInspected)} machines · ${num(cur.activeInspectors)} inspectors`} icon={<Users className="h-4 w-4" />} />
             <KpiTile label="On Hold now" value={num(data.holds.length)} current={null} previous={null} goodWhen="down" tone={data.holds.some((h) => h.ageDays >= t.holdAgeRedDays) ? 'red' : data.holds.some((h) => h.ageDays >= t.holdAgeAmberDays) ? 'amber' : data.holds.length ? 'neutral' : 'green'} sub={`${num(holdPieces)} pieces waiting for a disposition`} icon={<PauseCircle className="h-4 w-4" />} />
-            <KpiTile label="Paint thickness" value={cur.paintMeanMicrons === null ? '—' : num(cur.paintMeanMicrons, 1)} unit="µm" current={cur.paintMeanMicrons} previous={prevT.paintMeanMicrons} goodWhen="none" sub={cur.paintReadings ? `${num(cur.paintReadings)} readings · min ${num(cur.paintMinMicrons, 1)} µm` : 'No paint readings'} icon={<Sparkles className="h-4 w-4" />} />
           </div>
 
           {/* Insights live behind the bulb; on paper they print in full. */}
@@ -636,8 +639,8 @@ export function DashboardPage() {
 
           {/* Trend + dispositions */}
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-            <Section title="Daily trend" hint="Samples per day with the defect rate over them." icon={<Activity className="h-4 w-4" />} className="xl:col-span-2">
-              <TrendChart points={dailyPoints} barLabel="Samples" lineLabel="Defect rate" />
+            <Section title="Daily trend" hint="Each day: pieces inspected beside pieces found defective, on one scale." icon={<Activity className="h-4 w-4" />} className="xl:col-span-2">
+              <PairedBarChart points={dailyPoints} totalLabel="Pieces inspected" partLabel="Defect pieces" />
             </Section>
             <Section title="Dispositions" hint="Defect pieces by what was decided." icon={<ClipboardList className="h-4 w-4" />}>
               <DonutChart
@@ -651,18 +654,43 @@ export function DashboardPage() {
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
             <Section
               title="Pareto of defects"
-              hint={`Which few defects make most of the pieces. Shares are of every defect piece in the period.${
-                data.paretoOthers ? ` ${data.paretoOthers.types} smaller types are grouped as "Others".` : ''
-              }`}
+              hint={
+                machinePareto
+                  ? `${machinePareto.label}: shares of that machine's own defect pieces${machinePareto.types > machinePareto.rows.length ? `, ${machinePareto.types - machinePareto.rows.length} smaller types not drawn` : ''}.`
+                  : `Which few defects make most of the pieces. Shares are of every defect piece in the period.${
+                      data.paretoOthers ? ` ${data.paretoOthers.types} smaller types are grouped as "Others".` : ''
+                    }`
+              }
               icon={<AlertTriangle className="h-4 w-4" />}
               className="xl:col-span-2"
+              action={
+                data.paretoByMachine.length > 0 && (
+                  <Select value={paretoMachine} onChange={(e) => setParetoMachine(e.target.value)} className="print-hidden min-h-[40px] max-w-[16rem]" aria-label="Pareto for machine">
+                    <option value="">All machines</option>
+                    {data.paretoByMachine.map((m) => (
+                      <option key={m.workCenterCode} value={m.workCenterCode}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </Select>
+                )
+              }
             >
               <ParetoChart
-                bars={[
-                  ...data.pareto.map((p) => ({ label: p.defectName, value: p.pieces, cumulativePct: p.cumulativePct })),
-                  // The tail as one bar, so the line reaches 100% where it truly does.
-                  ...(data.paretoOthers ? [{ label: `Others (${data.paretoOthers.types})`, value: data.paretoOthers.pieces, cumulativePct: 100 }] : []),
-                ]}
+                bars={
+                  machinePareto
+                    ? [
+                        ...machinePareto.rows.map((p) => ({ label: p.defectName, value: p.pieces, cumulativePct: p.cumulativePct })),
+                        ...(machinePareto.types > machinePareto.rows.length
+                          ? [{ label: `Others (${machinePareto.types - machinePareto.rows.length})`, value: machinePareto.totalPieces - machinePareto.rows.reduce((n, r) => n + r.pieces, 0), cumulativePct: 100 }]
+                          : []),
+                      ]
+                    : [
+                        ...data.pareto.map((p) => ({ label: p.defectName, value: p.pieces, cumulativePct: p.cumulativePct })),
+                        // The tail as one bar, so the line reaches 100% where it truly does.
+                        ...(data.paretoOthers ? [{ label: `Others (${data.paretoOthers.types})`, value: data.paretoOthers.pieces, cumulativePct: 100 }] : []),
+                      ]
+                }
               />
             </Section>
             <Section title="Defect rate by machine" hint={`Tap a machine to filter the page to it.${showing(Math.min(12, data.byMachine.length), data.counts.machines)}`} icon={<Activity className="h-4 w-4" />}>
@@ -673,7 +701,7 @@ export function DashboardPage() {
                   sub: m.sub,
                   value: m.defectRatePct,
                   tone: toneLowIsGood(m.defectRatePct, t.defectRateGreen, t.defectRateAmber),
-                  text: `${pctStr(m.defectRatePct)} · ${num(m.pieces)} pcs`,
+                  text: `${pctStr(m.defectRatePct)} · ${num(m.defectPieces)} of ${num(m.pieces)} pcs`,
                   onClick: () => patch({ workCenterCode: m.key }),
                 }))}
               />
@@ -721,32 +749,62 @@ export function DashboardPage() {
             </Section>
           </div>
 
-          {/* Process and materials */}
-          <div className="print-break grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <Section
-              title="Capability (Cpk)"
-              hint={`Per dimension, worst first; green from ${t.cpkGreen}, amber from ${t.cpkAmber}. Needs ${t.minReadingsForCpk} readings.${showing(
-                Math.min(10, data.dimensions.filter((d) => d.cpk !== null).length),
-                data.counts.dimensions,
-              )}`}
-              icon={<Ruler className="h-4 w-4" />}
-            >
-              <HorizontalBars
-                max={2}
-                rows={data.dimensions
-                  .filter((d) => d.cpk !== null)
-                  .slice(0, 10)
-                  .map((d) => ({
-                    label: `${d.name} · ${d.itemCode}`,
-                    sub: d.item,
-                    value: d.cpk === null ? null : Math.max(0, d.cpk),
-                    tone: toneHighIsGood(d.cpk, t.cpkGreen, t.cpkAmber),
-                    text: `Cpk ${num(d.cpk, 2)} · ${num(d.readings)} readings${d.centering !== null && Math.abs(d.centering) >= 0.5 ? ' · off centre' : ''}`,
-                    onClick: () => patch({ itemCode: d.itemCode }),
-                  }))}
+          {/* The shape of the period, and the paint line's readings per item. */}
+          <div className="print-break grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <Section title="Samples by defect rate" hint="How many samples had no defect, a few, or many. An average hides this shape." icon={<AlertTriangle className="h-4 w-4" />}>
+              <ColumnChart
+                columns={data.defectRateBands.map((b, i) => ({
+                  label: b.band,
+                  value: b.samples,
+                  sub: b.samples > 0 ? `${num(b.pieces)} pcs` : undefined,
+                  tone: i === 0 ? 'green' : i <= 2 ? 'neutral' : i === 3 ? 'amber' : 'red',
+                }))}
               />
             </Section>
-            <Section title="Defect rate by coil supplier" hint={`Pieces made from each supplier and grade.${showing(Math.min(10, data.suppliers.length), data.counts.suppliers)}`} icon={<ClipboardList className="h-4 w-4" />}>
+            <Section
+              title="Paint thickness by item"
+              hint={`Readings as recorded on paint samples, in µm.${showing(Math.min(10, data.paintByItem.length), data.counts.paintItems)}`}
+              icon={<Sparkles className="h-4 w-4" />}
+              className="xl:col-span-2"
+            >
+              <Table
+                rows={data.paintByItem}
+                total={data.counts.paintItems}
+                rowKey={(r) => r.itemCode}
+                maxRows={10}
+                empty="No paint thickness readings in this period."
+                columns={[
+                  { key: 'item', label: 'Item', render: (r) => (<span className="font-semibold">{r.itemCode}<span className="ml-1 text-xs font-normal text-slate-400">{r.item}</span></span>) },
+                  { key: 'n', label: 'Readings', className: 'text-right tabular-nums', render: (r) => num(r.readings) },
+                  { key: 'mean', label: 'Average µm', className: 'text-right tabular-nums font-semibold', render: (r) => num(r.meanMicrons, 1) },
+                  { key: 'min', label: 'Min µm', className: 'text-right tabular-nums', render: (r) => num(r.minMicrons, 1) },
+                  { key: 'max', label: 'Max µm', className: 'text-right tabular-nums', render: (r) => num(r.maxMicrons, 1) },
+                ]}
+              />
+            </Section>
+          </div>
+
+          {/* What each item is known to suffer, and where. */}
+          <Section title="Defects by item" hint="For the items with the most defect pieces: each defect, the machine it came from, and its share of that item's defect pieces." icon={<ClipboardList className="h-4 w-4" />}>
+            <Table
+              rows={data.itemDefects}
+              rowKey={(r) => `${r.itemCode}|${r.defectName}|${r.workCenterCode}`}
+              maxRows={15}
+              empty="No defects recorded in this period."
+              columns={[
+                { key: 'item', label: 'Item', render: (r) => (<span className="font-semibold">{r.itemCode}<span className="ml-1 text-xs font-normal text-slate-400">{r.item}</span></span>) },
+                { key: 'defect', label: 'Defect', render: (r) => <span dir="auto">{r.defectName}</span> },
+                { key: 'mc', label: 'Machine', render: (r) => r.machineLabel },
+                { key: 'pcs', label: 'Pieces', className: 'text-right tabular-nums', render: (r) => num(r.pieces) },
+                { key: 'rec', label: 'Records', className: 'text-right tabular-nums', render: (r) => num(r.records) },
+                { key: 'share', label: 'Of item', className: 'text-right', render: (r) => <span className="font-semibold tabular-nums">{pctStr(r.sharePct)}</span> },
+              ]}
+            />
+          </Section>
+
+          {/* Materials, and what is waiting */}
+          <div className="print-break grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Section title="Defect rate by coil supplier" hint={`Roll forming only — the coil is consumed there. Pieces made from each supplier and grade.${showing(Math.min(10, data.suppliers.length), data.counts.suppliers)}`} icon={<ClipboardList className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
                 rows={data.suppliers.slice(0, 10).map((s) => ({
@@ -758,21 +816,6 @@ export function DashboardPage() {
                 }))}
               />
             </Section>
-            <Section title="PT rejects by wire batch" hint={`Lengths rejected as a share of tested.${showing(Math.min(10, data.wireBatches.length), data.counts.wireBatches)}`} icon={<Activity className="h-4 w-4" />}>
-              <HorizontalBars
-                unit="%"
-                rows={data.wireBatches.slice(0, 10).map((w) => ({
-                  label: w.batch,
-                  value: w.rejectPct,
-                  tone: toneLowIsGood(w.rejectPct, t.ptRejectGreen, t.ptRejectAmber),
-                  text: `${pctStr(w.rejectPct)} · ${num(w.lengthsRejected)} of ${num(w.lengthsTested)}`,
-                }))}
-              />
-            </Section>
-          </div>
-
-          {/* Waiting: Holds by age, machines without a sample */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Section
               title="Hold ageing"
               hint={`Days a defect has waited for a disposition; amber from ${t.holdAgeAmberDays}, red from ${t.holdAgeRedDays}. Tap to open the session.${showing(
@@ -805,20 +848,6 @@ export function DashboardPage() {
                   }))}
               />
             </Section>
-            <Section title="Idle machines" hint={`Open order lines and no sample for ${t.idleMachineDays}+ days. Tap to filter.`} icon={<PauseCircle className="h-4 w-4" />}>
-              <HorizontalBars
-                unit=" d"
-                max={Math.max(t.idleMachineDays * 4, ...data.idleMachines.map((m) => m.daysSinceSample ?? 0))}
-                rows={data.idleMachines.slice(0, 10).map((m) => ({
-                  label: m.label,
-                  sub: `${m.factory ? `${m.factory} · ` : ''}${num(m.openLines)} open line${m.openLines === 1 ? '' : 's'}`,
-                  value: m.daysSinceSample ?? Math.max(t.idleMachineDays * 4, ...data.idleMachines.map((x) => x.daysSinceSample ?? 0)),
-                  tone: m.daysSinceSample === null || m.daysSinceSample >= t.idleMachineDays * 2 ? 'red' : 'amber',
-                  text: m.daysSinceSample === null ? 'never inspected' : `${num(m.daysSinceSample)} d since last sample`,
-                  onClick: () => patch({ workCenterCode: m.workCenterCode }),
-                }))}
-              />
-            </Section>
           </div>
 
           {/* Group tables */}
@@ -837,32 +866,9 @@ export function DashboardPage() {
             </Section>
           </div>
 
-          {/* Capability */}
-          <Section title="Process capability" hint={`Mean, spread and failures per dimension from the readings of the period; Cp and Cpk once a dimension has ${t.minReadingsForCpk} readings. Worst first.`} icon={<Ruler className="h-4 w-4" />} className="print-break">
-            <Table
-              rows={data.dimensions}
-              total={data.counts.dimensions}
-              rowKey={(d) => `${d.itemCode}|${d.name}`}
-              maxRows={12}
-              empty="No dimension has enough readings in this period."
-              columns={[
-                { key: 'item', label: 'Item', render: (d) => (<span className="font-semibold">{d.itemCode}<span className="ml-1 text-xs font-normal text-slate-400">{d.item}</span></span>) },
-                { key: 'dim', label: 'Dimension', render: (d) => `${d.name} (${d.unit})` },
-                { key: 'n', label: 'Readings', className: 'text-right tabular-nums', render: (d) => num(d.readings) },
-                { key: 'nom', label: 'Nominal', className: 'text-right tabular-nums', render: (d) => (d.nominal === null ? '—' : `${num(d.nominal, 3)} +${num(d.tolPlus, 3)} / −${num(d.tolMinus, 3)}`) },
-                { key: 'mean', label: 'Mean', className: 'text-right tabular-nums', render: (d) => num(d.mean, 3) },
-                { key: 'sd', label: 'Std dev', className: 'text-right tabular-nums', render: (d) => num(d.stdDev, 3) },
-                { key: 'cp', label: 'Cp', className: 'text-right tabular-nums', render: (d) => num(d.cp, 2) },
-                { key: 'cpk', label: 'Cpk', className: 'text-right', render: (d) => <span className={cn('font-semibold tabular-nums', TONE_TEXT[toneHighIsGood(d.cpk, t.cpkGreen, t.cpkAmber)])}>{num(d.cpk, 2)}</span> },
-                { key: 'centre', label: 'Centring', render: (d) => (d.centering === null ? '—' : <span className="inline-flex items-center gap-1.5"><span className="relative inline-block h-1.5 w-16 rounded-full bg-slate-200 dark:bg-slate-700"><span className="absolute top-1/2 h-3 w-1 -translate-y-1/2 rounded-full bg-brand-600 dark:bg-brand-300" style={{ left: `calc(${((d.centering + 1) / 2) * 100}% - 2px)` }} /></span><span className="text-xs tabular-nums text-slate-400">{d.centering > 0 ? '+' : ''}{d.centering.toFixed(2)}</span></span>) },
-                { key: 'fail', label: 'Fail', className: 'text-right', render: (d) => <ToneCell value={d.failPct} tone={toneLowIsGood(d.failPct, t.dimFailGreen, t.dimFailAmber)} /> },
-              ]}
-            />
-          </Section>
-
           {/* Materials + Holds */}
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <Section title="Coil suppliers" hint="Defect rate of the pieces made from each supplier and grade." icon={<ClipboardList className="h-4 w-4" />}>
+            <Section title="Coil suppliers" hint="Roll forming only. Defect rate of the pieces made from each supplier and grade." icon={<ClipboardList className="h-4 w-4" />}>
               <Table
                 rows={data.suppliers}
                 total={data.counts.suppliers}
@@ -876,21 +882,6 @@ export function DashboardPage() {
                   { key: 'p', label: 'Pieces', className: 'text-right tabular-nums', render: (s) => num(s.pieces) },
                   { key: 'd', label: 'Defect pcs', className: 'text-right tabular-nums', render: (s) => num(s.defectPieces) },
                   { key: 'r', label: 'Defect rate', className: 'text-right', render: (s) => <ToneCell value={s.defectRatePct} tone={toneLowIsGood(s.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /> },
-                ]}
-              />
-            </Section>
-            <Section title="Welding wire batches" hint="PT results per wire batch." icon={<Activity className="h-4 w-4" />}>
-              <Table
-                rows={data.wireBatches}
-                total={data.counts.wireBatches}
-                rowKey={(w) => w.batch}
-                maxRows={10}
-                empty="No PT lengths in this period."
-                columns={[
-                  { key: 'b', label: 'Batch', render: (w) => <span className="font-semibold">{w.batch}</span> },
-                  { key: 't', label: 'Tested', className: 'text-right tabular-nums', render: (w) => num(w.lengthsTested) },
-                  { key: 'r', label: 'Rejected', className: 'text-right tabular-nums', render: (w) => num(w.lengthsRejected) },
-                  { key: 'p', label: 'Reject rate', className: 'text-right', render: (w) => <ToneCell value={w.rejectPct} tone={toneLowIsGood(w.rejectPct, t.ptRejectGreen, t.ptRejectAmber)} /> },
                 ]}
               />
             </Section>
@@ -922,19 +913,6 @@ export function DashboardPage() {
                   { key: 'd', label: 'Defect', render: (h) => h.defectName },
                   { key: 'q', label: 'Qty', className: 'text-right tabular-nums', render: (h) => num(h.qty) },
                   { key: 'go', label: '', className: 'print-hidden text-right', render: (h) => (<button type="button" onClick={() => navigate(`/wizard/${h.sessionId}`)} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">Session</button>) },
-                ]}
-              />
-            </Section>
-            <Section title="Idle machines" hint={`Open order lines and no sample for ${t.idleMachineDays}+ days.`} icon={<PauseCircle className="h-4 w-4" />}>
-              <Table
-                rows={data.idleMachines}
-                rowKey={(m) => m.workCenterCode}
-                maxRows={10}
-                empty="Every machine with open orders was inspected recently."
-                columns={[
-                  { key: 'm', label: 'Machine', render: (m) => (<span className="font-semibold">{m.label}{m.factory && <span className="ml-1 text-xs font-normal text-slate-400">{m.factory}</span>}</span>) },
-                  { key: 'l', label: 'Open lines', className: 'text-right tabular-nums', render: (m) => num(m.openLines) },
-                  { key: 'd', label: 'Last sample', className: 'text-right', render: (m) => (m.daysSinceSample === null ? <Badge tone="red">never</Badge> : <Badge tone={m.daysSinceSample >= t.idleMachineDays * 2 ? 'red' : 'amber'}>{m.daysSinceSample} d ago</Badge>) },
                 ]}
               />
             </Section>

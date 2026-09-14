@@ -62,9 +62,8 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
       ['Inspectors', o.byInspector.length, o.counts.inspectors],
       ['Shifts', o.byShift.length, o.counts.shifts],
       ['Items', o.byItem.length, o.counts.items],
-      ['Capability — dimensions', o.dimensions.length, o.counts.dimensions],
-      ['Suppliers', o.suppliers.length, o.counts.suppliers],
-      ['Wire batches', o.wireBatches.length, o.counts.wireBatches],
+      ['Suppliers (roll forming only)', o.suppliers.length, o.counts.suppliers],
+      ['Paint thickness — items', o.paintByItem.length, o.counts.paintItems],
       ['Holds (oldest first)', o.holds.length, o.counts.holds],
       [],
       ['Inspector ranking weights', '', ''],
@@ -154,6 +153,26 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
         ),
       ],
     },
+    {
+      name: 'Defect rate bands',
+      header: ['Band', 'Samples', 'Pieces'],
+      rows: o.defectRateBands.map((b) => [b.band, b.samples, b.pieces]),
+    },
+    {
+      name: 'Pareto by machine',
+      header: ['Machine', 'Label', 'Defect', 'Pieces', 'Records', 'Share of machine %', 'Cumulative %'],
+      rows: o.paretoByMachine.flatMap((m) => m.rows.map((r) => [m.workCenterCode, m.label, r.defectName, r.pieces, r.records, r.sharePct, r.cumulativePct])),
+    },
+    {
+      name: 'Defects by item',
+      header: ['Item code', 'Item', 'Defect', 'Machine', 'Machine label', 'Pieces', 'Records', 'Share of item %'],
+      rows: o.itemDefects.map((r) => [r.itemCode, r.item, r.defectName, r.workCenterCode, r.machineLabel, r.pieces, r.records, r.sharePct]),
+    },
+    {
+      name: 'Paint by item',
+      header: ['Item code', 'Item', 'Readings', 'Average µm', 'Min µm', 'Max µm'],
+      rows: o.paintByItem.map((r) => [r.itemCode, r.item, r.readings, r.meanMicrons, r.minMicrons, r.maxMicrons]),
+    },
     group('Machines', o.byMachine),
     group('Inspectors', o.byInspector),
     {
@@ -162,29 +181,15 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
     },
     group('Items', o.byItem),
     {
-      name: 'Capability',
-      header: ['Item code', 'Item', 'Dimension', 'Unit', 'Readings', 'Mean', 'Std dev', 'Nominal', 'Tol +', 'Tol −', 'Cp', 'Cpk', 'Pass %', 'Fail %'],
-      rows: o.dimensions.map((d) => [d.itemCode, d.item, d.name, d.unit, d.readings, d.mean, d.stdDev, d.nominal, d.tolPlus, d.tolMinus, d.cp, d.cpk, d.passPct, d.failPct]),
-    },
-    {
       name: 'Suppliers',
+      // Roll forming only: the coil is consumed there.
       header: ['Supplier', 'Grade', 'Samples', 'Pieces', 'Defect pieces', 'Defect rate %'],
       rows: o.suppliers.map((s) => [s.supplier, s.grade, s.samples, s.pieces, s.defectPieces, s.defectRatePct]),
-    },
-    {
-      name: 'Wire batches',
-      header: ['Batch', 'Lengths tested', 'Lengths rejected', 'Reject %'],
-      rows: o.wireBatches.map((w) => [w.batch, w.lengthsTested, w.lengthsRejected, w.rejectPct]),
     },
     {
       name: 'Holds',
       header: ['Order', 'Item', 'Machine', 'Defect', 'Qty', 'Age (days)', 'Session id', 'Sample id'],
       rows: o.holds.map((h) => [h.orderNumber, h.item, h.workCenterCode, h.defectName, h.qty, h.ageDays, h.sessionId, h.sampleId]),
-    },
-    {
-      name: 'Idle machines',
-      header: ['Machine', 'Label', 'Factory', 'Open lines', 'Days since sample'],
-      rows: o.idleMachines.map((m) => [m.workCenterCode, m.label, m.factory, m.openLines, m.daysSinceSample]),
     },
     {
       name: 'Discipline',

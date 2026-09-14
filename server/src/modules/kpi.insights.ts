@@ -80,7 +80,7 @@ function yieldRules(o: Draft, t: KpiThresholds): KpiInsight[] {
       severity: 'critical',
       title: `${pctText(dimFail)} of measured dimensions are out of tolerance`,
       detail: `${o.current.dimensionsFail} failed of ${o.current.dimensionsMeasured} measured, ${o.current.dimensionsWarning} in the warning band.`,
-      action: 'Look at the capability table: a low Cpk with a mean off nominal is a setup problem, a low Cp is a machine problem.',
+      action: 'Open the failing samples in History: a mean sitting off nominal is a setup problem, readings spread across the tolerance are a machine problem.',
     })
   } else if (dimFail !== null && o.current.dimensionsMeasured >= 20 && dimFail > t.dimFailGreen) {
     out.push({
@@ -146,25 +146,6 @@ function outlierRule(
   }
 }
 
-function capabilityRules(o: Draft, t: KpiThresholds): KpiInsight[] {
-  const weak = o.dimensions.filter((d) => d.cpk !== null && d.readings >= t.minReadingsForCpk && d.cpk < t.cpkAmber)
-  if (weak.length === 0) return []
-  const worst = weak[0]
-  const offCentre = worst.centering !== null && Math.abs(worst.centering) >= 0.5
-  return [
-    {
-      id: 'cpk-low',
-      severity: worst.cpk !== null && worst.cpk < t.cpkAmber * 0.75 ? 'critical' : 'warning',
-      title: `${plural(weak.length, 'dimension')} below Cpk ${t.cpkAmber}; worst is "${worst.name}" on ${worst.itemCode} at ${fmt(worst.cpk, 2)}`,
-      detail: `${worst.readings} readings, mean ${fmt(worst.mean, 2)} ${worst.unit} against nominal ${fmt(worst.nominal, 2)}; Cp ${fmt(worst.cp, 2)}.`,
-      action: offCentre
-        ? 'The mean sits off nominal: re-centre the setup, the spread itself is acceptable.'
-        : 'The spread is too wide for the tolerance: check the machine, not the setup.',
-      link: { kind: 'item', value: worst.itemCode },
-    },
-  ]
-}
-
 function supplierRules(o: Draft): KpiInsight[] {
   const overall = o.current.defectRatePct
   if (overall === null || overall <= 0) return []
@@ -180,32 +161,6 @@ function supplierRules(o: Draft): KpiInsight[] {
       action: 'Raise it with procurement with the coil numbers from History; hold incoming material of this grade for inspection.',
     },
   ]
-}
-
-function wireRules(o: Draft, t: KpiThresholds): KpiInsight[] {
-  const out: KpiInsight[] = []
-  const rate = o.current.ptRejectPct
-  if (rate !== null && o.current.ptLengthsTested >= 10 && rate > t.ptRejectAmber) {
-    out.push({
-      id: 'pt-reject-red',
-      severity: 'critical',
-      title: `${pctText(rate)} of PT weld lengths rejected`,
-      detail: `${o.current.ptLengthsRejected} of ${o.current.ptLengthsTested} lengths tested.`,
-      action: 'Check wire batch, gas flow and the welder settings on the lines with rejects.',
-    })
-  }
-  const bad = o.wireBatches.filter((w) => w.lengthsTested >= 10 && w.rejectPct !== null && w.rejectPct > t.ptRejectAmber)
-  if (bad.length > 0) {
-    const worst = bad.sort((a, b) => (b.rejectPct ?? 0) - (a.rejectPct ?? 0))[0]
-    out.push({
-      id: 'wire-batch',
-      severity: 'warning',
-      title: `Wire batch ${worst.batch} rejects ${pctText(worst.rejectPct)} of tested lengths`,
-      detail: `${worst.lengthsRejected} of ${worst.lengthsTested} lengths.`,
-      action: 'Quarantine the batch and test a length from another batch on the same machine to separate wire from welder.',
-    })
-  }
-  return out
 }
 
 function holdRules(o: Draft, t: KpiThresholds): KpiInsight[] {
@@ -245,25 +200,6 @@ function holdRules(o: Draft, t: KpiThresholds): KpiInsight[] {
       title: `${plural(o.holds.length, 'defect')} on Hold, ${pieces} pieces`,
       detail: 'All within the age limit.',
       link: { kind: 'history-hold', value: 'Hold' },
-    },
-  ]
-}
-
-function idleRules(o: Draft, t: KpiThresholds): KpiInsight[] {
-  if (o.idleMachines.length === 0) return []
-  const never = o.idleMachines.filter((m) => m.daysSinceSample === null)
-  const list = o.idleMachines
-    .slice(0, 4)
-    .map((m) => `${m.label}${m.daysSinceSample === null ? ' (never)' : ` (${plural(m.daysSinceSample, 'day')})`}`)
-    .join(', ')
-  return [
-    {
-      id: 'idle-machines',
-      severity: never.length > 0 || o.idleMachines.length >= 3 ? 'warning' : 'info',
-      title: `${plural(o.idleMachines.length, 'machine')} with open orders and no sample for ${t.idleMachineDays}+ days`,
-      detail: `${list}${o.idleMachines.length > 4 ? ` and ${o.idleMachines.length - 4} more` : ''}.`,
-      action: 'Either the machine is not running or nobody is inspecting it; both are worth a walk.',
-      link: { kind: 'machine', value: o.idleMachines[0].workCenterCode },
     },
   ]
 }
@@ -384,11 +320,8 @@ export function buildInsights(o: Draft, t: KpiThresholds): KpiInsight[] {
     ...defectRateRules(o, t),
     ...yieldRules(o, t),
     ...paretoRules(o),
-    ...capabilityRules(o, t),
     ...supplierRules(o),
-    ...wireRules(o, t),
     ...holdRules(o, t),
-    ...idleRules(o, t),
     ...disciplineRules(o),
     ...inspectorRules(o),
     ...shiftRules(o),

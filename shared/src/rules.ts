@@ -161,6 +161,9 @@ export function isOtherDefect(name: string): boolean {
 
 /** The dimension name the paint-thickness readings are saved under (§5.5). */
 export const PAINT_THICKNESS_NAME = 'Paint thickness'
+
+/** §5.6 — the share of welds a PT inspection must cover, at the least. */
+export const PT_MIN_TEST_FREQUENCY_PCT = 5
 /** The least thickness readings a paint sample carries; more are added in threes. */
 export const PAINT_THICKNESS_READINGS = 3
 /** The unit used when no configuration row names one. */
@@ -362,10 +365,10 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
     if (!pt) {
       issues.push({ step: 'pt', message: 'PT / weld inspection details are required.' })
     } else {
-      if (!(pt.testFrequencyPct > 5)) {
+      if (!(pt.testFrequencyPct >= PT_MIN_TEST_FREQUENCY_PCT)) {
         issues.push({
           step: 'pt',
-          message: 'Test frequency must be greater than 5%.',
+          message: `Test frequency must be at least ${PT_MIN_TEST_FREQUENCY_PCT}%.`,
           ref: 'testFrequencyPct',
         })
       }
