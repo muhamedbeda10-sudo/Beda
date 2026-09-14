@@ -65,7 +65,8 @@ import type { HistoryFilters, SessionWithOrder } from '@qc/shared/api'
 // and a sample's dimensions, defects and coils when that sample is opened.
 // ============================================================================
 
-type StatusFilter = 'All' | 'Open' | 'Closed'
+/** Open, Closed, or — the case a supervisor looks for first — on Hold. */
+type StatusFilter = 'All' | 'Open' | 'Closed' | 'Hold'
 type RangeFilter = 'all' | '7' | '30' | '90'
 
 /** How many sessions one page holds. The filters are answered over the whole
@@ -162,12 +163,13 @@ export function HistoryPage() {
   const filters = useMemo<HistoryFilters>(() => {
     const f: HistoryFilters = {}
     if (settledTerm) f.q = settledTerm
-    if (status !== 'All') f.status = status
+    if (status === 'Open' || status === 'Closed') f.status = status
     if (workCenter !== 'all') f.workCenterCode = workCenter
     if (inspectorFilter !== 'all') f.inspectorId = inspectorFilter
     if (factoryFilter !== 'all') f.factory = factoryFilter
     if (range !== 'all') f.since = daysAgoISO(Number(range))
     if (dispositionFilter) f.disposition = dispositionFilter
+    else if (status === 'Hold') f.disposition = 'Hold'
     return f
   }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, range, dispositionFilter])
 
@@ -351,6 +353,7 @@ export function HistoryPage() {
               <option value="All">All</option>
               <option value="Open">Open</option>
               <option value="Closed">Closed</option>
+              <option value="Hold">On Hold</option>
             </Select>
           </Field>
           <Field label="Date range">
@@ -628,7 +631,18 @@ export function HistoryPage() {
                         onClick={() => setOpenSampleId(sm.id)}
                         className="flex min-h-[48px] w-full items-center gap-3 rounded-2xl px-4 py-3 text-left ring-1 ring-slate-200 transition-colors hover:bg-slate-50 dark:ring-slate-700 dark:hover:bg-slate-800/60"
                       >
-                        <span className="grid h-10 min-w-[2.5rem] shrink-0 place-items-center rounded-xl bg-brand-100 px-1.5 text-sm font-bold tabular-nums text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+                        {/* The number tile wears the sample's worst signal: amber on Hold, red with defects, blue when clean. */}
+                        <span
+                          className={cn(
+                            'grid h-10 min-w-[2.5rem] shrink-0 place-items-center rounded-xl px-1.5 text-sm font-bold tabular-nums',
+                            (sm.holdCount ?? 0) > 0
+                              ? 'bg-amber-100 text-amber-800 ring-1 ring-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/40'
+                              : (sm.defectCount ?? 0) > 0
+                                ? 'bg-rose-100 text-rose-800 ring-1 ring-rose-300 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-500/40'
+                                : 'bg-brand-100 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300',
+                          )}
+                          title={(sm.holdCount ?? 0) > 0 ? 'A defect in this sample is on Hold' : (sm.defectCount ?? 0) > 0 ? 'This sample recorded defects' : undefined}
+                        >
                           {openSession.seq}-{sm.index}
                         </span>
                         <span className="min-w-0 flex-1">

@@ -246,6 +246,7 @@ export type SampleSummary = Pick<
   | 'dimensionCount'
   | 'measuredDimensionCount'
   | 'defectCount'
+  | 'holdCount'
   | 'coilCount'
 >
 

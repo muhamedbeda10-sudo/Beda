@@ -221,6 +221,8 @@ export interface InspectionSample {
   dimensionCount?: number
   measuredDimensionCount?: number
   defectCount?: number
+  /** Defects of this sample still on Hold. Computed by the API. */
+  holdCount?: number
   coilCount?: number
   deletedAt?: ISODate | null
   version: number

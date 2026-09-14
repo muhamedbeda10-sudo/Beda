@@ -525,8 +525,17 @@ export function InspectionsPage() {
                               key={sm.id}
                               type="button"
                               onClick={() => setViewing({ session: s, sample: sm })}
-                              className="min-h-[36px] rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20"
-                              aria-label={`Open sample ${sm.index}`}
+                              className={cn(
+                                'min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 transition-colors',
+                                // The chip wears the sample's worst signal: amber while a defect waits on Hold, red for defects decided, blue when clean.
+                                (sm.holdCount ?? 0) > 0
+                                  ? 'bg-amber-50 text-amber-800 ring-amber-300 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/40'
+                                  : (sm.defectCount ?? 0) > 0
+                                    ? 'bg-rose-50 text-rose-800 ring-rose-300 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-500/40'
+                                    : 'bg-brand-50 text-brand-700 ring-brand-200 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20',
+                              )}
+                              aria-label={`Open sample ${sm.index}${(sm.holdCount ?? 0) > 0 ? ', on Hold' : ''}`}
+                              title={(sm.holdCount ?? 0) > 0 ? 'A defect in this sample is on Hold' : undefined}
                             >
                               {s.seq}-{sm.index}
                             </button>
