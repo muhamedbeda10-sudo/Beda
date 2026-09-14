@@ -82,25 +82,64 @@ const RANGE_LABEL: Record<RangeFilter, string> = {
 }
 
 
-/** The table's columns and their starting widths; a desktop drags them, anyone hides them (§11). */
+/**
+ * The table's columns and their starting widths; a desktop drags them, anyone
+ * hides them (§11). The everyday set is on by default; the rest are there for
+ * the full picture and switched on from the Columns button.
+ */
 const HISTORY_COLUMNS: ColumnDef[] = [
   { key: 'seq', label: 'Seq', width: 72, min: 56 },
   { key: 'order', label: 'Order', width: 120, min: 80 },
   { key: 'item', label: 'Item', width: 240, min: 100 },
+  { key: 'itemCode', label: 'Item code', width: 120, min: 80, defaultHidden: true },
+  { key: 'customer', label: 'Customer', width: 160, min: 90, defaultHidden: true },
+  { key: 'factory', label: 'Factory', width: 110, min: 80, defaultHidden: true },
   { key: 'machine', label: 'Machine', width: 150, min: 80 },
   { key: 'inspector', label: 'Inspector', width: 150, min: 80 },
-  { key: 'date', label: 'Date', width: 130, min: 90 },
+  { key: 'date', label: 'Started', width: 130, min: 90 },
+  { key: 'closed', label: 'Closed', width: 150, min: 90, defaultHidden: true },
+  { key: 'closedBy', label: 'Closed by', width: 150, min: 80, defaultHidden: true },
   { key: 'status', label: 'Status', width: 150, min: 90 },
   { key: 'samples', label: 'Samples', width: 96, min: 72, align: 'right' },
+  { key: 'pieces', label: 'Pieces inspected', width: 120, min: 80, align: 'right' },
+  { key: 'defects', label: 'Defects', width: 90, min: 72, align: 'right' },
   { key: 'defectPieces', label: 'Defect pcs', width: 104, min: 80, align: 'right' },
+  { key: 'defectRate', label: 'Defect %', width: 96, min: 72, align: 'right' },
+  { key: 'dimFails', label: 'Dims failed', width: 100, min: 80, align: 'right', defaultHidden: true },
+  { key: 'holds', label: 'On Hold', width: 90, min: 72, align: 'right', defaultHidden: true },
+  { key: 'notes', label: 'Notes', width: 80, min: 64, align: 'right', defaultHidden: true },
   { key: 'rejected', label: 'Rejected before release', width: 150, min: 90, align: 'right' },
+  { key: 'produced', label: 'Produced (stock)', width: 130, min: 90, align: 'right', defaultHidden: true },
   { key: 'final', label: 'Final qty', width: 100, min: 80, align: 'right' },
+  { key: 'grade', label: 'Expected grade', width: 120, min: 80, defaultHidden: true },
   { key: 'open', label: '', width: 48, min: 40, hideable: false },
 ]
 
-/** One cell of the table. Fixed layout (a desktop): the cell shows what fits its column and the whole text on hover; dragging the column wider shows the rest. */
-function historyCell(key: string, s: SessionWithOrder, fixed: boolean, workCenterName: (code: string) => string): ReactNode {
-  const clip = fixed ? 'truncate' : ''
+interface HistoryCellContext {
+  /** True on a desktop with fixed column widths: the cell shows what fits and the whole text on hover. */
+  fixed: boolean
+  workCenterName: (code: string) => string
+  factoryOf: (code: string) => string
+}
+
+const pctText = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 1000) / 10}%` : '—')
+
+/** One cell of the table, by column key. */
+function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext): ReactNode {
+  const clip = ctx.fixed ? 'truncate' : ''
+  const text = (value: string, extra = '') => (
+    <td key={key} className={cn('px-4 py-3', extra, clip)} title={value || undefined}>
+      {value || '—'}
+    </td>
+  )
+  const number = (value: number | null | undefined, extra = '') => (
+    <td key={key} className={cn('px-4 py-3 text-right tabular-nums', extra)}>
+      {num(value)}
+    </td>
+  )
+  const defects = s.defectCount ?? 0
+  const defectPieces = s.defectPieces ?? 0
+  const pieces = s.piecesInspected ?? 0
   switch (key) {
     case 'seq':
       return <td key={key} className="px-4 py-3 tabular-nums text-slate-400">#{s.seq}</td>
@@ -112,28 +151,30 @@ function historyCell(key: string, s: SessionWithOrder, fixed: boolean, workCente
       )
     case 'item':
       return (
-        <td key={key} className={cn('px-4 py-3', fixed ? 'truncate' : 'max-w-[220px] truncate')} title={s.order?.item ?? undefined}>
+        <td key={key} className={cn('px-4 py-3', ctx.fixed ? 'truncate' : 'max-w-[220px] truncate')} title={s.order?.item ?? undefined}>
           {s.order?.item ?? '—'}
         </td>
       )
+    case 'itemCode':
+      return text(s.order?.itemCode ?? '', 'font-mono text-xs')
+    case 'customer':
+      return text(s.order?.customer ?? '')
+    case 'factory':
+      return text(ctx.factoryOf(s.workCenterCode))
     case 'machine':
-      return (
-        <td key={key} className={cn('px-4 py-3', clip)} title={workCenterName(s.workCenterCode)}>
-          {workCenterName(s.workCenterCode)}
-        </td>
-      )
+      return text(ctx.workCenterName(s.workCenterCode))
     case 'inspector':
-      return (
-        <td key={key} className={cn('px-4 py-3', clip)} title={s.inspectorName}>
-          {s.inspectorName}
-        </td>
-      )
+      return text(s.inspectorName)
     case 'date':
       return (
-        <td key={key} className={cn('px-4 py-3 tabular-nums', clip)}>
+        <td key={key} className={cn('px-4 py-3 tabular-nums', clip)} title={formatDateTime(s.startedAt)}>
           {formatDate(s.startedAt)}
         </td>
       )
+    case 'closed':
+      return text(s.closedAt ? formatDateTime(s.closedAt) : '', 'tabular-nums')
+    case 'closedBy':
+      return text(s.closedAt ? (s.closedByName ?? 'Unknown') : '')
     case 'status':
       return (
         <td key={key} className="px-4 py-3">
@@ -144,18 +185,34 @@ function historyCell(key: string, s: SessionWithOrder, fixed: boolean, workCente
         </td>
       )
     case 'samples':
-      return <td key={key} className="px-4 py-3 text-right tabular-nums">{num(s.sampleCount)}</td>
+      return number(s.sampleCount)
+    case 'pieces':
+      return number(pieces)
+    case 'defects':
+      return number(defects, defects > 0 ? 'font-bold text-rose-600 dark:text-rose-400' : '')
     case 'defectPieces':
       // The same figure the dashboard adds up per day and per machine.
+      return number(defectPieces, defectPieces > 0 ? 'font-bold text-rose-600 dark:text-rose-400' : '')
+    case 'defectRate':
       return (
-        <td key={key} className={cn('px-4 py-3 text-right tabular-nums', (s.defectPieces ?? 0) > 0 && 'font-bold text-rose-600 dark:text-rose-400')}>
-          {num(s.defectPieces ?? 0)}
+        <td key={key} className={cn('px-4 py-3 text-right tabular-nums', defectPieces > 0 && 'font-bold text-rose-600 dark:text-rose-400')} title="Defect pieces over pieces inspected">
+          {pctText(defectPieces, pieces)}
         </td>
       )
+    case 'dimFails':
+      return number(s.dimensionFailCount ?? 0, (s.dimensionFailCount ?? 0) > 0 ? 'font-bold text-rose-600 dark:text-rose-400' : '')
+    case 'holds':
+      return number(s.holdCount ?? 0, (s.holdCount ?? 0) > 0 ? 'font-bold text-amber-700 dark:text-amber-400' : '')
+    case 'notes':
+      return number(s.noteCount ?? 0)
     case 'rejected':
-      return <td key={key} className="px-4 py-3 text-right tabular-nums">{num(s.startQtyConfirmed?.qty)}</td>
+      return number(s.startQtyConfirmed?.qty)
+    case 'produced':
+      return number(isStockOrder(s.order) ? (s.producedQty ?? null) : null)
     case 'final':
-      return <td key={key} className="px-4 py-3 text-right tabular-nums">{num(s.finalQty)}</td>
+      return number(s.finalQty)
+    case 'grade':
+      return text(s.order?.expectedGrade ?? '')
     case 'open':
       return (
         <td key={key} className="px-4 py-3 text-right">
@@ -305,6 +362,14 @@ export function HistoryPage() {
   const sessionSamples = useMemo(() => [...samples].sort((a, b) => a.index - b.index), [samples])
 
   const workCenterName = (code: string) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`
+  const cellContext = useMemo<HistoryCellContext>(
+    () => ({
+      fixed: grid.enabled,
+      workCenterName: (code) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`,
+      factoryOf: (code) => machines.find((m) => m.code === code)?.factory ?? '',
+    }),
+    [grid.enabled, machines],
+  )
 
   // The lists a filter may offer come from the record, not from the page on
   // screen — an inspector who last worked a year ago is still in the list.
@@ -559,7 +624,7 @@ export function HistoryPage() {
                       onClick={() => setOpenSessionId(s.id)}
                       className={cn('cursor-pointer transition-colors', sessionToneClass(s, 'row', 'hover:bg-slate-50 dark:hover:bg-slate-800/50'))}
                     >
-                      {grid.visible.map((c) => historyCell(c.key, s, grid.enabled, workCenterName))}
+                      {grid.visible.map((c) => historyCell(c.key, s, cellContext))}
                     </tr>
                   ))}
                 </tbody>

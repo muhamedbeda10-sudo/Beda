@@ -315,6 +315,9 @@ describe('the atomic sample save', () => {
     // One defect record of two pieces: the pieces are what the dashboard adds up.
     expect(board.body.sessions[0].defectCount).toBe(1)
     expect(board.body.sessions[0].defectPieces).toBe(2)
+    // Two samples of one piece each; the 2503 mm length fails its ±2 tolerance in both.
+    expect(board.body.sessions[0].piecesInspected).toBe(2)
+    expect(board.body.sessions[0].dimensionFailCount).toBe(2)
     expect(board.body.holdCount).toBe(1)
     const history = await app.api<OrderHistory>('GET', `/api/orders/${weldOrder.id}/history`, { token: inspector.token })
     expect(history.body.sessions).toHaveLength(1)

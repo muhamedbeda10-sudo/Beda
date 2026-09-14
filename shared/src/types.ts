@@ -176,6 +176,10 @@ export interface InspectionSession {
   defectPieces?: number
   /** Of those, the ones dispositioned Hold. Computed by the API. */
   holdCount?: number
+  /** Pieces inspected: the sum of the samples' quantities. Computed by the API. */
+  piecesInspected?: number
+  /** Dimension readings out of tolerance across the samples. Computed by the API. */
+  dimensionFailCount?: number
   /** The same item of the same order already showed defects on another
    *  machine or in an earlier session. Computed by the API. */
   priorDefectsElsewhere?: boolean
