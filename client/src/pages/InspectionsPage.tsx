@@ -27,6 +27,7 @@ import { SessionToneBadge, sessionToneClass } from '@/components/inspection/Sess
 import { SampleDetail } from '@/components/inspection/SampleDetail'
 import { DefectEditDialog, DimensionEditDialog } from '@/components/inspection/CorrectionDialogs'
 import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
+import { HoldDecisionDialog } from '@/components/inspection/HoldDecisionDialog'
 import { OrderDetailsPanel } from '@/components/inspection/OrderDetailsPanel'
 import { InstallBanner } from '@/components/layout/InstallBanner'
 import { useMaster, useOpenBoard, useSampleDetail } from '@/services/queries'
@@ -218,6 +219,10 @@ export function InspectionsPage() {
   const [closing, setClosing] = useState<SessionWithOrder | null>(null)
   /** §4 — the session whose quantities are being corrected. */
   const [correctingQty, setCorrectingQty] = useState<SessionWithOrder | null>(null)
+  /** §7 — the session whose Holds are being decided from the badge. */
+  const [holdFor, setHoldFor] = useState<SessionWithOrder | null>(null)
+  /** Who may change a defect's decision here: the same rule as any correction. */
+  const mayDecide = (s: SessionWithOrder) => (s.holdCount ?? 0) > 0 && (s.status === 'Open' ? can(role, 'edit-open-session') : can(role, 'edit-closed-session'))
   /** A sample opened from its chip on the card: the full record, read-only here. */
   const [viewing, setViewing] = useState<{ session: SessionWithOrder; sample: SampleSummary } | null>(null)
   const { data: viewingDetail, isLoading: viewingLoading } = useSampleDetail(viewing?.sample.id ?? null)
@@ -315,7 +320,7 @@ export function InspectionsPage() {
                     <td className="px-4 py-2.5">
                       <span className="inline-flex flex-wrap items-center gap-1.5">
                         {s.status === 'Open' ? <Badge tone="green">OPEN</Badge> : <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>CLOSED</Badge>}
-                        <SessionToneBadge session={s} />
+                        <SessionToneBadge session={s} onHold={mayDecide(s) ? () => setHoldFor(s) : undefined} />
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-right">
@@ -418,7 +423,7 @@ export function InspectionsPage() {
                           {s.producedQty !== undefined ? ` · produced ${s.producedQty} pairs` : ''}
                         </span>
                       </button>
-                      <SessionToneBadge session={s} className="hidden sm:inline-flex" />
+                      <SessionToneBadge session={s} className="hidden sm:inline-flex" onHold={mayDecide(s) ? () => setHoldFor(s) : undefined} />
                       {s.status === 'Open' ? (
                         <Button variant="primary" className="min-h-[40px] shrink-0" onClick={() => navigate(`/wizard/${s.id}`)} aria-label="Continue">
                           <Play className="h-4 w-4" />
@@ -462,7 +467,7 @@ export function InspectionsPage() {
                       )}
                       <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
                       {s.status === 'Open' ? <Badge tone="green">OPEN</Badge> : <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>CLOSED · stays while on Hold</Badge>}
-                      <SessionToneBadge session={s} />
+                      <SessionToneBadge session={s} onHold={mayDecide(s) ? () => setHoldFor(s) : undefined} />
                       <Badge tone="neutral">
                         {sessionSamples.length} sample{sessionSamples.length === 1 ? '' : 's'}
                       </Badge>
@@ -743,6 +748,7 @@ export function InspectionsPage() {
         onCorrectQuantities={details && (details.status === 'Open' ? can(role, 'edit-open-session') : can(role, 'edit-closed-session')) ? (s) => setCorrectingQty(s) : undefined}
       />
       {correctingQty && <SessionQuantitiesDialog session={correctingQty} onClose={() => setCorrectingQty(null)} />}
+      {holdFor && <HoldDecisionDialog session={holdFor} onClose={() => setHoldFor(null)} />}
 
       {closing && (
         <CloseSessionDialog
