@@ -31,7 +31,18 @@ const dayLabel = (iso: string) => {
   return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' })
 }
 
-export function ChatThread({ conversation: c, onBack, onOpenDirect }: { conversation: ChatConversation; onBack?: () => void; onOpenDirect: (userId: string) => void }) {
+export function ChatThread({
+  conversation: c,
+  onBack,
+  onOpenDirect,
+  onDeleted,
+}: {
+  conversation: ChatConversation
+  onBack?: () => void
+  onOpenDirect: (userId: string) => void
+  /** An administrator deleted this group: leave it. */
+  onDeleted: () => void
+}) {
   const qc = useQueryClient()
   const { toast } = useApp()
   const { profile, role } = useAuth()
@@ -235,7 +246,7 @@ export function ChatThread({ conversation: c, onBack, onOpenDirect }: { conversa
           </div>
         </div>
       )}
-      {info && <ConversationInfoModal conversation={c} onClose={() => setInfo(false)} onOpenDirect={(id) => { setInfo(false); onOpenDirect(id) }} />}
+      {info && <ConversationInfoModal conversation={c} onClose={() => setInfo(false)} onOpenDirect={(id) => { setInfo(false); onOpenDirect(id) }} onDeleted={() => { setInfo(false); onDeleted() }} />}
       {confirm && (
         <Modal
           open

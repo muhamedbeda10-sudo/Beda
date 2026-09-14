@@ -44,7 +44,6 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/history', label: 'History', icon: History },
-  { to: '/chat', label: 'Chat', icon: MessagesSquare },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
 ]
 
@@ -83,6 +82,38 @@ function ToastHost() {
         )
       })}
     </div>
+  )
+}
+
+/** Chat: an icon on the right beside the bell, on every screen size, with what is still unread on it. */
+function ChatButton() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { profile } = useAuth()
+  const { data } = useChatUnread(!!profile)
+  const unread = data?.unreadTotal ?? 0
+  const mentions = data?.mentionTotal ?? 0
+  const inChat = location.pathname.startsWith('/chat')
+  return (
+    <button
+      type="button"
+      onClick={() => navigate('/chat')}
+      className={cn('icon-btn relative', inChat && 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200')}
+      aria-label={unread > 0 ? `Chat, ${unread} unread` : 'Chat'}
+      aria-current={inChat ? 'page' : undefined}
+    >
+      <MessagesSquare className="h-5 w-5" />
+      {unread > 0 && (
+        <span
+          className={cn(
+            'absolute -right-0.5 -top-0.5 grid min-w-[18px] place-items-center rounded-full px-1 text-[10px] font-bold leading-[18px] text-white ring-2 ring-white dark:ring-slate-900',
+            mentions > 0 ? 'bg-accent-500' : 'bg-rose-600',
+          )}
+        >
+          {unread > 99 ? '99+' : unread}
+        </span>
+      )}
+    </button>
   )
 }
 
@@ -164,8 +195,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
 
   const nav = NAV.filter((n) => !n.needs || can(role, n.needs))
-  const { data: chatUnread } = useChatUnread(!!profile)
-  const badgeOf = (n: NavItem) => (n.to === '/chat' ? chatUnread?.unreadTotal ?? 0 : 0)
   const admin = ADMIN_NAV.filter((n) => !n.needs || can(role, n.needs))
   const displayName = profile?.name || user
   const initials = (displayName ?? '?')
@@ -204,7 +233,6 @@ export function AppShell({ children }: { children: ReactNode }) {
                 >
                   <n.icon className={cn('h-4 w-4 transition-transform duration-200 group-hover:-translate-y-0.5', active && 'text-accent-500')} />
                   {n.label}
-                  {badgeOf(n) > 0 && <span className="ml-1 rounded-full bg-rose-600 px-1.5 text-[10px] font-bold leading-[16px] text-white">{badgeOf(n) > 99 ? '99+' : badgeOf(n)}</span>}
                 </NavLink>
               )
             })}
@@ -212,6 +240,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           {/* Right — theme, administration, account */}
           <div className="ml-auto flex shrink-0 items-center gap-1 lg:ml-0 lg:justify-self-end">
+            <ChatButton />
             <NoticeBell />
             <button onClick={toggleTheme} className="icon-btn" aria-label="Toggle light or dark theme">
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
@@ -250,7 +279,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
             <nav className="flex flex-col gap-1 p-3">
               {nav.map((n) => (
-                <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} badge={badgeOf(n)} />
+                <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
               ))}
               {admin.length > 0 && (
                 <>
@@ -291,7 +320,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   )
 }
 
-function DrawerLink({ item, active, onClick, badge = 0 }: { item: NavItem; active: boolean; onClick: () => void; badge?: number }) {
+function DrawerLink({ item, active, onClick }: { item: NavItem; active: boolean; onClick: () => void }) {
   return (
     <NavLink
       to={item.to}
@@ -304,7 +333,6 @@ function DrawerLink({ item, active, onClick, badge = 0 }: { item: NavItem; activ
     >
       <item.icon className="h-5 w-5" />
       {item.label}
-      {badge > 0 && <span className={cn('ml-auto rounded-full px-2 text-[11px] font-bold leading-[20px]', active ? 'bg-white/20 text-white' : 'bg-rose-600 text-white')}>{badge > 99 ? '99+' : badge}</span>}
     </NavLink>
   )
 }

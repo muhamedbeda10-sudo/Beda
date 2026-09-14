@@ -99,6 +99,35 @@ describe('chat', () => {
     expect((await app.api('GET', `/api/chat/conversations/${group.id}/messages`, { token: sup.token })).status).toBe(200)
   })
 
+  it('lets an administrator delete a group, and nothing else', async () => {
+    const created = await app.api<ChatConversation>('POST', '/api/chat/conversations', { token: admin.token, body: { kind: 'group', name: 'Paint line', memberIds: [insp.user.id, sup.user.id] } })
+    expect(created.status).toBe(201)
+    const doomed = created.body
+    const unreadOf = async (s: Session) => (await app.api<ChatUnreadResponse>('GET', '/api/chat/unread', { token: s.token })).body.unreadTotal
+    const supBefore = await unreadOf(sup)
+    expect((await send(insp, doomed.id, 'Booth 2 is down.')).status).toBe(201)
+    expect(await unreadOf(sup)).toBe(supBefore + 1)
+    // A member who is not an administrator cannot; the general channel and a direct conversation cannot be.
+    expect((await app.api('DELETE', `/api/chat/conversations/${doomed.id}`, { token: sup.token })).status).toBe(403)
+    expect((await app.api('DELETE', `/api/chat/conversations/${general.id}`, { token: admin.token })).status).toBe(400)
+    expect((await app.api('DELETE', `/api/chat/conversations/${direct.id}`, { token: admin.token })).status).toBe(400)
+    expect((await app.api('DELETE', `/api/chat/conversations/${doomed.id}`, { token: admin.token })).status).toBe(204)
+    // Gone for everyone who was in it, and gone means gone for a second delete too.
+    for (const s of [admin, insp, sup]) {
+      expect((await app.api<ChatConversationsResponse>('GET', '/api/chat/conversations', { token: s.token })).body.conversations.find((c) => c.id === doomed.id)).toBeUndefined()
+      expect((await app.api('GET', `/api/chat/conversations/${doomed.id}/messages`, { token: s.token })).status).toBe(404)
+    }
+    expect((await app.api('DELETE', `/api/chat/conversations/${doomed.id}`, { token: admin.token })).status).toBe(404)
+    expect((await app.api('PATCH', `/api/chat/conversations/${doomed.id}`, { token: admin.token, body: { name: 'Back?' } })).status).toBe(404)
+    // The unread count no longer includes the group's messages.
+    expect(await unreadOf(sup)).toBe(supBefore)
+    // The messages are kept, and the deletion is on record.
+    const kept = await app.db.query(`SELECT count(*)::int AS n FROM chat_messages WHERE conversation_id = $1`, [doomed.id])
+    expect(kept.rows[0].n).toBe(1)
+    const audit = await app.db.query(`SELECT action, entity FROM audit_log WHERE entity_id = $1`, [doomed.id])
+    expect(audit.rows).toEqual([{ action: 'delete', entity: 'ChatGroup' }])
+  })
+
   it('carries mentions, replies, reactions, edits and deletions', async () => {
     const body = `@[Inspector One](user:${insp.user.id}) please look at #[20095-QC1-HYH · XL Light Beam](order:${randomUUID()}) on #[58](machine:58)`
     const m = await send(admin, general.id, body)

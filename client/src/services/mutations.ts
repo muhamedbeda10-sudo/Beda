@@ -386,6 +386,12 @@ export async function updateGroup(qc: QueryClient, id: string, body: UpdateGroup
   return res
 }
 
+/** An administrator removes a group: it leaves every member's list; its messages stay on the server. */
+export async function deleteGroup(qc: QueryClient, id: string): Promise<void> {
+  await api<void>(`/chat/conversations/${id}`, { method: 'DELETE' })
+  await qc.invalidateQueries({ queryKey: ['chat'] })
+}
+
 export async function uploadChatFile(file: File): Promise<StoredFile> {
   const form = new FormData()
   form.set('file', file, file.name)

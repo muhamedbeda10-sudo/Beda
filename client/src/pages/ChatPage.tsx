@@ -57,7 +57,7 @@ export function ChatPage() {
         </aside>
         <section className={cn('min-h-0', conversationId ? 'block' : 'hidden lg:block')}>
           {active ? (
-            <ChatThread conversation={active} onBack={() => navigate('/chat')} onOpenDirect={(id) => void openDirect(id)} />
+            <ChatThread conversation={active} onBack={() => navigate('/chat')} onOpenDirect={(id) => void openDirect(id)} onDeleted={() => navigate('/chat', { replace: true })} />
           ) : (
             <div className="grid h-full place-items-center p-6">
               <EmptyState icon={<MessagesSquare className="h-10 w-10" />} title="Pick a conversation" hint="Or start one with the + button. @ mentions a person; # points at an order, an item, a machine or a session." />

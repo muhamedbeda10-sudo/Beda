@@ -39,6 +39,7 @@ import { withTransaction, type Queryable } from '../db/pool'
 import { HttpError, badRequest, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
+import { auditDelete } from '../audit/service'
 import { NOTICE_FILE_TYPES, buildChatFileStorageKey } from '../images/storage'
 import { sniffNoticeFile } from './notices.routes'
 
@@ -417,6 +418,24 @@ export function chatRoutes(ctx: AppContext): Router {
     // The administrator may have removed themself; answer with the row as anyone sees it.
     const { rows } = await db.query<ConversationRow>(`SELECT ${CONVERSATION_SELECT} FROM chat_conversations c WHERE c.id = $1`, [id])
     res.json((await buildConversations(db, rows, user))[0])
+  })
+
+  /**
+   * An administrator removes a group. The row and its messages stay (soft
+   * delete, audited); it leaves every member's list at once. The general
+   * channel and a direct conversation are never deleted.
+   */
+  r.delete('/conversations/:id', requireCapability('manage-admin-data'), async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    await withTransaction(db, async (tx) => {
+      const { rows } = await tx.query<{ kind: string; name: string }>(`SELECT kind, name FROM chat_conversations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [id])
+      if (!rows[0]) throw notFound('That conversation')
+      if (rows[0].kind !== 'group') throw badRequest('Only a group can be deleted.')
+      await tx.query(`UPDATE chat_conversations SET deleted_at = now(), deleted_by_id = $2, updated_at = now() WHERE id = $1`, [id, user.id])
+      await auditDelete(tx, { userId: user.id, userName: user.name, entity: 'ChatGroup', entityId: id })
+    })
+    res.status(204).end()
   })
 
   r.get('/conversations/:id/messages', async (req, res) => {

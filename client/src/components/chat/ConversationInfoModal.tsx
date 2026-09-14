@@ -1,16 +1,27 @@
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Check, Loader2, Pencil, UserMinus, UserPlus, Users } from 'lucide-react'
+import { Check, Loader2, Pencil, Trash2, UserMinus, UserPlus, Users } from 'lucide-react'
 import type { ChatConversation } from '@qc/shared/types'
 import { Badge, Button, Input, Modal } from '@/components/ui'
 import { useChatUsers } from '@/services/queries'
-import { updateGroup } from '@/services/mutations'
+import { deleteGroup, updateGroup } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { initialsOf } from './ConversationList'
 
-/** Who is in the conversation; an administrator renames a group and changes its members. */
-export function ConversationInfoModal({ conversation: c, onClose, onOpenDirect }: { conversation: ChatConversation; onClose: () => void; onOpenDirect: (userId: string) => void }) {
+/** Who is in the conversation; an administrator renames a group, changes its members, or deletes it. */
+export function ConversationInfoModal({
+  conversation: c,
+  onClose,
+  onOpenDirect,
+  onDeleted,
+}: {
+  conversation: ChatConversation
+  onClose: () => void
+  onOpenDirect: (userId: string) => void
+  /** The group is gone: the caller leaves it. */
+  onDeleted: () => void
+}) {
   const qc = useQueryClient()
   const { toast } = useApp()
   const { role, profile } = useAuth()
@@ -19,6 +30,7 @@ export function ConversationInfoModal({ conversation: c, onClose, onOpenDirect }
   const [name, setName] = useState(c.title)
   const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const candidates = useMemo(() => users.filter((u) => !c.members.some((m) => m.id === u.id)), [users, c.members])
 
   const change = async (body: Parameters<typeof updateGroup>[2]) => {
@@ -32,8 +44,59 @@ export function ConversationInfoModal({ conversation: c, onClose, onOpenDirect }
     }
   }
 
+  const remove = async () => {
+    setBusy(true)
+    try {
+      await deleteGroup(qc, c.id)
+      toast(`Group "${c.title}" deleted.`, 'success')
+      onDeleted()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not delete the group.', 'error')
+      setBusy(false)
+    }
+  }
+
+  if (confirmDelete) {
+    return (
+      <Modal
+        open
+        onClose={() => !busy && setConfirmDelete(false)}
+        size="sm"
+        icon={<Trash2 className="h-5 w-5" />}
+        title="Delete this group?"
+        footer={
+          <>
+            <Button onClick={() => setConfirmDelete(false)} disabled={busy}>
+              Keep
+            </Button>
+            <Button variant="danger" onClick={() => void remove()} disabled={busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Delete group
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          <span className="font-semibold text-slate-800 dark:text-slate-100">{c.title}</span> disappears for all {c.members.length} member{c.members.length === 1 ? '' : 's'}. Nobody can read or write in it afterwards. The deletion is written to the audit log.
+        </p>
+      </Modal>
+    )
+  }
+
   return (
-    <Modal open onClose={onClose} size="md" icon={<Users className="h-5 w-5" />} title={c.kind === 'general' ? 'General' : c.kind === 'group' ? 'Group' : 'Conversation'}>
+    <Modal
+      open
+      onClose={onClose}
+      size="md"
+      icon={<Users className="h-5 w-5" />}
+      title={c.kind === 'general' ? 'General' : c.kind === 'group' ? 'Group' : 'Conversation'}
+      footer={
+        admin ? (
+          <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={busy}>
+            <Trash2 className="h-4 w-4" /> Delete group
+          </Button>
+        ) : undefined
+      }
+    >
       {admin && (
         <div className="mb-3 flex gap-2">
           <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} aria-label="Group name" />
