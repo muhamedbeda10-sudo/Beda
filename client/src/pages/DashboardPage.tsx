@@ -348,12 +348,34 @@ export function DashboardPage() {
   const { data: machines = [] } = useMaster('machines', undefined, allowed)
   const { data: users = [] } = useUsers()
 
+  /**
+   * The inspector filter used to offer every account, whether or not the
+   * person had recorded anything — so a name stayed on the list after the
+   * last of their sessions was deleted. It now offers the people the period's
+   * record actually names first, from the ranking, which carries every one of
+   * them rather than the capped top of the table. An account with nothing
+   * recorded is still offered, under its own heading, so "did anyone check
+   * this?" can still be asked; and someone whose account was removed but
+   * whose inspections remain is offered from the record itself.
+   */
+  const inspectorChoices = useMemo(() => {
+    const ranking = data ? [...data.inspectorRanking.overall.ranked, ...data.inspectorRanking.overall.unranked] : []
+    const recorded = new Map(ranking.map((r) => [r.inspectorId, r.name]))
+    const byName = (a: { id: string; name: string }, b: { id: string; name: string }) => a.name.localeCompare(b.name)
+    const withRecord = Array.from(recorded, ([id, name]) => ({ id, name: users.find((u) => u.id === id)?.name ?? name })).sort(byName)
+    const without = users
+      .filter((u) => !recorded.has(u.id) && (u.isActive || u.id === f.inspectorId))
+      .map((u) => ({ id: u.id, name: u.name }))
+      .sort(byName)
+    return { withRecord, without }
+  }, [data, users, f.inspectorId])
+
   const factories = useMemo(() => Array.from(new Set(machines.map((m) => m.factory ?? '').filter(Boolean))).sort(), [machines])
   const machineOptions = useMemo(
     () => machines.filter((m) => !f.factory || (m.factory ?? '') === f.factory).sort((a, b) => a.displayName.localeCompare(b.displayName)),
     [machines, f.factory],
   )
-  const activeFilters = [f.factory && `Factory ${f.factory}`, f.workCenterCode && `Machine ${f.workCenterCode}`, f.itemCode && `Item ${f.itemCode}`, f.inspectorId && (users.find((u) => u.id === f.inspectorId)?.name ?? 'Inspector'), f.shift && `${shiftName(f.shift)} shift`].filter(Boolean) as string[]
+  const activeFilters = [f.factory && `Factory ${f.factory}`, f.workCenterCode && `Machine ${f.workCenterCode}`, f.itemCode && `Item ${f.itemCode}`, f.inspectorId && (users.find((u) => u.id === f.inspectorId)?.name ?? inspectorChoices.withRecord.find((r) => r.id === f.inspectorId)?.name ?? 'Inspector'), f.shift && `${shiftName(f.shift)} shift`].filter(Boolean) as string[]
 
   const onLink = (link: NonNullable<KpiInsight['link']>) => {
     if (link.kind === 'history-hold') navigate('/history?disposition=Hold')
@@ -525,14 +547,24 @@ export function DashboardPage() {
           <Field label="Inspector">
             <Select value={f.inspectorId} onChange={(e) => patch({ inspectorId: e.target.value })}>
               <option value="">All inspectors</option>
-              {users
-                .filter((u) => u.isActive || u.id === f.inspectorId)
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                  </option>
-                ))}
+              {inspectorChoices.withRecord.length > 0 && (
+                <optgroup label="Recorded in this period">
+                  {inspectorChoices.withRecord.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {inspectorChoices.without.length > 0 && (
+                <optgroup label="Nothing recorded in this period">
+                  {inspectorChoices.without.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </Select>
           </Field>
           <Field label="Shift">
