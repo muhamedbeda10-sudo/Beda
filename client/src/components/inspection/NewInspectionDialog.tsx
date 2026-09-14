@@ -31,7 +31,10 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
   const [orderNumber, setOrderNumber] = useState('')
   const [itemTerm, setItemTerm] = useState('')
   const [picked, setPicked] = useState<ProductionOrder | null>(null)
-  const [startQty, setStartQty] = useState('')
+  /** §4 — most lines have nothing rejected before the release inspection, so
+   *  zero is what the field starts at; the inspector types a number only when
+   *  there is one to report. */
+  const [startQty, setStartQty] = useState('0')
   /** On a make-to-stock machine: how many pieces (pairs) came out. */
   const [producedQty, setProducedQty] = useState('')
   const [busy, setBusy] = useState(false)
@@ -84,7 +87,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
 
   function reset() {
     setPicked(null)
-    setStartQty('')
+    setStartQty('0')
     setProducedQty('')
     setOrderTerm('')
     setOrderNumber('')
@@ -133,8 +136,8 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
 
   async function start(afterGate = false) {
     if (!picked) return
-    const qty = Number(startQty)
-    if (Number.isNaN(qty) || qty < 0) return
+    const qty = rejectedBeforeRelease
+    if (qty === null) return
     setBusy(true)
     try {
       if (!afterGate) {
@@ -178,15 +181,21 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     />
   ) : null
 
+  /** What the field says, with an emptied field read as none rejected; null when it is not a number. */
+  const rejectedBeforeRelease = (() => {
+    if (startQty.trim() === '') return 0
+    const n = Number(startQty)
+    return Number.isNaN(n) || n < 0 ? null : n
+  })()
+
   /** The session already open on the picked line, if any: the inspector joins it. */
   const openOnLine = (history?.sessions ?? []).find((s) => s.status === 'Open') ?? board?.sessions.find((s) => s.status === 'Open' && s.orderId === picked?.id) ?? null
 
   // ---- Step 4: confirm the line and the starting quantity ------------------
   if (picked) {
     const remaining = remainingQty(picked)
-    const qty = Number(startQty)
     // Joining an open session asks nothing more: its starting quantity was confirmed when it opened.
-    const valid = openOnLine !== null || (startQty.trim() !== '' && !Number.isNaN(qty) && qty >= 0)
+    const valid = openOnLine !== null || rejectedBeforeRelease !== null
 
     return (
       <Modal
@@ -246,13 +255,16 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             </div>
           )}
           {!openOnLine && (
-          <Field label="Rejected qty before release" hint="Pieces already rejected on this line before the release inspection. The session is opened when the first sample is saved.">
+          <Field label="Rejected qty before release" hint="Pieces already rejected on this line before the release inspection. Leave it at zero when there are none; the session is opened when the first sample is saved.">
             <Input
               autoFocus
               type="number"
               inputMode="numeric"
+              min={0}
               value={startQty}
-              onChange={(e) => setStartQty(e.target.value)}
+              // Typing over the zero reads as the number meant, not "012".
+              onChange={(e) => setStartQty(e.target.value.replace(/^0+(?=\d)/, ''))}
+              onFocus={(e) => e.target.select()}
               placeholder="0"
               className="min-h-[48px] text-lg"
             />
