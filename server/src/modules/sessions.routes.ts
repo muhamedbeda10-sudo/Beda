@@ -333,35 +333,36 @@ export function sessionsRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
-  /** §6 — one page of the newest sessions, or those owning a defect with a disposition. */
+  /**
+   * §6 — a page of sessions, newest first, walked back with `before` so no
+   * session is ever out of reach: the floor keeps recording, and a record
+   * that falls past the first page is still the factory's evidence.
+   */
   r.get('/history', async (req, res) => {
+    requireUser(req)
     const q = parse(
       z.object({
         limit: z.coerce.number().int().min(1).max(500).default(100),
         disposition: z.enum(DISPOSITIONS as unknown as [string, ...string[]]).optional(),
+        /** Sessions started before this instant: the end of the page already read. */
+        before: z.string().datetime({ offset: true }).optional(),
       }),
       req.query,
     )
-    const visible = visibleTo(requireUser(req), 2)
-    const { rows } = q.disposition
-      ? await db.query<SessionRow & OrderSummaryRow>(
-          `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
-             FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
-            WHERE s.deleted_at IS NULL AND ${visible.clause} AND EXISTS (
-                    SELECT 1 FROM inspection_samples sm
-                    JOIN defect_results d ON d.sample_id = sm.id AND d.deleted_at IS NULL
-                   WHERE sm.session_id = s.id AND sm.deleted_at IS NULL AND d.disposition = $${visible.params.length + 2})
-            ORDER BY s.started_at DESC LIMIT $1`,
-          [q.limit, ...visible.params, q.disposition],
-        )
-      : await db.query<SessionRow & OrderSummaryRow>(
-          `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
-             FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
-            WHERE s.deleted_at IS NULL AND ${visible.clause}
-            ORDER BY s.started_at DESC LIMIT $1`,
-          [q.limit, ...visible.params],
-        )
-    const body: HistoryResponse = { sessions: rows.map(toSessionWithOrder) }
+    // One more than asked for, so the page knows whether older ones remain.
+    const { rows } = await db.query<SessionRow & OrderSummaryRow>(
+      `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
+         FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
+        WHERE s.deleted_at IS NULL
+          AND ($2::timestamptz IS NULL OR s.started_at < $2)
+          AND ($3::text IS NULL OR EXISTS (
+                SELECT 1 FROM inspection_samples sm
+                JOIN defect_results d ON d.sample_id = sm.id AND d.deleted_at IS NULL
+               WHERE sm.session_id = s.id AND sm.deleted_at IS NULL AND d.disposition::text = $3))
+        ORDER BY s.started_at DESC, s.seq DESC LIMIT $1`,
+      [q.limit + 1, q.before ?? null, q.disposition ?? null],
+    )
+    const body: HistoryResponse = { sessions: rows.slice(0, q.limit).map(toSessionWithOrder), hasMore: rows.length > q.limit }
     res.json(body)
   })
 

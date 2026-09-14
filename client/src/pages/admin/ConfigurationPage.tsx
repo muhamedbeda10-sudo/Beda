@@ -14,6 +14,7 @@ import { PTConsumablesSection } from '@/components/admin/config/PTConsumablesSec
 import { WorkInstructionsSection } from '@/components/admin/config/WorkInstructionsSection'
 import { KpiTargetsSection } from '@/components/admin/config/KpiTargetsSection'
 import { Button } from '@/components/ui'
+import { ConfigurationExport } from '@/components/admin/ConfigurationExport'
 import { cn } from '@/lib/utils'
 
 /**
@@ -34,6 +35,8 @@ const SECTIONS: Array<{ key: string; label: string; icon: typeof Ruler; panel: R
 
 export function ConfigurationPage() {
   const { section = '' } = useParams()
+  /** Taking the configuration out as a workbook, a sheet per chosen list. */
+  const [exporting, setExporting] = useState(false)
   const current = SECTIONS.find((s) => s.key === section)
   /** The grid is the everyday way in; a file is there for a large export. */
   const [fileMode, setFileMode] = useState(false)
@@ -41,7 +44,15 @@ export function ConfigurationPage() {
   if (!current) return <Navigate to={`/admin/configuration/${SECTIONS[0].key}`} replace />
 
   return (
-    <AdminLayout title="Configuration" needs="manage-admin-data">
+    <AdminLayout
+      title="Configuration"
+      needs="manage-admin-data"
+      actions={
+        <Button className="min-h-[44px]" onClick={() => setExporting(true)}>
+          <FileSpreadsheet className="h-4 w-4" /> Export to Excel
+        </Button>
+      }
+    >
       <div className="space-y-4">
         <div className="flex flex-wrap gap-2 pb-1">
           {SECTIONS.map((s) => (
@@ -96,6 +107,8 @@ export function ConfigurationPage() {
           {current.panel}
         </div>
       </div>
+
+      {exporting && <ConfigurationExport onClose={() => setExporting(false)} />}
     </AdminLayout>
   )
 }

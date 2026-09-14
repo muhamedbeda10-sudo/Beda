@@ -97,6 +97,11 @@ export function useHistory(disposition: Disposition | null, limit = 100) {
   })
 }
 
+/** §6 — the page of sessions older than `before`, for the History list's "show older". */
+export async function loadOlderSessions(disposition: Disposition | null, before: string, limit = 100): Promise<HistoryResponse> {
+  return api<HistoryResponse>(`/sessions/history${qs({ limit, disposition, before })}`)
+}
+
 export function useSession(id: string | null) {
   return useQuery({ queryKey: keys.session(id ?? ''), queryFn: () => api<SessionWithOrder>(`/sessions/${id}`), enabled: !!id })
 }
