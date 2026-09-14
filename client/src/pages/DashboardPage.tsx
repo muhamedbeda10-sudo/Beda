@@ -25,7 +25,6 @@ import {
   Ruler,
   ShieldAlert,
   Sparkles,
-  Table2,
   Target,
   Users,
   X,
@@ -340,7 +339,6 @@ export function DashboardPage() {
 
   const { data, isLoading, isFetching, error, refetch } = useKpiOverview(allowed ? filters : null)
   const [insightsOpen, setInsightsOpen] = useState(false)
-  const [showTables, setShowTables] = useState(false)
   const { data: machines = [] } = useMaster('machines', undefined, allowed)
   const { data: users = [] } = useUsers()
 
@@ -418,9 +416,6 @@ export function DashboardPage() {
               </span>
             </button>
           )}
-          <Button className="min-h-[44px]" onClick={() => setShowTables((v) => !v)} disabled={!data} aria-pressed={showTables}>
-            <Table2 className="h-4 w-4" /> {showTables ? 'Hide tables' : 'Tables'}
-          </Button>
           <Button className="min-h-[44px]" onClick={() => void refetch()} disabled={isFetching} aria-label="Refresh">
             <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} /> Refresh
           </Button>
@@ -764,8 +759,6 @@ export function DashboardPage() {
             </Section>
           </div>
 
-          {showTables && (
-            <>
           {/* Group tables */}
           <div className="print-break grid grid-cols-1 gap-4 xl:grid-cols-2">
             <Section title="By machine" icon={<Activity className="h-4 w-4" />}>
@@ -884,9 +877,6 @@ export function DashboardPage() {
               />
             </Section>
           </div>
-
-            </>
-          )}
 
           {/* Discipline */}
           <Section title="Recording discipline" hint="How the records themselves are kept. Not a KPI of the product; a KPI of the inspection." icon={<CheckCircle2 className="h-4 w-4" />}>
