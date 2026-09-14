@@ -80,6 +80,17 @@ beforeAll(async () => {
 })
 afterAll(() => app.stop())
 
+describe('kpi span', () => {
+  it('starts the record on the day of the first inspection', async () => {
+    const res = await app.api<{ firstDay: string | null }>('GET', '/api/kpi/span', { token: admin.token })
+    expect(res.status).toBe(200)
+    expect(res.body.firstDay).toBe(today())
+  })
+  it('is for the dashboard only', async () => {
+    expect((await app.api('GET', '/api/kpi/span', { token: inspector.token })).status).toBe(403)
+  })
+})
+
 describe('kpi thresholds', () => {
   it('are the defaults until an administrator changes them', async () => {
     const res = await app.api<KpiThresholdsResponse>('GET', '/api/kpi/thresholds', { token: admin.token })
