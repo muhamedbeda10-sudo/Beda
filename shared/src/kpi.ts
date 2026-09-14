@@ -61,6 +61,9 @@ export interface KpiThresholds {
   idleMachineDays: number
   /** A change worth calling out: current vs previous period, in percent. */
   trendAlertPct: number
+  /** Samples an inspector must have recorded in the period before being
+   *  ranked. Below it, a single unlucky shift decides a position. */
+  minSamplesForRanking: number
 }
 
 export const DEFAULT_KPI_THRESHOLDS: KpiThresholds = {
@@ -79,6 +82,7 @@ export const DEFAULT_KPI_THRESHOLDS: KpiThresholds = {
   holdAgeRedDays: 3,
   idleMachineDays: 3,
   trendAlertPct: 25,
+  minSamplesForRanking: 20,
 }
 
 export type KpiTone = 'green' | 'amber' | 'red' | 'neutral'
@@ -296,6 +300,8 @@ export interface KpiOverview {
   counts: KpiListCounts
   /** Present when defect types were left off the Pareto chart. */
   paretoOthers?: KpiParetoOthers
+  /** §16 — how the inspectors placed, overall and per factory. */
+  inspectorRanking: KpiInspectorRanking
   current: KpiTotals
   previous: KpiTotals
   daily: KpiDailyPoint[]
@@ -345,4 +351,212 @@ export function capability(input: { mean: number; stdDev: number | null; nominal
   const cp = span / (6 * stdDev)
   const cpk = Math.min((usl - mean) / (3 * stdDev), (mean - lsl) / (3 * stdDev))
   return { cp: Math.round(cp * 100) / 100, cpk: Math.round(cpk * 100) / 100, centering }
+}
+
+// ============================================================================
+// §16 — ranking inspectors.
+//
+// What is deliberately NOT here: the defect rate or the first-pass yield of
+// the work an inspector happened to inspect. Ranking on those rewards the
+// inspector who finds least, which is the one incentive a quality department
+// must never create — and the product's quality is the line's work, not the
+// inspector's. What is ranked is the inspection itself:
+//
+//   Coverage      30%  how much work was actually inspected, per day worked
+//   Completeness  35%  how completely each inspection was recorded
+//   Accuracy      20%  how rarely the record had to be corrected afterwards
+//   Detection     15%  defects found against what peers find on the same machine
+//
+// Coverage and accuracy are relative — an inspector is measured against the
+// others in the same list, because "enough samples a day" has no absolute
+// value. Completeness is absolute: a measurement was either recorded or it
+// was not. Detection is relative by construction.
+// ============================================================================
+
+/** What the database supplies per inspector, before any scoring. */
+export interface KpiInspectorRaw {
+  inspectorId: string
+  name: string
+  /** '' for the overall list; the factory name for a per-factory list. */
+  factory: string
+  samples: number
+  pieces: number
+  /** Days on which this inspector recorded anything — the fair denominator. */
+  activeDays: number
+  /** Order lines and machines covered. */
+  lines: number
+  machines: number
+  /** Dimension rows on their samples, and how many carry a measurement. */
+  dimensionRows: number
+  dimensionsMeasured: number
+  /** Coils recorded on their samples, and how many came from the register. */
+  coilsUsed: number
+  coilsFromRegister: number
+  /** Sessions they closed, and how many carry the final quantity. */
+  sessionsClosed: number
+  sessionsClosedWithFinalQty: number
+  /** Sessions they opened that recorded nothing, and were discarded or left empty. */
+  emptySessions: number
+  sessionsOpened: number
+  /** Later corrections to their dimension and defect records. */
+  corrections: number
+  /** Their samples that had to be recorded again. */
+  reRecorded: number
+  /** Defect records they raised, and the peer-relative index of that rate:
+   *  1 is exactly what others find on the same machines, 2 is twice as much. */
+  defectRecords: number
+  detectionIndex: number | null
+}
+
+export interface KpiInspectorRank extends KpiInspectorRaw {
+  /** 1 is first. */
+  rank: number
+  /** 0–100. */
+  score: number
+  coverageScore: number
+  completenessScore: number
+  accuracyScore: number
+  detectionScore: number
+  /** The parts of completeness, as percentages, or null where not applicable. */
+  dimensionCompletionPct: number | null
+  coilFromRegisterPct: number | null
+  finalQtyPct: number | null
+  emptySessionPct: number | null
+  samplesPerActiveDay: number
+  correctionsPer100Samples: number
+  reRecordedPer100Samples: number
+}
+
+export interface KpiInspectorGroup {
+  /** '' for the list across every factory the filters match. */
+  factory: string
+  ranked: KpiInspectorRank[]
+  /** Too little work in the period to place fairly. Listed, never ranked. */
+  unranked: KpiInspectorRank[]
+}
+
+export interface KpiInspectorRanking {
+  overall: KpiInspectorGroup
+  byFactory: KpiInspectorGroup[]
+  /** The bar an inspector must clear to be ranked, from the thresholds. */
+  minSamples: number
+  weights: typeof RANKING_WEIGHTS
+}
+
+export const RANKING_WEIGHTS = {
+  coverage: 0.3,
+  completeness: 0.35,
+  accuracy: 0.2,
+  detection: 0.15,
+} as const
+
+const round1 = (n: number) => Math.round(n * 10) / 10
+const clamp = (n: number, lo = 0, hi = 100) => Math.min(hi, Math.max(lo, n))
+
+/** Where `value` sits between zero and the best in the list, as 0–100. With
+ *  one inspector, or with every value equal, everyone scores full: a list of
+ *  one has no one to be better than. */
+function relative(value: number, best: number): number {
+  if (!(best > 0)) return 100
+  return clamp((value / best) * 100)
+}
+
+/** The mirror of `relative` for a measure where less is better. */
+function relativeInverse(value: number, worst: number): number {
+  if (!(worst > 0)) return 100
+  return clamp(100 - (value / worst) * 100)
+}
+
+/** A weighted mean over the parts that apply, with the weight of a part that
+ *  does not apply shared among the rest — an inspector who used no coil is
+ *  not marked down for the coil register. */
+function meanOfApplicable(parts: { value: number | null; weight: number }[]): number {
+  let sum = 0
+  let weight = 0
+  for (const p of parts) {
+    if (p.value === null) continue
+    sum += p.value * p.weight
+    weight += p.weight
+  }
+  return weight > 0 ? sum / weight : 0
+}
+
+/**
+ * Score and order one list of inspectors. `minSamples` decides who is ranked
+ * at all; those below it are scored the same way but listed apart, because a
+ * position won on four samples is noise, not performance.
+ */
+export function rankInspectors(rows: KpiInspectorRaw[], minSamples: number): KpiInspectorGroup {
+  const eligible = rows.filter((r) => r.samples >= minSamples)
+  // The yardsticks come from the inspectors being ranked — not from those
+  // with too little work, whose rates swing on a single sample.
+  const scale = eligible.length > 0 ? eligible : rows
+  const bestPerDay = Math.max(0, ...scale.map((r) => (r.activeDays > 0 ? r.samples / r.activeDays : 0)))
+  const bestPieces = Math.max(0, ...scale.map((r) => r.pieces))
+  const bestLines = Math.max(0, ...scale.map((r) => r.lines))
+  const worstCorrections = Math.max(0, ...scale.map((r) => (r.samples > 0 ? (r.corrections / r.samples) * 100 : 0)))
+  const worstReRecorded = Math.max(0, ...scale.map((r) => (r.samples > 0 ? (r.reRecorded / r.samples) * 100 : 0)))
+
+  const scored = rows.map((r): KpiInspectorRank => {
+    const samplesPerActiveDay = r.activeDays > 0 ? r.samples / r.activeDays : 0
+    const correctionsPer100Samples = r.samples > 0 ? (r.corrections / r.samples) * 100 : 0
+    const reRecordedPer100Samples = r.samples > 0 ? (r.reRecorded / r.samples) * 100 : 0
+
+    // Coverage — how much of the factory's work this inspector actually saw.
+    const coverageScore =
+      relative(samplesPerActiveDay, bestPerDay) * 0.5 + relative(r.pieces, bestPieces) * 0.3 + relative(r.lines, bestLines) * 0.2
+
+    // Completeness — whether each inspection was recorded in full.
+    const dimensionCompletionPct = r.dimensionRows > 0 ? (r.dimensionsMeasured / r.dimensionRows) * 100 : null
+    const coilFromRegisterPct = r.coilsUsed > 0 ? (r.coilsFromRegister / r.coilsUsed) * 100 : null
+    const finalQtyPct = r.sessionsClosed > 0 ? (r.sessionsClosedWithFinalQty / r.sessionsClosed) * 100 : null
+    const emptySessionPct = r.sessionsOpened > 0 ? (r.emptySessions / r.sessionsOpened) * 100 : null
+    const completenessScore = meanOfApplicable([
+      { value: dimensionCompletionPct, weight: 0.45 },
+      { value: coilFromRegisterPct, weight: 0.25 },
+      { value: finalQtyPct, weight: 0.2 },
+      { value: emptySessionPct === null ? null : 100 - emptySessionPct, weight: 0.1 },
+    ])
+
+    // Accuracy — how rarely someone had to go back and fix the record.
+    const accuracyScore =
+      relativeInverse(correctionsPer100Samples, worstCorrections) * 0.6 + relativeInverse(reRecordedPer100Samples, worstReRecorded) * 0.4
+
+    // Detection — found against what peers find on the same machines. Parity
+    // with peers is 50; twice the peer rate is full marks. An inspector with
+    // no peer on any machine they worked has nothing to compare against and
+    // sits at parity rather than being rewarded or punished for it.
+    const detectionScore = r.detectionIndex === null ? 50 : clamp((Math.min(r.detectionIndex, 2) / 2) * 100)
+
+    const score =
+      coverageScore * RANKING_WEIGHTS.coverage +
+      completenessScore * RANKING_WEIGHTS.completeness +
+      accuracyScore * RANKING_WEIGHTS.accuracy +
+      detectionScore * RANKING_WEIGHTS.detection
+
+    return {
+      ...r,
+      rank: 0,
+      score: round1(score),
+      coverageScore: round1(coverageScore),
+      completenessScore: round1(completenessScore),
+      accuracyScore: round1(accuracyScore),
+      detectionScore: round1(detectionScore),
+      dimensionCompletionPct: dimensionCompletionPct === null ? null : round1(dimensionCompletionPct),
+      coilFromRegisterPct: coilFromRegisterPct === null ? null : round1(coilFromRegisterPct),
+      finalQtyPct: finalQtyPct === null ? null : round1(finalQtyPct),
+      emptySessionPct: emptySessionPct === null ? null : round1(emptySessionPct),
+      samplesPerActiveDay: round1(samplesPerActiveDay),
+      correctionsPer100Samples: round1(correctionsPer100Samples),
+      reRecordedPer100Samples: round1(reRecordedPer100Samples),
+    }
+  })
+
+  // Highest score first; a tie goes to whoever inspected more, then by name,
+  // so the order is the same on every refresh.
+  const order = (a: KpiInspectorRank, b: KpiInspectorRank) => b.score - a.score || b.samples - a.samples || a.name.localeCompare(b.name)
+  const ranked = scored.filter((r) => r.samples >= minSamples).sort(order)
+  ranked.forEach((r, i) => (r.rank = i + 1))
+  const unranked = scored.filter((r) => r.samples < minSamples).sort((a, b) => b.samples - a.samples || a.name.localeCompare(b.name))
+  return { factory: rows[0]?.factory ?? '', ranked, unranked }
 }

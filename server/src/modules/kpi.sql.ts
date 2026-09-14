@@ -14,6 +14,7 @@ import type {
   KpiGroupRow,
   KpiHoldRow,
   KpiIdleMachine,
+  KpiInspectorRaw,
   KpiParetoRow,
   KpiSupplierRow,
   KpiTotals,
@@ -539,5 +540,138 @@ export async function loadDiscipline(q: Queryable, f: PeriodFilters): Promise<Di
     emptyOpenSessions: sessionsRow.rows[0].emptyOpen,
     openLines: linesRow.rows[0].openLines,
     openLinesInspected: Math.min(b.linesInspected, linesRow.rows[0].openLines),
+  }
+}
+
+
+/**
+ * §16 — the raw figures behind the inspector ranking, one row per inspector
+ * per factory, plus the days each inspector actually recorded on.
+ *
+ * Every measure here is of the inspection, never of the product: how much was
+ * inspected, how completely it was recorded, how often the record had to be
+ * fixed afterwards, and how the defects found compare with what other
+ * inspectors find on the same machine. `rankInspectors` in @qc/shared/kpi
+ * turns these into scores; the folding of factories into one overall list is
+ * done in TypeScript, where the days worked can be counted once across them.
+ */
+export interface InspectorRawResult {
+  /** One row per inspector per factory. */
+  perFactory: KpiInspectorRaw[]
+  /** Distinct factory days an inspector recorded on: `${inspectorId}|${factory}`
+   *  for one factory, and `${inspectorId}|` for all of them together. */
+  activeDays: Map<string, number>
+}
+
+export async function loadInspectorRaw(q: Queryable, f: PeriodFilters): Promise<InspectorRawResult> {
+  const p = params(f)
+  const [figures, days] = await Promise.all([
+    q.query<Omit<KpiInspectorRaw, 'activeDays'>>(
+      `${BASE},
+       -- What each inspector recorded, per factory.
+       per_inspector AS (
+         SELECT ps.inspector_id, max(ps.inspector_name) AS name, ps.factory,
+                count(*)::int AS samples,
+                COALESCE(sum(ps.sample_qty), 0)::float8 AS pieces,
+                count(DISTINCT ps.order_id)::int AS lines,
+                count(DISTINCT lower(ps.wc))::int AS machines,
+                COALESCE(sum(ps.defect_records), 0)::int AS "defectRecords"
+           FROM per_sample ps GROUP BY ps.inspector_id, ps.factory),
+       -- How completely each inspection was recorded.
+       completeness AS (
+         SELECT b.inspector_id, b.factory,
+                count(r.id)::int AS "dimensionRows",
+                count(r.id) FILTER (WHERE r.actual IS NOT NULL)::int AS "dimensionsMeasured"
+           FROM base b LEFT JOIN dimension_results r ON r.sample_id = b.sample_id AND r.deleted_at IS NULL
+          GROUP BY b.inspector_id, b.factory),
+       coils AS (
+         SELECT b.inspector_id, b.factory,
+                count(c.id)::int AS "coilsUsed",
+                count(c.id) FILTER (WHERE c.coil_id IS NOT NULL)::int AS "coilsFromRegister"
+           FROM base b LEFT JOIN sample_coils c ON c.sample_id = b.sample_id AND c.deleted_at IS NULL
+          GROUP BY b.inspector_id, b.factory),
+       -- Sessions counted by who opened them, over the same period and filters.
+       sessions AS (
+         SELECT s.inspector_id, COALESCE(m.factory, '') AS factory,
+                count(*)::int AS "sessionsOpened",
+                count(*) FILTER (WHERE s.status = 'Closed')::int AS "sessionsClosed",
+                count(*) FILTER (WHERE s.status = 'Closed' AND s.final_qty IS NOT NULL)::int AS "sessionsClosedWithFinalQty",
+                count(*) FILTER (WHERE NOT EXISTS (
+                  SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL))::int AS "emptySessions"
+           FROM inspection_sessions s
+           JOIN production_orders o ON o.id = s.order_id
+           LEFT JOIN LATERAL (
+             SELECT m.factory FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
+              ORDER BY m.created_at LIMIT 1) m ON true
+          WHERE s.deleted_at IS NULL
+            AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
+            AND s.started_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
+            AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
+            AND ($5::text IS NULL OR lower(s.work_center_code) = lower($5))
+            AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
+            AND ($7::uuid IS NULL OR s.inspector_id = $7)
+          GROUP BY s.inspector_id, COALESCE(m.factory, '')),
+       -- What had to be corrected afterwards, attributed to the record's owner
+       -- rather than to whoever made the correction.
+       fixes AS (
+         SELECT b.inspector_id, b.factory,
+                count(*) FILTER (WHERE a.entity IN ('DimensionResult', 'DefectResult') AND a.action = 'update')::int AS corrections,
+                count(*) FILTER (WHERE a.entity = 'InspectionSample' AND a.field = 'reRecorded')::int AS "reRecorded"
+           FROM base b JOIN audit_log a ON a.sample_id = b.sample_id AND a.deleted_at IS NULL
+          GROUP BY b.inspector_id, b.factory),
+       -- Detection, machine by machine: this inspector's defect records per
+       -- piece against what everyone ELSE on that machine records. A machine
+       -- they worked alone has no peer rate and is left out of the index.
+       per_machine AS (
+         SELECT lower(ps.wc) AS wc, ps.inspector_id, ps.factory,
+                COALESCE(sum(ps.sample_qty), 0)::float8 AS pieces,
+                COALESCE(sum(ps.defect_records), 0)::float8 AS records
+           FROM per_sample ps GROUP BY 1, 2, 3),
+       machine_totals AS (
+         SELECT wc, sum(pieces) AS pieces, sum(records) AS records FROM per_machine GROUP BY wc),
+       comparable AS (
+         SELECT pm.inspector_id, pm.factory, pm.pieces,
+                (pm.records / pm.pieces) / ((mt.records - pm.records) / (mt.pieces - pm.pieces)) AS ratio
+           FROM per_machine pm JOIN machine_totals mt ON mt.wc = pm.wc
+          WHERE pm.pieces > 0 AND mt.pieces > pm.pieces AND (mt.records - pm.records) > 0),
+       detection AS (
+         -- Weighted by the pieces they saw on each machine, so a machine they
+         -- barely worked does not decide their index.
+         SELECT inspector_id, factory, (sum(ratio * pieces) / sum(pieces))::float8 AS "detectionIndex"
+           FROM comparable GROUP BY inspector_id, factory)
+       SELECT pi.inspector_id AS "inspectorId", pi.name, pi.factory,
+              pi.samples, pi.pieces, pi.lines, pi.machines, pi."defectRecords",
+              COALESCE(c."dimensionRows", 0) AS "dimensionRows", COALESCE(c."dimensionsMeasured", 0) AS "dimensionsMeasured",
+              COALESCE(co."coilsUsed", 0) AS "coilsUsed", COALESCE(co."coilsFromRegister", 0) AS "coilsFromRegister",
+              COALESCE(se."sessionsOpened", 0) AS "sessionsOpened", COALESCE(se."sessionsClosed", 0) AS "sessionsClosed",
+              COALESCE(se."sessionsClosedWithFinalQty", 0) AS "sessionsClosedWithFinalQty",
+              COALESCE(se."emptySessions", 0) AS "emptySessions",
+              COALESCE(fx.corrections, 0) AS corrections, COALESCE(fx."reRecorded", 0) AS "reRecorded",
+              dt."detectionIndex"
+         FROM per_inspector pi
+         LEFT JOIN completeness c ON c.inspector_id = pi.inspector_id AND c.factory = pi.factory
+         LEFT JOIN coils co ON co.inspector_id = pi.inspector_id AND co.factory = pi.factory
+         LEFT JOIN sessions se ON se.inspector_id = pi.inspector_id AND se.factory = pi.factory
+         LEFT JOIN fixes fx ON fx.inspector_id = pi.inspector_id AND fx.factory = pi.factory
+         LEFT JOIN detection dt ON dt.inspector_id = pi.inspector_id AND dt.factory = pi.factory`,
+      p,
+    ),
+    // Days worked, counted once per factory and once across all of them: an
+    // inspector on two factories on the same day worked one day, not two.
+    q.query<{ inspectorId: string; factory: string | null; days: number }>(
+      `${BASE},
+       worked AS (SELECT DISTINCT inspector_id, factory, (created_at AT TIME ZONE $1)::date AS day FROM per_sample)
+       SELECT inspector_id AS "inspectorId",
+              CASE WHEN grouping(factory) = 1 THEN NULL ELSE factory END AS factory,
+              count(DISTINCT day)::int AS days
+         FROM worked GROUP BY GROUPING SETS ((inspector_id, factory), (inspector_id))`,
+      p,
+    ),
+  ])
+  const activeDays = new Map<string, number>()
+  for (const d of days.rows) activeDays.set(`${d.inspectorId}|${d.factory ?? ''}`, d.days)
+  return {
+    perFactory: figures.rows.map((r) => ({ ...r, activeDays: activeDays.get(`${r.inspectorId}|${r.factory}`) ?? 0 })),
+    activeDays,
   }
 }
