@@ -108,6 +108,15 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 }
 
 // ---- Modal / Dialog --------------------------------------------------------
+/**
+ * The footer of every modal and drawer. On a phone a right-aligned row of four
+ * buttons wrapped into a ragged stack, so there it is a grid of two even
+ * columns, each button filling its cell; from a tablet up it is the row, and
+ * `mr-auto` on a button still parts it from the rest.
+ */
+const FOOTER =
+  'grid grid-cols-2 gap-2 border-t border-slate-100 px-4 py-3 dark:border-slate-800 safe-bottom [&>*]:min-h-[48px] [&>*]:justify-center [&>*:only-child]:col-span-2 sm:flex sm:flex-wrap sm:justify-end sm:px-5 sm:py-3.5'
+
 export function Modal({
   open,
   onClose,
@@ -168,7 +177,7 @@ export function Modal({
         )}
         <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
-          <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-3.5 dark:border-slate-800 safe-bottom">
+          <div className={FOOTER}>
             {footer}
           </div>
         )}
@@ -237,7 +246,7 @@ export function Drawer({
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
-          <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-3.5 dark:border-slate-800 safe-bottom">
+          <div className={FOOTER}>
             {footer}
           </div>
         )}
