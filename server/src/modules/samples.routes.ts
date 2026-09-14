@@ -8,7 +8,8 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { DISPOSITIONS, type CoilRegisterDetails, type DefectResult, type DimensionResult, type PTRecord, type PTTestedLength, type PaintSampleRecord, type SampleCoil } from '@qc/shared/types'
 import { can, dimensionStatus } from '@qc/shared/rules'
-import type { SampleDetail } from '@qc/shared/api'
+import type {
+  SessionDefectsResponse, SampleDetail } from '@qc/shared/api'
 import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
 import { ConflictError, forbidden, notFound } from '../lib/errors'
@@ -137,6 +138,26 @@ function assertMayCorrect(user: AuthUser, status: 'Open' | 'Closed'): void {
 export function samplesRoutes(ctx: AppContext): Router {
   const r = Router()
   const { db } = ctx
+
+  /**
+   * §7 — every live defect of one session, with the sample it sits on, so a
+   * Hold can be decided from the board without opening each sample. Read by
+   * anyone signed in, like the session itself; changing one goes through the
+   * correction below, with its rights and its audit entry.
+   */
+  r.get('/defects', async (req, res) => {
+    requireUser(req)
+    const { sessionId } = parse(z.object({ sessionId: uuid }), req.query)
+    const { rows } = await db.query<DefectResult & { sampleIndex: number }>(
+      `SELECT ${DEFECT_SELECT}, sm.index AS "sampleIndex"
+         FROM defect_results d JOIN inspection_samples sm ON sm.id = d.sample_id
+        WHERE sm.session_id = $1 AND sm.deleted_at IS NULL AND d.deleted_at IS NULL
+        ORDER BY sm.index, d.updated_at, d.id`,
+      [sessionId],
+    )
+    const body: SessionDefectsResponse = { defects: rows.map(dropNulls) }
+    res.json(body)
+  })
 
   r.get('/:id', async (req, res) => {
     const detail = await loadSampleDetail(db, parse(uuid, req.params.id))

@@ -39,17 +39,34 @@ export function sessionToneClass(session: Signals, kind: 'block' | 'row', fallba
 }
 
 /** The badge that says why a session is coloured; nothing when it is not. */
-export function SessionToneBadge({ session, className }: { session: Signals; className?: string }) {
+export function SessionToneBadge({ session, className, onHold }: { session: Signals; className?: string; onHold?: () => void }) {
   const tone = sessionTone(session)
   if (!tone) return null
   const defects = session.defectCount ?? 0
   const holds = session.holdCount ?? 0
   if (tone === 'hold') {
-    return (
-      <Badge tone="amber" className={className} icon={<PauseCircle className="h-3 w-3" />}>
+    const badge = (
+      <Badge tone="amber" className={cn(className, onHold && 'ring-1 ring-amber-400/60')} icon={<PauseCircle className="h-3 w-3" />}>
         Hold {holds > 1 ? `×${holds}` : ''}
         {defects > holds ? ` · ${defects} defect${defects === 1 ? '' : 's'}` : ''}
       </Badge>
+    )
+    // Where a decision may be made from here, the badge is the way in.
+    return onHold ? (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onHold()
+        }}
+        title="Decide the Hold"
+        aria-label="Decide the Hold"
+        className="inline-flex min-h-[32px] items-center rounded-full transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-amber-400"
+      >
+        {badge}
+      </button>
+    ) : (
+      badge
     )
   }
   if (tone === 'defect') {

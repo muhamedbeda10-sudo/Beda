@@ -32,6 +32,7 @@ import type {
   StartSessionRequest,
   WizardContext,
   SessionNotesResponse,
+  SessionDefectsResponse,
   KpiSpanResponse,
   KpiThresholdsResponse,
   NoticeInboxResponse,
@@ -52,6 +53,7 @@ export const keys = {
   wizardPreview: (key: string) => ['sessions', 'preview', key] as const,
   sessionSamples: (id: string) => ['sessions', id, 'samples'] as const,
   sessionNotes: (id: string) => ['sessions', id, 'notes'] as const,
+  sessionDefects: (id: string) => ['sessions', id, 'defects'] as const,
   sample: (id: string) => ['samples', id] as const,
   orderSearch: (term: string) => ['orders', 'search', term] as const,
   orderNumbers: (key: string) => ['orders', 'numbers', key] as const,
@@ -150,6 +152,15 @@ export function useSessionSamples(sessionId: string | null) {
   return useQuery({
     queryKey: keys.sessionSamples(sessionId ?? ''),
     queryFn: () => api<SampleSummary[]>(`/sessions/${sessionId}/samples`),
+    enabled: !!sessionId,
+  })
+}
+
+/** §7 — a session's defects with their samples, for deciding Holds from the board. */
+export function useSessionDefects(sessionId: string | null) {
+  return useQuery({
+    queryKey: keys.sessionDefects(sessionId ?? ''),
+    queryFn: () => api<SessionDefectsResponse>(`/samples/defects${qs({ sessionId })}`),
     enabled: !!sessionId,
   })
 }

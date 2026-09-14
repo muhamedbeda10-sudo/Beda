@@ -505,6 +505,12 @@ export interface CorrectDimensionRequest {
   version: number
 }
 
+/** §7 — the defects of one session across its samples, each with the
+ *  sample it was recorded on, for deciding Holds from the board. */
+export interface SessionDefectsResponse {
+  defects: (DefectResult & { sampleIndex: number })[]
+}
+
 export interface CorrectDefectRequest {
   disposition: Disposition
   qty: number
