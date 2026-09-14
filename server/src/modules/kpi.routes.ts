@@ -17,7 +17,7 @@ import {
   type KpiOverview,
   type KpiThresholds,
 } from '@qc/shared/kpi'
-import type { KpiThresholdsResponse } from '@qc/shared/api'
+import type { KpiSpanResponse, KpiThresholdsResponse } from '@qc/shared/api'
 import type { AppContext } from '../context'
 import type { Queryable } from '../db/pool'
 import { withTransaction } from '../db/pool'
@@ -174,6 +174,19 @@ function foldFactories(perFactory: KpiInspectorRaw[], activeDays: Map<string, nu
 export function kpiRoutes(ctx: AppContext): Router {
   const r = Router()
   r.use(requireCapability('view-dashboard'))
+
+  /** The first day anything was recorded — where the period strip begins. */
+  r.get('/span', async (_req, res) => {
+    const { rows } = await ctx.db.query<{ firstDay: string | null }>(
+      `SELECT to_char(LEAST(
+                (SELECT min(started_at) FROM inspection_sessions WHERE deleted_at IS NULL),
+                (SELECT min(created_at) FROM inspection_samples WHERE deleted_at IS NULL)
+              ) AT TIME ZONE $1, 'YYYY-MM-DD') AS "firstDay"`,
+      [ctx.config.FACTORY_TIMEZONE],
+    )
+    const body: KpiSpanResponse = { firstDay: rows[0]?.firstDay ?? null }
+    res.json(body)
+  })
 
   r.get('/thresholds', async (_req, res) => {
     res.json(await loadThresholds(ctx.db))

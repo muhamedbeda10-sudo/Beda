@@ -32,6 +32,7 @@ import type {
   StartSessionRequest,
   WizardContext,
   SessionNotesResponse,
+  KpiSpanResponse,
   KpiThresholdsResponse,
   NoticeInboxResponse,
   ChatConversationsResponse,
@@ -70,6 +71,7 @@ export const keys = {
   workInstructions: (process?: string, history?: boolean) => ['work-instructions', process ?? 'all', history ? 'history' : 'in-force'] as const,
   kpiOverview: (filters: KpiFilters) => ['kpi', 'overview', filters] as const,
   kpiThresholds: ['kpi', 'thresholds'] as const,
+  kpiSpan: ['kpi', 'span'] as const,
   noticeInbox: ['notices', 'inbox'] as const,
   noticesAdmin: ['notices', 'admin'] as const,
   noticeAcks: (id: string) => ['notices', id, 'acknowledgements'] as const,
@@ -325,6 +327,11 @@ export function useKpiOverview(filters: KpiFilters | null) {
     staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
   })
+}
+
+/** Where the period strip begins: the first day anything was recorded. */
+export function useKpiSpan(enabled = true) {
+  return useQuery({ queryKey: keys.kpiSpan, queryFn: () => api<KpiSpanResponse>('/kpi/span'), enabled, staleTime: 60 * 60_000 })
 }
 
 export function useKpiThresholds(enabled = true) {

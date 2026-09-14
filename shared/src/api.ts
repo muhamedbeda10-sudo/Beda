@@ -627,6 +627,12 @@ export interface HealthResponse {
 
 // ---- §15 Dashboard ---------------------------------------------------------
 
+/** How far back the record goes: the day of the first inspection, in the
+ *  factory's zone, or null before anything was recorded. */
+export interface KpiSpanResponse {
+  firstDay: string | null
+}
+
 export interface KpiThresholdsResponse {
   thresholds: KpiThresholds
   updatedAt?: string

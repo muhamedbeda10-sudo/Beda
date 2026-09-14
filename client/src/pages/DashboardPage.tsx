@@ -43,7 +43,7 @@ import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, 
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn, formatDateTime } from '@/lib/utils'
-import { useKpiOverview, useMaster, useUsers } from '@/services/queries'
+import { useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
 import { useAuth } from '@/store/AuthContext'
 import { ApiError } from '@/lib/api'
 
@@ -350,6 +350,7 @@ export function DashboardPage() {
   const [paretoMachine, setParetoMachine] = useState('')
   const { data: machines = [] } = useMaster('machines', undefined, allowed)
   const { data: users = [] } = useUsers()
+  const { data: span } = useKpiSpan(allowed)
 
   /**
    * The inspector filter used to offer every account, whether or not the
@@ -491,6 +492,7 @@ export function DashboardPage() {
         <PeriodSlicer
           value={range}
           preset={f.preset}
+          firstDay={span?.firstDay ?? null}
           onChange={(next, preset) => patch({ preset, customFrom: next.from, customTo: next.to })}
         />
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">

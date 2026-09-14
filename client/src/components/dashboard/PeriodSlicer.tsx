@@ -13,9 +13,10 @@ import type { KpiRange } from '@qc/shared/kpi'
 import { addDays, fromDay, toDay, PERIOD_PRESETS, presetRange, type PeriodPreset } from './period'
 import { cn } from '@/lib/utils'
 
-/** Width of one day on the strip, and how far back it reaches. */
+/** Width of one day on the strip. */
 const DAY_PX = 10
-const SPAN_DAYS = 731
+/** The strip always offers at least this much, even before there is a record. */
+const MIN_SPAN_DAYS = 31
 /** The most days the dashboard will answer for. */
 const MAX_DAYS = 366
 
@@ -25,16 +26,33 @@ const dayIndex = (origin: string, day: string) => Math.round((fromDay(day).getTi
 
 type Drag = { kind: 'from' | 'to' | 'band'; pointerId: number; startX: number; from: number; to: number }
 
-export function PeriodSlicer({ value, preset, onChange }: { value: KpiRange; preset: PeriodPreset; onChange: (range: KpiRange, preset: PeriodPreset) => void }) {
+export function PeriodSlicer({
+  value,
+  preset,
+  firstDay,
+  onChange,
+}: {
+  value: KpiRange
+  preset: PeriodPreset
+  /** The first day anything was recorded; the strip starts there. */
+  firstDay: string | null
+  onChange: (range: KpiRange, preset: PeriodPreset) => void
+}) {
   const today = toDay(new Date())
-  const origin = useMemo(() => addDays(today, -(SPAN_DAYS - 1)), [today])
+  // The strip runs from the first day of the record to today — never shorter
+  // than a month, and never starting after the period it is showing.
+  const origin = useMemo(() => {
+    const floor = addDays(today, -(MIN_SPAN_DAYS - 1))
+    return [firstDay, value.from, floor].filter((d): d is string => !!d).sort()[0]
+  }, [today, firstDay, value.from])
+  const spanDays = dayIndex(origin, today) + 1
   const scroller = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<Drag | null>(null)
   /** While dragging, the band follows the pointer; the page is told on release. */
   const [live, setLive] = useState<{ from: number; to: number } | null>(null)
 
   const sel = live ?? { from: dayIndex(origin, value.from), to: dayIndex(origin, value.to) }
-  const clampIndex = (i: number) => Math.max(0, Math.min(SPAN_DAYS - 1, i))
+  const clampIndex = (i: number) => Math.max(0, Math.min(spanDays - 1, i))
 
   // The months along the top, one label where each begins.
   const months = useMemo(() => {
@@ -44,7 +62,7 @@ export function PeriodSlicer({ value, preset, onChange }: { value: KpiRange; pre
     while (d <= fromDay(today)) {
       const start = Math.max(0, dayIndex(origin, toDay(d)))
       const next = new Date(d.getFullYear(), d.getMonth() + 1, 1)
-      const end = Math.min(SPAN_DAYS, dayIndex(origin, toDay(next)))
+      const end = Math.min(spanDays, dayIndex(origin, toDay(next)))
       out.push({ label: `${MONTH[d.getMonth()]}${d.getMonth() === 0 || out.length === 0 ? ` ${d.getFullYear()}` : ''}`, x: start * DAY_PX, width: (end - start) * DAY_PX })
       d = next
     }
@@ -86,8 +104,8 @@ export function PeriodSlicer({ value, preset, onChange }: { value: KpiRange; pre
       const len = drag.to - drag.from
       from = clampIndex(drag.from + delta)
       to = from + len
-      if (to > SPAN_DAYS - 1) {
-        to = SPAN_DAYS - 1
+      if (to > spanDays - 1) {
+        to = spanDays - 1
         from = to - len
       }
     }
@@ -156,7 +174,7 @@ export function PeriodSlicer({ value, preset, onChange }: { value: KpiRange; pre
         className="relative overflow-x-auto overscroll-x-contain rounded-xl bg-slate-50 ring-1 ring-slate-200 dark:bg-slate-800/60 dark:ring-slate-700"
         style={{ touchAction: 'pan-x' }}
       >
-        <div className="relative h-[68px] select-none" style={{ width: SPAN_DAYS * DAY_PX }} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
+        <div className="relative h-[68px] select-none" style={{ width: spanDays * DAY_PX }} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
           {/* Months */}
           {months.map((m) => (
             <div key={m.label + m.x} className="absolute top-0 h-full border-l border-slate-200 dark:border-slate-700" style={{ left: m.x, width: m.width }}>
@@ -164,11 +182,11 @@ export function PeriodSlicer({ value, preset, onChange }: { value: KpiRange; pre
             </div>
           ))}
           {/* Weeks, as ticks along the bottom */}
-          {Array.from({ length: Math.ceil(SPAN_DAYS / 7) }, (_, i) => (
+          {Array.from({ length: Math.ceil(spanDays / 7) }, (_, i) => (
             <span key={i} className="absolute bottom-0 h-1.5 border-l border-slate-300 dark:border-slate-600" style={{ left: i * 7 * DAY_PX }} />
           ))}
           {/* Today */}
-          <span className="absolute bottom-0 top-0 border-l-2 border-dashed border-rose-400" style={{ left: (SPAN_DAYS - 1) * DAY_PX + DAY_PX / 2 }} aria-hidden />
+          <span className="absolute bottom-0 top-0 border-l-2 border-dashed border-rose-400" style={{ left: (spanDays - 1) * DAY_PX + DAY_PX / 2 }} aria-hidden />
 
           {/* The band: the chosen period. Dragging it moves the whole period. */}
           <div
