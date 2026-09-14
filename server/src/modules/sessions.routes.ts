@@ -106,6 +106,14 @@ const startSchema = z.union([
 ])
 const closeSchema = z.object({ finalQty: z.coerce.number().min(0), version: z.coerce.number().int().min(0) })
 const reopenSchema = z.object({ version: z.coerce.number().int().min(0) })
+const quantitiesSchema = z
+  .object({
+    startQty: z.coerce.number().min(0).optional(),
+    producedQty: z.coerce.number().min(0).optional(),
+    finalQty: z.coerce.number().min(0).optional(),
+    version: z.coerce.number().int().min(0),
+  })
+  .refine((b) => b.startQty !== undefined || b.producedQty !== undefined || b.finalQty !== undefined, { message: 'Nothing to change.' })
 
 const optText = (max: number) => z.string().trim().max(max).optional().transform((v) => (v ? v : undefined))
 const nullableNum = z.union([z.number().finite(), z.null()])
@@ -1017,6 +1025,50 @@ export function sessionsRoutes(ctx: AppContext): Router {
       return after
     })
     res.json(reopened)
+  })
+
+  /**
+   * §4 — correct a session's quantities after the fact. The quantity rejected
+   * before release is typed when an order session opens, the quantity produced
+   * when a stock session opens, and the final quantity when a session closes;
+   * each is as mis-keyed as any other figure. An open session's are corrected
+   * by its inspector (or anyone who may edit open sessions); a closed session's
+   * by whoever may edit closed records. Every change is written to the audit
+   * log, and the rejected quantity is re-attributed to whoever corrected it.
+   */
+  r.patch('/:id/quantities', requireCapability('record-inspection'), async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    const body = parse(quantitiesSchema, req.body)
+    const updated = await withTransaction(db, async (tx) => {
+      const before = await loadSessionWithOrder(tx, id, true)
+      if (!before) throw notFound('That session')
+      if (before.version !== body.version) throw new ConflictError(before)
+      const may = before.status === 'Open' ? before.inspectorId === user.id || can(user.role, 'edit-open-session') : can(user.role, 'edit-closed-session')
+      if (!may) throw forbidden()
+      const stock = isStockOrder(before.order)
+      if (body.startQty !== undefined && stock) throw badRequest('A make-to-stock session has no rejected quantity before release.')
+      if (body.producedQty !== undefined && !stock) throw badRequest('Only a make-to-stock session has a quantity produced.')
+      if (body.finalQty !== undefined && before.status !== 'Closed') throw badRequest('The final quantity is recorded when the session closes.')
+
+      const sets: string[] = ['version = version + 1']
+      const params: unknown[] = [id]
+      const p = (v: unknown) => `$${params.push(v)}`
+      if (body.startQty !== undefined) sets.push(`start_qty = ${p(body.startQty)}, start_qty_by_id = ${p(user.id)}, start_qty_by_name = ${p(user.name)}, start_qty_at = now()`)
+      if (body.producedQty !== undefined) sets.push(`produced_qty = ${p(body.producedQty)}`)
+      if (body.finalQty !== undefined) sets.push(`final_qty = ${p(body.finalQty)}`)
+      await tx.query(`UPDATE inspection_sessions SET ${sets.join(', ')} WHERE id = $1`, params)
+
+      const after = (await loadSessionWithOrder(tx, id))!
+      await auditChanges(
+        tx,
+        auditCtxFor(user, before, 'InspectionSession', id),
+        { startQty: before.startQtyConfirmed?.qty ?? null, producedQty: before.producedQty ?? null, finalQty: before.finalQty ?? null },
+        { startQty: after.startQtyConfirmed?.qty ?? null, producedQty: after.producedQty ?? null, finalQty: after.finalQty ?? null },
+      )
+      return after
+    })
+    res.json(updated)
   })
 
   return r

@@ -30,6 +30,7 @@ import {
   type ReRecordSampleRequest,
   type ReRecordSampleResponse,
   type ReopenSessionRequest,
+  type UpdateSessionQuantitiesRequest,
   type KpiThresholdsResponse,
   type AcknowledgeNoticeRequest,
   type MatchNoticesRequest,
@@ -97,6 +98,13 @@ export async function reRecordSample(qc: QueryClient, sessionId: string, sampleI
 /** Reopen a closed session so samples can be added again (closed-record rights). */
 export async function reopenSession(qc: QueryClient, sessionId: string, version: number): Promise<SessionWithOrder> {
   const session = await api<SessionWithOrder>(`/sessions/${sessionId}/reopen`, { method: 'POST', body: { version } satisfies ReopenSessionRequest })
+  await recordChanged(qc)
+  return session
+}
+
+/** §4 — correct a session's quantities; refused with a conflict if the session moved. */
+export async function updateSessionQuantities(qc: QueryClient, sessionId: string, body: UpdateSessionQuantitiesRequest): Promise<SessionWithOrder> {
+  const session = await api<SessionWithOrder>(`/sessions/${sessionId}/quantities`, { method: 'PATCH', body })
   await recordChanged(qc)
   return session
 }

@@ -8,6 +8,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import {
+  Pencil,
   Boxes,
   Calendar,
   ClipboardList,
@@ -43,6 +44,7 @@ export function OrderDetailsPanel({
   onContinue,
   onCloseSession,
   onOpenSample,
+  onCorrectQuantities,
 }: {
   session: SessionWithOrder | null
   samples: SampleSummary[]
@@ -52,6 +54,8 @@ export function OrderDetailsPanel({
   onContinue: (session: SessionWithOrder) => void
   onCloseSession: (session: SessionWithOrder) => void
   onOpenSample: (session: SessionWithOrder, sample: SampleSummary) => void
+  /** Offered when this person may correct the session's quantities (§4). */
+  onCorrectQuantities?: (session: SessionWithOrder) => void
 }) {
   const orderId = session?.orderId ?? null
   const { data: order } = useOrder(orderId)
@@ -159,6 +163,15 @@ export function OrderDetailsPanel({
                 <Attr label="Final qty" value={session.finalQty !== undefined ? String(session.finalQty) : ''} />
                 <Attr label="Closed" value={session.closedAt ? formatDateTime(session.closedAt) : ''} />
               </dl>
+              {onCorrectQuantities && (
+                <button
+                  type="button"
+                  onClick={() => onCorrectQuantities(session)}
+                  className="mt-2 inline-flex min-h-[40px] items-center gap-1.5 text-sm font-semibold text-brand-700 hover:underline dark:text-brand-300"
+                >
+                  <Pencil className="h-4 w-4" /> Correct quantities
+                </button>
+              )}
               <div className="mt-3 flex flex-wrap gap-2">
                 <Chip tone="blue" label="Samples" value={samples.length} />
                 <Chip tone={(session.defectCount ?? 0) > 0 ? 'red' : 'neutral'} label="Defects" value={session.defectCount ?? 0} />
