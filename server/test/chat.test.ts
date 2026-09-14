@@ -1,8 +1,9 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import type { ApiErrorBody, ChatConversationsResponse, ChatMessagesResponse, ChatUnreadResponse } from '@qc/shared/api'
-import type { ChatConversation, ChatMessage, ChatUser, StoredFile } from '@qc/shared/types'
+import { CHAT_FILE_ATTACHMENTS_ENABLED, type ChatConversation, type ChatMessage, type ChatUser, type StoredFile } from '@qc/shared/types'
 import { TestApp, type Session } from './harness'
+import { buildChatFileStorageKey } from '../src/images/storage'
 
 const app = new TestApp()
 let admin: Session
@@ -185,7 +186,29 @@ describe('chat', () => {
     expect(list.body.unreadTotal).toBeGreaterThan(40)
   })
 
-  it('sends a file only its conversation can read', async () => {
+  it('refuses a file while attachments are switched off, and still serves one sent earlier', { skip: CHAT_FILE_ATTACHMENTS_ENABLED }, async () => {
+    const form = new FormData()
+    form.set('file', new Blob([Buffer.from('%PDF-1.4\n%%EOF\n')], { type: 'application/pdf' }), 'cert.pdf')
+    expect((await app.api('POST', '/api/chat/files', { token: insp.token, raw: form })).status).toBe(403)
+    expect((await send(insp, direct.id, '', { fileIds: [randomUUID()] })).status).toBe(400)
+    expect((await send(insp, direct.id, 'text with a file id', { fileIds: [randomUUID()] })).status).toBe(400)
+    expect((await send(sup, direct.id, '   ')).status).toBe(400)
+    // A file from before the switch: written straight into the store, readable by the conversation, nobody else.
+    const id = randomUUID()
+    const key = buildChatFileStorageKey(id, 'pdf')
+    await app.images.put(key, Buffer.from('%PDF-1.4\n%%EOF\n'), 'application/pdf')
+    await app.db.query(
+      `INSERT INTO chat_files (id, storage_key, driver, original_filename, mime_type, byte_size, sha256, uploaded_by_id, uploaded_by_name) VALUES ($1,$2,$3,'old.pdf','application/pdf',14,'x',$4,'Inspector One')`,
+      [id, key, app.images.driver, insp.user.id],
+    )
+    await app.db.query(`UPDATE chat_files SET message_id = (SELECT id FROM chat_messages WHERE conversation_id = $1 ORDER BY created_at LIMIT 1) WHERE id = $2`, [direct.id, id])
+    expect((await app.api('GET', `/api/chat/files/${id}/content`, { token: sup.token })).status).toBe(200)
+    expect((await app.api('GET', `/api/chat/files/${id}/content`, { token: admin.token })).status).toBe(404)
+    const page = await app.api<ChatMessagesResponse>('GET', `/api/chat/conversations/${direct.id}/messages`, { token: sup.token })
+    expect(page.body.messages[0].files.map((f) => f.originalFilename)).toEqual(['old.pdf'])
+  })
+
+  it('sends a file only its conversation can read', { skip: !CHAT_FILE_ATTACHMENTS_ENABLED }, async () => {
     const pdf = Buffer.from('%PDF-1.4\n%%EOF\n')
     const form = new FormData()
     form.set('file', new Blob([pdf], { type: 'application/pdf' }), 'cert.pdf')

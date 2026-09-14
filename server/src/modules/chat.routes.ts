@@ -22,6 +22,7 @@ import type {
 } from '@qc/shared/api'
 import {
   CHAT_EDIT_WINDOW_MS,
+  CHAT_FILE_ATTACHMENTS_ENABLED,
   CHAT_MAX_BODY,
   CHAT_MENTION_KINDS,
   type ChatConversation,
@@ -461,7 +462,8 @@ export function chatRoutes(ctx: AppContext): Router {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const body = parse(sendSchema, req.body) as Required<SendChatMessageRequest>
-    if (!body.body.trim() && body.imageIds.length === 0 && body.fileIds.length === 0) throw badRequest('Write something or attach a file.')
+    if (!CHAT_FILE_ATTACHMENTS_ENABLED && body.fileIds.length > 0) throw badRequest('File attachments are switched off; send a photo instead.')
+    if (!body.body.trim() && body.imageIds.length === 0 && body.fileIds.length === 0) throw badRequest('Write something or attach a photo.')
     await requireMembership(db, id, user)
     const messageId = await withTransaction(db, async (tx) => {
       const existing = await tx.query<{ id: string }>(`SELECT id FROM chat_messages WHERE sender_id = $1 AND client_id = $2`, [user.id, body.clientId])
@@ -577,6 +579,7 @@ export function chatRoutes(ctx: AppContext): Router {
 
   r.post('/files', upload.single('file'), async (req: Request, res) => {
     const user = requireUser(req)
+    if (!CHAT_FILE_ATTACHMENTS_ENABLED) throw forbidden('File attachments are switched off; send a photo instead.')
     if (!req.file) throw badRequest('Attach the document as the "file" field.')
     const name = req.file.originalname.slice(0, 255) || 'document'
     const ext = sniffNoticeFile(name, req.file.buffer)
