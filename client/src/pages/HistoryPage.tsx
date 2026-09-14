@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -29,7 +29,7 @@ import { SessionToneBadge, sessionToneClass } from '@/components/inspection/Sess
 import { Attr, SampleDetail, Section, SectionEmpty, dispositionToneOf, num, statusToneOf } from '@/components/inspection/SampleDetail'
 import { DefectEditDialog, DimensionEditDialog } from '@/components/inspection/CorrectionDialogs'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
-import { loadOlderSessions, useHistory, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
+import { loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
@@ -48,7 +48,7 @@ import {
   type SampleCoil,
   type Process,
 } from '@qc/shared/types'
-import type { SessionWithOrder } from '@qc/shared/api'
+import type { HistoryFilters, SessionWithOrder } from '@qc/shared/api'
 
 // ============================================================================
 // §6 — History. Three levels: session → sample → the full record of that sample.
@@ -66,7 +66,8 @@ import type { SessionWithOrder } from '@qc/shared/api'
 type StatusFilter = 'All' | 'Open' | 'Closed'
 type RangeFilter = 'all' | '7' | '30' | '90'
 
-/** How many sessions the list holds. Stated in the UI — never a silent cut. */
+/** How many sessions one page holds. The filters are answered over the whole
+ *  record, so this bounds what is fetched, never what can be found. */
 const SESSION_PAGE = 100
 
 const RANGE_LABEL: Record<RangeFilter, string> = {
@@ -89,6 +90,8 @@ export function HistoryPage() {
   const [status, setStatus] = useState<StatusFilter>('All')
   const [workCenter, setWorkCenter] = useState('all')
   const [range, setRange] = useState<RangeFilter>('all')
+  const [inspectorFilter, setInspectorFilter] = useState('all')
+  const [factoryFilter, setFactoryFilter] = useState('all')
 
   const [openSessionId, setOpenSessionId] = useState<string | null>(null)
   const [openSampleId, setOpenSampleId] = useState<string | null>(null)
@@ -145,9 +148,23 @@ export function HistoryPage() {
   const dispositionFilter = (DISPOSITIONS as readonly string[]).includes(dispositionParam ?? '') ? (dispositionParam as Disposition) : null
 
   // ---- The list ------------------------------------------------------------
-  // One page of the newest sessions (or those owning a defect with the landing
-  // disposition), each with its order. The filters below narrow this page.
-  const { data: history, isLoading: loading } = useHistory(dispositionFilter, SESSION_PAGE)
+  // Every filter is answered by the API over the whole record, never by
+  // sifting the page in hand: a session that matches is found whether it is
+  // the newest one or the ten-thousandth.
+  const settledTerm = useDebounced(term.trim(), 300)
+  const filters = useMemo<HistoryFilters>(() => {
+    const f: HistoryFilters = {}
+    if (settledTerm) f.q = settledTerm
+    if (status !== 'All') f.status = status
+    if (workCenter !== 'all') f.workCenterCode = workCenter
+    if (inspectorFilter !== 'all') f.inspectorId = inspectorFilter
+    if (factoryFilter !== 'all') f.factory = factoryFilter
+    if (range !== 'all') f.since = daysAgoISO(Number(range))
+    if (dispositionFilter) f.disposition = dispositionFilter
+    return f
+  }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, range, dispositionFilter])
+
+  const { data: history, isLoading: loading, isFetching } = useHistory(filters, SESSION_PAGE)
   /** Pages walked back from the first one, so an older session is never out of reach. */
   const [older, setOlder] = useState<SessionWithOrder[]>([])
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -158,18 +175,18 @@ export function HistoryPage() {
   }, [history, older])
   const hasMore = older.length > 0 ? olderHasMore : (history?.hasMore ?? false)
 
-  // A different disposition is a different list: start again from its first page.
+  // Different filters are a different list: start again from its first page.
   useEffect(() => {
     setOlder([])
     setOlderHasMore(false)
-  }, [dispositionFilter])
+  }, [filters])
 
   async function showOlder() {
     const last = sessions[sessions.length - 1]
     if (!last || loadingOlder) return
     setLoadingOlder(true)
     try {
-      const page = await loadOlderSessions(dispositionFilter, last.startedAt, SESSION_PAGE)
+      const page = await loadOlderSessions(filters, last.startedAt, SESSION_PAGE)
       setOlder((prev) => [...prev, ...page.sessions])
       setOlderHasMore(page.hasMore)
     } catch (e) {
@@ -193,57 +210,40 @@ export function HistoryPage() {
 
   const workCenterName = (code: string) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`
 
-  const workCenterOptions = useMemo(() => {
-    const codes = Array.from(new Set(sessions.map((s) => s.workCenterCode))).filter(Boolean)
-    return codes.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-  }, [sessions])
+  // The lists a filter may offer come from the record, not from the page on
+  // screen — an inspector who last worked a year ago is still in the list.
+  const { data: options } = useHistoryOptions()
+  const workCenterOptions = options?.workCenterCodes ?? []
+  const inspectorOptions = options?.inspectors ?? []
 
   // History is the factory's record: everyone reads all of it and may
   // narrow by who and where.
   const seesAll = true
-  const [inspectorFilter, setInspectorFilter] = useState('all')
-  const [factoryFilter, setFactoryFilter] = useState('all')
-  const factoryOf = useCallback((code: string) => machines.find((m) => m.code === code)?.factory?.trim() ?? '', [machines])
-  const inspectorOptions = useMemo(() => {
-    const byId = new Map<string, string>()
-    for (const s of sessions) byId.set(s.inspectorId, s.inspectorName)
-    return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
-  }, [sessions])
   const factoryOptions = useMemo(() => {
     const names = new Set<string>()
-    for (const s of sessions) {
-      const f = machines.find((m) => m.code === s.workCenterCode)?.factory?.trim()
+    for (const m of machines) {
+      const f = m.factory?.trim()
       if (f) names.add(f)
     }
     return Array.from(names).sort((a, b) => a.localeCompare(b))
-  }, [sessions, machines])
+  }, [machines])
 
-  const filtered = useMemo(() => {
-    const t = term.trim().toLowerCase()
-    const since = range === 'all' ? null : daysAgoISO(Number(range))
-    return sessions
-      .filter((s) => {
-        if (status !== 'All' && s.status !== status) return false
-        if (workCenter !== 'all' && s.workCenterCode !== workCenter) return false
-        if (inspectorFilter !== 'all' && s.inspectorId !== inspectorFilter) return false
-        if (factoryFilter !== 'all' && factoryOf(s.workCenterCode) !== factoryFilter) return false
-        if (since && s.startedAt < since) return false
-        if (!t) return true
-        return (
-          (s.order?.orderNumber ?? '').toLowerCase().includes(t) ||
-          (s.order?.item ?? '').toLowerCase().includes(t) ||
-          (s.order?.itemCode ?? '').toLowerCase().includes(t) ||
-          s.inspectorName.toLowerCase().includes(t)
-        )
-      })
-      .sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : b.seq - a.seq))
-  }, [sessions, term, status, workCenter, range, inspectorFilter, factoryFilter, factoryOf])
+  /** The API answers newest first; the merged pages keep that order. */
+  const filtered = useMemo(
+    () => [...sessions].sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : b.seq - a.seq)),
+    [sessions],
+  )
 
+  // Counted by the API over everything that matches — the stat is the size of
+  // the match, not the size of what has been fetched so far.
   const totals = useMemo(() => {
-    let open = 0
-    for (const s of filtered) if (s.status === 'Open') open += 1
-    return { sessions: filtered.length, open, closed: filtered.length - open }
-  }, [filtered])
+    const matched = history?.totals
+    if (!matched) {
+      const open = filtered.filter((s) => s.status === 'Open').length
+      return { sessions: filtered.length, open, closed: filtered.length - open }
+    }
+    return { sessions: matched.sessions, open: matched.open, closed: matched.sessions - matched.open }
+  }, [history, filtered])
 
   const openSession = openSessionId ? (sessions.find((s) => s.id === openSessionId) ?? null) : null
   const openSample = openSampleId && detail ? detail.sample : null
@@ -307,7 +307,7 @@ export function HistoryPage() {
           compact
           label="Sessions"
           value={totals.sessions}
-          sub={dispositionFilter ? `Dispositioned ${dispositionFilter}` : `${sessions.length} loaded${hasMore ? ', older ones below' : ''}`}
+          sub={totals.sessions > filtered.length ? `${filtered.length} on screen, the rest below` : 'All of them on screen'}
           icon={<HistoryIcon className="h-5 w-5" />}
         />
         <Stat compact label="Open" value={totals.open} tone={totals.open > 0 ? 'green' : 'neutral'} icon={<ClipboardList className="h-5 w-5" />} />
@@ -333,7 +333,7 @@ export function HistoryPage() {
           <Input
             value={term}
             onChange={(e) => setTerm(e.target.value)}
-            placeholder="Order number, item or inspector…"
+            placeholder="Order, item, code, customer, inspector, machine or #session…"
             className="min-h-[52px] pl-9 text-base"
             aria-label="Search history"
           />
@@ -392,6 +392,7 @@ export function HistoryPage() {
             </>
           )}
         </div>
+        {isFetching && !loading && <p className="text-xs text-slate-400">Searching the whole record…</p>}
       </Card>
 
       {loading ? (
@@ -400,7 +401,11 @@ export function HistoryPage() {
         <EmptyState
           icon={<HistoryIcon className="h-10 w-10" />}
           title="No sessions match"
-          hint={dispositionFilter ? `Nothing is currently dispositioned ${dispositionFilter}.` : 'Widen the date range, clear the search, or load older sessions.'}
+          hint={
+            dispositionFilter
+              ? `Nothing is currently dispositioned ${dispositionFilter}.`
+              : 'Nothing in the whole record matches these filters — widen the date range or clear the search.'
+          }
         />
       ) : (
         <>

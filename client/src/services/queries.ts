@@ -11,9 +11,13 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import type {
+  AuditFilters,
   AuditListResponse,
+  AuditOptionsResponse,
   AuditStats,
   CoilUsage,
+  HistoryFilters,
+  HistoryOptionsResponse,
   HistoryResponse,
   MasterKind,
   MasterListQuery,
@@ -35,12 +39,13 @@ import type {
   ChatUnreadResponse,
 } from '@qc/shared/api'
 import type { KpiFilters, KpiOverview } from '@qc/shared/kpi'
-import type { ChatUser, Coil, Disposition, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
+import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
 export const keys = {
   openBoard: ['sessions', 'open'] as const,
-  history: (disposition?: Disposition | null) => ['sessions', 'history', disposition ?? 'all'] as const,
+  history: (filters: HistoryFilters) => ['sessions', 'history', filters] as const,
+  historyOptions: ['sessions', 'history', 'options'] as const,
   session: (id: string) => ['sessions', id] as const,
   wizard: (id: string) => ['sessions', id, 'wizard'] as const,
   wizardPreview: (key: string) => ['sessions', 'preview', key] as const,
@@ -58,7 +63,8 @@ export const keys = {
   images: (ids: string) => ['images', ids] as const,
   master: (kind: MasterKind, filters?: MasterListQuery) => ['master', kind, filters ?? {}] as const,
   pdi: ['pdi'] as const,
-  audit: ['audit', 'list'] as const,
+  audit: (filters: AuditFilters) => ['audit', 'list', filters] as const,
+  auditOptions: ['audit', 'options'] as const,
   auditStats: ['audit', 'stats'] as const,
   users: ['users'] as const,
   workInstructions: (process?: string, history?: boolean) => ['work-instructions', process ?? 'all', history ? 'history' : 'in-force'] as const,
@@ -90,16 +96,25 @@ export function useOpenBoard() {
   return useQuery({ queryKey: keys.openBoard, queryFn: () => api<OpenSessionsResponse>('/sessions/open'), refetchInterval: 60_000 })
 }
 
-export function useHistory(disposition: Disposition | null, limit = 100) {
+/** §6 — a first page of the sessions the filters match. The filters go to the
+ *  API, not to the page in hand, so nothing matching is left behind. */
+export function useHistory(filters: HistoryFilters, limit = 100) {
   return useQuery({
-    queryKey: keys.history(disposition),
-    queryFn: () => api<HistoryResponse>(`/sessions/history${qs({ limit, disposition })}`),
+    queryKey: keys.history(filters),
+    queryFn: () => api<HistoryResponse>(`/sessions/history${qs({ limit, ...filters })}`),
+    // The list stays put while a new search settles, instead of blinking empty.
+    placeholderData: keepPreviousData,
   })
 }
 
-/** §6 — the page of sessions older than `before`, for the History list's "show older". */
-export async function loadOlderSessions(disposition: Disposition | null, before: string, limit = 100): Promise<HistoryResponse> {
-  return api<HistoryResponse>(`/sessions/history${qs({ limit, disposition, before })}`)
+/** §6 — the next page: the same filters, walked back past `before`. */
+export async function loadOlderSessions(filters: HistoryFilters, before: string, limit = 100): Promise<HistoryResponse> {
+  return api<HistoryResponse>(`/sessions/history${qs({ limit, ...filters, before })}`)
+}
+
+/** §6 — every inspector and machine in the record, for the History filters. */
+export function useHistoryOptions() {
+  return useQuery({ queryKey: keys.historyOptions, queryFn: () => api<HistoryOptionsResponse>('/sessions/history/options'), staleTime: 5 * 60_000 })
 }
 
 export function useSession(id: string | null) {
@@ -254,8 +269,29 @@ export function usePdiList(limit = 50) {
   return useQuery({ queryKey: keys.pdi, queryFn: () => api<PDIWithOrder[]>(`/pdi${qs({ limit })}`) })
 }
 
-export function useAuditList(limit = 500) {
-  return useQuery({ queryKey: keys.audit, queryFn: () => api<AuditListResponse>(`/audit${qs({ limit })}`) })
+/** §11 — a first page of the log entries the filters match, counted over the
+ *  whole log. The filters are answered in SQL, never by sifting this page. */
+export function useAuditList(filters: AuditFilters, limit = 200) {
+  return useQuery({
+    queryKey: keys.audit(filters),
+    queryFn: () => api<AuditListResponse>(`/audit${qs({ limit, ...filters })}`),
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** §11 — the next page: the same filters, walked back past one entry. */
+export async function loadOlderAudit(filters: AuditFilters, before: string, beforeId: string, limit = 200): Promise<AuditListResponse> {
+  return api<AuditListResponse>(`/audit${qs({ limit, ...filters, before, beforeId })}`)
+}
+
+/** §11 — every entry the filters match, up to `limit`, for the CSV export. */
+export async function loadAuditMatches(filters: AuditFilters, limit = 2000): Promise<AuditListResponse> {
+  return api<AuditListResponse>(`/audit${qs({ limit, ...filters })}`)
+}
+
+/** §11 — every user and entity in the log, for the audit filters. */
+export function useAuditOptions() {
+  return useQuery({ queryKey: keys.auditOptions, queryFn: () => api<AuditOptionsResponse>('/audit/options'), staleTime: 5 * 60_000 })
 }
 
 export function useAuditStats() {

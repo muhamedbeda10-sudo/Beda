@@ -511,8 +511,23 @@ export interface SessionNotesResponse {
 
 // ---- History ---------------------------------------------------------------
 
-export interface HistoryQuery {
-  limit?: number
+/**
+ * How the History list narrows. Every field is applied in SQL over the whole
+ * record — not over the page already fetched — so a session that matches ten
+ * thousand rows down is still found.
+ */
+export interface HistoryFilters {
+  /** Free text: order number, item, item code, customer, inspector, machine,
+   *  or the session's own number (`#12`). */
+  q?: string
+  status?: SessionStatus
+  /** A machine code, compared the way the floor writes it. */
+  workCenterCode?: string
+  /** The factory a machine belongs to, as the machine catalogue names it. */
+  factory?: string
+  inspectorId?: string
+  /** Only sessions started at or after this instant. */
+  since?: string
   /** Land on the sessions that own a defect with this disposition. */
   disposition?: Disposition
 }
@@ -521,6 +536,16 @@ export interface HistoryResponse {
   sessions: SessionWithOrder[]
   /** Sessions older than the last one here exist; ask again with `before`. */
   hasMore: boolean
+  /** Counted over everything that matches the filters, not over this page.
+   *  Sent with a first page only — paging back does not change it. */
+  totals?: { sessions: number; open: number }
+}
+
+/** What the History filters may offer, drawn from every session on record. */
+export interface HistoryOptionsResponse {
+  inspectors: { id: string; name: string }[]
+  /** Machine codes that actually appear in the record, newest use first. */
+  workCenterCodes: string[]
 }
 
 // ---- Images ----------------------------------------------------------------
@@ -553,17 +578,39 @@ export interface CreatePDIRequest {
 
 // ---- Audit -----------------------------------------------------------------
 
-export interface AuditQuery {
-  limit?: number
-}
-
 export interface AuditStats {
   total: number
   byAction: Partial<Record<AuditAction, number>>
 }
 
+/**
+ * How the audit browser narrows. Like the History filters, every field is
+ * applied in SQL over the whole log — which is the table that grows fastest —
+ * so an entry is found however far back it sits.
+ */
+export interface AuditFilters {
+  /** Free text: order, item, machine, field, either value, entity or user. */
+  q?: string
+  action?: AuditAction
+  /** The name as it was recorded on the entry. */
+  userName?: string
+  entity?: string
+  /** Only entries written at or after this instant. */
+  since?: string
+}
+
 export interface AuditListResponse {
   entries: AuditEntry[]
+  /** Entries older than the last one here match too; ask again with `before`. */
+  hasMore: boolean
+  /** How many match in the whole log. Sent with a first page only. */
+  total?: number
+}
+
+/** What the audit filters may offer, drawn from the whole log. */
+export interface AuditOptionsResponse {
+  users: string[]
+  entities: string[]
 }
 
 export interface PurgeAuditRequest {

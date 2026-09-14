@@ -528,7 +528,10 @@ export interface WorkInstruction {
 
 // ---- Audit -----------------------------------------------------------------
 
-export type AuditAction = 'create' | 'update' | 'delete' | 'restore' | 'purge' | 'acknowledge'
+/** Every action an audit entry may record — the list a filter narrows by. */
+export const AUDIT_ACTIONS = ['create', 'update', 'delete', 'restore', 'purge', 'acknowledge'] as const
+
+export type AuditAction = (typeof AUDIT_ACTIONS)[number]
 
 /** Field-level change record. Written for every edit after the initial save. */
 export interface AuditEntry {

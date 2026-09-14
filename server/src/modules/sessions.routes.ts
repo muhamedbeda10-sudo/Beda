@@ -38,6 +38,7 @@ import {
 } from '@qc/shared/rules'
 import { instructionsInForce } from './workInstructions.routes'
 import type {
+  HistoryOptionsResponse,
   HistoryResponse,
   OpenSessionsResponse,
   PreviousDimension,
@@ -346,23 +347,108 @@ export function sessionsRoutes(ctx: AppContext): Router {
         disposition: z.enum(DISPOSITIONS as unknown as [string, ...string[]]).optional(),
         /** Sessions started before this instant: the end of the page already read. */
         before: z.string().datetime({ offset: true }).optional(),
+        /** Free text over the order, the item, the customer, the inspector,
+         *  the machine and the session number. */
+        q: z.string().trim().max(120).optional(),
+        status: z.enum(['Open', 'Closed']).optional(),
+        workCenterCode: z.string().trim().max(60).optional(),
+        factory: z.string().trim().max(120).optional(),
+        inspectorId: uuid.optional(),
+        since: z.string().datetime({ offset: true }).optional(),
       }),
       req.query,
     )
-    // One more than asked for, so the page knows whether older ones remain.
-    const { rows } = await db.query<SessionRow & OrderSummaryRow>(
+
+    // The filters, as SQL over the whole table. They are built here — not
+    // applied to a page already fetched — so a session that matches is found
+    // wherever it sits in the record.
+    const clauses = ['s.deleted_at IS NULL']
+    const params: unknown[] = []
+    const p = (v: unknown) => `$${params.push(v)}`
+
+    if (q.disposition) {
+      clauses.push(`EXISTS (SELECT 1 FROM inspection_samples sm
+                              JOIN defect_results d ON d.sample_id = sm.id AND d.deleted_at IS NULL
+                             WHERE sm.session_id = s.id AND sm.deleted_at IS NULL AND d.disposition::text = ${p(q.disposition)})`)
+    }
+    if (q.status) clauses.push(`s.status = ${p(q.status)}`)
+    if (q.inspectorId) clauses.push(`s.inspector_id = ${p(q.inspectorId)}::uuid`)
+    if (q.since) clauses.push(`s.started_at >= ${p(q.since)}::timestamptz`)
+    if (q.workCenterCode) {
+      // "STAM 24", "stam24" and "024" all name the same machine on the floor.
+      clauses.push(`${NORMALISED_CODE('s.work_center_code')} = ${NORMALISED_CODE(p(q.workCenterCode) + '::text')}`)
+    }
+    if (q.factory) {
+      clauses.push(`EXISTS (SELECT 1 FROM machines m
+                             WHERE m.deleted_at IS NULL AND lower(btrim(COALESCE(m.factory, ''))) = lower(btrim(${p(q.factory)}))
+                               AND ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('s.work_center_code')})`)
+    }
+    if (q.q) {
+      // A literal search: the wildcards a person types are text, not pattern.
+      const like = `%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+      const t = p(like)
+      const seq = /^#?\d+$/.test(q.q) ? Number(q.q.replace('#', '')) : null
+      clauses.push(`(o.order_number ILIKE ${t} OR o.item ILIKE ${t} OR o.item_code ILIKE ${t} OR o.customer ILIKE ${t}
+                     OR s.inspector_name ILIKE ${t} OR s.work_center_code ILIKE ${t}
+                     OR EXISTS (SELECT 1 FROM machines m
+                                 WHERE m.deleted_at IS NULL AND ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('s.work_center_code')}
+                                   AND (m.display_name ILIKE ${t} OR m.name ILIKE ${t} OR m.line ILIKE ${t}))
+                     OR (${p(seq)}::int IS NOT NULL AND s.seq = ${p(seq)}::int))`)
+    }
+
+    const where = clauses.join(' AND ')
+    const filterParams = [...params]
+    // The cursor is not a filter: the totals below count the whole match, and
+    // only the page walks back from where the last one ended.
+    const paged = q.before ? `${where} AND s.started_at < ${p(q.before)}::timestamptz` : where
+    const limit = p(q.limit + 1) // One more than asked for, so the page knows whether older ones remain.
+
+    const page = db.query<SessionRow & OrderSummaryRow>(
       `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
          FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
-        WHERE s.deleted_at IS NULL
-          AND ($2::timestamptz IS NULL OR s.started_at < $2)
-          AND ($3::text IS NULL OR EXISTS (
-                SELECT 1 FROM inspection_samples sm
-                JOIN defect_results d ON d.sample_id = sm.id AND d.deleted_at IS NULL
-               WHERE sm.session_id = s.id AND sm.deleted_at IS NULL AND d.disposition::text = $3))
-        ORDER BY s.started_at DESC, s.seq DESC LIMIT $1`,
-      [q.limit + 1, q.before ?? null, q.disposition ?? null],
+        WHERE ${paged}
+        ORDER BY s.started_at DESC, s.seq DESC LIMIT ${limit}`,
+      params,
     )
-    const body: HistoryResponse = { sessions: rows.slice(0, q.limit).map(toSessionWithOrder), hasMore: rows.length > q.limit }
+    // How many match in total, counted once: the first page carries it, and
+    // walking back does not change it.
+    const totals = q.before
+      ? null
+      : db.query<{ sessions: number; open: number }>(
+          `SELECT count(*)::int AS sessions, count(*) FILTER (WHERE s.status = 'Open')::int AS open
+             FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
+            WHERE ${where}`,
+          filterParams,
+        )
+    const [rows, counted] = await Promise.all([page, totals])
+
+    const body: HistoryResponse = { sessions: rows.rows.slice(0, q.limit).map(toSessionWithOrder), hasMore: rows.rows.length > q.limit }
+    if (counted) body.totals = counted.rows[0]
+    res.json(body)
+  })
+
+  /**
+   * §6 — what the History filters may offer: every inspector who ever opened
+   * a session and every machine that ever ran one. Drawn from the record
+   * itself, so a filter is never limited to the page on screen.
+   */
+  r.get('/history/options', async (req, res) => {
+    requireUser(req)
+    const [inspectors, machines] = await Promise.all([
+      db.query<{ id: string; name: string }>(
+        `SELECT DISTINCT ON (s.inspector_id) s.inspector_id AS id, s.inspector_name AS name
+           FROM inspection_sessions s WHERE s.deleted_at IS NULL
+          ORDER BY s.inspector_id, s.started_at DESC`,
+      ),
+      db.query<{ code: string }>(
+        `SELECT DISTINCT s.work_center_code AS code
+           FROM inspection_sessions s WHERE s.deleted_at IS NULL AND btrim(s.work_center_code) <> ''`,
+      ),
+    ])
+    const body: HistoryOptionsResponse = {
+      inspectors: inspectors.rows.sort((a, b) => a.name.localeCompare(b.name)),
+      workCenterCodes: machines.rows.map((m) => m.code).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    }
     res.json(body)
   })
 
