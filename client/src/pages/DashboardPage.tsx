@@ -16,6 +16,7 @@ import {
   ClipboardList,
   FileSpreadsheet,
   Info,
+  LayoutGrid,
   Lightbulb,
   Loader2,
   Minus,
@@ -341,6 +342,9 @@ export function DashboardPage() {
 
   const { data, isLoading, isFetching, error, refetch } = useKpiOverview(allowed ? filters : null)
   const [insightsOpen, setInsightsOpen] = useState(false)
+  /** Which half of the dashboard is on screen. Printing renders both, so the
+   *  PDF is the whole dashboard whichever tab is open. */
+  const [view, setView] = useState<'overview' | 'inspectors'>('overview')
   const { data: machines = [] } = useMaster('machines', undefined, allowed)
   const { data: users = [] } = useUsers()
 
@@ -402,6 +406,27 @@ export function DashboardPage() {
           </p>
         </div>
         <div className="print-hidden flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-xl p-0.5 ring-1 ring-slate-200 dark:ring-slate-700">
+            {(
+              [
+                ['overview', 'Overview', LayoutGrid],
+                ['inspectors', 'Inspectors', Trophy],
+              ] as const
+            ).map(([key, label, Icon]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setView(key)}
+                aria-pressed={view === key}
+                className={cn(
+                  'inline-flex min-h-[40px] items-center gap-1.5 rounded-[10px] px-3 text-sm font-semibold transition-colors',
+                  view === key ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800',
+                )}
+              >
+                <Icon className="h-4 w-4" /> {label}
+              </button>
+            ))}
+          </div>
           {data && (
             <button
               type="button"
@@ -551,6 +576,9 @@ export function DashboardPage() {
 
       {data && t && cur && prevT && (
         <div className={cn('space-y-5 transition-opacity', isFetching && 'opacity-70')}>
+          {/* Everything but the ranking. Hidden on screen when the Inspectors
+              tab is open; still printed, so the PDF stays the whole dashboard. */}
+          <div className={cn('space-y-5', view !== 'overview' && '[@media_screen]:hidden')}>
           {/* Tiles */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <KpiTile label="Defect rate" value={pctStr(cur.defectRatePct)} current={cur.defectRatePct} previous={prevT.defectRatePct} goodWhen="down" tone={toneLowIsGood(cur.defectRatePct, t.defectRateGreen, t.defectRateAmber)} sub={`${num(cur.defectPieces)} defect pcs in ${num(cur.pieces)} inspected · target ≤ ${t.defectRateGreen}%`} icon={<AlertTriangle className="h-4 w-4" />} />
@@ -880,16 +908,6 @@ export function DashboardPage() {
             </Section>
           </div>
 
-          {/* §16 — who inspected, and how well. Admin-only by the page itself. */}
-          <Section
-            title="Inspector ranking"
-            hint="Scored on the inspection: how much was covered, how completely it was recorded, how rarely it needed correcting, and what was found against peers on the same machine."
-            icon={<Trophy className="h-4 w-4" />}
-            className="print-break"
-          >
-            <InspectorRanking data={data.inspectorRanking} onPick={(id) => patch({ inspectorId: id })} />
-          </Section>
-
           {/* Discipline */}
           <Section title="Recording discipline" hint="How the records themselves are kept. Not a KPI of the product; a KPI of the inspection." icon={<CheckCircle2 className="h-4 w-4" />}>
             <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
@@ -910,6 +928,18 @@ export function DashboardPage() {
                 </div>
               ))}
             </dl>
+          </Section>
+          </div>
+
+          {/* §16 — who inspected, and how well. Its own tab, and its own page
+              in the PDF. Administrator-only, like the dashboard itself. */}
+          <Section
+            title="Inspector ranking"
+            hint="Scored on the inspection: how much was covered, how completely it was recorded, how rarely it needed correcting, and what was found against peers on the same machine."
+            icon={<Trophy className="h-4 w-4" />}
+            className={cn('print-break', view !== 'inspectors' && '[@media_screen]:hidden')}
+          >
+            <InspectorRanking data={data.inspectorRanking} onPick={(id) => patch({ inspectorId: id })} />
           </Section>
 
           <p className="text-xs text-slate-400">
