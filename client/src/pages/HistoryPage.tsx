@@ -92,6 +92,7 @@ const HISTORY_COLUMNS: ColumnDef[] = [
   { key: 'date', label: 'Date', width: 130, min: 90 },
   { key: 'status', label: 'Status', width: 150, min: 90 },
   { key: 'samples', label: 'Samples', width: 96, min: 72, align: 'right' },
+  { key: 'defectPieces', label: 'Defect pcs', width: 104, min: 80, align: 'right' },
   { key: 'rejected', label: 'Rejected before release', width: 150, min: 90, align: 'right' },
   { key: 'final', label: 'Final qty', width: 100, min: 80, align: 'right' },
   { key: 'open', label: '', width: 48, min: 40, hideable: false },
@@ -144,6 +145,13 @@ function historyCell(key: string, s: SessionWithOrder, fixed: boolean, workCente
       )
     case 'samples':
       return <td key={key} className="px-4 py-3 text-right tabular-nums">{num(s.sampleCount)}</td>
+    case 'defectPieces':
+      // The same figure the dashboard adds up per day and per machine.
+      return (
+        <td key={key} className={cn('px-4 py-3 text-right tabular-nums', (s.defectPieces ?? 0) > 0 && 'font-bold text-rose-600 dark:text-rose-400')}>
+          {num(s.defectPieces ?? 0)}
+        </td>
+      )
     case 'rejected':
       return <td key={key} className="px-4 py-3 text-right tabular-nums">{num(s.startQtyConfirmed?.qty)}</td>
     case 'final':

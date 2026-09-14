@@ -312,6 +312,9 @@ describe('the atomic sample save', () => {
     const board = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: inspector.token })
     expect(board.body.samples.map((s) => s.index)).toEqual([1, 2])
     expect(board.body.sessions[0].sampleCount).toBe(2)
+    // One defect record of two pieces: the pieces are what the dashboard adds up.
+    expect(board.body.sessions[0].defectCount).toBe(1)
+    expect(board.body.sessions[0].defectPieces).toBe(2)
     expect(board.body.holdCount).toBe(1)
     const history = await app.api<OrderHistory>('GET', `/api/orders/${weldOrder.id}/history`, { token: inspector.token })
     expect(history.body.sessions).toHaveLength(1)

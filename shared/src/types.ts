@@ -171,6 +171,9 @@ export interface InspectionSession {
   sampleCount?: number
   /** Defects recorded across the session's samples. Computed by the API. */
   defectCount?: number
+  /** Pieces those defects cover (the sum of their quantities): the number the
+   *  dashboard adds up as "defect pieces". Computed by the API. */
+  defectPieces?: number
   /** Of those, the ones dispositioned Hold. Computed by the API. */
   holdCount?: number
   /** The same item of the same order already showed defects on another

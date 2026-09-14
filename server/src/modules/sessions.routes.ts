@@ -389,7 +389,14 @@ export function sessionsRoutes(ctx: AppContext): Router {
       clauses.push(`(s.inspector_id = ${who}::uuid OR EXISTS (
                       SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.inspector_id = ${who}::uuid))`)
     }
-    if (q.since) clauses.push(`s.started_at >= ${p(q.since)}::timestamptz`)
+    if (q.since) {
+      // A session started earlier but still being sampled is part of this
+      // period too: the dashboard puts a sample on the day it was recorded,
+      // so History must land on the same session for the same date range.
+      const since = p(q.since)
+      clauses.push(`(s.started_at >= ${since}::timestamptz OR EXISTS (
+                      SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.created_at >= ${since}::timestamptz))`)
+    }
     if (q.workCenterCode) {
       // "STAM 24", "stam24" and "024" all name the same machine on the floor.
       clauses.push(`${NORMALISED_CODE('s.work_center_code')} = ${NORMALISED_CODE(p(q.workCenterCode) + '::text')}`)

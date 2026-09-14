@@ -179,6 +179,22 @@ describe('§6 — a filter reaches past the first page', () => {
     expect(res.body.workCenterCodes.sort()).toEqual(['31', 'STAM 24'])
   })
 
+  it('lands on a session sampled in the period even when it started before it', async () => {
+    const since = new Date(Date.now() - 30 * 60_000).toISOString()
+    expect((await get(`since=${encodeURIComponent(since)}`, one.token)).body.sessions.map((s) => s.id)).not.toContain(buried)
+    // A sample recorded now on the hour-old session: the dashboard counts it today, so History shows the session today.
+    await app.db.query(
+      `INSERT INTO inspection_samples (session_id, order_id, index, shift, inspector_id, inspector_name, drawing, sample_qty, submission_id)
+       VALUES ($1, $2, 1, 'A', $3, $4, 'D-2', 5, gen_random_uuid())`,
+      [buried, panel.id, two.user.id, two.user.name],
+    )
+    const res = await get(`since=${encodeURIComponent(since)}`, one.token)
+    expect(res.body.totals!.sessions).toBe(RECENT + 1)
+    // It started an hour ago, so it sorts behind the first page; narrowed to its inspector it is the match.
+    const theirs = await get(`since=${encodeURIComponent(since)}&inspectorId=${two.user.id}`, one.token)
+    expect(theirs.body.sessions.map((s) => s.id)).toEqual([buried])
+  })
+
   it('refuses a filter it cannot read', async () => {
     expect((await get('status=Sleeping', one.token)).status).toBe(400)
     expect((await get('inspectorId=nobody', one.token)).status).toBe(400)

@@ -23,6 +23,8 @@ export const SESSION_SELECT = `
   (SELECT count(*)::int FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "sampleCount",
   (SELECT count(*)::int FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
     WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL) AS "defectCount",
+  (SELECT COALESCE(sum(d.qty), 0)::float8 FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+    WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL) AS "defectPieces",
   (SELECT count(*)::int FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
     WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL AND d.disposition = 'Hold') AS "holdCount",
   (SELECT count(*)::int FROM session_notes n WHERE n.session_id = s.id AND n.deleted_at IS NULL) AS "noteCount",
@@ -84,6 +86,7 @@ export interface SessionRow {
   deletedAt: string | null
   sampleCount: number
   defectCount: number
+  defectPieces: number
   holdCount: number
   noteCount: number
   priorDefectsElsewhere: boolean
@@ -114,6 +117,7 @@ export function toSession(r: SessionRow): InspectionSession {
     version: r.version,
     sampleCount: r.sampleCount,
     defectCount: r.defectCount,
+    defectPieces: r.defectPieces,
     holdCount: r.holdCount,
     noteCount: r.noteCount,
     priorDefectsElsewhere: r.priorDefectsElsewhere,
