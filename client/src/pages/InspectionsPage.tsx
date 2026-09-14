@@ -187,6 +187,29 @@ export function InspectionsPage() {
   const machinePickKnown = machinePick === 'all' || groupsInFactory.some((g) => g.code === machinePick)
   const activeMachine = machinePickKnown ? machinePick : 'all'
   const groups = activeMachine === 'all' ? groupsInFactory : groupsInFactory.filter((g) => g.code === activeMachine)
+
+  /**
+   * The board as frames: the pinned machine first, in a frame of its own,
+   * then one frame per factory in the register's order, each holding its
+   * machines in the order the worst signal gives them.
+   */
+  const sections = useMemo(() => {
+    const pinned = groups.filter((g) => g.code === favourite)
+    const byFactory = new Map<string, MachineGroup[]>()
+    for (const g of groups) {
+      if (g.code === favourite) continue
+      byFactory.set(g.factory, [...(byFactory.get(g.factory) ?? []), g])
+    }
+    const out: { key: string; label: string; groups: MachineGroup[]; pinned: boolean }[] = []
+    if (pinned.length > 0) out.push({ key: '__pinned__', label: 'My machine', groups: pinned, pinned: true })
+    const ordered = [...factoryTabs.map((t) => t.key), ...byFactory.keys()].filter((k, i, all) => all.indexOf(k) === i)
+    for (const key of ordered) {
+      const gs = byFactory.get(key)
+      if (gs?.length) out.push({ key, label: key === NO_FACTORY ? 'No factory' : key, groups: gs, pinned: false })
+    }
+    return out
+  }, [groups, favourite, factoryTabs])
+
   const shown = groups.reduce((n, g) => n + g.sessions.length, 0)
   const narrowed = seesAll && (term.trim() !== '' || inspectorFilter !== 'all')
   const filtering = narrowed || activeFactory !== 'all' || activeMachine !== 'all'
@@ -238,6 +261,289 @@ export function InspectionsPage() {
             ? 'bg-rose-50 text-rose-800 ring-rose-300 hover:bg-rose-100 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-500/40'
             : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700 dark:hover:bg-slate-800',
     )
+
+  // ---- The board's two renderings of a set of machines ---------------------
+  // Each frame below hands its machines to one of these; the factory name on
+  // a machine is shown only where the frame does not already say it.
+  const machineTable = (gs: MachineGroup[], showFactory: boolean) => (
+    // Every open session in one flat table, machine by machine in the same order as the cards.
+    <Card className="overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[60rem] text-sm">
+          <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:bg-slate-800/60">
+            <tr>
+              <th className="px-4 py-3">Machine</th>
+              <th className="px-4 py-3">Order</th>
+              <th className="px-4 py-3">Item</th>
+              <th className="px-4 py-3">Inspector</th>
+              <th className="px-4 py-3">Started</th>
+              <th className="px-4 py-3 text-right">Samples</th>
+              <th className="px-4 py-3 text-right">Defects</th>
+              <th className="px-4 py-3">State</th>
+              <th className="px-4 py-3"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            {gs.flatMap((g) =>
+              g.sessions.map((s) => {
+                const order = s.order
+                const count = samplesBySession.get(s.id)?.length ?? 0
+                return (
+                  <tr key={s.id} onClick={() => setDetails(s)} className={cn('cursor-pointer transition-colors', sessionToneClass(s, 'row', 'hover:bg-slate-50 dark:hover:bg-slate-800/50'))}>
+                    <td className="px-4 py-2.5">
+                      <span className="flex items-center gap-1.5 font-semibold">
+                        {g.code === favourite && <Star className="h-3.5 w-3.5 fill-current text-amber-500" />}
+                        {g.label}
+                      </span>
+                      {showFactory && g.factory !== NO_FACTORY && <span className="block text-xs text-slate-400">{g.factory}</span>}
+                    </td>
+                    <td className="px-4 py-2.5 font-bold">
+                      {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : (order?.orderNumber ?? '—')}
+                      <span className="ml-1.5 text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
+                    </td>
+                    <td className="max-w-[220px] truncate px-4 py-2.5">
+                      <span className="block truncate">{order?.item ?? '—'}</span>
+                      <span className="block truncate font-mono text-xs text-slate-400">{order?.itemCode ?? ''}</span>
+                    </td>
+                    <td className="px-4 py-2.5">{s.inspectorName}</td>
+                    <td className="px-4 py-2.5 tabular-nums text-slate-500 dark:text-slate-400">{formatDateTime(s.startedAt)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{count}</td>
+                    <td className={cn('px-4 py-2.5 text-right tabular-nums', (s.defectCount ?? 0) > 0 && 'font-bold text-rose-600 dark:text-rose-400')}>{s.defectCount ?? 0}</td>
+                    <td className="px-4 py-2.5">
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        {s.status === 'Open' ? <Badge tone="green">OPEN</Badge> : <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>CLOSED</Badge>}
+                        <SessionToneBadge session={s} />
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      {s.status === 'Open' && (
+                        <Button
+                          variant="primary"
+                          className="min-h-[40px]"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            navigate(`/wizard/${s.id}`)
+                          }}
+                        >
+                          <Play className="h-4 w-4" /> Continue
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              }),
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  )
+
+  const machineCards = (gs: MachineGroup[], showFactory: boolean) => (
+    // Several machines side by side on a wide screen; one column on a phone.
+    <div className={cn('grid items-start gap-4', density === 'cards' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1 xl:grid-cols-2')}>
+      {gs.map((g) => {
+        const isCollapsed = collapsed[g.code] === true
+        const isExpanded = expanded[g.code]
+        const visible = isExpanded || density === 'compact' ? g.sessions : g.sessions.slice(0, COLLAPSE_AFTER)
+        const hidden = g.sessions.length - visible.length
+        const isFavourite = g.code === favourite
+        return (
+          <Card key={g.code} className={cn('overflow-hidden', isFavourite && 'ring-2 ring-brand-300 dark:ring-brand-500/50')}>
+            <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setCollapsed((c) => ({ ...c, [g.code]: !isCollapsed }))}
+                aria-expanded={!isCollapsed}
+                aria-label={isCollapsed ? `Expand ${g.label}` : `Collapse ${g.label}`}
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+              >
+                <span
+                  className={cn(
+                    'grid h-10 w-10 shrink-0 place-items-center rounded-xl',
+                    g.tone === 'hold'
+                      ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400'
+                      : g.tone === 'defect'
+                        ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
+                        : 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300',
+                  )}
+                >
+                  <Factory className="h-5 w-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  {/* The full machine name, on two lines if it must; the counts sit under it so a narrow column never clips it. */}
+                  <span className="line-clamp-2 text-base font-extrabold leading-tight" title={g.label}>
+                    {g.label}
+                  </span>
+                  <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400">
+                    {showFactory && g.factory !== NO_FACTORY && <span>{g.factory}</span>}
+                    <span className="tabular-nums">
+                      {g.sessions.length} session{g.sessions.length === 1 ? '' : 's'} · {g.sampleCount} sample{g.sampleCount === 1 ? '' : 's'}
+                    </span>
+                  </span>
+                </span>
+                {isCollapsed ? <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" /> : <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setFavourite(isFavourite ? null : g.code)}
+                aria-pressed={isFavourite}
+                aria-label={isFavourite ? `Stop pinning ${g.label}` : `Pin ${g.label} as my machine`}
+                title={isFavourite ? 'My machine — pinned first on this device' : 'Pin as my machine on this device'}
+                className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl transition-colors', isFavourite ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-500/10' : 'text-slate-300 hover:bg-slate-100 hover:text-amber-500 dark:text-slate-600 dark:hover:bg-slate-800')}
+              >
+                <Star className={cn('h-5 w-5', isFavourite && 'fill-current')} />
+              </button>
+            </div>
+
+            {!isCollapsed && density === 'compact' ? (
+              <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                {visible.map((s) => {
+                  const order = s.order
+                  const count = samplesBySession.get(s.id)?.length ?? 0
+                  return (
+                    <li key={s.id} className={cn('flex items-center gap-3 px-4 py-2.5', sessionToneClass(s, 'row'))}>
+                      <button type="button" onClick={() => setDetails(s)} className="min-w-0 flex-1 text-left" aria-label={`Order details for ${order?.orderNumber ?? 'this session'}`}>
+                        <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{order?.orderNumber ?? '—'}</span>}
+                          <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
+                          <span className="truncate text-sm text-brand-600 dark:text-brand-400">{order?.item ?? '—'}</span>
+                        </span>
+                        <span className="block truncate text-xs text-slate-400">
+                          {s.inspectorName} · {formatDate(s.startedAt)} · {count} sample{count === 1 ? '' : 's'}
+                          {s.startQtyConfirmed ? ` · rejected before release ${s.startQtyConfirmed.qty}` : ''}
+                          {s.producedQty !== undefined ? ` · produced ${s.producedQty} pairs` : ''}
+                        </span>
+                      </button>
+                      <SessionToneBadge session={s} className="hidden sm:inline-flex" />
+                      {s.status === 'Open' ? (
+                        <Button variant="primary" className="min-h-[40px] shrink-0" onClick={() => navigate(`/wizard/${s.id}`)} aria-label="Continue">
+                          <Play className="h-4 w-4" />
+                          <span className="hidden sm:inline">Continue</span>
+                        </Button>
+                      ) : (
+                        <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>
+                          CLOSED
+                        </Badge>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : !isCollapsed ? (
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {visible.map((s) => {
+                const order = s.order
+                const sessionSamples = samplesBySession.get(s.id) ?? []
+                return (
+                  <div key={s.id} className={cn('px-4 py-3.5', sessionToneClass(s, 'block'))}>
+                    {/* The card's head opens the order in full; buttons and chips keep their own job. */}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setDetails(s)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          setDetails(s)
+                        }
+                      }}
+                      className="group -mx-2 -mt-1 cursor-pointer rounded-xl px-2 pt-1 pb-1 transition-colors hover:bg-white/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 dark:hover:bg-slate-800/60"
+                      aria-label={`Order details for ${order?.orderNumber ?? 'this session'}`}
+                    >
+                    <div className="flex flex-wrap items-center gap-2">
+                      {isStockOrder(order) ? (
+                        <Badge tone="violet">For stock</Badge>
+                      ) : (
+                        <span className="font-bold">{order?.orderNumber ?? '—'}</span>
+                      )}
+                      <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
+                      {s.status === 'Open' ? <Badge tone="green">OPEN</Badge> : <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>CLOSED · stays while on Hold</Badge>}
+                      <SessionToneBadge session={s} />
+                      <Badge tone="neutral">
+                        {sessionSamples.length} sample{sessionSamples.length === 1 ? '' : 's'}
+                      </Badge>
+                      {s.startQtyConfirmed && (
+                        <Badge tone="blue" icon={<CheckCircle2 className="h-3 w-3" />}>
+                          Rejected before release {s.startQtyConfirmed.qty}
+                        </Badge>
+                      )}
+                      {s.producedQty !== undefined && (
+                        <Badge tone="blue" icon={<Boxes className="h-3 w-3" />}>
+                          Produced {s.producedQty} pairs
+                        </Badge>
+                      )}
+                      {(s.noteCount ?? 0) > 0 && (
+                        <Badge tone="neutral" icon={<MessageSquareText className="h-3 w-3" />}>
+                          {s.noteCount} note{s.noteCount === 1 ? '' : 's'}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="mt-1 truncate text-sm font-medium text-brand-600 dark:text-brand-400">
+                      {order?.item} · {order?.itemCode}
+                    </p>
+                    <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-400">
+                      <span>
+                        {formatDate(s.startedAt)} · {s.inspectorName}
+                      </span>
+                      <span className="ml-auto inline-flex items-center gap-0.5 font-semibold text-brand-600 opacity-70 transition-[opacity,transform] group-hover:translate-x-0.5 group-hover:opacity-100 dark:text-brand-400">
+                        Order details <ChevronRight className="h-3.5 w-3.5" />
+                      </span>
+                    </p>
+                    </div>
+
+                    {/* A closed session on Hold is here to be seen, not continued; deleting is an administrator's act, from History. */}
+                    {s.status === 'Open' && (
+                      <div className="mt-3 flex items-center gap-2">
+                        <Button variant="primary" className="min-h-[48px] flex-1" onClick={() => navigate(`/wizard/${s.id}`)}>
+                          <Play className="h-4 w-4" /> Continue
+                        </Button>
+                        <Button variant="secondary" className="min-h-[48px]" onClick={() => setClosing(s)} aria-label="Close session">
+                          <Lock className="h-4 w-4" />
+                          <span className="hidden sm:inline">Close</span>
+                        </Button>
+                      </div>
+                    )}
+
+                    {sessionSamples.length > 0 && (
+                      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
+                        <span className="flex items-center gap-1 text-xs font-bold uppercase text-slate-400">
+                          <Boxes className="h-3.5 w-3.5" /> Samples
+                        </span>
+                        {[...sessionSamples]
+                          .sort((a, b) => a.index - b.index)
+                          .map((sm) => (
+                            <button
+                              key={sm.id}
+                              type="button"
+                              onClick={() => setViewing({ session: s, sample: sm })}
+                              className="min-h-[36px] rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20"
+                              aria-label={`Open sample ${sm.index}`}
+                            >
+                              {s.seq}-{sm.index}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            ) : null}
+
+            {!isCollapsed && density === 'cards' && hidden > 0 && (
+              <button
+                onClick={() => setExpanded((e) => ({ ...e, [g.code]: true }))}
+                className="flex w-full items-center justify-center gap-1.5 border-t border-slate-100 py-3 text-sm font-semibold text-brand-600 hover:bg-slate-50 dark:border-slate-800 dark:text-brand-400 dark:hover:bg-slate-800/50"
+              >
+                <ChevronDown className="h-4 w-4" /> View {hidden} more
+              </button>
+            )}
+          </Card>
+        )
+      })}
+    </div>
+  )
 
   return (
     <div className="space-y-5">
@@ -393,281 +699,27 @@ export function InspectionsPage() {
             )
           }
         />
-      ) : density === 'table' ? (
-        // Every open session in one flat table, machine by machine in the same order as the cards.
-        <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[60rem] text-sm">
-              <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:bg-slate-800/60">
-                <tr>
-                  <th className="px-4 py-3">Machine</th>
-                  <th className="px-4 py-3">Order</th>
-                  <th className="px-4 py-3">Item</th>
-                  <th className="px-4 py-3">Inspector</th>
-                  <th className="px-4 py-3">Started</th>
-                  <th className="px-4 py-3 text-right">Samples</th>
-                  <th className="px-4 py-3 text-right">Defects</th>
-                  <th className="px-4 py-3">State</th>
-                  <th className="px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {groups.flatMap((g) =>
-                  g.sessions.map((s) => {
-                    const order = s.order
-                    const count = samplesBySession.get(s.id)?.length ?? 0
-                    return (
-                      <tr key={s.id} onClick={() => setDetails(s)} className={cn('cursor-pointer transition-colors', sessionToneClass(s, 'row', 'hover:bg-slate-50 dark:hover:bg-slate-800/50'))}>
-                        <td className="px-4 py-2.5">
-                          <span className="flex items-center gap-1.5 font-semibold">
-                            {g.code === favourite && <Star className="h-3.5 w-3.5 fill-current text-amber-500" />}
-                            {g.label}
-                          </span>
-                          {activeFactory === 'all' && g.factory !== NO_FACTORY && <span className="block text-xs text-slate-400">{g.factory}</span>}
-                        </td>
-                        <td className="px-4 py-2.5 font-bold">
-                          {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : (order?.orderNumber ?? '—')}
-                          <span className="ml-1.5 text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
-                        </td>
-                        <td className="max-w-[220px] truncate px-4 py-2.5">
-                          <span className="block truncate">{order?.item ?? '—'}</span>
-                          <span className="block truncate font-mono text-xs text-slate-400">{order?.itemCode ?? ''}</span>
-                        </td>
-                        <td className="px-4 py-2.5">{s.inspectorName}</td>
-                        <td className="px-4 py-2.5 tabular-nums text-slate-500 dark:text-slate-400">{formatDateTime(s.startedAt)}</td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">{count}</td>
-                        <td className={cn('px-4 py-2.5 text-right tabular-nums', (s.defectCount ?? 0) > 0 && 'font-bold text-rose-600 dark:text-rose-400')}>{s.defectCount ?? 0}</td>
-                        <td className="px-4 py-2.5">
-                          <span className="inline-flex flex-wrap items-center gap-1.5">
-                            {s.status === 'Open' ? <Badge tone="green">OPEN</Badge> : <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>CLOSED</Badge>}
-                            <SessionToneBadge session={s} />
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-right">
-                          {s.status === 'Open' && (
-                            <Button
-                              variant="primary"
-                              className="min-h-[40px]"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                navigate(`/wizard/${s.id}`)
-                              }}
-                            >
-                              <Play className="h-4 w-4" /> Continue
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  }),
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
       ) : (
-        // Several machines side by side on a wide screen; one column on a phone.
-        <div className={cn('grid items-start gap-4', density === 'cards' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4' : 'grid-cols-1 xl:grid-cols-2')}>
-          {groups.map((g) => {
-            const isCollapsed = collapsed[g.code] === true
-            const isExpanded = expanded[g.code]
-            const visible = isExpanded || density === 'compact' ? g.sessions : g.sessions.slice(0, COLLAPSE_AFTER)
-            const hidden = g.sessions.length - visible.length
-            const isFavourite = g.code === favourite
-            return (
-              <Card key={g.code} className={cn('overflow-hidden', isFavourite && 'ring-2 ring-brand-300 dark:ring-brand-500/50')}>
-                <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setCollapsed((c) => ({ ...c, [g.code]: !isCollapsed }))}
-                    aria-expanded={!isCollapsed}
-                    aria-label={isCollapsed ? `Expand ${g.label}` : `Collapse ${g.label}`}
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                  >
-                    <span
-                      className={cn(
-                        'grid h-10 w-10 shrink-0 place-items-center rounded-xl',
-                        g.tone === 'hold'
-                          ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400'
-                          : g.tone === 'defect'
-                            ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
-                            : 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300',
-                      )}
-                    >
-                      <Factory className="h-5 w-5" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      {/* The full machine name, on two lines if it must; the counts sit under it so a narrow column never clips it. */}
-                      <span className="line-clamp-2 text-base font-extrabold leading-tight" title={g.label}>
-                        {g.label}
-                      </span>
-                      <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400">
-                        {activeFactory === 'all' && g.factory !== NO_FACTORY && <span>{g.factory}</span>}
-                        <span className="tabular-nums">
-                          {g.sessions.length} session{g.sessions.length === 1 ? '' : 's'} · {g.sampleCount} sample{g.sampleCount === 1 ? '' : 's'}
-                        </span>
-                      </span>
-                    </span>
-                    {isCollapsed ? <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" /> : <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFavourite(isFavourite ? null : g.code)}
-                    aria-pressed={isFavourite}
-                    aria-label={isFavourite ? `Stop pinning ${g.label}` : `Pin ${g.label} as my machine`}
-                    title={isFavourite ? 'My machine — pinned first on this device' : 'Pin as my machine on this device'}
-                    className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl transition-colors', isFavourite ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-500/10' : 'text-slate-300 hover:bg-slate-100 hover:text-amber-500 dark:text-slate-600 dark:hover:bg-slate-800')}
-                  >
-                    <Star className={cn('h-5 w-5', isFavourite && 'fill-current')} />
-                  </button>
-                </div>
-
-                {!isCollapsed && density === 'compact' ? (
-                  <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {visible.map((s) => {
-                      const order = s.order
-                      const count = samplesBySession.get(s.id)?.length ?? 0
-                      return (
-                        <li key={s.id} className={cn('flex items-center gap-3 px-4 py-2.5', sessionToneClass(s, 'row'))}>
-                          <button type="button" onClick={() => setDetails(s)} className="min-w-0 flex-1 text-left" aria-label={`Order details for ${order?.orderNumber ?? 'this session'}`}>
-                            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                              {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{order?.orderNumber ?? '—'}</span>}
-                              <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
-                              <span className="truncate text-sm text-brand-600 dark:text-brand-400">{order?.item ?? '—'}</span>
-                            </span>
-                            <span className="block truncate text-xs text-slate-400">
-                              {s.inspectorName} · {formatDate(s.startedAt)} · {count} sample{count === 1 ? '' : 's'}
-                              {s.startQtyConfirmed ? ` · rejected before release ${s.startQtyConfirmed.qty}` : ''}
-                              {s.producedQty !== undefined ? ` · produced ${s.producedQty} pairs` : ''}
-                            </span>
-                          </button>
-                          <SessionToneBadge session={s} className="hidden sm:inline-flex" />
-                          {s.status === 'Open' ? (
-                            <Button variant="primary" className="min-h-[40px] shrink-0" onClick={() => navigate(`/wizard/${s.id}`)} aria-label="Continue">
-                              <Play className="h-4 w-4" />
-                              <span className="hidden sm:inline">Continue</span>
-                            </Button>
-                          ) : (
-                            <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>
-                              CLOSED
-                            </Badge>
-                          )}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                ) : !isCollapsed ? (
-                <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {visible.map((s) => {
-                    const order = s.order
-                    const sessionSamples = samplesBySession.get(s.id) ?? []
-                    return (
-                      <div key={s.id} className={cn('px-4 py-3.5', sessionToneClass(s, 'block'))}>
-                        {/* The card's head opens the order in full; buttons and chips keep their own job. */}
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setDetails(s)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault()
-                              setDetails(s)
-                            }
-                          }}
-                          className="group -mx-2 -mt-1 cursor-pointer rounded-xl px-2 pt-1 pb-1 transition-colors hover:bg-white/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 dark:hover:bg-slate-800/60"
-                          aria-label={`Order details for ${order?.orderNumber ?? 'this session'}`}
-                        >
-                        <div className="flex flex-wrap items-center gap-2">
-                          {isStockOrder(order) ? (
-                            <Badge tone="violet">For stock</Badge>
-                          ) : (
-                            <span className="font-bold">{order?.orderNumber ?? '—'}</span>
-                          )}
-                          <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
-                          {s.status === 'Open' ? <Badge tone="green">OPEN</Badge> : <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>CLOSED · stays while on Hold</Badge>}
-                          <SessionToneBadge session={s} />
-                          <Badge tone="neutral">
-                            {sessionSamples.length} sample{sessionSamples.length === 1 ? '' : 's'}
-                          </Badge>
-                          {s.startQtyConfirmed && (
-                            <Badge tone="blue" icon={<CheckCircle2 className="h-3 w-3" />}>
-                              Rejected before release {s.startQtyConfirmed.qty}
-                            </Badge>
-                          )}
-                          {s.producedQty !== undefined && (
-                            <Badge tone="blue" icon={<Boxes className="h-3 w-3" />}>
-                              Produced {s.producedQty} pairs
-                            </Badge>
-                          )}
-                          {(s.noteCount ?? 0) > 0 && (
-                            <Badge tone="neutral" icon={<MessageSquareText className="h-3 w-3" />}>
-                              {s.noteCount} note{s.noteCount === 1 ? '' : 's'}
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="mt-1 truncate text-sm font-medium text-brand-600 dark:text-brand-400">
-                          {order?.item} · {order?.itemCode}
-                        </p>
-                        <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-400">
-                          <span>
-                            {formatDate(s.startedAt)} · {s.inspectorName}
-                          </span>
-                          <span className="ml-auto inline-flex items-center gap-0.5 font-semibold text-brand-600 opacity-70 transition-[opacity,transform] group-hover:translate-x-0.5 group-hover:opacity-100 dark:text-brand-400">
-                            Order details <ChevronRight className="h-3.5 w-3.5" />
-                          </span>
-                        </p>
-                        </div>
-
-                        {/* A closed session on Hold is here to be seen, not continued; deleting is an administrator's act, from History. */}
-                        {s.status === 'Open' && (
-                          <div className="mt-3 flex items-center gap-2">
-                            <Button variant="primary" className="min-h-[48px] flex-1" onClick={() => navigate(`/wizard/${s.id}`)}>
-                              <Play className="h-4 w-4" /> Continue
-                            </Button>
-                            <Button variant="secondary" className="min-h-[48px]" onClick={() => setClosing(s)} aria-label="Close session">
-                              <Lock className="h-4 w-4" />
-                              <span className="hidden sm:inline">Close</span>
-                            </Button>
-                          </div>
-                        )}
-
-                        {sessionSamples.length > 0 && (
-                          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
-                            <span className="flex items-center gap-1 text-xs font-bold uppercase text-slate-400">
-                              <Boxes className="h-3.5 w-3.5" /> Samples
-                            </span>
-                            {[...sessionSamples]
-                              .sort((a, b) => a.index - b.index)
-                              .map((sm) => (
-                                <button
-                                  key={sm.id}
-                                  type="button"
-                                  onClick={() => setViewing({ session: s, sample: sm })}
-                                  className="min-h-[36px] rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20"
-                                  aria-label={`Open sample ${sm.index}`}
-                                >
-                                  {s.seq}-{sm.index}
-                                </button>
-                              ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-                ) : null}
-
-                {!isCollapsed && density === 'cards' && hidden > 0 && (
-                  <button
-                    onClick={() => setExpanded((e) => ({ ...e, [g.code]: true }))}
-                    className="flex w-full items-center justify-center gap-1.5 border-t border-slate-100 py-3 text-sm font-semibold text-brand-600 hover:bg-slate-50 dark:border-slate-800 dark:text-brand-400 dark:hover:bg-slate-800/50"
-                  >
-                    <ChevronDown className="h-4 w-4" /> View {hidden} more
-                  </button>
-                )}
-              </Card>
-            )
-          })}
+        // One frame per factory, its machines inside, each machine's sessions
+        // beneath it — the same order on a phone, stacked in one column. The
+        // pinned machine takes a frame of its own at the top.
+        <div className="space-y-4">
+          {sections.map((sec) => (
+            <fieldset
+              key={sec.key}
+              className={cn('rounded-2xl border px-3 pb-3 pt-1 sm:px-4 sm:pb-4', sec.pinned ? 'border-amber-300 dark:border-amber-500/40' : 'border-slate-200 dark:border-slate-700')}
+            >
+              <legend className="flex items-center gap-2 px-1.5 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                {sec.pinned ? <Star className="h-3.5 w-3.5 fill-current text-amber-500" /> : <Factory className="h-3.5 w-3.5" />}
+                {sec.label}
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] tabular-nums text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                  {sec.groups.length} machine{sec.groups.length === 1 ? '' : 's'} · {sec.groups.reduce((n, g) => n + g.sessions.length, 0)} session
+                  {sec.groups.reduce((n, g) => n + g.sessions.length, 0) === 1 ? '' : 's'}
+                </span>
+              </legend>
+              {density === 'table' ? machineTable(sec.groups, sec.pinned) : machineCards(sec.groups, sec.pinned)}
+            </fieldset>
+          ))}
         </div>
       )}
 
