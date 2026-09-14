@@ -52,6 +52,20 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
       [],
       ['Thresholds', '', ''],
       ...Object.entries(o.thresholds).map(([k, v]) => [k, v, '']),
+      [],
+      // Every figure above is counted over every record the filters match.
+      // The sheets that follow are the largest few of something, so the
+      // workbook states how many exist behind each one.
+      ['What the list sheets show', 'In this workbook', 'In the period'],
+      ['Pareto — defect types', o.pareto.length, o.counts.defectTypes],
+      ['Machines', o.byMachine.length, o.counts.machines],
+      ['Inspectors', o.byInspector.length, o.counts.inspectors],
+      ['Shifts', o.byShift.length, o.counts.shifts],
+      ['Items', o.byItem.length, o.counts.items],
+      ['Capability — dimensions', o.dimensions.length, o.counts.dimensions],
+      ['Suppliers', o.suppliers.length, o.counts.suppliers],
+      ['Wire batches', o.wireBatches.length, o.counts.wireBatches],
+      ['Holds (oldest first)', o.holds.length, o.counts.holds],
     ],
   }
   const group = (name: string, rows: KpiOverview['byMachine']): SheetSpec => ({
@@ -74,7 +88,11 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
     {
       name: 'Pareto',
       header: ['Defect', 'Pieces', 'Records', 'Share %', 'Cumulative %'],
-      rows: o.pareto.map((p) => [p.defectName, p.pieces, p.records, p.sharePct, p.cumulativePct]),
+      rows: [
+        ...o.pareto.map((p) => [p.defectName, p.pieces, p.records, p.sharePct, p.cumulativePct]),
+        // The tail as one row, so the shares add to the period's own total.
+        ...(o.paretoOthers ? [[`Others (${o.paretoOthers.types} types)`, o.paretoOthers.pieces, null, o.paretoOthers.sharePct, 100]] : []),
+      ],
     },
     group('Machines', o.byMachine),
     group('Inspectors', o.byInspector),

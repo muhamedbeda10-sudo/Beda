@@ -5,7 +5,7 @@
 
 import { Router } from 'express'
 import { z } from 'zod'
-import { DEFAULT_KPI_THRESHOLDS, type KpiFilters, type KpiOverview, type KpiThresholds } from '@qc/shared/kpi'
+import { DEFAULT_KPI_THRESHOLDS, pct, type KpiFilters, type KpiListCounts, type KpiOverview, type KpiThresholds } from '@qc/shared/kpi'
 import type { KpiThresholdsResponse } from '@qc/shared/api'
 import type { AppContext } from '../context'
 import type { Queryable } from '../db/pool'
@@ -191,22 +191,48 @@ export function kpiRoutes(ctx: AppContext): Router {
       openLines: disciplineRaw.openLines,
       openLinesInspected: disciplineRaw.openLinesInspected,
     }
+    // The figures above are counted over every record the filters match. These
+    // lists are the largest few of something, so the page is told how many
+    // exist behind each one and never implies the few are all there is.
+    const counts: KpiListCounts = {
+      defectTypes: pareto.types,
+      machines: byMachine.total,
+      inspectors: byInspector.total,
+      shifts: byShift.total,
+      items: byItem.total,
+      dimensions: dimensions.total,
+      suppliers: suppliers.total,
+      wireBatches: wireBatches.total,
+      holds: holds.total,
+    }
+    const shownPieces = pareto.rows.reduce((n, row) => n + row.pieces, 0)
+    const otherTypes = pareto.types - pareto.rows.length
     const draft = {
       filters,
       thresholds,
       generatedAt: new Date().toISOString(),
+      counts,
+      ...(otherTypes > 0
+        ? {
+            paretoOthers: {
+              types: otherTypes,
+              pieces: Math.round((pareto.totalPieces - shownPieces) * 100) / 100,
+              sharePct: pct(pareto.totalPieces - shownPieces, pareto.totalPieces) ?? 0,
+            },
+          }
+        : {}),
       current,
       previous,
       daily,
-      pareto,
-      byMachine,
-      byInspector,
-      byShift,
-      byItem,
-      dimensions,
-      suppliers,
-      wireBatches,
-      holds,
+      pareto: pareto.rows,
+      byMachine: byMachine.rows,
+      byInspector: byInspector.rows,
+      byShift: byShift.rows,
+      byItem: byItem.rows,
+      dimensions: dimensions.rows,
+      suppliers: suppliers.rows,
+      wireBatches: wireBatches.rows,
+      holds: holds.rows,
       idleMachines,
       discipline,
     }
