@@ -21,3 +21,6 @@ server/public/
 deploy/
 *.publishsettings
 *.PublishSettings
+
+# TypeScript incremental build state — a local artifact, never the repo's.
+*.tsbuildinfo

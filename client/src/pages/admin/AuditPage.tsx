@@ -1,15 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { ScrollText, Search, Plus, Pencil, Trash2, RotateCcw, ShieldAlert, Download, Flame } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Input, Modal, Select, Stat } from '@/components/ui'
 import { AdminLayout } from '@/components/admin/AdminLayout'
-import { useAuditList, useAuditStats } from '@/services/queries'
+import { loadAuditMatches, loadOlderAudit, useAuditList, useAuditOptions, useAuditStats, useDebounced } from '@/services/queries'
 import { purgeAudit } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
 import { cn, downloadText, formatDateTime } from '@/lib/utils'
-import type { AuditAction } from '@qc/shared/types'
+import { AUDIT_ACTIONS, type AuditAction, type AuditEntry } from '@qc/shared/types'
+import type { AuditFilters } from '@qc/shared/api'
 
 const ACTION_META: Record<AuditAction, { icon: typeof Plus; tone: string; label: string }> = {
   create: { icon: Plus, tone: 'text-emerald-500 bg-emerald-100 dark:bg-emerald-500/15', label: 'Create' },
@@ -20,8 +21,12 @@ const ACTION_META: Record<AuditAction, { icon: typeof Plus; tone: string; label:
   acknowledge: { icon: ShieldAlert, tone: 'text-amber-500 bg-amber-100 dark:bg-amber-500/15', label: 'Acknowledge' },
 }
 
-/** How many entries the browser holds. The log only grows, so it is a window. */
-const WINDOW = 500
+/** How many entries one page holds. The log only grows; the filters below are
+ *  answered over all of it, and older pages are fetched on request. */
+const PAGE = 200
+
+/** The most the CSV export takes in one go. */
+const EXPORT_CAP = 2000
 
 const RANGES = [
   { label: 'All time', days: 0 },
@@ -33,11 +38,7 @@ const RANGES = [
 /** §11 — the audit browser. */
 export function AuditPage() {
   const queryClient = useQueryClient()
-  // The newest WINDOW entries. The filters below narrow that window; they do
-  // not scan the whole log, which grows with every save the factory makes.
-  const { data, isLoading } = useAuditList(WINDOW)
   const { data: stats } = useAuditStats()
-  const entries = useMemo(() => data?.entries ?? [], [data])
   const totalEvents = stats?.total ?? 0
   const { role } = useAuth()
   const { toast } = useApp()
@@ -50,29 +51,59 @@ export function AuditPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [purging, setPurging] = useState(false)
 
-  const users = useMemo(() => Array.from(new Set(entries.map((e) => e.userName))).sort(), [entries])
-  const entities = useMemo(() => Array.from(new Set(entries.map((e) => e.entity))).sort(), [entries])
+  // Every filter goes to the API, which applies it over the whole log — an
+  // entry from last season is found as readily as one from this morning.
+  const settledTerm = useDebounced(term.trim(), 300)
+  const filters = useMemo<AuditFilters>(() => {
+    const f: AuditFilters = {}
+    if (settledTerm) f.q = settledTerm
+    if (action !== 'all') f.action = action
+    if (user !== 'all') f.userName = user
+    if (entity !== 'all') f.entity = entity
+    if (days > 0) f.since = new Date(Date.now() - days * 86400000).toISOString()
+    return f
+  }, [settledTerm, action, user, entity, days])
+
+  const { data, isLoading, isFetching } = useAuditList(filters, PAGE)
+  const { data: options } = useAuditOptions()
+  const users = options?.users ?? []
+  const entities = options?.entities ?? []
+
+  /** Pages walked back from the first, so an older entry is never out of reach. */
+  const [older, setOlder] = useState<AuditEntry[]>([])
+  const [olderHasMore, setOlderHasMore] = useState(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const rows = useMemo(() => {
-    const t = term.trim().toLowerCase()
-    const since = days > 0 ? Date.now() - days * 86400000 : 0
-    return entries
-      .filter((e) => action === 'all' || e.action === action)
-      .filter((e) => user === 'all' || e.userName === user)
-      .filter((e) => entity === 'all' || e.entity === entity)
-      .filter((e) => !since || new Date(e.at).getTime() >= since)
-      .filter(
-        (e) =>
-          !t ||
-          (e.orderNumber ?? '').toLowerCase().includes(t) ||
-          (e.item ?? '').toLowerCase().includes(t) ||
-          (e.field ?? '').toLowerCase().includes(t) ||
-          (e.oldValue ?? '').toLowerCase().includes(t) ||
-          (e.newValue ?? '').toLowerCase().includes(t) ||
-          e.entity.toLowerCase().includes(t) ||
-          e.userName.toLowerCase().includes(t),
-      )
-  }, [entries, term, action, user, entity, days])
+    const first = data?.entries ?? []
+    const seen = new Set(first.map((e) => e.id))
+    return [...first, ...older.filter((e) => !seen.has(e.id))]
+  }, [data, older])
+  /** How many match in the whole log — not how many have been fetched. */
+  const matched = data?.total ?? rows.length
+  const hasMore = older.length > 0 ? olderHasMore : (data?.hasMore ?? false)
+
+  // Different filters are a different list: start again from its first page.
+  useEffect(() => {
+    setOlder([])
+    setOlderHasMore(false)
+  }, [filters])
+
+  async function showOlder() {
+    const last = rows[rows.length - 1]
+    if (!last || loadingOlder) return
+    setLoadingOlder(true)
+    try {
+      const page = await loadOlderAudit(filters, last.at, last.id)
+      setOlder((prev) => [...prev, ...page.entries])
+      setOlderHasMore(page.hasMore)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not load older entries.', 'error')
+    } finally {
+      setLoadingOlder(false)
+    }
+  }
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id))
 
@@ -80,13 +111,26 @@ export function AuditPage() {
     setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)))
   }
 
-  function exportCsv() {
-    const header = 'timestamp,user,action,entity,entityId,field,oldValue,newValue,order,item,workCenter'
-    const esc = (v = '') => `"${String(v).replace(/"/g, '""')}"`
-    const lines = rows.map((r) =>
-      [r.at, esc(r.userName), r.action, r.entity, r.entityId, esc(r.field), esc(r.oldValue), esc(r.newValue), esc(r.orderNumber), esc(r.item), esc(r.workCenterCode)].join(','),
-    )
-    downloadText('audit-logs.csv', [header, ...lines].join('\n'))
+  /** The export is of the match, not of the page on screen: it asks the API
+   *  for every entry the filters find, up to a stated cap. */
+  async function exportCsv() {
+    if (exporting) return
+    setExporting(true)
+    try {
+      const all = await loadAuditMatches(filters, EXPORT_CAP)
+      const header = 'timestamp,user,action,entity,entityId,field,oldValue,newValue,order,item,workCenter'
+      const esc = (v = '') => `"${String(v).replace(/"/g, '""')}"`
+      const lines = all.entries.map((r) =>
+        [r.at, esc(r.userName), r.action, r.entity, r.entityId, esc(r.field), esc(r.oldValue), esc(r.newValue), esc(r.orderNumber), esc(r.item), esc(r.workCenterCode)].join(','),
+      )
+      downloadText('audit-logs.csv', [header, ...lines].join('\n'))
+      if (all.hasMore) toast(`More than ${EXPORT_CAP} entries match. The export holds the newest ${EXPORT_CAP} — narrow the filters for the rest.`, 'info')
+      else toast(`Exported ${all.entries.length} entries.`, 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not build the export.', 'error')
+    } finally {
+      setExporting(false)
+    }
   }
 
   /** Purging is restricted, and is itself audited (§11). A soft delete, not a
@@ -110,8 +154,8 @@ export function AuditPage() {
       needs="edit-closed-session"
       actions={
         <>
-          <Button variant="secondary" className="min-h-[48px]" onClick={exportCsv}>
-            <Download className="h-4 w-4" /> Export
+          <Button variant="secondary" className="min-h-[48px]" onClick={() => void exportCsv()} disabled={exporting}>
+            <Download className="h-4 w-4" /> {exporting ? 'Building…' : 'Export'}
           </Button>
           {can(role, 'purge-audit-logs') && (
             <Button variant="danger" className="min-h-[48px]" disabled={selected.size === 0} onClick={() => setPurging(true)}>
@@ -137,7 +181,7 @@ export function AuditPage() {
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <Select value={action} onChange={(e) => setAction(e.target.value as 'all' | AuditAction)} className="min-h-[48px]">
             <option value="all">All actions</option>
-            {(Object.keys(ACTION_META) as AuditAction[]).map((a) => (
+            {AUDIT_ACTIONS.map((a) => (
               <option key={a} value={a}>
                 {ACTION_META[a].label}
               </option>
@@ -167,11 +211,12 @@ export function AuditPage() {
             ))}
           </Select>
         </div>
-        {totalEvents > entries.length && (
-          <p className="px-1 text-xs text-slate-400">
-            Showing the {entries.length} most recent of {totalEvents} events. The filters and the export apply to these.
-          </p>
-        )}
+        <p className="px-1 text-xs text-slate-400">
+          {matched === totalEvents
+            ? `All ${totalEvents} events. ${rows.length} on screen.`
+            : `${matched} of ${totalEvents} events match. ${rows.length} on screen.`}
+          {isFetching && !isLoading && ' Searching the whole log…'}
+        </p>
         {can(role, 'purge-audit-logs') && rows.length > 0 && (
           <label className="flex min-h-[44px] cursor-pointer items-center gap-2 text-sm font-semibold text-slate-600 dark:text-slate-300">
             <input type="checkbox" checked={allSelected} onChange={toggleAll} className="h-5 w-5 rounded accent-brand-600" />
@@ -183,10 +228,10 @@ export function AuditPage() {
       {isLoading ? (
         <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
       ) : rows.length === 0 ? (
-        <EmptyState icon={<ScrollText className="h-10 w-10" />} title="No matching activity" hint="Adjust the filters to see more." />
+        <EmptyState icon={<ScrollText className="h-10 w-10" />} title="No matching activity" hint="Nothing in the whole log matches these filters." />
       ) : (
         <Card className="divide-y divide-slate-100 dark:divide-slate-800">
-          {rows.slice(0, 400).map((e) => {
+          {rows.map((e) => {
             const meta = ACTION_META[e.action] ?? ACTION_META.update
             const Icon = meta.icon
             return (
@@ -232,10 +277,12 @@ export function AuditPage() {
               </div>
             )
           })}
-          {rows.length > 400 && (
-            <p className="px-4 py-3 text-center text-xs text-slate-400">
-              Showing the most recent 400 of {rows.length} entries. Narrow the filters to see older ones.
-            </p>
+          {hasMore && (
+            <div className="flex justify-center px-4 py-3">
+              <Button className="min-h-[48px]" onClick={() => void showOlder()} disabled={loadingOlder}>
+                {loadingOlder ? 'Loading…' : 'Show older entries'}
+              </Button>
+            </div>
           )}
         </Card>
       )}
