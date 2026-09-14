@@ -49,10 +49,11 @@ describe('a session’s defects, for deciding Holds from the board', () => {
   it('lists every live defect with the sample it sits on', async () => {
     const res = await app.api<SessionDefectsResponse>('GET', `/api/samples/defects?sessionId=${session.id}`, { token: inspector.token })
     expect(res.status).toBe(200)
+    // Sample by sample, and by name within one — the order the list draws.
     expect(res.body.defects.map((d) => [d.sampleIndex, d.defectName, d.disposition])).toEqual([
       [1, 'Edge', 'Hold'],
-      [2, 'Scratch', 'Hold'],
       [2, 'Edge', 'Repair'],
+      [2, 'Scratch', 'Hold'],
     ])
     expect(res.body.defects.every((d) => typeof d.version === 'number')).toBe(true)
   })

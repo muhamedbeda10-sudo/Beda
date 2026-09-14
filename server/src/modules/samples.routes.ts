@@ -152,7 +152,7 @@ export function samplesRoutes(ctx: AppContext): Router {
       `SELECT ${DEFECT_SELECT}, sm.index AS "sampleIndex"
          FROM defect_results d JOIN inspection_samples sm ON sm.id = d.sample_id
         WHERE sm.session_id = $1 AND sm.deleted_at IS NULL AND d.deleted_at IS NULL
-        ORDER BY sm.index, d.updated_at, d.id`,
+        ORDER BY sm.index, d.defect_name, d.id`,
       [sessionId],
     )
     const body: SessionDefectsResponse = { defects: rows.map(dropNulls) }
