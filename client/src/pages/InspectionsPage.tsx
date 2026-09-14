@@ -85,8 +85,8 @@ export function InspectionsPage() {
   // The board is everyone's: every open session, with a search and an
   // inspector filter so a technician can narrow it to their own name.
   const seesAll = true
-  const [term, setTerm] = useState('')
-  const [inspectorFilter, setInspectorFilter] = useState('all')
+  const [term, setTerm] = usePersistedState('qc-board:term', '')
+  const [inspectorFilter, setInspectorFilter] = usePersistedState('qc-board:inspector', 'all')
 
   const machineOf = useMemo(() => new Map(machines.map((m) => [m.code, m])), [machines])
   const machineLabel = useCallback(

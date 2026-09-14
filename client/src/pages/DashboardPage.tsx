@@ -345,9 +345,9 @@ export function DashboardPage() {
   const [insightsOpen, setInsightsOpen] = useState(false)
   /** Which half of the dashboard is on screen. Printing renders both, so the
    *  PDF is the whole dashboard whichever tab is open. */
-  const [view, setView] = useState<'overview' | 'inspectors'>('overview')
+  const [view, setView] = usePersistedState<'overview' | 'inspectors'>('qc-dash:view', 'overview')
   /** The Pareto can be read for one machine without narrowing the whole page. */
-  const [paretoMachine, setParetoMachine] = useState('')
+  const [paretoMachine, setParetoMachine] = usePersistedState('qc-dash:pareto-machine', '')
   const { data: machines = [] } = useMaster('machines', undefined, allowed)
   const { data: users = [] } = useUsers()
   const { data: span } = useKpiSpan(allowed)

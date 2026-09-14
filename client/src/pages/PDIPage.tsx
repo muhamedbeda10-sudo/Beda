@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { usePersistedState } from '@/lib/usePersistedState'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, FileText, Plus, Search } from 'lucide-react'
@@ -14,7 +15,7 @@ export function PDIPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useApp()
-  const [term, setTerm] = useState('')
+  const [term, setTerm] = usePersistedState('qc-pdi:term', '')
   const [adding, setAdding] = useState(false)
 
   // The 50 most recent PDI documents, each with the order it names.

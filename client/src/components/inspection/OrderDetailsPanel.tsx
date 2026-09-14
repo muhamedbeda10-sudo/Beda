@@ -162,6 +162,7 @@ export function OrderDetailsPanel({
                 )}
                 <Attr label="Final qty" value={session.finalQty !== undefined ? String(session.finalQty) : ''} />
                 <Attr label="Closed" value={session.closedAt ? formatDateTime(session.closedAt) : ''} />
+                <Attr label="Closed by" value={session.closedByName ?? (session.closedAt ? 'Unknown' : '')} />
               </dl>
               {onCorrectQuantities && (
                 <button

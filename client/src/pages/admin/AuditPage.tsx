@@ -5,6 +5,7 @@ import { Badge, Button, Card, EmptyState, Input, Modal, Select, Stat } from '@/c
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { loadAuditMatches, loadOlderAudit, useAuditList, useAuditOptions, useAuditStats, useDebounced } from '@/services/queries'
 import { purgeAudit } from '@/services/mutations'
+import { usePersistedState } from '@/lib/usePersistedState'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
@@ -43,11 +44,12 @@ export function AuditPage() {
   const { role } = useAuth()
   const { toast } = useApp()
 
-  const [term, setTerm] = useState('')
-  const [action, setAction] = useState<'all' | AuditAction>('all')
-  const [user, setUser] = useState('all')
-  const [entity, setEntity] = useState('all')
-  const [days, setDays] = useState(0)
+  // Kept on this device, so a tab away and back finds the filters as left.
+  const [term, setTerm] = usePersistedState('qc-audit:term', '')
+  const [action, setAction] = usePersistedState<'all' | AuditAction>('qc-audit:action', 'all')
+  const [user, setUser] = usePersistedState('qc-audit:user', 'all')
+  const [entity, setEntity] = usePersistedState('qc-audit:entity', 'all')
+  const [days, setDays] = usePersistedState('qc-audit:days', 0)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [purging, setPurging] = useState(false)
 
