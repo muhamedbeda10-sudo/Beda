@@ -309,8 +309,12 @@ export function InspectionsPage() {
         </div>
       </div>
 
-      {/* Factory tabs, then machine chips: two scrolling rows on a phone, one wrapping row on a wide screen, led by the title. */}
-      <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center lg:gap-x-3">
+      {/* The title and the factory tabs on one row; the machine chips on their
+          own row beneath, wrapping across the full width. Sharing a row put the
+          chips in a cramped column beside the tabs once a factory had twenty
+          machines open. On a phone each row scrolls sideways instead. */}
+      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-x-3">
       <div className="hidden items-center gap-2 lg:flex">
         <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
         <Badge tone="blue">{filtering ? `${shown} of ${openSessions.length}` : openSessions.length}</Badge>
@@ -342,10 +346,11 @@ export function InspectionsPage() {
         </div>
       )}
 
+      </div>
+
       {/* Machine chips: only the machines with something open, coloured by the worst signal on them. */}
-      {groupsInFactory.length > 1 && factoryTabs.length > 0 && <span className="hidden h-7 w-px bg-slate-200 lg:block dark:bg-slate-700" aria-hidden="true" />}
       {groupsInFactory.length > 1 && (
-        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:flex-1 lg:flex-wrap lg:overflow-visible lg:pb-0" role="tablist" aria-label="Machine">
+        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0" role="tablist" aria-label="Machine">
           <button role="tab" aria-selected={activeMachine === 'all'} onClick={() => setMachinePick('all')} className={chipTone(null, activeMachine === 'all')}>
             All machines
           </button>

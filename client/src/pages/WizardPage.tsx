@@ -67,6 +67,7 @@ import {
   PAINT_THICKNESS_NAME,
   PAINT_THICKNESS_READINGS,
   PAINT_THICKNESS_UNIT,
+  PT_MIN_TEST_FREQUENCY_PCT,
   type WizardStep,
 } from '@qc/shared/rules'
 
@@ -1682,7 +1683,7 @@ function PTStep({
   const pt = draft.pt ?? emptyPT()
   const setPT = (patch: Partial<DraftPT>) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), ...patch } }))
   const freq = Number(pt.testFrequencyPct)
-  const freqBad = pt.testFrequencyPct.trim() !== '' && !(freq > 5)
+  const freqBad = pt.testFrequencyPct.trim() !== '' && !(freq >= PT_MIN_TEST_FREQUENCY_PCT)
   const setLength = (key: string, patch: Partial<DraftPT['testedLengths'][number]>) =>
     setPT({ testedLengths: pt.testedLengths.map((l) => (l.key === key ? { ...l, ...patch } : l)) })
   const overall = ptOverallVerdict(pt.testedLengths.map((l) => ({ verdict: l.verdict })))
@@ -1691,7 +1692,7 @@ function PTStep({
     <div className="space-y-4">
       <div className="rounded-2xl border-l-4 border-l-brand-500 bg-brand-50/60 p-3 text-sm text-brand-900 dark:bg-brand-500/10 dark:text-brand-100">
         <p className="font-bold">PT test frequency requirement</p>
-        <p>Test frequency must be more than 5% of the welds.</p>
+        <p>At least {PT_MIN_TEST_FREQUENCY_PCT}% of the welds must be tested.</p>
       </div>
 
       <Field label="Test frequency %">
@@ -1705,7 +1706,7 @@ function PTStep({
         />
         {freqBad && (
           <span className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-rose-600 dark:text-rose-400">
-            <AlertTriangle className="h-4 w-4" /> Must be greater than 5%.
+            <AlertTriangle className="h-4 w-4" /> Must be at least {PT_MIN_TEST_FREQUENCY_PCT}%.
           </span>
         )}
       </Field>

@@ -157,14 +157,30 @@ describe('kpi overview', () => {
     expect(o.byMachine[0].sub).toBe('Factory 1')
     expect(o.byInspector[0].label).toBe('Inspector One')
     expect(o.byItem[0].key).toBe('125185TA3')
-    expect(o.suppliers).toEqual([{ supplier: 'Ezz Steel', grade: 'S355JR', samples: 3, pieces: 30, defectPieces: 4, defectRatePct: 13.33 }])
-    expect(o.wireBatches).toEqual([{ batch: 'WW-2401', lengthsTested: 6, lengthsRejected: 3, rejectPct: 50 }])
+    // Coils are consumed by roll forming; a welding line's coil says nothing
+    // about its supplier, so the welding samples here do not count.
+    expect(o.suppliers).toEqual([])
+    expect(o.counts.suppliers).toBe(0)
+    // Every sample sits in exactly one band of defect rate.
+    expect(o.defectRateBands.map((b) => b.band)).toEqual(['0%', '≤1%', '1–3%', '3–5%', '5–10%', '>10%'])
+    expect(o.defectRateBands.reduce((s, b) => s + b.samples, 0)).toBe(3)
+    expect(o.defectRateBands.find((b) => b.band === '0%')?.samples).toBe(1)
+    // The Pareto per machine: one machine, shares of its own pieces.
+    expect(o.paretoByMachine).toHaveLength(1)
+    expect(o.paretoByMachine[0].workCenterCode).toBe('58')
+    expect(o.paretoByMachine[0].rows.map((r) => r.defectName)).toEqual(['Weld porosity', 'Undercut'])
+    expect(o.paretoByMachine[0].rows[1].cumulativePct).toBe(100)
+    // What the item is known to suffer, with the machine it came from.
+    expect(o.itemDefects.map((r) => [r.itemCode, r.defectName, r.workCenterCode, r.pieces])).toEqual([
+      ['125185TA3', 'Weld porosity', '58', 3],
+      ['125185TA3', 'Undercut', '58', 1],
+    ])
+    expect(o.itemDefects[0].sharePct).toBe(75)
+    expect(o.paintByItem).toEqual([])
     expect(o.holds).toHaveLength(1)
     expect(o.holds[0].defectName).toBe('Weld porosity')
     expect(o.holds[0].qty).toBe(3)
     expect(o.holds[0].ageDays).toBe(0)
-    // Machine 48 has an open line and never had a sample.
-    expect(o.idleMachines.map((m) => m.workCenterCode)).toEqual(['48'])
     expect(o.discipline.coveragePct).toBe(50)
     expect(o.discipline.typedCoilPct).toBe(0)
     // The thresholds saved above colour this overview.
@@ -172,7 +188,6 @@ describe('kpi overview', () => {
     const ids = o.insights.map((i) => i.id)
     expect(ids).toContain('defect-rate-red')
     expect(ids).toContain('hold-open')
-    expect(ids).toContain('idle-machines')
     expect(ids).not.toContain('on-target')
     // Ordered most serious first.
     expect(o.insights[0].severity).toBe('critical')
@@ -188,14 +203,11 @@ describe('kpi overview', () => {
     expect(nobody.body.current.samples).toBe(0)
   })
 
-  it('shows capability once a dimension has enough readings', async () => {
-    await app.api('PUT', '/api/kpi/thresholds', { token: admin.token, body: { ...DEFAULT_KPI_THRESHOLDS, minReadingsForCpk: 3 } })
-    const res = await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}`, { token: admin.token })
-    expect(res.body.dimensions).toHaveLength(1)
-    const width = res.body.dimensions[0]
-    expect(width.name).toBe('Width')
-    expect(width.readings).toBe(3)
-    expect(width.cpk).not.toBeNull()
-    expect(width.failPct).toBeCloseTo(33.33, 1)
+  it('answers a period with nothing in it with empty bands, not an error', async () => {
+    const res = await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}&workCenterCode=48`, { token: admin.token })
+    expect(res.status).toBe(200)
+    expect(res.body.defectRateBands.every((b) => b.samples === 0)).toBe(true)
+    expect(res.body.paretoByMachine).toEqual([])
+    expect(res.body.itemDefects).toEqual([])
   })
 })

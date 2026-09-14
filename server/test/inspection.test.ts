@@ -200,7 +200,7 @@ describe('the atomic sample save', () => {
     })
     const res = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/samples`, { token: inspector.token, body: noLots })
     expect(res.status).toBe(400)
-    expect(res.body.error.message).toMatch(/greater than 5%/)
+    expect(res.body.error.message).toMatch(/at least 5%/)
     const { rows } = await app.db.query('SELECT count(*)::int AS n FROM inspection_samples')
     expect(rows[0].n).toBe(0)
   })

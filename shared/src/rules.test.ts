@@ -260,16 +260,18 @@ describe('save-time validation', () => {
     expect(validateSample({ ...base, coils: [] })).toEqual([])
   })
 
-  it('requires PT test frequency to be greater than 5%', () => {
+  it('requires PT test frequency of at least 5%', () => {
     const withFreq = (pct: number) =>
       validateSample({
         ...base,
         process: 'welding',
         pt: { ...ptOk(), testFrequencyPct: pct },
       })
-    expect(withFreq(5).some((i) => i.ref === 'testFrequencyPct')).toBe(true)
-    expect(withFreq(4).some((i) => i.ref === 'testFrequencyPct')).toBe(true)
-    expect(withFreq(5.1).some((i) => i.ref === 'testFrequencyPct')).toBe(false)
+    // Exactly five is the floor, and passes; anything under it does not.
+    expect(withFreq(5).some((i) => i.ref === 'testFrequencyPct')).toBe(false)
+    expect(withFreq(4.9).some((i) => i.ref === 'testFrequencyPct')).toBe(true)
+    expect(withFreq(0).some((i) => i.ref === 'testFrequencyPct')).toBe(true)
+    expect(withFreq(10).some((i) => i.ref === 'testFrequencyPct')).toBe(false)
   })
 
   it('requires every consumable lot number', () => {

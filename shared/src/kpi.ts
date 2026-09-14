@@ -151,6 +151,46 @@ export interface KpiDailyPoint {
   fpyPct: number | null
 }
 
+/** How many samples fell in each band of defect rate — the shape of the
+ *  period, where a single average hides it. */
+export interface KpiRateBand {
+  band: string
+  samples: number
+  pieces: number
+}
+
+/** The paint thickness readings of one item, as recorded. */
+export interface KpiPaintItemRow {
+  itemCode: string
+  item: string
+  readings: number
+  meanMicrons: number
+  minMicrons: number
+  maxMicrons: number
+}
+
+/** The Pareto of one machine's defects, shares of that machine's own pieces. */
+export interface KpiMachinePareto {
+  workCenterCode: string
+  label: string
+  rows: KpiParetoRow[]
+  totalPieces: number
+  types: number
+}
+
+/** One defect of one item on one machine: what an item is known to suffer. */
+export interface KpiItemDefectRow {
+  itemCode: string
+  item: string
+  defectName: string
+  workCenterCode: string
+  machineLabel: string
+  pieces: number
+  records: number
+  /** Share of this item's defect pieces, %. */
+  sharePct: number
+}
+
 export interface KpiParetoRow {
   defectName: string
   pieces: number
@@ -279,9 +319,8 @@ export interface KpiListCounts {
   inspectors: number
   shifts: number
   items: number
-  dimensions: number
   suppliers: number
-  wireBatches: number
+  paintItems: number
   holds: number
 }
 
@@ -305,16 +344,21 @@ export interface KpiOverview {
   current: KpiTotals
   previous: KpiTotals
   daily: KpiDailyPoint[]
+  /** Samples by band of defect rate, in band order. */
+  defectRateBands: KpiRateBand[]
   pareto: KpiParetoRow[]
+  /** The Pareto again, per machine, largest machine first. */
+  paretoByMachine: KpiMachinePareto[]
   byMachine: KpiGroupRow[]
   byInspector: KpiGroupRow[]
   byShift: KpiGroupRow[]
   byItem: KpiGroupRow[]
-  dimensions: KpiDimensionRow[]
+  /** The defects of the items with the most defect pieces. */
+  itemDefects: KpiItemDefectRow[]
+  /** Coils are consumed by roll forming; only forming samples count here. */
   suppliers: KpiSupplierRow[]
-  wireBatches: KpiWireBatchRow[]
+  paintByItem: KpiPaintItemRow[]
   holds: KpiHoldRow[]
-  idleMachines: KpiIdleMachine[]
   discipline: KpiDiscipline
   insights: KpiInsight[]
 }

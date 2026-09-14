@@ -335,3 +335,128 @@ export function ChartEmpty({ height = 160, children = 'Nothing in this period.' 
     </div>
   )
 }
+
+export interface PairedPoint {
+  label: string
+  /** The larger bar, e.g. pieces inspected. */
+  total: number
+  /** The bar drawn beside it, e.g. defect pieces. */
+  part: number
+}
+
+/** Two bars per day on one axis: what was inspected and what was found wrong.
+ *  One scale, so the eye compares heights directly — no second axis to read. */
+export function PairedBarChart({ points, totalLabel, partLabel, height = 220 }: { points: PairedPoint[]; totalLabel: string; partLabel: string; height?: number }) {
+  const [hover, setHover] = useState<number | null>(null)
+  const id = useId()
+  const W = 720
+  const H = height
+  const pad = { l: 44, r: 12, t: 16, b: 34 }
+  const x0 = pad.l
+  const x1 = W - pad.r
+  const y0 = pad.t
+  const y1 = H - pad.b
+  const n = points.length
+  if (n === 0) return <ChartEmpty height={height} />
+  const max = niceMax(Math.max(...points.map((p) => Math.max(p.total, p.part))))
+  const slot = (x1 - x0) / n
+  const bw = Math.max(2, Math.min(16, slot * 0.32))
+  const xAt = (i: number) => x0 + slot * i + slot / 2
+  const yAt = (v: number) => y1 - ((y1 - y0) * v) / max
+  const every = Math.max(1, Math.ceil(n / 12))
+  const h = hover !== null ? points[hover] : null
+  return (
+    <figure className="relative">
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
+        <title id={`${id}-t`}>
+          {totalLabel} and {partLabel} by day
+        </title>
+        <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} />
+        {points.map((p, i) => (
+          <g key={p.label} onMouseEnter={() => setHover(i)} className={cn('transition-opacity', hover !== null && hover !== i && 'opacity-50')}>
+            <rect x={xAt(i) - slot / 2} y={y0} width={slot} height={y1 - y0} fill="transparent" />
+            <rect x={xAt(i) - bw - 1} y={yAt(p.total)} width={bw} height={Math.max(0, y1 - yAt(p.total))} rx={2} className="fill-brand-300 dark:fill-brand-600" />
+            <rect x={xAt(i) + 1} y={yAt(p.part)} width={bw} height={Math.max(0, y1 - yAt(p.part))} rx={2} className="fill-rose-500" />
+            {i % every === 0 && (
+              <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-slate-500 dark:fill-slate-400">
+                {p.label}
+              </text>
+            )}
+          </g>
+        ))}
+      </svg>
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+        <span className="inline-flex items-center gap-1.5">
+          <i className="inline-block h-2.5 w-2.5 rounded-sm bg-brand-300 dark:bg-brand-600" /> {totalLabel}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <i className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> {partLabel}
+        </span>
+        {h && (
+          <span className="ml-auto font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+            {h.label}: {fmt(h.total)} inspected · {fmt(h.part)} defective
+          </span>
+        )}
+      </div>
+    </figure>
+  )
+}
+
+export interface Column {
+  label: string
+  value: number
+  /** Written under the value, e.g. the pieces behind a count of samples. */
+  sub?: string
+  tone?: keyof typeof TONE_BAR
+}
+
+/** Columns in a fixed order — a histogram: how many fell in each band. */
+export function ColumnChart({ columns, height = 200, unit = '' }: { columns: Column[]; height?: number; unit?: string }) {
+  const id = useId()
+  const W = 520
+  const H = height
+  const pad = { l: 40, r: 8, t: 22, b: 44 }
+  const x0 = pad.l
+  const x1 = W - pad.r
+  const y0 = pad.t
+  const y1 = H - pad.b
+  if (columns.length === 0 || columns.every((c) => c.value === 0)) return <ChartEmpty height={height} />
+  const max = niceMax(Math.max(...columns.map((c) => c.value)))
+  const slot = (x1 - x0) / columns.length
+  const bw = Math.min(56, slot * 0.66)
+  const xAt = (i: number) => x0 + slot * i + slot / 2
+  const yAt = (v: number) => y1 - ((y1 - y0) * v) / max
+  const fill: Record<keyof typeof TONE_BAR, string> = {
+    green: 'fill-emerald-500',
+    amber: 'fill-amber-500',
+    red: 'fill-rose-500',
+    neutral: 'fill-brand-400 dark:fill-brand-500',
+  }
+  return (
+    <figure>
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-t`}>
+        <title id={`${id}-t`}>{columns.map((c) => `${c.label}: ${fmt(c.value)}${unit}`).join(', ')}</title>
+        <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} unit={unit} />
+        {columns.map((c, i) => (
+          <g key={c.label}>
+            <rect x={xAt(i) - bw / 2} y={yAt(c.value)} width={bw} height={Math.max(0, y1 - yAt(c.value))} rx={4} className={fill[c.tone ?? 'neutral']} />
+            {c.value > 0 && (
+              <text x={xAt(i)} y={yAt(c.value) - 5} textAnchor="middle" fontSize="11" fontWeight={700} className="fill-slate-700 dark:fill-slate-200">
+                {fmt(c.value)}
+                {unit}
+              </text>
+            )}
+            <text x={xAt(i)} y={y1 + 15} textAnchor="middle" fontSize="11" fontWeight={600} className="fill-slate-600 dark:fill-slate-300">
+              {c.label}
+            </text>
+            {c.sub && (
+              <text x={xAt(i)} y={y1 + 29} textAnchor="middle" fontSize="9.5" className="fill-slate-400">
+                {c.sub}
+              </text>
+            )}
+          </g>
+        ))}
+      </svg>
+    </figure>
+  )
+}

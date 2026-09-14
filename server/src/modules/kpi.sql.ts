@@ -10,17 +10,18 @@ import type { Disposition, ShiftLetter } from '@qc/shared/types'
 import { PAINT_THICKNESS_NAME } from '@qc/shared/rules'
 import type {
   KpiDailyPoint,
-  KpiDimensionRow,
   KpiGroupRow,
   KpiHoldRow,
-  KpiIdleMachine,
   KpiInspectorRaw,
+  KpiItemDefectRow,
+  KpiMachinePareto,
+  KpiPaintItemRow,
   KpiParetoRow,
+  KpiRateBand,
   KpiSupplierRow,
   KpiTotals,
-  KpiWireBatchRow,
 } from '@qc/shared/kpi'
-import { capability, pct } from '@qc/shared/kpi'
+import { pct } from '@qc/shared/kpi'
 import type { Queryable } from '../db/pool'
 
 export interface PeriodFilters {
@@ -51,12 +52,13 @@ WITH base AS (
   SELECT sm.id AS sample_id, sm.session_id, sm.order_id, sm.created_at, sm.shift, sm.inspector_id, sm.inspector_name,
          sm.sample_qty, sm.grade_ack_at,
          s.work_center_code AS wc, COALESCE(m.factory, '') AS factory, COALESCE(m.display_name, 'Machine ' || s.work_center_code) AS machine_label,
+         COALESCE(m.process, 'other') AS process,
          o.item_code, o.item, o.order_number, o.customer
     FROM inspection_samples sm
     JOIN inspection_sessions s ON s.id = sm.session_id AND s.deleted_at IS NULL
     JOIN production_orders o ON o.id = sm.order_id
     LEFT JOIN LATERAL (
-      SELECT m.factory, m.display_name FROM machines m
+      SELECT m.factory, m.display_name, m.process FROM machines m
        WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
        ORDER BY m.created_at LIMIT 1) m ON true
    WHERE sm.deleted_at IS NULL
@@ -307,71 +309,13 @@ export async function loadGroups(q: Queryable, f: PeriodFilters, kind: GroupKind
   }
 }
 
-export async function loadDimensions(q: Queryable, f: PeriodFilters, minReadingsForCpk: number): Promise<CappedRows<KpiDimensionRow>> {
-  const { rows } = await q.query<{
-    itemCode: string
-    item: string
-    name: string
-    unit: string
-    readings: number
-    mean: number
-    stdDev: number | null
-    nominal: number | null
-    tolPlus: number | null
-    tolMinus: number | null
-    pass: number
-    fail: number
-    total: number
-  }>(
-    `${BASE}
-     SELECT b.item_code AS "itemCode", max(b.item) AS item, r.name, max(r.unit) AS unit, count(*) OVER ()::int AS total,
-            count(*)::int AS readings, avg(r.actual)::float8 AS mean, stddev_samp(r.actual)::float8 AS "stdDev",
-            avg(r.nominal)::float8 AS nominal, avg(r.tol_plus)::float8 AS "tolPlus", avg(r.tol_minus)::float8 AS "tolMinus",
-            count(*) FILTER (WHERE r.status = 'Pass')::int AS pass, count(*) FILTER (WHERE r.status = 'Fail')::int AS fail
-       FROM dimension_results r JOIN base b ON b.sample_id = r.sample_id
-      WHERE r.deleted_at IS NULL AND r.actual IS NOT NULL AND r.nominal IS NOT NULL AND lower(r.name) <> lower($9)
-      GROUP BY b.item_code, r.name
-     HAVING count(*) >= 3
-      ORDER BY readings DESC LIMIT 60`,
-    [...params(f), PAINT_THICKNESS_NAME],
-  )
-  const out = rows.map((r): KpiDimensionRow => {
-    const cap = r.readings >= minReadingsForCpk ? capability(r) : { cp: null, cpk: null, centering: capability(r).centering }
-    return {
-      itemCode: r.itemCode,
-      item: r.item,
-      name: r.name,
-      unit: r.unit,
-      readings: r.readings,
-      mean: Math.round(r.mean * 1000) / 1000,
-      stdDev: r.stdDev === null ? null : Math.round(r.stdDev * 1000) / 1000,
-      nominal: r.nominal,
-      tolPlus: r.tolPlus,
-      tolMinus: r.tolMinus,
-      cp: cap.cp,
-      cpk: cap.cpk,
-      passPct: pct(r.pass, r.readings) ?? 0,
-      failPct: pct(r.fail, r.readings) ?? 0,
-      centering: cap.centering === null ? null : Math.round(cap.centering * 100) / 100,
-    }
-  })
-  // The dimensions that need attention first: a known Cpk, lowest first; then by fail rate.
-  out.sort((a, b) => {
-    if (a.cpk !== null && b.cpk !== null) return a.cpk - b.cpk
-    if (a.cpk !== null) return -1
-    if (b.cpk !== null) return 1
-    return b.failPct - a.failPct || b.readings - a.readings
-  })
-  return { rows: out, total: rows[0]?.total ?? 0 }
-}
-
 export async function loadSuppliers(q: Queryable, f: PeriodFilters): Promise<CappedRows<KpiSupplierRow>> {
   const { rows } = await q.query<{ supplier: string; grade: string; samples: number; pieces: number; defectPieces: number; total: number }>(
     `${BASE},
      coil_samples AS (
        SELECT DISTINCT c.sample_id, COALESCE(NULLIF(btrim(c.supplier), ''), '(unknown supplier)') AS supplier,
                        COALESCE(NULLIF(btrim(c.grade), ''), '—') AS grade
-         FROM sample_coils c JOIN base b ON b.sample_id = c.sample_id WHERE c.deleted_at IS NULL)
+         FROM sample_coils c JOIN base b ON b.sample_id = c.sample_id WHERE c.deleted_at IS NULL AND b.process = 'forming')
      SELECT cs.supplier, cs.grade, count(*) OVER ()::int AS total, count(*)::int AS samples, COALESCE(sum(ps.sample_qty), 0)::float8 AS pieces,
             COALESCE(sum(ps.defect_pieces), 0)::float8 AS "defectPieces"
        FROM coil_samples cs JOIN per_sample ps ON ps.sample_id = cs.sample_id
@@ -386,27 +330,6 @@ export async function loadSuppliers(q: Queryable, f: PeriodFilters): Promise<Cap
       pieces: r.pieces,
       defectPieces: r.defectPieces,
       defectRatePct: pct(r.defectPieces, r.pieces),
-    })),
-    total: rows[0]?.total ?? 0,
-  }
-}
-
-export async function loadWireBatches(q: Queryable, f: PeriodFilters): Promise<CappedRows<KpiWireBatchRow>> {
-  const { rows } = await q.query<{ batch: string; lengthsTested: number; lengthsRejected: number; total: number }>(
-    `${BASE}
-     SELECT COALESCE(NULLIF(btrim(pr.welding_wire_batch), ''), '(no batch)') AS batch, count(*) OVER ()::int AS total,
-            count(*)::int AS "lengthsTested", count(*) FILTER (WHERE l.verdict = 'Reject / Repair')::int AS "lengthsRejected"
-       FROM pt_records pr JOIN base b ON b.sample_id = pr.sample_id
-       JOIN pt_tested_lengths l ON l.pt_record_id = pr.id AND l.deleted_at IS NULL
-      WHERE pr.deleted_at IS NULL GROUP BY 1 ORDER BY "lengthsTested" DESC LIMIT 15`,
-    params(f),
-  )
-  return {
-    rows: rows.map((r) => ({
-      batch: r.batch,
-      lengthsTested: r.lengthsTested,
-      lengthsRejected: r.lengthsRejected,
-      rejectPct: pct(r.lengthsRejected, r.lengthsTested),
     })),
     total: rows[0]?.total ?? 0,
   }
@@ -434,26 +357,6 @@ export async function loadHolds(q: Queryable, f: PeriodFilters): Promise<CappedR
   )
   // The oldest fifty: a Hold owes a decision, and the oldest owe it most.
   return { rows: rows.map(({ total: _total, ...row }) => row), total: rows[0]?.total ?? 0 }
-}
-
-/** Machines with open order lines and no recent sample: work that is not being inspected. */
-export async function loadIdleMachines(q: Queryable, f: PeriodFilters, idleDays: number): Promise<KpiIdleMachine[]> {
-  const { rows } = await q.query<KpiIdleMachine>(
-    `SELECT m.code AS "workCenterCode", m.display_name AS label, COALESCE(m.factory, '') AS factory,
-            (SELECT count(*) FROM production_orders o
-              WHERE o.deleted_at IS NULL AND lower(o.work_center_code) = lower(m.code)
-                AND lower(o.erp_status) <> 'cancel' AND o.required_qty > o.finished_qty)::int AS "openLines",
-            (SELECT floor(EXTRACT(EPOCH FROM (now() - max(sm.created_at))) / 86400)::int
-               FROM inspection_samples sm JOIN inspection_sessions s ON s.id = sm.session_id AND s.deleted_at IS NULL
-              WHERE sm.deleted_at IS NULL AND lower(s.work_center_code) = lower(m.code)) AS "daysSinceSample"
-       FROM machines m
-      WHERE m.deleted_at IS NULL
-        AND ($1::text IS NULL OR COALESCE(m.factory, '') = $1)
-        AND ($2::text IS NULL OR lower(m.code) = lower($2))
-      ORDER BY m.factory, m.code`,
-    [f.factory ?? null, f.workCenterCode ?? null],
-  )
-  return rows.filter((r) => r.openLines > 0 && (r.daysSinceSample === null || r.daysSinceSample >= idleDays))
 }
 
 export interface DisciplineRaw {
@@ -674,4 +577,121 @@ export async function loadInspectorRaw(q: Queryable, f: PeriodFilters): Promise<
     perFactory: figures.rows.map((r) => ({ ...r, activeDays: activeDays.get(`${r.inspectorId}|${r.factory}`) ?? 0 })),
     activeDays,
   }
+}
+
+/**
+ * The shape of the period: how many samples had no defect, a few, or many.
+ * A single average defect rate hides whether the line runs clean with the odd
+ * bad sample or runs uniformly rough, and that difference decides the action.
+ */
+export const RATE_BANDS = ['0%', '≤1%', '1–3%', '3–5%', '5–10%', '>10%'] as const
+
+export async function loadDefectRateBands(q: Queryable, f: PeriodFilters): Promise<KpiRateBand[]> {
+  const { rows } = await q.query<{ band: string; samples: number; pieces: number }>(
+    `${BASE}
+     SELECT CASE
+              WHEN defect_pieces = 0 THEN '0%'
+              WHEN defect_pieces / sample_qty <= 0.01 THEN '≤1%'
+              WHEN defect_pieces / sample_qty <= 0.03 THEN '1–3%'
+              WHEN defect_pieces / sample_qty <= 0.05 THEN '3–5%'
+              WHEN defect_pieces / sample_qty <= 0.10 THEN '5–10%'
+              ELSE '>10%' END AS band,
+            count(*)::int AS samples, COALESCE(sum(sample_qty), 0)::float8 AS pieces
+       FROM per_sample WHERE sample_qty > 0 GROUP BY 1`,
+    params(f),
+  )
+  const found = new Map(rows.map((r) => [r.band, r]))
+  return RATE_BANDS.map((band) => ({ band, samples: found.get(band)?.samples ?? 0, pieces: found.get(band)?.pieces ?? 0 }))
+}
+
+/** Paint thickness per item, from the readings as recorded on paint samples. */
+export async function loadPaintByItem(q: Queryable, f: PeriodFilters): Promise<CappedRows<KpiPaintItemRow>> {
+  const { rows } = await q.query<KpiPaintItemRow & { total: number }>(
+    `${BASE}
+     SELECT max(b.item_code) AS "itemCode", max(b.item) AS item, count(*) OVER ()::int AS total,
+            count(*)::int AS readings, avg(r.actual)::float8 AS "meanMicrons",
+            min(r.actual)::float8 AS "minMicrons", max(r.actual)::float8 AS "maxMicrons"
+       FROM dimension_results r JOIN base b ON b.sample_id = r.sample_id
+      WHERE r.deleted_at IS NULL AND r.actual IS NOT NULL AND lower(r.name) = lower($9)
+      GROUP BY lower(b.item_code) ORDER BY readings DESC LIMIT 25`,
+    [...params(f), PAINT_THICKNESS_NAME],
+  )
+  return {
+    rows: rows.map((r) => ({
+      itemCode: r.itemCode,
+      item: r.item,
+      readings: r.readings,
+      meanMicrons: Math.round(r.meanMicrons * 10) / 10,
+      minMicrons: r.minMicrons,
+      maxMicrons: r.maxMicrons,
+    })),
+    total: rows[0]?.total ?? 0,
+  }
+}
+
+/** The Pareto of each machine's defects — the ten largest types, shares of
+ *  that machine's own defect pieces — machines with most defect pieces first. */
+export async function loadParetoByMachine(q: Queryable, f: PeriodFilters): Promise<KpiMachinePareto[]> {
+  const { rows } = await q.query<{ code: string; label: string; defectName: string; pieces: number; records: number; total: number; types: number }>(
+    `${BASE},
+     by_machine AS (
+       SELECT lower(b.wc) AS wc, max(b.wc) AS code, max(b.machine_label) AS label, d.defect_name AS "defectName",
+              COALESCE(sum(d.qty), 0)::float8 AS pieces, count(*)::int AS records
+         FROM defect_results d JOIN base b ON b.sample_id = d.sample_id
+        WHERE d.deleted_at IS NULL GROUP BY lower(b.wc), d.defect_name),
+     totals AS (SELECT wc, sum(pieces)::float8 AS total, count(*)::int AS types FROM by_machine GROUP BY wc),
+     ranked AS (SELECT m.*, row_number() OVER (PARTITION BY m.wc ORDER BY m.pieces DESC, m.records DESC) AS rn FROM by_machine m)
+     SELECT r.code, r.label, r."defectName", r.pieces, r.records, t.total, t.types
+       FROM ranked r JOIN totals t ON t.wc = r.wc
+      WHERE r.rn <= 10 ORDER BY t.total DESC, r.code, r.rn`,
+    params(f),
+  )
+  const out: KpiMachinePareto[] = []
+  for (const r of rows) {
+    let m = out[out.length - 1]
+    if (!m || m.workCenterCode !== r.code) {
+      m = { workCenterCode: r.code, label: r.label, rows: [], totalPieces: r.total, types: r.types }
+      out.push(m)
+    }
+    const running = m.rows.reduce((n, x) => n + x.pieces, 0) + r.pieces
+    m.rows.push({
+      defectName: r.defectName,
+      pieces: r.pieces,
+      records: r.records,
+      sharePct: pct(r.pieces, r.total) ?? 0,
+      cumulativePct: pct(running, r.total) ?? 0,
+    })
+  }
+  return out
+}
+
+/** What each item is known to suffer: for the ten items with the most defect
+ *  pieces, their five largest defects with the machine each came from. */
+export async function loadItemDefects(q: Queryable, f: PeriodFilters): Promise<KpiItemDefectRow[]> {
+  const { rows } = await q.query<KpiItemDefectRow & { total: number }>(
+    `${BASE},
+     by_item_defect AS (
+       SELECT lower(b.item_code) AS ic, max(b.item_code) AS "itemCode", max(b.item) AS item, d.defect_name AS "defectName",
+              max(b.wc) AS "workCenterCode", max(b.machine_label) AS "machineLabel",
+              COALESCE(sum(d.qty), 0)::float8 AS pieces, count(*)::int AS records
+         FROM defect_results d JOIN base b ON b.sample_id = d.sample_id
+        WHERE d.deleted_at IS NULL GROUP BY lower(b.item_code), d.defect_name, lower(b.wc)),
+     item_totals AS (SELECT ic, sum(pieces)::float8 AS total FROM by_item_defect GROUP BY ic ORDER BY total DESC LIMIT 10),
+     ranked AS (
+       SELECT x.*, it.total, row_number() OVER (PARTITION BY x.ic ORDER BY x.pieces DESC, x.records DESC) AS rn
+         FROM by_item_defect x JOIN item_totals it ON it.ic = x.ic)
+     SELECT "itemCode", item, "defectName", "workCenterCode", "machineLabel", pieces, records, total
+       FROM ranked WHERE rn <= 5 ORDER BY total DESC, ic, rn`,
+    params(f),
+  )
+  return rows.map((r) => ({
+    itemCode: r.itemCode,
+    item: r.item,
+    defectName: r.defectName,
+    workCenterCode: r.workCenterCode,
+    machineLabel: r.machineLabel,
+    pieces: r.pieces,
+    records: r.records,
+    sharePct: pct(r.pieces, r.total) ?? 0,
+  }))
 }
