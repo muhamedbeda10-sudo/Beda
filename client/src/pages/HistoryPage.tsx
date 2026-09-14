@@ -33,6 +33,7 @@ import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
+import { useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, isStockOrder, processForMachine, shiftName } from '@/domain'
@@ -81,6 +82,21 @@ const RANGE_LABEL: Record<RangeFilter, string> = {
 }
 
 
+/** The table's columns and their starting widths; a desktop drags them (§11). */
+const HISTORY_COLUMNS: ColumnDef[] = [
+  { key: 'seq', width: 72, min: 56 },
+  { key: 'order', width: 120, min: 80 },
+  { key: 'item', width: 240, min: 100 },
+  { key: 'machine', width: 150, min: 80 },
+  { key: 'inspector', width: 150, min: 80 },
+  { key: 'date', width: 130, min: 90 },
+  { key: 'status', width: 150, min: 90 },
+  { key: 'samples', width: 96, min: 72 },
+  { key: 'rejected', width: 150, min: 90 },
+  { key: 'final', width: 100, min: 80 },
+  { key: 'open', width: 48, min: 40 },
+]
+
 export function HistoryPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -99,6 +115,7 @@ export function HistoryPage() {
   const [factoryFilter, setFactoryFilter] = usePersistedState('qc-history:factory', 'all')
 
   const [openSessionId, setOpenSessionId] = useState<string | null>(null)
+  const grid = useResizableColumns('qc-history:columns', HISTORY_COLUMNS)
   const [openSampleId, setOpenSampleId] = useState<string | null>(null)
   const [editingDim, setEditingDim] = useState<DimensionResult | null>(null)
   const [editingDefect, setEditingDefect] = useState<DefectResult | null>(null)
@@ -307,10 +324,7 @@ export function HistoryPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">History</h1>
-      </div>
-
+      {/* No page heading: the tab says where you are, and the counters take the top of the page. */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <Stat
           compact
@@ -452,20 +466,31 @@ export function HistoryPage() {
           {/* md+ — the same rows as a table. */}
           <Card className="hidden md:block">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-sm">
+              <table className={cn('w-full text-sm', !grid.enabled && 'min-w-[860px]')} style={grid.tableStyle}>
+                {grid.colgroup}
                 <thead>
                   <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
-                    <th className="px-4 py-3">Seq</th>
-                    <th className="px-4 py-3">Order</th>
-                    <th className="px-4 py-3">Item</th>
-                    <th className="px-4 py-3">Machine</th>
-                    <th className="px-4 py-3">Inspector</th>
-                    <th className="px-4 py-3">Date</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Samples</th>
-                    <th className="px-4 py-3 text-right">Rejected before release</th>
-                    <th className="px-4 py-3 text-right">Final qty</th>
-                    <th className="px-4 py-3" />
+                    {(
+                      [
+                        ['seq', 'Seq', ''],
+                        ['order', 'Order', ''],
+                        ['item', 'Item', ''],
+                        ['machine', 'Machine', ''],
+                        ['inspector', 'Inspector', ''],
+                        ['date', 'Date', ''],
+                        ['status', 'Status', ''],
+                        ['samples', 'Samples', 'text-right'],
+                        ['rejected', 'Rejected before release', 'text-right'],
+                        ['final', 'Final qty', 'text-right'],
+                        ['open', '', ''],
+                      ] as const
+                    ).map(([key, label, align]) => (
+                      // The cell stays overflow-visible so the grab zone can straddle its edge; only the label is clipped.
+                      <th key={key} className={cn('relative px-4 py-3', align, grid.dragging === key && 'bg-brand-50/60 dark:bg-brand-500/10')} title={grid.enabled && label ? label : undefined}>
+                        <span className={cn(grid.enabled && 'block truncate')}>{label}</span>
+                        {key !== 'open' && grid.handle(key)}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -476,11 +501,16 @@ export function HistoryPage() {
                       className={cn('cursor-pointer transition-colors', sessionToneClass(s, 'row', 'hover:bg-slate-50 dark:hover:bg-slate-800/50'))}
                     >
                       <td className="px-4 py-3 tabular-nums text-slate-400">#{s.seq}</td>
-                      <td className="px-4 py-3 font-bold">{isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : (s.order?.orderNumber ?? '—')}</td>
-                      <td className="max-w-[220px] truncate px-4 py-3">{s.order?.item ?? '—'}</td>
-                      <td className="px-4 py-3">{workCenterName(s.workCenterCode)}</td>
-                      <td className="px-4 py-3">{s.inspectorName}</td>
-                      <td className="px-4 py-3 tabular-nums">{formatDate(s.startedAt)}</td>
+                      <td className={cn('px-4 py-3 font-bold', grid.enabled && 'truncate')} title={s.order?.orderNumber ?? undefined}>
+                        {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : (s.order?.orderNumber ?? '—')}
+                      </td>
+                      {/* Fixed layout: the cell shows what fits its column and the whole name on hover; dragging the column wider shows the rest. */}
+                      <td className={cn('px-4 py-3', grid.enabled ? 'truncate' : 'max-w-[220px] truncate')} title={s.order?.item ?? undefined}>
+                        {s.order?.item ?? '—'}
+                      </td>
+                      <td className={cn('px-4 py-3', grid.enabled && 'truncate')} title={workCenterName(s.workCenterCode)}>{workCenterName(s.workCenterCode)}</td>
+                      <td className={cn('px-4 py-3', grid.enabled && 'truncate')} title={s.inspectorName}>{s.inspectorName}</td>
+                      <td className={cn('px-4 py-3 tabular-nums', grid.enabled && 'truncate')}>{formatDate(s.startedAt)}</td>
                       <td className="px-4 py-3">
                         <span className="inline-flex flex-wrap items-center gap-1.5">
                           <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>

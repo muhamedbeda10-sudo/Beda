@@ -759,3 +759,9 @@ export interface ChatMessage {
 /** Edit and delete-for-everyone are allowed this long after sending. */
 export const CHAT_EDIT_WINDOW_MS = 60 * 60 * 1000
 export const CHAT_MAX_BODY = 4000
+/**
+ * Documents (PDF, Excel) as chat attachments are switched off for now: photos
+ * only. The composer hides the file button and the API refuses an upload or
+ * a message carrying file ids. Files sent while it was on stay readable.
+ */
+export const CHAT_FILE_ATTACHMENTS_ENABLED = false

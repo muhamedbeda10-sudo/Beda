@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AtSign, FileUp, ImagePlus, Loader2, Paperclip, Pencil, Send, Smile, X } from 'lucide-react'
-import type { ChatMentionKind, ChatMessage, StoredFile } from '@qc/shared/types'
+import { CHAT_FILE_ATTACHMENTS_ENABLED, type ChatMentionKind, type ChatMessage, type StoredFile } from '@qc/shared/types'
 import { isStockOrder } from '@qc/shared/rules'
 import { useImages, useChatUsers, useMaster, useOpenBoard, useOrderSearch } from '@/services/queries'
 import { uploadChatFile } from '@/services/mutations'
@@ -160,6 +160,7 @@ export function Composer({
   }
 
   const pickFile = async (f: File | undefined) => {
+    if (!CHAT_FILE_ATTACHMENTS_ENABLED) return
     if (!f) return
     if (f.size > 25 * 1024 * 1024) {
       toast('A file may be at most 25 MB.', 'error')
@@ -276,11 +277,13 @@ export function Composer({
             <button type="button" onClick={() => imgRef.current?.click()} className="icon-btn h-10 w-10" aria-label="Photo" disabled={imageIds.length >= 10}>
               <ImagePlus className="h-5 w-5" />
             </button>
-            <button type="button" onClick={() => fileRef.current?.click()} className="icon-btn hidden h-10 w-10 sm:grid" aria-label="File" disabled={files.length >= 5}>
-              <FileUp className="h-5 w-5" />
-            </button>
+            {CHAT_FILE_ATTACHMENTS_ENABLED && (
+              <button type="button" onClick={() => fileRef.current?.click()} className="icon-btn hidden h-10 w-10 sm:grid" aria-label="File" disabled={files.length >= 5}>
+                <FileUp className="h-5 w-5" />
+              </button>
+            )}
             <input ref={imgRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => void pickImages(e.target.files)} />
-            <input ref={fileRef} type="file" accept=".pdf,.xlsx,.xls,application/pdf" className="hidden" onChange={(e) => void pickFile(e.target.files?.[0])} />
+            {CHAT_FILE_ATTACHMENTS_ENABLED && <input ref={fileRef} type="file" accept=".pdf,.xlsx,.xls,application/pdf" className="hidden" onChange={(e) => void pickFile(e.target.files?.[0])} />}
           </>
         )}
         <textarea

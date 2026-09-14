@@ -34,6 +34,7 @@ export interface Session {
 
 export class TestApp {
   db!: Db
+  images!: LocalImageStorage
   server!: Server
   baseUrl!: string
   config!: Config
@@ -53,10 +54,11 @@ export class TestApp {
     this.config = loadConfig(env)
     this.db = createPool(this.config.DATABASE_URL, 5)
     this.tmpDir = await mkdtemp(path.join(os.tmpdir(), 'qc-images-'))
+    this.images = new LocalImageStorage(this.tmpDir)
     const app = createApp({
       config: this.config,
       db: this.db,
-      images: new LocalImageStorage(this.tmpDir),
+      images: this.images,
       loginLimiter: new RateLimiter(10, 15 * 60_000),
       version: 'test',
     })
