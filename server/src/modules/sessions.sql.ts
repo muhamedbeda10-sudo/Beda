@@ -51,6 +51,7 @@ export const SAMPLE_SUMMARY_SELECT = `
   (SELECT count(*)::int FROM dimension_results d WHERE d.sample_id = sm.id AND d.deleted_at IS NULL) AS "dimensionCount",
   (SELECT count(*)::int FROM dimension_results d WHERE d.sample_id = sm.id AND d.deleted_at IS NULL AND d.actual IS NOT NULL) AS "measuredDimensionCount",
   (SELECT count(*)::int FROM defect_results d WHERE d.sample_id = sm.id AND d.deleted_at IS NULL) AS "defectCount",
+  (SELECT count(*)::int FROM defect_results d WHERE d.sample_id = sm.id AND d.deleted_at IS NULL AND d.disposition = 'Hold') AS "holdCount",
   (SELECT count(*)::int FROM sample_coils c WHERE c.sample_id = sm.id AND c.deleted_at IS NULL) AS "coilCount"`
 
 export const SAMPLE_SELECT = `
