@@ -372,7 +372,15 @@ export function sessionsRoutes(ctx: AppContext): Router {
                              WHERE sm.session_id = s.id AND sm.deleted_at IS NULL AND d.disposition::text = ${p(q.disposition)})`)
     }
     if (q.status) clauses.push(`s.status = ${p(q.status)}`)
-    if (q.inspectorId) clauses.push(`s.inspector_id = ${p(q.inspectorId)}::uuid`)
+    if (q.inspectorId) {
+      // Two inspectors may share a session (§4.4): the one who opened it and
+      // any who recorded a sample in it. A filter by inspector finds both —
+      // otherwise a sample recorded in a colleague's session is on the
+      // dashboard under this name and nowhere to be found in History.
+      const who = p(q.inspectorId)
+      clauses.push(`(s.inspector_id = ${who}::uuid OR EXISTS (
+                      SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.inspector_id = ${who}::uuid))`)
+    }
     if (q.since) clauses.push(`s.started_at >= ${p(q.since)}::timestamptz`)
     if (q.workCenterCode) {
       // "STAM 24", "stam24" and "024" all name the same machine on the floor.
@@ -390,6 +398,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       const seq = /^#?\d+$/.test(q.q) ? Number(q.q.replace('#', '')) : null
       clauses.push(`(o.order_number ILIKE ${t} OR o.item ILIKE ${t} OR o.item_code ILIKE ${t} OR o.customer ILIKE ${t}
                      OR s.inspector_name ILIKE ${t} OR s.work_center_code ILIKE ${t}
+                     OR EXISTS (SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.inspector_name ILIKE ${t})
                      OR EXISTS (SELECT 1 FROM machines m
                                  WHERE m.deleted_at IS NULL AND ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('s.work_center_code')}
                                    AND (m.display_name ILIKE ${t} OR m.name ILIKE ${t} OR m.line ILIKE ${t}))
@@ -436,9 +445,16 @@ export function sessionsRoutes(ctx: AppContext): Router {
     requireUser(req)
     const [inspectors, machines] = await Promise.all([
       db.query<{ id: string; name: string }>(
-        `SELECT DISTINCT ON (s.inspector_id) s.inspector_id AS id, s.inspector_name AS name
-           FROM inspection_sessions s WHERE s.deleted_at IS NULL
-          ORDER BY s.inspector_id, s.started_at DESC`,
+        // Whoever opened a session or recorded a sample in one, named as they
+        // were most recently.
+        `SELECT DISTINCT ON (id) id, name FROM (
+           SELECT s.inspector_id AS id, s.inspector_name AS name, s.started_at AS at
+             FROM inspection_sessions s WHERE s.deleted_at IS NULL
+           UNION ALL
+           SELECT x.inspector_id, x.inspector_name, x.created_at
+             FROM inspection_samples x JOIN inspection_sessions s ON s.id = x.session_id AND s.deleted_at IS NULL
+            WHERE x.deleted_at IS NULL) w
+          ORDER BY id, at DESC`,
       ),
       db.query<{ code: string }>(
         `SELECT DISTINCT s.work_center_code AS code
