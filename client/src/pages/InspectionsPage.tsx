@@ -309,18 +309,18 @@ export function InspectionsPage() {
         </div>
       </div>
 
-      {/* The title and the factory tabs on one row; the machine chips on their
-          own row beneath, wrapping across the full width. Sharing a row put the
-          chips in a cramped column beside the tabs once a factory had twenty
-          machines open. On a phone each row scrolls sideways instead. */}
-      <div className="flex flex-col gap-2">
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-x-3">
+      {/* The factories in one framed row and the machines in another, each
+          named on its frame, so the two levels read apart at a glance. On a
+          phone each row scrolls sideways; on a wide screen the chips wrap. */}
+      <div className="flex flex-col gap-3">
       <div className="hidden items-center gap-2 lg:flex">
         <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
         <Badge tone="blue">{filtering ? `${shown} of ${openSessions.length}` : openSessions.length}</Badge>
       </div>
       {factoryTabs.length > 0 && (
-        <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:overflow-visible lg:pb-0" role="tablist" aria-label="Factory">
+        <fieldset className="rounded-2xl border border-slate-200 px-3 pb-2.5 pt-1 dark:border-slate-700">
+        <legend className="px-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Factories</legend>
+        <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0" role="tablist" aria-label="Factory">
           {[{ key: 'all', label: 'All factories', count: base.length }, ...factoryTabs].map((t) => {
             const active = activeFactory === t.key
             return (
@@ -344,12 +344,13 @@ export function InspectionsPage() {
             )
           })}
         </div>
+        </fieldset>
       )}
-
-      </div>
 
       {/* Machine chips: only the machines with something open, coloured by the worst signal on them. */}
       {groupsInFactory.length > 1 && (
+        <fieldset className="rounded-2xl border border-slate-200 px-3 pb-2.5 pt-1 dark:border-slate-700">
+        <legend className="px-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Machines</legend>
         <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0" role="tablist" aria-label="Machine">
           <button role="tab" aria-selected={activeMachine === 'all'} onClick={() => setMachinePick('all')} className={chipTone(null, activeMachine === 'all')}>
             All machines
@@ -362,6 +363,7 @@ export function InspectionsPage() {
             </button>
           ))}
         </div>
+        </fieldset>
       )}
       </div>
 

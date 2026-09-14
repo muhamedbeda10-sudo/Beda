@@ -351,7 +351,7 @@ export function PairedBarChart({ points, totalLabel, partLabel, height = 220 }: 
   const id = useId()
   const W = 720
   const H = height
-  const pad = { l: 44, r: 12, t: 16, b: 34 }
+  const pad = { l: 44, r: 12, t: 30, b: 34 }
   const x0 = pad.l
   const x1 = W - pad.r
   const y0 = pad.t
@@ -365,6 +365,23 @@ export function PairedBarChart({ points, totalLabel, partLabel, height = 220 }: 
   const yAt = (v: number) => y1 - ((y1 - y0) * v) / max
   const every = Math.max(1, Math.ceil(n / 12))
   const h = hover !== null ? points[hover] : null
+  // The value sits on its bar. Where the days are packed too close for that,
+  // it stands upright beside the bar's top instead of overlapping its neighbour.
+  const upright = slot < 44
+  const label = (x: number, v: number, cls: string) =>
+    v > 0 && (
+      <text
+        x={x}
+        y={yAt(v) - 4}
+        textAnchor={upright ? 'start' : 'middle'}
+        fontSize={upright ? 9 : 10}
+        fontWeight={700}
+        transform={upright ? `rotate(-90 ${x} ${yAt(v) - 4})` : undefined}
+        className={cls}
+      >
+        {fmt(v)}
+      </text>
+    )
   return (
     <figure className="relative">
       <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
@@ -377,6 +394,8 @@ export function PairedBarChart({ points, totalLabel, partLabel, height = 220 }: 
             <rect x={xAt(i) - slot / 2} y={y0} width={slot} height={y1 - y0} fill="transparent" />
             <rect x={xAt(i) - bw - 1} y={yAt(p.total)} width={bw} height={Math.max(0, y1 - yAt(p.total))} rx={2} className="fill-brand-300 dark:fill-brand-600" />
             <rect x={xAt(i) + 1} y={yAt(p.part)} width={bw} height={Math.max(0, y1 - yAt(p.part))} rx={2} className="fill-rose-500" />
+            {label(xAt(i) - bw / 2 - 1, p.total, 'fill-brand-700 dark:fill-brand-200')}
+            {label(xAt(i) + bw / 2 + 1, p.part, 'fill-rose-600 dark:fill-rose-300')}
             {i % every === 0 && (
               <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-slate-500 dark:fill-slate-400">
                 {p.label}

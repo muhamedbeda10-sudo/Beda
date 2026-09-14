@@ -36,6 +36,7 @@ import type { Disposition, ShiftLetter } from '@qc/shared/types'
 import { deltaPct, toneHighIsGood, toneLowIsGood, type KpiFilters, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
+import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
 import { ColumnChart, DonutChart, HorizontalBars, PairedBarChart, ParetoChart } from '@/components/dashboard/charts'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
@@ -486,35 +487,12 @@ export function DashboardPage() {
 
       {/* Filters */}
       <Card className="print-hidden space-y-3 p-4">
-        {/* The period is a row of buttons, one tap each, with the dates shown
-            only when "Custom" is chosen. */}
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Period">
-          <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Period</span>
-          {PERIOD_PRESETS.map((p) => {
-            const active = f.preset === p.key
-            return (
-              <button
-                key={p.key}
-                type="button"
-                aria-pressed={active}
-                onClick={() => patch({ preset: p.key, customFrom: f.customFrom || range.from, customTo: f.customTo || range.to })}
-                className={cn(
-                  'min-h-[40px] rounded-xl px-3 text-sm font-semibold ring-1 transition-colors',
-                  active ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800',
-                )}
-              >
-                {p.label}
-              </button>
-            )
-          })}
-          {f.preset === 'custom' && (
-            <span className="inline-flex flex-wrap items-center gap-2">
-              <Input type="date" value={f.customFrom} max={today} onChange={(e) => patch({ customFrom: e.target.value })} aria-label="From" className="min-h-[40px]" />
-              <span className="text-xs text-slate-400">to</span>
-              <Input type="date" value={f.customTo} max={today} onChange={(e) => patch({ customTo: e.target.value })} aria-label="To" className="min-h-[40px]" />
-            </span>
-          )}
-        </div>
+        {/* §15 — the period is a timeline strip: two handles to drag, presets to jump. */}
+        <PeriodSlicer
+          value={range}
+          preset={f.preset}
+          onChange={(next, preset) => patch({ preset, customFrom: next.from, customTo: next.to })}
+        />
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           <Field label="Compare with">
             <Select value={f.compare} onChange={(e) => patch({ compare: e.target.value as ComparePreset })}>
