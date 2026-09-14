@@ -27,7 +27,7 @@ import {
   ChevronUp,
 } from 'lucide-react'
 import { Badge, Button, Drawer, type BadgeTone } from '@/components/ui'
-import { SessionToneBadge } from '@/components/inspection/SessionTone'
+import { SessionToneBadge, sampleChipClass, sampleChipTitle } from '@/components/inspection/SessionTone'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { useOrder, useOrderHistory, useOrderNotes } from '@/services/queries'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
@@ -187,11 +187,14 @@ export function OrderDetailsPanel({
                   {[...samples]
                     .sort((a, b) => a.index - b.index)
                     .map((sm) => (
+                      // The chip wears the sample's signal: amber on Hold, red with defects, blue when clean.
                       <button
                         key={sm.id}
                         type="button"
                         onClick={() => onOpenSample(session, sm)}
-                        className="min-h-[36px] rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20"
+                        className={cn('min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors', sampleChipClass(sm))}
+                        title={sampleChipTitle(sm) || undefined}
+                        aria-label={`Open sample ${session.seq}-${sm.index}${sampleChipTitle(sm) ? `, ${sampleChipTitle(sm)}` : ''}`}
                       >
                         {session.seq}-{sm.index}
                       </button>
@@ -250,7 +253,8 @@ export function OrderDetailsPanel({
                                   key={sm.id}
                                   type="button"
                                   onClick={() => onOpenSample({ ...s, order: session.order }, sm)}
-                                  className="min-h-[36px] rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-50 dark:bg-slate-900 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20"
+                                  className={cn('min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors', sampleChipClass(sm, true))}
+                                  title={sampleChipTitle(sm) || undefined}
                                 >
                                   {s.seq}-{sm.index}
                                   <span className="ml-1 font-normal text-slate-400">{sm.inspectorName.split(' ')[0]}</span>

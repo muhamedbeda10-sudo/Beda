@@ -1,21 +1,34 @@
 // ============================================================================
-// Columns a person drags wider on a desktop, the way a spreadsheet does, so a
-// long item name can be read in the row instead of opened. The widths are
-// remembered on this device per table. A tablet or phone never sees the
-// handles: there is no fine pointer to drag them with, and the table keeps
-// its automatic layout there.
+// A table the person shapes like a spreadsheet: columns dragged wider on a
+// desktop so a long item name can be read in the row, and columns hidden
+// so the ones that matter today get the width. Both are remembered on this
+// device per table. A tablet or phone never sees the drag handles (no fine
+// pointer to drag them with; the table keeps its automatic layout there)
+// but can still choose which columns to show.
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react'
+import { Check, Columns3, RotateCcw } from 'lucide-react'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn } from '@/lib/utils'
 
 export interface ColumnDef {
   key: string
+  /** As written in the header and in the picker. */
+  label: string
   /** Starting width in pixels; the person drags from here. */
   width: number
   /** The narrowest the column may be dragged to. */
   min?: number
+  /** Right-aligned numbers. */
+  align?: 'left' | 'right'
+  /** False for a column that must stay (the row's open chevron). */
+  hideable?: boolean
+}
+
+interface Stored {
+  widths: Record<string, number>
+  hidden: string[]
 }
 
 const DEFAULT_MIN = 56
@@ -35,12 +48,36 @@ function useMediaQuery(query: string): boolean {
   return matches
 }
 
+/** Whatever was saved, made safe: unknown keys dropped, widths clamped, at least one column left visible. */
+function sanitise(raw: unknown, columns: ColumnDef[]): Stored {
+  const out: Stored = { widths: {}, hidden: [] }
+  if (!raw || typeof raw !== 'object') return out
+  const r = raw as Partial<Stored>
+  const widths = r.widths && typeof r.widths === 'object' ? r.widths : {}
+  for (const c of columns) {
+    const v = (widths as Record<string, unknown>)[c.key]
+    if (typeof v === 'number' && Number.isFinite(v)) out.widths[c.key] = Math.min(MAX_WIDTH, Math.max(c.min ?? DEFAULT_MIN, Math.round(v)))
+  }
+  const hidden = Array.isArray(r.hidden) ? r.hidden.filter((k): k is string => typeof k === 'string') : []
+  out.hidden = columns.filter((c) => c.hideable !== false && hidden.includes(c.key)).map((c) => c.key)
+  if (out.hidden.length >= columns.filter((c) => c.hideable !== false).length) out.hidden = []
+  return out
+}
+
 export interface ResizableColumns {
   /** True on a desktop with a mouse: fixed layout and handles. False elsewhere: the table lays itself out. */
   enabled: boolean
-  /** Width per column key, only while enabled. */
-  widths: Record<string, number> | null
-  /** Style for the table: fixed layout at the sum of the widths, so a wider column pushes the table rather than squeezing its neighbours. */
+  /** The columns on screen, in order. */
+  visible: ColumnDef[]
+  /** Every column, for the picker. */
+  columns: ColumnDef[]
+  isVisible: (key: string) => boolean
+  toggle: (key: string) => void
+  /** Every column shown again, at its starting width. */
+  resetAll: () => void
+  /** Anything to undo: a hidden column or a dragged width. */
+  customised: boolean
+  /** Style for the table: fixed layout at the sum of the visible widths, so a wider column pushes the table rather than squeezing its neighbours. */
   tableStyle: CSSProperties | undefined
   /** The `<colgroup>` to render first inside the table. */
   colgroup: ReactElement | null
@@ -52,27 +89,29 @@ export interface ResizableColumns {
 
 export function useResizableColumns(storageKey: string, columns: ColumnDef[]): ResizableColumns {
   const enabled = useMediaQuery(DESKTOP)
-  const [stored, setStored] = usePersistedState<Record<string, number>>(storageKey, {})
+  const [raw, setRaw] = usePersistedState<Partial<Stored>>(storageKey, { widths: {}, hidden: [] })
+  const stored = useMemo(() => sanitise(raw, columns), [raw, columns])
+  const setStored = useCallback((fn: (prev: Stored) => Stored) => setRaw((prev) => fn(sanitise(prev, columns))), [setRaw, columns])
   const [dragging, setDragging] = useState<string | null>(null)
   const drag = useRef<{ key: string; startX: number; startWidth: number; min: number } | null>(null)
+
+  const hiddenSet = useMemo(() => new Set(stored.hidden), [stored.hidden])
+  const visible = useMemo(() => columns.filter((c) => !hiddenSet.has(c.key)), [columns, hiddenSet])
+  const isVisible = useCallback((key: string) => !hiddenSet.has(key), [hiddenSet])
 
   const widths = useMemo(() => {
     if (!enabled) return null
     const out: Record<string, number> = {}
-    for (const c of columns) {
-      const min = c.min ?? DEFAULT_MIN
-      const saved = stored[c.key]
-      out[c.key] = typeof saved === 'number' && Number.isFinite(saved) ? Math.min(MAX_WIDTH, Math.max(min, Math.round(saved))) : c.width
-    }
+    for (const c of visible) out[c.key] = stored.widths[c.key] ?? c.width
     return out
-  }, [enabled, columns, stored])
+  }, [enabled, visible, stored.widths])
 
   const onPointerMove = useCallback(
     (e: PointerEvent) => {
       const d = drag.current
       if (!d) return
       const next = Math.min(MAX_WIDTH, Math.max(d.min, Math.round(d.startWidth + (e.clientX - d.startX))))
-      setStored((prev) => (prev[d.key] === next ? prev : { ...prev, [d.key]: next }))
+      setStored((prev) => (prev.widths[d.key] === next ? prev : { ...prev, widths: { ...prev.widths, [d.key]: next } }))
     },
     [setStored],
   )
@@ -106,15 +145,31 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
   )
 
   /** Back to the starting width for one column. */
-  const reset = useCallback(
+  const resetWidth = useCallback(
     (key: string) =>
       setStored((prev) => {
-        if (!(key in prev)) return prev
-        const { [key]: _gone, ...rest } = prev
-        return rest
+        if (!(key in prev.widths)) return prev
+        const { [key]: _gone, ...rest } = prev.widths
+        return { ...prev, widths: rest }
       }),
     [setStored],
   )
+
+  const toggle = useCallback(
+    (key: string) =>
+      setStored((prev) => {
+        const col = columns.find((c) => c.key === key)
+        if (!col || col.hideable === false) return prev
+        if (prev.hidden.includes(key)) return { ...prev, hidden: prev.hidden.filter((k) => k !== key) }
+        // The last visible column stays: an empty table says nothing.
+        const hideable = columns.filter((c) => c.hideable !== false).length
+        if (prev.hidden.length + 1 >= hideable) return prev
+        return { ...prev, hidden: [...prev.hidden, key] }
+      }),
+    [setStored, columns],
+  )
+  const resetAll = useCallback(() => setStored(() => ({ widths: {}, hidden: [] })), [setStored])
+  const customised = stored.hidden.length > 0 || Object.keys(stored.widths).length > 0
 
   const tableStyle = useMemo<CSSProperties | undefined>(() => {
     if (!widths) return undefined
@@ -126,12 +181,12 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
     () =>
       widths ? (
         <colgroup>
-          {columns.map((c) => (
+          {visible.map((c) => (
             <col key={c.key} style={{ width: widths[c.key] }} />
           ))}
         </colgroup>
       ) : null,
-    [widths, columns],
+    [widths, visible],
   )
 
   const handle = useCallback(
@@ -145,7 +200,7 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
           onPointerDown={(e) => start(key, e)}
           onDoubleClick={(e) => {
             e.stopPropagation()
-            reset(key)
+            resetWidth(key)
           }}
           onClick={(e) => e.stopPropagation()}
           className={cn(
@@ -155,8 +210,83 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
           )}
         />
       ) : null,
-    [widths, start, reset, dragging],
+    [widths, start, resetWidth, dragging],
   )
 
-  return { enabled, widths, tableStyle, colgroup, handle, dragging }
+  return { enabled, visible, columns, isVisible, toggle, resetAll, customised, tableStyle, colgroup, handle, dragging }
+}
+
+/** The "Columns" button and its list: tick a column to show it, untick to hide it; one control resets widths and hidden columns together. */
+export function ColumnPicker({ grid, className }: { grid: ResizableColumns; className?: string }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+  const hideable = grid.columns.filter((c) => c.hideable !== false)
+  const hiddenCount = hideable.filter((c) => !grid.isVisible(c.key)).length
+  return (
+    <div ref={ref} className={cn('relative', className)}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={cn('btn-secondary min-h-[40px] px-3 text-xs', (open || hiddenCount > 0) && 'text-brand-700 dark:text-brand-200')}
+      >
+        <Columns3 className="h-4 w-4" /> Columns
+        {hiddenCount > 0 && <span className="rounded-full bg-brand-600 px-1.5 text-[10px] font-bold leading-[16px] text-white">{hideable.length - hiddenCount}/{hideable.length}</span>}
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full z-30 mt-2 w-60 rounded-2xl bg-white p-1.5 shadow-lift ring-1 ring-slate-200 animate-drop-in dark:bg-slate-900 dark:ring-slate-800">
+          <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Show columns</p>
+          <ul className="max-h-80 overflow-y-auto">
+            {hideable.map((c) => {
+              const on = grid.isVisible(c.key)
+              return (
+                <li key={c.key}>
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={on}
+                    onClick={() => grid.toggle(c.key)}
+                    className="flex min-h-[40px] w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded-md ring-1', on ? 'bg-brand-600 text-white ring-brand-600' : 'ring-slate-300 dark:ring-slate-600')}>
+                      {on && <Check className="h-3.5 w-3.5" />}
+                    </span>
+                    {c.label}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+          <div className="mt-1 border-t border-slate-100 pt-1 dark:border-slate-800">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                grid.resetAll()
+                setOpen(false)
+              }}
+              disabled={!grid.customised}
+              className="flex min-h-[40px] w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              <RotateCcw className="h-4 w-4" /> Show all, default widths
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
