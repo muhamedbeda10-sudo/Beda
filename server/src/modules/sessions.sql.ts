@@ -18,7 +18,8 @@ export const SESSION_SELECT = `
   s.inspector_id AS "inspectorId", s.inspector_name AS "inspectorName", s.started_at AS "startedAt", s.status,
   s.start_qty AS "startQty", s.start_qty_by_id AS "startQtyById", s.start_qty_by_name AS "startQtyByName",
   s.start_qty_at AS "startQtyAt", s.final_qty AS "finalQty", s.produced_qty AS "producedQty", s.closed_at AS "closedAt",
-  s.closed_by_id AS "closedById", s.version, s.deleted_at AS "deletedAt",
+  s.closed_by_id AS "closedById", (SELECT u.name FROM users u WHERE u.id = s.closed_by_id) AS "closedByName",
+  s.version, s.deleted_at AS "deletedAt",
   (SELECT count(*)::int FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "sampleCount",
   (SELECT count(*)::int FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
     WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL) AS "defectCount",
@@ -77,6 +78,7 @@ export interface SessionRow {
   producedQty: number | null
   closedAt: string | null
   closedById: string | null
+  closedByName: string | null
   version: number
   deletedAt: string | null
   sampleCount: number
@@ -122,6 +124,7 @@ export function toSession(r: SessionRow): InspectionSession {
   if (r.producedQty !== null) out.producedQty = r.producedQty
   if (r.closedAt) out.closedAt = r.closedAt
   if (r.closedById) out.closedById = r.closedById
+  if (r.closedByName) out.closedByName = r.closedByName
   if (r.deletedAt) out.deletedAt = r.deletedAt
   return out
 }

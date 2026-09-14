@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { usePersistedState } from '@/lib/usePersistedState'
 import { Search, Package2, ArrowLeft } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Badge, Button, Card, EmptyState, Input } from '@/components/ui'
@@ -10,7 +11,7 @@ import { useCoilSearch, useCoilUsage } from '@/services/queries'
  */
 export function CoilSearchPage() {
   const navigate = useNavigate()
-  const [term, setTerm] = useState('')
+  const [term, setTerm] = usePersistedState('qc-coils:term', '')
 
   // The coil catalogue is not loaded to find one. The API matches the term as
   // a prefix of the coil number, and of the grade and supplier once something

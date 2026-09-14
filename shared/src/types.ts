@@ -164,6 +164,8 @@ export interface InspectionSession {
   producedQty?: number
   closedAt?: ISODate
   closedById?: ID
+  /** Who closed it, as named at the time it is read. */
+  closedByName?: string
   deletedAt?: ISODate | null
   /** How many samples this session holds. Computed by the API. */
   sampleCount?: number

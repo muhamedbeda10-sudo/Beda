@@ -459,6 +459,7 @@ describe('corrections (§9.4, §14)', () => {
     expect(ok.body.status).toBe('Closed')
     expect(ok.body.finalQty).toBe(480)
     expect(ok.body.closedAt).toBeTruthy()
+    expect(ok.body.closedByName).toBe(inspector.user.name)
     expect(ok.body.version).toBe(1)
     const again = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/close`, { token: inspector.token, body: { finalQty: 1, version: 1 } })
     expect(again.status).toBe(400)

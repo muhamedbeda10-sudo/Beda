@@ -32,6 +32,7 @@ import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantiti
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
+import { usePersistedState } from '@/lib/usePersistedState'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, isStockOrder, processForMachine, shiftName } from '@/domain'
@@ -86,13 +87,15 @@ export function HistoryPage() {
   const { toast } = useApp()
   const [params, setParams] = useSearchParams()
 
-  const [term, setTerm] = useState('')
+  // The filters are kept on this device: leaving for another tab and coming
+  // back finds them where they were left, as on every list in the app.
+  const [term, setTerm] = usePersistedState('qc-history:term', '')
   const [olderHasMore, setOlderHasMore] = useState(false)
-  const [status, setStatus] = useState<StatusFilter>('All')
-  const [workCenter, setWorkCenter] = useState('all')
-  const [range, setRange] = useState<RangeFilter>('all')
-  const [inspectorFilter, setInspectorFilter] = useState('all')
-  const [factoryFilter, setFactoryFilter] = useState('all')
+  const [status, setStatus] = usePersistedState<StatusFilter>('qc-history:status', 'All')
+  const [workCenter, setWorkCenter] = usePersistedState('qc-history:machine', 'all')
+  const [range, setRange] = usePersistedState<RangeFilter>('qc-history:range', 'all')
+  const [inspectorFilter, setInspectorFilter] = usePersistedState('qc-history:inspector', 'all')
+  const [factoryFilter, setFactoryFilter] = usePersistedState('qc-history:factory', 'all')
 
   const [openSessionId, setOpenSessionId] = useState<string | null>(null)
   const [openSampleId, setOpenSampleId] = useState<string | null>(null)
@@ -610,6 +613,7 @@ export function HistoryPage() {
                   )}
                   <Attr label="Final qty" value={openSession.finalQty} />
                   <Attr label="Closed" value={openSession.closedAt ? formatDateTime(openSession.closedAt) : '—'} />
+                  <Attr label="Closed by" value={openSession.closedByName ?? (openSession.closedAt ? 'Unknown' : '—')} />
                 </dl>
 
                 {samplesLoading ? (
