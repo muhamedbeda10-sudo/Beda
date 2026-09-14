@@ -469,6 +469,20 @@ export interface ReopenSessionRequest {
   version: number
 }
 
+/**
+ * §4 — correct a session's quantities after the fact: the quantity rejected
+ * before release (typed when an order session opened), the quantity produced
+ * (a make-to-stock session), and the final quantity (typed when it closed).
+ * Send the ones to change; each is audited like any other correction.
+ */
+export interface UpdateSessionQuantitiesRequest {
+  startQty?: number
+  producedQty?: number
+  finalQty?: number
+  /** Version the client loaded — the change is rejected if it moved. */
+  version: number
+}
+
 export interface SaveSampleResponse {
   sampleId: string
   index: number

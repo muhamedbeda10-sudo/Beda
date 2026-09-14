@@ -28,6 +28,7 @@ import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
 import { Attr, SampleDetail, Section, SectionEmpty, dispositionToneOf, num, statusToneOf } from '@/components/inspection/SampleDetail'
 import { DefectEditDialog, DimensionEditDialog } from '@/components/inspection/CorrectionDialogs'
+import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
@@ -103,6 +104,9 @@ export function HistoryPage() {
     { kind: 'session'; id: string; label: string } | { kind: 'sample'; id: string; label: string } | { kind: 'note'; id: string; label: string } | null
   >(null)
   const canDelete = can(role, 'delete-session')
+  /** §4 — an open session's quantities by an inspector, a closed one's by a supervisor; the API enforces the same. */
+  const canCorrectQuantities = (s: SessionWithOrder) => (s.status === 'Open' ? can(role, 'edit-open-session') : can(role, 'edit-closed-session'))
+  const [correctingQty, setCorrectingQty] = useState<SessionWithOrder | null>(null)
   const canDeleteNote = can(role, 'delete-note')
 
   async function reopen() {
@@ -536,6 +540,11 @@ export function HistoryPage() {
                 <LockOpen className="h-4 w-4" /> Reopen session
               </Button>
             )}
+            {openSession && !openSample && canCorrectQuantities(openSession) && (
+              <Button variant="secondary" className="min-h-[48px]" onClick={() => setCorrectingQty(openSession)}>
+                <Pencil className="h-4 w-4" /> Correct quantities
+              </Button>
+            )}
             {canDelete && openSession && (
               <Button
                 variant="danger"
@@ -702,6 +711,7 @@ export function HistoryPage() {
         </p>
       </Modal>
 
+      {correctingQty && <SessionQuantitiesDialog session={correctingQty} onClose={() => setCorrectingQty(null)} />}
       {editingDim && <DimensionEditDialog dimension={editingDim} saving={saving} onClose={() => setEditingDim(null)} onSave={(actual) => saveDimension(editingDim, actual)} />}
 
       {editingDefect && <DefectEditDialog defect={editingDefect} saving={saving} onClose={() => setEditingDefect(null)} onSave={(patch) => saveDefect(editingDefect, patch)} />}

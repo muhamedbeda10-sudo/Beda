@@ -26,6 +26,7 @@ import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog
 import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
 import { SampleDetail } from '@/components/inspection/SampleDetail'
 import { DefectEditDialog, DimensionEditDialog } from '@/components/inspection/CorrectionDialogs'
+import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
 import { OrderDetailsPanel } from '@/components/inspection/OrderDetailsPanel'
 import { InstallBanner } from '@/components/layout/InstallBanner'
 import { useMaster, useOpenBoard, useSampleDetail } from '@/services/queries'
@@ -215,6 +216,8 @@ export function InspectionsPage() {
   const filtering = narrowed || activeFactory !== 'all' || activeMachine !== 'all'
 
   const [closing, setClosing] = useState<SessionWithOrder | null>(null)
+  /** §4 — the session whose quantities are being corrected. */
+  const [correctingQty, setCorrectingQty] = useState<SessionWithOrder | null>(null)
   /** A sample opened from its chip on the card: the full record, read-only here. */
   const [viewing, setViewing] = useState<{ session: SessionWithOrder; sample: SampleSummary } | null>(null)
   const { data: viewingDetail, isLoading: viewingLoading } = useSampleDetail(viewing?.sample.id ?? null)
@@ -737,7 +740,9 @@ export function InspectionsPage() {
           setClosing(s)
         }}
         onOpenSample={(s, sm) => setViewing({ session: s, sample: sm })}
+        onCorrectQuantities={details && (details.status === 'Open' ? can(role, 'edit-open-session') : can(role, 'edit-closed-session')) ? (s) => setCorrectingQty(s) : undefined}
       />
+      {correctingQty && <SessionQuantitiesDialog session={correctingQty} onClose={() => setCorrectingQty(null)} />}
 
       {closing && (
         <CloseSessionDialog
