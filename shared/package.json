@@ -10,7 +10,8 @@
     "./rules": "./src/rules.ts",
     "./audit": "./src/audit.ts",
     "./api": "./src/api.ts",
-    "./kpi": "./src/kpi.ts"
+    "./kpi": "./src/kpi.ts",
+    "./releases": "./src/releases.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",

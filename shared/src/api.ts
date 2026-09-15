@@ -734,3 +734,14 @@ export interface UpdateGroupRequest {
 export interface ToggleReactionRequest {
   emoji: string
 }
+
+// ---- Release notes (§18) ---------------------------------------------------
+
+export interface ReleaseStateResponse {
+  /** The newest release this person has dismissed; null before the first. */
+  lastSeenReleaseId: string | null
+}
+
+export interface MarkReleaseSeenRequest {
+  releaseId: string
+}

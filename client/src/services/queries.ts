@@ -41,6 +41,7 @@ import type {
   ChatUnreadResponse,
 } from '@qc/shared/api'
 import type { KpiFilters, KpiOverview } from '@qc/shared/kpi'
+import type { ReleaseStateResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
@@ -81,6 +82,7 @@ export const keys = {
   chatConversations: ['chat', 'conversations'] as const,
   chatMessages: (id: string) => ['chat', 'messages', id] as const,
   chatUsers: ['chat', 'users'] as const,
+  releaseState: ['releases', 'state'] as const,
 }
 
 /** A value that settles `ms` after it stops changing, so typing an
@@ -416,4 +418,9 @@ export function useChatMessages(conversationId: string | null) {
 
 export function useChatUsers(enabled = true) {
   return useQuery({ queryKey: keys.chatUsers, queryFn: () => api<ChatUser[]>('/chat/users'), enabled, staleTime: 5 * 60_000 })
+}
+
+/** §18 — how far this administrator has read the release notes. */
+export function useReleaseState(enabled: boolean) {
+  return useQuery({ queryKey: keys.releaseState, queryFn: () => api<ReleaseStateResponse>('/releases/state'), enabled, staleTime: 5 * 60_000 })
 }

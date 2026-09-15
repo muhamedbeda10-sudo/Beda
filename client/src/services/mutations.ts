@@ -40,6 +40,7 @@ import {
   type CreateConversationRequest,
   type SendChatMessageRequest,
   type UpdateGroupRequest,
+  type ReleaseStateResponse,
 } from '@qc/shared/api'
 import type { KpiThresholds } from '@qc/shared/kpi'
 import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
@@ -396,4 +397,10 @@ export async function uploadChatFile(file: File): Promise<StoredFile> {
   const form = new FormData()
   form.set('file', file, file.name)
   return api<StoredFile>('/chat/files', { method: 'POST', form })
+}
+
+/** §18 — the newest release note dismissed; the mark only ever moves forward. */
+export async function markReleaseSeen(qc: QueryClient, releaseId: string): Promise<void> {
+  const res = await api<ReleaseStateResponse>('/releases/seen', { method: 'POST', body: { releaseId } })
+  qc.setQueryData(['releases', 'state'], res)
 }
