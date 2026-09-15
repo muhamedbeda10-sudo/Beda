@@ -566,9 +566,10 @@ export interface AuditEntry {
 
 // ---- Users -----------------------------------------------------------------
 
-export type Role = 'inspector' | 'supervisor' | 'admin'
+/** A viewer reads the board, History and the dashboard and changes nothing; the rest record. */
+export type Role = 'viewer' | 'inspector' | 'supervisor' | 'admin'
 
-export const ROLES: readonly Role[] = ['inspector', 'supervisor', 'admin']
+export const ROLES: readonly Role[] = ['viewer', 'inspector', 'supervisor', 'admin']
 
 export interface UserProfile {
   id: ID

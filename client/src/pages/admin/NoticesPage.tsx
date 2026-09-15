@@ -20,7 +20,7 @@ import {
   type NoticeTarget,
   type NoticeTargetKind,
 } from '@qc/shared/types'
-import { shiftName } from '@qc/shared/rules'
+import { can, shiftName } from '@qc/shared/rules'
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { NoticeCard, NoticeFileRow, SeverityBadge, TargetChips, validityText } from '@/components/notices/NoticeCard'
@@ -116,7 +116,7 @@ function TargetBuilder({ targets, onChange }: { targets: NoticeTarget[]; onChang
         {kind === 'role' && (
           <Select value={value} onChange={(e) => { setValue(e.target.value); setLabel(e.target.value.charAt(0).toUpperCase() + e.target.value.slice(1)) }} aria-label="Role">
             <option value="">Choose a role…</option>
-            {ROLES.map((r) => (
+            {ROLES.filter((r) => can(r, 'read-notices')).map((r) => (
               <option key={r} value={r} className="capitalize">{r}</option>
             ))}
           </Select>

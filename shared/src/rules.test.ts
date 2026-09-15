@@ -561,3 +561,21 @@ describe('the make-to-stock press', () => {
     expect(normaliseMachineCode('LM-4 ')).toBe('lm-4')
   })
 })
+
+describe('roles', () => {
+  it('a viewer reads and never writes, and is outside the chat and the notices', () => {
+    expect(can('viewer', 'view-all-sessions')).toBe(true)
+    expect(can('viewer', 'view-dashboard')).toBe(true)
+    for (const cap of ['record-inspection', 'edit-open-session', 'edit-closed-session', 'delete-session', 'delete-sample', 'delete-note', 'delete-defect', 'manage-admin-data', 'purge-audit-logs', 'override-grade-mismatch', 'use-chat', 'read-notices'] as const) {
+      expect(can('viewer', cap)).toBe(false)
+    }
+  })
+  it('everyone who records is in the chat and receives notices', () => {
+    for (const role of ['inspector', 'supervisor', 'admin'] as const) {
+      expect(can(role, 'record-inspection')).toBe(true)
+      expect(can(role, 'use-chat')).toBe(true)
+      expect(can(role, 'read-notices')).toBe(true)
+    }
+    expect(can(undefined, 'view-all-sessions')).toBe(false)
+  })
+})

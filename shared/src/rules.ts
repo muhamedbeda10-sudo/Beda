@@ -607,11 +607,19 @@ export type Capability =
   | 'override-grade-mismatch'
   | 'manage-admin-data'
   | 'purge-audit-logs'
+  /** Read and write in the chat. */
+  | 'use-chat'
+  /** Receive notices: the bell, and the ones matched on the way into an inspection. */
+  | 'read-notices'
 
 const CAPABILITIES: Record<Role, Capability[]> = {
-  inspector: ['record-inspection', 'edit-open-session'],
+  // Reads everything the floor produces; writes nothing, hears nothing.
+  viewer: ['view-all-sessions', 'view-dashboard'],
+  inspector: ['record-inspection', 'edit-open-session', 'use-chat', 'read-notices'],
   supervisor: [
     'record-inspection',
+    'use-chat',
+    'read-notices',
     'view-all-sessions',
     'edit-open-session',
     'edit-closed-session',
@@ -620,6 +628,8 @@ const CAPABILITIES: Record<Role, Capability[]> = {
   ],
   admin: [
     'record-inspection',
+    'use-chat',
+    'read-notices',
     'view-all-sessions',
     'edit-open-session',
     'edit-closed-session',

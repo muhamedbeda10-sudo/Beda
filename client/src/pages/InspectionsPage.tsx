@@ -61,6 +61,8 @@ export function InspectionsPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { role } = useAuth()
+  // A viewer reads the board: no new inspection, no continue, no close.
+  const canRecord = can(role, 'record-inspection')
   const { toast } = useApp()
 
   // Only the open sessions — this screen exists to answer "what is open now".
@@ -324,7 +326,7 @@ export function InspectionsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      {s.status === 'Open' && (
+                      {s.status === 'Open' && canRecord && (
                         <Button
                           variant="primary"
                           className="min-h-[40px]"
@@ -425,7 +427,7 @@ export function InspectionsPage() {
                       </button>
                       <SessionToneBadge session={s} className="hidden sm:inline-flex" onHold={mayDecide(s) ? () => setHoldFor(s) : undefined} />
                       {s.status === 'Open' ? (
-                        <Button variant="primary" className="min-h-[40px] shrink-0" onClick={() => navigate(`/wizard/${s.id}`)} aria-label="Continue">
+                        <Button variant="primary" className={cn('min-h-[40px] shrink-0', !canRecord && 'hidden')} onClick={() => navigate(`/wizard/${s.id}`)} aria-label="Continue">
                           <Play className="h-4 w-4" />
                           <span className="hidden sm:inline">Continue</span>
                         </Button>
@@ -501,7 +503,7 @@ export function InspectionsPage() {
                     </div>
 
                     {/* A closed session on Hold is here to be seen, not continued; deleting is an administrator's act, from History. */}
-                    {s.status === 'Open' && (
+                    {s.status === 'Open' && canRecord && (
                       <div className="mt-3 flex items-center gap-2">
                         <Button variant="primary" className="min-h-[48px] flex-1" onClick={() => navigate(`/wizard/${s.id}`)}>
                           <Play className="h-4 w-4" /> Continue
@@ -569,11 +571,13 @@ export function InspectionsPage() {
       {/* §4 — one toolbar: the three primary actions, then search, inspector and the view toggle.
           On a phone the actions are tiles and the rest stacks under them; on a wide screen it is one row. */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="grid w-full grid-cols-3 gap-3 lg:flex lg:w-auto lg:items-stretch">
-          <QuickAction icon={<Plus className="h-6 w-6 lg:h-5 lg:w-5" />} title="New" subtitle="Inspection" onClick={() => setNewOpen(true)} />
-          <QuickAction icon={<Search className="h-6 w-6 lg:h-5 lg:w-5" />} title="Coil" subtitle="Search" onClick={() => navigate('/coils')} />
-          <QuickAction icon={<FileText className="h-6 w-6 lg:h-5 lg:w-5" />} title="PDI" subtitle="Documents" onClick={() => navigate('/pdi')} />
-        </div>
+        {canRecord && (
+          <div className="grid w-full grid-cols-3 gap-3 lg:flex lg:w-auto lg:items-stretch">
+            <QuickAction icon={<Plus className="h-6 w-6 lg:h-5 lg:w-5" />} title="New" subtitle="Inspection" onClick={() => setNewOpen(true)} />
+            <QuickAction icon={<Search className="h-6 w-6 lg:h-5 lg:w-5" />} title="Coil" subtitle="Search" onClick={() => navigate('/coils')} />
+            <QuickAction icon={<FileText className="h-6 w-6 lg:h-5 lg:w-5" />} title="PDI" subtitle="Documents" onClick={() => navigate('/pdi')} />
+          </div>
+        )}
         <div className="flex items-center gap-2 lg:hidden">
           <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
           <Badge tone="blue">{filtering ? `${shown} of ${openSessions.length}` : openSessions.length}</Badge>
@@ -709,11 +713,11 @@ export function InspectionsPage() {
               >
                 Show everything
               </Button>
-            ) : (
+            ) : canRecord ? (
               <Button variant="primary" onClick={() => setNewOpen(true)}>
                 <Plus className="h-4 w-4" /> New Inspection
               </Button>
-            )
+            ) : undefined
           }
         />
       ) : (
@@ -746,7 +750,7 @@ export function InspectionsPage() {
         session={details}
         samples={details ? (samplesBySession.get(details.id) ?? []) : []}
         machines={machines}
-        canRecord={can(role, 'record-inspection')}
+        canRecord={canRecord}
         onClose={() => setDetails(null)}
         onContinue={(s) => navigate(`/wizard/${s.id}`)}
         onCloseSession={(s) => {

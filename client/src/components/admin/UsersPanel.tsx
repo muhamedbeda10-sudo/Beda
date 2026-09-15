@@ -16,9 +16,10 @@ import { cn } from '@/lib/utils'
 import { ROLES, type Role, type UserProfile } from '@qc/shared/types'
 
 
-const ROLE_TONE: Record<Role, 'neutral' | 'blue' | 'violet'> = { inspector: 'neutral', supervisor: 'blue', admin: 'violet' }
+const ROLE_TONE: Record<Role, 'neutral' | 'blue' | 'violet'> = { viewer: 'neutral', inspector: 'neutral', supervisor: 'blue', admin: 'violet' }
 
 const ROLE_HELP: Record<Role, string> = {
+  viewer: 'Reads the board, History and the dashboard. Changes nothing; no chat, no notices, no administration.',
   inspector: 'Records inspections and corrects open sessions.',
   supervisor: 'Also corrects closed sessions, deletes sessions and reviews the audit log.',
   admin: 'Also manages master data, imports, users and audit purges.',

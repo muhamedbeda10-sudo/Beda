@@ -17,6 +17,14 @@ import { AuditPage } from '@/pages/admin/AuditPage'
 import { NoticesPage } from '@/pages/admin/NoticesPage'
 import { WhatsNewPage } from '@/pages/admin/WhatsNewPage'
 import { useAuth } from '@/store/AuthContext'
+import { can, type Capability } from '@qc/shared/rules'
+import type { ReactElement } from 'react'
+
+/** A page for a capability the signed-in role lacks sends the reader home; the API refuses it anyway. */
+function Only({ cap, children }: { cap: Capability; children: ReactElement }) {
+  const { role } = useAuth()
+  return can(role, cap) ? children : <Navigate to="/" replace />
+}
 
 function Splash() {
   return (
@@ -39,21 +47,21 @@ export default function App() {
     <AppShell>
       <Routes>
         <Route path="/" element={<InspectionsPage />} />
-        <Route path="/wizard/:sessionId" element={<WizardPage />} />
-        <Route path="/wizard/:sessionId/edit/:sampleId" element={<WizardPage />} />
-        <Route path="/coils" element={<CoilSearchPage />} />
-        <Route path="/pdi" element={<PDIPage />} />
+        <Route path="/wizard/:sessionId" element={<Only cap="record-inspection"><WizardPage /></Only>} />
+        <Route path="/wizard/:sessionId/edit/:sampleId" element={<Only cap="record-inspection"><WizardPage /></Only>} />
+        <Route path="/coils" element={<Only cap="record-inspection"><CoilSearchPage /></Only>} />
+        <Route path="/pdi" element={<Only cap="record-inspection"><PDIPage /></Only>} />
         <Route path="/history" element={<HistoryPage />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/chat/:conversationId?" element={<ChatPage />} />
+        <Route path="/dashboard" element={<Only cap="view-dashboard"><DashboardPage /></Only>} />
+        <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
         {/* Administration lives behind the gear; every section keeps its own address. */}
         <Route path="/admin" element={<Navigate to="/admin/configuration" replace />} />
-        <Route path="/admin/configuration/:section?" element={<ConfigurationPage />} />
-        <Route path="/admin/import" element={<DataImportPage />} />
-        <Route path="/admin/users" element={<UsersPage />} />
-        <Route path="/admin/audit" element={<AuditPage />} />
-        <Route path="/admin/notices" element={<NoticesPage />} />
-        <Route path="/admin/whats-new" element={<WhatsNewPage />} />
+        <Route path="/admin/configuration/:section?" element={<Only cap="manage-admin-data"><ConfigurationPage /></Only>} />
+        <Route path="/admin/import" element={<Only cap="manage-admin-data"><DataImportPage /></Only>} />
+        <Route path="/admin/users" element={<Only cap="manage-admin-data"><UsersPage /></Only>} />
+        <Route path="/admin/audit" element={<Only cap="edit-closed-session"><AuditPage /></Only>} />
+        <Route path="/admin/notices" element={<Only cap="manage-admin-data"><NoticesPage /></Only>} />
+        <Route path="/admin/whats-new" element={<Only cap="manage-admin-data"><WhatsNewPage /></Only>} />
         <Route path="/audit" element={<Navigate to="/admin/audit" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
