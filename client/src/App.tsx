@@ -15,6 +15,7 @@ import { DataImportPage } from '@/pages/admin/DataImportPage'
 import { UsersPage } from '@/pages/admin/UsersPage'
 import { AuditPage } from '@/pages/admin/AuditPage'
 import { NoticesPage } from '@/pages/admin/NoticesPage'
+import { WhatsNewPage } from '@/pages/admin/WhatsNewPage'
 import { useAuth } from '@/store/AuthContext'
 
 function Splash() {
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="/admin/users" element={<UsersPage />} />
         <Route path="/admin/audit" element={<AuditPage />} />
         <Route path="/admin/notices" element={<NoticesPage />} />
+        <Route path="/admin/whats-new" element={<WhatsNewPage />} />
         <Route path="/audit" element={<Navigate to="/admin/audit" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
