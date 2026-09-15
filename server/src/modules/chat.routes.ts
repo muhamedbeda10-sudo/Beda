@@ -327,10 +327,12 @@ export function chatRoutes(ctx: AppContext): Router {
   const r = Router()
   const db = ctx.db
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: ctx.config.MAX_DOCUMENT_BYTES, files: 1, fields: 5 } })
+  // A viewer is outside the chat altogether: no list, no unread count, no message.
+  r.use(requireCapability('use-chat'))
 
   /** Everyone who can be written to. */
   r.get('/users', async (_req, res) => {
-    const { rows } = await db.query<ChatUser>(`SELECT id, name, username, role FROM users WHERE deleted_at IS NULL AND is_active ORDER BY name`)
+    const { rows } = await db.query<ChatUser>(`SELECT id, name, username, role FROM users WHERE deleted_at IS NULL AND is_active AND role <> 'viewer' ORDER BY name`)
     res.json(rows)
   })
 

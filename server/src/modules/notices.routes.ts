@@ -132,7 +132,7 @@ export function noticesRoutes(ctx: AppContext): Router {
 
   // ---- Readers -------------------------------------------------------------
 
-  r.get('/inbox', async (req, res) => {
+  r.get('/inbox', requireCapability('read-notices'), async (req, res) => {
     const user = requireUser(req)
     const notices = await loadInbox(ctx.db, tz, { userId: user.id, role: user.role })
     const body: NoticeInboxResponse = { notices, pendingCount: notices.filter((n) => n.pending).length }
@@ -140,7 +140,7 @@ export function noticesRoutes(ctx: AppContext): Router {
   })
 
   /** What the reader still has to read where they are about to work. */
-  r.post('/match', async (req, res) => {
+  r.post('/match', requireCapability('read-notices'), async (req, res) => {
     const user = requireUser(req)
     const where = parse(matchSchema, req.body)
     const context: NoticeContext = { shift: deriveShift(new Date(), tz) }
@@ -202,8 +202,8 @@ export function noticesRoutes(ctx: AppContext): Router {
     res.status(204).end()
   }
 
-  r.post('/:id/seen', (req, res) => mark(req, false, res))
-  r.post('/:id/acknowledge', (req, res) => mark(req, true, res))
+  r.post('/:id/seen', requireCapability('read-notices'), (req, res) => mark(req, false, res))
+  r.post('/:id/acknowledge', requireCapability('read-notices'), (req, res) => mark(req, true, res))
 
   /** The bytes of an attached file. Signed-in only; immutable per row. */
   r.get('/files/:id/content', async (req, res) => {
