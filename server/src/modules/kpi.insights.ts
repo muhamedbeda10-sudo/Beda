@@ -24,7 +24,7 @@ function defectRateRules(o: Draft, t: KpiThresholds): KpiInsight[] {
       id: 'defect-rate-red',
       severity: 'critical',
       title: `Defect rate is ${pctText(rate)}, above the ${t.defectRateAmber}% limit`,
-      detail: `${o.current.defectPieces} defect pieces in ${o.current.pieces} inspected.`,
+      detail: `${o.current.productionDefectPieces} defect pieces in ${o.current.piecesProduced} produced, over ${plural(o.current.producedSessions, 'closed session')}.`,
       action: 'Review the Pareto below and the worst machine; agree a containment before the next shift.',
     })
   } else if (rate > t.defectRateGreen) {
@@ -32,12 +32,12 @@ function defectRateRules(o: Draft, t: KpiThresholds): KpiInsight[] {
       id: 'defect-rate-amber',
       severity: 'warning',
       title: `Defect rate is ${pctText(rate)}, above the ${t.defectRateGreen}% target`,
-      detail: `${o.current.defectPieces} defect pieces in ${o.current.pieces} inspected.`,
+      detail: `${o.current.productionDefectPieces} defect pieces in ${o.current.piecesProduced} produced, over ${plural(o.current.producedSessions, 'closed session')}.`,
       action: 'Watch the daily trend; act on the leading defect before it grows.',
     })
   }
   const delta = deltaPct(rate, o.previous.defectRatePct)
-  if (delta !== null && Math.abs(delta) >= t.trendAlertPct && o.previous.pieces > 0) {
+  if (delta !== null && Math.abs(delta) >= t.trendAlertPct && o.previous.piecesProduced > 0) {
     const worse = delta > 0
     out.push({
       id: worse ? 'defect-rate-rising' : 'defect-rate-falling',
@@ -61,7 +61,7 @@ function yieldRules(o: Draft, t: KpiThresholds): KpiInsight[] {
         id: 'fpy-red',
         severity: 'critical',
         title: `First-pass yield is ${pctText(fpy)}, below the ${t.fpyAmber}% floor`,
-        detail: `Only ${Math.round((fpy / 100) * o.current.samples)} of ${o.current.samples} samples passed with nothing to record.`,
+        detail: `Only ${Math.round((fpy / 100) * o.current.samples)} of ${o.current.samples} samples passed with no defect recorded.`,
         action: 'Every sample is finding something: check setup and first-piece approval on the machines with the lowest yield.',
       })
     } else if (fpy < t.fpyGreen) {
@@ -127,36 +127,37 @@ function paretoRules(o: Draft): KpiInsight[] {
 
 function outlierRule(
   id: string,
-  rows: { label: string; sub?: string; pieces: number; defectRatePct: number | null; key: string }[],
+  rows: { label: string; sub?: string; piecesProduced: number | null; defectRatePct: number | null; key: string }[],
   overall: number | null,
   noun: string,
   link: 'machine' | 'item',
 ): KpiInsight | null {
   if (overall === null || overall <= 0) return null
-  const candidates = rows.filter((r) => r.pieces >= 30 && r.defectRatePct !== null && r.defectRatePct >= overall * 2 && r.defectRatePct > 1)
+  const candidates = rows.filter((r) => (r.piecesProduced ?? 0) >= 30 && r.defectRatePct !== null && r.defectRatePct >= overall * 2 && r.defectRatePct > 1)
   if (candidates.length === 0) return null
   const worst = candidates.sort((a, b) => (b.defectRatePct ?? 0) - (a.defectRatePct ?? 0))[0]
   return {
     id,
     severity: (worst.defectRatePct ?? 0) >= overall * 3 ? 'critical' : 'warning',
     title: `${noun} ${worst.label} runs at ${pctText(worst.defectRatePct)}, ${fmt((worst.defectRatePct ?? 0) / overall, 1)}× the overall rate`,
-    detail: `${worst.pieces} pieces inspected${worst.sub ? ` · ${worst.sub}` : ''}. Overall ${pctText(overall)}.`,
+    detail: `${worst.piecesProduced} pieces produced${worst.sub ? ` · ${worst.sub}` : ''}. Overall ${pctText(overall)}.`,
     action: link === 'machine' ? 'Walk the machine: setup sheet, tooling wear, and the operator on the worst shift.' : 'Check the drawing revision and the tooling for this item before the next run.',
     link: { kind: link, value: worst.key },
   }
 }
 
 function supplierRules(o: Draft): KpiInsight[] {
-  const overall = o.current.defectRatePct
+  // A coil is one input of a session: compared on the inspected view, against the inspected overall.
+  const overall = o.current.inspectedDefectPct
   if (overall === null || overall <= 0) return []
-  const rows = o.suppliers.filter((s) => s.pieces >= 30 && s.defectRatePct !== null && s.defectRatePct >= overall * 2 && s.defectRatePct > 1)
+  const rows = o.suppliers.filter((s) => s.pieces >= 30 && s.inspectedDefectPct !== null && s.inspectedDefectPct >= overall * 2 && s.inspectedDefectPct > 1)
   if (rows.length === 0) return []
-  const worst = rows.sort((a, b) => (b.defectRatePct ?? 0) - (a.defectRatePct ?? 0))[0]
+  const worst = rows.sort((a, b) => (b.inspectedDefectPct ?? 0) - (a.inspectedDefectPct ?? 0))[0]
   return [
     {
       id: 'supplier-outlier',
       severity: 'warning',
-      title: `Coils from ${worst.supplier} (${worst.grade}) show ${pctText(worst.defectRatePct)} defects, ${fmt((worst.defectRatePct ?? 0) / overall, 1)}× the overall rate`,
+      title: `Coils from ${worst.supplier} (${worst.grade}) show ${pctText(worst.inspectedDefectPct)} defects of inspected, ${fmt((worst.inspectedDefectPct ?? 0) / overall, 1)}× the overall inspected rate`,
       detail: `${worst.pieces} pieces from ${plural(worst.samples, 'sample')} on this material.`,
       action: 'Raise it with procurement with the coil numbers from History; hold incoming material of this grade for inspection.',
     },

@@ -13,10 +13,14 @@ const TOTAL_ROWS: { key: keyof KpiTotals; label: string }[] = [
   { key: 'samples', label: 'Samples' },
   { key: 'samplesPerSession', label: 'Samples per session' },
   { key: 'pieces', label: 'Pieces inspected' },
-  { key: 'defectPieces', label: 'Defect pieces' },
+  { key: 'defectPieces', label: 'Defect pieces (on inspected samples)' },
   { key: 'defectRecords', label: 'Defect records' },
-  { key: 'defectRatePct', label: 'Defect rate %' },
-  { key: 'fpyPct', label: 'First-pass yield %' },
+  { key: 'inspectedDefectPct', label: 'Defect % of inspected' },
+  { key: 'piecesProduced', label: 'Pieces produced (sessions closed with a final qty)' },
+  { key: 'producedSessions', label: 'Closed sessions with a final qty' },
+  { key: 'productionDefectPieces', label: 'Defect pieces of those sessions' },
+  { key: 'defectRatePct', label: 'Defect rate % (of produced)' },
+  { key: 'fpyPct', label: 'First-pass yield % (samples with no defect)' },
   { key: 'dimensionsMeasured', label: 'Dimensions measured' },
   { key: 'dimensionsPass', label: 'Dimensions pass' },
   { key: 'dimensionsWarning', label: 'Dimensions warning' },
@@ -76,8 +80,8 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
   }
   const group = (name: string, rows: KpiOverview['byMachine']): SheetSpec => ({
     name,
-    header: ['Key', 'Label', 'Detail', 'Sessions', 'Samples', 'Pieces', 'Defect pieces', 'Defect rate %', 'FPY %', 'Dim fail %'],
-    rows: rows.map((r) => [r.key, r.label, r.sub ?? '', r.sessions, r.samples, r.pieces, r.defectPieces, r.defectRatePct, r.fpyPct, r.dimFailPct]),
+    header: ['Key', 'Label', 'Detail', 'Sessions', 'Samples', 'Pieces inspected', 'Defect pieces', 'Defect % of inspected', 'Pieces produced', 'Defect pieces of produced', 'Defect rate % (of produced)', 'FPY %', 'Dim fail %'],
+    rows: rows.map((r) => [r.key, r.label, r.sub ?? '', r.sessions, r.samples, r.pieces, r.defectPieces, r.inspectedDefectPct, r.piecesProduced, r.productionDefectPieces, r.defectRatePct, r.fpyPct, r.dimFailPct]),
   })
   return [
     summary,
@@ -88,8 +92,8 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
     },
     {
       name: 'Daily',
-      header: ['Day', 'Samples', 'Pieces', 'Defect pieces', 'Defect rate %', 'FPY %'],
-      rows: o.daily.map((d) => [d.day, d.samples, d.pieces, d.defectPieces, d.defectRatePct, d.fpyPct]),
+      header: ['Day', 'Samples', 'Pieces inspected', 'Defect pieces', 'Defect % of inspected', 'Pieces produced (closed that day)', 'Defect pieces of produced', 'Defect rate % (of produced)', 'FPY %'],
+      rows: o.daily.map((d) => [d.day, d.samples, d.pieces, d.defectPieces, d.inspectedDefectPct, d.piecesProduced, d.productionDefectPieces, d.defectRatePct, d.fpyPct]),
     },
     {
       name: 'Pareto',
@@ -177,14 +181,14 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
     group('Inspectors', o.byInspector),
     {
       ...group('Shifts', o.byShift),
-      rows: o.byShift.map((r) => [r.key, `${r.label} (${shiftName(r.key as ShiftLetter)})`, '', r.sessions, r.samples, r.pieces, r.defectPieces, r.defectRatePct, r.fpyPct, r.dimFailPct]),
+      rows: o.byShift.map((r) => [r.key, `${r.label} (${shiftName(r.key as ShiftLetter)})`, '', r.sessions, r.samples, r.pieces, r.defectPieces, r.inspectedDefectPct, r.piecesProduced, r.productionDefectPieces, r.defectRatePct, r.fpyPct, r.dimFailPct]),
     },
     group('Items', o.byItem),
     {
       name: 'Suppliers',
       // Roll forming only: the coil is consumed there.
-      header: ['Supplier', 'Grade', 'Samples', 'Pieces', 'Defect pieces', 'Defect rate %'],
-      rows: o.suppliers.map((s) => [s.supplier, s.grade, s.samples, s.pieces, s.defectPieces, s.defectRatePct]),
+      header: ['Supplier', 'Grade', 'Samples', 'Pieces inspected', 'Defect pieces', 'Defect % of inspected'],
+      rows: o.suppliers.map((s) => [s.supplier, s.grade, s.samples, s.pieces, s.defectPieces, s.inspectedDefectPct]),
     },
     {
       name: 'Holds',

@@ -37,10 +37,10 @@ export interface KpiFilters extends KpiRange {
  * defaults a steel racking line can start from.
  */
 export interface KpiThresholds {
-  /** Defect pieces per 100 inspected: green at or under, amber at or under, red above. */
+  /** Defect pieces per 100 produced (sessions closed with a final quantity): green at or under, amber at or under, red above. */
   defectRateGreen: number
   defectRateAmber: number
-  /** First-pass yield (% of samples with no defect and no failed dimension): green at or above, amber at or above. */
+  /** First-pass yield (% of samples with no defect recorded; dimensions have their own measure): green at or above, amber at or above. */
   fpyGreen: number
   fpyAmber: number
   /** Dimensions out of tolerance (% of measured): green at or under, amber at or under. */
@@ -111,13 +111,25 @@ export interface KpiTotals {
   samples: number
   /** Pieces inspected: the sum of sample quantities. */
   pieces: number
-  /** Defect pieces recorded (sum of defect quantities). */
+  /** Defect pieces recorded on the period's samples (sum of defect quantities). */
   defectPieces: number
   /** Defect rows recorded. */
   defectRecords: number
-  /** Defect pieces per 100 inspected pieces; null when nothing was inspected. */
+  /**
+   * Pieces produced: the final quantities of the sessions closed in the
+   * period that carry one. Production belongs to a whole session, so with
+   * an inspector or shift filter it is 0 and the rate is null.
+   */
+  piecesProduced: number
+  /** Sessions closed in the period with a final quantity. */
+  producedSessions: number
+  /** Defect pieces of those sessions, over all their samples: the defects of the batch. */
+  productionDefectPieces: number
+  /** Defect rate: defect pieces per 100 produced; null without production. */
   defectRatePct: number | null
-  /** Samples with no defect and no failed dimension, as a % of samples. */
+  /** Defect pieces per 100 inspected (the sample view of the same period). */
+  inspectedDefectPct: number | null
+  /** First-pass yield: samples with no defect recorded, as a % of samples. A failed dimension does not count against it. */
   fpyPct: number | null
   dimensionsMeasured: number
   dimensionsPass: number
@@ -147,7 +159,13 @@ export interface KpiDailyPoint {
   samples: number
   pieces: number
   defectPieces: number
+  /** Production of the sessions closed that day, and their defect pieces. */
+  piecesProduced: number
+  productionDefectPieces: number
+  /** Defect rate of the production closed that day. */
   defectRatePct: number | null
+  /** Defect pieces per 100 inspected that day. */
+  inspectedDefectPct: number | null
   fpyPct: number | null
 }
 
@@ -210,7 +228,14 @@ export interface KpiGroupRow {
   samples: number
   pieces: number
   defectPieces: number
+  /** Production of the sessions closed in the period for this row; null where a
+   *  session's production cannot be attributed (an inspector, a shift). */
+  piecesProduced: number | null
+  productionDefectPieces: number | null
+  /** Defect pieces per 100 produced; null where production cannot be attributed. */
   defectRatePct: number | null
+  /** Defect pieces per 100 inspected. */
+  inspectedDefectPct: number | null
   fpyPct: number | null
   dimFailPct: number | null
 }
@@ -240,7 +265,8 @@ export interface KpiSupplierRow {
   samples: number
   pieces: number
   defectPieces: number
-  defectRatePct: number | null
+  /** A coil is one input of a session, so its rate is of the pieces inspected from it. */
+  inspectedDefectPct: number | null
 }
 
 export interface KpiWireBatchRow {

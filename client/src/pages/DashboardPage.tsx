@@ -247,9 +247,11 @@ function groupColumns(t: KpiThresholds, first: Column<KpiGroupRow>): Column<KpiG
     first,
     { key: 'sessions', label: 'Sessions', className: 'text-right tabular-nums', render: (r) => num(r.sessions) },
     { key: 'samples', label: 'Samples', className: 'text-right tabular-nums', render: (r) => num(r.samples) },
-    { key: 'pieces', label: 'Pieces', className: 'text-right tabular-nums', render: (r) => num(r.pieces) },
+    { key: 'pieces', label: 'Inspected', className: 'text-right tabular-nums', render: (r) => num(r.pieces) },
     { key: 'defects', label: 'Defect pcs', className: 'text-right tabular-nums', render: (r) => num(r.defectPieces) },
+    { key: 'produced', label: 'Produced', className: 'text-right tabular-nums', render: (r) => (r.piecesProduced === null ? <span className="text-slate-400">—</span> : num(r.piecesProduced)) },
     { key: 'rate', label: 'Defect rate', className: 'text-right', render: (r) => <ToneCell value={r.defectRatePct} tone={toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /> },
+    { key: 'inspectedRate', label: 'Of inspected', className: 'text-right', render: (r) => <ToneCell value={r.inspectedDefectPct} tone="neutral" /> },
     { key: 'fpy', label: 'FPY', className: 'text-right', render: (r) => <ToneCell value={r.fpyPct} tone={toneHighIsGood(r.fpyPct, t.fpyGreen, t.fpyAmber)} /> },
     { key: 'dim', label: 'Dim fail', className: 'text-right', render: (r) => <ToneCell value={r.dimFailPct} tone={toneLowIsGood(r.dimFailPct, t.dimFailGreen, t.dimFailAmber)} /> },
   ]
@@ -598,10 +600,26 @@ export function DashboardPage() {
           <div className={cn('space-y-5', view !== 'overview' && '[@media_screen]:hidden')}>
           {/* Tiles */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-            <KpiTile label="Defect rate" value={pctStr(cur.defectRatePct)} current={cur.defectRatePct} previous={prevT.defectRatePct} goodWhen="down" tone={toneLowIsGood(cur.defectRatePct, t.defectRateGreen, t.defectRateAmber)} sub={`${num(cur.defectPieces)} defect pcs in ${num(cur.pieces)} inspected · target ≤ ${t.defectRateGreen}%`} icon={<AlertTriangle className="h-4 w-4" />} />
-            <KpiTile label="First-pass yield" value={pctStr(cur.fpyPct)} current={cur.fpyPct} previous={prevT.fpyPct} goodWhen="up" tone={toneHighIsGood(cur.fpyPct, t.fpyGreen, t.fpyAmber)} sub={`${num(cur.samples)} samples · target ≥ ${t.fpyGreen}%`} icon={<Target className="h-4 w-4" />} />
+            {/* Defect pieces per 100 produced, over the sessions closed in the period with a final quantity. */}
+            <KpiTile
+              label="Defect rate"
+              value={pctStr(cur.defectRatePct)}
+              current={cur.defectRatePct}
+              previous={prevT.defectRatePct}
+              goodWhen="down"
+              tone={toneLowIsGood(cur.defectRatePct, t.defectRateGreen, t.defectRateAmber)}
+              sub={
+                filters.inspectorId || filters.shift
+                  ? 'Production belongs to a whole session: not by inspector or shift. Of inspected: ' + pctStr(cur.inspectedDefectPct)
+                  : cur.producedSessions === 0
+                    ? `No session closed with a final quantity in this period · of inspected ${pctStr(cur.inspectedDefectPct)}`
+                    : `${num(cur.productionDefectPieces)} defect pcs of ${num(cur.piecesProduced)} produced · ${num(cur.producedSessions)} closed sessions · target ≤ ${t.defectRateGreen}%`
+              }
+              icon={<AlertTriangle className="h-4 w-4" />}
+            />
+            <KpiTile label="First-pass yield" value={pctStr(cur.fpyPct)} current={cur.fpyPct} previous={prevT.fpyPct} goodWhen="up" tone={toneHighIsGood(cur.fpyPct, t.fpyGreen, t.fpyAmber)} sub={`samples with no defect · ${num(cur.samples)} samples · target ≥ ${t.fpyGreen}%`} icon={<Target className="h-4 w-4" />} />
             <KpiTile label="Dimensions out of tolerance" value={pctStr(cur.dimFailPct)} current={cur.dimFailPct} previous={prevT.dimFailPct} goodWhen="down" tone={toneLowIsGood(cur.dimFailPct, t.dimFailGreen, t.dimFailAmber)} sub={`${num(cur.dimensionsFail)} fail · ${num(cur.dimensionsWarning)} warning of ${num(cur.dimensionsMeasured)} measured`} icon={<Ruler className="h-4 w-4" />} />
-            <KpiTile label="Pieces inspected" value={num(cur.pieces)} current={cur.pieces} previous={prevT.pieces} goodWhen="up" sub={`${num(cur.samples)} samples · ${num(cur.samplesPerSession, 1)} per session`} icon={<ClipboardList className="h-4 w-4" />} />
+            <KpiTile label="Pieces inspected" value={num(cur.pieces)} current={cur.pieces} previous={prevT.pieces} goodWhen="up" sub={`${num(cur.samples)} samples · ${num(cur.samplesPerSession, 1)} per session · ${pctStr(cur.inspectedDefectPct)} defective of inspected`} icon={<ClipboardList className="h-4 w-4" />} />
             <KpiTile label="Sessions" value={num(cur.sessions)} current={cur.sessions} previous={prevT.sessions} goodWhen="none" sub={`${num(cur.sessionsClosed)} closed · ${num(cur.machinesInspected)} machines · ${num(cur.activeInspectors)} inspectors`} icon={<Users className="h-4 w-4" />} />
             <KpiTile label="On Hold now" value={num(data.holds.length)} current={null} previous={null} goodWhen="down" tone={data.holds.some((h) => h.ageDays >= t.holdAgeRedDays) ? 'red' : data.holds.some((h) => h.ageDays >= t.holdAgeAmberDays) ? 'amber' : data.holds.length ? 'neutral' : 'green'} sub={`${num(holdPieces)} pieces waiting for a disposition`} icon={<PauseCircle className="h-4 w-4" />} />
           </div>
@@ -673,7 +691,7 @@ export function DashboardPage() {
                 }
               />
             </Section>
-            <Section title="Defect rate by machine" hint={`Tap a machine to filter the page to it.${showing(Math.min(12, data.byMachine.length), data.counts.machines)}`} icon={<Activity className="h-4 w-4" />}>
+            <Section title="Defect rate by machine" hint={`Defect pieces per 100 produced on the machine (sessions closed in the period). Tap a machine to filter the page to it.${showing(Math.min(12, data.byMachine.length), data.counts.machines)}`} icon={<Activity className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
                 rows={data.byMachine.slice(0, 12).map((m) => ({
@@ -681,7 +699,7 @@ export function DashboardPage() {
                   sub: m.sub,
                   value: m.defectRatePct,
                   tone: toneLowIsGood(m.defectRatePct, t.defectRateGreen, t.defectRateAmber),
-                  text: `${pctStr(m.defectRatePct)} · ${num(m.defectPieces)} of ${num(m.pieces)} pcs`,
+                  text: m.defectRatePct === null ? `no closed production · ${pctStr(m.inspectedDefectPct)} of inspected` : `${pctStr(m.defectRatePct)} · ${num(m.productionDefectPieces)} of ${num(m.piecesProduced)} produced`,
                   onClick: () => patch({ workCenterCode: m.key }),
                 }))}
               />
@@ -690,31 +708,31 @@ export function DashboardPage() {
 
           {/* Who and what: one bar per row, coloured against the target. */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <Section title="Defect rate by shift" hint="Same machines, different hours." icon={<Users className="h-4 w-4" />}>
+            <Section title="Defects of inspected by shift" hint="Same machines, different hours. A session's production cannot be split by shift, so this is defect pieces per 100 inspected." icon={<Users className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
                 rows={data.byShift.map((r) => ({
                   label: `${r.label} · ${shiftName(r.key as ShiftLetter)}`,
-                  value: r.defectRatePct,
-                  tone: toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber),
-                  text: `${pctStr(r.defectRatePct)} · ${num(r.pieces)} pcs`,
+                  value: r.inspectedDefectPct,
+                  tone: 'neutral' as const,
+                  text: `${pctStr(r.inspectedDefectPct)} · ${num(r.defectPieces)} of ${num(r.pieces)} inspected`,
                   onClick: () => patch({ shift: r.key as ShiftLetter }),
                 }))}
               />
             </Section>
-            <Section title="Defect rate by inspector" hint={`Tap a name to filter the page to them.${showing(Math.min(10, data.byInspector.length), data.counts.inspectors)}`} icon={<Users className="h-4 w-4" />}>
+            <Section title="Defects of inspected by inspector" hint={`Defect pieces per 100 inspected by each person: production belongs to the session, not the inspector. Tap a name to filter the page to them.${showing(Math.min(10, data.byInspector.length), data.counts.inspectors)}`} icon={<Users className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
                 rows={data.byInspector.slice(0, 10).map((r) => ({
                   label: r.label,
-                  value: r.defectRatePct,
-                  tone: toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber),
-                  text: `${pctStr(r.defectRatePct)} · ${num(r.samples)} samples`,
+                  value: r.inspectedDefectPct,
+                  tone: 'neutral' as const,
+                  text: `${pctStr(r.inspectedDefectPct)} · ${num(r.samples)} samples`,
                   onClick: () => patch({ inspectorId: r.key }),
                 }))}
               />
             </Section>
-            <Section title="Defect rate by item" hint={`Tap an item to filter the page to it.${showing(Math.min(10, data.byItem.length), data.counts.items)}`} icon={<ClipboardList className="h-4 w-4" />}>
+            <Section title="Defect rate by item" hint={`Defect pieces per 100 produced of the item (sessions closed in the period). Tap an item to filter the page to it.${showing(Math.min(10, data.byItem.length), data.counts.items)}`} icon={<ClipboardList className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
                 rows={data.byItem.slice(0, 10).map((r) => ({
@@ -722,7 +740,7 @@ export function DashboardPage() {
                   sub: r.key,
                   value: r.defectRatePct,
                   tone: toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber),
-                  text: `${pctStr(r.defectRatePct)} · ${num(r.pieces)} pcs`,
+                  text: r.defectRatePct === null ? `no closed production · ${pctStr(r.inspectedDefectPct)} of inspected` : `${pctStr(r.defectRatePct)} · ${num(r.productionDefectPieces)} of ${num(r.piecesProduced)} produced`,
                   onClick: () => patch({ itemCode: r.key }),
                 }))}
               />
@@ -784,15 +802,15 @@ export function DashboardPage() {
 
           {/* Materials, and what is waiting */}
           <div className="print-break grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Section title="Defect rate by coil supplier" hint={`Roll forming only — the coil is consumed there. Pieces made from each supplier and grade.${showing(Math.min(10, data.suppliers.length), data.counts.suppliers)}`} icon={<ClipboardList className="h-4 w-4" />}>
+            <Section title="Defects of inspected by coil supplier" hint={`Roll forming only — the coil is consumed there. Defect pieces per 100 inspected from each supplier and grade.${showing(Math.min(10, data.suppliers.length), data.counts.suppliers)}`} icon={<ClipboardList className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
                 rows={data.suppliers.slice(0, 10).map((s) => ({
                   label: s.supplier,
                   sub: s.grade,
-                  value: s.defectRatePct,
-                  tone: toneLowIsGood(s.defectRatePct, t.defectRateGreen, t.defectRateAmber),
-                  text: `${pctStr(s.defectRatePct)} · ${num(s.pieces)} pcs`,
+                  value: s.inspectedDefectPct,
+                  tone: 'neutral' as const,
+                  text: `${pctStr(s.inspectedDefectPct)} · ${num(s.defectPieces)} of ${num(s.pieces)} inspected`,
                 }))}
               />
             </Section>
@@ -848,7 +866,7 @@ export function DashboardPage() {
 
           {/* Materials + Holds */}
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <Section title="Coil suppliers" hint="Roll forming only. Defect rate of the pieces made from each supplier and grade." icon={<ClipboardList className="h-4 w-4" />}>
+            <Section title="Coil suppliers" hint="Roll forming only. Defect pieces per 100 inspected from each supplier and grade." icon={<ClipboardList className="h-4 w-4" />}>
               <Table
                 rows={data.suppliers}
                 total={data.counts.suppliers}
@@ -861,7 +879,7 @@ export function DashboardPage() {
                   { key: 'n', label: 'Samples', className: 'text-right tabular-nums', render: (s) => num(s.samples) },
                   { key: 'p', label: 'Pieces', className: 'text-right tabular-nums', render: (s) => num(s.pieces) },
                   { key: 'd', label: 'Defect pcs', className: 'text-right tabular-nums', render: (s) => num(s.defectPieces) },
-                  { key: 'r', label: 'Defect rate', className: 'text-right', render: (s) => <ToneCell value={s.defectRatePct} tone={toneLowIsGood(s.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /> },
+                  { key: 'r', label: 'Of inspected', className: 'text-right', render: (s) => <ToneCell value={s.inspectedDefectPct} tone="neutral" /> },
                 ]}
               />
             </Section>
