@@ -105,6 +105,7 @@ const HISTORY_COLUMNS: ColumnDef[] = [
   { key: 'defects', label: 'Defects', width: 90, min: 72, align: 'right' },
   { key: 'defectPieces', label: 'Defect pcs', width: 104, min: 80, align: 'right' },
   { key: 'defectRate', label: 'Defect %', width: 96, min: 72, align: 'right' },
+  { key: 'inspectedRate', label: 'Defect % of inspected', width: 120, min: 80, align: 'right', defaultHidden: true },
   { key: 'dimFails', label: 'Dims failed', width: 100, min: 80, align: 'right', defaultHidden: true },
   { key: 'holds', label: 'On Hold', width: 90, min: 72, align: 'right', defaultHidden: true },
   { key: 'notes', label: 'Notes', width: 80, min: 64, align: 'right', defaultHidden: true },
@@ -193,7 +194,20 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
     case 'defectPieces':
       // The same figure the dashboard adds up per day and per machine.
       return number(defectPieces, defectPieces > 0 ? 'font-bold text-rose-600 dark:text-rose-400' : '')
-    case 'defectRate':
+    case 'defectRate': {
+      // Defect pieces per 100 produced: the final quantity is the batch, known once the session is closed.
+      const produced = s.status === 'Closed' && s.finalQty !== undefined ? s.finalQty : null
+      return (
+        <td
+          key={key}
+          className={cn('px-4 py-3 text-right tabular-nums', produced !== null && defectPieces > 0 && 'font-bold text-rose-600 dark:text-rose-400')}
+          title={produced === null ? 'Known once the session is closed with a final quantity' : `${defectPieces} defect pieces of ${produced} produced`}
+        >
+          {produced === null ? '—' : pctText(defectPieces, produced)}
+        </td>
+      )
+    }
+    case 'inspectedRate':
       return (
         <td key={key} className={cn('px-4 py-3 text-right tabular-nums', defectPieces > 0 && 'font-bold text-rose-600 dark:text-rose-400')} title="Defect pieces over pieces inspected">
           {pctText(defectPieces, pieces)}

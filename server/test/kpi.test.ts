@@ -143,7 +143,11 @@ describe('kpi overview', () => {
     expect(o.current.pieces).toBe(30)
     expect(o.current.defectPieces).toBe(4)
     expect(o.current.defectRecords).toBe(2)
-    expect(o.current.defectRatePct).toBeCloseTo(13.33, 1)
+    // The session is still open: no production yet, so no defect rate; the inspected view is 4 of 30.
+    expect(o.current.defectRatePct).toBeNull()
+    expect(o.current.inspectedDefectPct).toBeCloseTo(13.33, 1)
+    expect(o.current.piecesProduced).toBe(0)
+    expect(o.current.producedSessions).toBe(0)
     // One clean sample of three.
     expect(o.current.fpyPct).toBeCloseTo(33.33, 1)
     expect(o.current.dimensionsMeasured).toBe(3)
@@ -197,11 +201,10 @@ describe('kpi overview', () => {
     // The thresholds saved above colour this overview.
     expect(o.thresholds.defectRateGreen).toBe(1)
     const ids = o.insights.map((i) => i.id)
-    expect(ids).toContain('defect-rate-red')
+    // No session has closed with a final quantity yet: the defect rate has nothing to stand on, so no rate insight.
+    expect(ids).not.toContain('defect-rate-red')
     expect(ids).toContain('hold-open')
     expect(ids).not.toContain('on-target')
-    // Ordered most serious first.
-    expect(o.insights[0].severity).toBe('critical')
   })
 
   it('narrows to a machine, an inspector or a shift', async () => {
@@ -220,5 +223,53 @@ describe('kpi overview', () => {
     expect(res.body.defectRateBands.every((b) => b.samples === 0)).toBe(true)
     expect(res.body.paretoByMachine).toEqual([])
     expect(res.body.itemDefects).toEqual([])
+  })
+})
+
+describe('the defect rate is over production (§15)', () => {
+  it('refuses to close a session on a final quantity below its defective pieces', async () => {
+    const before = await app.api<SessionWithOrder>('GET', `/api/sessions/${sessionId}`, { token: inspector.token })
+    const res = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/close`, { token: inspector.token, body: { finalQty: 3, version: before.body.version } })
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toContain('4 defective pieces')
+  })
+
+  it('counts the closed session\'s production and the defects of its batch', async () => {
+    const before = await app.api<SessionWithOrder>('GET', `/api/sessions/${sessionId}`, { token: inspector.token })
+    expect((await app.api('POST', `/api/sessions/${sessionId}/close`, { token: inspector.token, body: { finalQty: 200, version: before.body.version } })).status).toBe(200)
+    const o = (await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}`, { token: admin.token })).body
+    expect(o.current.piecesProduced).toBe(200)
+    expect(o.current.producedSessions).toBe(1)
+    expect(o.current.productionDefectPieces).toBe(4)
+    expect(o.current.defectRatePct).toBe(2)
+    expect(o.current.inspectedDefectPct).toBeCloseTo(13.33, 1)
+    // 2% against the 1% target saved earlier (limit 5%): the rate insight is back as a warning, and it quotes production.
+    const amber = o.insights.find((i) => i.id === 'defect-rate-amber')!
+    expect(amber.severity).toBe('warning')
+    expect(amber.detail).toContain('4 defect pieces in 200 produced')
+    // Ordered most serious first.
+    const order = ['critical', 'warning', 'good', 'info']
+    const ranks = o.insights.map((i) => order.indexOf(i.severity))
+    expect(ranks).toEqual([...ranks].sort((a, b) => a - b))
+    // The machine and the item carry the production; an inspector or a shift cannot.
+    expect(o.byMachine[0].piecesProduced).toBe(200)
+    expect(o.byMachine[0].defectRatePct).toBe(2)
+    expect(o.byMachine[0].inspectedDefectPct).toBeCloseTo(13.33, 1)
+    expect(o.byItem[0].piecesProduced).toBe(200)
+    expect(o.byInspector[0].piecesProduced).toBeNull()
+    expect(o.byInspector[0].defectRatePct).toBeNull()
+    expect(o.byShift[0].defectRatePct).toBeNull()
+    // The day it was closed carries the production.
+    const today = o.daily.find((d) => d.piecesProduced > 0)!
+    expect(today.productionDefectPieces).toBe(4)
+    expect(today.defectRatePct).toBe(2)
+    // Narrowed to an inspector, production is not attributable: no rate.
+    const byInspector = (await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}&inspectorId=${inspector.user.id}`, { token: admin.token })).body
+    expect(byInspector.current.piecesProduced).toBe(0)
+    expect(byInspector.current.defectRatePct).toBeNull()
+    expect(byInspector.current.inspectedDefectPct).toBeCloseTo(13.33, 1)
+    // A correction of the final quantity is held to the same rule.
+    const closed = await app.api<SessionWithOrder>('GET', `/api/sessions/${sessionId}`, { token: admin.token })
+    expect((await app.api('PATCH', `/api/sessions/${sessionId}/quantities`, { token: admin.token, body: { finalQty: 2, version: closed.body.version } })).status).toBe(400)
   })
 })

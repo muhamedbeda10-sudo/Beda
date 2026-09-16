@@ -46,6 +46,35 @@ function params(f: PeriodFilters): unknown[] {
   return [f.tz, f.from, f.to, f.factory ?? null, f.workCenterCode ?? null, f.itemCode ?? null, f.inspectorId ?? null, f.shift ?? null]
 }
 
+/**
+ * The production of the period: sessions closed in it with a final quantity,
+ * narrowed by factory, machine and item. Production belongs to a whole
+ * session, so an inspector or shift filter leaves this empty. Each session
+ * carries the defect pieces of all its samples — the defects of the batch —
+ * so the rate is defect pieces per 100 produced.
+ */
+const PRODUCED = `
+produced AS (
+  SELECT s.id AS session_id, s.work_center_code AS wc, COALESCE(m.factory, '') AS factory,
+         COALESCE(m.display_name, 'Machine ' || s.work_center_code) AS machine_label,
+         o.item_code, o.item, s.closed_at, s.final_qty::float8 AS produced,
+         COALESCE((SELECT sum(d.qty) FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+                    WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL), 0)::float8 AS defect_pieces
+    FROM inspection_sessions s
+    JOIN production_orders o ON o.id = s.order_id
+    LEFT JOIN LATERAL (
+      SELECT m.factory, m.display_name FROM machines m
+       WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
+       ORDER BY m.created_at LIMIT 1) m ON true
+   WHERE s.deleted_at IS NULL AND s.status = 'Closed' AND s.final_qty IS NOT NULL AND s.closed_at IS NOT NULL
+     AND s.closed_at >= ($2::date)::timestamp AT TIME ZONE $1
+     AND s.closed_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
+     AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
+     AND ($5::text IS NULL OR lower(s.work_center_code) = lower($5))
+     AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
+     AND $7::uuid IS NULL AND $8::text IS NULL
+)`
+
 /** The samples of the period that pass the filters, with what each one recorded. */
 const BASE = `
 WITH base AS (
@@ -101,7 +130,7 @@ interface TotalsRow {
 
 export async function loadTotals(q: Queryable, f: PeriodFilters): Promise<KpiTotals> {
   const p = params(f)
-  const [agg, dispositions, sessions] = await Promise.all([
+  const [agg, dispositions, sessions, production] = await Promise.all([
     q.query<TotalsRow>(
       `${BASE}
        SELECT (SELECT count(DISTINCT session_id) FROM per_sample)::int AS sessions,
@@ -109,7 +138,7 @@ export async function loadTotals(q: Queryable, f: PeriodFilters): Promise<KpiTot
               (SELECT COALESCE(sum(sample_qty), 0) FROM per_sample)::float8 AS pieces,
               (SELECT COALESCE(sum(defect_pieces), 0) FROM per_sample)::float8 AS "defectPieces",
               (SELECT COALESCE(sum(defect_records), 0) FROM per_sample)::int AS "defectRecords",
-              (SELECT count(*) FROM per_sample WHERE defect_pieces = 0 AND dims_fail = 0)::int AS "firstPass",
+              (SELECT count(*) FROM per_sample WHERE defect_pieces = 0)::int AS "firstPass",
               (SELECT COALESCE(sum(dims_measured), 0) FROM per_sample)::int AS "dimsMeasured",
               (SELECT COALESCE(sum(dims_fail), 0) FROM per_sample)::int AS "dimsFail",
               (SELECT count(*) FROM dimension_results r JOIN base b ON b.sample_id = r.sample_id
@@ -156,18 +185,28 @@ export async function loadTotals(q: Queryable, f: PeriodFilters): Promise<KpiTot
           AND ($7::uuid IS NULL OR s.inspector_id = $7)`,
       p.slice(0, 7),
     ),
+    q.query<{ sessions: number; produced: number; defectPieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT count(*)::int AS sessions, COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces" FROM produced`,
+      p,
+    ),
   ])
   const t = agg.rows[0]
   const byDisposition: Partial<Record<Disposition, number>> = {}
   for (const row of dispositions.rows) byDisposition[row.disposition] = row.pieces
   const started = sessions.rows[0]
+  const made = production.rows[0]
   return {
     sessions: started.started,
     samples: t.samples,
     pieces: t.pieces,
     defectPieces: t.defectPieces,
     defectRecords: t.defectRecords,
-    defectRatePct: pct(t.defectPieces, t.pieces),
+    piecesProduced: made.produced,
+    producedSessions: made.sessions,
+    productionDefectPieces: made.defectPieces,
+    defectRatePct: pct(made.defectPieces, made.produced),
+    inspectedDefectPct: pct(t.defectPieces, t.pieces),
     fpyPct: pct(t.firstPass, t.samples),
     dimensionsMeasured: t.dimsMeasured,
     dimensionsPass: t.dimsPass,
@@ -189,23 +228,43 @@ export async function loadTotals(q: Queryable, f: PeriodFilters): Promise<KpiTot
 }
 
 export async function loadDaily(q: Queryable, f: PeriodFilters): Promise<KpiDailyPoint[]> {
-  const { rows } = await q.query<{ day: string; samples: number; pieces: number; defectPieces: number; firstPass: number }>(
-    `${BASE}
-     SELECT to_char((created_at AT TIME ZONE $1)::date, 'YYYY-MM-DD') AS day,
-            count(*)::int AS samples, COALESCE(sum(sample_qty), 0)::float8 AS pieces,
-            COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces",
-            count(*) FILTER (WHERE defect_pieces = 0 AND dims_fail = 0)::int AS "firstPass"
-       FROM per_sample GROUP BY 1 ORDER BY 1`,
-    params(f),
-  )
-  return rows.map((r) => ({
-    day: r.day,
-    samples: r.samples,
-    pieces: r.pieces,
-    defectPieces: r.defectPieces,
-    defectRatePct: pct(r.defectPieces, r.pieces),
-    fpyPct: pct(r.firstPass, r.samples),
-  }))
+  const [sampled, produced] = await Promise.all([
+    q.query<{ day: string; samples: number; pieces: number; defectPieces: number; firstPass: number }>(
+      `${BASE}
+       SELECT to_char((created_at AT TIME ZONE $1)::date, 'YYYY-MM-DD') AS day,
+              count(*)::int AS samples, COALESCE(sum(sample_qty), 0)::float8 AS pieces,
+              COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces",
+              count(*) FILTER (WHERE defect_pieces = 0)::int AS "firstPass"
+         FROM per_sample GROUP BY 1 ORDER BY 1`,
+      params(f),
+    ),
+    // Production lands on the day its session was closed.
+    q.query<{ day: string; produced: number; defectPieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT to_char((closed_at AT TIME ZONE $1)::date, 'YYYY-MM-DD') AS day,
+              COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+         FROM produced GROUP BY 1`,
+      params(f),
+    ),
+  ])
+  const madeByDay = new Map(produced.rows.map((r) => [r.day, r]))
+  const days = Array.from(new Set([...sampled.rows.map((r) => r.day), ...produced.rows.map((r) => r.day)])).sort()
+  const sampledByDay = new Map(sampled.rows.map((r) => [r.day, r]))
+  return days.map((day) => {
+    const s = sampledByDay.get(day)
+    const m = madeByDay.get(day)
+    return {
+      day,
+      samples: s?.samples ?? 0,
+      pieces: s?.pieces ?? 0,
+      defectPieces: s?.defectPieces ?? 0,
+      piecesProduced: m?.produced ?? 0,
+      productionDefectPieces: m?.defectPieces ?? 0,
+      defectRatePct: m ? pct(m.defectPieces, m.produced) : null,
+      inspectedDefectPct: s ? pct(s.defectPieces, s.pieces) : null,
+      fpyPct: s ? pct(s.firstPass, s.samples) : null,
+    }
+  })
 }
 
 /** How many defect types the period holds, and how many pieces they carry in
@@ -253,12 +312,14 @@ export async function loadPareto(q: Queryable, f: PeriodFilters): Promise<Pareto
 
 type GroupKind = 'machine' | 'inspector' | 'shift' | 'item'
 
-/** `group` decides what one row is; `key` is the value the client links with. */
-const GROUP_KEYS: Record<GroupKind, { group: string; key: string; label: string; sub: string }> = {
-  machine: { group: 'lower(wc)', key: 'max(wc)', label: 'max(machine_label)', sub: 'max(factory)' },
-  inspector: { group: 'inspector_id::text', key: 'inspector_id::text', label: 'max(inspector_name)', sub: `''` },
-  shift: { group: 'shift::text', key: 'shift::text', label: 'shift::text', sub: `''` },
-  item: { group: 'lower(item_code)', key: 'max(item_code)', label: 'max(item)', sub: 'max(item_code)' },
+/** `group` decides what one row is; `key` is the value the client links with;
+ *  `produced` is the same grouping over the period's production, where a
+ *  session's production can be attributed to the row at all. */
+const GROUP_KEYS: Record<GroupKind, { group: string; key: string; label: string; sub: string; produced: string | null }> = {
+  machine: { group: 'lower(wc)', key: 'max(wc)', label: 'max(machine_label)', sub: 'max(factory)', produced: 'lower(wc)' },
+  inspector: { group: 'inspector_id::text', key: 'inspector_id::text', label: 'max(inspector_name)', sub: `''`, produced: null },
+  shift: { group: 'shift::text', key: 'shift::text', label: 'shift::text', sub: `''`, produced: null },
+  item: { group: 'lower(item_code)', key: 'max(item_code)', label: 'max(item)', sub: 'max(item_code)', produced: 'lower(item_code)' },
 }
 
 /** A capped list with the size of the list it was cut from. */
@@ -287,24 +348,40 @@ export async function loadGroups(q: Queryable, f: PeriodFilters, kind: GroupKind
      SELECT ${g.key} AS key, ${g.label} AS label, ${g.sub} AS sub, count(*) OVER ()::int AS total,
             count(DISTINCT session_id)::int AS sessions, count(*)::int AS samples, COALESCE(sum(sample_qty), 0)::float8 AS pieces,
             COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces",
-            count(*) FILTER (WHERE defect_pieces = 0 AND dims_fail = 0)::int AS "firstPass",
+            count(*) FILTER (WHERE defect_pieces = 0)::int AS "firstPass",
             COALESCE(sum(dims_measured), 0)::int AS "dimsMeasured", COALESCE(sum(dims_fail), 0)::int AS "dimsFail"
        FROM per_sample GROUP BY ${g.group} ORDER BY samples DESC, key LIMIT ${limit}`,
     params(f),
   )
+  const made = new Map<string, { produced: number; defectPieces: number }>()
+  if (g.produced) {
+    const production = await q.query<{ gkey: string; produced: number; defectPieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT ${g.produced} AS gkey, COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+         FROM produced GROUP BY 1`,
+      params(f),
+    )
+    for (const r of production.rows) made.set(r.gkey, r)
+  }
   return {
-    rows: rows.map((r) => ({
-      key: r.key,
-      label: r.label,
-      sub: r.sub || undefined,
-      sessions: r.sessions,
-      samples: r.samples,
-      pieces: r.pieces,
-      defectPieces: r.defectPieces,
-      defectRatePct: pct(r.defectPieces, r.pieces),
-      fpyPct: pct(r.firstPass, r.samples),
-      dimFailPct: pct(r.dimsFail, r.dimsMeasured),
-    })),
+    rows: rows.map((r) => {
+      const m = g.produced ? made.get(r.key.toLowerCase()) : undefined
+      return {
+        key: r.key,
+        label: r.label,
+        sub: r.sub || undefined,
+        sessions: r.sessions,
+        samples: r.samples,
+        pieces: r.pieces,
+        defectPieces: r.defectPieces,
+        piecesProduced: g.produced ? (m?.produced ?? 0) : null,
+        productionDefectPieces: g.produced ? (m?.defectPieces ?? 0) : null,
+        defectRatePct: m ? pct(m.defectPieces, m.produced) : null,
+        inspectedDefectPct: pct(r.defectPieces, r.pieces),
+        fpyPct: pct(r.firstPass, r.samples),
+        dimFailPct: pct(r.dimsFail, r.dimsMeasured),
+      }
+    }),
     total: rows[0]?.total ?? 0,
   }
 }
@@ -329,7 +406,7 @@ export async function loadSuppliers(q: Queryable, f: PeriodFilters): Promise<Cap
       samples: r.samples,
       pieces: r.pieces,
       defectPieces: r.defectPieces,
-      defectRatePct: pct(r.defectPieces, r.pieces),
+      inspectedDefectPct: pct(r.defectPieces, r.pieces),
     })),
     total: rows[0]?.total ?? 0,
   }

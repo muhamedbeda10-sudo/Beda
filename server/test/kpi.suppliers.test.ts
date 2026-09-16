@@ -86,7 +86,7 @@ describe('defect rate by coil supplier', () => {
   it('counts the forming sample and leaves the welding one out', async () => {
     const o = (await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}`, { token: admin.token })).body
     // Both samples carry the same coil; only forming's 2 defects in 10 pieces count.
-    expect(o.suppliers).toEqual([{ supplier: 'Ezz Steel', grade: 'S355JR', samples: 1, pieces: 10, defectPieces: 2, defectRatePct: 20 }])
+    expect(o.suppliers).toEqual([{ supplier: 'Ezz Steel', grade: 'S355JR', samples: 1, pieces: 10, defectPieces: 2, inspectedDefectPct: 20 }])
     expect(o.counts.suppliers).toBe(1)
     // The welding defects are still in every other figure.
     expect(o.current.defectPieces).toBe(7)
