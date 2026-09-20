@@ -68,7 +68,7 @@ import type { HistoryFilters, SessionWithOrder } from '@qc/shared/api'
 
 /** Open, Closed, or — the case a supervisor looks for first — on Hold. */
 type StatusFilter = 'All' | 'Open' | 'Closed' | 'Hold'
-type RangeFilter = 'all' | '7' | '30' | '90'
+type RangeFilter = 'all' | '7' | '30' | '90' | 'custom'
 
 /** How many sessions one page holds. The filters are answered over the whole
  *  record, so this bounds what is fetched, never what can be found. */
@@ -79,7 +79,10 @@ const RANGE_LABEL: Record<RangeFilter, string> = {
   '7': 'Last 7 days',
   '30': 'Last 30 days',
   '90': 'Last 90 days',
+  custom: 'A day or a range…',
 }
+
+const todayISO = () => new Date().toISOString().slice(0, 10)
 
 
 /**
@@ -262,6 +265,9 @@ export function HistoryPage() {
   const [status, setStatus] = usePersistedState<StatusFilter>('qc-history:status', 'All')
   const [workCenter, setWorkCenter] = usePersistedState('qc-history:machine', 'all')
   const [range, setRange] = usePersistedState<RangeFilter>('qc-history:range', 'all')
+  /** The custom range: factory days, both inclusive; the same day twice is one day. */
+  const [fromDay, setFromDay] = usePersistedState('qc-history:from', todayISO())
+  const [toDay, setToDay] = usePersistedState('qc-history:to', todayISO())
   const [inspectorFilter, setInspectorFilter] = usePersistedState('qc-history:inspector', 'all')
   const [factoryFilter, setFactoryFilter] = usePersistedState('qc-history:factory', 'all')
 
@@ -335,11 +341,16 @@ export function HistoryPage() {
     if (workCenter !== 'all') f.workCenterCode = workCenter
     if (inspectorFilter !== 'all') f.inspectorId = inspectorFilter
     if (factoryFilter !== 'all') f.factory = factoryFilter
-    if (range !== 'all') f.since = daysAgoISO(Number(range))
+    if (range === 'custom') {
+      // Either end may be left open; an inverted pair is sent in order rather than refused.
+      const [a, b] = fromDay && toDay && fromDay > toDay ? [toDay, fromDay] : [fromDay, toDay]
+      if (a) f.from = a
+      if (b) f.to = b
+    } else if (range !== 'all') f.since = daysAgoISO(Number(range))
     if (dispositionFilter) f.disposition = dispositionFilter
     else if (status === 'Hold') f.disposition = 'Hold'
     return f
-  }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, range, dispositionFilter])
+  }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, range, fromDay, toDay, dispositionFilter])
 
   const { data: history, isLoading: loading, isFetching } = useHistory(filters, SESSION_PAGE)
   /** Pages walked back from the first one, so an older session is never out of reach. */
@@ -538,6 +549,16 @@ export function HistoryPage() {
               ))}
             </Select>
           </Field>
+          {range === 'custom' && (
+            <>
+              <Field label="From day">
+                <Input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} className="min-h-[48px]" aria-label="From day" />
+              </Field>
+              <Field label="To day">
+                <Input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} className="min-h-[48px]" aria-label="To day" />
+              </Field>
+            </>
+          )}
           <div className={cn(!seesAll && 'col-span-2 sm:col-span-1')}>
             <Field label="Machine">
               <Select value={workCenter} onChange={(e) => setWorkCenter(e.target.value)} className="min-h-[48px]">

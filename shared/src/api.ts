@@ -547,8 +547,12 @@ export interface HistoryFilters {
   /** The factory a machine belongs to, as the machine catalogue names it. */
   factory?: string
   inspectorId?: string
-  /** Only sessions started at or after this instant. */
+  /** Only sessions started (or sampled) at or after this instant. */
   since?: string
+  /** A range of factory days, YYYY-MM-DD, both inclusive: sessions started or
+   *  sampled on those days. One day is `from` = `to`. */
+  from?: string
+  to?: string
   /** Land on the sessions that own a defect with this disposition. */
   disposition?: Disposition
 }
