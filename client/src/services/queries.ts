@@ -41,7 +41,7 @@ import type {
   ChatUnreadResponse,
 } from '@qc/shared/api'
 import type { KpiFilters, KpiOverview } from '@qc/shared/kpi'
-import type { ReleaseStateResponse } from '@qc/shared/api'
+import type { OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
@@ -83,6 +83,8 @@ export const keys = {
   chatMessages: (id: string) => ['chat', 'messages', id] as const,
   chatUsers: ['chat', 'users'] as const,
   releaseState: ['releases', 'state'] as const,
+  orderList: (filters: OrderListFilters) => ['orders', 'list', filters] as const,
+  orderListOptions: ['orders', 'list', 'options'] as const,
 }
 
 /** A value that settles `ms` after it stops changing, so typing an
@@ -423,4 +425,22 @@ export function useChatUsers(enabled = true) {
 /** §18 — how far this administrator has read the release notes. */
 export function useReleaseState(enabled: boolean) {
   return useQuery({ queryKey: keys.releaseState, queryFn: () => api<ReleaseStateResponse>('/releases/state'), enabled, staleTime: 5 * 60_000 })
+}
+
+/** §19 — Access: the imported lines, filtered in SQL, first page. */
+export function useOrderList(filters: OrderListFilters, limit = 100) {
+  return useQuery({
+    queryKey: keys.orderList(filters),
+    queryFn: () => api<OrderListResponse>(`/orders/list${qs({ limit, ...filters })}`),
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** §19 — the next page of the same filters. */
+export async function loadMoreOrders(filters: OrderListFilters, offset: number, limit = 100): Promise<OrderListResponse> {
+  return api<OrderListResponse>(`/orders/list${qs({ limit, offset, ...filters })}`)
+}
+
+export function useOrderListOptions() {
+  return useQuery({ queryKey: keys.orderListOptions, queryFn: () => api<OrderListOptionsResponse>('/orders/list/options'), staleTime: 5 * 60_000 })
 }

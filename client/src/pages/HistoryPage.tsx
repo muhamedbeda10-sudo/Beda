@@ -244,6 +244,16 @@ export function HistoryPage() {
   const { role } = useAuth()
   const { toast } = useApp()
   const [params, setParams] = useSearchParams()
+  // Access sends an order number in the address: it becomes the search, once, and leaves the address.
+  useEffect(() => {
+    const q = params.get('q')
+    if (q === null) return
+    setTerm(q)
+    const next = new URLSearchParams(params)
+    next.delete('q')
+    setParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params])
 
   // The filters are kept on this device: leaving for another tab and coming
   // back finds them where they were left, as on every list in the app.

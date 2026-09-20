@@ -5,6 +5,7 @@ import { Brand } from '@/components/brand/Brand'
 import { InspectionsPage } from '@/pages/InspectionsPage'
 import { WizardPage } from '@/pages/WizardPage'
 import { HistoryPage } from '@/pages/HistoryPage'
+import { AccessPage } from '@/pages/AccessPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { ChatPage } from '@/pages/ChatPage'
 import { CoilSearchPage } from '@/pages/CoilSearchPage'
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="/coils" element={<Only cap="record-inspection"><CoilSearchPage /></Only>} />
         <Route path="/pdi" element={<Only cap="record-inspection"><PDIPage /></Only>} />
         <Route path="/history" element={<HistoryPage />} />
+        <Route path="/access" element={<AccessPage />} />
         <Route path="/dashboard" element={<Only cap="view-dashboard"><DashboardPage /></Only>} />
         <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
         {/* Administration lives behind the gear; every section keeps its own address. */}
