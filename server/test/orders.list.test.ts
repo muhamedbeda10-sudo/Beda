@@ -6,6 +6,7 @@ import { TestApp, type Session } from './harness'
 const app = new TestApp()
 let admin: Session
 let viewer: Session
+let inspector: Session
 const get = (query: string, token: string) => app.api<OrderListResponse>('GET', `/api/orders/list${query ? `?${query}` : ''}`, { token })
 
 beforeAll(async () => {
@@ -14,6 +15,7 @@ beforeAll(async () => {
   admin = await app.register('admin', 'Admin')
   await app.api('POST', '/api/users', { token: admin.token, body: { username: 'watcher', password: 'Password#1', name: 'Plant Manager', role: 'viewer' } })
   viewer = await app.login('watcher')
+  inspector = await app.register('insp', 'Inspector One')
   await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '58', name: 'A. Welding Line', line: 'LM4', displayName: '58-A. Welding Line-LM4', process: 'welding', factory: 'Factory 1' } })
   await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '24', name: 'Stam Upright', line: 'B', displayName: '24-Stam Upright', process: 'punching', factory: 'Factory 2' } })
   // 150 lines: a needle at line 137, the rest filler on two machines, one of them cancelled.
@@ -75,6 +77,11 @@ describe('§19 — Access: the imported lines as a table', () => {
     expect(inspected.body.orders[0].sessions).toBe(1)
     expect((await get('inspected=no', admin.token)).body.total).toBe(149)
     expect((await get('inspected=no&workCenterCode=58&remaining=done', admin.token)).body.total).toBe(25)
+  })
+
+  it('is not for an inspector', async () => {
+    expect((await get('', inspector.token)).status).toBe(403)
+    expect((await app.api('GET', '/api/orders/list/options', { token: inspector.token })).status).toBe(403)
   })
 
   it('offers the filter options and reads for a viewer', async () => {

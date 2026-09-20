@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-20.2',
+    date: '2026-09-20',
+    title: 'Access first, and tables that fit',
+    items: [
+      { text: 'Access is the first tab, for supervisors, administrators and viewers; inspectors do not see it.' },
+      { text: 'History and Access tables scroll inside a frame: the header stays put and both scrollbars are on screen however many columns are shown.' },
+      { text: 'Fit columns (desktop) sizes every column to what is in it; a few columns spread over the width instead of huddling on the left.' },
+    ],
+  },
+  {
     id: '2026-09-20.1',
     date: '2026-09-20',
     title: 'Access: the order sheet as a table',

@@ -45,9 +45,9 @@ interface NavItem {
 
 /** The work an inspector does: centred in the bar on a desktop, in the menu on a tablet or phone. */
 const NAV: NavItem[] = [
+  { to: '/access', label: 'Access', icon: Table2, needs: 'view-order-sheet' },
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/history', label: 'History', icon: History },
-  { to: '/access', label: 'Access', icon: Table2 },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
 ]
 

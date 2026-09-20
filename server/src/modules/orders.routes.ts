@@ -140,7 +140,7 @@ export function ordersRoutes(ctx: AppContext): Router {
    * inspection record adds to each line. Cancelled lines are listed too:
    * this is the sheet as it was uploaded.
    */
-  r.get('/list', async (req, res) => {
+  r.get('/list', requireCapability('view-order-sheet'), async (req, res) => {
     requireUser(req)
     const q = parse(
       z.object({
@@ -201,7 +201,7 @@ export function ordersRoutes(ctx: AppContext): Router {
   })
 
   /** What the Access filters may offer, drawn from every line on record. */
-  r.get('/list/options', async (req, res) => {
+  r.get('/list/options', requireCapability('view-order-sheet'), async (req, res) => {
     requireUser(req)
     const [statuses, factories, machines] = await Promise.all([
       ctx.db.query<{ v: string }>(`SELECT DISTINCT btrim(erp_status) AS v FROM production_orders WHERE deleted_at IS NULL AND btrim(erp_status) <> '' ORDER BY 1`),

@@ -33,7 +33,7 @@ import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
-import { ColumnPicker, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
+import { ColumnPicker, FitColumnsButton, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, isStockOrder, processForMachine, shiftName } from '@/domain'
@@ -623,18 +623,19 @@ export function HistoryPage() {
           </div>
 
           {/* md+ — the same rows as a table; the columns are the person's to size and choose. */}
-          <div className="hidden justify-end md:flex">
+          <div className="hidden justify-end gap-2 md:flex">
+            <FitColumnsButton grid={grid} />
             <ColumnPicker grid={grid} />
           </div>
-          <Card className="hidden md:block">
-            <div className="overflow-x-auto">
-              <table className={cn('w-full text-sm', !grid.enabled && 'min-w-[720px]')} style={grid.tableStyle}>
+          <Card className="hidden overflow-hidden md:block">
+            <GridFrame>
+              <table ref={grid.tableRef} className={cn('w-full text-sm', !grid.enabled && 'min-w-[720px]')} style={grid.tableStyle}>
                 {grid.colgroup}
                 <thead>
                   <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
                     {grid.visible.map((c) => (
                       // The cell stays overflow-visible so the grab zone can straddle its edge; only the label is clipped.
-                      <th key={c.key} className={cn('relative px-4 py-3', c.align === 'right' && 'text-right', grid.dragging === c.key && 'bg-brand-50/60 dark:bg-brand-500/10')} title={grid.enabled && c.label ? c.label : undefined}>
+                      <th key={c.key} data-col={c.key} className={cn('px-4 py-3', c.align === 'right' && 'text-right', grid.dragging === c.key && '!bg-brand-50 dark:!bg-brand-950')} title={grid.enabled && c.label ? c.label : undefined}>
                         <span className={cn(grid.enabled && 'block truncate')}>{c.label}</span>
                         {c.hideable !== false && grid.handle(c.key)}
                       </th>
@@ -653,7 +654,7 @@ export function HistoryPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </GridFrame>
           </Card>
 
           {hasMore && (
