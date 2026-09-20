@@ -31,6 +31,8 @@ export const SESSION_SELECT = `
   (SELECT COALESCE(sum(x.sample_qty), 0)::float8 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "piecesInspected",
   (SELECT count(*)::int FROM dimension_results r JOIN inspection_samples x ON x.id = r.sample_id
     WHERE x.session_id = s.id AND x.deleted_at IS NULL AND r.deleted_at IS NULL AND r.status = 'Fail') AS "dimensionFailCount",
+  (SELECT count(*)::int FROM pt_tested_lengths l JOIN pt_records pr ON pr.id = l.pt_record_id JOIN inspection_samples x ON x.id = pr.sample_id
+    WHERE x.session_id = s.id AND x.deleted_at IS NULL AND pr.deleted_at IS NULL AND l.deleted_at IS NULL) AS "ptTestedCount",
   EXISTS (
     SELECT 1
       FROM production_orders o1
@@ -94,6 +96,7 @@ export interface SessionRow {
   noteCount: number
   piecesInspected: number
   dimensionFailCount: number
+  ptTestedCount: number
   priorDefectsElsewhere: boolean
 }
 
@@ -127,6 +130,7 @@ export function toSession(r: SessionRow): InspectionSession {
     noteCount: r.noteCount,
     piecesInspected: r.piecesInspected,
     dimensionFailCount: r.dimensionFailCount,
+    ptTestedCount: r.ptTestedCount,
     priorDefectsElsewhere: r.priorDefectsElsewhere,
   }
   if (r.startQty !== null && r.startQtyById && r.startQtyByName && r.startQtyAt) {

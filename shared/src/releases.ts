@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-20.3',
+    date: '2026-09-20',
+    title: 'PT coverage from production; History by day',
+    items: [
+      { text: 'PT: the requirement is 5% of the final quantity, rounded up to a whole piece, worked out when a welding session is closed. Nobody types a frequency any more; the close dialog shows tested vs required as the quantity is typed, and History and the board show the same badge on the session.' },
+      { text: 'History → Date range → "A day or a range…": pick one day or a From/To range; a session counts on the days it was started or sampled.' },
+    ],
+  },
+  {
     id: '2026-09-20.2',
     date: '2026-09-20',
     title: 'Access first, and tables that fit',

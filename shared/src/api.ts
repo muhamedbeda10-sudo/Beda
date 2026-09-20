@@ -413,7 +413,8 @@ export interface SaveCoilInput {
 }
 
 export interface SavePTInput {
-  testFrequencyPct: number
+  /** No longer typed: the requirement is 5% of the final quantity. Accepted from older clients only. */
+  testFrequencyPct?: number
   consumableLots: Record<PTConsumableKind, string>
   /** The welding wire batch number, entered on the setup step. */
   weldingWireBatch?: string

@@ -27,12 +27,12 @@ import {
   ChevronUp,
 } from 'lucide-react'
 import { Badge, Button, Drawer, type BadgeTone } from '@/components/ui'
-import { SessionToneBadge, sampleChipClass, sampleChipTitle } from '@/components/inspection/SessionTone'
+import { PtCoverageBadge, SessionToneBadge, sampleChipClass, sampleChipTitle } from '@/components/inspection/SessionTone'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { useOrder, useOrderHistory, useOrderNotes } from '@/services/queries'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
-import { isStockOrder } from '@qc/shared/rules'
+import { isStockOrder, processForMachine } from '@qc/shared/rules'
 import type { SampleSummary, SessionWithOrder } from '@qc/shared/api'
 
 export function OrderDetailsPanel({
@@ -163,6 +163,14 @@ export function OrderDetailsPanel({
                 <Attr label="Final qty" value={session.finalQty !== undefined ? String(session.finalQty) : ''} />
                 <Attr label="Closed" value={session.closedAt ? formatDateTime(session.closedAt) : ''} />
                 <Attr label="Closed by" value={session.closedByName ?? (session.closedAt ? 'Unknown' : '')} />
+                {processForMachine(machines.find((m) => m.code === session.workCenterCode) ?? null, session.workCenterCode) === 'welding' && (
+                  <div>
+                    <dt className="text-xs font-semibold uppercase text-slate-400">PT coverage (5% of final qty)</dt>
+                    <dd className="mt-0.5">
+                      <PtCoverageBadge session={session} finalQty={session.status === 'Closed' ? session.finalQty : null} />
+                    </dd>
+                  </div>
+                )}
               </dl>
               {onCorrectQuantities && (
                 <button

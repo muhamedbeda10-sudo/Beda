@@ -174,7 +174,7 @@ const saveSampleSchema = z.object({
   paint: z.object({ notes: optText(4000), imageIds: z.array(uuid).max(50).default([]) }).optional(),
   pt: z
     .object({
-      testFrequencyPct: z.number().finite(),
+      testFrequencyPct: z.number().finite().optional(),
       consumableLots: z.object({ Cleaner: z.string().trim(), Penetrant: z.string().trim(), Developer: z.string().trim() }),
       weldingWireBatch: optText(100),
       testedLengths: z
@@ -1205,7 +1205,7 @@ async function writeSampleChildren(
       `INSERT INTO pt_records
          (sample_id, test_frequency_pct, cleaner_lot, penetrant_lot, developer_lot, welding_wire_batch, accept_or_repair, notes)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-      [sampleId, pt.testFrequencyPct, pt.consumableLots.Cleaner, pt.consumableLots.Penetrant, pt.consumableLots.Developer, pt.weldingWireBatch ?? null, verdict, pt.notes ?? null],
+      [sampleId, pt.testFrequencyPct ?? null, pt.consumableLots.Cleaner, pt.consumableLots.Penetrant, pt.consumableLots.Developer, pt.weldingWireBatch ?? null, verdict, pt.notes ?? null],
     )).rows[0].id
     for (const [i, l] of pt.testedLengths.entries()) {
       await tx.query(`INSERT INTO pt_tested_lengths (pt_record_id, seq, length_mm, verdict) VALUES ($1, $2, $3, $4)`, [ptId, i + 1, l.lengthMm, l.verdict])

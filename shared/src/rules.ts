@@ -164,6 +164,16 @@ export const PAINT_THICKNESS_NAME = 'Paint thickness'
 
 /** §5.6 — the share of welds a PT inspection must cover, at the least. */
 export const PT_MIN_TEST_FREQUENCY_PCT = 5
+
+/**
+ * §5.6 — how many pieces a welding session must have PT-tested: 5% of its
+ * final quantity, rounded up to a whole piece so the 5% is met, never
+ * undershot. Known once the session is closed with its final quantity.
+ */
+export function ptRequiredFor(finalQty: number): number {
+  if (!Number.isFinite(finalQty) || finalQty <= 0) return 0
+  return Math.ceil((finalQty * PT_MIN_TEST_FREQUENCY_PCT) / 100 - 1e-9)
+}
 /** The least thickness readings a paint sample carries; more are added in threes. */
 export const PAINT_THICKNESS_READINGS = 3
 /** The unit used when no configuration row names one. */
@@ -285,7 +295,8 @@ export interface SampleDraftForValidation {
   dimensions?: Array<{ name: string; nominal: number | null; actual: number | null }>
   paint?: { imageIds: string[] }
   pt?: {
-    testFrequencyPct: number
+    /** Older records typed a frequency by hand; the requirement is now worked out from the final quantity. */
+    testFrequencyPct?: number | null
     consumableLots: Partial<Record<'Cleaner' | 'Penetrant' | 'Developer', string>>
     testedLengths?: Array<{ lengthMm: number; verdict: PTVerdict | null | undefined }>
   }
@@ -365,13 +376,6 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
     if (!pt) {
       issues.push({ step: 'pt', message: 'PT / weld inspection details are required.' })
     } else {
-      if (!(pt.testFrequencyPct >= PT_MIN_TEST_FREQUENCY_PCT)) {
-        issues.push({
-          step: 'pt',
-          message: `Test frequency must be at least ${PT_MIN_TEST_FREQUENCY_PCT}%.`,
-          ref: 'testFrequencyPct',
-        })
-      }
       for (const kind of ['Cleaner', 'Penetrant', 'Developer'] as const) {
         if (!pt.consumableLots?.[kind]?.trim()) {
           issues.push({

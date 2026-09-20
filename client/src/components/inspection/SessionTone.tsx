@@ -1,6 +1,7 @@
 import { AlertOctagon, History, PauseCircle } from 'lucide-react'
 import { Badge } from '@/components/ui'
 import { sessionTone, type SessionTone } from '@/domain'
+import { PT_MIN_TEST_FREQUENCY_PCT, ptRequiredFor } from '@qc/shared/rules'
 import { cn } from '@/lib/utils'
 import type { InspectionSession } from '@qc/shared/types'
 
@@ -35,6 +36,36 @@ type Signals = Pick<InspectionSession, 'defectCount' | 'defectPieces' | 'holdCou
 const formatQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/\.?0+$/, ''))
 
 type SampleSignals = { defectCount?: number; holdCount?: number }
+
+/**
+ * §5.6 — PT coverage of a welding session against 5% of its production.
+ * `finalQty` is the quantity typed (or recorded); before it is known the
+ * requirement is not, and the line says so.
+ */
+export function ptCoverage(session: { ptTestedCount?: number }, finalQty: number | null | undefined): { tested: number; required: number | null; short: number; met: boolean } {
+  const tested = session.ptTestedCount ?? 0
+  const required = finalQty !== null && finalQty !== undefined && Number.isFinite(finalQty) && finalQty >= 0 ? ptRequiredFor(finalQty) : null
+  const short = required === null ? 0 : Math.max(0, required - tested)
+  return { tested, required, short, met: required !== null && short === 0 }
+}
+
+/** The PT line in words: "12 tested · 15 required (5% of 300) · short by 3". */
+export function ptCoverageText(session: { ptTestedCount?: number }, finalQty: number | null | undefined): string {
+  const c = ptCoverage(session, finalQty)
+  if (c.required === null) return `${c.tested} tested · required is ${PT_MIN_TEST_FREQUENCY_PCT}% of the final quantity, known at close`
+  return `${c.tested} tested · ${c.required} required (${PT_MIN_TEST_FREQUENCY_PCT}% of ${finalQty}, rounded up)${c.short > 0 ? ` · short by ${c.short}` : ' · met'}`
+}
+
+/** The PT coverage as a badge: green when met, amber when short, quiet until the final quantity is known. */
+export function PtCoverageBadge({ session, finalQty, className }: { session: { ptTestedCount?: number }; finalQty: number | null | undefined; className?: string }) {
+  const c = ptCoverage(session, finalQty)
+  if (c.required === null) return <Badge tone="neutral" className={className}>PT {c.tested} tested</Badge>
+  return (
+    <Badge tone={c.met ? 'green' : 'amber'} className={className} icon={c.met ? undefined : <AlertOctagon className="h-3 w-3" />}>
+      PT {c.tested} / {c.required}{c.short > 0 ? ` · short by ${c.short}` : ''}
+    </Badge>
+  )
+}
 
 /**
  * A sample chip wears the sample's worst signal, the same colours as a

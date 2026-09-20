@@ -56,7 +56,6 @@ export interface DraftTestedLength {
 }
 
 export interface DraftPT {
-  testFrequencyPct: string
   consumableLots: Partial<Record<PTConsumableKind, string>>
   /** Entered on the setup step of a welding machine. */
   weldingWireBatch?: string
@@ -122,7 +121,7 @@ export function draftIsUntouched(d: SampleDraft): boolean {
   if (d.defects.length > 0) return false
   if (d.paint.imageIds.length > 0 || (d.paint.notes ?? '').trim() !== '') return false
   if (d.note && (d.note.text.trim() !== '' || d.note.imageIds.length > 0)) return false
-  if (d.pt && (d.pt.testedLengths.length > 0 || d.pt.imageIds.length > 0 || d.pt.testFrequencyPct.trim() !== '')) return false
+  if (d.pt && (d.pt.testedLengths.length > 0 || d.pt.imageIds.length > 0)) return false
   return true
 }
 

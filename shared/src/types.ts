@@ -180,6 +180,8 @@ export interface InspectionSession {
   piecesInspected?: number
   /** Dimension readings out of tolerance across the samples. Computed by the API. */
   dimensionFailCount?: number
+  /** PT-tested weld lengths across the samples: what counts toward the 5% of the final quantity. Computed by the API. */
+  ptTestedCount?: number
   /** The same item of the same order already showed defects on another
    *  machine or in an earlier session. Computed by the API. */
   priorDefectsElsewhere?: boolean
@@ -371,8 +373,8 @@ export interface PTTestedLength {
 export interface PTRecord {
   id: ID
   sampleId: ID
-  /** Must be greater than 5 (§5.6). */
-  testFrequencyPct: number
+  /** Typed by hand on older records only; the requirement is 5% of the session's final quantity (§5.6). */
+  testFrequencyPct?: number | null
   /** Lot/batch per consumable kind — the chemical audit trail, all mandatory. */
   consumableLots: Record<PTConsumableKind, string>
   sampleSize?: string

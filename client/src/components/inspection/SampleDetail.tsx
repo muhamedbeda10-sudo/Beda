@@ -292,7 +292,7 @@ export function SampleDetail({
                 <Attr label="Cleaner lot" value={pt.consumableLots.Cleaner} />
                 <Attr label="Penetrant lot" value={pt.consumableLots.Penetrant} />
                 <Attr label="Developer lot" value={pt.consumableLots.Developer} />
-                <Attr label="Test frequency" value={`${pt.testFrequencyPct}%`} />
+                {pt.testFrequencyPct !== null && pt.testFrequencyPct !== undefined && <Attr label="Test frequency (typed)" value={`${pt.testFrequencyPct}%`} />}
                 <Attr label="Welding wire batch" value={pt.weldingWireBatch} />
                 <div>
                   <dt className="text-xs font-semibold uppercase text-slate-400">PT verdict</dt>

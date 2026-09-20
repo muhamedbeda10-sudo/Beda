@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Stat } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
-import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
+import { PtCoverageBadge, SessionToneBadge, ptCoverage, sessionToneClass } from '@/components/inspection/SessionTone'
 import { Attr, SampleDetail, Section, SectionEmpty, dispositionToneOf, num, statusToneOf } from '@/components/inspection/SampleDetail'
 import { DefectEditDialog, DimensionEditDialog } from '@/components/inspection/CorrectionDialogs'
 import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
@@ -110,6 +110,7 @@ const HISTORY_COLUMNS: ColumnDef[] = [
   { key: 'defectRate', label: 'Defect %', width: 96, min: 72, align: 'right' },
   { key: 'inspectedRate', label: 'Defect % of inspected', width: 120, min: 80, align: 'right', defaultHidden: true },
   { key: 'dimFails', label: 'Dims failed', width: 100, min: 80, align: 'right', defaultHidden: true },
+  { key: 'pt', label: 'PT tested / required', width: 150, min: 100, align: 'right', defaultHidden: true },
   { key: 'holds', label: 'On Hold', width: 90, min: 72, align: 'right', defaultHidden: true },
   { key: 'notes', label: 'Notes', width: 80, min: 64, align: 'right', defaultHidden: true },
   { key: 'rejected', label: 'Rejected before release', width: 150, min: 90, align: 'right' },
@@ -124,6 +125,7 @@ interface HistoryCellContext {
   fixed: boolean
   workCenterName: (code: string) => string
   factoryOf: (code: string) => string
+  processOf: (code: string) => Process
 }
 
 const pctText = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 1000) / 10}%` : '—')
@@ -218,6 +220,16 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
       )
     case 'dimFails':
       return number(s.dimensionFailCount ?? 0, (s.dimensionFailCount ?? 0) > 0 ? 'font-bold text-rose-600 dark:text-rose-400' : '')
+    case 'pt': {
+      // Welding only; the requirement is 5% of the final quantity once the session is closed.
+      if (ctx.processOf(s.workCenterCode) !== 'welding') return <td key={key} className="px-4 py-3 text-right text-slate-400">—</td>
+      const c = ptCoverage(s, s.status === 'Closed' ? s.finalQty : null)
+      return (
+        <td key={key} className={cn('px-4 py-3 text-right tabular-nums', c.required !== null && (c.met ? 'font-semibold text-emerald-700 dark:text-emerald-400' : 'font-bold text-amber-700 dark:text-amber-400'))} title={c.required === null ? 'Required is known once the session is closed' : c.short > 0 ? `Short by ${c.short}` : 'Met'}>
+          {c.tested} / {c.required ?? '—'}
+        </td>
+      )
+    }
     case 'holds':
       return number(s.holdCount ?? 0, (s.holdCount ?? 0) > 0 ? 'font-bold text-amber-700 dark:text-amber-400' : '')
     case 'notes':
@@ -402,6 +414,7 @@ export function HistoryPage() {
       fixed: grid.enabled,
       workCenterName: (code) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`,
       factoryOf: (code) => machines.find((m) => m.code === code)?.factory ?? '',
+      processOf: (code) => processForMachine(machines.find((m) => m.code === code) ?? null, code),
     }),
     [grid.enabled, machines],
   )
@@ -795,6 +808,14 @@ export function HistoryPage() {
                   <Attr label="Final qty" value={openSession.finalQty} />
                   <Attr label="Closed" value={openSession.closedAt ? formatDateTime(openSession.closedAt) : '—'} />
                   <Attr label="Closed by" value={openSession.closedByName ?? (openSession.closedAt ? 'Unknown' : '—')} />
+                  {processForMachine(machines.find((m) => m.code === openSession.workCenterCode) ?? null, openSession.workCenterCode) === 'welding' && (
+                    <div>
+                      <dt className="text-xs font-semibold uppercase text-slate-400">PT coverage (5% of final qty)</dt>
+                      <dd className="mt-0.5">
+                        <PtCoverageBadge session={openSession} finalQty={openSession.status === 'Closed' ? openSession.finalQty : null} />
+                      </dd>
+                    </div>
+                  )}
                 </dl>
 
                 {samplesLoading ? (

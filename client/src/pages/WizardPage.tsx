@@ -253,7 +253,7 @@ export function WizardPage() {
       note: { text: '', imageIds: [] },
       pt:
         process === 'welding'
-          ? { testFrequencyPct: '', consumableLots: {}, weldingWireBatch: previousWire ?? '', testedLengths: [], imageIds: [] }
+          ? { consumableLots: {}, weldingWireBatch: previousWire ?? '', testedLengths: [], imageIds: [] }
           : undefined,
       updatedAt: new Date().toISOString(),
     })
@@ -302,7 +302,6 @@ export function WizardPage() {
       paint: { imageIds: draft.paint.imageIds },
       pt: draft.pt
         ? {
-            testFrequencyPct: Number(draft.pt.testFrequencyPct),
             consumableLots: draft.pt.consumableLots,
             testedLengths: draft.pt.testedLengths.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict ?? null })),
           }
@@ -386,7 +385,6 @@ export function WizardPage() {
         pt:
           draft.process === 'welding' && draft.pt
             ? {
-                testFrequencyPct: Number(draft.pt.testFrequencyPct),
                 consumableLots: {
                   Cleaner: draft.pt.consumableLots.Cleaner ?? '',
                   Penetrant: draft.pt.consumableLots.Penetrant ?? '',
@@ -1515,7 +1513,6 @@ function draftFromSample(detail: SampleDetail, sessionId: string, workCenterCode
     pt:
       process === 'welding'
         ? {
-            testFrequencyPct: str(pt?.testFrequencyPct),
             consumableLots: pt?.consumableLots ?? {},
             weldingWireBatch: pt?.weldingWireBatch ?? '',
             testedLengths: (pt?.testedLengths ?? []).map((l) => ({ key: uid('tl'), lengthMm: String(l.lengthMm), verdict: l.verdict })),
@@ -1536,7 +1533,7 @@ function draftFromSample(detail: SampleDetail, sessionId: string, workCenterCode
 }
 
 function emptyPT(): DraftPT {
-  return { testFrequencyPct: '', consumableLots: {}, weldingWireBatch: '', testedLengths: [], imageIds: [] }
+  return { consumableLots: {}, weldingWireBatch: '', testedLengths: [], imageIds: [] }
 }
 
 function PaintStep({
@@ -1682,34 +1679,21 @@ function PTStep({
 }) {
   const pt = draft.pt ?? emptyPT()
   const setPT = (patch: Partial<DraftPT>) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), ...patch } }))
-  const freq = Number(pt.testFrequencyPct)
-  const freqBad = pt.testFrequencyPct.trim() !== '' && !(freq >= PT_MIN_TEST_FREQUENCY_PCT)
+  const testedHere = pt.testedLengths.length
   const setLength = (key: string, patch: Partial<DraftPT['testedLengths'][number]>) =>
     setPT({ testedLengths: pt.testedLengths.map((l) => (l.key === key ? { ...l, ...patch } : l)) })
   const overall = ptOverallVerdict(pt.testedLengths.map((l) => ({ verdict: l.verdict })))
 
   return (
     <div className="space-y-4">
+      {/* The requirement is worked out, not typed: 5% of the final quantity, rounded up, once the session closes. */}
       <div className="rounded-2xl border-l-4 border-l-brand-500 bg-brand-50/60 p-3 text-sm text-brand-900 dark:bg-brand-500/10 dark:text-brand-100">
-        <p className="font-bold">PT test frequency requirement</p>
-        <p>At least {PT_MIN_TEST_FREQUENCY_PCT}% of the welds must be tested.</p>
+        <p className="font-bold">PT covers {PT_MIN_TEST_FREQUENCY_PCT}% of the session's production</p>
+        <p>
+          The required count is {PT_MIN_TEST_FREQUENCY_PCT}% of the final quantity, rounded up to a whole piece, and is worked out when the session is closed.
+          Every tested length recorded here counts toward it{testedHere > 0 ? ` — ${testedHere} in this sample so far` : ''}.
+        </p>
       </div>
-
-      <Field label="Test frequency %">
-        <Input
-          type="number"
-          inputMode="decimal"
-          step="any"
-          value={pt.testFrequencyPct}
-          onChange={(e) => setPT({ testFrequencyPct: e.target.value })}
-          className={cn('min-h-[48px] text-lg', freqBad && 'border-rose-400')}
-        />
-        {freqBad && (
-          <span className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-rose-600 dark:text-rose-400">
-            <AlertTriangle className="h-4 w-4" /> Must be at least {PT_MIN_TEST_FREQUENCY_PCT}%.
-          </span>
-        )}
-      </Field>
 
       <div>
         <span className="label">PT materials — lot / batch is mandatory</span>
@@ -1989,7 +1973,6 @@ function ReviewStep({
       {draft.process === 'welding' && draft.pt && (
         <Section title="PT / weld">
           <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-            <Row label="Frequency" value={`${draft.pt.testFrequencyPct}%`} />
             <Row label="Cleaner lot" value={draft.pt.consumableLots.Cleaner ?? '—'} />
             <Row label="Penetrant lot" value={draft.pt.consumableLots.Penetrant ?? '—'} />
             <Row label="Developer lot" value={draft.pt.consumableLots.Developer ?? '—'} />
