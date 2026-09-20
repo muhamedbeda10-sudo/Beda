@@ -195,6 +195,30 @@ describe('§6 — a filter reaches past the first page', () => {
     expect(theirs.body.sessions.map((s) => s.id)).toEqual([buried])
   })
 
+  it('finds the sessions of one day, or of a range of days', async () => {
+    const day = (offset: number) => {
+      const d = new Date()
+      d.setUTCDate(d.getUTCDate() + offset)
+      return d.toISOString().slice(0, 10)
+    }
+    // Everything here was started today (some an hour ago), so today alone holds the whole record...
+    const today = await get(`from=${day(0)}&to=${day(0)}`, one.token)
+    expect(today.status).toBe(200)
+    expect(today.body.totals!.sessions).toBe(RECENT + 1)
+    // ...a window ending yesterday holds nothing, and a window from yesterday on holds all.
+    expect((await get(`from=${day(-30)}&to=${day(-1)}`, one.token)).body.totals!.sessions).toBe(0)
+    expect((await get(`from=${day(-1)}`, one.token)).body.totals!.sessions).toBe(RECENT + 1)
+    expect((await get(`to=${day(-1)}`, one.token)).body.totals!.sessions).toBe(0)
+    // Pushed back to a day last week, the buried session leaves today and is found on its own day.
+    await app.db.query(`UPDATE inspection_sessions SET started_at = started_at - interval '7 days' WHERE id = $1`, [buried])
+    await app.db.query(`UPDATE inspection_samples SET created_at = created_at - interval '7 days' WHERE session_id = $1`, [buried])
+    expect((await get(`from=${day(0)}&to=${day(0)}`, one.token)).body.totals!.sessions).toBe(RECENT)
+    const lastWeek = await get(`from=${day(-7)}&to=${day(-7)}`, one.token)
+    expect(lastWeek.body.sessions.map((s) => s.id)).toEqual([buried])
+    expect((await get(`from=${day(0)}&to=${day(-1)}`, one.token)).status).toBe(400)
+    expect((await get('from=2026-1-1', one.token)).status).toBe(400)
+  })
+
   it('refuses a filter it cannot read', async () => {
     expect((await get('status=Sleeping', one.token)).status).toBe(400)
     expect((await get('inspectorId=nobody', one.token)).status).toBe(400)

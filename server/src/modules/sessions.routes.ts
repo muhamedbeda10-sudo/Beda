@@ -370,6 +370,8 @@ export function sessionsRoutes(ctx: AppContext): Router {
         factory: z.string().trim().max(120).optional(),
         inspectorId: uuid.optional(),
         since: z.string().datetime({ offset: true }).optional(),
+        from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a day, YYYY-MM-DD').optional(),
+        to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a day, YYYY-MM-DD').optional(),
       }),
       req.query,
     )
@@ -403,6 +405,18 @@ export function sessionsRoutes(ctx: AppContext): Router {
       const since = p(q.since)
       clauses.push(`(s.started_at >= ${since}::timestamptz OR EXISTS (
                       SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.created_at >= ${since}::timestamptz))`)
+    }
+    if (q.from || q.to) {
+      // Factory days, both ends inclusive, in the factory's zone — the same
+      // reading of a day the dashboard uses. A session is in the range when it
+      // started in it or a sample was recorded in it.
+      if (q.from && q.to && q.from > q.to) throw badRequest('The range ends before it starts.')
+      const tz = p(ctx.config.FACTORY_TIMEZONE)
+      const start = q.from ? `(${p(q.from)}::date)::timestamp AT TIME ZONE ${tz}` : null
+      const end = q.to ? `((${p(q.to)}::date + 1)::timestamp) AT TIME ZONE ${tz}` : null
+      const within = (col: string) => [start && `${col} >= ${start}`, end && `${col} < ${end}`].filter(Boolean).join(' AND ')
+      clauses.push(`(${within('s.started_at')} OR EXISTS (
+                      SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND ${within('x.created_at')}))`)
     }
     if (q.workCenterCode) {
       // "STAM 24", "stam24" and "024" all name the same machine on the floor.
