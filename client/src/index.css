@@ -112,6 +112,32 @@ body {
   background: transparent;
 }
 
+/* A wide table lives in a frame of bounded height: its header stays put
+   and both scrollbars are on screen, not under the end of the page. */
+.grid-scroll {
+  min-height: 12rem;
+  overflow: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+.grid-scroll::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.grid-scroll::-webkit-scrollbar-track {
+  @apply bg-slate-100 dark:bg-slate-800;
+}
+.grid-scroll::-webkit-scrollbar-thumb {
+  @apply rounded-full border-2 border-solid border-slate-100 bg-slate-400 dark:border-slate-800 dark:bg-slate-500;
+}
+.grid-scroll::-webkit-scrollbar-corner {
+  @apply bg-slate-100 dark:bg-slate-800;
+}
+.grid-scroll thead th {
+  @apply sticky top-0 z-20 bg-white dark:bg-slate-900;
+}
+
 /* Hide number input spinners */
 input[type='number']::-webkit-inner-spin-button,
 input[type='number']::-webkit-outer-spin-button {

@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronRight, Search, Table2, X } from 'lucide-react'
 import type { OrderListFilters, OrderListRow } from '@qc/shared/api'
 import { Badge, Button, Card, EmptyState, Field, Input, Select } from '@/components/ui'
-import { ColumnPicker, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
+import { ColumnPicker, FitColumnsButton, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { loadMoreOrders, useDebounced, useMaster, useOrderList, useOrderListOptions } from '@/services/queries'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useApp } from '@/store/AppContext'
@@ -285,7 +285,8 @@ export function AccessPage() {
             </button>
           )}
         </p>
-        <div className="hidden md:block">
+        <div className="hidden gap-2 md:flex">
+          <FitColumnsButton grid={grid} />
           <ColumnPicker grid={grid} />
         </div>
       </div>
@@ -333,15 +334,15 @@ export function AccessPage() {
           </div>
 
           {/* md+ — the sheet as a table; the columns are the reader's to choose and, on a desktop, to size. */}
-          <Card className="hidden md:block">
-            <div className="overflow-x-auto">
-              <table className={cn('w-full text-sm', !grid.enabled && 'min-w-[900px]')} style={grid.tableStyle}>
+          <Card className="hidden overflow-hidden md:block">
+            <GridFrame>
+              <table ref={grid.tableRef} className={cn('w-full text-sm', !grid.enabled && 'min-w-[900px]')} style={grid.tableStyle}>
                 {grid.colgroup}
                 <thead>
                   <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
                     {grid.visible.map((c) => (
                       // The cell stays overflow-visible so the grab zone can straddle its edge; only the label is clipped.
-                      <th key={c.key} className={cn('relative px-4 py-3', c.align === 'right' && 'text-right', grid.dragging === c.key && 'bg-brand-50/60 dark:bg-brand-500/10')} title={grid.enabled && c.label ? c.label : undefined}>
+                      <th key={c.key} data-col={c.key} className={cn('px-4 py-3', c.align === 'right' && 'text-right', grid.dragging === c.key && '!bg-brand-50 dark:!bg-brand-950')} title={grid.enabled && c.label ? c.label : undefined}>
                         <span className={cn(grid.enabled && 'block truncate')}>{c.label}</span>
                         {c.hideable !== false && grid.handle(c.key)}
                       </th>
@@ -361,7 +362,7 @@ export function AccessPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </GridFrame>
           </Card>
 
           {hasMore && (

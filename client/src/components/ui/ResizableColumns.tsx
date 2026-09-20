@@ -7,8 +7,8 @@
 // but can still choose which columns to show.
 // ============================================================================
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react'
-import { Check, Columns3, RotateCcw } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from 'react'
+import { Check, Columns3, RotateCcw, Scaling } from 'lucide-react'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn } from '@/lib/utils'
 
@@ -100,6 +100,12 @@ export interface ResizableColumns {
   handle: (key: string) => ReactElement | null
   /** Which column is being dragged, for a header highlight. */
   dragging: string | null
+  /** Put on the `<table>`: the fit reads the columns' natural widths from it. */
+  tableRef: (el: HTMLTableElement | null) => void
+  /** Size every visible column to its content, once, and remember it. */
+  autoFit: () => void
+  /** True for the one render in which the table lays itself out to be measured. */
+  fitting: boolean
 }
 
 export function useResizableColumns(storageKey: string, columns: ColumnDef[]): ResizableColumns {
@@ -109,13 +115,18 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
   const setStored = useCallback((fn: (prev: Stored) => Stored) => setRaw((prev) => fn(sanitise(prev, columns))), [setRaw, columns])
   const [dragging, setDragging] = useState<string | null>(null)
   const drag = useRef<{ key: string; startX: number; startWidth: number; min: number } | null>(null)
+  const table = useRef<HTMLTableElement | null>(null)
+  const tableRef = useCallback((el: HTMLTableElement | null) => {
+    table.current = el
+  }, [])
+  const [fitting, setFitting] = useState(false)
 
   const visible = useMemo(() => visibleWith(columns, stored.shown), [columns, stored.shown])
   const visibleKeys = useMemo(() => new Set(visible.map((c) => c.key)), [visible])
   const isVisible = useCallback((key: string) => visibleKeys.has(key), [visibleKeys])
 
   const widths = useMemo(() => {
-    if (!enabled) return null
+    if (!enabled || fitting) return null
     const out: Record<string, number> = {}
     for (const c of visible) out[c.key] = stored.widths[c.key] ?? c.width
     return out
@@ -186,13 +197,40 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
     [setStored, columns],
   )
   const resetAll = useCallback(() => setStored(() => ({ widths: {}, shown: {} })), [setStored])
+
+  // Fit: one render with the table's own layout, then every header's width is read and kept.
+  const autoFit = useCallback(() => {
+    if (enabled) setFitting(true)
+  }, [enabled])
+  useLayoutEffect(() => {
+    if (!fitting) return
+    const el = table.current
+    const next: Record<string, number> = {}
+    if (el) {
+      for (const th of Array.from(el.querySelectorAll<HTMLTableCellElement>('thead th[data-col]'))) {
+        const key = th.dataset.col!
+        const col = columns.find((c) => c.key === key)
+        // The fixed columns (the row's chevron) keep their width.
+        if (!col || col.hideable === false) continue
+        // A little air past the content, so the last letter is not against the edge.
+        next[key] = Math.min(MAX_WIDTH, Math.max(col.min ?? DEFAULT_MIN, Math.ceil(th.getBoundingClientRect().width) + 8))
+      }
+    }
+    setStored((prev) => ({ ...prev, widths: { ...prev.widths, ...next } }))
+    setFitting(false)
+  }, [fitting, columns, setStored])
   const customised = Object.keys(stored.shown).length > 0 || Object.keys(stored.widths).length > 0
 
+  // Fixed layout at the sum of the widths; when the frame is wider than that,
+  // the table takes the frame and the extra is shared out, so a few columns
+  // fill the width rather than huddling on the left.
   const tableStyle = useMemo<CSSProperties | undefined>(() => {
+    // The measuring render: the table's own layout at its natural width, so each column is as wide as its content.
+    if (fitting) return { tableLayout: 'auto', width: 'auto', minWidth: 0 }
     if (!widths) return undefined
     const total = Object.values(widths).reduce((a, b) => a + b, 0)
-    return { tableLayout: 'fixed', width: total, minWidth: total }
-  }, [widths])
+    return { tableLayout: 'fixed', width: '100%', minWidth: total }
+  }, [widths, fitting])
 
   const colgroup = useMemo(
     () =>
@@ -230,7 +268,50 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
     [widths, start, resetWidth, dragging],
   )
 
-  return { enabled, visible, columns, isVisible, toggle, resetAll, customised, tableStyle, colgroup, handle, dragging }
+  return { enabled, visible, columns, isVisible, toggle, resetAll, customised, tableStyle, colgroup, handle, dragging, tableRef, autoFit, fitting }
+}
+
+/** Sizes every column to its content; a desktop control, beside the picker. */
+export function FitColumnsButton({ grid, className }: { grid: ResizableColumns; className?: string }) {
+  if (!grid.enabled) return null
+  return (
+    <button type="button" onClick={grid.autoFit} className={cn('btn-secondary min-h-[40px] px-3 text-xs', className)} title="Size every column to what is in it">
+      <Scaling className="h-4 w-4" /> Fit columns
+    </button>
+  )
+}
+
+/**
+ * The frame a wide table scrolls in. Its height runs from where it sits on
+ * the page to the bottom of the window, so the header stays put and both
+ * scrollbars are on screen however many columns are shown, rather than
+ * under the end of the page.
+ */
+export function GridFrame({ children, className }: { children: ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = () => {
+      // Where the frame starts when the page is at its top, whatever the page is scrolled to now.
+      const top = el.getBoundingClientRect().top + window.scrollY
+      setMaxHeight(Math.max(256, Math.round(window.innerHeight - top - 24)))
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    ro?.observe(document.body)
+    return () => {
+      window.removeEventListener('resize', measure)
+      ro?.disconnect()
+    }
+  }, [])
+  return (
+    <div ref={ref} className={cn('grid-scroll', className)} style={{ maxHeight }}>
+      {children}
+    </div>
+  )
 }
 
 /** The "Columns" button and its list: tick a column to show it, untick to hide it; one control resets widths and hidden columns together. */
@@ -291,6 +372,19 @@ export function ColumnPicker({ grid, className }: { grid: ResizableColumns; clas
             })}
           </ul>
           <div className="mt-1 border-t border-slate-100 pt-1 dark:border-slate-800">
+            {grid.enabled && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  grid.autoFit()
+                  setOpen(false)
+                }}
+                className="flex min-h-[40px] w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <Scaling className="h-4 w-4" /> Fit columns to content
+              </button>
+            )}
             <button
               type="button"
               role="menuitem"
