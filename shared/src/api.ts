@@ -745,3 +745,41 @@ export interface ReleaseStateResponse {
 export interface MarkReleaseSeenRequest {
   releaseId: string
 }
+
+// ---- Access: the imported order lines as a table (§19) -------------------
+
+export interface OrderListFilters {
+  /** Free text over order number, line key, item, item code, customer, drawing and machine code. */
+  q?: string
+  /** A machine code, compared the way the floor writes it. */
+  workCenterCode?: string
+  factory?: string
+  erpStatus?: string
+  /** 'open' — required above finished; 'done' — finished. */
+  remaining?: 'open' | 'done'
+  /** 'yes' — at least one inspection session on the line; 'no' — none. */
+  inspected?: 'yes' | 'no'
+}
+
+/** One imported line with what the inspection record adds to it. */
+export interface OrderListRow extends ProductionOrder {
+  factory: string
+  remainingQty: number
+  sessions: number
+  samples: number
+  defectPieces: number
+  lastInspectedAt: string | null
+}
+
+export interface OrderListResponse {
+  orders: OrderListRow[]
+  /** Lines matching the filters, counted over the whole table. */
+  total: number
+  hasMore: boolean
+}
+
+export interface OrderListOptionsResponse {
+  erpStatuses: string[]
+  factories: string[]
+  workCenterCodes: string[]
+}

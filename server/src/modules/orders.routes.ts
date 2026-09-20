@@ -15,6 +15,9 @@ import {
   type ExistingKeysResponse,
   type ImportResult,
   type OrderHistory,
+  type OrderListOptionsResponse,
+  type OrderListResponse,
+  type OrderListRow,
   type OrderNumberSummary,
   type SampleSummary,
   type SessionNotesResponse,
@@ -28,6 +31,7 @@ import { requireCapability, requireUser } from '../auth/middleware'
 import { writeAudit } from '../audit/service'
 import { dropNulls, normaliseKey } from '../lib/rows'
 import { SAMPLE_SUMMARY_SELECT, SESSION_SELECT } from './sessions.sql'
+import { NORMALISED_CODE } from './sessions.routes'
 import { loadOrderNotes } from './notes'
 
 export const ORDER_SELECT = `
@@ -35,6 +39,9 @@ export const ORDER_SELECT = `
   machine_id AS "machineId", required_qty AS "requiredQty", finished_qty AS "finishedQty",
   drawing, drawing_alt AS "drawingAlt", issue, material, expected_grade AS "expectedGrade",
   customer, type, colour, erp_status AS "erpStatus", order_date AS "date", deleted_at AS "deletedAt"`
+
+/** The same columns qualified with the table alias `o`, for a query that joins. */
+const ORDER_SELECT_O = ORDER_SELECT.replace(/(^|,)(\s*)(?=[a-z_]+)/g, '$1$2o.')
 
 const importRow = z.object({
   lineKey: z.string().trim().min(1).max(120),
@@ -125,6 +132,84 @@ export function ordersRoutes(ctx: AppContext): Router {
       params,
     )
     res.json(rows.map(dropNulls))
+  })
+
+  /**
+   * §19 — Access: the imported lines as a table, every filter applied in SQL
+   * over the whole table so a line is found wherever it sits, with what the
+   * inspection record adds to each line. Cancelled lines are listed too:
+   * this is the sheet as it was uploaded.
+   */
+  r.get('/list', async (req, res) => {
+    requireUser(req)
+    const q = parse(
+      z.object({
+        q: z.string().trim().max(120).optional(),
+        workCenterCode: z.string().trim().max(60).optional(),
+        factory: z.string().trim().max(120).optional(),
+        erpStatus: z.string().trim().max(40).optional(),
+        remaining: z.enum(['open', 'done']).optional(),
+        inspected: z.enum(['yes', 'no']).optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(100),
+        offset: z.coerce.number().int().min(0).max(100000).default(0),
+      }),
+      req.query,
+    )
+    const clauses = ['o.deleted_at IS NULL']
+    const params: unknown[] = []
+    const p = (v: unknown) => `$${params.push(v)}`
+    if (q.q) {
+      const t = p(`%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
+      clauses.push(`(o.order_number ILIKE ${t} OR o.line_key ILIKE ${t} OR o.item ILIKE ${t} OR o.item_code ILIKE ${t}
+                     OR o.customer ILIKE ${t} OR o.drawing ILIKE ${t} OR o.work_center_code ILIKE ${t})`)
+    }
+    if (q.workCenterCode) clauses.push(`${NORMALISED_CODE('o.work_center_code')} = ${NORMALISED_CODE(p(q.workCenterCode) + '::text')}`)
+    if (q.factory) clauses.push(`lower(btrim(COALESCE(m.factory, ''))) = lower(btrim(${p(q.factory)}))`)
+    if (q.erpStatus) clauses.push(`lower(btrim(o.erp_status)) = lower(btrim(${p(q.erpStatus)}))`)
+    if (q.remaining === 'open') clauses.push('o.required_qty > o.finished_qty')
+    if (q.remaining === 'done') clauses.push('o.required_qty <= o.finished_qty')
+    if (q.inspected === 'yes') clauses.push('EXISTS (SELECT 1 FROM inspection_sessions s WHERE s.order_id = o.id AND s.deleted_at IS NULL)')
+    if (q.inspected === 'no') clauses.push('NOT EXISTS (SELECT 1 FROM inspection_sessions s WHERE s.order_id = o.id AND s.deleted_at IS NULL)')
+    const limit = p(q.limit + 1)
+    const offset = p(q.offset)
+    const { rows } = await ctx.db.query<OrderListRow & { total: number }>(
+      `SELECT ${ORDER_SELECT_O}, COALESCE(m.factory, '') AS factory,
+              GREATEST(0, o.required_qty - o.finished_qty) AS "remainingQty",
+              (SELECT count(*)::int FROM inspection_sessions s WHERE s.order_id = o.id AND s.deleted_at IS NULL) AS sessions,
+              (SELECT count(*)::int FROM inspection_samples x WHERE x.order_id = o.id AND x.deleted_at IS NULL) AS samples,
+              (SELECT COALESCE(sum(d.qty), 0)::float8 FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+                WHERE x.order_id = o.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL) AS "defectPieces",
+              (SELECT max(x.created_at) FROM inspection_samples x WHERE x.order_id = o.id AND x.deleted_at IS NULL) AS "lastInspectedAt",
+              count(*) OVER ()::int AS total
+         FROM production_orders o
+         LEFT JOIN LATERAL (
+           SELECT m.factory FROM machines m WHERE ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('o.work_center_code')} AND m.deleted_at IS NULL
+           ORDER BY m.created_at LIMIT 1) m ON true
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY o.order_number, o.item_code, o.work_center_code, o.id
+        LIMIT ${limit} OFFSET ${offset}`,
+      params,
+    )
+    const hasMore = rows.length > q.limit
+    const page = rows.slice(0, q.limit)
+    const body: OrderListResponse = {
+      orders: page.map(({ total: _t, ...row }) => dropNulls(row) as OrderListRow),
+      total: rows[0]?.total ?? 0,
+      hasMore,
+    }
+    res.json(body)
+  })
+
+  /** What the Access filters may offer, drawn from every line on record. */
+  r.get('/list/options', async (req, res) => {
+    requireUser(req)
+    const [statuses, factories, machines] = await Promise.all([
+      ctx.db.query<{ v: string }>(`SELECT DISTINCT btrim(erp_status) AS v FROM production_orders WHERE deleted_at IS NULL AND btrim(erp_status) <> '' ORDER BY 1`),
+      ctx.db.query<{ v: string }>(`SELECT DISTINCT btrim(factory) AS v FROM machines WHERE deleted_at IS NULL AND btrim(COALESCE(factory, '')) <> '' ORDER BY 1`),
+      ctx.db.query<{ v: string }>(`SELECT DISTINCT work_center_code AS v FROM production_orders WHERE deleted_at IS NULL AND btrim(work_center_code) <> '' ORDER BY 1`),
+    ])
+    const body: OrderListOptionsResponse = { erpStatuses: statuses.rows.map((r) => r.v), factories: factories.rows.map((r) => r.v), workCenterCodes: machines.rows.map((r) => r.v) }
+    res.json(body)
   })
 
   /**

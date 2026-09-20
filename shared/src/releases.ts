@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-20.1',
+    date: '2026-09-20',
+    title: 'Access: the order sheet as a table',
+    items: [
+      { text: 'A new Access tab shows the ERP order sheet as it was uploaded, for everyone. Search any word of a line; filter by machine, factory, ERP status, remaining quantity and whether the line was inspected. Every filter runs over the whole sheet.' },
+      { text: 'Columns: choose the ones you need (line key, drawing, material, colour, and the inspection figures per line: sessions, samples, defect pieces, last inspected) and drag them wider on a desktop, as in History.' },
+      { text: 'A line that was inspected opens History on its order number.' },
+    ],
+  },
+  {
     id: '2026-09-16.1',
     date: '2026-09-16',
     title: 'Defect rate over production',

@@ -95,7 +95,7 @@ async function assertCoilsUsable(q: Queryable, coilIds: string[]): Promise<void>
  * numeric code without its leading zeros — so "STAM 24", "stam24" and "024"
  * all find the same previous sample.
  */
-const NORMALISED_CODE = (col: string) =>
+export const NORMALISED_CODE = (col: string) =>
   `(CASE WHEN regexp_replace(lower(translate(${col}, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')), '\\s+', '', 'g') ~ '^[0-9]+$'
          THEN COALESCE(NULLIF(ltrim(regexp_replace(lower(translate(${col}, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')), '\\s+', '', 'g'), '0'), ''), '0')
          ELSE regexp_replace(lower(translate(${col}, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')), '\\s+', '', 'g') END)`

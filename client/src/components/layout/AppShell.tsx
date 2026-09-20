@@ -22,6 +22,7 @@ import {
   BellRing,
   MessagesSquare,
   Sparkles,
+  Table2,
 } from 'lucide-react'
 import { WhatsNewPrompt } from '@/components/releases/WhatsNew'
 import { NoticeBell } from '@/components/notices/NoticeBell'
@@ -46,6 +47,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/history', label: 'History', icon: History },
+  { to: '/access', label: 'Access', icon: Table2 },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
 ]
 
