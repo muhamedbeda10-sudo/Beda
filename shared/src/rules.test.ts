@@ -17,6 +17,7 @@ import {
   resolveDimensions,
   sessionTone,
   can,
+  ptRequiredFor,
   stockProductionOf, isStockMachine, normaliseMachineCode,
 } from './rules'
 
@@ -260,18 +261,16 @@ describe('save-time validation', () => {
     expect(validateSample({ ...base, coils: [] })).toEqual([])
   })
 
-  it('requires PT test frequency of at least 5%', () => {
-    const withFreq = (pct: number) =>
-      validateSample({
-        ...base,
-        process: 'welding',
-        pt: { ...ptOk(), testFrequencyPct: pct },
-      })
-    // Exactly five is the floor, and passes; anything under it does not.
-    expect(withFreq(5).some((i) => i.ref === 'testFrequencyPct')).toBe(false)
-    expect(withFreq(4.9).some((i) => i.ref === 'testFrequencyPct')).toBe(true)
-    expect(withFreq(0).some((i) => i.ref === 'testFrequencyPct')).toBe(true)
-    expect(withFreq(10).some((i) => i.ref === 'testFrequencyPct')).toBe(false)
+  it('works the PT requirement out of the final quantity, whole pieces, rounded up', () => {
+    expect(ptRequiredFor(100)).toBe(5)
+    expect(ptRequiredFor(95)).toBe(5)
+    expect(ptRequiredFor(20)).toBe(1)
+    expect(ptRequiredFor(1)).toBe(1)
+    expect(ptRequiredFor(0)).toBe(0)
+    expect(ptRequiredFor(2176)).toBe(109)
+    // No typed frequency is asked for any more; a record without one is complete.
+    const { testFrequencyPct: _gone, ...untyped } = ptOk()
+    expect(validateSample({ ...base, process: 'welding', coils: [], pt: untyped })).toEqual([])
   })
 
   it('requires every consumable lot number', () => {

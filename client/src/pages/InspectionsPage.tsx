@@ -23,7 +23,7 @@ import {
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
-import { SessionToneBadge, sessionToneClass } from '@/components/inspection/SessionTone'
+import { PtCoverageBadge, SessionToneBadge, ptCoverageText, sessionToneClass } from '@/components/inspection/SessionTone'
 import { SampleDetail } from '@/components/inspection/SampleDetail'
 import { DefectEditDialog, DimensionEditDialog } from '@/components/inspection/CorrectionDialogs'
 import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
@@ -34,7 +34,7 @@ import { useMaster, useOpenBoard, useSampleDetail } from '@/services/queries'
 import { closeSession, correctDefect, correctDimension, discardSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can, isStockOrder, processForMachine, sessionTone, shiftName, type SessionTone } from '@/domain'
+import { can, isStockOrder, processForMachine, sessionTone, shiftName, type Process, type SessionTone } from '@/domain'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import { usePersistedState } from '@/lib/usePersistedState'
 import type { SampleSummary, SessionWithOrder } from '@qc/shared/api'
@@ -765,6 +765,7 @@ export function InspectionsPage() {
 
       {closing && (
         <CloseSessionDialog
+          process={processForMachine(machines.find((m) => m.code === closing.workCenterCode) ?? null, closing.workCenterCode)}
           session={closing}
           onClose={() => setClosing(null)}
           onConfirm={async (qty) => {
@@ -847,11 +848,14 @@ export function InspectionsPage() {
 
 function CloseSessionDialog({
   session,
+  process,
   onClose,
   onConfirm,
   onDiscard,
 }: {
   session: SessionWithOrder
+  /** The machine's process: a welding session shows its PT coverage against the quantity typed. */
+  process: Process
   onClose: () => void
   onConfirm: (qty: number) => void
   onDiscard: () => void
@@ -912,6 +916,24 @@ function CloseSessionDialog({
         <Field label={stock ? 'Final quantity produced (pairs)' : 'Final produced quantity'} hint="Recorded against this session and audited.">
           <Input autoFocus type="number" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} className="min-h-[48px] text-lg" />
         </Field>
+        {process === 'welding' && (
+          // §5.6 — the PT requirement follows the quantity as it is typed: 5% of it, rounded up, against what was tested.
+          <div
+            className={cn(
+              'rounded-2xl border-l-4 p-3 text-sm',
+              !valid
+                ? 'border-l-slate-300 bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300'
+                : ptCoverageText(session, parsed).endsWith('met')
+                  ? 'border-l-emerald-500 bg-emerald-50/70 text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-100'
+                  : 'border-l-amber-500 bg-amber-50/70 text-amber-900 dark:bg-amber-500/10 dark:text-amber-100',
+            )}
+          >
+            <p className="flex flex-wrap items-center gap-2 font-bold">
+              PT coverage <PtCoverageBadge session={session} finalQty={valid ? parsed : null} />
+            </p>
+            <p className="mt-1">{ptCoverageText(session, valid ? parsed : null)}</p>
+          </div>
+        )}
         <p className="text-sm text-slate-500 dark:text-slate-400">
           A closed session becomes read-only for inspectors. A supervisor can still correct it, and any correction is audited.
         </p>

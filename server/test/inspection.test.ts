@@ -200,7 +200,7 @@ describe('the atomic sample save', () => {
     })
     const res = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/samples`, { token: inspector.token, body: noLots })
     expect(res.status).toBe(400)
-    expect(res.body.error.message).toMatch(/at least 5%/)
+    expect(res.body.error.message).toMatch(/Cleaner lot/)
     const { rows } = await app.db.query('SELECT count(*)::int AS n FROM inspection_samples')
     expect(rows[0].n).toBe(0)
   })
@@ -318,6 +318,8 @@ describe('the atomic sample save', () => {
     // Two samples of one piece each; the 2503 mm length fails its ±2 tolerance in both.
     expect(board.body.sessions[0].piecesInspected).toBe(2)
     expect(board.body.sessions[0].dimensionFailCount).toBe(2)
+    // Two tested lengths on the first sample, two on the second: what counts toward 5% of the final quantity.
+    expect(board.body.sessions[0].ptTestedCount).toBe(4)
     expect(board.body.holdCount).toBe(1)
     const history = await app.api<OrderHistory>('GET', `/api/orders/${weldOrder.id}/history`, { token: inspector.token })
     expect(history.body.sessions).toHaveLength(1)
