@@ -21,7 +21,7 @@ import {
   type NoticeTargetKind,
   type NoticeMatchMode,
 } from '@qc/shared/types'
-import { can, shiftName } from '@qc/shared/rules'
+import { can, normaliseMachineCode, shiftName } from '@qc/shared/rules'
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { NoticeCard, NoticeFileRow, SeverityBadge, TargetChips, validityText } from '@/components/notices/NoticeCard'
@@ -29,7 +29,7 @@ import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/
 import { ApiError } from '@/lib/api'
 import { cn, formatDateTime } from '@/lib/utils'
 import { deleteNotice, saveNotice, uploadNoticeFile, withdrawNotice } from '@/services/mutations'
-import { useAdminNotices, useLinesOfOrders, useMaster, useNoticeAcknowledgements, useOrderSearch, useUsers } from '@/services/queries'
+import { useAdminNotices, useLinesOfMachines, useLinesOfOrders, useMaster, useNoticeAcknowledgements, useOrderSearch, useUsers } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 
 const today = () => {
@@ -159,10 +159,47 @@ function TargetBuilder({
   const { data: users = [] } = useUsers()
   const searching = kind === 'order-number' || kind === 'order-line'
   const { data: orderHits = [], isFetching } = useOrderSearch(term, 60, searching && term.trim().length >= 2)
-  // Items of the orders already targeted: an order picked first offers its own lines.
-  const targetedOrders = useMemo(() => targets.filter((t) => t.kind === 'order-number').map((t) => t.value), [targets])
-  const { data: orderLines = [], isFetching: linesFetching } = useLinesOfOrders(targetedOrders, kind === 'item-code' || kind === 'order-line')
   const factories = useMemo(() => Array.from(new Set(machines.map((m) => m.factory?.trim() ?? '').filter(Boolean))).sort(), [machines])
+
+  // ---- The cascade: what was targeted first narrows what is offered next.
+  //   factory / process → the machines in them
+  //   machines (or the factories' / process's machines) → the orders, lines, items and customers on them
+  //   order numbers → their lines and items
+  const of = (k: NoticeTargetKind) => targets.filter((t) => t.kind === k).map((t) => t.value)
+  const targetedFactories = of('factory').map((f) => f.trim().toLowerCase())
+  const targetedProcesses = of('process')
+  const targetedMachines = of('machine').map(normaliseMachineCode)
+  const targetedOrders = of('order-number')
+  const targetedItems = of('item-code').map((v) => v.trim().toLowerCase())
+  const machinesInScope = useMemo(
+    () =>
+      machines.filter(
+        (m) =>
+          (targetedFactories.length === 0 || targetedFactories.includes((m.factory ?? '').trim().toLowerCase())) &&
+          (targetedProcesses.length === 0 || targetedProcesses.includes(m.process)),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [machines, targetedFactories.join('|'), targetedProcesses.join('|')],
+  )
+  /** The machine codes orders are looked up on: the targeted machines, else the factories' or process's machines, else none (no narrowing). */
+  const scopeMachines = useMemo(() => {
+    if (targetedMachines.length > 0) return machinesInScope.filter((m) => targetedMachines.includes(normaliseMachineCode(m.code))).map((m) => m.code)
+    if (targetedFactories.length > 0 || targetedProcesses.length > 0) return machinesInScope.map((m) => m.code)
+    return []
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [machinesInScope, targetedMachines.join('|'), targetedFactories.length, targetedProcesses.length])
+  const inScope = (workCenterCode: string) => scopeMachines.length === 0 || scopeMachines.some((c) => normaliseMachineCode(c) === normaliseMachineCode(workCenterCode))
+  const needLines = kind === 'order-number' || kind === 'order-line' || kind === 'item-code' || kind === 'customer'
+  const { data: orderLines = [], isFetching: linesFetching } = useLinesOfOrders(targetedOrders, needLines)
+  const { data: machineLines = [], isFetching: machineLinesFetching } = useLinesOfMachines(scopeMachines, needLines && targetedOrders.length === 0)
+  /** The lines the next pick is drawn from: the targeted orders' (in scope), else the scope machines'. */
+  const scopeLines = useMemo(() => (targetedOrders.length > 0 ? orderLines : machineLines).filter((o) => inScope(o.workCenterCode)), [targetedOrders.length, orderLines, machineLines, scopeMachines]) // eslint-disable-line react-hooks/exhaustive-deps
+  const narrowedBy = [
+    targetedFactories.length ? `${targetedFactories.length} factor${targetedFactories.length === 1 ? 'y' : 'ies'}` : '',
+    targetedProcesses.length ? `${targetedProcesses.length} process${targetedProcesses.length === 1 ? '' : 'es'}` : '',
+    targetedMachines.length ? `${targetedMachines.length} machine${targetedMachines.length === 1 ? '' : 's'}` : '',
+    targetedOrders.length ? `${targetedOrders.length} order${targetedOrders.length === 1 ? '' : 's'}` : '',
+  ].filter(Boolean)
   const taken = useMemo(() => new Set(targets.filter((t) => t.kind === kind).map((t) => t.value.toLowerCase())), [targets, kind])
 
   const addMany = (picked: Candidate[]) => {
@@ -183,7 +220,7 @@ function TargetBuilder({
       case 'factory':
         return factories.map((f) => ({ value: f, label: f }))
       case 'machine':
-        return [...machines].sort((a, b) => a.displayName.localeCompare(b.displayName)).map((m) => ({ value: m.code, label: m.displayName, sub: m.factory ?? undefined }))
+        return [...machinesInScope].sort((a, b) => a.displayName.localeCompare(b.displayName)).map((m) => ({ value: m.code, label: m.displayName, sub: m.factory ?? undefined }))
       case 'process':
         return PROCESSES.map((p) => ({ value: p, label: PROCESS_LABEL[p] }))
       case 'shift':
@@ -193,28 +230,44 @@ function TargetBuilder({
       case 'user':
         return [...users].filter((u) => u.isActive).sort((a, b) => a.name.localeCompare(b.name)).map((u) => ({ value: u.id, label: u.name, sub: `${u.username} · ${u.role}` }))
       case 'order-number': {
+        // The scope's orders when there is one; the search on top, narrowed to the scope.
+        const rows = [...(targetedOrders.length === 0 ? scopeLines : []), ...orderHits.filter((o) => inScope(o.workCenterCode))]
         const seen = new Map<string, Candidate>()
-        for (const o of orderHits) if (!seen.has(o.orderNumber)) seen.set(o.orderNumber, { value: o.orderNumber, label: o.orderNumber, sub: `${o.customer || '—'} · ${o.item}` })
+        for (const o of rows) if (!seen.has(o.orderNumber)) seen.set(o.orderNumber, { value: o.orderNumber, label: o.orderNumber, sub: `${o.customer || '—'} · ${o.item} · machine ${o.workCenterCode}` })
         return Array.from(seen.values())
       }
       case 'order-line': {
-        // The targeted orders' lines first, then whatever the search finds.
-        const rows = [...orderLines, ...orderHits]
+        // The scope's lines first, then whatever the search finds inside the scope; targeted items narrow further.
+        const rows = [...scopeLines, ...orderHits.filter((o) => inScope(o.workCenterCode))].filter((o) => targetedItems.length === 0 || targetedItems.includes(o.itemCode.trim().toLowerCase()))
         const seen = new Map<string, Candidate>()
         for (const o of rows) if (!seen.has(o.id)) seen.set(o.id, { value: o.id, label: `${o.orderNumber} · ${o.item} (${o.itemCode})`, sub: `machine ${o.workCenterCode} · line ${o.lineKey}` })
         return Array.from(seen.values())
       }
       case 'item-code': {
         const seen = new Map<string, Candidate>()
-        for (const o of orderLines) if (o.itemCode && !seen.has(o.itemCode.toLowerCase())) seen.set(o.itemCode.toLowerCase(), { value: o.itemCode, label: o.itemCode, sub: `${o.item} · ${o.orderNumber}` })
+        for (const o of scopeLines) if (o.itemCode && !seen.has(o.itemCode.toLowerCase())) seen.set(o.itemCode.toLowerCase(), { value: o.itemCode, label: o.itemCode, sub: `${o.item} · ${o.orderNumber}` })
         return Array.from(seen.values())
+      }
+      case 'customer': {
+        const seen = new Map<string, Candidate & { n: number }>()
+        for (const o of scopeLines) {
+          const c = o.customer?.trim()
+          if (!c) continue
+          const k = c.toLowerCase()
+          const cur = seen.get(k)
+          if (cur) cur.n += 1
+          else seen.set(k, { value: c, label: c, sub: '', n: 1 })
+        }
+        return Array.from(seen.values()).map((c) => ({ value: c.value, label: c.label, sub: `${c.n} line${c.n === 1 ? '' : 's'} in scope` }))
       }
       default:
         return []
     }
-  }, [kind, factories, machines, users, orderHits, orderLines])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, factories, machinesInScope, users, orderHits, scopeLines, targetedOrders.length, targetedItems.join('|'), scopeMachines.join('|')])
 
-  const listed = kind !== 'customer'
+  // A customer list only exists once there is a scope to draw it from; otherwise it is typed.
+  const listed = kind !== 'customer' || scopeLines.length > 0 || linesFetching || machineLinesFetching
   const typedToo = kind === 'item-code' || kind === 'customer'
 
   return (
@@ -235,6 +288,7 @@ function TargetBuilder({
         ))}
         <span className="basis-full text-slate-500 dark:text-slate-400">
           No target means everyone, everywhere. {matchMode === 'any' ? 'Any one of the targets below reaches the reader.' : 'Every kind below must hold at once; within a kind, any value.'}
+          {narrowedBy.length > 0 && <> The lists below are narrowed by what is already targeted: {narrowedBy.join(', ')}.</>}
         </span>
       </div>
 
@@ -252,21 +306,24 @@ function TargetBuilder({
               candidates={candidates}
               taken={taken}
               onAdd={addMany}
-              searching={(searching && isFetching) || (kind === 'item-code' && linesFetching)}
+              searching={(searching && isFetching) || (needLines && (linesFetching || machineLinesFetching))}
               term={term}
               onTerm={setTerm}
               searchPlaceholder={
-                kind === 'order-number' ? 'Type part of the order number…'
-                : kind === 'order-line' ? targetedOrders.length ? 'Filter the lines, or type another order number…' : 'Type part of the order number…'
+                kind === 'order-number' ? scopeMachines.length ? 'Filter the orders on the targeted machines, or type another order number…' : 'Type part of the order number…'
+                : kind === 'order-line' ? scopeLines.length ? 'Filter the lines, or type another order number…' : 'Type part of the order number…'
                 : kind === 'item-code' ? 'Filter the items…'
+                : kind === 'customer' ? 'Filter the customers…'
                 : `Filter ${NOTICE_TARGET_LABEL[kind].toLowerCase()}s…`
               }
               emptyText={
-                kind === 'order-number' || (kind === 'order-line' && targetedOrders.length === 0)
-                  ? 'Type at least two characters of an order number.'
+                (kind === 'order-number' || kind === 'order-line') && scopeLines.length === 0
+                  ? scopeMachines.length ? 'No order line on the targeted machines. Type part of an order number to search.' : 'Type at least two characters of an order number; or target a factory or a machine first and its orders are listed.'
                   : kind === 'item-code'
-                    ? targetedOrders.length ? 'No item on the targeted orders.' : 'Target an order number first and its items are listed here; or type an item code below.'
-                    : 'Nothing to choose from.'
+                    ? scopeLines.length ? 'No item in scope.' : 'Target an order number, a machine or a factory first and its items are listed here; or type an item code below.'
+                    : kind === 'customer'
+                      ? 'No customer in scope; type one below.'
+                      : 'Nothing to choose from.'
               }
             />
           )}
