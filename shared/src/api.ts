@@ -573,8 +573,8 @@ export interface HistoryFilters {
   workCenterCode?: string
   /** The factory a machine belongs to, as the machine catalogue names it. */
   factory?: string
-  /** An item code, exact, case-insensitive. */
-  itemCode?: string
+  /** Any part of an item code or name, case-insensitive: typed text narrows as it is typed. */
+  item?: string
   inspectorId?: string
   /** Only sessions started (or sampled) at or after this instant. */
   since?: string
@@ -803,8 +803,8 @@ export interface OrderListFilters {
   workCenterCode?: string
   factory?: string
   erpStatus?: string
-  /** An item code, exact, case-insensitive. */
-  itemCode?: string
+  /** Any part of an item code or name, case-insensitive: typed text narrows as it is typed. */
+  item?: string
   /** 'open' — required above finished; 'done' — finished. */
   remaining?: 'open' | 'done'
   /** 'yes' — at least one inspection session on the line; 'no' — none. */

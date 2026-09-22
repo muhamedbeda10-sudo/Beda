@@ -46,7 +46,8 @@ const ACCESS_COLUMNS: ColumnDef[] = [
 const num = (v: number | null | undefined) => (v === null || v === undefined || Number.isNaN(v) ? '—' : String(v))
 
 /** The code out of what was typed or picked: "125185TA3 — XL Light Beam" and "125185TA3" both give the code. */
-const itemCodeOf = (typed: string) => typed.split(' — ')[0].trim()
+/** A pick from the list is "code — name"; sending the code alone matches it. Anything else is sent as typed. */
+const itemTermOf = (typed: string) => (typed.includes(' — ') ? typed.split(' — ')[0] : typed).trim()
 
 function statusTone(s: string): 'green' | 'amber' | 'violet' | 'neutral' | 'red' {
   const v = s.trim().toLowerCase()
@@ -147,18 +148,19 @@ export function AccessPage() {
   const [remaining, setRemaining] = usePersistedState<'all' | 'open' | 'done'>('qc-access:remaining', 'all')
   const [inspected, setInspected] = usePersistedState<'all' | 'yes' | 'no'>('qc-access:inspected', 'all')
   const debounced = useDebounced(term.trim())
+  const settledItem = useDebounced(itemTermOf(item))
   const filters = useMemo<OrderListFilters>(
     () => ({
       q: debounced || undefined,
       workCenterCode: machine === 'all' ? undefined : machine,
       factory: factory === 'all' ? undefined : factory,
       erpStatus: erpStatus === 'all' ? undefined : erpStatus,
-      itemCode: itemCodeOf(item) || undefined,
+      item: settledItem || undefined,
       remaining: remaining === 'all' ? undefined : remaining,
       inspected: inspected === 'all' ? undefined : inspected,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [debounced, machine, factory, erpStatus, item, remaining, inspected],
+    [debounced, machine, factory, erpStatus, settledItem, remaining, inspected],
   )
   const { data, isLoading, isError } = useOrderList(filters)
   const { data: options } = useOrderListOptions()
@@ -259,12 +261,12 @@ export function AccessPage() {
             </Select>
           </Field>
           <Field label="Item">
-            {/* Typed with completion from the sheet's items: "code — name" or the code alone both land on the code. */}
+            {/* Any part of a code or a name narrows as it is typed; the list offers the sheet's items for completion. */}
             <Input
               list="access-items"
               value={item}
               onChange={(e) => setItem(e.target.value)}
-              placeholder="All items"
+              placeholder="Any part of a code or name"
               className="min-h-[48px]"
               aria-label="Item"
             />

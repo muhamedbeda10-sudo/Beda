@@ -148,7 +148,7 @@ export function ordersRoutes(ctx: AppContext): Router {
         workCenterCode: z.string().trim().max(60).optional(),
         factory: z.string().trim().max(120).optional(),
         erpStatus: z.string().trim().max(40).optional(),
-        itemCode: z.string().trim().max(120).optional(),
+        item: z.string().trim().max(120).optional(),
         remaining: z.enum(['open', 'done']).optional(),
         inspected: z.enum(['yes', 'no']).optional(),
         limit: z.coerce.number().int().min(1).max(500).default(100),
@@ -167,7 +167,11 @@ export function ordersRoutes(ctx: AppContext): Router {
     if (q.workCenterCode) clauses.push(`${NORMALISED_CODE('o.work_center_code')} = ${NORMALISED_CODE(p(q.workCenterCode) + '::text')}`)
     if (q.factory) clauses.push(`lower(btrim(COALESCE(m.factory, ''))) = lower(btrim(${p(q.factory)}))`)
     if (q.erpStatus) clauses.push(`lower(btrim(o.erp_status)) = lower(btrim(${p(q.erpStatus)}))`)
-    if (q.itemCode) clauses.push(`lower(btrim(o.item_code)) = lower(btrim(${p(q.itemCode)}))`)
+    if (q.item) {
+      // Any part of the code or the name, as typed: no need to pick one from the list.
+      const t = p(`%${q.item.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
+      clauses.push(`(o.item_code ILIKE ${t} OR o.item ILIKE ${t})`)
+    }
     if (q.remaining === 'open') clauses.push('o.required_qty > o.finished_qty')
     if (q.remaining === 'done') clauses.push('o.required_qty <= o.finished_qty')
     if (q.inspected === 'yes') clauses.push('EXISTS (SELECT 1 FROM inspection_sessions s WHERE s.order_id = o.id AND s.deleted_at IS NULL)')

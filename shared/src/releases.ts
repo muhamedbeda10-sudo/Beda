@@ -28,6 +28,12 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-22.6',
+    date: '2026-09-22',
+    title: 'Access and History: the Item filter matches as you type',
+    items: [{ text: 'Type any part of an item code or name and the table narrows to every line containing it. Picking from the list still works; nothing has to be chosen exactly.' }],
+  },
+  {
     id: '2026-09-22.5',
     date: '2026-09-22',
     title: 'Dashboard: hide an insight you have read',

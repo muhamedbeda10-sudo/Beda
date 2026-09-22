@@ -371,7 +371,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
         q: z.string().trim().max(120).optional(),
         status: z.enum(['Open', 'Closed']).optional(),
         workCenterCode: z.string().trim().max(60).optional(),
-        itemCode: z.string().trim().max(120).optional(),
+        item: z.string().trim().max(120).optional(),
         factory: z.string().trim().max(120).optional(),
         inspectorId: uuid.optional(),
         since: z.string().datetime({ offset: true }).optional(),
@@ -432,7 +432,11 @@ export function sessionsRoutes(ctx: AppContext): Router {
                              WHERE m.deleted_at IS NULL AND lower(btrim(COALESCE(m.factory, ''))) = lower(btrim(${p(q.factory)}))
                                AND ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('s.work_center_code')})`)
     }
-    if (q.itemCode) clauses.push(`lower(btrim(o.item_code)) = lower(btrim(${p(q.itemCode)}))`)
+    if (q.item) {
+      // Any part of the code or the name, as typed: no need to pick one from the list.
+      const t = p(`%${q.item.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
+      clauses.push(`(o.item_code ILIKE ${t} OR o.item ILIKE ${t})`)
+    }
     if (q.q) {
       // A literal search: the wildcards a person types are text, not pattern.
       const like = `%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
