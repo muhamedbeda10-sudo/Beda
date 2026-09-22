@@ -7,6 +7,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import {
   DEFAULT_KPI_THRESHOLDS,
+  INSIGHT_KEY_MAX,
   RANKING_WEIGHTS,
   pct,
   rankInspectors,
@@ -17,7 +18,7 @@ import {
   type KpiOverview,
   type KpiThresholds,
 } from '@qc/shared/kpi'
-import type { KpiSpanResponse, KpiThresholdsResponse } from '@qc/shared/api'
+import type { HiddenInsightRequest, HiddenInsightsResponse, KpiSpanResponse, KpiThresholdsResponse } from '@qc/shared/api'
 import type { AppContext } from '../context'
 import type { Queryable } from '../db/pool'
 import { withTransaction } from '../db/pool'
@@ -344,6 +345,43 @@ export function kpiRoutes(ctx: AppContext): Router {
     }
     const body: KpiOverview = { ...draft, insights: buildInsights(draft, thresholds) }
     res.json(body)
+  })
+
+  // ---- Hidden insights ------------------------------------------------------
+  // Per person, by the insight's key (rule and subject). Hiding an insight
+  // hides it on every device until the same person shows it again; the row
+  // is kept and stamped either way.
+
+  const hiddenKeySchema = z.object({ key: z.string().trim().min(1).max(INSIGHT_KEY_MAX) })
+
+  async function hiddenInsights(db: Queryable, userId: string): Promise<HiddenInsightsResponse> {
+    const { rows } = await db.query<{ key: string }>(
+      `SELECT insight_key AS key FROM insight_dismissals WHERE user_id = $1 AND restored_at IS NULL ORDER BY hidden_at DESC, insight_key`,
+      [userId],
+    )
+    return { keys: rows.map((r) => r.key) }
+  }
+
+  r.get('/insights/hidden', async (req, res) => {
+    res.json(await hiddenInsights(ctx.db, requireUser(req).id))
+  })
+
+  r.post('/insights/hide', async (req, res) => {
+    const user = requireUser(req)
+    const body = parse(hiddenKeySchema, req.body) as HiddenInsightRequest
+    await ctx.db.query(
+      `INSERT INTO insight_dismissals (user_id, insight_key) VALUES ($1, $2)
+         ON CONFLICT (user_id, insight_key) DO UPDATE SET hidden_at = now(), restored_at = NULL`,
+      [user.id, body.key],
+    )
+    res.json(await hiddenInsights(ctx.db, user.id))
+  })
+
+  r.post('/insights/restore', async (req, res) => {
+    const user = requireUser(req)
+    const body = parse(hiddenKeySchema, req.body) as HiddenInsightRequest
+    await ctx.db.query(`UPDATE insight_dismissals SET restored_at = now() WHERE user_id = $1 AND insight_key = $2 AND restored_at IS NULL`, [user.id, body.key])
+    res.json(await hiddenInsights(ctx.db, user.id))
   })
 
   return r

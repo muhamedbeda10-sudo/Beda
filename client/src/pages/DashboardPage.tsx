@@ -6,9 +6,12 @@
 
 import { useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   AlertOctagon,
+  Eye,
+  EyeOff,
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
@@ -33,7 +36,7 @@ import {
 } from 'lucide-react'
 import { can, shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
-import { deltaPct, toneHighIsGood, toneLowIsGood, type KpiFilters, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
+import { deltaPct, insightKey, toneHighIsGood, toneLowIsGood, type KpiFilters, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
@@ -43,8 +46,10 @@ import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, 
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn, formatDateTime } from '@/lib/utils'
-import { useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
+import { useHiddenInsights, useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
+import { hideInsight, restoreInsight } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
+import { useApp } from '@/store/AppContext'
 import { ApiError } from '@/lib/api'
 
 // ---- Formatting ------------------------------------------------------------
@@ -141,13 +146,32 @@ const SEVERITY: Record<KpiInsight['severity'], { icon: typeof Info; cls: string;
   good: { icon: CheckCircle2, cls: 'border-emerald-200 bg-emerald-50/70 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200', label: 'Good' },
 }
 
-function InsightList({ insights, onLink }: { insights: KpiInsight[]; onLink: (link: NonNullable<KpiInsight['link']>) => void }) {
+/**
+ * The cards. `onHide` puts a hide control on each card; `onRestore` puts a
+ * show-again control on each, for the list of the ones already hidden. On
+ * paper neither prints.
+ */
+function InsightList({
+  insights,
+  onLink,
+  onHide,
+  onRestore,
+  muted = false,
+}: {
+  insights: KpiInsight[]
+  onLink: (link: NonNullable<KpiInsight['link']>) => void
+  onHide?: (key: string) => void
+  onRestore?: (key: string) => void
+  /** The hidden ones: drawn quieter so they read as put away. */
+  muted?: boolean
+}) {
   return (
     <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2">
       {insights.map((i, idx) => {
         const s = SEVERITY[i.severity]
+        const key = insightKey(i)
         return (
-          <li key={i.id} className={cn('animate-page-in rounded-xl border p-3', s.cls)} style={{ animationDelay: `${Math.min(idx, 8) * 40}ms` }}>
+          <li key={key} className={cn('animate-page-in rounded-xl border p-3', s.cls, muted && 'opacity-70')} style={{ animationDelay: `${Math.min(idx, 8) * 40}ms` }}>
             <div className="flex items-start gap-2.5">
               <s.icon className="mt-0.5 h-4 w-4 shrink-0" />
               <div className="min-w-0 flex-1">
@@ -160,6 +184,27 @@ function InsightList({ insights, onLink }: { insights: KpiInsight[]; onLink: (li
                   </button>
                 )}
               </div>
+              {onHide && (
+                <button
+                  type="button"
+                  onClick={() => onHide(key)}
+                  className="print-hidden -mr-1 -mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-lg opacity-60 transition-opacity hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+                  aria-label={`Hide: ${i.title}`}
+                  title="Hide this insight until you show it again"
+                >
+                  <EyeOff className="h-4 w-4" />
+                </button>
+              )}
+              {onRestore && (
+                <button
+                  type="button"
+                  onClick={() => onRestore(key)}
+                  className="print-hidden inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold underline decoration-dotted underline-offset-2 hover:bg-black/5 dark:hover:bg-white/10"
+                  aria-label={`Show again: ${i.title}`}
+                >
+                  <Eye className="h-4 w-4" /> Show again
+                </button>
+              )}
             </div>
           </li>
         )
@@ -345,6 +390,30 @@ export function DashboardPage() {
 
   const { data, isLoading, isFetching, error, refetch } = useKpiOverview(allowed ? filters : null)
   const [insightsOpen, setInsightsOpen] = useState(false)
+  /** The ones this person put away: hidden on every device until shown again. */
+  const [hiddenOpen, setHiddenOpen] = useState(false)
+  const { data: hiddenState } = useHiddenInsights(allowed)
+  const qc = useQueryClient()
+  const { toast } = useApp()
+  const { visibleInsights, hiddenInsights } = useMemo(() => {
+    const all = data?.insights ?? []
+    const hidden = new Set(hiddenState?.keys ?? [])
+    return { visibleInsights: all.filter((i) => !hidden.has(insightKey(i))), hiddenInsights: all.filter((i) => hidden.has(insightKey(i))) }
+  }, [data, hiddenState])
+  const onHide = async (key: string) => {
+    try {
+      await hideInsight(qc, key)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not hide the insight.', 'error')
+    }
+  }
+  const onRestore = async (key: string) => {
+    try {
+      await restoreInsight(qc, key)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not show the insight again.', 'error')
+    }
+  }
   /** Which half of the dashboard is on screen. Printing renders both, so the
    *  PDF is the whole dashboard whichever tab is open. */
   const [view, setView] = usePersistedState<'overview' | 'inspectors'>('qc-dash:view', 'overview')
@@ -397,7 +466,7 @@ export function DashboardPage() {
 
   const exportExcel = () => {
     if (!data) return
-    downloadWorkbook(`QC-dashboard-${range.from}_${range.to}.xlsx`, kpiSheets(data))
+    downloadWorkbook(`QC-dashboard-${range.from}_${range.to}.xlsx`, kpiSheets({ ...data, insights: visibleInsights }))
   }
 
   if (!allowed) {
@@ -423,7 +492,7 @@ export function DashboardPage() {
   const cur = data?.current
   const prevT = data?.previous
   const holdPieces = data?.holds.reduce((n, h) => n + h.qty, 0) ?? 0
-  const attention = data?.insights.filter((i) => i.severity === 'critical' || i.severity === 'warning').length ?? 0
+  const attention = visibleInsights.filter((i) => i.severity === 'critical' || i.severity === 'warning').length
 
   return (
     <div className="mx-auto max-w-[110rem] space-y-5">
@@ -468,7 +537,7 @@ export function DashboardPage() {
                 'relative grid h-11 w-11 place-items-center rounded-xl ring-1 transition-colors',
                 attention > 0 ? 'bg-amber-50 text-amber-700 ring-amber-200 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30' : 'bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30',
               )}
-              aria-label={`Insights, ${data.insights.length} ${data.insights.length === 1 ? 'note' : 'notes'}`}
+              aria-label={`Insights, ${visibleInsights.length} ${visibleInsights.length === 1 ? 'note' : 'notes'}${hiddenInsights.length ? `, ${hiddenInsights.length} hidden` : ''}`}
             >
               <Lightbulb className="h-5 w-5" />
               <span className={cn('absolute -right-1.5 -top-1.5 grid min-w-[20px] place-items-center rounded-full px-1 text-[10px] font-bold leading-[20px] text-white ring-2 ring-white dark:ring-slate-900', attention > 0 ? 'bg-rose-600' : 'bg-emerald-600')}>
@@ -626,12 +695,36 @@ export function DashboardPage() {
 
           {/* Insights live behind the bulb; on paper they print in full. */}
           <Section title="Insights" hint="What the numbers say, by rule, not by guess. Most serious first." icon={<Sparkles className="h-4 w-4" />} className="hidden print:block">
-            <InsightList insights={data.insights} onLink={onLink} />
+            <InsightList insights={visibleInsights} onLink={onLink} />
           </Section>
           {insightsOpen && (
             <Modal open onClose={() => setInsightsOpen(false)} size="xl" icon={<Lightbulb className="h-5 w-5" />} title={<span>Insights <span className="ml-2 text-sm font-semibold text-slate-400">{describeRange(range)}</span></span>}>
-              <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">What the numbers say, by rule, not by guess. Most serious first.</p>
-              <InsightList insights={data.insights} onLink={(l) => { setInsightsOpen(false); onLink(l) }} />
+              <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">What the numbers say, by rule, not by guess. Most serious first. Read one? Hide it and it stays hidden for you, on every device, until you show it again.</p>
+              {visibleInsights.length > 0 ? (
+                <InsightList insights={visibleInsights} onLink={(l) => { setInsightsOpen(false); onLink(l) }} onHide={(k) => void onHide(k)} />
+              ) : (
+                <p className="rounded-xl border border-dashed border-slate-200 py-6 text-center text-sm text-slate-400 dark:border-slate-700">
+                  {hiddenInsights.length > 0 ? 'Every insight for this period is hidden.' : 'Nothing to say about this period.'}
+                </p>
+              )}
+              {hiddenInsights.length > 0 && (
+                <div className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() => setHiddenOpen((v) => !v)}
+                    aria-expanded={hiddenOpen}
+                    className="inline-flex min-h-[40px] items-center gap-2 rounded-lg px-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    {hiddenOpen ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                    {hiddenInsights.length} hidden {hiddenInsights.length === 1 ? 'insight' : 'insights'} · {hiddenOpen ? 'Put away' : 'Show'}
+                  </button>
+                  {hiddenOpen && (
+                    <div className="mt-2">
+                      <InsightList insights={hiddenInsights} muted onLink={(l) => { setInsightsOpen(false); onLink(l) }} onRestore={(k) => void onRestore(k)} />
+                    </div>
+                  )}
+                </div>
+              )}
             </Modal>
           )}
 
