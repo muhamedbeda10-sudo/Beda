@@ -46,6 +46,7 @@ import type {
   WorkInstructionScope,
   WorkInstructionStep,
   SessionNote,
+  NoticeMatchMode,
 } from './types'
 
 // ---- Errors ----------------------------------------------------------------
@@ -697,6 +698,8 @@ export interface SaveNoticeRequest {
   body: string
   severity: NoticeSeverity
   requiresAck: boolean
+  /** Defaults to `all`. */
+  matchMode?: NoticeMatchMode
   validFrom: string
   validTo: string | null
   targets: NoticeTarget[]

@@ -145,6 +145,46 @@ describe('notices', () => {
     expect(insp.body.notices.find((n) => n.id === created.body.id)?.active).toBe(false)
   })
 
+  it('under "any", one target of any kind is enough', async () => {
+    // Machine 48 OR the supervisor role: the supervisor gets it anywhere, the inspector only on machine 48.
+    const res = await app.api<Notice>('POST', '/api/notices', {
+      token: admin.token,
+      body: {
+        title: 'Paint booth 2 is down',
+        severity: 'info',
+        requiresAck: false,
+        matchMode: 'any',
+        validFrom: today,
+        validTo: null,
+        targets: [
+          { kind: 'machine', value: '48', label: '48-Painting Line-LM4' },
+          { kind: 'role', value: 'supervisor', label: 'Supervisor' },
+        ],
+        imageIds: [],
+        fileIds: [],
+      },
+    })
+    expect(res.status).toBe(201)
+    expect(res.body.matchMode).toBe('any')
+    const any = res.body
+    const supAtWeld = await app.api<MatchNoticesResponse>('POST', '/api/notices/match', { token: supervisor.token, body: { workCenterCode: '58', orderId: weldOrder.id } })
+    expect(supAtWeld.body.notices.map((n) => n.id)).toContain(any.id)
+    const inspAtPaint = await app.api<MatchNoticesResponse>('POST', '/api/notices/match', { token: inspector.token, body: { workCenterCode: '48', orderId: paintOrder.id } })
+    expect(inspAtPaint.body.notices.map((n) => n.id)).toContain(any.id)
+    const inspAtWeld = await app.api<MatchNoticesResponse>('POST', '/api/notices/match', { token: inspector.token, body: { workCenterCode: '58', orderId: weldOrder.id } })
+    expect(inspAtWeld.body.notices.map((n) => n.id)).not.toContain(any.id)
+    // The supervisor is named, so their bell lists it at once; the inspector's waits for machine 48.
+    expect((await app.api<NoticeInboxResponse>('GET', '/api/notices/inbox', { token: supervisor.token })).body.notices.map((n) => n.id)).toContain(any.id)
+    expect((await app.api<NoticeInboxResponse>('GET', '/api/notices/inbox', { token: inspector.token })).body.notices.map((n) => n.id)).not.toContain(any.id)
+    // Switched to "all", the supervisor must be on machine 48 too.
+    const put = await app.api<Notice>('PUT', `/api/notices/${any.id}`, { token: admin.token, body: { ...any, matchMode: 'all', fileIds: [] } })
+    expect(put.status).toBe(200)
+    expect(put.body.matchMode).toBe('all')
+    const supAtWeldAll = await app.api<MatchNoticesResponse>('POST', '/api/notices/match', { token: supervisor.token, body: { workCenterCode: '58', orderId: weldOrder.id } })
+    expect(supAtWeldAll.body.notices.map((n) => n.id)).not.toContain(any.id)
+    await app.api('POST', `/api/notices/${any.id}/withdraw`, { token: admin.token })
+  })
+
   it('carries a PDF and refuses other files', async () => {
     const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n')
     const form = new FormData()

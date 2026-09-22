@@ -44,6 +44,7 @@ const saveSchema = z
     body: z.string().trim().max(4000).default(''),
     severity: z.enum(NOTICE_SEVERITIES as unknown as [string, ...string[]]),
     requiresAck: z.boolean().default(true),
+    matchMode: z.enum(['all', 'any']).default('all'),
     validFrom: day,
     validTo: day.nullable().default(null),
     targets: z.array(targetSchema).max(100).default([]),
@@ -117,6 +118,7 @@ function pick(n: SaveNoticeRequest | Notice) {
     body: n.body,
     severity: n.severity,
     requiresAck: n.requiresAck,
+    matchMode: n.matchMode ?? 'all',
     validFrom: n.validFrom,
     validTo: n.validTo ?? null,
     targets: n.targets.map((t) => `${t.kind}:${t.value}`).sort().join(', '),
@@ -286,9 +288,9 @@ export function noticesRoutes(ctx: AppContext): Router {
     const body = parse(saveSchema, req.body) as SaveNoticeRequest
     const created = await withTransaction(ctx.db, async (tx) => {
       const { rows } = await tx.query<{ id: string }>(
-        `INSERT INTO notices (title, body, severity, requires_ack, valid_from, valid_to, created_by_id, created_by_name)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-        [body.title, body.body, body.severity, body.requiresAck, body.validFrom, body.validTo, user.id, user.name],
+        `INSERT INTO notices (title, body, severity, requires_ack, valid_from, valid_to, created_by_id, created_by_name, match_mode)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+        [body.title, body.body, body.severity, body.requiresAck, body.validFrom, body.validTo, user.id, user.name, body.matchMode ?? 'all'],
       )
       const id = rows[0].id
       await writeParts(tx, id, body)
@@ -306,8 +308,8 @@ export function noticesRoutes(ctx: AppContext): Router {
       const before = await loadNotice(tx, tz, id)
       if (!before) throw notFound('That notice')
       await tx.query(
-        `UPDATE notices SET title = $2, body = $3, severity = $4, requires_ack = $5, valid_from = $6, valid_to = $7 WHERE id = $1`,
-        [id, body.title, body.body, body.severity, body.requiresAck, body.validFrom, body.validTo],
+        `UPDATE notices SET title = $2, body = $3, severity = $4, requires_ack = $5, valid_from = $6, valid_to = $7, match_mode = $8 WHERE id = $1`,
+        [id, body.title, body.body, body.severity, body.requiresAck, body.validFrom, body.validTo, body.matchMode ?? 'all'],
       )
       await writeParts(tx, id, body)
       const next = (await loadNotice(tx, tz, id))!

@@ -19,6 +19,7 @@ import {
   type NoticeSeverity,
   type NoticeTarget,
   type NoticeTargetKind,
+  type NoticeMatchMode,
 } from '@qc/shared/types'
 import { can, shiftName } from '@qc/shared/rules'
 import { AdminLayout } from '@/components/admin/AdminLayout'
@@ -28,7 +29,7 @@ import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/
 import { ApiError } from '@/lib/api'
 import { cn, formatDateTime } from '@/lib/utils'
 import { deleteNotice, saveNotice, uploadNoticeFile, withdrawNotice } from '@/services/mutations'
-import { useAdminNotices, useMaster, useNoticeAcknowledgements, useOrderSearch, useUsers } from '@/services/queries'
+import { useAdminNotices, useLinesOfOrders, useMaster, useNoticeAcknowledgements, useOrderSearch, useUsers } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 
 const today = () => {
@@ -40,127 +41,245 @@ interface Draft extends SaveNoticeRequest {
   files: NoticeFile[]
 }
 
-const EMPTY: Draft = { title: '', body: '', severity: 'warning', requiresAck: true, validFrom: today(), validTo: null, targets: [], imageIds: [], fileIds: [], files: [] }
+const EMPTY: Draft = { title: '', body: '', severity: 'warning', requiresAck: true, matchMode: 'all', validFrom: today(), validTo: null, targets: [], imageIds: [], fileIds: [], files: [] }
 
 const CONTEXT_KINDS: NoticeTargetKind[] = ['factory', 'machine', 'process', 'order-number', 'order-line', 'item-code', 'customer', 'shift']
 
 // ---- Target builder --------------------------------------------------------
 
-function TargetBuilder({ targets, onChange }: { targets: NoticeTarget[]; onChange: (t: NoticeTarget[]) => void }) {
+interface Candidate {
+  value: string
+  label: string
+  /** A second line under the label: a machine's factory, a line's item. */
+  sub?: string
+}
+
+/**
+ * A list to tick several of and add at once: machines, people, orders,
+ * lines, items. A search box narrows it; "all shown" ticks what is on
+ * screen. Already-added values are shown ticked and locked.
+ */
+function PickList({
+  candidates,
+  taken,
+  onAdd,
+  searching,
+  emptyText,
+  searchPlaceholder,
+  term,
+  onTerm,
+}: {
+  candidates: Candidate[]
+  taken: Set<string>
+  onAdd: (picked: Candidate[]) => void
+  searching?: boolean
+  emptyText: string
+  searchPlaceholder: string
+  term: string
+  onTerm: (t: string) => void
+}) {
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const shown = useMemo(() => {
+    const q = term.trim().toLowerCase()
+    return q ? candidates.filter((c) => `${c.label} ${c.sub ?? ''} ${c.value}`.toLowerCase().includes(q)) : candidates
+  }, [candidates, term])
+  const free = shown.filter((c) => !taken.has(c.value.toLowerCase()))
+  const allShown = free.length > 0 && free.every((c) => picked.has(c.value))
+  const toggle = (v: string) =>
+    setPicked((p) => {
+      const n = new Set(p)
+      if (n.has(v)) n.delete(v)
+      else n.add(v)
+      return n
+    })
+  const add = () => {
+    const chosen = candidates.filter((c) => picked.has(c.value) && !taken.has(c.value.toLowerCase()))
+    if (chosen.length === 0) return
+    onAdd(chosen)
+    setPicked(new Set())
+  }
+  const count = Array.from(picked).filter((v) => !taken.has(v.toLowerCase())).length
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input value={term} onChange={(e) => onTerm(e.target.value)} placeholder={searchPlaceholder} className="min-h-[44px] flex-1" aria-label={searchPlaceholder} />
+        <label className="inline-flex min-h-[44px] items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+          <input
+            type="checkbox"
+            checked={allShown}
+            disabled={free.length === 0}
+            onChange={(e) => setPicked((p) => { const n = new Set(p); for (const c of free) e.target.checked ? n.add(c.value) : n.delete(c.value); return n })}
+            className="h-4 w-4 accent-brand-600"
+          />
+          All shown ({free.length})
+        </label>
+        <Button type="button" onClick={add} disabled={count === 0} className="min-h-[44px]">
+          <Plus className="h-4 w-4" /> Add {count > 0 ? count : ''}
+        </Button>
+      </div>
+      <ul className="max-h-56 space-y-0.5 overflow-y-auto rounded-xl border border-slate-200 p-1 dark:border-slate-800">
+        {searching && shown.length === 0 && <li className="px-3 py-2 text-sm text-slate-400">Searching…</li>}
+        {!searching && shown.length === 0 && <li className="px-3 py-2 text-sm text-slate-400">{emptyText}</li>}
+        {shown.map((c) => {
+          const locked = taken.has(c.value.toLowerCase())
+          const on = locked || picked.has(c.value)
+          return (
+            <li key={c.value}>
+              <label className={cn('flex min-h-[40px] cursor-pointer items-center gap-3 rounded-lg px-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800', locked && 'cursor-default opacity-60')}>
+                <input type="checkbox" checked={on} disabled={locked} onChange={() => toggle(c.value)} className="h-4 w-4 accent-brand-600" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{c.label}</span>
+                  {c.sub && <span className="block truncate text-xs text-slate-400">{c.sub}</span>}
+                </span>
+                {locked && <span className="text-[11px] font-semibold uppercase text-slate-400">added</span>}
+              </label>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+function TargetBuilder({
+  targets,
+  matchMode,
+  onChange,
+  onMatchMode,
+}: {
+  targets: NoticeTarget[]
+  matchMode: NoticeMatchMode
+  onChange: (t: NoticeTarget[]) => void
+  onMatchMode: (m: NoticeMatchMode) => void
+}) {
   const [kind, setKind] = useState<NoticeTargetKind>('machine')
-  const [value, setValue] = useState('')
-  const [label, setLabel] = useState('')
+  const [term, setTerm] = useState('')
+  const [typed, setTyped] = useState('')
   const { data: machines = [] } = useMaster('machines')
   const { data: users = [] } = useUsers()
   const searching = kind === 'order-number' || kind === 'order-line'
-  const { data: orderHits = [], isFetching } = useOrderSearch(value, 30, searching && value.trim().length >= 2)
+  const { data: orderHits = [], isFetching } = useOrderSearch(term, 60, searching && term.trim().length >= 2)
+  // Items of the orders already targeted: an order picked first offers its own lines.
+  const targetedOrders = useMemo(() => targets.filter((t) => t.kind === 'order-number').map((t) => t.value), [targets])
+  const { data: orderLines = [], isFetching: linesFetching } = useLinesOfOrders(targetedOrders, kind === 'item-code' || kind === 'order-line')
   const factories = useMemo(() => Array.from(new Set(machines.map((m) => m.factory?.trim() ?? '').filter(Boolean))).sort(), [machines])
+  const taken = useMemo(() => new Set(targets.filter((t) => t.kind === kind).map((t) => t.value.toLowerCase())), [targets, kind])
 
-  const add = (v: string, l: string) => {
-    const trimmed = v.trim()
-    if (!trimmed) return
-    if (targets.some((t) => t.kind === kind && t.value.toLowerCase() === trimmed.toLowerCase())) return
-    onChange([...targets, { kind, value: trimmed, label: l.trim() || trimmed }])
-    setValue('')
-    setLabel('')
+  const addMany = (picked: Candidate[]) => {
+    const fresh = picked.filter((c) => !targets.some((t) => t.kind === kind && t.value.toLowerCase() === c.value.toLowerCase()))
+    if (fresh.length === 0) return
+    onChange([...targets, ...fresh.map((c) => ({ kind, value: c.value, label: c.label }))])
+  }
+  const addTyped = () => {
+    const v = typed.trim()
+    if (!v) return
+    addMany([{ value: v, label: v }])
+    setTyped('')
   }
   const remove = (t: NoticeTarget) => onChange(targets.filter((x) => !(x.kind === t.kind && x.value === t.value)))
 
-  const orderNumbers = useMemo(() => Array.from(new Set(orderHits.map((o) => o.orderNumber))).slice(0, 12), [orderHits])
+  const candidates = useMemo<Candidate[]>(() => {
+    switch (kind) {
+      case 'factory':
+        return factories.map((f) => ({ value: f, label: f }))
+      case 'machine':
+        return [...machines].sort((a, b) => a.displayName.localeCompare(b.displayName)).map((m) => ({ value: m.code, label: m.displayName, sub: m.factory ?? undefined }))
+      case 'process':
+        return PROCESSES.map((p) => ({ value: p, label: PROCESS_LABEL[p] }))
+      case 'shift':
+        return (['A', 'B', 'C'] as const).map((s) => ({ value: s, label: `${s} · ${shiftName(s)}` }))
+      case 'role':
+        return ROLES.filter((r) => can(r, 'read-notices')).map((r) => ({ value: r, label: r.charAt(0).toUpperCase() + r.slice(1) }))
+      case 'user':
+        return [...users].filter((u) => u.isActive).sort((a, b) => a.name.localeCompare(b.name)).map((u) => ({ value: u.id, label: u.name, sub: `${u.username} · ${u.role}` }))
+      case 'order-number': {
+        const seen = new Map<string, Candidate>()
+        for (const o of orderHits) if (!seen.has(o.orderNumber)) seen.set(o.orderNumber, { value: o.orderNumber, label: o.orderNumber, sub: `${o.customer || '—'} · ${o.item}` })
+        return Array.from(seen.values())
+      }
+      case 'order-line': {
+        // The targeted orders' lines first, then whatever the search finds.
+        const rows = [...orderLines, ...orderHits]
+        const seen = new Map<string, Candidate>()
+        for (const o of rows) if (!seen.has(o.id)) seen.set(o.id, { value: o.id, label: `${o.orderNumber} · ${o.item} (${o.itemCode})`, sub: `machine ${o.workCenterCode} · line ${o.lineKey}` })
+        return Array.from(seen.values())
+      }
+      case 'item-code': {
+        const seen = new Map<string, Candidate>()
+        for (const o of orderLines) if (o.itemCode && !seen.has(o.itemCode.toLowerCase())) seen.set(o.itemCode.toLowerCase(), { value: o.itemCode, label: o.itemCode, sub: `${o.item} · ${o.orderNumber}` })
+        return Array.from(seen.values())
+      }
+      default:
+        return []
+    }
+  }, [kind, factories, machines, users, orderHits, orderLines])
+
+  const listed = kind !== 'customer'
+  const typedToo = kind === 'item-code' || kind === 'customer'
 
   return (
     <div className="space-y-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800">
-      <p className="text-xs text-slate-500 dark:text-slate-400">
-        No target means everyone, everywhere. Several values of one kind: any of them. Different kinds: all of them at once (this machine <b>and</b> this order).
-      </p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr_auto]">
-        <Select value={kind} onChange={(e) => { setKind(e.target.value as NoticeTargetKind); setValue(''); setLabel('') }} aria-label="Target kind">
+      {/* How the targets combine. Only worth deciding once there is more than one. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+        <span className="font-semibold text-slate-500">Reach:</span>
+        {(
+          [
+            ['all', 'ALL of them (AND)', 'Each kind must hold; several values of one kind are alternatives. This machine AND this order.'],
+            ['any', 'ANY of them (OR)', 'One target of any kind is enough. This machine OR this order OR this person.'],
+          ] as const
+        ).map(([mode, label, hint]) => (
+          <label key={mode} className="inline-flex items-center gap-1.5" title={hint}>
+            <input type="radio" name="notice-match" checked={matchMode === mode} onChange={() => onMatchMode(mode)} className="h-4 w-4 accent-brand-600" />
+            <span className={cn('font-semibold', matchMode === mode ? 'text-brand-700 dark:text-brand-300' : 'text-slate-600 dark:text-slate-300')}>{label}</span>
+          </label>
+        ))}
+        <span className="basis-full text-slate-500 dark:text-slate-400">
+          No target means everyone, everywhere. {matchMode === 'any' ? 'Any one of the targets below reaches the reader.' : 'Every kind below must hold at once; within a kind, any value.'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[11rem_1fr]">
+        <Select value={kind} onChange={(e) => { setKind(e.target.value as NoticeTargetKind); setTerm(''); setTyped('') }} aria-label="Target kind" className="min-h-[44px]">
           {NOTICE_TARGET_KINDS.map((k) => (
             <option key={k} value={k}>
               {NOTICE_TARGET_LABEL[k]}
             </option>
           ))}
         </Select>
-        {kind === 'factory' && (
-          <Select value={value} onChange={(e) => { setValue(e.target.value); setLabel(e.target.value) }} aria-label="Factory">
-            <option value="">Choose a factory…</option>
-            {factories.map((f) => (
-              <option key={f} value={f}>{f}</option>
-            ))}
-          </Select>
-        )}
-        {kind === 'machine' && (
-          <Select value={value} onChange={(e) => { const m = machines.find((x) => x.code === e.target.value); setValue(e.target.value); setLabel(m?.displayName ?? e.target.value) }} aria-label="Machine">
-            <option value="">Choose a machine…</option>
-            {[...machines].sort((a, b) => a.displayName.localeCompare(b.displayName)).map((m) => (
-              <option key={m.id} value={m.code}>{m.displayName}</option>
-            ))}
-          </Select>
-        )}
-        {kind === 'process' && (
-          <Select value={value} onChange={(e) => { setValue(e.target.value); setLabel(PROCESS_LABEL[e.target.value as keyof typeof PROCESS_LABEL] ?? e.target.value) }} aria-label="Process">
-            <option value="">Choose a process…</option>
-            {PROCESSES.map((p) => (
-              <option key={p} value={p}>{PROCESS_LABEL[p]}</option>
-            ))}
-          </Select>
-        )}
-        {kind === 'shift' && (
-          <Select value={value} onChange={(e) => { setValue(e.target.value); setLabel(`${e.target.value} · ${shiftName(e.target.value as 'A')}`) }} aria-label="Shift">
-            <option value="">Choose a shift…</option>
-            {(['A', 'B', 'C'] as const).map((s) => (
-              <option key={s} value={s}>{s} · {shiftName(s)}</option>
-            ))}
-          </Select>
-        )}
-        {kind === 'role' && (
-          <Select value={value} onChange={(e) => { setValue(e.target.value); setLabel(e.target.value.charAt(0).toUpperCase() + e.target.value.slice(1)) }} aria-label="Role">
-            <option value="">Choose a role…</option>
-            {ROLES.filter((r) => can(r, 'read-notices')).map((r) => (
-              <option key={r} value={r} className="capitalize">{r}</option>
-            ))}
-          </Select>
-        )}
-        {kind === 'user' && (
-          <Select value={value} onChange={(e) => { const u = users.find((x) => x.id === e.target.value); setValue(e.target.value); setLabel(u?.name ?? '') }} aria-label="User">
-            <option value="">Choose a user…</option>
-            {[...users].filter((u) => u.isActive).sort((a, b) => a.name.localeCompare(b.name)).map((u) => (
-              <option key={u.id} value={u.id}>{u.name} ({u.username})</option>
-            ))}
-          </Select>
-        )}
-        {(kind === 'item-code' || kind === 'customer') && (
-          <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder={kind === 'item-code' ? 'Item code, e.g. 125185TA3' : 'Customer name as on the order'} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), add(value, value))} />
-        )}
-        {kind === 'order-number' && (
-          <div>
-            <Input list="notice-order-numbers" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Type part of the order number" onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), add(value, value))} />
-            <datalist id="notice-order-numbers">{orderNumbers.map((n) => <option key={n} value={n} />)}</datalist>
-          </div>
-        )}
-        {kind === 'order-line' && <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder="Type part of the order number, then pick the line" />}
-        {kind !== 'order-line' && (
-          <Button type="button" onClick={() => add(value, label)} disabled={!value.trim()} className="min-h-[44px]">
-            <Plus className="h-4 w-4" /> Add
-          </Button>
-        )}
+        <div className="space-y-2">
+          {listed && (
+            <PickList
+              candidates={candidates}
+              taken={taken}
+              onAdd={addMany}
+              searching={(searching && isFetching) || (kind === 'item-code' && linesFetching)}
+              term={term}
+              onTerm={setTerm}
+              searchPlaceholder={
+                kind === 'order-number' ? 'Type part of the order number…'
+                : kind === 'order-line' ? targetedOrders.length ? 'Filter the lines, or type another order number…' : 'Type part of the order number…'
+                : kind === 'item-code' ? 'Filter the items…'
+                : `Filter ${NOTICE_TARGET_LABEL[kind].toLowerCase()}s…`
+              }
+              emptyText={
+                kind === 'order-number' || (kind === 'order-line' && targetedOrders.length === 0)
+                  ? 'Type at least two characters of an order number.'
+                  : kind === 'item-code'
+                    ? targetedOrders.length ? 'No item on the targeted orders.' : 'Target an order number first and its items are listed here; or type an item code below.'
+                    : 'Nothing to choose from.'
+              }
+            />
+          )}
+          {typedToo && (
+            <div className="flex gap-2">
+              <Input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={kind === 'item-code' ? 'Or type an item code, e.g. 125185TA3' : 'Customer name as on the order'} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addTyped())} className="min-h-[44px]" />
+              <Button type="button" onClick={addTyped} disabled={!typed.trim()} className="min-h-[44px]">
+                <Plus className="h-4 w-4" /> Add
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
-      {kind === 'order-line' && value.trim().length >= 2 && (
-        <ul className="max-h-48 space-y-1 overflow-y-auto rounded-xl border border-slate-200 p-1 dark:border-slate-800">
-          {isFetching && orderHits.length === 0 && <li className="px-3 py-2 text-sm text-slate-400">Searching…</li>}
-          {!isFetching && orderHits.length === 0 && <li className="px-3 py-2 text-sm text-slate-400">No order line matches.</li>}
-          {orderHits.map((o) => {
-            const l = `${o.orderNumber} · ${o.item} (${o.itemCode}) · machine ${o.workCenterCode}`
-            return (
-              <li key={o.id}>
-                <button type="button" onClick={() => add(o.id, l)} className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
-                  {l}
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
       {targets.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
           {targets.map((t) => (
@@ -171,6 +290,11 @@ function TargetBuilder({ targets, onChange }: { targets: NoticeTarget[]; onChang
               </button>
             </span>
           ))}
+          {targets.length > 1 && (
+            <button type="button" onClick={() => onChange([])} className="inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
+              Clear all
+            </button>
+          )}
         </div>
       ) : (
         <p className="text-xs font-semibold text-slate-500">Everyone, everywhere.</p>
@@ -280,7 +404,7 @@ function NoticeForm({ initial, id, onClose }: { initial: Draft; id: string | nul
         </div>
         <div>
           <span className="label">Aimed at</span>
-          <TargetBuilder targets={d.targets} onChange={(targets) => patch({ targets })} />
+          <TargetBuilder targets={d.targets} matchMode={d.matchMode ?? 'all'} onChange={(targets) => patch({ targets })} onMatchMode={(matchMode) => patch({ matchMode })} />
         </div>
         <div>
           <span className="label">Photos</span>
@@ -375,7 +499,7 @@ export function NoticesPage() {
   const edit = (n: NoticeAdminRow) =>
     setForm({
       id: n.id,
-      draft: { title: n.title, body: n.body, severity: n.severity, requiresAck: n.requiresAck, validFrom: n.validFrom, validTo: n.validTo, targets: n.targets, imageIds: n.imageIds, fileIds: n.files.map((f) => f.id), files: n.files },
+      draft: { title: n.title, body: n.body, severity: n.severity, requiresAck: n.requiresAck, matchMode: n.matchMode ?? 'all', validFrom: n.validFrom, validTo: n.validTo, targets: n.targets, imageIds: n.imageIds, fileIds: n.files.map((f) => f.id), files: n.files },
     })
 
   const act = async () => {
