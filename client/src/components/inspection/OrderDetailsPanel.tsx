@@ -25,10 +25,12 @@ import {
   User,
   ChevronDown,
   ChevronUp,
+  Camera,
 } from 'lucide-react'
 import { Badge, Button, Drawer, type BadgeTone } from '@/components/ui'
 import { PtCoverageBadge, SessionToneBadge, sampleChipClass, sampleChipTitle } from '@/components/inspection/SessionTone'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
+import { SessionPhotos } from '@/components/inspection/SessionPhotos'
 import { useOrder, useOrderHistory, useOrderNotes } from '@/services/queries'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
@@ -280,6 +282,12 @@ export function OrderDetailsPanel({
           </Reveal>
 
           <Reveal index={5}>
+            <Section icon={<Camera className="h-4 w-4" />} title="Photos of this session">
+              <SessionPhotos sessionId={session.id} sessionSeq={session.seq} onOpenSample={(id) => { const sm = samples.find((x) => x.id === id); if (sm) onOpenSample(session, sm) }} />
+            </Section>
+          </Reveal>
+
+          <Reveal index={6}>
             <Section icon={<MessageSquareText className="h-4 w-4" />} title="Notes on this line" count={notes.length}>
               {notesLoading ? <Skeleton rows={2} /> : <OrderNoteList notes={notes} emptyMessage="No notes on this item on this machine yet." machineLabel={machineLabel} />}
             </Section>

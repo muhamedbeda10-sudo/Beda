@@ -491,7 +491,8 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
                   key={o.id}
                   onClick={() => {
                     setPicked(o)
-                    setStartQty(String(remainingQty(o)))
+                    // Rejected before release starts at zero: the line's remaining quantity is production, not rejects.
+                    setStartQty('0')
                   }}
                   className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 p-3 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/50 dark:border-slate-800 dark:hover:border-brand-500/50 dark:hover:bg-brand-500/5"
                 >

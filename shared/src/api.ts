@@ -531,6 +531,31 @@ export interface SessionNotesResponse {
   notes: SessionNote[]
 }
 
+// ---- Every photo of a session, by what it shows (§10.8) --------------------
+
+export type SessionImageKind = 'defect' | 'paint' | 'pt' | 'note'
+
+export interface SessionImageItem {
+  imageId: string
+  /** The sample the photo belongs to; a note written outside a sample has none. */
+  sampleId: string | null
+  sampleIndex: number | null
+  /** What the photo is of: the defect name, the note's first words, "Paint", "PT". */
+  label: string
+  takenAt: string
+}
+
+export interface SessionImageGroup {
+  kind: SessionImageKind
+  items: SessionImageItem[]
+}
+
+export interface SessionImagesResponse {
+  /** In a fixed order: defects, paint, PT, notes; a kind with no photo is left out. */
+  groups: SessionImageGroup[]
+  total: number
+}
+
 // ---- History ---------------------------------------------------------------
 
 /**
