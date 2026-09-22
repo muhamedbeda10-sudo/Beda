@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ChevronDown, Info, Loader2, Trash2 } from 'lucide-react'
+import { ArrowLeft, ChevronDown, Info, Loader2, Trash2, UserPlus } from 'lucide-react'
 import type { ChatConversation, ChatMessage } from '@qc/shared/types'
 import { Button, Modal } from '@/components/ui'
 import { useChatMessages } from '@/services/queries'
@@ -55,7 +55,7 @@ export function ChatThread({
   const [editing, setEditing] = useState<ChatMessage | null>(null)
   const [confirm, setConfirm] = useState<{ m: ChatMessage; scope: 'me' | 'everyone' } | null>(null)
   const [reactFor, setReactFor] = useState<ChatMessage | null>(null)
-  const [info, setInfo] = useState(false)
+  const [info, setInfo] = useState<false | 'members' | 'add'>(false)
   const [highlight, setHighlight] = useState<string | null>(null)
   const [atBottom, setAtBottom] = useState(true)
   const scroller = useRef<HTMLDivElement>(null)
@@ -178,14 +178,20 @@ export function ChatThread({
             <ArrowLeft className="h-5 w-5" />
           </button>
         )}
-        <button type="button" onClick={() => setInfo(true)} className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-1 py-1 text-left hover:bg-slate-50 dark:hover:bg-slate-800">
+        <button type="button" onClick={() => setInfo('members')} className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-1 py-1 text-left hover:bg-slate-50 dark:hover:bg-slate-800">
           <Avatar conversation={c} size="sm" />
           <span className="min-w-0">
             <span className="block truncate text-sm font-bold">{c.title}</span>
             <span className={cn('block truncate text-xs text-slate-400', c.kind === 'direct' && 'capitalize')}>{subtitle}</span>
           </span>
         </button>
-        <button type="button" onClick={() => setInfo(true)} className="icon-btn h-10 w-10" aria-label="Conversation info">
+        {/* An administrator adds people to a group from here, after it was made. */}
+        {role === 'admin' && c.kind === 'group' && (
+          <button type="button" onClick={() => setInfo('add')} className="icon-btn h-10 w-10" aria-label="Add people" title="Add people to this group">
+            <UserPlus className="h-5 w-5" />
+          </button>
+        )}
+        <button type="button" onClick={() => setInfo('members')} className="icon-btn h-10 w-10" aria-label="Conversation info">
           <Info className="h-5 w-5" />
         </button>
       </header>
@@ -246,7 +252,7 @@ export function ChatThread({
           </div>
         </div>
       )}
-      {info && <ConversationInfoModal conversation={c} onClose={() => setInfo(false)} onOpenDirect={(id) => { setInfo(false); onOpenDirect(id) }} onDeleted={() => { setInfo(false); onDeleted() }} />}
+      {info && <ConversationInfoModal key={info} conversation={c} startAdding={info === 'add'} onClose={() => setInfo(false)} onOpenDirect={(id) => { setInfo(false); onOpenDirect(id) }} onDeleted={() => { setInfo(false); onDeleted() }} />}
       {confirm && (
         <Modal
           open

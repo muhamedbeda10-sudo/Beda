@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Check, Loader2, Pencil, Trash2, UserMinus, UserPlus, Users } from 'lucide-react'
+import { Loader2, Pencil, Trash2, UserMinus, UserPlus, Users } from 'lucide-react'
 import type { ChatConversation } from '@qc/shared/types'
 import { Badge, Button, Input, Modal } from '@/components/ui'
 import { useChatUsers } from '@/services/queries'
@@ -15,12 +15,15 @@ export function ConversationInfoModal({
   onClose,
   onOpenDirect,
   onDeleted,
+  startAdding = false,
 }: {
   conversation: ChatConversation
   onClose: () => void
   onOpenDirect: (userId: string) => void
   /** The group is gone: the caller leaves it. */
   onDeleted: () => void
+  /** Open straight onto the people to add. */
+  startAdding?: boolean
 }) {
   const qc = useQueryClient()
   const { toast } = useApp()
@@ -29,7 +32,8 @@ export function ConversationInfoModal({
   const { data: users = [] } = useChatUsers(admin)
   const [name, setName] = useState(c.title)
   const [busy, setBusy] = useState(false)
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState(startAdding)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
   const [confirmDelete, setConfirmDelete] = useState(false)
   const candidates = useMemo(() => users.filter((u) => !c.members.some((m) => m.id === u.id)), [users, c.members])
 
@@ -139,15 +143,41 @@ export function ConversationInfoModal({
               <UserPlus className="h-4 w-4" /> Add people
             </Button>
           ) : (
-            <ul className="max-h-48 space-y-0.5 overflow-y-auto rounded-xl border border-slate-200 p-1 dark:border-slate-800">
-              {candidates.map((u) => (
-                <li key={u.id}>
-                  <button type="button" disabled={busy} onClick={() => void change({ addMemberIds: [u.id] })} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
-                    <Check className="h-4 w-4 text-slate-300" /> {u.name} <Badge tone="neutral" className="ml-auto capitalize">{u.role}</Badge>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            // Tick several, add them at once.
+            <div className="space-y-2">
+              <ul className="max-h-48 space-y-0.5 overflow-y-auto rounded-xl border border-slate-200 p-1 dark:border-slate-800">
+                {candidates.length === 0 && <li className="px-2 py-2 text-sm text-slate-400">Everyone is already in this group.</li>}
+                {candidates.map((u) => {
+                  const on = picked.has(u.id)
+                  return (
+                    <li key={u.id}>
+                      <label className="flex min-h-[40px] cursor-pointer items-center gap-2 rounded-lg px-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          disabled={busy}
+                          onChange={() => setPicked((p) => { const n = new Set(p); if (n.has(u.id)) n.delete(u.id); else n.add(u.id); return n })}
+                          className="h-4 w-4 accent-brand-600"
+                        />
+                        {u.name} <Badge tone="neutral" className="ml-auto capitalize">{u.role}</Badge>
+                      </label>
+                    </li>
+                  )
+                })}
+              </ul>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="primary"
+                  disabled={busy || picked.size === 0}
+                  onClick={() => void change({ addMemberIds: Array.from(picked) }).then(() => { setPicked(new Set()); setAdding(false) })}
+                >
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />} Add {picked.size > 0 ? picked.size : ''}
+                </Button>
+                <Button onClick={() => { setPicked(new Set()); setAdding(false) }} disabled={busy}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
           )}
         </div>
       )}

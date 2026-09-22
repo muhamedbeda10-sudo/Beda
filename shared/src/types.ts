@@ -627,6 +627,15 @@ export interface NoticeFile {
   uploadedAt: ISODate
 }
 
+/**
+ * How a notice's targets combine. `all`: values of one kind are
+ * alternatives and the kinds all have to hold (this machine AND this
+ * order). `any`: one target of any kind is enough (this machine OR this
+ * order OR this person).
+ */
+export type NoticeMatchMode = 'all' | 'any'
+export const NOTICE_MATCH_MODES: readonly NoticeMatchMode[] = ['all', 'any']
+
 export interface Notice {
   id: ID
   title: string
@@ -634,6 +643,7 @@ export interface Notice {
   severity: NoticeSeverity
   /** The reader must press Acknowledge; otherwise closing it is enough. */
   requiresAck: boolean
+  matchMode: NoticeMatchMode
   /** Shown from this factory day. */
   validFrom: string
   /** Shown through this factory day; null until withdrawn. */

@@ -84,10 +84,17 @@ export function NoticeFileRow({ file, path, compact = false }: { file: NoticeFil
   )
 }
 
-export function TargetChips({ notice, className }: { notice: Pick<Notice, 'targets'>; className?: string }) {
+export function TargetChips({ notice, className }: { notice: Pick<Notice, 'targets'> & Partial<Pick<Notice, 'matchMode'>>; className?: string }) {
   if (notice.targets.length === 0) return <Badge tone="neutral" className={className}>Everyone, everywhere</Badge>
+  const kinds = new Set(notice.targets.map((t) => t.kind)).size
   return (
-    <div className={cn('flex flex-wrap gap-1.5', className)}>
+    <div className={cn('flex flex-wrap items-center gap-1.5', className)}>
+      {/* The combining rule only matters once there is more than one thing to combine. */}
+      {notice.targets.length > 1 && (
+        <span title={notice.matchMode === 'any' ? 'One of these is enough' : kinds > 1 ? 'All kinds at once; any value of a kind' : 'Any of these'}>
+          <Badge tone={notice.matchMode === 'any' ? 'amber' : 'blue'}>{notice.matchMode === 'any' ? 'ANY of' : kinds > 1 ? 'ALL of' : 'ANY of'}</Badge>
+        </span>
+      )}
       {notice.targets.map((t) => (
         <Badge key={`${t.kind}:${t.value}`} tone="neutral">
           <span className="font-normal text-slate-400">{NOTICE_TARGET_LABEL[t.kind]}</span> {t.label || t.value}

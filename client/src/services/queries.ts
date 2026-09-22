@@ -455,3 +455,14 @@ export function useSessionImages(sessionId: string | null) {
     staleTime: 60_000,
   })
 }
+
+/** The lines of the given order numbers, all at once: what an order chosen first has to offer. */
+export function useLinesOfOrders(orderNumbers: string[], enabled = true) {
+  const key = Array.from(new Set(orderNumbers.map((n) => n.trim()).filter(Boolean))).sort()
+  return useQuery({
+    queryKey: ['orders', 'lines', key] as const,
+    queryFn: async () => (await Promise.all(key.map((n) => api<ProductionOrder[]>(`/orders${qs({ orderNumber: n, includeCancelled: true, limit: 500 })}`)))).flat(),
+    enabled: enabled && key.length > 0,
+    staleTime: 60_000,
+  })
+}

@@ -6,12 +6,12 @@
 // is for everyone, everywhere.
 // ============================================================================
 
-import type { Notice, NoticeFile, NoticeForUser, NoticeTarget, NoticeTargetKind, Process, Role, ShiftLetter } from '@qc/shared/types'
+import type { Notice, NoticeFile, NoticeForUser, NoticeMatchMode, NoticeTarget, NoticeTargetKind, Process, Role, ShiftLetter } from '@qc/shared/types'
 import { normaliseMachineCode } from '@qc/shared/rules'
 import type { Queryable } from '../db/pool'
 
 export const NOTICE_SELECT = `
-  n.id, n.title, n.body, n.severity, n.requires_ack AS "requiresAck",
+  n.id, n.title, n.body, n.severity, n.requires_ack AS "requiresAck", n.match_mode AS "matchMode",
   to_char(n.valid_from, 'YYYY-MM-DD') AS "validFrom", to_char(n.valid_to, 'YYYY-MM-DD') AS "validTo",
   n.created_by_id AS "createdById", n.created_by_name AS "createdByName", n.created_at AS "createdAt", n.updated_at AS "updatedAt",
   n.withdrawn_at AS "withdrawnAt", n.withdrawn_by_name AS "withdrawnByName",
@@ -73,40 +73,46 @@ export interface NoticeReader {
 
 const eq = (a: string | null | undefined, b: string): boolean => (a ?? '').trim().toLowerCase() === b.trim().toLowerCase()
 
+/** Whether one kind's values hit: `true`, `false`, or `null` when the kind is about a place and there is no place to check. */
+function kindHits(kind: NoticeTargetKind, values: string[], reader: NoticeReader, context: NoticeContext | null): boolean | null {
+  switch (kind) {
+    case 'user':
+      return values.includes(reader.userId)
+    case 'role':
+      return values.some((v) => eq(v, reader.role))
+    default: {
+      if (!context) return null
+      const actual =
+        kind === 'factory' ? context.factory
+        : kind === 'machine' ? context.workCenterCode
+        : kind === 'process' ? context.process
+        : kind === 'order-number' ? context.orderNumber
+        : kind === 'order-line' ? context.orderLineId
+        : kind === 'item-code' ? context.itemCode
+        : kind === 'customer' ? context.customer
+        : context.shift
+      if (actual === null || actual === undefined) return false
+      return kind === 'machine' ? values.some((v) => normaliseMachineCode(v) === normaliseMachineCode(actual)) : values.some((v) => eq(actual, v))
+    }
+  }
+}
+
 /**
  * Whether a notice applies to a reader. With a context every kind is
  * checked; without one (the bell) only the kinds about the reader are, so
  * the list shows everything the reader could meet.
+ *
+ * `all`: every kind present has to hit (values of one kind being
+ * alternatives). `any`: one hit of any kind is enough; without a context a
+ * place kind counts as "could be met", so the bell can list it once seen.
  */
-export function noticeApplies(targets: NoticeTarget[], reader: NoticeReader, context: NoticeContext | null): boolean {
+export function noticeApplies(targets: NoticeTarget[], reader: NoticeReader, context: NoticeContext | null, mode: NoticeMatchMode = 'all'): boolean {
+  if (targets.length === 0) return true
   const kinds = new Map<NoticeTargetKind, string[]>()
   for (const t of targets) kinds.set(t.kind, [...(kinds.get(t.kind) ?? []), t.value])
-  for (const [kind, values] of kinds) {
-    switch (kind) {
-      case 'user':
-        if (!values.includes(reader.userId)) return false
-        break
-      case 'role':
-        if (!values.some((v) => eq(v, reader.role))) return false
-        break
-      default: {
-        if (!context) break
-        const actual =
-          kind === 'factory' ? context.factory
-          : kind === 'machine' ? context.workCenterCode
-          : kind === 'process' ? context.process
-          : kind === 'order-number' ? context.orderNumber
-          : kind === 'order-line' ? context.orderLineId
-          : kind === 'item-code' ? context.itemCode
-          : kind === 'customer' ? context.customer
-          : context.shift
-        if (actual === null || actual === undefined) return false
-        const hit = kind === 'machine' ? values.some((v) => normaliseMachineCode(v) === normaliseMachineCode(actual)) : values.some((v) => eq(actual, v))
-        if (!hit) return false
-      }
-    }
-  }
-  return true
+  const results = Array.from(kinds, ([kind, values]) => kindHits(kind, values, reader, context))
+  if (mode === 'any') return results.some((r) => r === true || r === null)
+  return results.every((r) => r !== false)
 }
 
 interface StatusRow {
@@ -135,9 +141,19 @@ export async function forReader(q: Queryable, notices: (NoticeRow & { targets: N
 
 const READER_KINDS: readonly NoticeTargetKind[] = ['user', 'role']
 
-/** Whether a notice is aimed at a place (a machine, an order…) rather than only at people. */
-export function isPlaceBound(targets: NoticeTarget[]): boolean {
-  return targets.some((t) => !READER_KINDS.includes(t.kind))
+/**
+ * Whether a notice reaches this reader only through a place (a machine, an
+ * order…), so the bell must wait until they meet it there. Under `any`, a
+ * notice that also names the reader (their user or role) is theirs at once.
+ */
+export function isPlaceBound(targets: NoticeTarget[], reader?: NoticeReader, mode: NoticeMatchMode = 'all'): boolean {
+  const place = targets.some((t) => !READER_KINDS.includes(t.kind))
+  if (!place) return false
+  if (mode === 'any' && reader) {
+    const named = targets.some((t) => (t.kind === 'user' && t.value === reader.userId) || (t.kind === 'role' && eq(t.value, reader.role)))
+    if (named) return false
+  }
+  return true
 }
 
 /**
@@ -154,10 +170,10 @@ export async function loadInbox(q: Queryable, tz: string, reader: NoticeReader, 
   const withParts = await attachNoticeParts(q, rows)
   const mine = await forReader(
     q,
-    withParts.filter((n) => noticeApplies(n.targets, reader, null)),
+    withParts.filter((n) => noticeApplies(n.targets, reader, null, n.matchMode)),
     reader,
   )
-  return mine.filter((n) => !isPlaceBound(n.targets) || n.seenAt !== null).slice(0, limit)
+  return mine.filter((n) => !isPlaceBound(n.targets, reader, n.matchMode) || n.seenAt !== null).slice(0, limit)
 }
 
 /** The notices still to be read by this reader in this place. */
@@ -171,6 +187,6 @@ export async function loadPending(q: Queryable, tz: string, reader: NoticeReader
     [tz],
   )
   const withParts = await attachNoticeParts(q, rows)
-  const applicable = withParts.filter((n) => noticeApplies(n.targets, reader, context))
+  const applicable = withParts.filter((n) => noticeApplies(n.targets, reader, context, n.matchMode))
   return (await forReader(q, applicable, reader)).filter((n) => n.pending)
 }
