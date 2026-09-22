@@ -16,8 +16,7 @@ import type {
   SaveSampleResponse,
   SessionNotesResponse,
   SessionWithOrder,
-  WizardContext,
-} from '@qc/shared/api'
+  WizardContext, SessionImagesResponse } from '@qc/shared/api'
 import type { Coil, DefectResult, DimensionResult, ImageAsset, Machine, ProductionOrder, WorkInstruction } from '@qc/shared/types'
 import { TestApp, tinyJpeg, type Session } from './harness'
 
@@ -257,6 +256,13 @@ describe('the atomic sample save', () => {
     saved = res.body
     expect(saved.index).toBe(1)
     expect(saved.deduped).toBe(false)
+
+    // §10.8 — the session's photos, grouped, without opening the sample.
+    const photos = await app.api<SessionImagesResponse>('GET', `/api/sessions/${sessionId}/images`, { token: inspector.token })
+    expect(photos.status).toBe(200)
+    expect(photos.body.total).toBe(1)
+    expect(photos.body.groups.map((g) => g.kind)).toEqual(['defect'])
+    expect(photos.body.groups[0].items[0]).toMatchObject({ imageId: photo.id, sampleId: saved.sampleId, sampleIndex: 1, label: 'عيب لحام' })
 
     const detail = await app.api<SampleDetail>('GET', `/api/samples/${saved.sampleId}`, { token: inspector.token })
     expect(detail.status).toBe(200)

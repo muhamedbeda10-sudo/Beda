@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-22.1',
+    date: '2026-09-22',
+    title: 'All the photos of a session, on one screen',
+    items: [
+      { text: 'Open a session in History or on the board: "Photos of this session" shows every photo taken in it, grouped as Defects, Paint, PT / weld and Notes, each with its sample number and what it is of. No need to open sample after sample.' },
+      { text: 'Tap a photo to view it large and swipe through the group; tap the sample number to open that sample.' },
+      { text: 'New inspection: "Rejected qty before release" starts at 0 on every line. It used to start at the line\'s remaining quantity.' },
+    ],
+  },
+  {
     id: '2026-09-20.3',
     date: '2026-09-20',
     title: 'PT coverage from production; History by day',

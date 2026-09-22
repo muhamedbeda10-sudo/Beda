@@ -52,6 +52,10 @@ import type {
   WizardContext,
   StartSessionRequest,
   StartWithSampleResponse,
+  SessionImageGroup,
+  SessionImageItem,
+  SessionImageKind,
+  SessionImagesResponse,
 } from '@qc/shared/api'
 import type { AuditContext } from '@qc/shared/audit'
 import type { AppContext } from '../context'
@@ -741,6 +745,55 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const session = await loadSessionWithOrder(db, id)
     if (!session) throw notFound('That session')
     const body: SessionNotesResponse = { notes: await loadSessionNotes(db, id) }
+    res.json(body)
+  })
+
+  /**
+   * §10.8 — every photo taken in the session, in one answer, grouped by what
+   * it shows, so a reader sees them all without opening sample after sample.
+   * Only live rows: a deleted sample, defect, note or image takes its photos
+   * with it.
+   */
+  r.get('/:id/images', async (req, res) => {
+    const id = parse(uuid, req.params.id)
+    const session = await loadSessionWithOrder(db, id)
+    if (!session) throw notFound('That session')
+    const { rows } = await db.query<SessionImageItem & { kind: SessionImageKind }>(
+      `SELECT 'defect'::text AS kind, i.id AS "imageId", sm.id AS "sampleId", sm.index AS "sampleIndex", d.defect_name AS label, i.uploaded_at AS "takenAt", di.position
+         FROM defect_images di
+         JOIN defect_results d ON d.id = di.defect_id AND d.deleted_at IS NULL
+         JOIN inspection_samples sm ON sm.id = d.sample_id AND sm.deleted_at IS NULL
+         JOIN images i ON i.id = di.image_id AND i.deleted_at IS NULL
+        WHERE sm.session_id = $1
+       UNION ALL
+       SELECT 'paint', i.id, sm.id, sm.index, 'Paint', i.uploaded_at, pi.position
+         FROM paint_sample_images pi
+         JOIN paint_samples ps ON ps.id = pi.paint_sample_id AND ps.deleted_at IS NULL
+         JOIN inspection_samples sm ON sm.id = ps.sample_id AND sm.deleted_at IS NULL
+         JOIN images i ON i.id = pi.image_id AND i.deleted_at IS NULL
+        WHERE sm.session_id = $1
+       UNION ALL
+       SELECT 'pt', i.id, sm.id, sm.index, 'PT / weld', i.uploaded_at, pti.position
+         FROM pt_record_images pti
+         JOIN pt_records pr ON pr.id = pti.pt_record_id AND pr.deleted_at IS NULL
+         JOIN inspection_samples sm ON sm.id = pr.sample_id AND sm.deleted_at IS NULL
+         JOIN images i ON i.id = pti.image_id AND i.deleted_at IS NULL
+        WHERE sm.session_id = $1
+       UNION ALL
+       SELECT 'note', i.id, sm.id, sm.index, left(n.text, 80), i.uploaded_at, ni.position
+         FROM session_note_images ni
+         JOIN session_notes n ON n.id = ni.note_id AND n.deleted_at IS NULL
+         LEFT JOIN inspection_samples sm ON sm.id = n.sample_id AND sm.deleted_at IS NULL
+         JOIN images i ON i.id = ni.image_id AND i.deleted_at IS NULL
+        WHERE n.session_id = $1
+       ORDER BY "sampleIndex" NULLS LAST, "takenAt", position`,
+      [id],
+    )
+    const order: SessionImageKind[] = ['defect', 'paint', 'pt', 'note']
+    const groups: SessionImageGroup[] = order
+      .map((kind) => ({ kind, items: rows.filter((r) => r.kind === kind).map(({ kind: _k, ...item }) => item) }))
+      .filter((g) => g.items.length > 0)
+    const body: SessionImagesResponse = { groups, total: rows.length }
     res.json(body)
   })
 

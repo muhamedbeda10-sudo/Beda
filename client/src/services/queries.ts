@@ -41,7 +41,7 @@ import type {
   ChatUnreadResponse,
 } from '@qc/shared/api'
 import type { KpiFilters, KpiOverview } from '@qc/shared/kpi'
-import type { OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse } from '@qc/shared/api'
+import type { OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
@@ -84,6 +84,7 @@ export const keys = {
   chatUsers: ['chat', 'users'] as const,
   releaseState: ['releases', 'state'] as const,
   orderList: (filters: OrderListFilters) => ['orders', 'list', filters] as const,
+  sessionImages: (id: string) => ['sessions', id, 'images'] as const,
   orderListOptions: ['orders', 'list', 'options'] as const,
 }
 
@@ -443,4 +444,14 @@ export async function loadMoreOrders(filters: OrderListFilters, offset: number, 
 
 export function useOrderListOptions() {
   return useQuery({ queryKey: keys.orderListOptions, queryFn: () => api<OrderListOptionsResponse>('/orders/list/options'), staleTime: 5 * 60_000 })
+}
+
+/** §10.8 — every photo of a session, grouped by what it shows. */
+export function useSessionImages(sessionId: string | null) {
+  return useQuery({
+    queryKey: keys.sessionImages(sessionId ?? ''),
+    queryFn: () => api<SessionImagesResponse>(`/sessions/${sessionId}/images`),
+    enabled: !!sessionId,
+    staleTime: 60_000,
+  })
 }

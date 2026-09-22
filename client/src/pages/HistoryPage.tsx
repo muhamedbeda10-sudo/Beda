@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   SprayCan,
   X,
+  Camera,
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Stat } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
@@ -30,6 +31,7 @@ import { Attr, SampleDetail, Section, SectionEmpty, dispositionToneOf, num, stat
 import { DefectEditDialog, DimensionEditDialog } from '@/components/inspection/CorrectionDialogs'
 import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
+import { SessionPhotos } from '@/components/inspection/SessionPhotos'
 import { loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
@@ -873,6 +875,11 @@ export function HistoryPage() {
                     ))}
                   </div>
                 )}
+
+                {/* §10.8 — every photo of the session, by what it shows, without opening the samples. */}
+                <Section icon={<Camera className="h-4 w-4" />} title="Photos of this session">
+                  <SessionPhotos sessionId={openSession.id} sessionSeq={openSession.seq} onOpenSample={(id) => setOpenSampleId(id)} />
+                </Section>
 
                 {/* §5.8 — remarks about the order written during this session. */}
                 <Section icon={<MessageSquareText className="h-4 w-4" />} title="Notes about the order" count={sessionNotes.length}>
