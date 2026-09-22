@@ -35,6 +35,7 @@ export const RELEASES: readonly Release[] = [
       { text: 'Notices → Reach: "ALL of them (AND)" keeps the old rule (each kind must hold; within a kind any value); "ANY of them (OR)" reaches a reader through any one target: this machine OR this order OR this person.' },
       { text: 'Every target kind is now a list to tick several of and add at once: machines, people, factories, shifts, roles, order numbers, order lines. "All shown" ticks the whole filtered list.' },
       { text: 'Target an order number first and the Item code list offers the items of that order to tick; the Order line list shows its lines. An item code can still be typed.' },
+      { text: 'The lists narrow as you go: a factory or a process narrows the machines; machines (or the factories\' machines) narrow the orders, lines, items and customers to what runs on them; an order narrows its items and lines.' },
       { text: 'Chat: an administrator adds people to a group after it was made, from the person-plus button at the top of the group, several at once.' },
     ],
   },

@@ -466,3 +466,14 @@ export function useLinesOfOrders(orderNumbers: string[], enabled = true) {
     staleTime: 60_000,
   })
 }
+
+/** Every line on the given machines, all at once: what a machine chosen first has to offer. */
+export function useLinesOfMachines(codes: string[], enabled = true) {
+  const key = Array.from(new Set(codes.map((c) => c.trim()).filter(Boolean))).sort()
+  return useQuery({
+    queryKey: ['orders', 'lines-of-machines', key] as const,
+    queryFn: async () => (await Promise.all(key.map((c) => api<ProductionOrder[]>(`/orders${qs({ machine: c, includeCancelled: true, limit: 500 })}`)))).flat(),
+    enabled: enabled && key.length > 0,
+    staleTime: 60_000,
+  })
+}
