@@ -45,6 +45,9 @@ const ACCESS_COLUMNS: ColumnDef[] = [
 
 const num = (v: number | null | undefined) => (v === null || v === undefined || Number.isNaN(v) ? '—' : String(v))
 
+/** The code out of what was typed or picked: "125185TA3 — XL Light Beam" and "125185TA3" both give the code. */
+const itemCodeOf = (typed: string) => typed.split(' — ')[0].trim()
+
 function statusTone(s: string): 'green' | 'amber' | 'violet' | 'neutral' | 'red' {
   const v = s.trim().toLowerCase()
   if (v === 'active') return 'green'
@@ -140,6 +143,7 @@ export function AccessPage() {
   const [machine, setMachine] = usePersistedState('qc-access:machine', 'all')
   const [factory, setFactory] = usePersistedState('qc-access:factory', 'all')
   const [erpStatus, setErpStatus] = usePersistedState('qc-access:status', 'all')
+  const [item, setItem] = usePersistedState('qc-access:item', '')
   const [remaining, setRemaining] = usePersistedState<'all' | 'open' | 'done'>('qc-access:remaining', 'all')
   const [inspected, setInspected] = usePersistedState<'all' | 'yes' | 'no'>('qc-access:inspected', 'all')
   const debounced = useDebounced(term.trim())
@@ -149,10 +153,12 @@ export function AccessPage() {
       workCenterCode: machine === 'all' ? undefined : machine,
       factory: factory === 'all' ? undefined : factory,
       erpStatus: erpStatus === 'all' ? undefined : erpStatus,
+      itemCode: itemCodeOf(item) || undefined,
       remaining: remaining === 'all' ? undefined : remaining,
       inspected: inspected === 'all' ? undefined : inspected,
     }),
-    [debounced, machine, factory, erpStatus, remaining, inspected],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [debounced, machine, factory, erpStatus, item, remaining, inspected],
   )
   const { data, isLoading, isError } = useOrderList(filters)
   const { data: options } = useOrderListOptions()
@@ -188,12 +194,13 @@ export function AccessPage() {
     }
   }
 
-  const filtering = !!(debounced || machine !== 'all' || factory !== 'all' || erpStatus !== 'all' || remaining !== 'all' || inspected !== 'all')
+  const filtering = !!(debounced || machine !== 'all' || factory !== 'all' || erpStatus !== 'all' || item.trim() || remaining !== 'all' || inspected !== 'all')
   const clear = () => {
     setTerm('')
     setMachine('all')
     setFactory('all')
     setErpStatus('all')
+    setItem('')
     setRemaining('all')
     setInspected('all')
   }
@@ -220,7 +227,7 @@ export function AccessPage() {
             </button>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <Field label="Machine">
             <Select value={machine} onChange={(e) => setMachine(e.target.value)} className="min-h-[48px]">
               <option value="all">All machines</option>
@@ -250,6 +257,22 @@ export function AccessPage() {
                 </option>
               ))}
             </Select>
+          </Field>
+          <Field label="Item">
+            {/* Typed with completion from the sheet's items: "code — name" or the code alone both land on the code. */}
+            <Input
+              list="access-items"
+              value={item}
+              onChange={(e) => setItem(e.target.value)}
+              placeholder="All items"
+              className="min-h-[48px]"
+              aria-label="Item"
+            />
+            <datalist id="access-items">
+              {(options?.items ?? []).map((i) => (
+                <option key={i.itemCode} value={`${i.itemCode} — ${i.item}`} />
+              ))}
+            </datalist>
           </Field>
           <Field label="Remaining">
             <Select value={remaining} onChange={(e) => setRemaining(e.target.value as 'all' | 'open' | 'done')} className="min-h-[48px]">
