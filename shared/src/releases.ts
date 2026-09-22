@@ -28,6 +28,12 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-22.4',
+    date: '2026-09-22',
+    title: 'History: filter by item',
+    items: [{ text: 'History → Item: type or pick an item (code — name) and the list narrows to the sessions inspecting it, the same way Access does. Kept with the other filters on the device.' }],
+  },
+  {
     id: '2026-09-22.3',
     date: '2026-09-22',
     title: 'Access: filter by item',

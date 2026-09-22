@@ -371,6 +371,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
         q: z.string().trim().max(120).optional(),
         status: z.enum(['Open', 'Closed']).optional(),
         workCenterCode: z.string().trim().max(60).optional(),
+        itemCode: z.string().trim().max(120).optional(),
         factory: z.string().trim().max(120).optional(),
         inspectorId: uuid.optional(),
         since: z.string().datetime({ offset: true }).optional(),
@@ -431,6 +432,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
                              WHERE m.deleted_at IS NULL AND lower(btrim(COALESCE(m.factory, ''))) = lower(btrim(${p(q.factory)}))
                                AND ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('s.work_center_code')})`)
     }
+    if (q.itemCode) clauses.push(`lower(btrim(o.item_code)) = lower(btrim(${p(q.itemCode)}))`)
     if (q.q) {
       // A literal search: the wildcards a person types are text, not pattern.
       const like = `%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
@@ -483,7 +485,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
    */
   r.get('/history/options', async (req, res) => {
     requireUser(req)
-    const [inspectors, machines] = await Promise.all([
+    const [inspectors, machines, items] = await Promise.all([
       db.query<{ id: string; name: string }>(
         // Whoever opened a session or recorded a sample in one, named as they
         // were most recently.
@@ -500,10 +502,18 @@ export function sessionsRoutes(ctx: AppContext): Router {
         `SELECT DISTINCT s.work_center_code AS code
            FROM inspection_sessions s WHERE s.deleted_at IS NULL AND btrim(s.work_center_code) <> ''`,
       ),
+      // The items that were inspected: one row per code, named as its latest session's line names it.
+      db.query<{ itemCode: string; item: string }>(
+        `SELECT DISTINCT ON (lower(btrim(o.item_code))) btrim(o.item_code) AS "itemCode", btrim(o.item) AS item
+           FROM inspection_sessions s JOIN production_orders o ON o.id = s.order_id
+          WHERE s.deleted_at IS NULL AND btrim(o.item_code) <> ''
+          ORDER BY lower(btrim(o.item_code)), s.started_at DESC`,
+      ),
     ])
     const body: HistoryOptionsResponse = {
       inspectors: inspectors.rows.sort((a, b) => a.name.localeCompare(b.name)),
       workCenterCodes: machines.rows.map((m) => m.code).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+      items: items.rows,
     }
     res.json(body)
   })
