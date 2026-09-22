@@ -573,6 +573,8 @@ export interface HistoryFilters {
   workCenterCode?: string
   /** The factory a machine belongs to, as the machine catalogue names it. */
   factory?: string
+  /** An item code, exact, case-insensitive. */
+  itemCode?: string
   inspectorId?: string
   /** Only sessions started (or sampled) at or after this instant. */
   since?: string
@@ -598,6 +600,8 @@ export interface HistoryOptionsResponse {
   inspectors: { id: string; name: string }[]
   /** Machine codes that actually appear in the record, newest use first. */
   workCenterCodes: string[]
+  /** Every item inspected so far, by code, with the name its latest line carries. */
+  items: { itemCode: string; item: string }[]
 }
 
 // ---- Images ----------------------------------------------------------------

@@ -145,6 +145,17 @@ describe('§6 — a filter reaches past the first page', () => {
     expect(recent.body.sessions.map((s) => s.id)).not.toContain(buried)
   })
 
+  it('filters by item code, exact and case-blind, and offers the items', async () => {
+    // The buried session is on the panel (200999ZZ); everything else is the beam (100155TA3).
+    const panelOnly = await get('itemCode=200999zz', one.token)
+    expect(panelOnly.body.sessions.map((s) => s.id)).toEqual([buried])
+    expect((await get('itemCode=100155TA3', one.token)).body.totals!.sessions).toBe(RECENT)
+    expect((await get('itemCode=nope', one.token)).body.totals!.sessions).toBe(0)
+    const options = await app.api<HistoryOptionsResponse>('GET', '/api/sessions/history/options', { token: one.token })
+    expect(options.body.items.map((i) => i.itemCode).sort()).toEqual(['100155TA3', '200999ZZ'])
+    expect(options.body.items.find((i) => i.itemCode === '200999ZZ')?.item).toBe('Deep Shelf Panel')
+  })
+
   it('finds a session by its number', async () => {
     const res = await get('q=%233', one.token)
     expect(res.body.totals).toEqual({ sessions: 1, open: 1 })

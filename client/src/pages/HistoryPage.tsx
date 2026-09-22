@@ -284,6 +284,8 @@ export function HistoryPage() {
   const [toDay, setToDay] = usePersistedState('qc-history:to', todayISO())
   const [inspectorFilter, setInspectorFilter] = usePersistedState('qc-history:inspector', 'all')
   const [factoryFilter, setFactoryFilter] = usePersistedState('qc-history:factory', 'all')
+  /** Typed or picked as "code — name"; the code is what is sent. */
+  const [itemFilter, setItemFilter] = usePersistedState('qc-history:item', '')
 
   const [openSessionId, setOpenSessionId] = useState<string | null>(null)
   const grid = useResizableColumns('qc-history:grid', HISTORY_COLUMNS)
@@ -355,6 +357,7 @@ export function HistoryPage() {
     if (workCenter !== 'all') f.workCenterCode = workCenter
     if (inspectorFilter !== 'all') f.inspectorId = inspectorFilter
     if (factoryFilter !== 'all') f.factory = factoryFilter
+    if (itemFilter.trim()) f.itemCode = itemFilter.split(' — ')[0].trim()
     if (range === 'custom') {
       // Either end may be left open; an inverted pair is sent in order rather than refused.
       const [a, b] = fromDay && toDay && fromDay > toDay ? [toDay, fromDay] : [fromDay, toDay]
@@ -364,7 +367,7 @@ export function HistoryPage() {
     if (dispositionFilter) f.disposition = dispositionFilter
     else if (status === 'Hold') f.disposition = 'Hold'
     return f
-  }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, range, fromDay, toDay, dispositionFilter])
+  }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, itemFilter, range, fromDay, toDay, dispositionFilter])
 
   const { data: history, isLoading: loading, isFetching } = useHistory(filters, SESSION_PAGE)
   /** Pages walked back from the first one, so an older session is never out of reach. */
@@ -426,6 +429,7 @@ export function HistoryPage() {
   const { data: options } = useHistoryOptions()
   const workCenterOptions = options?.workCenterCodes ?? []
   const inspectorOptions = options?.inspectors ?? []
+  const itemOptions = options?.items ?? []
 
   // History is the factory's record: everyone reads all of it and may
   // narrow by who and where.
@@ -546,7 +550,7 @@ export function HistoryPage() {
             aria-label="Search history"
           />
         </div>
-        <div className={cn('grid grid-cols-2 gap-3 sm:grid-cols-3', seesAll && 'lg:grid-cols-5')}>
+        <div className={cn('grid grid-cols-2 gap-3 sm:grid-cols-3', seesAll && 'lg:grid-cols-6')}>
           <Field label="Status">
             <Select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} className="min-h-[48px]">
               <option value="All">All</option>
@@ -563,6 +567,14 @@ export function HistoryPage() {
                 </option>
               ))}
             </Select>
+          </Field>
+          <Field label="Item">
+            <Input list="history-items" value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} placeholder="All items" className="min-h-[48px]" aria-label="Item" />
+            <datalist id="history-items">
+              {itemOptions.map((i) => (
+                <option key={i.itemCode} value={`${i.itemCode} — ${i.item}`} />
+              ))}
+            </datalist>
           </Field>
           {range === 'custom' && (
             <>
