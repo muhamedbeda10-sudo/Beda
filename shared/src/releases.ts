@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-22.5',
+    date: '2026-09-22',
+    title: 'Dashboard: hide an insight you have read',
+    items: [
+      { text: 'Dashboard → Insights: each card has a hide button. A hidden insight stays hidden for you on every device until you show it again from the "hidden" row at the bottom of the list.' },
+      { text: 'Hiding is by rule and subject: hiding "machine 14 runs hot" does not hide the same finding about another machine. The bulb count, the print and the Excel export follow what you see.' },
+    ],
+  },
+  {
     id: '2026-09-22.4',
     date: '2026-09-22',
     title: 'History: filter by item',

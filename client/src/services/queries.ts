@@ -41,7 +41,7 @@ import type {
   ChatUnreadResponse,
 } from '@qc/shared/api'
 import type { KpiFilters, KpiOverview } from '@qc/shared/kpi'
-import type { OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
+import type { HiddenInsightsResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
@@ -75,6 +75,7 @@ export const keys = {
   kpiOverview: (filters: KpiFilters) => ['kpi', 'overview', filters] as const,
   kpiThresholds: ['kpi', 'thresholds'] as const,
   kpiSpan: ['kpi', 'span'] as const,
+  hiddenInsights: ['kpi', 'insights', 'hidden'] as const,
   noticeInbox: ['notices', 'inbox'] as const,
   noticesAdmin: ['notices', 'admin'] as const,
   noticeAcks: (id: string) => ['notices', id, 'acknowledgements'] as const,
@@ -348,6 +349,11 @@ export function useKpiOverview(filters: KpiFilters | null) {
 /** Where the period strip begins: the first day anything was recorded. */
 export function useKpiSpan(enabled = true) {
   return useQuery({ queryKey: keys.kpiSpan, queryFn: () => api<KpiSpanResponse>('/kpi/span'), enabled, staleTime: 60 * 60_000 })
+}
+
+/** §15 — the insight keys this person has hidden, on every device. */
+export function useHiddenInsights(enabled = true) {
+  return useQuery({ queryKey: keys.hiddenInsights, queryFn: () => api<HiddenInsightsResponse>('/kpi/insights/hidden'), enabled, staleTime: 5 * 60_000 })
 }
 
 export function useKpiThresholds(enabled = true) {

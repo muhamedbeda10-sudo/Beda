@@ -333,6 +333,18 @@ export interface KpiInsight {
   link?: { kind: 'history-hold' | 'machine' | 'item' | 'session'; value: string }
 }
 
+/** The longest key the server keeps; a rule id and a subject fit with room. */
+export const INSIGHT_KEY_MAX = 200
+
+/**
+ * What a person hides when they hide an insight: the rule and its subject,
+ * so hiding "machine 14 runs hot" does not hide the same rule about another
+ * machine, while a changed percentage in the wording hides nothing new.
+ */
+export function insightKey(i: Pick<KpiInsight, 'id' | 'link'>): string {
+  return (i.link ? `${i.id}:${i.link.kind}:${i.link.value}` : i.id).slice(0, INSIGHT_KEY_MAX)
+}
+
 /**
  * Several lists on the dashboard are the largest few of something: the top
  * defect types, machines, items, dimensions, suppliers, wire batches, and the

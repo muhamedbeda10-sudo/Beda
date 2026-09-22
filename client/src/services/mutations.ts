@@ -41,6 +41,7 @@ import {
   type SendChatMessageRequest,
   type UpdateGroupRequest,
   type ReleaseStateResponse,
+  type HiddenInsightsResponse,
 } from '@qc/shared/api'
 import type { KpiThresholds } from '@qc/shared/kpi'
 import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
@@ -397,6 +398,17 @@ export async function uploadChatFile(file: File): Promise<StoredFile> {
   const form = new FormData()
   form.set('file', file, file.name)
   return api<StoredFile>('/chat/files', { method: 'POST', form })
+}
+
+/** §15 — hide an insight for this person, on every device, until they show it again. */
+export async function hideInsight(qc: QueryClient, key: string): Promise<void> {
+  const res = await api<HiddenInsightsResponse>('/kpi/insights/hide', { method: 'POST', body: { key } })
+  qc.setQueryData(['kpi', 'insights', 'hidden'], res)
+}
+
+export async function restoreInsight(qc: QueryClient, key: string): Promise<void> {
+  const res = await api<HiddenInsightsResponse>('/kpi/insights/restore', { method: 'POST', body: { key } })
+  qc.setQueryData(['kpi', 'insights', 'hidden'], res)
 }
 
 /** §18 — the newest release note dismissed; the mark only ever moves forward. */

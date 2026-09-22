@@ -772,6 +772,17 @@ export interface ToggleReactionRequest {
   emoji: string
 }
 
+// ---- Hidden insights (§15) -------------------------------------------------
+
+/** The insight keys this person has hidden; see `insightKey` in ./kpi. */
+export interface HiddenInsightsResponse {
+  keys: string[]
+}
+
+export interface HiddenInsightRequest {
+  key: string
+}
+
 // ---- Release notes (§18) ---------------------------------------------------
 
 export interface ReleaseStateResponse {
