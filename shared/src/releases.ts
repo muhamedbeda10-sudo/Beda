@@ -28,6 +28,12 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-22.3',
+    date: '2026-09-22',
+    title: 'Access: filter by item',
+    items: [{ text: 'Access → Item: type or pick an item (code — name) from the sheet and the table narrows to its lines. Kept with the other filters on the device.' }],
+  },
+  {
     id: '2026-09-22.2',
     date: '2026-09-22',
     title: 'Notices: AND / OR, and adding many targets at once',

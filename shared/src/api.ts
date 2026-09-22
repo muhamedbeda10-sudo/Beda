@@ -788,6 +788,8 @@ export interface OrderListFilters {
   workCenterCode?: string
   factory?: string
   erpStatus?: string
+  /** An item code, exact, case-insensitive. */
+  itemCode?: string
   /** 'open' — required above finished; 'done' — finished. */
   remaining?: 'open' | 'done'
   /** 'yes' — at least one inspection session on the line; 'no' — none. */
@@ -815,4 +817,6 @@ export interface OrderListOptionsResponse {
   erpStatuses: string[]
   factories: string[]
   workCenterCodes: string[]
+  /** Every item on the sheet, by code, with the name it carries. */
+  items: { itemCode: string; item: string }[]
 }

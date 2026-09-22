@@ -148,6 +148,7 @@ export function ordersRoutes(ctx: AppContext): Router {
         workCenterCode: z.string().trim().max(60).optional(),
         factory: z.string().trim().max(120).optional(),
         erpStatus: z.string().trim().max(40).optional(),
+        itemCode: z.string().trim().max(120).optional(),
         remaining: z.enum(['open', 'done']).optional(),
         inspected: z.enum(['yes', 'no']).optional(),
         limit: z.coerce.number().int().min(1).max(500).default(100),
@@ -166,6 +167,7 @@ export function ordersRoutes(ctx: AppContext): Router {
     if (q.workCenterCode) clauses.push(`${NORMALISED_CODE('o.work_center_code')} = ${NORMALISED_CODE(p(q.workCenterCode) + '::text')}`)
     if (q.factory) clauses.push(`lower(btrim(COALESCE(m.factory, ''))) = lower(btrim(${p(q.factory)}))`)
     if (q.erpStatus) clauses.push(`lower(btrim(o.erp_status)) = lower(btrim(${p(q.erpStatus)}))`)
+    if (q.itemCode) clauses.push(`lower(btrim(o.item_code)) = lower(btrim(${p(q.itemCode)}))`)
     if (q.remaining === 'open') clauses.push('o.required_qty > o.finished_qty')
     if (q.remaining === 'done') clauses.push('o.required_qty <= o.finished_qty')
     if (q.inspected === 'yes') clauses.push('EXISTS (SELECT 1 FROM inspection_sessions s WHERE s.order_id = o.id AND s.deleted_at IS NULL)')
@@ -203,12 +205,23 @@ export function ordersRoutes(ctx: AppContext): Router {
   /** What the Access filters may offer, drawn from every line on record. */
   r.get('/list/options', requireCapability('view-order-sheet'), async (req, res) => {
     requireUser(req)
-    const [statuses, factories, machines] = await Promise.all([
+    const [statuses, factories, machines, items] = await Promise.all([
       ctx.db.query<{ v: string }>(`SELECT DISTINCT btrim(erp_status) AS v FROM production_orders WHERE deleted_at IS NULL AND btrim(erp_status) <> '' ORDER BY 1`),
       ctx.db.query<{ v: string }>(`SELECT DISTINCT btrim(factory) AS v FROM machines WHERE deleted_at IS NULL AND btrim(COALESCE(factory, '')) <> '' ORDER BY 1`),
       ctx.db.query<{ v: string }>(`SELECT DISTINCT work_center_code AS v FROM production_orders WHERE deleted_at IS NULL AND btrim(work_center_code) <> '' ORDER BY 1`),
+      // One row per item code, with the name the most recent line gives it.
+      ctx.db.query<{ itemCode: string; item: string }>(
+        `SELECT DISTINCT ON (lower(btrim(item_code))) btrim(item_code) AS "itemCode", btrim(item) AS item
+           FROM production_orders WHERE deleted_at IS NULL AND btrim(item_code) <> ''
+          ORDER BY lower(btrim(item_code)), order_date DESC NULLS LAST, id`,
+      ),
     ])
-    const body: OrderListOptionsResponse = { erpStatuses: statuses.rows.map((r) => r.v), factories: factories.rows.map((r) => r.v), workCenterCodes: machines.rows.map((r) => r.v) }
+    const body: OrderListOptionsResponse = {
+      erpStatuses: statuses.rows.map((r) => r.v),
+      factories: factories.rows.map((r) => r.v),
+      workCenterCodes: machines.rows.map((r) => r.v),
+      items: items.rows,
+    }
     res.json(body)
   })
 

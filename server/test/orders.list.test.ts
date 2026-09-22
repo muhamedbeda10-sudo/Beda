@@ -70,6 +70,9 @@ describe('§19 — Access: the imported lines as a table', () => {
     expect((await get('workCenterCode=%20024%20', admin.token)).body.total).toBe(75)
     expect((await get('factory=Factory%202', admin.token)).body.total).toBe(75)
     expect((await get('erpStatus=cancel', admin.token)).body.total).toBe(1)
+    expect((await get('itemCode=dsp-9', admin.token)).body.total).toBe(1)
+    // i ≡ 3 (mod 7) gives 21 lines in 0..149, less the needle at i = 136, which carries DSP-9.
+    expect((await get('itemCode=125185TA3', admin.token)).body.total).toBe(20)
     expect((await get('remaining=done', admin.token)).body.total).toBe(50)
     expect((await get('remaining=open', admin.token)).body.total).toBe(100)
     const inspected = await get('inspected=yes', admin.token)
@@ -90,6 +93,8 @@ describe('§19 — Access: the imported lines as a table', () => {
     expect(options.body.erpStatuses).toEqual(['Active', 'Cancel'])
     expect(options.body.factories).toEqual(['Factory 1', 'Factory 2'])
     expect(options.body.workCenterCodes).toEqual(['024', '58'])
+    expect(options.body.items).toHaveLength(8)
+    expect(options.body.items.find((i) => i.itemCode === 'DSP-9')?.item).toBe('Deep Shelf Panel')
     expect((await get('q=needle', viewer.token)).body.total).toBe(1)
   })
 })
