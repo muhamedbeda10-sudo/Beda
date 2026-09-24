@@ -111,11 +111,6 @@ const startSchema = z.union([
 const closeSchema = z.object({ finalQty: z.coerce.number().min(0), version: z.coerce.number().int().min(0) })
 
 /** A defect quantity counts defective pieces of the batch (§15): the final quantity is the batch, so it cannot be below them. */
-function assertFinalQtyCoversDefects(finalQty: number, defectPieces: number): void {
-  if (finalQty < defectPieces) {
-    throw badRequest(`The final quantity (${finalQty}) is below the ${defectPieces} defective pieces recorded in this session. Check the quantity, or correct the defect quantities first.`)
-  }
-}
 const reopenSchema = z.object({ version: z.coerce.number().int().min(0) })
 const quantitiesSchema = z
   .object({
@@ -853,7 +848,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       // so it cannot be closed as one — it is discarded instead.
       if ((before.sampleCount ?? 0) === 0) throw badRequest('No sample has been recorded in this session. Record one before closing, or discard the session.')
       // The defect quantities are the defective pieces of the batch, so the batch cannot be smaller than them.
-      assertFinalQtyCoversDefects(body.finalQty, before.defectPieces ?? 0)
+      // The final quantity is the good production; the rejected pieces were made on top of it, so no floor applies.
       await tx.query(
         `UPDATE inspection_sessions SET status = 'Closed', final_qty = $2, closed_at = now(), closed_by_id = $3, version = version + 1 WHERE id = $1`,
         [id, body.finalQty, user.id],
@@ -1147,8 +1142,6 @@ export function sessionsRoutes(ctx: AppContext): Router {
       if (body.startQty !== undefined && stock) throw badRequest('A make-to-stock session has no rejected quantity before release.')
       if (body.producedQty !== undefined && !stock) throw badRequest('Only a make-to-stock session has a quantity produced.')
       if (body.finalQty !== undefined && before.status !== 'Closed') throw badRequest('The final quantity is recorded when the session closes.')
-      if (body.finalQty !== undefined) assertFinalQtyCoversDefects(body.finalQty, before.defectPieces ?? 0)
-
       const sets: string[] = ['version = version + 1']
       const params: unknown[] = [id]
       const p = (v: unknown) => `$${params.push(v)}`

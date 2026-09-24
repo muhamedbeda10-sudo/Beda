@@ -23,16 +23,16 @@ function defectRateRules(o: Draft, t: KpiThresholds): KpiInsight[] {
     out.push({
       id: 'defect-rate-red',
       severity: 'critical',
-      title: `Defect rate is ${pctText(rate)}, above the ${t.defectRateAmber}% limit`,
-      detail: `${o.current.productionDefectPieces} defect pieces in ${o.current.piecesProduced} produced, over ${plural(o.current.producedSessions, 'closed session')}.`,
+      title: `Reject rate is ${pctText(rate)}, above the ${t.defectRateAmber}% limit`,
+      detail: `${o.current.productionDefectPieces} rejected pieces against ${o.current.piecesProduced} produced, over ${plural(o.current.producedSessions, 'closed session')}.`,
       action: 'Review the Pareto below and the worst machine; agree a containment before the next shift.',
     })
   } else if (rate > t.defectRateGreen) {
     out.push({
       id: 'defect-rate-amber',
       severity: 'warning',
-      title: `Defect rate is ${pctText(rate)}, above the ${t.defectRateGreen}% target`,
-      detail: `${o.current.productionDefectPieces} defect pieces in ${o.current.piecesProduced} produced, over ${plural(o.current.producedSessions, 'closed session')}.`,
+      title: `Reject rate is ${pctText(rate)}, above the ${t.defectRateGreen}% target`,
+      detail: `${o.current.productionDefectPieces} rejected pieces against ${o.current.piecesProduced} produced, over ${plural(o.current.producedSessions, 'closed session')}.`,
       action: 'Watch the daily trend; act on the leading defect before it grows.',
     })
   }
@@ -43,8 +43,8 @@ function defectRateRules(o: Draft, t: KpiThresholds): KpiInsight[] {
       id: worse ? 'defect-rate-rising' : 'defect-rate-falling',
       severity: worse ? 'warning' : 'good',
       title: worse
-        ? `Defect rate rose ${fmt(Math.abs(delta))}% against the previous period`
-        : `Defect rate fell ${fmt(Math.abs(delta))}% against the previous period`,
+        ? `Reject rate rose ${fmt(Math.abs(delta))}% against the previous period`
+        : `Reject rate fell ${fmt(Math.abs(delta))}% against the previous period`,
       detail: `${pctText(o.previous.defectRatePct)} before, ${pctText(rate)} now.`,
       action: worse ? 'Compare the Pareto of both periods: a new defect or an old one growing?' : undefined,
     })

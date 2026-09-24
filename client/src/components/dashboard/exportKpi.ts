@@ -44,7 +44,7 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
     rows: [
       ['Period', `${f.from} to ${f.to}`, `${f.prevFrom} to ${f.prevTo}`],
       ['Factory', f.factory ?? 'All', ''],
-      ['Machine', f.workCenterCode ?? 'All', ''],
+      ['Machine', f.workCenterCodes?.length ? f.workCenterCodes.join(', ') : 'All', ''],
       ['Item code', f.itemCode ?? 'All', ''],
       ['Shift', f.shift ? `${f.shift} (${shiftName(f.shift)})` : 'All', ''],
       ['Generated', o.generatedAt, ''],

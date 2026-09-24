@@ -12,6 +12,7 @@ import {
   RANKING_WEIGHTS,
   pct,
   rankInspectors,
+  type KpiBreakdown,
   type KpiFilters,
   type KpiGeneral,
   type KpiInspectorRanking,
@@ -31,15 +32,18 @@ import { requireCapability, requireUser } from '../auth/middleware'
 import { auditChanges } from '../audit/service'
 import { buildInsights } from './kpi.insights'
 import {
+  loadBreakdown,
   loadDaily,
   loadDefectDetails,
   loadDefectRateBands,
   loadDiscipline,
   loadFactoryMonths,
+  loadFirstPart,
   loadGroups,
   loadHolds,
   loadInspectorRaw,
   loadItemDefects,
+  loadMachineMonths,
   loadMonthly,
   loadPaintByItem,
   loadPareto,
@@ -66,6 +70,21 @@ const OverviewQuery = z.object({
   itemCode: optionalText,
   inspectorId: z.string().uuid().optional(),
   shift: z.enum(['A', 'B', 'C']).optional(),
+})
+
+/** One machine, or several separated by commas: "24,25,31". */
+function machineCodes(raw: string | undefined): string[] | undefined {
+  const codes = (raw ?? '').split(',').map((c) => c.trim()).filter(Boolean)
+  return codes.length ? Array.from(new Set(codes)) : undefined
+}
+
+const BreakdownQuery = z.object({
+  from: day,
+  to: day,
+  factory: optionalText,
+  process: z.enum(PROCESSES as unknown as [Process, ...Process[]]).optional(),
+  workCenterCode: optionalText,
+  itemCode: optionalText,
 })
 
 const rate = z.number().min(0).max(100)
@@ -236,7 +255,7 @@ export function kpiRoutes(ctx: AppContext): Router {
     checkRange(q.prevFrom, q.prevTo, 'Comparison period')
     const { thresholds } = await loadThresholds(ctx.db)
     const tz = ctx.config.FACTORY_TIMEZONE
-    const common = { tz, factory: q.factory, process: q.process, workCenterCode: q.workCenterCode, itemCode: q.itemCode, inspectorId: q.inspectorId, shift: q.shift }
+    const common = { tz, factory: q.factory, process: q.process, workCenterCodes: machineCodes(q.workCenterCode), itemCode: q.itemCode, inspectorId: q.inspectorId, shift: q.shift }
     const cur: PeriodFilters = { ...common, from: q.from, to: q.to }
     const prev: PeriodFilters = { ...common, from: q.prevFrom, to: q.prevTo }
     const db = ctx.db
@@ -305,7 +324,7 @@ export function kpiRoutes(ctx: AppContext): Router {
       prevTo: q.prevTo,
       factory: q.factory,
       process: q.process,
-      workCenterCode: q.workCenterCode,
+      workCenterCodes: machineCodes(q.workCenterCode),
       itemCode: q.itemCode,
       inspectorId: q.inspectorId,
       shift: q.shift,
@@ -387,7 +406,7 @@ export function kpiRoutes(ctx: AppContext): Router {
     const today = factoryToday(tz)
     const from = `${monthsBefore(today.slice(0, 7), GENERAL_MONTHS - 1)}-01`
     const f: PeriodFilters = { tz, from, to: today }
-    const [totals, months, factories] = await Promise.all([loadTotals(ctx.db, f), loadMonthly(ctx.db, f), loadFactoryMonths(ctx.db, f)])
+    const [totals, months, factories, machines] = await Promise.all([loadTotals(ctx.db, f), loadMonthly(ctx.db, f), loadFactoryMonths(ctx.db, f), loadMachineMonths(ctx.db, f)])
     const body: KpiGeneral = {
       from,
       to: today,
@@ -409,6 +428,25 @@ export function kpiRoutes(ctx: AppContext): Router {
       },
       months,
       factories,
+      machines,
+    }
+    res.json(body)
+  })
+
+  /** The drill-down of the general page: a factory, a process or a few machines
+   *  over a period, month by month, with first part released. */
+  r.get('/breakdown', async (req, res) => {
+    const q = parse(BreakdownQuery, req.query)
+    checkRange(q.from, q.to, 'Period')
+    const { thresholds } = await loadThresholds(ctx.db)
+    const f: PeriodFilters = { tz: ctx.config.FACTORY_TIMEZONE, from: q.from, to: q.to, factory: q.factory, process: q.process, workCenterCodes: machineCodes(q.workCenterCode), itemCode: q.itemCode }
+    const [breakdown, firstPart] = await Promise.all([loadBreakdown(ctx.db, f), loadFirstPart(ctx.db, f)])
+    const body: KpiBreakdown = {
+      filters: { from: q.from, to: q.to, factory: q.factory, process: q.process, workCenterCodes: f.workCenterCodes, itemCode: q.itemCode },
+      generatedAt: new Date().toISOString(),
+      thresholds,
+      ...breakdown,
+      firstPart,
     }
     res.json(body)
   })
