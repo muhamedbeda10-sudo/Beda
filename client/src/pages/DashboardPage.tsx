@@ -12,6 +12,9 @@ import {
   AlertOctagon,
   Eye,
   EyeOff,
+  Factory,
+  Layers,
+  PackageCheck,
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
@@ -36,17 +39,18 @@ import {
 } from 'lucide-react'
 import { can, shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
-import { deltaPct, insightKey, toneHighIsGood, toneLowIsGood, type KpiFilters, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
+import { deltaPct, insightKey, toneHighIsGood, toneLowIsGood, type KpiFilters, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
+import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
-import { ColumnChart, DonutChart, HorizontalBars, PairedBarChart, ParetoChart } from '@/components/dashboard/charts'
+import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, TrendChart } from '@/components/dashboard/charts'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
-import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
+import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn, formatDateTime } from '@/lib/utils'
-import { useHiddenInsights, useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
+import { useHiddenInsights, useKpiGeneral, useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
 import { hideInsight, restoreInsight } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
@@ -320,6 +324,147 @@ function Section({ title, hint, icon, children, className, action }: { title: st
   )
 }
 
+// ---- The general page and the analysis blocks --------------------------------
+
+function PlainTile({ label, value, sub, icon, tone = 'neutral' }: { label: string; value: string; sub?: ReactNode; icon: ReactNode; tone?: KpiTone }) {
+  return (
+    <Card className={cn('p-4 ring-1', TONE_RING[tone])}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+        <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', tone === 'neutral' ? 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300' : tone === 'green' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : tone === 'amber' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400')}>
+          {icon}
+        </span>
+      </div>
+      <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>{value}</p>
+      {sub && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{sub}</p>}
+    </Card>
+  )
+}
+
+/**
+ * §15 — the general page. The whole plant over the last calendar months with
+ * no filter: production, defects, the rate month by month, and each factory's
+ * trend. The slicers of the analysis page do not touch it, so it reads the
+ * same in every meeting.
+ */
+function GeneralView({ data, loading, error }: { data: KpiGeneral | null; loading: boolean; error: string | null }) {
+  if (error) return <Card className="border border-rose-200 p-4 text-sm text-rose-700 dark:border-rose-500/30 dark:text-rose-300">{error}</Card>
+  if (!data) {
+    return loading ? (
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i} className="skeleton h-28" />
+        ))}
+      </div>
+    ) : null
+  }
+  const t = data.thresholds
+  const tot = data.totals
+  const labels = data.months.map((m) => monthLabel(m.month, false))
+  const span = `${monthLabel(data.months[0]?.month ?? data.from.slice(0, 7))} – ${monthLabel(data.to.slice(0, 7))} (to date)`
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <PlainTile label="Pieces produced" value={num(tot.piecesProduced)} sub={`${num(tot.producedSessions)} sessions closed with a final quantity · ${num(tot.machines)} machines · ${num(tot.factories)} factories`} icon={<Factory className="h-4 w-4" />} />
+        <PlainTile label="Defect pieces" value={num(tot.productionDefectPieces)} sub={`of the batches produced · ${num(tot.defectPieces)} found on ${num(tot.pieces)} pieces inspected (${pctStr(tot.inspectedDefectPct)})`} icon={<AlertTriangle className="h-4 w-4" />} tone={tot.productionDefectPieces > 0 ? 'amber' : 'green'} />
+        <PlainTile label="Defect rate" value={pctStr(tot.defectRatePct)} sub={`defect pieces per 100 produced · target ≤ ${t.defectRateGreen}%`} icon={<Target className="h-4 w-4" />} tone={toneLowIsGood(tot.defectRatePct, t.defectRateGreen, t.defectRateAmber)} />
+        <PlainTile label="Released pieces" value={num(tot.releasedPieces)} sub="produced less the defect pieces of the batch" icon={<PackageCheck className="h-4 w-4" />} tone="green" />
+      </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Section title="Monthly defect rate" hint={`Pieces produced each month with the defect rate over them. ${span}.`} icon={<Activity className="h-4 w-4" />}>
+          <TrendChart points={data.months.map((m) => ({ label: monthLabel(m.month, false), bar: m.piecesProduced, line: m.defectRatePct }))} barLabel="Pieces produced" lineLabel="Defect rate" />
+        </Section>
+        <Section title="Defect rate by factory" hint="Each factory's defect rate month by month, defect pieces per 100 produced there." icon={<Factory className="h-4 w-4" />}>
+          <LineChart labels={labels} series={data.factories.slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.factory, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))} />
+        </Section>
+      </div>
+      <Section title="Factories" hint={`Production and defects of each factory over the ${data.monthsBack} months.`} icon={<Factory className="h-4 w-4" />}>
+        <Table
+          rows={data.factories}
+          rowKey={(r) => r.factory}
+          empty="No session closed with a final quantity in these months."
+          columns={[
+            { key: 'f', label: 'Factory', render: (r) => <span className="font-semibold">{r.factory}</span> },
+            { key: 'p', label: 'Produced', className: 'text-right tabular-nums', render: (r) => num(r.piecesProduced) },
+            { key: 'd', label: 'Defect pcs', className: 'text-right tabular-nums', render: (r) => num(r.productionDefectPieces) },
+            { key: 'rel', label: 'Released', className: 'text-right tabular-nums', render: (r) => num(Math.max(0, r.piecesProduced - r.productionDefectPieces)) },
+            { key: 'rate', label: 'Defect rate', className: 'text-right', render: (r) => <ToneCell value={r.defectRatePct} tone={toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /> },
+            ...data.months.map((m) => ({ key: m.month, label: monthLabel(m.month, false), className: 'text-right', render: (r: KpiGeneral['factories'][number]) => { const x = r.months.find((y) => y.month === m.month); return <ToneCell value={x?.defectRatePct ?? null} tone={toneLowIsGood(x?.defectRatePct ?? null, t.defectRateGreen, t.defectRateAmber)} /> } })),
+          ]}
+        />
+      </Section>
+      <p className="text-xs text-slate-400">
+        {span}. Production is the sessions closed in the month with a final quantity; the defect pieces are those of the whole batch. Generated {formatDateTime(data.generatedAt)}.
+      </p>
+    </div>
+  )
+}
+
+/** One card per machine of the selection: the rate, its trend, and the pieces behind it. */
+function MachineCards({ rows, previous, t, onPick }: { rows: KpiGroupRow[]; previous: KpiGroupRow[]; t: KpiThresholds; onPick: (code: string) => void }) {
+  if (rows.length === 0) return <p className="py-6 text-center text-sm text-slate-400">No machine inspected in this period.</p>
+  const before = new Map(previous.map((r) => [r.key.toLowerCase(), r]))
+  const sorted = [...rows].sort((a, b) => (b.defectRatePct ?? -1) - (a.defectRatePct ?? -1) || b.defectPieces - a.defectPieces)
+  return (
+    <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      {sorted.map((m) => {
+        const prev = before.get(m.key.toLowerCase())
+        const delta = deltaPct(m.defectRatePct, prev?.defectRatePct ?? null)
+        const up = delta !== null && delta > 0
+        const flat = delta !== null && Math.abs(delta) < 0.05
+        const tone = toneLowIsGood(m.defectRatePct, t.defectRateGreen, t.defectRateAmber)
+        const produced = m.piecesProduced ?? 0
+        const defective = m.productionDefectPieces ?? 0
+        return (
+          <li key={m.key}>
+            <button type="button" onClick={() => onPick(m.key)} className={cn('block w-full rounded-2xl p-4 text-left ring-1 transition-shadow hover:shadow-hover', TONE_RING[tone])}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate font-bold">{m.label}</p>
+                  {m.sub && <p className="truncate text-xs text-slate-400">{m.sub}</p>}
+                </div>
+                <span className={cn('inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold tabular-nums', delta === null ? 'text-slate-400' : flat ? 'text-slate-500' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')} title={prev ? `Was ${pctStr(prev.defectRatePct)} in the comparison period` : 'Nothing in the comparison period'}>
+                  {delta === null ? <Minus className="h-3 w-3" /> : flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
+                  {delta === null ? 'new' : flat ? 'flat' : `${Math.abs(delta).toFixed(1)}%`}
+                </span>
+              </div>
+              <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
+                {pctStr(m.defectRatePct)}
+                <span className="ml-1 text-xs font-semibold text-slate-400">defect rate</span>
+              </p>
+              <dl className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                <div><dt className="text-slate-400">Produced</dt><dd className="font-semibold tabular-nums">{m.piecesProduced === null ? '—' : num(produced)}</dd></div>
+                <div><dt className="text-slate-400">Released</dt><dd className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">{m.piecesProduced === null ? '—' : num(Math.max(0, produced - defective))}</dd></div>
+                <div><dt className="text-slate-400">Defective</dt><dd className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">{m.piecesProduced === null ? num(m.defectPieces) : num(defective)}</dd></div>
+              </dl>
+              <p className="mt-1.5 text-[11px] text-slate-400">{num(m.pieces)} inspected in {num(m.samples)} samples · {pctStr(m.inspectedDefectPct)} of inspected</p>
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/** The fixed right side: one list, largest defect count first, each row tappable to filter the page. */
+function TopDown({ title, hint, icon, rows, t }: { title: string; hint: string; icon: ReactNode; rows: { key: string; label: string; sub?: string; pieces: number; rate: number | null; onClick: () => void }[]; t: KpiThresholds }) {
+  const shown = rows.filter((r) => r.pieces > 0).slice(0, 10)
+  return (
+    <Section title={title} hint={hint} icon={icon}>
+      <HorizontalBars
+        rows={shown.map((r) => ({
+          label: r.label,
+          sub: r.sub,
+          value: r.pieces,
+          tone: toneLowIsGood(r.rate, t.defectRateGreen, t.defectRateAmber),
+          text: `${num(r.pieces)} pcs${r.rate === null ? '' : ` · ${pctStr(r.rate)}`}`,
+          onClick: r.onClick,
+        }))}
+      />
+    </Section>
+  )
+}
+
 // ---- The page --------------------------------------------------------------
 
 interface DashFilters {
@@ -328,6 +473,8 @@ interface DashFilters {
   customFrom: string
   customTo: string
   factory: string
+  /** A process group of the register; narrows the machine list and every figure. */
+  process: '' | Process
   workCenterCode: string
   itemCode: string
   inspectorId: string
@@ -340,6 +487,7 @@ const DEFAULT_FILTERS: DashFilters = {
   customFrom: '',
   customTo: '',
   factory: '',
+  process: '',
   workCenterCode: '',
   itemCode: '',
   inspectorId: '',
@@ -380,12 +528,13 @@ export function DashboardPage() {
       prevFrom: prev.from,
       prevTo: prev.to,
       factory: f.factory || undefined,
+      process: f.process || undefined,
       workCenterCode: f.workCenterCode || undefined,
       itemCode: f.itemCode.trim() || undefined,
       inspectorId: f.inspectorId || undefined,
       shift: f.shift || undefined,
     }),
-    [range, prev, f.factory, f.workCenterCode, f.itemCode, f.inspectorId, f.shift],
+    [range, prev, f.factory, f.process, f.workCenterCode, f.itemCode, f.inspectorId, f.shift],
   )
 
   const { data, isLoading, isFetching, error, refetch } = useKpiOverview(allowed ? filters : null)
@@ -416,7 +565,8 @@ export function DashboardPage() {
   }
   /** Which half of the dashboard is on screen. Printing renders both, so the
    *  PDF is the whole dashboard whichever tab is open. */
-  const [view, setView] = usePersistedState<'overview' | 'inspectors'>('qc-dash:view', 'overview')
+  const [view, setView] = usePersistedState<'general' | 'analysis' | 'inspectors'>('qc-dash:page', 'general')
+  const { data: general, isLoading: generalLoading, error: generalError } = useKpiGeneral(allowed)
   /** The Pareto can be read for one machine without narrowing the whole page. */
   const [paretoMachine, setParetoMachine] = usePersistedState('qc-dash:pareto-machine', '')
   const { data: machines = [] } = useMaster('machines', undefined, allowed)
@@ -451,11 +601,13 @@ export function DashboardPage() {
   }, [data, users, f.inspectorId])
 
   const factories = useMemo(() => Array.from(new Set(machines.map((m) => m.factory ?? '').filter(Boolean))).sort(), [machines])
+  // The process narrows the machine list the way the factory does, so the
+  // Machine select only ever offers what the page is already showing.
   const machineOptions = useMemo(
-    () => machines.filter((m) => !f.factory || (m.factory ?? '') === f.factory).sort((a, b) => a.displayName.localeCompare(b.displayName)),
-    [machines, f.factory],
+    () => machines.filter((m) => (!f.factory || (m.factory ?? '') === f.factory) && (!f.process || (m.process ?? 'forming') === f.process)).sort((a, b) => a.displayName.localeCompare(b.displayName)),
+    [machines, f.factory, f.process],
   )
-  const activeFilters = [f.factory && `Factory ${f.factory}`, f.workCenterCode && `Machine ${f.workCenterCode}`, f.itemCode && `Item ${f.itemCode}`, f.inspectorId && (users.find((u) => u.id === f.inspectorId)?.name ?? inspectorChoices.withRecord.find((r) => r.id === f.inspectorId)?.name ?? 'Inspector'), f.shift && `${shiftName(f.shift)} shift`].filter(Boolean) as string[]
+  const activeFilters = [f.factory && `Factory ${f.factory}`, f.process && PROCESS_LABEL[f.process], f.workCenterCode && `Machine ${f.workCenterCode}`, f.itemCode && `Item ${f.itemCode}`, f.inspectorId && (users.find((u) => u.id === f.inspectorId)?.name ?? inspectorChoices.withRecord.find((r) => r.id === f.inspectorId)?.name ?? 'Inspector'), f.shift && `${shiftName(f.shift)} shift`].filter(Boolean) as string[]
 
   const onLink = (link: NonNullable<KpiInsight['link']>) => {
     if (link.kind === 'history-hold') navigate('/history?disposition=Hold')
@@ -501,17 +653,25 @@ export function DashboardPage() {
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Quality</p>
           <h1 className="mt-1 text-2xl font-extrabold tracking-tight">Dashboard</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            <span className="font-semibold text-slate-700 dark:text-slate-200">{describeRange(range)}</span> compared with {describeRange(prev)}
-            {activeFilters.length > 0 && <span> · {activeFilters.join(' · ')}</span>}
-            {data && <span className="hidden print:inline"> · generated {formatDateTime(data.generatedAt)}</span>}
-          </p>
+          {view === 'general' ? (
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              <span className="font-semibold text-slate-700 dark:text-slate-200">The whole plant, last {general?.monthsBack ?? 4} months</span> · no filter applies here
+              {general && <span className="hidden print:inline"> · generated {formatDateTime(general.generatedAt)}</span>}
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              <span className="font-semibold text-slate-700 dark:text-slate-200">{describeRange(range)}</span> compared with {describeRange(prev)}
+              {activeFilters.length > 0 && <span> · {activeFilters.join(' · ')}</span>}
+              {data && <span className="hidden print:inline"> · generated {formatDateTime(data.generatedAt)}</span>}
+            </p>
+          )}
         </div>
         <div className="print-hidden flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-xl p-0.5 ring-1 ring-slate-200 dark:ring-slate-700">
             {(
               [
-                ['overview', 'Overview', LayoutGrid],
+                ['general', 'General', Factory],
+                ['analysis', 'Analysis', LayoutGrid],
                 ['inspectors', 'Inspectors', Trophy],
               ] as const
             ).map(([key, label, Icon]) => (
@@ -557,8 +717,13 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <Card className="print-hidden space-y-3 p-4">
+      {/* §15 — the general page: fixed, unfiltered, the same for everyone. */}
+      {view === 'general' && (
+        <GeneralView data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} />
+      )}
+
+      {/* Filters — for the analysis and inspector pages. */}
+      <Card className={cn('print-hidden space-y-3 p-4', view === 'general' && 'hidden')}>
         {/* §15 — the period is a timeline strip: two handles to drag, presets to jump. */}
         <PeriodSlicer
           value={range}
@@ -566,7 +731,7 @@ export function DashboardPage() {
           firstDay={span?.firstDay ?? null}
           onChange={(next, preset) => patch({ preset, customFrom: next.from, customTo: next.to })}
         />
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-7">
           <Field label="Compare with">
             <Select value={f.compare} onChange={(e) => patch({ compare: e.target.value as ComparePreset })}>
               {COMPARE_PRESETS.map((p) => (
@@ -582,6 +747,16 @@ export function DashboardPage() {
               {factories.map((x) => (
                 <option key={x} value={x}>
                   {x}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Process">
+            <Select value={f.process} onChange={(e) => patch({ process: e.target.value as DashFilters['process'], workCenterCode: '' })}>
+              <option value="">All processes</option>
+              {PROCESSES.map((p) => (
+                <option key={p} value={p}>
+                  {PROCESS_LABEL[p]}
                 </option>
               ))}
             </Select>
@@ -641,20 +816,20 @@ export function DashboardPage() {
                 {a}
               </Badge>
             ))}
-            <button type="button" onClick={() => patch({ factory: '', workCenterCode: '', itemCode: '', inspectorId: '', shift: '' })} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
+            <button type="button" onClick={() => patch({ factory: '', process: '', workCenterCode: '', itemCode: '', inspectorId: '', shift: '' })} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
               <X className="h-3.5 w-3.5" /> Clear filters
             </button>
           </div>
         )}
       </Card>
 
-      {error && (
+      {error && view !== 'general' && (
         <Card className="border border-rose-200 p-4 text-sm text-rose-700 dark:border-rose-500/30 dark:text-rose-300">
           {error instanceof ApiError ? error.message : 'The dashboard could not be loaded.'}
         </Card>
       )}
 
-      {isLoading && !data && (
+      {isLoading && !data && view !== 'general' && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {Array.from({ length: 8 }, (_, i) => (
             <div key={i} className="skeleton h-28" />
@@ -666,7 +841,8 @@ export function DashboardPage() {
         <div className={cn('space-y-5 transition-opacity', isFetching && 'opacity-70')}>
           {/* Everything but the ranking. Hidden on screen when the Inspectors
               tab is open; still printed, so the PDF stays the whole dashboard. */}
-          <div className={cn('space-y-5', view !== 'overview' && '[@media_screen]:hidden')}>
+          <div className={cn('grid grid-cols-1 gap-4 xl:grid-cols-4', view !== 'analysis' && '[@media_screen]:hidden')}>
+          <div className="min-w-0 space-y-5 xl:col-span-3">
           {/* Tiles */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             {/* Defect pieces per 100 produced, over the sessions closed in the period with a final quantity. */}
@@ -727,6 +903,47 @@ export function DashboardPage() {
               )}
             </Modal>
           )}
+
+          {/* §15 — the analysis: each machine of the selection, the months, and how spread each defect is. */}
+          <Section
+            title="Machines"
+            hint={`Each machine of the selection: defect pieces per 100 produced, against ${describeRange(prev)}; produced, released and defective are the sessions closed in the period. Tap a machine to filter the page to it.${showing(data.byMachine.length, data.counts.machines)}`}
+            icon={<Activity className="h-4 w-4" />}
+          >
+            <MachineCards rows={data.byMachine} previous={data.byMachinePrevious} t={t} onPick={(code) => patch({ workCenterCode: code })} />
+          </Section>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+            <Section title="Month by month" hint="Pieces produced each month of the period, with the defect rate over them." icon={<Activity className="h-4 w-4" />} className="xl:col-span-2">
+              <TrendChart points={data.monthly.map((m) => ({ label: monthLabel(m.month, false), bar: m.piecesProduced, line: m.defectRatePct }))} barLabel="Pieces produced" lineLabel="Defect rate" />
+            </Section>
+            <Section title="Defect details" hint={`Every defect of the selection, largest first: the pieces, on how many distinct days it was recorded, and on how many order lines.${showing(Math.min(12, data.defectDetails.length), data.counts.defectTypes)}`} icon={<AlertTriangle className="h-4 w-4" />} className="xl:col-span-3">
+              <Table
+                rows={data.defectDetails}
+                rowKey={(r) => r.defectName}
+                maxRows={12}
+                total={data.counts.defectTypes}
+                empty="No defects recorded in this period."
+                columns={[
+                  { key: 'd', label: 'Defect', render: (r) => <span dir="auto" className="font-semibold">{r.defectName}</span> },
+                  { key: 'p', label: 'Pieces', className: 'text-right tabular-nums font-semibold', render: (r) => num(r.pieces) },
+                  { key: 'r', label: 'Records', className: 'text-right tabular-nums', render: (r) => num(r.records) },
+                  { key: 'days', label: 'Days seen', className: 'text-right tabular-nums', render: (r) => num(r.days) },
+                  { key: 'orders', label: 'Orders', className: 'text-right tabular-nums', render: (r) => num(r.orders) },
+                  {
+                    key: 'share',
+                    label: 'Share',
+                    className: 'w-40',
+                    render: (r) => (
+                      <span className="flex items-center gap-2">
+                        <span className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-rose-500" style={{ width: `${Math.min(100, r.sharePct)}%` }} /></span>
+                        <span className="w-12 text-right text-xs font-semibold tabular-nums">{pctStr(r.sharePct)}</span>
+                      </span>
+                    ),
+                  },
+                ]}
+              />
+            </Section>
+          </div>
 
           {/* Trend + dispositions */}
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -840,6 +1057,32 @@ export function DashboardPage() {
             </Section>
           </div>
 
+          </div>
+          {/* The fixed right side: top down, the machines then the items, by defect pieces. */}
+          <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
+            <TopDown
+              title="Defects by machine"
+              hint="Defect pieces of the sessions closed in the period, largest first."
+              icon={<Activity className="h-4 w-4" />}
+              rows={[...data.byMachine]
+                .sort((a, b) => (b.productionDefectPieces ?? b.defectPieces) - (a.productionDefectPieces ?? a.defectPieces))
+                .map((m) => ({ key: m.key, label: m.label, sub: m.sub, pieces: m.productionDefectPieces ?? m.defectPieces, rate: m.defectRatePct, onClick: () => patch({ workCenterCode: m.key }) }))}
+              t={t}
+            />
+            <TopDown
+              title="Defects by item"
+              hint="Defect pieces per item, largest first, with the item's defect rate over its production."
+              icon={<Layers className="h-4 w-4" />}
+              rows={[...data.byItem]
+                .sort((a, b) => (b.productionDefectPieces ?? b.defectPieces) - (a.productionDefectPieces ?? a.defectPieces))
+                .map((r) => ({ key: r.key, label: r.label, sub: r.key, pieces: r.productionDefectPieces ?? r.defectPieces, rate: r.defectRatePct, onClick: () => patch({ itemCode: r.key }) }))}
+              t={t}
+            />
+          </aside>
+          </div>
+
+          {/* Everything that was on the Overview page, full width, unchanged. */}
+          <div className={cn('space-y-5', view !== 'analysis' && '[@media_screen]:hidden')}>
           {/* The shape of the period, and the paint line's readings per item. */}
           <div className="print-break grid grid-cols-1 gap-4 xl:grid-cols-3">
             <Section title="Samples by defect rate" hint="How many samples had no defect, a few, or many. An average hides this shape." icon={<AlertTriangle className="h-4 w-4" />}>

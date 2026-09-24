@@ -6,15 +6,18 @@
 // the trend all agree with one another.
 // ============================================================================
 
-import type { Disposition, ShiftLetter } from '@qc/shared/types'
+import type { Disposition, Process, ShiftLetter } from '@qc/shared/types'
 import { PAINT_THICKNESS_NAME } from '@qc/shared/rules'
 import type {
   KpiDailyPoint,
+  KpiDefectDetailRow,
+  KpiFactoryTrend,
   KpiGroupRow,
   KpiHoldRow,
   KpiInspectorRaw,
   KpiItemDefectRow,
   KpiMachinePareto,
+  KpiMonthPoint,
   KpiPaintItemRow,
   KpiParetoRow,
   KpiRateBand,
@@ -31,6 +34,8 @@ export interface PeriodFilters {
   /** Inclusive factory day, YYYY-MM-DD. */
   to: string
   factory?: string
+  /** A process group from the machine register: only its machines. */
+  process?: Process
   workCenterCode?: string
   itemCode?: string
   inspectorId?: string
@@ -39,11 +44,11 @@ export interface PeriodFilters {
 
 /**
  * $1 tz · $2 from · $3 to · $4 factory · $5 machine · $6 item code ·
- * $7 inspector · $8 shift. Days are turned into instants in the factory's
- * zone here, so "the 3rd" means the 3rd on the floor, not in UTC.
+ * $7 inspector · $8 shift · $9 process. Days are turned into instants in
+ * the factory's zone here, so "the 3rd" means the 3rd on the floor, not in UTC.
  */
 function params(f: PeriodFilters): unknown[] {
-  return [f.tz, f.from, f.to, f.factory ?? null, f.workCenterCode ?? null, f.itemCode ?? null, f.inspectorId ?? null, f.shift ?? null]
+  return [f.tz, f.from, f.to, f.factory ?? null, f.workCenterCode ?? null, f.itemCode ?? null, f.inspectorId ?? null, f.shift ?? null, f.process ?? null]
 }
 
 /**
@@ -63,7 +68,7 @@ produced AS (
     FROM inspection_sessions s
     JOIN production_orders o ON o.id = s.order_id
     LEFT JOIN LATERAL (
-      SELECT m.factory, m.display_name FROM machines m
+      SELECT m.factory, m.display_name, m.process FROM machines m
        WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
        ORDER BY m.created_at LIMIT 1) m ON true
    WHERE s.deleted_at IS NULL AND s.status = 'Closed' AND s.final_qty IS NOT NULL AND s.closed_at IS NOT NULL
@@ -73,6 +78,7 @@ produced AS (
      AND ($5::text IS NULL OR lower(s.work_center_code) = lower($5))
      AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
      AND $7::uuid IS NULL AND $8::text IS NULL
+     AND ($9::text IS NULL OR COALESCE(m.process, 'other') = $9)
 )`
 
 /** The samples of the period that pass the filters, with what each one recorded. */
@@ -98,6 +104,7 @@ WITH base AS (
      AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
      AND ($7::uuid IS NULL OR sm.inspector_id = $7)
      AND ($8::text IS NULL OR sm.shift::text = $8)
+     AND ($9::text IS NULL OR COALESCE(m.process, 'other') = $9)
 ),
 per_sample AS (
   SELECT b.*,
@@ -152,11 +159,11 @@ export async function loadTotals(q: Queryable, f: PeriodFilters): Promise<KpiTot
               (SELECT count(*) FROM pt_tested_lengths l JOIN pt_records pr ON pr.id = l.pt_record_id AND pr.deleted_at IS NULL
                  JOIN base b ON b.sample_id = pr.sample_id WHERE l.deleted_at IS NULL AND l.verdict = 'Reject / Repair')::int AS "ptRejected",
               (SELECT count(*) FROM dimension_results r JOIN base b ON b.sample_id = r.sample_id
-                WHERE r.deleted_at IS NULL AND r.actual IS NOT NULL AND lower(r.name) = lower($9))::int AS "paintReadings",
+                WHERE r.deleted_at IS NULL AND r.actual IS NOT NULL AND lower(r.name) = lower($10))::int AS "paintReadings",
               (SELECT avg(r.actual) FROM dimension_results r JOIN base b ON b.sample_id = r.sample_id
-                WHERE r.deleted_at IS NULL AND r.actual IS NOT NULL AND lower(r.name) = lower($9))::float8 AS "paintMean",
+                WHERE r.deleted_at IS NULL AND r.actual IS NOT NULL AND lower(r.name) = lower($10))::float8 AS "paintMean",
               (SELECT min(r.actual) FROM dimension_results r JOIN base b ON b.sample_id = r.sample_id
-                WHERE r.deleted_at IS NULL AND r.actual IS NOT NULL AND lower(r.name) = lower($9))::float8 AS "paintMin"`,
+                WHERE r.deleted_at IS NULL AND r.actual IS NOT NULL AND lower(r.name) = lower($10))::float8 AS "paintMin"`,
       [...p, PAINT_THICKNESS_NAME],
     ),
     q.query<{ disposition: Disposition; pieces: number }>(
@@ -175,15 +182,16 @@ export async function loadTotals(q: Queryable, f: PeriodFilters): Promise<KpiTot
          FROM inspection_sessions s
          JOIN production_orders o ON o.id = s.order_id
          LEFT JOIN LATERAL (
-           SELECT m.factory FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
+           SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
         WHERE s.deleted_at IS NULL
           AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
           AND s.started_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
           AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
           AND ($5::text IS NULL OR lower(s.work_center_code) = lower($5))
           AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
-          AND ($7::uuid IS NULL OR s.inspector_id = $7)`,
-      p.slice(0, 7),
+          AND ($7::uuid IS NULL OR s.inspector_id = $7)
+          AND ($8::text IS NULL OR COALESCE(m.process, 'other') = $8)`,
+      [...p.slice(0, 7), f.process ?? null],
     ),
     q.query<{ sessions: number; produced: number; defectPieces: number }>(
       `WITH ${PRODUCED}
@@ -423,14 +431,15 @@ export async function loadHolds(q: Queryable, f: PeriodFilters): Promise<CappedR
        JOIN inspection_sessions s ON s.id = sm.session_id AND s.deleted_at IS NULL
        JOIN production_orders o ON o.id = sm.order_id
        LEFT JOIN LATERAL (
-         SELECT m.factory FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
+         SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
       WHERE d.deleted_at IS NULL AND d.disposition = 'Hold'
         AND ($1::text IS NULL OR COALESCE(m.factory, '') = $1)
         AND ($2::text IS NULL OR lower(s.work_center_code) = lower($2))
         AND ($3::text IS NULL OR lower(o.item_code) = lower($3))
         AND ($4::uuid IS NULL OR sm.inspector_id = $4)
+        AND ($5::text IS NULL OR COALESCE(m.process, 'other') = $5)
       ORDER BY sm.created_at LIMIT 50`,
-    [f.factory ?? null, f.workCenterCode ?? null, f.itemCode ?? null, f.inspectorId ?? null],
+    [f.factory ?? null, f.workCenterCode ?? null, f.itemCode ?? null, f.inspectorId ?? null, f.process ?? null],
   )
   // The oldest fifty: a Hold owes a decision, and the oldest owe it most.
   return { rows: rows.map(({ total: _total, ...row }) => row), total: rows[0]?.total ?? 0 }
@@ -474,13 +483,14 @@ export async function loadDiscipline(q: Queryable, f: PeriodFilters): Promise<Di
          FROM inspection_sessions s
          JOIN production_orders o ON o.id = s.order_id
          LEFT JOIN LATERAL (
-           SELECT m.factory FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
+           SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
         WHERE s.deleted_at IS NULL
           AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
           AND ($5::text IS NULL OR lower(s.work_center_code) = lower($5))
           AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
-          AND ($7::uuid IS NULL OR s.inspector_id = $7)`,
-      p.slice(0, 7),
+          AND ($7::uuid IS NULL OR s.inspector_id = $7)
+          AND ($8::text IS NULL OR COALESCE(m.process, 'other') = $8)`,
+      [...p.slice(0, 7), f.process ?? null],
     ),
     // The audit log knows the machine of an entry; the other filters do not apply to it.
     q.query<{ reRecorded: number; corrections: number; discarded: number }>(
@@ -499,12 +509,13 @@ export async function loadDiscipline(q: Queryable, f: PeriodFilters): Promise<Di
       `SELECT count(*)::int AS "openLines"
          FROM production_orders o
          LEFT JOIN LATERAL (
-           SELECT m.factory FROM machines m WHERE lower(m.code) = lower(o.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
+           SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(o.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
         WHERE o.deleted_at IS NULL AND lower(o.erp_status) <> 'cancel' AND o.required_qty > o.finished_qty
           AND ($1::text IS NULL OR COALESCE(m.factory, '') = $1)
           AND ($2::text IS NULL OR lower(o.work_center_code) = lower($2))
-          AND ($3::text IS NULL OR lower(o.item_code) = lower($3))`,
-      [f.factory ?? null, f.workCenterCode ?? null, f.itemCode ?? null],
+          AND ($3::text IS NULL OR lower(o.item_code) = lower($3))
+          AND ($4::text IS NULL OR COALESCE(m.process, 'other') = $4)`,
+      [f.factory ?? null, f.workCenterCode ?? null, f.itemCode ?? null, f.process ?? null],
     ),
   ])
   const b = fromBase.rows[0]
@@ -581,7 +592,7 @@ export async function loadInspectorRaw(q: Queryable, f: PeriodFilters): Promise<
            FROM inspection_sessions s
            JOIN production_orders o ON o.id = s.order_id
            LEFT JOIN LATERAL (
-             SELECT m.factory FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
+             SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
               ORDER BY m.created_at LIMIT 1) m ON true
           WHERE s.deleted_at IS NULL
             AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
@@ -590,6 +601,7 @@ export async function loadInspectorRaw(q: Queryable, f: PeriodFilters): Promise<
             AND ($5::text IS NULL OR lower(s.work_center_code) = lower($5))
             AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
             AND ($7::uuid IS NULL OR s.inspector_id = $7)
+            AND ($9::text IS NULL OR COALESCE(m.process, 'other') = $9)
           GROUP BY s.inspector_id, COALESCE(m.factory, '')),
        -- What had to be corrected afterwards, attributed to the record's owner
        -- rather than to whoever made the correction.
@@ -689,7 +701,7 @@ export async function loadPaintByItem(q: Queryable, f: PeriodFilters): Promise<C
             count(*)::int AS readings, avg(r.actual)::float8 AS "meanMicrons",
             min(r.actual)::float8 AS "minMicrons", max(r.actual)::float8 AS "maxMicrons"
        FROM dimension_results r JOIN base b ON b.sample_id = r.sample_id
-      WHERE r.deleted_at IS NULL AND r.actual IS NOT NULL AND lower(r.name) = lower($9)
+      WHERE r.deleted_at IS NULL AND r.actual IS NOT NULL AND lower(r.name) = lower($10)
       GROUP BY lower(b.item_code) ORDER BY readings DESC LIMIT 25`,
     [...params(f), PAINT_THICKNESS_NAME],
   )
@@ -771,4 +783,114 @@ export async function loadItemDefects(q: Queryable, f: PeriodFilters): Promise<K
     records: r.records,
     sharePct: pct(r.pieces, r.total) ?? 0,
   }))
+}
+
+// ---- Months, defect spread, and the general page ----------------------------
+
+/** The selection month by month: what was inspected in each, and what was
+ *  produced (sessions closed in it with a final quantity). */
+export async function loadMonthly(q: Queryable, f: PeriodFilters): Promise<KpiMonthPoint[]> {
+  const [sampled, produced] = await Promise.all([
+    q.query<{ month: string; samples: number; pieces: number; defectPieces: number }>(
+      `${BASE}
+       SELECT to_char(created_at AT TIME ZONE $1, 'YYYY-MM') AS month,
+              count(*)::int AS samples, COALESCE(sum(sample_qty), 0)::float8 AS pieces,
+              COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+         FROM per_sample GROUP BY 1 ORDER BY 1`,
+      params(f),
+    ),
+    q.query<{ month: string; produced: number; defectPieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month,
+              COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+         FROM produced GROUP BY 1`,
+      params(f),
+    ),
+  ])
+  const madeByMonth = new Map(produced.rows.map((r) => [r.month, r]))
+  const sampledByMonth = new Map(sampled.rows.map((r) => [r.month, r]))
+  // Every month of the period on the axis, so a quiet month shows as zero rather than vanishing.
+  const months: string[] = []
+  for (let m = f.from.slice(0, 7); m <= f.to.slice(0, 7) && months.length < 60; m = nextMonth(m)) months.push(m)
+  return months.map((month) => {
+    const s = sampledByMonth.get(month)
+    const m = madeByMonth.get(month)
+    return {
+      month,
+      samples: s?.samples ?? 0,
+      pieces: s?.pieces ?? 0,
+      defectPieces: s?.defectPieces ?? 0,
+      piecesProduced: m?.produced ?? 0,
+      productionDefectPieces: m?.defectPieces ?? 0,
+      defectRatePct: m ? pct(m.defectPieces, m.produced) : null,
+      inspectedDefectPct: s ? pct(s.defectPieces, s.pieces) : null,
+    }
+  })
+}
+
+/** YYYY-MM after this one. */
+export function nextMonth(month: string): string {
+  const [y, m] = month.split('-').map(Number)
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`
+}
+
+/** Every defect type of the selection, largest first, with how spread it is:
+ *  the distinct factory days it was recorded on and the distinct order lines. */
+export async function loadDefectDetails(q: Queryable, f: PeriodFilters, limit = 40): Promise<KpiDefectDetailRow[]> {
+  const { rows } = await q.query<{ defectName: string; pieces: number; records: number; days: number; orders: number; totalPieces: number }>(
+    `${BASE},
+     by_defect AS (
+       SELECT d.defect_name AS "defectName", COALESCE(sum(d.qty), 0)::float8 AS pieces, count(*)::int AS records,
+              count(DISTINCT (b.created_at AT TIME ZONE $1)::date)::int AS days,
+              count(DISTINCT b.order_id)::int AS orders
+         FROM defect_results d JOIN base b ON b.sample_id = d.sample_id
+        WHERE d.deleted_at IS NULL GROUP BY d.defect_name)
+     SELECT "defectName", pieces, records, days, orders,
+            (SELECT COALESCE(sum(pieces), 0) FROM by_defect)::float8 AS "totalPieces"
+       FROM by_defect ORDER BY pieces DESC, records DESC, "defectName" LIMIT ${limit}`,
+    params(f),
+  )
+  const total = rows[0]?.totalPieces ?? 0
+  return rows.map((r) => ({
+    defectName: r.defectName,
+    pieces: r.pieces,
+    records: r.records,
+    days: r.days,
+    orders: r.orders,
+    sharePct: pct(r.pieces, total) ?? 0,
+  }))
+}
+
+/** Each factory's production month by month, for the general page's trend.
+ *  A factory is the register's; a machine without one counts as "(no factory)". */
+export async function loadFactoryMonths(q: Queryable, f: PeriodFilters): Promise<KpiFactoryTrend[]> {
+  const { rows } = await q.query<{ factory: string; month: string; produced: number; defectPieces: number }>(
+    `WITH ${PRODUCED}
+     SELECT factory, to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month,
+            COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+       FROM produced GROUP BY 1, 2 ORDER BY 1, 2`,
+    params(f),
+  )
+  const months: string[] = []
+  for (let m = f.from.slice(0, 7); m <= f.to.slice(0, 7) && months.length < 60; m = nextMonth(m)) months.push(m)
+  const byFactory = new Map<string, Map<string, { produced: number; defectPieces: number }>>()
+  for (const r of rows) {
+    const name = r.factory || '(no factory)'
+    if (!byFactory.has(name)) byFactory.set(name, new Map())
+    byFactory.get(name)!.set(r.month, r)
+  }
+  return Array.from(byFactory, ([factory, perMonth]) => {
+    const produced = Array.from(perMonth.values()).reduce((n, r) => n + r.produced, 0)
+    const defectPieces = Array.from(perMonth.values()).reduce((n, r) => n + r.defectPieces, 0)
+    return {
+      factory,
+      piecesProduced: produced,
+      productionDefectPieces: defectPieces,
+      defectRatePct: pct(defectPieces, produced),
+      months: months.map((month) => {
+        const m = perMonth.get(month)
+        return { month, piecesProduced: m?.produced ?? 0, productionDefectPieces: m?.defectPieces ?? 0, defectRatePct: m ? pct(m.defectPieces, m.produced) : null }
+      }),
+    }
+  }).sort((a, b) => b.piecesProduced - a.piecesProduced || a.factory.localeCompare(b.factory))
 }

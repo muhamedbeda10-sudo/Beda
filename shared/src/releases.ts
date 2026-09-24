@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-24.2',
+    date: '2026-09-24',
+    title: 'Dashboard: General and Analysis pages',
+    items: [
+      { text: 'Dashboard → General: the whole plant over the last 4 months with no filter: pieces produced, defect pieces, defect rate and released pieces; the rate month by month; and each factory\'s trend and figures.' },
+      { text: 'Dashboard → Analysis: a Process filter (Roll forming, Welding, Painting, Universal machines, Mast machines, Others) that narrows the machine list and every figure. Each machine is a card: defect rate with its trend, produced, released and defective pieces.' },
+      { text: 'Analysis also gets the period month by month, a Defect details table (pieces, days seen, orders seen, share), and a fixed right side listing defects by machine and by item, largest first. Everything that was on Overview follows below it, unchanged.' },
+      { text: 'Admin → Machines: two more process groups, Universal machines and Mast machines; they run the forming wizard.' },
+    ],
+  },
+  {
     id: '2026-09-24.1',
     date: '2026-09-24',
     title: 'Coils: the same coil on the next sample',

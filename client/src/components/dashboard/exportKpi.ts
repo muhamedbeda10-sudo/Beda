@@ -96,6 +96,16 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
       rows: o.daily.map((d) => [d.day, d.samples, d.pieces, d.defectPieces, d.inspectedDefectPct, d.piecesProduced, d.productionDefectPieces, d.defectRatePct, d.fpyPct]),
     },
     {
+      name: 'Monthly',
+      header: ['Month', 'Samples', 'Pieces inspected', 'Defect pieces', 'Defect % of inspected', 'Pieces produced', 'Defect pieces of produced', 'Defect rate % (of produced)'],
+      rows: o.monthly.map((m) => [m.month, m.samples, m.pieces, m.defectPieces, m.inspectedDefectPct, m.piecesProduced, m.productionDefectPieces, m.defectRatePct]),
+    },
+    {
+      name: 'Defect details',
+      header: ['Defect', 'Pieces', 'Records', 'Days seen', 'Orders seen', 'Share %'],
+      rows: o.defectDetails.map((d) => [d.defectName, d.pieces, d.records, d.days, d.orders, d.sharePct]),
+    },
+    {
       name: 'Pareto',
       header: ['Defect', 'Pieces', 'Records', 'Share %', 'Cumulative %'],
       rows: [

@@ -7,7 +7,7 @@
 // an administrator sets the factory's own.
 // ============================================================================
 
-import type { Disposition, ShiftLetter } from './types'
+import type { Disposition, Process, ShiftLetter } from './types'
 
 // ---- Filters ---------------------------------------------------------------
 
@@ -23,6 +23,8 @@ export interface KpiFilters extends KpiRange {
   prevFrom: string
   prevTo: string
   factory?: string
+  /** A process group from the machine register: only its machines. */
+  process?: Process
   workCenterCode?: string
   itemCode?: string
   inspectorId?: string
@@ -320,6 +322,82 @@ export interface KpiDiscipline {
   openLinesInspected: number
 }
 
+/**
+ * One calendar month of the selection: production (sessions closed in it with
+ * a final quantity) beside what was inspected in it. The rate is defect
+ * pieces per 100 produced, as everywhere on the dashboard.
+ */
+export interface KpiMonthPoint {
+  /** YYYY-MM, in the factory's zone. */
+  month: string
+  samples: number
+  pieces: number
+  defectPieces: number
+  piecesProduced: number
+  productionDefectPieces: number
+  defectRatePct: number | null
+  inspectedDefectPct: number | null
+}
+
+/**
+ * One defect type of the selection, with how spread it is: on how many
+ * distinct factory days it was recorded and on how many distinct order lines.
+ * "50 pieces over 10 days on 4 orders" says more than "50 pieces".
+ */
+export interface KpiDefectDetailRow {
+  defectName: string
+  pieces: number
+  records: number
+  days: number
+  orders: number
+  /** Of every defect piece in the selection. */
+  sharePct: number
+}
+
+/** A factory's production and defect rate, month by month, for the general page. */
+export interface KpiFactoryTrend {
+  factory: string
+  piecesProduced: number
+  productionDefectPieces: number
+  defectRatePct: number | null
+  months: { month: string; piecesProduced: number; productionDefectPieces: number; defectRatePct: number | null }[]
+}
+
+/**
+ * The general page: the whole plant over the last few calendar months, with
+ * no filter applied, so the picture stays the same whoever opens it and
+ * whatever the analysis page is narrowed to.
+ */
+export interface KpiGeneral {
+  /** First day of the oldest month shown. */
+  from: string
+  /** Today, in the factory's zone: the current month is to date. */
+  to: string
+  /** How many calendar months the span covers, the current one included. */
+  monthsBack: number
+  generatedAt: string
+  thresholds: KpiThresholds
+  totals: {
+    piecesProduced: number
+    productionDefectPieces: number
+    /** Produced less the defect pieces of the batch. */
+    releasedPieces: number
+    defectRatePct: number | null
+    producedSessions: number
+    samples: number
+    pieces: number
+    defectPieces: number
+    inspectedDefectPct: number | null
+    machines: number
+    factories: number
+  }
+  months: KpiMonthPoint[]
+  factories: KpiFactoryTrend[]
+}
+
+/** How many calendar months the general page shows, the current one included. */
+export const GENERAL_MONTHS = 4
+
 export type KpiInsightSeverity = 'critical' | 'warning' | 'info' | 'good'
 
 export interface KpiInsight {
@@ -382,12 +460,18 @@ export interface KpiOverview {
   current: KpiTotals
   previous: KpiTotals
   daily: KpiDailyPoint[]
+  /** The period month by month, for a trend the eye can read across a quarter. */
+  monthly: KpiMonthPoint[]
   /** Samples by band of defect rate, in band order. */
   defectRateBands: KpiRateBand[]
   pareto: KpiParetoRow[]
+  /** Every defect type of the selection with its spread over days and orders. */
+  defectDetails: KpiDefectDetailRow[]
   /** The Pareto again, per machine, largest machine first. */
   paretoByMachine: KpiMachinePareto[]
   byMachine: KpiGroupRow[]
+  /** The same machines over the comparison period, for a trend per machine. */
+  byMachinePrevious: KpiGroupRow[]
   byInspector: KpiGroupRow[]
   byShift: KpiGroupRow[]
   byItem: KpiGroupRow[]
