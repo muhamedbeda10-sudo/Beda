@@ -561,3 +561,31 @@ export function LineChart({ labels, series, unit = '%', height = 220 }: { labels
 
 /** Up to six lines that stay apart in both themes. */
 export const LINE_CLASSES = ['stroke-brand-500', 'stroke-rose-500', 'stroke-emerald-500', 'stroke-amber-500', 'stroke-violet-500', 'stroke-sky-500']
+
+/** A tiny line for a card: a few values, no axes, the last point marked. null draws a gap. */
+export function Sparkline({ values, className = 'stroke-brand-500', width = 96, height = 28 }: { values: (number | null)[]; className?: string; width?: number; height?: number }) {
+  const n = values.length
+  const known = values.filter((v): v is number => v !== null)
+  if (n < 2 || known.length === 0) return <svg width={width} height={height} aria-hidden />
+  const max = Math.max(...known, 0.0001)
+  const pad = 3
+  const xAt = (i: number) => pad + ((width - pad * 2) * i) / (n - 1)
+  const yAt = (v: number) => height - pad - ((height - pad * 2) * v) / max
+  const segments: string[] = []
+  let current: string[] = []
+  values.forEach((v, i) => {
+    if (v === null) {
+      if (current.length) segments.push(current.join(' '))
+      current = []
+    } else current.push(`${xAt(i)},${yAt(v)}`)
+  })
+  if (current.length) segments.push(current.join(' '))
+  const lastIdx = values.length - 1 - [...values].reverse().findIndex((v) => v !== null)
+  const last = values[lastIdx]
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden className="shrink-0">
+      {segments.map((d, i) => <polyline key={i} points={d} fill="none" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" className={className} />)}
+      {last !== null && last !== undefined && <circle cx={xAt(lastIdx)} cy={yAt(last)} r={2.5} className={cn('fill-white dark:fill-slate-900', className)} strokeWidth={2} />}
+    </svg>
+  )
+}

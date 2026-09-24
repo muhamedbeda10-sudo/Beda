@@ -9,14 +9,19 @@
 import type { Disposition, Process, ShiftLetter } from '@qc/shared/types'
 import { PAINT_THICKNESS_NAME } from '@qc/shared/rules'
 import type {
+  KpiBreakdownDefect,
+  KpiBreakdownMonth,
+  KpiBreakdownRow,
   KpiDailyPoint,
   KpiDefectDetailRow,
   KpiFactoryTrend,
+  KpiFirstPart,
   KpiGroupRow,
   KpiHoldRow,
   KpiInspectorRaw,
   KpiItemDefectRow,
   KpiMachinePareto,
+  KpiMachineTrend,
   KpiMonthPoint,
   KpiPaintItemRow,
   KpiParetoRow,
@@ -24,7 +29,7 @@ import type {
   KpiSupplierRow,
   KpiTotals,
 } from '@qc/shared/kpi'
-import { pct } from '@qc/shared/kpi'
+import { pct, rejectRate } from '@qc/shared/kpi'
 import type { Queryable } from '../db/pool'
 
 export interface PeriodFilters {
@@ -36,10 +41,17 @@ export interface PeriodFilters {
   factory?: string
   /** A process group from the machine register: only its machines. */
   process?: Process
-  workCenterCode?: string
+  /** One or more machine codes; the figures of those machines together. */
+  workCenterCodes?: string[]
   itemCode?: string
   inspectorId?: string
   shift?: ShiftLetter
+}
+
+/** The machine codes as the SQL wants them: lower-cased, or null for every machine. */
+function wcs(f: PeriodFilters): string[] | null {
+  const codes = (f.workCenterCodes ?? []).map((c) => c.trim().toLowerCase()).filter(Boolean)
+  return codes.length ? codes : null
 }
 
 /**
@@ -48,7 +60,7 @@ export interface PeriodFilters {
  * the factory's zone here, so "the 3rd" means the 3rd on the floor, not in UTC.
  */
 function params(f: PeriodFilters): unknown[] {
-  return [f.tz, f.from, f.to, f.factory ?? null, f.workCenterCode ?? null, f.itemCode ?? null, f.inspectorId ?? null, f.shift ?? null, f.process ?? null]
+  return [f.tz, f.from, f.to, f.factory ?? null, wcs(f), f.itemCode ?? null, f.inspectorId ?? null, f.shift ?? null, f.process ?? null]
 }
 
 /**
@@ -62,7 +74,8 @@ const PRODUCED = `
 produced AS (
   SELECT s.id AS session_id, s.work_center_code AS wc, COALESCE(m.factory, '') AS factory,
          COALESCE(m.display_name, 'Machine ' || s.work_center_code) AS machine_label,
-         o.item_code, o.item, s.closed_at, s.final_qty::float8 AS produced,
+         COALESCE(m.process, 'other') AS process,
+         o.item_code, o.item, o.order_number, s.order_id, s.closed_at, s.final_qty::float8 AS produced,
          COALESCE((SELECT sum(d.qty) FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
                     WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL), 0)::float8 AS defect_pieces
     FROM inspection_sessions s
@@ -75,7 +88,7 @@ produced AS (
      AND s.closed_at >= ($2::date)::timestamp AT TIME ZONE $1
      AND s.closed_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
      AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
-     AND ($5::text IS NULL OR lower(s.work_center_code) = lower($5))
+     AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
      AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
      AND $7::uuid IS NULL AND $8::text IS NULL
      AND ($9::text IS NULL OR COALESCE(m.process, 'other') = $9)
@@ -100,7 +113,7 @@ WITH base AS (
      AND sm.created_at >= ($2::date)::timestamp AT TIME ZONE $1
      AND sm.created_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
      AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
-     AND ($5::text IS NULL OR lower(s.work_center_code) = lower($5))
+     AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
      AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
      AND ($7::uuid IS NULL OR sm.inspector_id = $7)
      AND ($8::text IS NULL OR sm.shift::text = $8)
@@ -187,7 +200,7 @@ export async function loadTotals(q: Queryable, f: PeriodFilters): Promise<KpiTot
           AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
           AND s.started_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
           AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
-          AND ($5::text IS NULL OR lower(s.work_center_code) = lower($5))
+          AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
           AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
           AND ($7::uuid IS NULL OR s.inspector_id = $7)
           AND ($8::text IS NULL OR COALESCE(m.process, 'other') = $8)`,
@@ -213,7 +226,7 @@ export async function loadTotals(q: Queryable, f: PeriodFilters): Promise<KpiTot
     piecesProduced: made.produced,
     producedSessions: made.sessions,
     productionDefectPieces: made.defectPieces,
-    defectRatePct: pct(made.defectPieces, made.produced),
+    defectRatePct: rejectRate(made.defectPieces, made.produced),
     inspectedDefectPct: pct(t.defectPieces, t.pieces),
     fpyPct: pct(t.firstPass, t.samples),
     dimensionsMeasured: t.dimsMeasured,
@@ -268,7 +281,7 @@ export async function loadDaily(q: Queryable, f: PeriodFilters): Promise<KpiDail
       defectPieces: s?.defectPieces ?? 0,
       piecesProduced: m?.produced ?? 0,
       productionDefectPieces: m?.defectPieces ?? 0,
-      defectRatePct: m ? pct(m.defectPieces, m.produced) : null,
+      defectRatePct: m ? rejectRate(m.defectPieces, m.produced) : null,
       inspectedDefectPct: s ? pct(s.defectPieces, s.pieces) : null,
       fpyPct: s ? pct(s.firstPass, s.samples) : null,
     }
@@ -384,7 +397,7 @@ export async function loadGroups(q: Queryable, f: PeriodFilters, kind: GroupKind
         defectPieces: r.defectPieces,
         piecesProduced: g.produced ? (m?.produced ?? 0) : null,
         productionDefectPieces: g.produced ? (m?.defectPieces ?? 0) : null,
-        defectRatePct: m ? pct(m.defectPieces, m.produced) : null,
+        defectRatePct: m ? rejectRate(m.defectPieces, m.produced) : null,
         inspectedDefectPct: pct(r.defectPieces, r.pieces),
         fpyPct: pct(r.firstPass, r.samples),
         dimFailPct: pct(r.dimsFail, r.dimsMeasured),
@@ -434,12 +447,12 @@ export async function loadHolds(q: Queryable, f: PeriodFilters): Promise<CappedR
          SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
       WHERE d.deleted_at IS NULL AND d.disposition = 'Hold'
         AND ($1::text IS NULL OR COALESCE(m.factory, '') = $1)
-        AND ($2::text IS NULL OR lower(s.work_center_code) = lower($2))
+        AND ($2::text[] IS NULL OR lower(s.work_center_code) = ANY($2::text[]))
         AND ($3::text IS NULL OR lower(o.item_code) = lower($3))
         AND ($4::uuid IS NULL OR sm.inspector_id = $4)
         AND ($5::text IS NULL OR COALESCE(m.process, 'other') = $5)
       ORDER BY sm.created_at LIMIT 50`,
-    [f.factory ?? null, f.workCenterCode ?? null, f.itemCode ?? null, f.inspectorId ?? null, f.process ?? null],
+    [f.factory ?? null, wcs(f), f.itemCode ?? null, f.inspectorId ?? null, f.process ?? null],
   )
   // The oldest fifty: a Hold owes a decision, and the oldest owe it most.
   return { rows: rows.map(({ total: _total, ...row }) => row), total: rows[0]?.total ?? 0 }
@@ -486,7 +499,7 @@ export async function loadDiscipline(q: Queryable, f: PeriodFilters): Promise<Di
            SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
         WHERE s.deleted_at IS NULL
           AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
-          AND ($5::text IS NULL OR lower(s.work_center_code) = lower($5))
+          AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
           AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
           AND ($7::uuid IS NULL OR s.inspector_id = $7)
           AND ($8::text IS NULL OR COALESCE(m.process, 'other') = $8)`,
@@ -501,9 +514,9 @@ export async function loadDiscipline(q: Queryable, f: PeriodFilters): Promise<Di
         WHERE deleted_at IS NULL
           AND at >= ($2::date)::timestamp AT TIME ZONE $1
           AND at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
-          AND ($4::text IS NULL OR lower(COALESCE(work_center_code, '')) = lower($4))
+          AND ($4::text[] IS NULL OR lower(COALESCE(work_center_code, '')) = ANY($4::text[]))
           AND ($5::uuid IS NULL OR user_id = $5)`,
-      [f.tz, f.from, f.to, f.workCenterCode ?? null, f.inspectorId ?? null],
+      [f.tz, f.from, f.to, wcs(f), f.inspectorId ?? null],
     ),
     q.query<{ openLines: number }>(
       `SELECT count(*)::int AS "openLines"
@@ -512,10 +525,10 @@ export async function loadDiscipline(q: Queryable, f: PeriodFilters): Promise<Di
            SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(o.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
         WHERE o.deleted_at IS NULL AND lower(o.erp_status) <> 'cancel' AND o.required_qty > o.finished_qty
           AND ($1::text IS NULL OR COALESCE(m.factory, '') = $1)
-          AND ($2::text IS NULL OR lower(o.work_center_code) = lower($2))
+          AND ($2::text[] IS NULL OR lower(o.work_center_code) = ANY($2::text[]))
           AND ($3::text IS NULL OR lower(o.item_code) = lower($3))
           AND ($4::text IS NULL OR COALESCE(m.process, 'other') = $4)`,
-      [f.factory ?? null, f.workCenterCode ?? null, f.itemCode ?? null, f.process ?? null],
+      [f.factory ?? null, wcs(f), f.itemCode ?? null, f.process ?? null],
     ),
   ])
   const b = fromBase.rows[0]
@@ -598,7 +611,7 @@ export async function loadInspectorRaw(q: Queryable, f: PeriodFilters): Promise<
             AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
             AND s.started_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
             AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
-            AND ($5::text IS NULL OR lower(s.work_center_code) = lower($5))
+            AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
             AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
             AND ($7::uuid IS NULL OR s.inspector_id = $7)
             AND ($9::text IS NULL OR COALESCE(m.process, 'other') = $9)
@@ -822,7 +835,7 @@ export async function loadMonthly(q: Queryable, f: PeriodFilters): Promise<KpiMo
       defectPieces: s?.defectPieces ?? 0,
       piecesProduced: m?.produced ?? 0,
       productionDefectPieces: m?.defectPieces ?? 0,
-      defectRatePct: m ? pct(m.defectPieces, m.produced) : null,
+      defectRatePct: m ? rejectRate(m.defectPieces, m.produced) : null,
       inspectedDefectPct: s ? pct(s.defectPieces, s.pieces) : null,
     }
   })
@@ -886,11 +899,206 @@ export async function loadFactoryMonths(q: Queryable, f: PeriodFilters): Promise
       factory,
       piecesProduced: produced,
       productionDefectPieces: defectPieces,
-      defectRatePct: pct(defectPieces, produced),
+      defectRatePct: rejectRate(defectPieces, produced),
       months: months.map((month) => {
         const m = perMonth.get(month)
-        return { month, piecesProduced: m?.produced ?? 0, productionDefectPieces: m?.defectPieces ?? 0, defectRatePct: m ? pct(m.defectPieces, m.produced) : null }
+        return { month, piecesProduced: m?.produced ?? 0, productionDefectPieces: m?.defectPieces ?? 0, defectRatePct: m ? rejectRate(m.defectPieces, m.produced) : null }
       }),
     }
   }).sort((a, b) => b.piecesProduced - a.piecesProduced || a.factory.localeCompare(b.factory))
+}
+
+/** Each machine's production and reject rate month by month, for the general page's overview. */
+export async function loadMachineMonths(q: Queryable, f: PeriodFilters): Promise<KpiMachineTrend[]> {
+  const { rows } = await q.query<{ code: string; label: string; factory: string; process: Process; month: string; produced: number; defectPieces: number }>(
+    `WITH ${PRODUCED}
+     SELECT max(wc) AS code, max(machine_label) AS label, max(factory) AS factory, max(process) AS process,
+            to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month,
+            COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+       FROM produced GROUP BY lower(wc), 5 ORDER BY 1, 5`,
+    params(f),
+  )
+  const months: string[] = []
+  for (let m = f.from.slice(0, 7); m <= f.to.slice(0, 7) && months.length < 60; m = nextMonth(m)) months.push(m)
+  const byMachine = new Map<string, { code: string; label: string; factory: string; process: Process; perMonth: Map<string, { produced: number; defectPieces: number }> }>()
+  for (const r of rows) {
+    const key = r.code.toLowerCase()
+    if (!byMachine.has(key)) byMachine.set(key, { code: r.code, label: r.label, factory: r.factory, process: r.process, perMonth: new Map() })
+    byMachine.get(key)!.perMonth.set(r.month, r)
+  }
+  return Array.from(byMachine.values())
+    .map((m) => {
+      const produced = Array.from(m.perMonth.values()).reduce((n, r) => n + r.produced, 0)
+      const defectPieces = Array.from(m.perMonth.values()).reduce((n, r) => n + r.defectPieces, 0)
+      return {
+        workCenterCode: m.code,
+        label: m.label,
+        factory: m.factory,
+        process: m.process,
+        piecesProduced: produced,
+        productionDefectPieces: defectPieces,
+        defectRatePct: rejectRate(defectPieces, produced),
+        months: months.map((month) => {
+          const x = m.perMonth.get(month)
+          return { month, piecesProduced: x?.produced ?? 0, productionDefectPieces: x?.defectPieces ?? 0, defectRatePct: x ? rejectRate(x.defectPieces, x.produced) : null }
+        }),
+      }
+    })
+    .sort((a, b) => (b.defectRatePct ?? -1) - (a.defectRatePct ?? -1) || b.piecesProduced - a.piecesProduced || a.label.localeCompare(b.label))
+}
+
+// ---- The drill-down ----------------------------------------------------------
+
+/** PRODUCED plus its defects, so the rejected pieces of a month can be laid on
+ *  a defect, an order line or an item. */
+export interface BreakdownResult {
+  months: KpiBreakdownMonth[]
+  defects: KpiBreakdownDefect[]
+  byOrder: KpiBreakdownRow[]
+  byItem: KpiBreakdownRow[]
+}
+
+export async function loadBreakdown(q: Queryable, f: PeriodFilters): Promise<BreakdownResult> {
+  const p = params(f)
+  const [monthRows, defectRows, orderRows, itemRows] = await Promise.all([
+    q.query<{ month: string; sessions: number; produced: number; defectPieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month, count(*)::int AS sessions,
+              COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+         FROM produced GROUP BY 1 ORDER BY 1`,
+      p,
+    ),
+    q.query<{ month: string; defectName: string; pieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT to_char(pr.closed_at AT TIME ZONE $1, 'YYYY-MM') AS month, d.defect_name AS "defectName", COALESCE(sum(d.qty), 0)::float8 AS pieces
+         FROM produced pr
+         JOIN inspection_samples x ON x.session_id = pr.session_id AND x.deleted_at IS NULL
+         JOIN defect_results d ON d.sample_id = x.id AND d.deleted_at IS NULL
+        GROUP BY 1, 2 ORDER BY 1, 3 DESC`,
+      p,
+    ),
+    q.query<{ month: string; orderNumber: string; item: string; itemCode: string; pieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month, order_number AS "orderNumber", max(item) AS item, max(item_code) AS "itemCode",
+              COALESCE(sum(defect_pieces), 0)::float8 AS pieces
+         FROM produced GROUP BY 1, 2 HAVING COALESCE(sum(defect_pieces), 0) > 0 ORDER BY 1, 5 DESC`,
+      p,
+    ),
+    q.query<{ month: string; itemCode: string; item: string; pieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month, max(item_code) AS "itemCode", max(item) AS item,
+              COALESCE(sum(defect_pieces), 0)::float8 AS pieces
+         FROM produced GROUP BY 1, lower(item_code) HAVING COALESCE(sum(defect_pieces), 0) > 0 ORDER BY 1, 4 DESC`,
+      p,
+    ),
+  ])
+  const months: string[] = []
+  for (let m = f.from.slice(0, 7); m <= f.to.slice(0, 7) && months.length < 60; m = nextMonth(m)) months.push(m)
+  const perMonth = new Map(monthRows.rows.map((r) => [r.month, r]))
+  const monthsOut: KpiBreakdownMonth[] = months.map((month) => {
+    const r = perMonth.get(month)
+    const produced = r?.produced ?? 0
+    const defectPieces = r?.defectPieces ?? 0
+    return { month, sessions: r?.sessions ?? 0, piecesProduced: produced, productionDefectPieces: defectPieces, made: produced + defectPieces, defectRatePct: r ? rejectRate(defectPieces, produced) : null }
+  })
+  const madeOf = new Map(monthsOut.map((m) => [m.month, m.made]))
+  const rejectedOf = new Map(monthsOut.map((m) => [m.month, m.productionDefectPieces]))
+  const totalRejected = monthsOut.reduce((n, m) => n + m.productionDefectPieces, 0)
+
+  const byDefect = new Map<string, Map<string, number>>()
+  for (const r of defectRows.rows) {
+    if (!byDefect.has(r.defectName)) byDefect.set(r.defectName, new Map())
+    byDefect.get(r.defectName)!.set(r.month, r.pieces)
+  }
+  const defects: KpiBreakdownDefect[] = Array.from(byDefect, ([defectName, per]) => {
+    const pieces = Array.from(per.values()).reduce((n, v) => n + v, 0)
+    return {
+      defectName,
+      pieces,
+      sharePct: pct(pieces, totalRejected) ?? 0,
+      months: months.map((month) => ({ month, pieces: per.get(month) ?? 0, pctOfMade: (madeOf.get(month) ?? 0) > 0 ? pct(per.get(month) ?? 0, madeOf.get(month)!) : null })),
+    }
+  }).sort((a, b) => b.pieces - a.pieces || a.defectName.localeCompare(b.defectName))
+
+  const row = (month: string, key: string, label: string, sub: string | undefined, pieces: number): KpiBreakdownRow => ({
+    month,
+    key,
+    label,
+    sub,
+    pieces,
+    pctOfMade: (madeOf.get(month) ?? 0) > 0 ? pct(pieces, madeOf.get(month)!) : null,
+    shareOfMonthPct: (rejectedOf.get(month) ?? 0) > 0 ? pct(pieces, rejectedOf.get(month)!) : null,
+  })
+  return {
+    months: monthsOut,
+    defects,
+    byOrder: orderRows.rows.map((r) => row(r.month, r.orderNumber, r.orderNumber, `${r.itemCode} · ${r.item}`, r.pieces)),
+    byItem: itemRows.rows.map((r) => row(r.month, r.itemCode, r.item, r.itemCode, r.pieces)),
+  }
+}
+
+/**
+ * First part released, by session: sessions started in the period, clean
+ * when nothing was rejected on the line before the release inspection.
+ * $1 tz · $2 from · $3 to · $4 factory · $5 machines · $6 item · $7 process.
+ */
+const FIRST_PART = `
+WITH sessions AS (
+  SELECT s.id, s.started_at, COALESCE(s.start_qty, 0)::float8 AS rejected_before, s.work_center_code AS wc, s.inspector_name,
+         COALESCE(m.factory, '') AS factory, COALESCE(m.display_name, 'Machine ' || s.work_center_code) AS machine_label,
+         o.order_number, o.item, o.item_code
+    FROM inspection_sessions s
+    JOIN production_orders o ON o.id = s.order_id
+    LEFT JOIN LATERAL (
+      SELECT m.factory, m.display_name, m.process FROM machines m
+       WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
+       ORDER BY m.created_at LIMIT 1) m ON true
+   WHERE s.deleted_at IS NULL
+     AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
+     AND s.started_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
+     AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
+     AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
+     AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
+     AND ($7::text IS NULL OR COALESCE(m.process, 'other') = $7)
+)`
+
+export async function loadFirstPart(q: Queryable, f: PeriodFilters): Promise<KpiFirstPart> {
+  const p = [f.tz, f.from, f.to, f.factory ?? null, wcs(f), f.itemCode ?? null, f.process ?? null]
+  const [totals, byMachine, byMonth, failed] = await Promise.all([
+    q.query<{ sessions: number; clean: number }>(`${FIRST_PART} SELECT count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean FROM sessions`, p),
+    q.query<{ code: string; label: string; factory: string; sessions: number; clean: number }>(
+      `${FIRST_PART}
+       SELECT max(wc) AS code, max(machine_label) AS label, max(factory) AS factory, count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean
+         FROM sessions GROUP BY lower(wc) ORDER BY sessions DESC, code`,
+      p,
+    ),
+    q.query<{ month: string; sessions: number; clean: number }>(
+      `${FIRST_PART}
+       SELECT to_char(started_at AT TIME ZONE $1, 'YYYY-MM') AS month, count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean
+         FROM sessions GROUP BY 1 ORDER BY 1`,
+      p,
+    ),
+    q.query<{ sessionId: string; startedAt: string; orderNumber: string; item: string; itemCode: string; workCenterCode: string; machineLabel: string; rejectedBeforeRelease: number; inspectorName: string }>(
+      `${FIRST_PART}
+       SELECT id AS "sessionId", started_at AS "startedAt", order_number AS "orderNumber", item, item_code AS "itemCode", wc AS "workCenterCode",
+              machine_label AS "machineLabel", rejected_before AS "rejectedBeforeRelease", inspector_name AS "inspectorName"
+         FROM sessions WHERE rejected_before > 0 ORDER BY started_at DESC LIMIT 50`,
+      p,
+    ),
+  ])
+  const months: string[] = []
+  for (let m = f.from.slice(0, 7); m <= f.to.slice(0, 7) && months.length < 60; m = nextMonth(m)) months.push(m)
+  const perMonth = new Map(byMonth.rows.map((r) => [r.month, r]))
+  const t = totals.rows[0]
+  return {
+    sessions: t.sessions,
+    clean: t.clean,
+    pct: pct(t.clean, t.sessions),
+    byMachine: byMachine.rows.map((r) => ({ workCenterCode: r.code, label: r.label, factory: r.factory, sessions: r.sessions, clean: r.clean, pct: pct(r.clean, r.sessions) })),
+    months: months.map((month) => {
+      const r = perMonth.get(month)
+      return { month, sessions: r?.sessions ?? 0, clean: r?.clean ?? 0, pct: r ? pct(r.clean, r.sessions) : null }
+    }),
+    failed: failed.rows.map((r) => ({ ...r, startedAt: new Date(r.startedAt).toISOString() })),
+  }
 }

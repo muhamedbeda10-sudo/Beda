@@ -40,7 +40,7 @@ import type {
   ChatMessagesResponse,
   ChatUnreadResponse,
 } from '@qc/shared/api'
-import type { KpiFilters, KpiGeneral, KpiOverview } from '@qc/shared/kpi'
+import type { KpiBreakdown, KpiBreakdownFilters, KpiFilters, KpiGeneral, KpiOverview } from '@qc/shared/kpi'
 import type { HiddenInsightsResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
@@ -76,6 +76,7 @@ export const keys = {
   kpiThresholds: ['kpi', 'thresholds'] as const,
   kpiSpan: ['kpi', 'span'] as const,
   kpiGeneral: ['kpi', 'general'] as const,
+  kpiBreakdown: (filters: KpiBreakdownFilters) => ['kpi', 'breakdown', filters] as const,
   hiddenInsights: ['kpi', 'insights', 'hidden'] as const,
   noticeInbox: ['notices', 'inbox'] as const,
   noticesAdmin: ['notices', 'admin'] as const,
@@ -340,7 +341,7 @@ export function useUsers() {
 export function useKpiOverview(filters: KpiFilters | null) {
   return useQuery({
     queryKey: keys.kpiOverview(filters ?? ({} as KpiFilters)),
-    queryFn: () => api<KpiOverview>(`/kpi/overview${qs({ ...filters })}`),
+    queryFn: () => api<KpiOverview>(`/kpi/overview${qs({ ...filters, workCenterCodes: undefined, workCenterCode: filters?.workCenterCodes?.join(',') })}`),
     enabled: filters !== null,
     staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
@@ -348,6 +349,17 @@ export function useKpiOverview(filters: KpiFilters | null) {
 }
 
 /** Where the period strip begins: the first day anything was recorded. */
+/** §15 — the drill-down of the general page: a factory, a process or a few machines, month by month. */
+export function useKpiBreakdown(filters: KpiBreakdownFilters | null) {
+  return useQuery({
+    queryKey: keys.kpiBreakdown(filters ?? ({} as KpiBreakdownFilters)),
+    queryFn: () => api<KpiBreakdown>(`/kpi/breakdown${qs({ ...filters, workCenterCodes: undefined, workCenterCode: filters?.workCenterCodes?.join(',') })}`),
+    enabled: filters !== null,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
 /** §15 — the general page: the plant over the last months, no filter. */
 export function useKpiGeneral(enabled = true) {
   return useQuery({ queryKey: keys.kpiGeneral, queryFn: () => api<KpiGeneral>('/kpi/general'), enabled, staleTime: 5 * 60_000 })

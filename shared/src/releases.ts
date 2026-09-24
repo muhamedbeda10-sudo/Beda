@@ -28,6 +28,18 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-24.3',
+    date: '2026-09-24',
+    title: 'Dashboard: General reads by factory or by process',
+    items: [
+      { text: 'General now opens on three figures only, for the plant and each factory: trend (four months, with the change against the month before), reject rate and PPM. Then every machine on the same three.' },
+      { text: 'Reject rate is rejected pieces per 100 made, where made = produced + rejected: a session\'s final quantity is its good production. Closing a session no longer refuses a final quantity below the rejected pieces.' },
+      { text: 'Read it: By factory or By process. Pick one, see its trend and its machines against one another, tick several machines to compare them, and the breakdown follows: defects and their months, the rejected pieces of each month laid on the order lines and items, and first part released.' },
+      { text: 'First part released is by session: clean when nothing was rejected on the line before the release inspection; 8 clean of 10 sessions is 80%. Shown by month, by machine, with the sessions that were not clean.' },
+      { text: 'Details keeps the full analysis behind the period and filters, as before; the Machine filter of the analysis now accepts several machines.' },
+    ],
+  },
+  {
     id: '2026-09-24.2',
     date: '2026-09-24',
     title: 'Dashboard: General and Analysis pages',

@@ -4,12 +4,13 @@
 // manager would say about them. Administrators only.
 // ============================================================================
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   AlertOctagon,
+  Check,
   Eye,
   EyeOff,
   Factory,
@@ -39,18 +40,18 @@ import {
 } from 'lucide-react'
 import { can, shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
-import { deltaPct, insightKey, toneHighIsGood, toneLowIsGood, type KpiFilters, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
+import { deltaPct, insightKey, ppm, toneHighIsGood, toneLowIsGood, type KpiBreakdown, type KpiFilters, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiMachineTrend, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
 import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
-import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, TrendChart } from '@/components/dashboard/charts'
+import { ColumnChart, DonutChart, HorizontalBars, PairedBarChart, ParetoChart, Sparkline, TrendChart } from '@/components/dashboard/charts'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn, formatDateTime } from '@/lib/utils'
-import { useHiddenInsights, useKpiGeneral, useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
+import { useHiddenInsights, useKpiBreakdown, useKpiGeneral, useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
 import { hideInsight, restoreInsight } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
@@ -341,13 +342,41 @@ function PlainTile({ label, value, sub, icon, tone = 'neutral' }: { label: strin
   )
 }
 
+type GeneralPick = 'factory' | 'process' | 'details'
+
+/** The change of a monthly rate against the month before it: the last two months that have one. */
+function monthTrend(months: { defectRatePct: number | null }[]): { delta: number | null; last: number | null } {
+  const known = months.map((m) => m.defectRatePct).filter((v): v is number => v !== null)
+  if (known.length === 0) return { delta: null, last: null }
+  const last = known[known.length - 1]
+  const before = known.length > 1 ? known[known.length - 2] : null
+  return { delta: deltaPct(last, before), last }
+}
+
+/** An arrow and a figure for a trend where a fall is good. */
+function TrendMark({ delta, title }: { delta: number | null; title?: string }) {
+  const up = delta !== null && delta > 0
+  const flat = delta !== null && Math.abs(delta) < 0.05
+  return (
+    <span
+      className={cn('inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold tabular-nums', delta === null ? 'text-slate-400' : flat ? 'text-slate-500' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}
+      title={title ?? (delta === null ? 'No month to compare with' : 'Against the month before')}
+    >
+      {delta === null || flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
+      {delta === null ? '—' : flat ? 'flat' : `${Math.abs(delta).toFixed(1)}%`}
+    </span>
+  )
+}
+
+const ppmStr = (rate: number | null): string => (rate === null ? '—' : num(ppm(rate)!))
+
 /**
- * §15 — the general page. The whole plant over the last calendar months with
- * no filter: production, defects, the rate month by month, and each factory's
- * trend. The slicers of the analysis page do not touch it, so it reads the
- * same in every meeting.
+ * §15 — the top of the general page: the plant and each factory on three
+ * figures only — trend, reject rate and PPM — then every machine on the same
+ * three. Nothing about samples, rejected counts or dimensions: those live in
+ * the details.
  */
-function GeneralView({ data, loading, error }: { data: KpiGeneral | null; loading: boolean; error: string | null }) {
+function GeneralOverview({ data, loading, error }: { data: KpiGeneral | null; loading: boolean; error: string | null }) {
   if (error) return <Card className="border border-rose-200 p-4 text-sm text-rose-700 dark:border-rose-500/30 dark:text-rose-300">{error}</Card>
   if (!data) {
     return loading ? (
@@ -359,43 +388,301 @@ function GeneralView({ data, loading, error }: { data: KpiGeneral | null; loadin
     ) : null
   }
   const t = data.thresholds
-  const tot = data.totals
-  const labels = data.months.map((m) => monthLabel(m.month, false))
   const span = `${monthLabel(data.months[0]?.month ?? data.from.slice(0, 7))} – ${monthLabel(data.to.slice(0, 7))} (to date)`
+  const cards = [
+    { key: '__plant', label: 'Whole plant', sub: `${num(data.totals.factories)} factories · ${num(data.totals.machines)} machines`, rate: data.totals.defectRatePct, months: data.months },
+    ...data.factories.map((f) => ({ key: f.factory, label: f.factory, sub: `${num(f.piecesProduced)} produced`, rate: f.defectRatePct, months: f.months })),
+  ]
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <PlainTile label="Pieces produced" value={num(tot.piecesProduced)} sub={`${num(tot.producedSessions)} sessions closed with a final quantity · ${num(tot.machines)} machines · ${num(tot.factories)} factories`} icon={<Factory className="h-4 w-4" />} />
-        <PlainTile label="Defect pieces" value={num(tot.productionDefectPieces)} sub={`of the batches produced · ${num(tot.defectPieces)} found on ${num(tot.pieces)} pieces inspected (${pctStr(tot.inspectedDefectPct)})`} icon={<AlertTriangle className="h-4 w-4" />} tone={tot.productionDefectPieces > 0 ? 'amber' : 'green'} />
-        <PlainTile label="Defect rate" value={pctStr(tot.defectRatePct)} sub={`defect pieces per 100 produced · target ≤ ${t.defectRateGreen}%`} icon={<Target className="h-4 w-4" />} tone={toneLowIsGood(tot.defectRatePct, t.defectRateGreen, t.defectRateAmber)} />
-        <PlainTile label="Released pieces" value={num(tot.releasedPieces)} sub="produced less the defect pieces of the batch" icon={<PackageCheck className="h-4 w-4" />} tone="green" />
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        {cards.map((c) => {
+          const tone = toneLowIsGood(c.rate, t.defectRateGreen, t.defectRateAmber)
+          const trend = monthTrend(c.months)
+          return (
+            <Card key={c.key} className={cn('p-4 ring-1', TONE_RING[tone], c.key === '__plant' && 'bg-slate-50 dark:bg-slate-800/40')}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{c.label}</p>
+                  <p className="truncate text-[11px] text-slate-400">{c.sub}</p>
+                </div>
+                <TrendMark delta={trend.delta} />
+              </div>
+              <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
+                {pctStr(c.rate)}
+                <span className="ml-1 text-[11px] font-semibold uppercase text-slate-400">reject</span>
+              </p>
+              <div className="mt-1 flex items-end justify-between gap-2">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{ppmStr(c.rate)}</span> PPM
+                </p>
+                <Sparkline values={c.months.map((m) => m.defectRatePct)} className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
+              </div>
+            </Card>
+          )
+        })}
       </div>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Section title="Monthly defect rate" hint={`Pieces produced each month with the defect rate over them. ${span}.`} icon={<Activity className="h-4 w-4" />}>
-          <TrendChart points={data.months.map((m) => ({ label: monthLabel(m.month, false), bar: m.piecesProduced, line: m.defectRatePct }))} barLabel="Pieces produced" lineLabel="Defect rate" />
-        </Section>
-        <Section title="Defect rate by factory" hint="Each factory's defect rate month by month, defect pieces per 100 produced there." icon={<Factory className="h-4 w-4" />}>
-          <LineChart labels={labels} series={data.factories.slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.factory, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))} />
-        </Section>
-      </div>
-      <Section title="Factories" hint={`Production and defects of each factory over the ${data.monthsBack} months.`} icon={<Factory className="h-4 w-4" />}>
+      <Section title="Machines" hint={`Every machine with production over ${span}, worst reject rate first. Rejected pieces per 100 made (produced + rejected); PPM is the same per million.`} icon={<Activity className="h-4 w-4" />}>
         <Table
-          rows={data.factories}
-          rowKey={(r) => r.factory}
+          rows={data.machines}
+          rowKey={(m) => m.workCenterCode}
+          maxRows={12}
           empty="No session closed with a final quantity in these months."
           columns={[
-            { key: 'f', label: 'Factory', render: (r) => <span className="font-semibold">{r.factory}</span> },
-            { key: 'p', label: 'Produced', className: 'text-right tabular-nums', render: (r) => num(r.piecesProduced) },
-            { key: 'd', label: 'Defect pcs', className: 'text-right tabular-nums', render: (r) => num(r.productionDefectPieces) },
-            { key: 'rel', label: 'Released', className: 'text-right tabular-nums', render: (r) => num(Math.max(0, r.piecesProduced - r.productionDefectPieces)) },
-            { key: 'rate', label: 'Defect rate', className: 'text-right', render: (r) => <ToneCell value={r.defectRatePct} tone={toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /> },
-            ...data.months.map((m) => ({ key: m.month, label: monthLabel(m.month, false), className: 'text-right', render: (r: KpiGeneral['factories'][number]) => { const x = r.months.find((y) => y.month === m.month); return <ToneCell value={x?.defectRatePct ?? null} tone={toneLowIsGood(x?.defectRatePct ?? null, t.defectRateGreen, t.defectRateAmber)} /> } })),
+            { key: 'm', label: 'Machine', render: (m) => <span className="font-semibold">{m.label}</span> },
+            { key: 'f', label: 'Factory', render: (m) => m.factory || <span className="text-slate-400">—</span> },
+            { key: 'p', label: 'Process', render: (m) => PROCESS_LABEL[m.process] },
+            { key: 'rate', label: 'Reject rate', className: 'text-right', render: (m) => <ToneCell value={m.defectRatePct} tone={toneLowIsGood(m.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /> },
+            { key: 'ppm', label: 'PPM', className: 'text-right tabular-nums', render: (m) => ppmStr(m.defectRatePct) },
+            { key: 'trend', label: 'Trend', className: 'text-right', render: (m) => (<span className="inline-flex items-center justify-end gap-2"><Sparkline values={m.months.map((x) => x.defectRatePct)} width={72} height={22} /><TrendMark delta={monthTrend(m.months).delta} /></span>) },
           ]}
         />
       </Section>
-      <p className="text-xs text-slate-400">
-        {span}. Production is the sessions closed in the month with a final quantity; the defect pieces are those of the whole batch. Generated {formatDateTime(data.generatedAt)}.
-      </p>
+    </div>
+  )
+}
+
+/**
+ * §15 — one angle on the general page: by factory or by process. Pick one,
+ * see its trend and its machines against one another, tick a few machines to
+ * compare them, and the breakdown below follows the pick: defects, their
+ * months, the orders and items behind them, and first part released.
+ */
+function ScopeView({ kind, general, factories, t }: { kind: 'factory' | 'process'; general: KpiGeneral; factories: string[]; t: KpiThresholds }) {
+  const [factory, setFactory] = usePersistedState('qc-dash:scope-factory', '')
+  const [process, setProcess] = usePersistedState<Process>('qc-dash:scope-process', 'forming')
+  const [pickedByScope, setPickedByScope] = usePersistedState<Record<string, string[]>>('qc-dash:scope-machines', {})
+  const options: { key: string; label: string }[] =
+    kind === 'factory'
+      ? Array.from(new Set([...factories, ...general.factories.map((f) => f.factory)])).sort().map((f) => ({ key: f, label: f }))
+      : PROCESSES.map((p) => ({ key: p, label: PROCESS_LABEL[p] }))
+  const scope = kind === 'factory' ? (factory && options.some((o) => o.key === factory) ? factory : (options[0]?.key ?? '')) : process
+  const scopeLabel = options.find((o) => o.key === scope)?.label ?? scope
+  const scopeKey = `${kind}:${scope}`
+  const machines = general.machines.filter((m) => (kind === 'factory' ? m.factory === scope : m.process === scope))
+  const picked = (pickedByScope[scopeKey] ?? []).filter((code) => machines.some((m) => m.workCenterCode === code))
+  const togglePick = (code: string) =>
+    setPickedByScope((prev) => {
+      const now = prev[scopeKey] ?? []
+      return { ...prev, [scopeKey]: now.includes(code) ? now.filter((c) => c !== code) : [...now, code] }
+    })
+  const clearPick = () => setPickedByScope((prev) => ({ ...prev, [scopeKey]: [] }))
+  const { data: breakdown, isFetching } = useKpiBreakdown(
+    scope
+      ? { from: general.from, to: general.to, factory: kind === 'factory' ? scope : undefined, process: kind === 'process' ? process : undefined, workCenterCodes: picked.length ? picked : undefined }
+      : null,
+  )
+  const maxRate = Math.max(...machines.map((m) => m.defectRatePct ?? 0), 0.0001)
+  const detailTitle = picked.length ? `${picked.length === 1 ? 'Machine' : `${picked.length} machines`}: ${machines.filter((m) => picked.includes(m.workCenterCode)).map((m) => m.label).join(', ')}` : scopeLabel
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label={kind === 'factory' ? 'Factory' : 'Process'}>
+        {options.map((o) => (
+          <button
+            key={o.key}
+            type="button"
+            aria-pressed={o.key === scope}
+            onClick={() => (kind === 'factory' ? setFactory(o.key) : setProcess(o.key as Process))}
+            className={cn('min-h-[40px] rounded-xl px-3 text-sm font-semibold ring-1 transition-colors', o.key === scope ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
+          >
+            {o.label}
+          </button>
+        ))}
+        {options.length === 0 && <p className="text-sm text-slate-400">No {kind === 'factory' ? 'factory' : 'process'} in the machine register yet.</p>}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+        <Section title={`${scopeLabel}: trend`} hint="Pieces made each month (produced + rejected) with the reject rate over them." icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
+          {breakdown ? (
+            breakdown.months.some((m) => m.made > 0) ? (
+              <TrendChart points={breakdown.months.map((m) => ({ label: monthLabel(m.month, false), bar: m.made, line: m.defectRatePct }))} barLabel="Pieces made" lineLabel="Reject rate" />
+            ) : (
+              <p className="py-10 text-center text-sm text-slate-400">No session closed with a final quantity in these months.</p>
+            )
+          ) : (
+            <div className="skeleton h-48" />
+          )}
+        </Section>
+        <Section title={`${scopeLabel}: machines`} hint="Reject rate of each machine over the same months. Tick machines to compare them; the breakdown below follows the ticks." icon={<Layers className="h-4 w-4" />} className="xl:col-span-2" action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-slate-500 hover:text-rose-600">Clear {picked.length} ticked</button>}>
+          {machines.length === 0 ? (
+            <p className="py-6 text-center text-sm text-slate-400">No production closed in these months.</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {machines.map((m) => {
+                const on = picked.includes(m.workCenterCode)
+                const tone = toneLowIsGood(m.defectRatePct, t.defectRateGreen, t.defectRateAmber)
+                return (
+                  <li key={m.workCenterCode}>
+                    <button type="button" onClick={() => togglePick(m.workCenterCode)} aria-pressed={on} className={cn('flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60', on && 'bg-brand-50 ring-1 ring-brand-300 dark:bg-brand-500/10 dark:ring-brand-500/40')}>
+                      <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded border', on ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 dark:border-slate-600')}>{on && <Check className="h-3.5 w-3.5" />}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-baseline justify-between gap-2 text-sm">
+                          <span className="truncate font-medium text-slate-700 dark:text-slate-200">{m.label}{kind === 'process' && m.factory && <span className="ml-1.5 text-xs font-normal text-slate-400">{m.factory}</span>}</span>
+                          <span className="shrink-0 text-xs tabular-nums text-slate-500 dark:text-slate-400"><span className={cn('font-semibold', TONE_TEXT[tone])}>{pctStr(m.defectRatePct)}</span> · {ppmStr(m.defectRatePct)} PPM</span>
+                        </span>
+                        <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><span className={cn('block h-full rounded-full', tone === 'red' ? 'bg-rose-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-slate-300')} style={{ width: `${Math.min(100, ((m.defectRatePct ?? 0) / maxRate) * 100)}%` }} /></span>
+                      </span>
+                      <Sparkline values={m.months.map((x) => x.defectRatePct)} width={56} height={20} />
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </Section>
+      </div>
+
+      {breakdown && <ScopeDetails title={detailTitle} data={breakdown} t={t} dim={isFetching} />}
+    </div>
+  )
+}
+
+/** What a pick's rejected pieces are: which defects, in which months, on which orders and items; and how often the first part was clean. */
+function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdown; t: KpiThresholds; dim: boolean }) {
+  const navigate = useNavigate()
+  const made = data.months.reduce((n, m) => n + m.made, 0)
+  const rejected = data.months.reduce((n, m) => n + m.productionDefectPieces, 0)
+  const rate = made > 0 ? Math.round((rejected / made) * 10000) / 100 : null
+  const monthsWithData = data.months.filter((m) => m.made > 0)
+  const fp = data.firstPart
+  const fpTone: KpiTone = fp.pct === null ? 'neutral' : fp.pct >= 95 ? 'green' : fp.pct >= 85 ? 'amber' : 'red'
+  const group = (rows: KpiBreakdown['byOrder']) => monthsWithData.map((m) => ({ month: m, rows: rows.filter((r) => r.month === m.month) })).filter((g) => g.rows.length > 0)
+  const breakdownTable = (rows: KpiBreakdown['byOrder'], what: string) => (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+            <th className="px-2 py-1.5 font-semibold">{what}</th>
+            <th className="px-2 py-1.5 text-right font-semibold">Rejected</th>
+            <th className="px-2 py-1.5 text-right font-semibold">Of made</th>
+            <th className="px-2 py-1.5 text-right font-semibold">Of month</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          {group(rows).map((g) => (
+            <Fragment key={g.month.month}>
+              <tr className="bg-slate-50 dark:bg-slate-800/60">
+                <td className="px-2 py-1.5 font-bold" colSpan={2}>{monthLabel(g.month.month)}</td>
+                <td className="px-2 py-1.5 text-right"><ToneCell value={g.month.defectRatePct} tone={toneLowIsGood(g.month.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /></td>
+                <td className="px-2 py-1.5 text-right text-xs text-slate-400">{num(g.month.productionDefectPieces)} of {num(g.month.made)}</td>
+              </tr>
+              {g.rows.map((r) => (
+                <tr key={`${r.month}|${r.key}`}>
+                  <td className="px-2 py-1.5"><span className="font-semibold">{r.label}</span>{r.sub && <span className="ml-1 text-xs text-slate-400">{r.sub}</span>}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{num(r.pieces)}</td>
+                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{pctStr(r.pctOfMade)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{pctStr(r.shareOfMonthPct, 0)}</td>
+                </tr>
+              ))}
+            </Fragment>
+          ))}
+          {group(rows).length === 0 && (
+            <tr><td colSpan={4} className="py-6 text-center text-sm text-slate-400">No rejected piece in these months.</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+  return (
+    <div className={cn('space-y-4 transition-opacity', dim && 'opacity-70')}>
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <h2 className="text-lg font-extrabold tracking-tight">{title}</h2>
+        <p className="text-xs text-slate-400">{monthLabel(data.filters.from.slice(0, 7))} – {monthLabel(data.filters.to.slice(0, 7))}</p>
+      </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <PlainTile label="Reject rate" value={pctStr(rate)} sub={`${num(rejected)} rejected of ${num(made)} made`} icon={<Target className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} />
+        <PlainTile label="PPM" value={ppmStr(rate)} sub="rejected pieces per million made" icon={<AlertTriangle className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} />
+        <PlainTile label="First part released" value={pctStr(fp.pct, 0)} sub={`${num(fp.clean)} of ${num(fp.sessions)} sessions with nothing rejected before release`} icon={<PackageCheck className="h-4 w-4" />} tone={fpTone} />
+        <PlainTile label="Sessions" value={num(data.months.reduce((n, m) => n + m.sessions, 0))} sub="closed with a final quantity" icon={<Users className="h-4 w-4" />} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+        <Section title="Defects" hint="Rejected pieces by defect, largest first, as a share of every rejected piece in the pick." icon={<AlertTriangle className="h-4 w-4" />} className="xl:col-span-2">
+          <HorizontalBars
+            rows={data.defects.slice(0, 12).map((d) => ({ label: d.defectName, value: d.pieces, tone: 'red' as const, text: `${num(d.pieces)} pcs · ${pctStr(d.sharePct, 0)}` }))}
+          />
+        </Section>
+        <Section title="Defects by month" hint="Each defect's rejected pieces in each month, and what they are of that month's made pieces." icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
+          {data.defects.length === 0 ? (
+            <p className="py-6 text-center text-sm text-slate-400">No rejected piece in these months.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                    <th className="px-2 py-1.5 font-semibold">Defect</th>
+                    {data.months.map((m) => <th key={m.month} className="px-2 py-1.5 text-right font-semibold">{monthLabel(m.month, false)}</th>)}
+                    <th className="px-2 py-1.5 text-right font-semibold">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  <tr className="bg-slate-50 font-semibold dark:bg-slate-800/60">
+                    <td className="px-2 py-1.5">All rejected · rate</td>
+                    {data.months.map((m) => <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{m.made > 0 ? <>{num(m.productionDefectPieces)} <span className="text-xs text-slate-400">{pctStr(m.defectRatePct)}</span></> : <span className="text-slate-300">—</span>}</td>)}
+                    <td className="px-2 py-1.5 text-right tabular-nums">{num(rejected)} <span className="text-xs text-slate-400">{pctStr(rate)}</span></td>
+                  </tr>
+                  {data.defects.slice(0, 15).map((d) => (
+                    <tr key={d.defectName}>
+                      <td className="px-2 py-1.5" dir="auto">{d.defectName}</td>
+                      {d.months.map((m) => <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-slate-400">{pctStr(m.pctOfMade)}</span></> : <span className="text-slate-300">—</span>}</td>)}
+                      <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{num(d.pieces)} <span className="text-xs font-normal text-slate-400">{pctStr(d.sharePct, 0)}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Section title="By order line" hint="Each month's rejected pieces laid on the order lines closed in it: the 3% of a 15% month that one order carried." icon={<ClipboardList className="h-4 w-4" />}>
+          {breakdownTable(data.byOrder, 'Order')}
+        </Section>
+        <Section title="By item" hint="The same rejected pieces laid on the items." icon={<Layers className="h-4 w-4" />}>
+          {breakdownTable(data.byItem, 'Item')}
+        </Section>
+      </div>
+
+      <Section title="First part released" hint="By session: clean when nothing was rejected on the line before the release inspection. Sessions started in these months." icon={<PackageCheck className="h-4 w-4" />}>
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <div>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">By month</p>
+            <ul className="space-y-1 text-sm">
+              {fp.months.map((m) => (
+                <li key={m.month} className="flex items-center justify-between gap-2">
+                  <span>{monthLabel(m.month)}</span>
+                  <span className="tabular-nums text-slate-500">{m.sessions > 0 ? <><span className={cn('font-semibold', TONE_TEXT[m.pct !== null && m.pct >= 95 ? 'green' : m.pct !== null && m.pct >= 85 ? 'amber' : 'red'])}>{pctStr(m.pct, 0)}</span> · {num(m.clean)} of {num(m.sessions)}</> : <span className="text-slate-300">—</span>}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">By machine</p>
+            <HorizontalBars
+              unit="%"
+              max={100}
+              rows={fp.byMachine.slice(0, 10).map((m) => ({ label: m.label, sub: m.factory, value: m.pct, tone: m.pct === null ? 'neutral' : m.pct >= 95 ? 'green' : m.pct >= 85 ? 'amber' : 'red', text: `${pctStr(m.pct, 0)} · ${num(m.clean)} of ${num(m.sessions)}` }))}
+            />
+          </div>
+          <div>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Not clean: rejected before release</p>
+            {fp.failed.length === 0 ? (
+              <p className="py-4 text-center text-sm text-slate-400">Every session started clean.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 text-sm dark:divide-slate-800">
+                {fp.failed.slice(0, 10).map((r) => (
+                  <li key={r.sessionId} className="flex items-center justify-between gap-2 py-1.5">
+                    <span className="min-w-0"><span className="font-semibold">{r.orderNumber}</span> <span className="text-xs text-slate-400">{r.item} · {r.machineLabel} · {shortDay(r.startedAt.slice(0, 10))}</span></span>
+                    <span className="flex shrink-0 items-center gap-2"><Badge tone="red">{num(r.rejectedBeforeRelease)} pcs</Badge><button type="button" onClick={() => navigate(`/wizard/${r.sessionId}`)} className="print-hidden text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">Session</button></span>
+                  </li>
+                ))}
+                {fp.failed.length > 10 && <li className="py-1.5 text-xs text-slate-400">and {fp.failed.length - 10} more</li>}
+              </ul>
+            )}
+          </div>
+        </div>
+      </Section>
     </div>
   )
 }
@@ -529,7 +816,7 @@ export function DashboardPage() {
       prevTo: prev.to,
       factory: f.factory || undefined,
       process: f.process || undefined,
-      workCenterCode: f.workCenterCode || undefined,
+      workCenterCodes: f.workCenterCode ? [f.workCenterCode] : undefined,
       itemCode: f.itemCode.trim() || undefined,
       inspectorId: f.inspectorId || undefined,
       shift: f.shift || undefined,
@@ -565,7 +852,10 @@ export function DashboardPage() {
   }
   /** Which half of the dashboard is on screen. Printing renders both, so the
    *  PDF is the whole dashboard whichever tab is open. */
-  const [view, setView] = usePersistedState<'general' | 'analysis' | 'inspectors'>('qc-dash:page', 'general')
+  const [view, setView] = usePersistedState<'general' | 'inspectors'>('qc-dash:tab', 'general')
+  /** Which angle the general page is read from; Details is the full analysis behind the filters. */
+  const [pick, setPick] = usePersistedState<GeneralPick>('qc-dash:pick', 'factory')
+  const showDetails = view === 'inspectors' || pick === 'details'
   const { data: general, isLoading: generalLoading, error: generalError } = useKpiGeneral(allowed)
   /** The Pareto can be read for one machine without narrowing the whole page. */
   const [paretoMachine, setParetoMachine] = usePersistedState('qc-dash:pareto-machine', '')
@@ -653,9 +943,9 @@ export function DashboardPage() {
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Quality</p>
           <h1 className="mt-1 text-2xl font-extrabold tracking-tight">Dashboard</h1>
-          {view === 'general' ? (
+          {view === 'general' && pick !== 'details' ? (
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              <span className="font-semibold text-slate-700 dark:text-slate-200">The whole plant, last {general?.monthsBack ?? 4} months</span> · no filter applies here
+              <span className="font-semibold text-slate-700 dark:text-slate-200">The whole plant, last {general?.monthsBack ?? 4} months</span> · reject rate = rejected ÷ (produced + rejected) · the period filters do not apply here
               {general && <span className="hidden print:inline"> · generated {formatDateTime(general.generatedAt)}</span>}
             </p>
           ) : (
@@ -671,7 +961,6 @@ export function DashboardPage() {
             {(
               [
                 ['general', 'General', Factory],
-                ['analysis', 'Analysis', LayoutGrid],
                 ['inspectors', 'Inspectors', Trophy],
               ] as const
             ).map(([key, label, Icon]) => (
@@ -717,13 +1006,39 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {/* §15 — the general page: fixed, unfiltered, the same for everyone. */}
+      {/* §15 — the general page: the plant and its factories on three figures, then one angle to read it from. */}
       {view === 'general' && (
-        <GeneralView data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} />
+        <>
+          <GeneralOverview data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} />
+          <div className="print-hidden flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Read it</span>
+            <div className="inline-flex rounded-xl p-0.5 ring-1 ring-slate-200 dark:ring-slate-700">
+              {(
+                [
+                  ['factory', 'By factory', Factory],
+                  ['process', 'By process', Layers],
+                  ['details', 'Details', LayoutGrid],
+                ] as const
+              ).map(([key, label, Icon]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setPick(key)}
+                  aria-pressed={pick === key}
+                  className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-[10px] px-3 text-sm font-semibold transition-colors', pick === key ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800')}
+                >
+                  <Icon className="h-4 w-4" /> {label}
+                </button>
+              ))}
+            </div>
+            {pick === 'details' && <span className="text-xs text-slate-400">The full analysis: the filters below narrow it.</span>}
+          </div>
+          {general && pick !== 'details' && <ScopeView kind={pick} general={general} factories={factories} t={general.thresholds} />}
+        </>
       )}
 
-      {/* Filters — for the analysis and inspector pages. */}
-      <Card className={cn('print-hidden space-y-3 p-4', view === 'general' && 'hidden')}>
+      {/* Filters — for the details and the inspector ranking. */}
+      <Card className={cn('print-hidden space-y-3 p-4', !showDetails && 'hidden')}>
         {/* §15 — the period is a timeline strip: two handles to drag, presets to jump. */}
         <PeriodSlicer
           value={range}
@@ -823,13 +1138,13 @@ export function DashboardPage() {
         )}
       </Card>
 
-      {error && view !== 'general' && (
+      {error && showDetails && (
         <Card className="border border-rose-200 p-4 text-sm text-rose-700 dark:border-rose-500/30 dark:text-rose-300">
           {error instanceof ApiError ? error.message : 'The dashboard could not be loaded.'}
         </Card>
       )}
 
-      {isLoading && !data && view !== 'general' && (
+      {isLoading && !data && showDetails && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {Array.from({ length: 8 }, (_, i) => (
             <div key={i} className="skeleton h-28" />
@@ -841,7 +1156,7 @@ export function DashboardPage() {
         <div className={cn('space-y-5 transition-opacity', isFetching && 'opacity-70')}>
           {/* Everything but the ranking. Hidden on screen when the Inspectors
               tab is open; still printed, so the PDF stays the whole dashboard. */}
-          <div className={cn('grid grid-cols-1 gap-4 xl:grid-cols-4', view !== 'analysis' && '[@media_screen]:hidden')}>
+          <div className={cn('grid grid-cols-1 gap-4 xl:grid-cols-4', !(view === 'general' && pick === 'details') && '[@media_screen]:hidden')}>
           <div className="min-w-0 space-y-5 xl:col-span-3">
           {/* Tiles */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
@@ -1082,7 +1397,7 @@ export function DashboardPage() {
           </div>
 
           {/* Everything that was on the Overview page, full width, unchanged. */}
-          <div className={cn('space-y-5', view !== 'analysis' && '[@media_screen]:hidden')}>
+          <div className={cn('space-y-5', !(view === 'general' && pick === 'details') && '[@media_screen]:hidden')}>
           {/* The shape of the period, and the paint line's readings per item. */}
           <div className="print-break grid grid-cols-1 gap-4 xl:grid-cols-3">
             <Section title="Samples by defect rate" hint="How many samples had no defect, a few, or many. An average hides this shape." icon={<AlertTriangle className="h-4 w-4" />}>

@@ -25,7 +25,8 @@ export interface KpiFilters extends KpiRange {
   factory?: string
   /** A process group from the machine register: only its machines. */
   process?: Process
-  workCenterCode?: string
+  /** One or more machine codes: the figures of those machines together. */
+  workCenterCodes?: string[]
   itemCode?: string
   inspectorId?: string
   shift?: ShiftLetter
@@ -393,6 +394,88 @@ export interface KpiGeneral {
   }
   months: KpiMonthPoint[]
   factories: KpiFactoryTrend[]
+  /** Every machine with production in the span, largest first. */
+  machines: KpiMachineTrend[]
+}
+
+/** A machine's reject rate month by month, for the general page's overview. */
+export interface KpiMachineTrend {
+  workCenterCode: string
+  label: string
+  factory: string
+  process: Process
+  piecesProduced: number
+  productionDefectPieces: number
+  defectRatePct: number | null
+  months: { month: string; piecesProduced: number; productionDefectPieces: number; defectRatePct: number | null }[]
+}
+
+// ---- The drill-down: a factory, a process or a few machines ----------------
+
+export interface KpiBreakdownFilters extends KpiRange {
+  factory?: string
+  process?: Process
+  workCenterCodes?: string[]
+  itemCode?: string
+}
+
+/** One month of the scope: what was made (produced + rejected) and the rate over it. */
+export interface KpiBreakdownMonth {
+  month: string
+  sessions: number
+  piecesProduced: number
+  productionDefectPieces: number
+  /** produced + rejected. */
+  made: number
+  defectRatePct: number | null
+}
+
+/** A defect of the scope with its month-by-month spread. */
+export interface KpiBreakdownDefect {
+  defectName: string
+  pieces: number
+  /** Of every rejected piece in the scope. */
+  sharePct: number
+  months: { month: string; pieces: number; pctOfMade: number | null }[]
+}
+
+/** The rejected pieces of one month laid on one order line or one item. */
+export interface KpiBreakdownRow {
+  month: string
+  key: string
+  label: string
+  sub?: string
+  pieces: number
+  /** Of the month's made pieces: the "3% for order X" of a 15% month. */
+  pctOfMade: number | null
+  /** Of the month's rejected pieces. */
+  shareOfMonthPct: number | null
+}
+
+/**
+ * First part released, by session: a session whose line had nothing rejected
+ * before the release inspection counts as clean; one with any quantity
+ * rejected before release does not. 8 clean of 10 sessions is 80%.
+ */
+export interface KpiFirstPart {
+  sessions: number
+  clean: number
+  pct: number | null
+  byMachine: { workCenterCode: string; label: string; factory: string; sessions: number; clean: number; pct: number | null }[]
+  months: { month: string; sessions: number; clean: number; pct: number | null }[]
+  /** The sessions that were not clean, newest first, the fifty most recent. */
+  failed: { sessionId: string; startedAt: string; orderNumber: string; item: string; itemCode: string; workCenterCode: string; machineLabel: string; rejectedBeforeRelease: number; inspectorName: string }[]
+}
+
+export interface KpiBreakdown {
+  filters: KpiBreakdownFilters
+  generatedAt: string
+  thresholds: KpiThresholds
+  months: KpiBreakdownMonth[]
+  defects: KpiBreakdownDefect[]
+  byOrder: KpiBreakdownRow[]
+  byItem: KpiBreakdownRow[]
+  firstPart: KpiFirstPart
 }
 
 /** How many calendar months the general page shows, the current one included. */
@@ -489,6 +572,20 @@ export interface KpiOverview {
 
 export function pct(part: number, whole: number): number | null {
   return whole > 0 ? Math.round((part / whole) * 10000) / 100 : null
+}
+
+/**
+ * The reject rate: rejected pieces per 100 made. A session's final quantity
+ * is the good production; the rejected pieces were made on top of it, so
+ * the base is produced + rejected, never produced alone.
+ */
+export function rejectRate(defectPieces: number, produced: number): number | null {
+  return pct(defectPieces, produced + defectPieces)
+}
+
+/** The same rate as parts per million, the figure a customer audit asks for. */
+export function ppm(rate: number | null): number | null {
+  return rate === null ? null : Math.round(rate * 10000)
 }
 
 /** Change from the previous value in percent, null when there was nothing before. */

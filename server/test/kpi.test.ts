@@ -227,11 +227,15 @@ describe('kpi overview', () => {
 })
 
 describe('the defect rate is over production (§15)', () => {
-  it('refuses to close a session on a final quantity below its defective pieces', async () => {
+  it('closes on a final quantity below the defective pieces: the final quantity is the good production', async () => {
     const before = await app.api<SessionWithOrder>('GET', `/api/sessions/${sessionId}`, { token: inspector.token })
-    const res = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/close`, { token: inspector.token, body: { finalQty: 3, version: before.body.version } })
-    expect(res.status).toBe(400)
-    expect(res.body.error.message).toContain('4 defective pieces')
+    expect((await app.api('POST', `/api/sessions/${sessionId}/close`, { token: inspector.token, body: { finalQty: 3, version: before.body.version } })).status).toBe(200)
+    // 4 rejected against 3 produced: 4 of 7 made.
+    const o = (await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}`, { token: admin.token })).body
+    expect(o.current.piecesProduced).toBe(3)
+    expect(o.current.defectRatePct).toBeCloseTo(57.14, 1)
+    const closed = await app.api<SessionWithOrder>('GET', `/api/sessions/${sessionId}`, { token: admin.token })
+    expect((await app.api('POST', `/api/sessions/${sessionId}/reopen`, { token: admin.token, body: { version: closed.body.version } })).status).toBe(200)
   })
 
   it('counts the closed session\'s production and the defects of its batch', async () => {
@@ -241,19 +245,20 @@ describe('the defect rate is over production (§15)', () => {
     expect(o.current.piecesProduced).toBe(200)
     expect(o.current.producedSessions).toBe(1)
     expect(o.current.productionDefectPieces).toBe(4)
-    expect(o.current.defectRatePct).toBe(2)
+    // 4 rejected of 204 made: produced + rejected is the base.
+    expect(o.current.defectRatePct).toBeCloseTo(1.96, 2)
     expect(o.current.inspectedDefectPct).toBeCloseTo(13.33, 1)
     // 2% against the 1% target saved earlier (limit 5%): the rate insight is back as a warning, and it quotes production.
     const amber = o.insights.find((i) => i.id === 'defect-rate-amber')!
     expect(amber.severity).toBe('warning')
-    expect(amber.detail).toContain('4 defect pieces in 200 produced')
+    expect(amber.detail).toContain('4 rejected pieces against 200 produced')
     // Ordered most serious first.
     const order = ['critical', 'warning', 'good', 'info']
     const ranks = o.insights.map((i) => order.indexOf(i.severity))
     expect(ranks).toEqual([...ranks].sort((a, b) => a - b))
     // The machine and the item carry the production; an inspector or a shift cannot.
     expect(o.byMachine[0].piecesProduced).toBe(200)
-    expect(o.byMachine[0].defectRatePct).toBe(2)
+    expect(o.byMachine[0].defectRatePct).toBeCloseTo(1.96, 2)
     expect(o.byMachine[0].inspectedDefectPct).toBeCloseTo(13.33, 1)
     expect(o.byItem[0].piecesProduced).toBe(200)
     expect(o.byInspector[0].piecesProduced).toBeNull()
@@ -262,14 +267,14 @@ describe('the defect rate is over production (§15)', () => {
     // The day it was closed carries the production.
     const today = o.daily.find((d) => d.piecesProduced > 0)!
     expect(today.productionDefectPieces).toBe(4)
-    expect(today.defectRatePct).toBe(2)
+    expect(today.defectRatePct).toBeCloseTo(1.96, 2)
     // Narrowed to an inspector, production is not attributable: no rate.
     const byInspector = (await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}&inspectorId=${inspector.user.id}`, { token: admin.token })).body
     expect(byInspector.current.piecesProduced).toBe(0)
     expect(byInspector.current.defectRatePct).toBeNull()
     expect(byInspector.current.inspectedDefectPct).toBeCloseTo(13.33, 1)
-    // A correction of the final quantity is held to the same rule.
+    // A correction of the final quantity below the defects is allowed for the same reason.
     const closed = await app.api<SessionWithOrder>('GET', `/api/sessions/${sessionId}`, { token: admin.token })
-    expect((await app.api('PATCH', `/api/sessions/${sessionId}/quantities`, { token: admin.token, body: { finalQty: 2, version: closed.body.version } })).status).toBe(400)
+    expect((await app.api('PATCH', `/api/sessions/${sessionId}/quantities`, { token: admin.token, body: { finalQty: 200, version: closed.body.version } })).status).toBe(200)
   })
 })
