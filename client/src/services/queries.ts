@@ -40,7 +40,7 @@ import type {
   ChatMessagesResponse,
   ChatUnreadResponse,
 } from '@qc/shared/api'
-import type { KpiFilters, KpiOverview } from '@qc/shared/kpi'
+import type { KpiFilters, KpiGeneral, KpiOverview } from '@qc/shared/kpi'
 import type { HiddenInsightsResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
@@ -75,6 +75,7 @@ export const keys = {
   kpiOverview: (filters: KpiFilters) => ['kpi', 'overview', filters] as const,
   kpiThresholds: ['kpi', 'thresholds'] as const,
   kpiSpan: ['kpi', 'span'] as const,
+  kpiGeneral: ['kpi', 'general'] as const,
   hiddenInsights: ['kpi', 'insights', 'hidden'] as const,
   noticeInbox: ['notices', 'inbox'] as const,
   noticesAdmin: ['notices', 'admin'] as const,
@@ -347,6 +348,11 @@ export function useKpiOverview(filters: KpiFilters | null) {
 }
 
 /** Where the period strip begins: the first day anything was recorded. */
+/** §15 — the general page: the plant over the last months, no filter. */
+export function useKpiGeneral(enabled = true) {
+  return useQuery({ queryKey: keys.kpiGeneral, queryFn: () => api<KpiGeneral>('/kpi/general'), enabled, staleTime: 5 * 60_000 })
+}
+
 export function useKpiSpan(enabled = true) {
   return useQuery({ queryKey: keys.kpiSpan, queryFn: () => api<KpiSpanResponse>('/kpi/span'), enabled, staleTime: 60 * 60_000 })
 }

@@ -44,6 +44,8 @@ const processSchema = z.preprocess(
 )
 export function normaliseProcess(raw: string): string {
   const v = raw.trim().toLowerCase()
+  if (['universal', 'يونيفرسال'].some((k) => v.includes(k))) return 'universal'
+  if (['mast', 'ماست'].some((k) => v.includes(k))) return 'mast'
   if (['weld', 'welding', 'لحام'].some((k) => v.includes(k))) return 'welding'
   if (['paint', 'painting', 'coat', 'دهان'].some((k) => v.includes(k))) return 'paint'
   if (['form', 'forming', 'fabrication', 'roll', 'punch', 'cut', 'bend', 'تشكيل'].some((k) => v.includes(k))) return 'forming'

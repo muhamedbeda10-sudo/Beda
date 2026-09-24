@@ -31,15 +31,18 @@ export const PT_WORK_CENTERS: readonly WorkCenterCode[] = ['22', '58']
  *   paint   — paint sample photos, paint thickness readings, defects
  *   other   — the forming flow
  */
-export type Process = 'forming' | 'welding' | 'paint' | 'other'
+export type Process = 'forming' | 'welding' | 'paint' | 'universal' | 'mast' | 'other'
 
-export const PROCESSES: readonly Process[] = ['forming', 'welding', 'paint', 'other']
+/** In the order the dashboard's process filter lists them. */
+export const PROCESSES: readonly Process[] = ['forming', 'welding', 'paint', 'universal', 'mast', 'other']
 
 export const PROCESS_LABEL: Record<Process, string> = {
-  forming: 'Forming / fabrication',
+  forming: 'Roll forming / fabrication',
   welding: 'Welding',
-  paint: 'Paint',
-  other: 'Other',
+  paint: 'Painting',
+  universal: 'Universal machines',
+  mast: 'Mast machines',
+  other: 'Others',
 }
 
 export interface Machine {

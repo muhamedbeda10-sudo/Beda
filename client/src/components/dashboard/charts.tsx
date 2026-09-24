@@ -479,3 +479,85 @@ export function ColumnChart({ columns, height = 200, unit = '' }: { columns: Col
     </figure>
   )
 }
+
+export interface LineSeries {
+  label: string
+  /** One value per label in `labels`; null draws a gap. */
+  values: (number | null)[]
+  /** Tailwind stroke class, e.g. "stroke-brand-500". */
+  className: string
+}
+
+/** A few lines over the same x axis — one per factory, month by month. */
+export function LineChart({ labels, series, unit = '%', height = 220 }: { labels: string[]; series: LineSeries[]; unit?: string; height?: number }) {
+  const [hover, setHover] = useState<number | null>(null)
+  const id = useId()
+  const W = 720
+  const H = height
+  const pad = { l: 44, r: 16, t: 16, b: 34 }
+  const x0 = pad.l
+  const x1 = W - pad.r
+  const y0 = pad.t
+  const y1 = H - pad.b
+  const n = labels.length
+  if (n === 0 || series.length === 0 || series.every((s) => s.values.every((v) => v === null))) return <ChartEmpty height={height} />
+  const max = niceMax(Math.max(...series.flatMap((s) => s.values.map((v) => v ?? 0))))
+  const slot = (x1 - x0) / n
+  const xAt = (i: number) => x0 + slot * i + slot / 2
+  const yAt = (v: number) => y1 - ((y1 - y0) * v) / max
+  const segmentsOf = (values: (number | null)[]): string[] => {
+    const out: string[] = []
+    let current: string[] = []
+    values.forEach((v, i) => {
+      if (v === null) {
+        if (current.length) out.push(current.join(' '))
+        current = []
+      } else current.push(`${xAt(i)},${yAt(v)}`)
+    })
+    if (current.length) out.push(current.join(' '))
+    return out
+  }
+  const every = Math.max(1, Math.ceil(n / 12))
+  return (
+    <figure className="relative">
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
+        <title id={`${id}-t`}>{series.map((s) => s.label).join(', ')} over time</title>
+        <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} unit={unit} />
+        {labels.map((l, i) => (
+          <g key={l} onMouseEnter={() => setHover(i)}>
+            <rect x={xAt(i) - slot / 2} y={y0} width={slot} height={y1 - y0} fill="transparent" />
+            {i % every === 0 && (
+              <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-slate-500 dark:fill-slate-400">
+                {l}
+              </text>
+            )}
+          </g>
+        ))}
+        {series.map((s) =>
+          segmentsOf(s.values).map((d, i) => <polyline key={`${s.label}-${i}`} points={d} fill="none" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" className={s.className} />),
+        )}
+        {series.map((s) =>
+          s.values.map((v, i) => v !== null && <circle key={`${s.label}-${i}`} cx={xAt(i)} cy={yAt(v)} r={hover === i ? 5 : 3} className={cn('fill-white dark:fill-slate-900', s.className)} strokeWidth={2} />),
+        )}
+        {hover !== null && <line x1={xAt(hover)} x2={xAt(hover)} y1={y0} y2={y1} className="stroke-slate-400" strokeDasharray="3 3" />}
+      </svg>
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+        {series.map((s) => (
+          <span key={s.label} className="inline-flex items-center gap-1.5">
+            <svg width="16" height="6" aria-hidden><line x1="0" y1="3" x2="16" y2="3" strokeWidth={3} className={s.className} /></svg>
+            {s.label}
+            {hover !== null && (
+              <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+                {s.values[hover] === null ? '—' : `${fmt(s.values[hover]!)}${unit}`}
+              </span>
+            )}
+          </span>
+        ))}
+        {hover !== null && <span className="ml-auto font-semibold text-slate-700 dark:text-slate-200">{labels[hover]}</span>}
+      </div>
+    </figure>
+  )
+}
+
+/** Up to six lines that stay apart in both themes. */
+export const LINE_CLASSES = ['stroke-brand-500', 'stroke-rose-500', 'stroke-emerald-500', 'stroke-amber-500', 'stroke-violet-500', 'stroke-sky-500']

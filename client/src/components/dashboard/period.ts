@@ -123,3 +123,10 @@ export function shortDay(s: string): string {
   const d = fromDay(s)
   return `${d.getDate()} ${MONTHS[d.getMonth()]}`
 }
+
+/** "Sep 2026" for a YYYY-MM. */
+export function monthLabel(month: string, withYear = true): string {
+  const [y, m] = month.split('-').map(Number)
+  const name = new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' })
+  return withYear ? `${name} ${y}` : name
+}

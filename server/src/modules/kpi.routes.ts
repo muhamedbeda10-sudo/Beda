@@ -7,11 +7,13 @@ import { Router } from 'express'
 import { z } from 'zod'
 import {
   DEFAULT_KPI_THRESHOLDS,
+  GENERAL_MONTHS,
   INSIGHT_KEY_MAX,
   RANKING_WEIGHTS,
   pct,
   rankInspectors,
   type KpiFilters,
+  type KpiGeneral,
   type KpiInspectorRanking,
   type KpiInspectorRaw,
   type KpiListCounts,
@@ -19,6 +21,7 @@ import {
   type KpiThresholds,
 } from '@qc/shared/kpi'
 import type { HiddenInsightRequest, HiddenInsightsResponse, KpiSpanResponse, KpiThresholdsResponse } from '@qc/shared/api'
+import { PROCESSES, type Process } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import type { Queryable } from '../db/pool'
 import { withTransaction } from '../db/pool'
@@ -29,12 +32,15 @@ import { auditChanges } from '../audit/service'
 import { buildInsights } from './kpi.insights'
 import {
   loadDaily,
+  loadDefectDetails,
   loadDefectRateBands,
   loadDiscipline,
+  loadFactoryMonths,
   loadGroups,
   loadHolds,
   loadInspectorRaw,
   loadItemDefects,
+  loadMonthly,
   loadPaintByItem,
   loadPareto,
   loadParetoByMachine,
@@ -55,6 +61,7 @@ const OverviewQuery = z.object({
   prevFrom: day,
   prevTo: day,
   factory: optionalText,
+  process: z.enum(PROCESSES as unknown as [Process, ...Process[]]).optional(),
   workCenterCode: optionalText,
   itemCode: optionalText,
   inspectorId: z.string().uuid().optional(),
@@ -103,6 +110,18 @@ function daysBetween(from: string, to: string): number {
 function validDay(s: string): boolean {
   const d = new Date(`${s}T00:00:00Z`)
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s
+}
+
+/** Today's calendar day where the factory sits. */
+function factoryToday(tz: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+}
+
+/** The YYYY-MM that is `n` months before this one. */
+function monthsBefore(month: string, n: number): string {
+  const [y, m] = month.split('-').map(Number)
+  const idx = y * 12 + (m - 1) - n
+  return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`
 }
 
 function checkRange(from: string, to: string, label: string): void {
@@ -217,7 +236,7 @@ export function kpiRoutes(ctx: AppContext): Router {
     checkRange(q.prevFrom, q.prevTo, 'Comparison period')
     const { thresholds } = await loadThresholds(ctx.db)
     const tz = ctx.config.FACTORY_TIMEZONE
-    const common = { tz, factory: q.factory, workCenterCode: q.workCenterCode, itemCode: q.itemCode, inspectorId: q.inspectorId, shift: q.shift }
+    const common = { tz, factory: q.factory, process: q.process, workCenterCode: q.workCenterCode, itemCode: q.itemCode, inspectorId: q.inspectorId, shift: q.shift }
     const cur: PeriodFilters = { ...common, from: q.from, to: q.to }
     const prev: PeriodFilters = { ...common, from: q.prevFrom, to: q.prevTo }
     const db = ctx.db
@@ -225,8 +244,11 @@ export function kpiRoutes(ctx: AppContext): Router {
       current,
       previous,
       daily,
+      monthly,
       pareto,
+      defectDetails,
       byMachine,
+      byMachinePrevious,
       byInspector,
       byShift,
       byItem,
@@ -242,8 +264,11 @@ export function kpiRoutes(ctx: AppContext): Router {
         loadTotals(db, cur),
         loadTotals(db, prev),
         loadDaily(db, cur),
+        loadMonthly(db, cur),
         loadPareto(db, cur),
+        loadDefectDetails(db, cur),
         loadGroups(db, cur, 'machine'),
+        loadGroups(db, prev, 'machine'),
         loadGroups(db, cur, 'inspector'),
         loadGroups(db, cur, 'shift'),
         loadGroups(db, cur, 'item'),
@@ -279,6 +304,7 @@ export function kpiRoutes(ctx: AppContext): Router {
       prevFrom: q.prevFrom,
       prevTo: q.prevTo,
       factory: q.factory,
+      process: q.process,
       workCenterCode: q.workCenterCode,
       itemCode: q.itemCode,
       inspectorId: q.inspectorId,
@@ -329,10 +355,13 @@ export function kpiRoutes(ctx: AppContext): Router {
       current,
       previous,
       daily,
+      monthly,
       defectRateBands,
       pareto: pareto.rows,
+      defectDetails,
       paretoByMachine,
       byMachine: byMachine.rows,
+      byMachinePrevious: byMachinePrevious.rows,
       byInspector: byInspector.rows,
       byShift: byShift.rows,
       byItem: byItem.rows,
@@ -344,6 +373,43 @@ export function kpiRoutes(ctx: AppContext): Router {
       inspectorRanking,
     }
     const body: KpiOverview = { ...draft, insights: buildInsights(draft, thresholds) }
+    res.json(body)
+  })
+
+  // ---- The general page -------------------------------------------------------
+  // The whole plant over the last few calendar months, the current one to
+  // date, with no filter: the same picture for everyone, whatever the
+  // analysis page is narrowed to.
+
+  r.get('/general', async (_req, res) => {
+    const tz = ctx.config.FACTORY_TIMEZONE
+    const { thresholds } = await loadThresholds(ctx.db)
+    const today = factoryToday(tz)
+    const from = `${monthsBefore(today.slice(0, 7), GENERAL_MONTHS - 1)}-01`
+    const f: PeriodFilters = { tz, from, to: today }
+    const [totals, months, factories] = await Promise.all([loadTotals(ctx.db, f), loadMonthly(ctx.db, f), loadFactoryMonths(ctx.db, f)])
+    const body: KpiGeneral = {
+      from,
+      to: today,
+      monthsBack: GENERAL_MONTHS,
+      generatedAt: new Date().toISOString(),
+      thresholds,
+      totals: {
+        piecesProduced: totals.piecesProduced,
+        productionDefectPieces: totals.productionDefectPieces,
+        releasedPieces: Math.max(0, totals.piecesProduced - totals.productionDefectPieces),
+        defectRatePct: totals.defectRatePct,
+        producedSessions: totals.producedSessions,
+        samples: totals.samples,
+        pieces: totals.pieces,
+        defectPieces: totals.defectPieces,
+        inspectedDefectPct: totals.inspectedDefectPct,
+        machines: totals.machinesInspected,
+        factories: factories.length,
+      },
+      months,
+      factories,
+    }
     res.json(body)
   })
 
