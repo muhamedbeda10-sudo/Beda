@@ -760,7 +760,18 @@ function SetupStep({
   gradeIndex: Map<string, string>
   instructions: WorkInstruction[]
 }) {
+  const { toast } = useApp()
   const [picking, setPicking] = useState(false)
+  /** The coil a tap in the picker pointed at, lit for a moment so the eye finds it on the list. */
+  const [litCoil, setLitCoil] = useState<string | null>(null)
+  const litTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (litTimer.current) clearTimeout(litTimer.current) }, [])
+  const pointAtCoil = (coilNumber: string) => {
+    setLitCoil(coilNumber.trim().toLowerCase())
+    toast(`${coilNumber} is already on this sample.`, 'info')
+    if (litTimer.current) clearTimeout(litTimer.current)
+    litTimer.current = setTimeout(() => setLitCoil(null), 2500)
+  }
   // A welding machine records the wire, not the coil (§5.2).
   const welding = draft.process === 'welding'
 
@@ -871,8 +882,9 @@ function SetupStep({
                 <div
                   key={`${c.coilId ?? 'typed'}-${c.coilNumber}-${i}`}
                   className={cn(
-                    'rounded-2xl border p-3',
+                    'rounded-2xl border p-3 transition-shadow',
                     mismatch ? 'border-amber-300 bg-amber-50/50 dark:border-amber-500/40 dark:bg-amber-500/5' : 'border-slate-200 dark:border-slate-700',
+                    litCoil === c.coilNumber.trim().toLowerCase() && 'ring-2 ring-brand-500 ring-offset-2 dark:ring-offset-slate-900',
                   )}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -937,6 +949,7 @@ function SetupStep({
         onClose={() => setPicking(false)}
         onPick={addFromRegister}
         onTyped={(coilNumber) => update((d) => ({ ...d, coils: [...d.coils, { coilNumber }] }))}
+        onAlready={pointAtCoil}
         expectedGrade={order.expectedGrade}
         gradeIndex={gradeIndex}
         alreadyChosen={draft.coils.map((c) => c.coilNumber)}

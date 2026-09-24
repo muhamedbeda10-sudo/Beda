@@ -28,6 +28,14 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-24.1',
+    date: '2026-09-24',
+    title: 'Coils: the same coil on the next sample',
+    items: [
+      { text: 'The next sample already carries the previous sample\'s coils, so the same coil can be on as many samples as it feeds. In "Add coil" such a coil is now marked "On this sample" and stays tappable: a tap closes the picker and lights the coil on the list instead of greying it out.' },
+    ],
+  },
+  {
     id: '2026-09-22.6',
     date: '2026-09-22',
     title: 'Access and History: the Item filter matches as you type',
