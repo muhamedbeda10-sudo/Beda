@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-24.4',
+    date: '2026-09-24',
+    title: 'Dashboard: one period for everything, several factories at once',
+    items: [
+      { text: 'The period strip now sits above every page: General, By factory, By process, Details and Inspectors all count over it. The trend line on the General cards keeps its last four months.' },
+      { text: 'By factory and By process take several picks at once (tap Factory 1 and Factory 2 to see them together), or All. The machines table at the top of General is gone; the machines live under the pick, worst first.' },
+      { text: 'The breakdown shows a Pareto of defects. First part released is reworked: clean, not clean and the pieces rejected before release, a Pareto of those pieces by machine, the months, and the sessions that were not clean as a table.' },
+    ],
+  },
+  {
     id: '2026-09-24.3',
     date: '2026-09-24',
     title: 'Dashboard: General reads by factory or by process',

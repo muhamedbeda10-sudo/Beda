@@ -65,24 +65,35 @@ const OverviewQuery = z.object({
   prevFrom: day,
   prevTo: day,
   factory: optionalText,
-  process: z.enum(PROCESSES as unknown as [Process, ...Process[]]).optional(),
+  process: optionalText,
   workCenterCode: optionalText,
   itemCode: optionalText,
   inspectorId: z.string().uuid().optional(),
   shift: z.enum(['A', 'B', 'C']).optional(),
 })
 
-/** One machine, or several separated by commas: "24,25,31". */
-function machineCodes(raw: string | undefined): string[] | undefined {
-  const codes = (raw ?? '').split(',').map((c) => c.trim()).filter(Boolean)
-  return codes.length ? Array.from(new Set(codes)) : undefined
+/** One value, or several separated by commas: "24,25,31". */
+function listOf(raw: string | undefined): string[] | undefined {
+  const values = (raw ?? '').split(',').map((c) => c.trim()).filter(Boolean)
+  return values.length ? Array.from(new Set(values)) : undefined
 }
+const machineCodes = listOf
+const factoryNames = listOf
+/** Process groups, each one of the register's; anything else is refused. */
+function processNames(raw: string | undefined): Process[] | undefined {
+  const values = listOf(raw)
+  if (!values) return undefined
+  for (const v of values) if (!(PROCESSES as readonly string[]).includes(v)) throw badRequest(`Process "${v}" is not one of the register's groups.`)
+  return values as Process[]
+}
+
+const GeneralQuery = z.object({ from: day, to: day })
 
 const BreakdownQuery = z.object({
   from: day,
   to: day,
   factory: optionalText,
-  process: z.enum(PROCESSES as unknown as [Process, ...Process[]]).optional(),
+  process: optionalText,
   workCenterCode: optionalText,
   itemCode: optionalText,
 })
@@ -255,7 +266,7 @@ export function kpiRoutes(ctx: AppContext): Router {
     checkRange(q.prevFrom, q.prevTo, 'Comparison period')
     const { thresholds } = await loadThresholds(ctx.db)
     const tz = ctx.config.FACTORY_TIMEZONE
-    const common = { tz, factory: q.factory, process: q.process, workCenterCodes: machineCodes(q.workCenterCode), itemCode: q.itemCode, inspectorId: q.inspectorId, shift: q.shift }
+    const common = { tz, factories: factoryNames(q.factory), processes: processNames(q.process), workCenterCodes: machineCodes(q.workCenterCode), itemCode: q.itemCode, inspectorId: q.inspectorId, shift: q.shift }
     const cur: PeriodFilters = { ...common, from: q.from, to: q.to }
     const prev: PeriodFilters = { ...common, from: q.prevFrom, to: q.prevTo }
     const db = ctx.db
@@ -322,8 +333,8 @@ export function kpiRoutes(ctx: AppContext): Router {
       to: q.to,
       prevFrom: q.prevFrom,
       prevTo: q.prevTo,
-      factory: q.factory,
-      process: q.process,
+      factories: factoryNames(q.factory),
+      processes: processNames(q.process),
       workCenterCodes: machineCodes(q.workCenterCode),
       itemCode: q.itemCode,
       inspectorId: q.inspectorId,
@@ -400,16 +411,36 @@ export function kpiRoutes(ctx: AppContext): Router {
   // date, with no filter: the same picture for everyone, whatever the
   // analysis page is narrowed to.
 
-  r.get('/general', async (_req, res) => {
+  r.get('/general', async (req, res) => {
     const tz = ctx.config.FACTORY_TIMEZONE
+    const q = req.query.from === undefined && req.query.to === undefined ? null : parse(GeneralQuery, req.query)
+    if (q) checkRange(q.from, q.to, 'Period')
     const { thresholds } = await loadThresholds(ctx.db)
     const today = factoryToday(tz)
-    const from = `${monthsBefore(today.slice(0, 7), GENERAL_MONTHS - 1)}-01`
-    const f: PeriodFilters = { tz, from, to: today }
-    const [totals, months, factories, machines] = await Promise.all([loadTotals(ctx.db, f), loadMonthly(ctx.db, f), loadFactoryMonths(ctx.db, f), loadMachineMonths(ctx.db, f)])
+    // The period the cards are counted over; without one, the trend window itself.
+    const to = q?.to ?? today
+    const windowFrom = `${monthsBefore(to.slice(0, 7), GENERAL_MONTHS - 1)}-01`
+    const from = q?.from ?? windowFrom
+    const period: PeriodFilters = { tz, from, to }
+    const window: PeriodFilters = { tz, from: windowFrom, to }
+    const [totals, months, factoriesInPeriod, machinesInPeriod, factoryTrends, machineTrends] = await Promise.all([
+      loadTotals(ctx.db, period),
+      loadMonthly(ctx.db, window),
+      loadFactoryMonths(ctx.db, period),
+      loadMachineMonths(ctx.db, period),
+      loadFactoryMonths(ctx.db, window),
+      loadMachineMonths(ctx.db, window),
+    ])
+    // The figures of the period, with the months of the trend window beside them.
+    const factoryMonths = new Map(factoryTrends.map((f) => [f.factory, f.months]))
+    const machineMonths = new Map(machineTrends.map((m) => [m.workCenterCode.toLowerCase(), m.months]))
+    const emptyMonths = months.map((m) => ({ month: m.month, piecesProduced: 0, productionDefectPieces: 0, defectRatePct: null }))
+    const factories = factoriesInPeriod.map((f) => ({ ...f, months: factoryMonths.get(f.factory) ?? emptyMonths }))
+    const machines = machinesInPeriod.map((m) => ({ ...m, months: machineMonths.get(m.workCenterCode.toLowerCase()) ?? emptyMonths }))
     const body: KpiGeneral = {
       from,
-      to: today,
+      to,
+      window: { from: windowFrom, to },
       monthsBack: GENERAL_MONTHS,
       generatedAt: new Date().toISOString(),
       thresholds,
@@ -439,10 +470,10 @@ export function kpiRoutes(ctx: AppContext): Router {
     const q = parse(BreakdownQuery, req.query)
     checkRange(q.from, q.to, 'Period')
     const { thresholds } = await loadThresholds(ctx.db)
-    const f: PeriodFilters = { tz: ctx.config.FACTORY_TIMEZONE, from: q.from, to: q.to, factory: q.factory, process: q.process, workCenterCodes: machineCodes(q.workCenterCode), itemCode: q.itemCode }
+    const f: PeriodFilters = { tz: ctx.config.FACTORY_TIMEZONE, from: q.from, to: q.to, factories: factoryNames(q.factory), processes: processNames(q.process), workCenterCodes: machineCodes(q.workCenterCode), itemCode: q.itemCode }
     const [breakdown, firstPart] = await Promise.all([loadBreakdown(ctx.db, f), loadFirstPart(ctx.db, f)])
     const body: KpiBreakdown = {
-      filters: { from: q.from, to: q.to, factory: q.factory, process: q.process, workCenterCodes: f.workCenterCodes, itemCode: q.itemCode },
+      filters: { from: q.from, to: q.to, factories: f.factories, processes: f.processes, workCenterCodes: f.workCenterCodes, itemCode: q.itemCode },
       generatedAt: new Date().toISOString(),
       thresholds,
       ...breakdown,

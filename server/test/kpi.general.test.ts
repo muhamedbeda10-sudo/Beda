@@ -116,6 +116,7 @@ describe('§15 — process groups and the month view', () => {
     expect(g.months.length).toBe(GENERAL_MONTHS)
     expect(g.months[g.months.length - 1].month).toBe(g.to.slice(0, 7))
     expect(g.from.slice(8)).toBe('01')
+    expect(g.window.from).toBe(g.from)
     expect(g.totals.piecesProduced).toBe(600)
     expect(g.totals.productionDefectPieces).toBe(6)
     expect(g.totals.releasedPieces).toBe(594)
@@ -133,6 +134,28 @@ describe('§15 — process groups and the month view', () => {
     expect(g.machines[0].process).toBe('forming')
     expect(g.machines[0].months.length).toBe(GENERAL_MONTHS)
     expect(g.machines[0].defectRatePct).toBeCloseTo(1.64, 2)
+    // On a period: the figures follow it, the trend keeps its months.
+    const short = (await app.api<KpiGeneral>('GET', `/api/kpi/general?from=${today(-1)}&to=${today(1)}`, { token: admin.token })).body
+    expect(short.from).toBe(today(-1))
+    expect(short.totals.piecesProduced).toBe(600)
+    expect(short.months.length).toBe(GENERAL_MONTHS)
+    expect(short.factories[0].months.length).toBe(GENERAL_MONTHS)
+    const empty = (await app.api<KpiGeneral>('GET', `/api/kpi/general?from=${today(-40)}&to=${today(-30)}`, { token: admin.token })).body
+    expect(empty.totals.piecesProduced).toBe(0)
+    expect(empty.factories).toEqual([])
+    expect((await app.api('GET', `/api/kpi/general?from=${today(1)}&to=${today(-1)}`, { token: admin.token })).status).toBe(400)
+  })
+
+  it('takes several factories or processes at once', async () => {
+    const both = await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}&factory=Factory%201,Factory%202`, { token: admin.token })
+    expect(both.body.current.piecesProduced).toBe(600)
+    expect(both.body.filters.factories).toEqual(['Factory 1', 'Factory 2'])
+    const one = await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}&factory=Factory%202`, { token: admin.token })
+    expect(one.body.current.piecesProduced).toBe(300)
+    const procs = await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}&process=forming,mast`, { token: admin.token })
+    expect(procs.body.filters.processes).toEqual(['forming', 'mast'])
+    expect(procs.body.defects.map((d) => d.defectName)).toEqual(['Scratch', 'Dent'])
+    expect((await app.api('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}&process=forming,lathe`, { token: admin.token })).status).toBe(400)
   })
 
   it('takes several machines at once', async () => {
@@ -172,13 +195,14 @@ describe('§15 — process groups and the month view', () => {
     const all = (await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}`, { token: admin.token })).body
     expect(all.firstPart).toMatchObject({ sessions: 3, clean: 2 })
     expect(all.firstPart.pct).toBeCloseTo(66.67, 2)
-    expect(all.firstPart.byMachine.find((m) => m.workCenterCode === '77')).toMatchObject({ sessions: 1, clean: 0, pct: 0 })
+    expect(all.firstPart.rejectedPieces).toBe(7)
+    expect(all.firstPart.byMachine[0]).toMatchObject({ workCenterCode: '77', sessions: 1, clean: 0, pct: 0, rejectedPieces: 7 })
     expect(all.firstPart.failed).toEqual([expect.objectContaining({ workCenterCode: '77', orderNumber: '30003-C', rejectedBeforeRelease: 7 })])
     expect(all.firstPart.months.find((m) => m.sessions > 0)).toMatchObject({ sessions: 3, clean: 2 })
     // A process scope and a machine scope work the same way.
     const mast = (await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}&process=mast`, { token: admin.token })).body
     expect(mast.defects.map((d) => d.defectName)).toEqual(['Dent'])
-    expect(mast.filters.process).toBe('mast')
+    expect(mast.filters.processes).toEqual(['mast'])
     const two = (await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}&workCenterCode=31,77`, { token: admin.token })).body
     expect(two.filters.workCenterCodes).toEqual(['31', '77'])
     expect(two.defects.map((d) => d.defectName)).toEqual(['Scratch', 'Dent'])
