@@ -22,9 +22,10 @@ export interface KpiFilters extends KpiRange {
   /** The period the current one is compared with. */
   prevFrom: string
   prevTo: string
-  factory?: string
-  /** A process group from the machine register: only its machines. */
-  process?: Process
+  /** One or more factories, as the machine register names them; none means every factory. */
+  factories?: string[]
+  /** One or more process groups of the register; none means every process. */
+  processes?: Process[]
   /** One or more machine codes: the figures of those machines together. */
   workCenterCodes?: string[]
   itemCode?: string
@@ -365,16 +366,17 @@ export interface KpiFactoryTrend {
 }
 
 /**
- * The general page: the whole plant over the last few calendar months, with
- * no filter applied, so the picture stays the same whoever opens it and
- * whatever the analysis page is narrowed to.
+ * The general page: the whole plant over the period, no other filter, with
+ * a trend over the last few calendar months ending in the period, so the
+ * cards read the same for everyone and the arrow has months to compare.
  */
 export interface KpiGeneral {
-  /** First day of the oldest month shown. */
+  /** The period the figures are counted over. */
   from: string
-  /** Today, in the factory's zone: the current month is to date. */
   to: string
-  /** How many calendar months the span covers, the current one included. */
+  /** The months the trends run over: the last `monthsBack` calendar months ending in `to`'s month. */
+  window: KpiRange
+  /** How many calendar months the trend covers, the last one included. */
   monthsBack: number
   generatedAt: string
   thresholds: KpiThresholds
@@ -413,8 +415,8 @@ export interface KpiMachineTrend {
 // ---- The drill-down: a factory, a process or a few machines ----------------
 
 export interface KpiBreakdownFilters extends KpiRange {
-  factory?: string
-  process?: Process
+  factories?: string[]
+  processes?: Process[]
   workCenterCodes?: string[]
   itemCode?: string
 }
@@ -461,7 +463,10 @@ export interface KpiFirstPart {
   sessions: number
   clean: number
   pct: number | null
-  byMachine: { workCenterCode: string; label: string; factory: string; sessions: number; clean: number; pct: number | null }[]
+  /** Pieces rejected before release across the sessions that were not clean. */
+  rejectedPieces: number
+  /** Largest first, so the list reads as a Pareto of where the first part fails. */
+  byMachine: { workCenterCode: string; label: string; factory: string; sessions: number; clean: number; pct: number | null; rejectedPieces: number }[]
   months: { month: string; sessions: number; clean: number; pct: number | null }[]
   /** The sessions that were not clean, newest first, the fifty most recent. */
   failed: { sessionId: string; startedAt: string; orderNumber: string; item: string; itemCode: string; workCenterCode: string; machineLabel: string; rejectedBeforeRelease: number; inspectorName: string }[]

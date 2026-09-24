@@ -43,7 +43,8 @@ export function kpiSheets(o: KpiOverview): SheetSpec[] {
     header: ['KPI', 'Current', 'Previous'],
     rows: [
       ['Period', `${f.from} to ${f.to}`, `${f.prevFrom} to ${f.prevTo}`],
-      ['Factory', f.factory ?? 'All', ''],
+      ['Factory', f.factories?.length ? f.factories.join(', ') : 'All', ''],
+      ['Process', f.processes?.length ? f.processes.join(', ') : 'All', ''],
       ['Machine', f.workCenterCodes?.length ? f.workCenterCodes.join(', ') : 'All', ''],
       ['Item code', f.itemCode ?? 'All', ''],
       ['Shift', f.shift ? `${f.shift} (${shiftName(f.shift)})` : 'All', ''],

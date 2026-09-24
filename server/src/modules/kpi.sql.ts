@@ -38,15 +38,24 @@ export interface PeriodFilters {
   from: string
   /** Inclusive factory day, YYYY-MM-DD. */
   to: string
-  factory?: string
-  /** A process group from the machine register: only its machines. */
-  process?: Process
+  /** One or more factories as the register names them; none means every factory. */
+  factories?: string[]
+  /** One or more process groups; none means every process. */
+  processes?: Process[]
   /** One or more machine codes; the figures of those machines together. */
   workCenterCodes?: string[]
   itemCode?: string
   inspectorId?: string
   shift?: ShiftLetter
 }
+
+/** A list for an `= ANY($n::text[])` clause: null when empty, which the clause reads as "every". */
+function listOrNull(values: readonly string[] | undefined): string[] | null {
+  const out = (values ?? []).map((v) => v.trim()).filter(Boolean)
+  return out.length ? out : null
+}
+const factories = (f: PeriodFilters) => listOrNull(f.factories)
+const processes = (f: PeriodFilters) => listOrNull(f.processes)
 
 /** The machine codes as the SQL wants them: lower-cased, or null for every machine. */
 function wcs(f: PeriodFilters): string[] | null {
@@ -60,7 +69,7 @@ function wcs(f: PeriodFilters): string[] | null {
  * the factory's zone here, so "the 3rd" means the 3rd on the floor, not in UTC.
  */
 function params(f: PeriodFilters): unknown[] {
-  return [f.tz, f.from, f.to, f.factory ?? null, wcs(f), f.itemCode ?? null, f.inspectorId ?? null, f.shift ?? null, f.process ?? null]
+  return [f.tz, f.from, f.to, factories(f), wcs(f), f.itemCode ?? null, f.inspectorId ?? null, f.shift ?? null, processes(f)]
 }
 
 /**
@@ -87,11 +96,11 @@ produced AS (
    WHERE s.deleted_at IS NULL AND s.status = 'Closed' AND s.final_qty IS NOT NULL AND s.closed_at IS NOT NULL
      AND s.closed_at >= ($2::date)::timestamp AT TIME ZONE $1
      AND s.closed_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
-     AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
+     AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
      AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
      AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
      AND $7::uuid IS NULL AND $8::text IS NULL
-     AND ($9::text IS NULL OR COALESCE(m.process, 'other') = $9)
+     AND ($9::text[] IS NULL OR COALESCE(m.process, 'other') = ANY($9::text[]))
 )`
 
 /** The samples of the period that pass the filters, with what each one recorded. */
@@ -112,12 +121,12 @@ WITH base AS (
    WHERE sm.deleted_at IS NULL
      AND sm.created_at >= ($2::date)::timestamp AT TIME ZONE $1
      AND sm.created_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
-     AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
+     AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
      AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
      AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
      AND ($7::uuid IS NULL OR sm.inspector_id = $7)
      AND ($8::text IS NULL OR sm.shift::text = $8)
-     AND ($9::text IS NULL OR COALESCE(m.process, 'other') = $9)
+     AND ($9::text[] IS NULL OR COALESCE(m.process, 'other') = ANY($9::text[]))
 ),
 per_sample AS (
   SELECT b.*,
@@ -199,12 +208,12 @@ export async function loadTotals(q: Queryable, f: PeriodFilters): Promise<KpiTot
         WHERE s.deleted_at IS NULL
           AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
           AND s.started_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
-          AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
+          AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
           AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
           AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
           AND ($7::uuid IS NULL OR s.inspector_id = $7)
-          AND ($8::text IS NULL OR COALESCE(m.process, 'other') = $8)`,
-      [...p.slice(0, 7), f.process ?? null],
+          AND ($8::text[] IS NULL OR COALESCE(m.process, 'other') = ANY($8::text[]))`,
+      [...p.slice(0, 7), processes(f)],
     ),
     q.query<{ sessions: number; produced: number; defectPieces: number }>(
       `WITH ${PRODUCED}
@@ -446,13 +455,13 @@ export async function loadHolds(q: Queryable, f: PeriodFilters): Promise<CappedR
        LEFT JOIN LATERAL (
          SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
       WHERE d.deleted_at IS NULL AND d.disposition = 'Hold'
-        AND ($1::text IS NULL OR COALESCE(m.factory, '') = $1)
+        AND ($1::text[] IS NULL OR COALESCE(m.factory, '') = ANY($1::text[]))
         AND ($2::text[] IS NULL OR lower(s.work_center_code) = ANY($2::text[]))
         AND ($3::text IS NULL OR lower(o.item_code) = lower($3))
         AND ($4::uuid IS NULL OR sm.inspector_id = $4)
-        AND ($5::text IS NULL OR COALESCE(m.process, 'other') = $5)
+        AND ($5::text[] IS NULL OR COALESCE(m.process, 'other') = ANY($5::text[]))
       ORDER BY sm.created_at LIMIT 50`,
-    [f.factory ?? null, wcs(f), f.itemCode ?? null, f.inspectorId ?? null, f.process ?? null],
+    [factories(f), wcs(f), f.itemCode ?? null, f.inspectorId ?? null, processes(f)],
   )
   // The oldest fifty: a Hold owes a decision, and the oldest owe it most.
   return { rows: rows.map(({ total: _total, ...row }) => row), total: rows[0]?.total ?? 0 }
@@ -498,12 +507,12 @@ export async function loadDiscipline(q: Queryable, f: PeriodFilters): Promise<Di
          LEFT JOIN LATERAL (
            SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
         WHERE s.deleted_at IS NULL
-          AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
+          AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
           AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
           AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
           AND ($7::uuid IS NULL OR s.inspector_id = $7)
-          AND ($8::text IS NULL OR COALESCE(m.process, 'other') = $8)`,
-      [...p.slice(0, 7), f.process ?? null],
+          AND ($8::text[] IS NULL OR COALESCE(m.process, 'other') = ANY($8::text[]))`,
+      [...p.slice(0, 7), processes(f)],
     ),
     // The audit log knows the machine of an entry; the other filters do not apply to it.
     q.query<{ reRecorded: number; corrections: number; discarded: number }>(
@@ -524,11 +533,11 @@ export async function loadDiscipline(q: Queryable, f: PeriodFilters): Promise<Di
          LEFT JOIN LATERAL (
            SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(o.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
         WHERE o.deleted_at IS NULL AND lower(o.erp_status) <> 'cancel' AND o.required_qty > o.finished_qty
-          AND ($1::text IS NULL OR COALESCE(m.factory, '') = $1)
+          AND ($1::text[] IS NULL OR COALESCE(m.factory, '') = ANY($1::text[]))
           AND ($2::text[] IS NULL OR lower(o.work_center_code) = ANY($2::text[]))
           AND ($3::text IS NULL OR lower(o.item_code) = lower($3))
-          AND ($4::text IS NULL OR COALESCE(m.process, 'other') = $4)`,
-      [f.factory ?? null, wcs(f), f.itemCode ?? null, f.process ?? null],
+          AND ($4::text[] IS NULL OR COALESCE(m.process, 'other') = ANY($4::text[]))`,
+      [factories(f), wcs(f), f.itemCode ?? null, processes(f)],
     ),
   ])
   const b = fromBase.rows[0]
@@ -610,11 +619,11 @@ export async function loadInspectorRaw(q: Queryable, f: PeriodFilters): Promise<
           WHERE s.deleted_at IS NULL
             AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
             AND s.started_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
-            AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
+            AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
             AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
             AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
             AND ($7::uuid IS NULL OR s.inspector_id = $7)
-            AND ($9::text IS NULL OR COALESCE(m.process, 'other') = $9)
+            AND ($9::text[] IS NULL OR COALESCE(m.process, 'other') = ANY($9::text[]))
           GROUP BY s.inspector_id, COALESCE(m.factory, '')),
        -- What had to be corrected afterwards, attributed to the record's owner
        -- rather than to whoever made the correction.
@@ -1056,20 +1065,21 @@ WITH sessions AS (
    WHERE s.deleted_at IS NULL
      AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
      AND s.started_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
-     AND ($4::text IS NULL OR COALESCE(m.factory, '') = $4)
+     AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
      AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
      AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
-     AND ($7::text IS NULL OR COALESCE(m.process, 'other') = $7)
+     AND ($7::text[] IS NULL OR COALESCE(m.process, 'other') = ANY($7::text[]))
 )`
 
 export async function loadFirstPart(q: Queryable, f: PeriodFilters): Promise<KpiFirstPart> {
-  const p = [f.tz, f.from, f.to, f.factory ?? null, wcs(f), f.itemCode ?? null, f.process ?? null]
+  const p = [f.tz, f.from, f.to, factories(f), wcs(f), f.itemCode ?? null, processes(f)]
   const [totals, byMachine, byMonth, failed] = await Promise.all([
-    q.query<{ sessions: number; clean: number }>(`${FIRST_PART} SELECT count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean FROM sessions`, p),
-    q.query<{ code: string; label: string; factory: string; sessions: number; clean: number }>(
+    q.query<{ sessions: number; clean: number; pieces: number }>(`${FIRST_PART} SELECT count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean, COALESCE(sum(rejected_before), 0)::float8 AS pieces FROM sessions`, p),
+    q.query<{ code: string; label: string; factory: string; sessions: number; clean: number; pieces: number }>(
       `${FIRST_PART}
-       SELECT max(wc) AS code, max(machine_label) AS label, max(factory) AS factory, count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean
-         FROM sessions GROUP BY lower(wc) ORDER BY sessions DESC, code`,
+       SELECT max(wc) AS code, max(machine_label) AS label, max(factory) AS factory, count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean,
+              COALESCE(sum(rejected_before), 0)::float8 AS pieces
+         FROM sessions GROUP BY lower(wc) ORDER BY pieces DESC, sessions DESC, code`,
       p,
     ),
     q.query<{ month: string; sessions: number; clean: number }>(
@@ -1094,7 +1104,8 @@ export async function loadFirstPart(q: Queryable, f: PeriodFilters): Promise<Kpi
     sessions: t.sessions,
     clean: t.clean,
     pct: pct(t.clean, t.sessions),
-    byMachine: byMachine.rows.map((r) => ({ workCenterCode: r.code, label: r.label, factory: r.factory, sessions: r.sessions, clean: r.clean, pct: pct(r.clean, r.sessions) })),
+    rejectedPieces: t.pieces,
+    byMachine: byMachine.rows.map((r) => ({ workCenterCode: r.code, label: r.label, factory: r.factory, sessions: r.sessions, clean: r.clean, pct: pct(r.clean, r.sessions), rejectedPieces: r.pieces })),
     months: months.map((month) => {
       const r = perMonth.get(month)
       return { month, sessions: r?.sessions ?? 0, clean: r?.clean ?? 0, pct: r ? pct(r.clean, r.sessions) : null }
