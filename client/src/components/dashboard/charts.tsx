@@ -6,7 +6,20 @@
 // with currentColor and the brand palette.
 // ============================================================================
 
-import { useId, useState, type ReactNode } from 'react'
+import { createContext, useContext, useId, useState, type ReactNode } from 'react'
+
+/**
+ * True inside a board: the chart fills the box it was given, height and
+ * width alike, scaling its drawing to fit. Outside a board a chart keeps
+ * its own aspect and takes the height it needs.
+ */
+export const ChartFillContext = createContext(false)
+
+/** The figure and svg classes for a chart that may fill its box. */
+function useChartFrame(): { figure: string; svg: string } {
+  const fill = useContext(ChartFillContext)
+  return fill ? { figure: 'relative flex h-full min-h-0 flex-col', svg: 'min-h-0 w-full flex-1' } : { figure: 'relative', svg: 'h-auto w-full' }
+}
 import { cn } from '@/lib/utils'
 
 const fmt = (n: number, digits = 1): string => (Number.isInteger(n) ? String(n) : n.toFixed(digits))
@@ -53,6 +66,7 @@ export interface TrendPoint {
 /** Bars for volume with a line for a rate over the same days; more lines on the rate axis when `lines` is given. Values are written on the marks while they fit. */
 export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height = 220, lines = [] }: { points: TrendPoint[]; barLabel: string; lineLabel: string; lineUnit?: string; height?: number; lines?: LineSeries[] }) {
   const [hover, setHover] = useState<number | null>(null)
+  const frame = useChartFrame()
   const id = useId()
   const W = 720
   const H = height
@@ -83,8 +97,8 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
   const every = Math.max(1, Math.ceil(n / 12))
   const h = hover !== null ? points[hover] : null
   return (
-    <figure className="relative">
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
+    <figure className={frame.figure}>
+      <svg viewBox={`0 0 ${W} ${H}`} className={frame.svg} role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
         <title id={`${id}-t`}>
           {barLabel} and {lineLabel} by day
         </title>
@@ -183,6 +197,7 @@ export interface ParetoBar {
 
 /** Bars sorted largest first with the running share drawn over them. */
 export function ParetoChart({ bars, height = 240 }: { bars: ParetoBar[]; height?: number }) {
+  const frame = useChartFrame()
   const id = useId()
   const [hover, setHover] = useState<number | null>(null)
   const W = 720
@@ -203,8 +218,8 @@ export function ParetoChart({ bars, height = 240 }: { bars: ParetoBar[]; height?
   const line = bars.map((b, i) => `${xAt(i)},${yPct(b.cumulativePct)}`).join(' ')
   const eighty = bars.findIndex((b) => b.cumulativePct >= 80)
   return (
-    <figure>
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
+    <figure className={frame.figure}>
+      <svg viewBox={`0 0 ${W} ${H}`} className={frame.svg} role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
         <title id={`${id}-t`}>Pareto of defects</title>
         <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} />
         <g className="text-slate-400 dark:text-slate-500" fontSize="10">
@@ -389,6 +404,7 @@ export interface PairedPoint {
  *  One scale, so the eye compares heights directly — no second axis to read. */
 export function PairedBarChart({ points, totalLabel, partLabel, height = 220 }: { points: PairedPoint[]; totalLabel: string; partLabel: string; height?: number }) {
   const [hover, setHover] = useState<number | null>(null)
+  const frame = useChartFrame()
   const id = useId()
   const W = 720
   const H = height
@@ -424,8 +440,8 @@ export function PairedBarChart({ points, totalLabel, partLabel, height = 220 }: 
       </text>
     )
   return (
-    <figure className="relative">
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
+    <figure className={frame.figure}>
+      <svg viewBox={`0 0 ${W} ${H}`} className={frame.svg} role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
         <title id={`${id}-t`}>
           {totalLabel} and {partLabel} by day
         </title>
@@ -472,6 +488,7 @@ export interface Column {
 
 /** Columns in a fixed order — a histogram: how many fell in each band. */
 export function ColumnChart({ columns, height = 200, unit = '' }: { columns: Column[]; height?: number; unit?: string }) {
+  const frame = useChartFrame()
   const id = useId()
   const W = 520
   const H = height
@@ -493,8 +510,8 @@ export function ColumnChart({ columns, height = 200, unit = '' }: { columns: Col
     neutral: 'fill-brand-400 dark:fill-brand-500',
   }
   return (
-    <figure>
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-t`}>
+    <figure className={frame.figure}>
+      <svg viewBox={`0 0 ${W} ${H}`} className={frame.svg} role="img" aria-labelledby={`${id}-t`}>
         <title id={`${id}-t`}>{columns.map((c) => `${c.label}: ${fmt(c.value)}${unit}`).join(', ')}</title>
         <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} unit={unit} />
         {columns.map((c, i) => (
@@ -532,6 +549,7 @@ export interface LineSeries {
 /** A few lines over the same x axis — one per factory, month by month. */
 export function LineChart({ labels, series, unit = '%', height = 220 }: { labels: string[]; series: LineSeries[]; unit?: string; height?: number }) {
   const [hover, setHover] = useState<number | null>(null)
+  const frame = useChartFrame()
   const id = useId()
   const W = 720
   const H = height
@@ -560,8 +578,8 @@ export function LineChart({ labels, series, unit = '%', height = 220 }: { labels
   }
   const every = Math.max(1, Math.ceil(n / 12))
   return (
-    <figure className="relative">
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
+    <figure className={frame.figure}>
+      <svg viewBox={`0 0 ${W} ${H}`} className={frame.svg} role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
         <title id={`${id}-t`}>{series.map((s) => s.label).join(', ')} over time</title>
         <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} unit={unit} />
         {labels.map((l, i) => (
