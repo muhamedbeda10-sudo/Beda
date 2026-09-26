@@ -29,7 +29,7 @@ export interface BoardState {
 export const BoardContext = createContext<BoardState>({ layouts: { general: [], details: [] }, editing: false, setLayout: () => {} })
 
 /** Below this width the grid is a stack: phones and tablets read, they do not arrange. */
-const GRID_MIN_WIDTH = 1024
+const GRID_MIN_WIDTH = 760
 
 export function Board({ page, widgets, className }: { page: DashboardPage; widgets: BoardWidget[]; className?: string }) {
   const { layouts, editing, setLayout } = useContext(BoardContext)
