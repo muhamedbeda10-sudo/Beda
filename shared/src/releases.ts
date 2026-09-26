@@ -28,11 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-09-26.5',
+    id: '2026-09-26.6',
     date: '2026-09-26',
-    title: 'Dashboard: the picks stay on the left',
+    title: 'Dashboard: picks back under the overview',
     items: [
-      { text: 'The factories or processes to pick and the machines to tick sit in a column on the left that stays put while the page scrolls; the period strip stays on top on its own. In Details the filters sit in that column too.' },
+      { text: 'The left column is gone: the picker, the factory or process chips and the machine list are back where they were, under the overview cards, with the machine list on the board. The two first-part cards no longer carry a machine list.' },
+      { text: 'The three First part widgets share one machine list in their headers: pick a machine and all three read for it.' },
+      { text: 'Arrange → Name on a chart: an administrator gives it a name and a description of their own, shown to everyone in place of the chart\'s own once the layout is saved. "Use its own" puts them back.' },
+      { text: 'Plant: trend is the one chart nothing narrows: the last four months to today, the whole plant, a line for each factory. Factories by month and Machines by month now follow the period and the picks like everything else.' },
+      { text: 'Four pies on the General board: Rejected by factory (or by process), Share of each defect, Rejected by machine, and Dispositions, each reading the period and the picks. Arrange them like any other chart.' },
+      { text: 'The machine list is grouped: by process when reading by process, by factory when reading by factory, worst first in each group.' },
     ],
   },
   {

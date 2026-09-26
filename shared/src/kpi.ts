@@ -489,6 +489,12 @@ export interface KpiFirstPart {
 export interface KpiBreakdownSeries {
   key: string
   label: string
+  /** A machine's factory. */
+  sub?: string
+  /** Over the whole period: produced + rejected, the rejected, and the rate. */
+  made: number
+  productionDefectPieces: number
+  defectRatePct: number | null
   months: { month: string; made: number; productionDefectPieces: number; defectRatePct: number | null }[]
 }
 
@@ -497,9 +503,11 @@ export interface KpiBreakdown {
   generatedAt: string
   thresholds: KpiThresholds
   months: KpiBreakdownMonth[]
-  /** The scope split by factory and by process, each month by month, so each can be a line on the same chart. */
-  series: { factories: KpiBreakdownSeries[]; processes: KpiBreakdownSeries[] }
+  /** The scope split by factory, by process and by machine, each month by month, so each can be a line on one chart or a slice of one pie. */
+  series: { factories: KpiBreakdownSeries[]; processes: KpiBreakdownSeries[]; machines: KpiBreakdownSeries[] }
   defects: KpiBreakdownDefect[]
+  /** The scope's rejected pieces by what was decided for them. */
+  byDisposition: Partial<Record<Disposition, number>>
   byOrder: KpiBreakdownRow[]
   byItem: KpiBreakdownRow[]
   firstPart: KpiFirstPart
@@ -865,7 +873,14 @@ export interface DashboardLayoutItem {
   y: number
   w: number
   h: number
+  /** A name an administrator gave the widget, shown to everyone in place of the code's. */
+  title?: string
+  /** A description an administrator wrote under that name. */
+  hint?: string
 }
+
+export const DASHBOARD_TITLE_MAX = 80
+export const DASHBOARD_HINT_MAX = 300
 
 export type DashboardLayouts = Record<DashboardPage, DashboardLayoutItem[]>
 
@@ -877,10 +892,15 @@ export const DASHBOARD_MAX_H = 80
 /** The widgets each page can show, in their default reading order, with a default size. */
 export const DASHBOARD_WIDGETS: Record<DashboardPage, { id: string; title: string; w: number; h: number }[]> = {
   general: [
-    { id: 'g.trend', title: 'Trend of the pick', w: 12, h: 9 },
+    { id: 'g.trend', title: 'Plant trend, last months', w: 7, h: 9 },
+    { id: 'g.machines', title: 'Machines of the pick', w: 5, h: 9 },
     { id: 'g.factoriesByMonth', title: 'Factories by month', w: 6, h: 8 },
     { id: 'g.machinesByMonth', title: 'Machines by month', w: 6, h: 8 },
     { id: 'g.tiles', title: 'Reject rate, PPM, first part', w: 12, h: 5 },
+    { id: 'g.pieScope', title: 'Rejected by factory or process', w: 4, h: 8 },
+    { id: 'g.pieDefects', title: 'Share of each defect', w: 4, h: 8 },
+    { id: 'g.pieMachines', title: 'Rejected by machine', w: 4, h: 8 },
+    { id: 'g.dispositions', title: 'Dispositions', w: 4, h: 8 },
     { id: 'g.pareto', title: 'Pareto of defects', w: 5, h: 9 },
     { id: 'g.defectsByMonth', title: 'Defects by month', w: 7, h: 9 },
     { id: 'g.byOrder', title: 'By order line', w: 6, h: 10 },
@@ -962,7 +982,12 @@ export function normaliseDashboardLayout(page: DashboardPage, stored: unknown): 
       const spec = known.get(id)
       if (!spec || seen.has(id)) continue
       const w = int(r.w, 1, DASHBOARD_COLS, spec.w)
-      out.push({ i: id, x: int(r.x, 0, DASHBOARD_COLS - w, 0), y: int(r.y, 0, 100000, 0), w, h: int(r.h, 1, DASHBOARD_MAX_H, spec.h) })
+      const item: DashboardLayoutItem = { i: id, x: int(r.x, 0, DASHBOARD_COLS - w, 0), y: int(r.y, 0, 100000, 0), w, h: int(r.h, 1, DASHBOARD_MAX_H, spec.h) }
+      const title = typeof r.title === 'string' ? r.title.trim().slice(0, DASHBOARD_TITLE_MAX) : ''
+      const hint = typeof r.hint === 'string' ? r.hint.trim().slice(0, DASHBOARD_HINT_MAX) : ''
+      if (title) item.title = title
+      if (hint) item.hint = hint
+      out.push(item)
       seen.add(id)
     }
   }

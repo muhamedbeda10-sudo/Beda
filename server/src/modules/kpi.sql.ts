@@ -963,15 +963,16 @@ export async function loadMachineMonths(q: Queryable, f: PeriodFilters): Promise
  *  a defect, an order line or an item. */
 export interface BreakdownResult {
   months: KpiBreakdownMonth[]
-  series: { factories: KpiBreakdownSeries[]; processes: KpiBreakdownSeries[] }
+  series: { factories: KpiBreakdownSeries[]; processes: KpiBreakdownSeries[]; machines: KpiBreakdownSeries[] }
   defects: KpiBreakdownDefect[]
+  byDisposition: Partial<Record<Disposition, number>>
   byOrder: KpiBreakdownRow[]
   byItem: KpiBreakdownRow[]
 }
 
 export async function loadBreakdown(q: Queryable, f: PeriodFilters): Promise<BreakdownResult> {
   const p = params(f)
-  const [monthRows, defectRows, orderRows, itemRows, factoryRows, processRows] = await Promise.all([
+  const [monthRows, defectRows, orderRows, itemRows, factoryRows, processRows, machineRows, dispositionRows] = await Promise.all([
     q.query<{ month: string; sessions: number; produced: number; defectPieces: number }>(
       `WITH ${PRODUCED}
        SELECT to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month, count(*)::int AS sessions,
@@ -1017,7 +1018,27 @@ export async function loadBreakdown(q: Queryable, f: PeriodFilters): Promise<Bre
          FROM produced GROUP BY 1, 2 ORDER BY 1, 2`,
       p,
     ),
+    // One series per machine of the scope, so the machines can be lines on one chart and slices of one pie.
+    q.query<{ key: string; label: string; sub: string; month: string; produced: number; defectPieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT lower(wc) AS key, max(machine_label) AS label, max(factory) AS sub, to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month,
+              COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+         FROM produced GROUP BY 1, 4 ORDER BY 1, 4`,
+      p,
+    ),
+    // What was decided for the scope's rejected pieces.
+    q.query<{ disposition: Disposition; pieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT d.disposition, COALESCE(sum(d.qty), 0)::float8 AS pieces
+         FROM produced pr
+         JOIN inspection_samples x ON x.session_id = pr.session_id AND x.deleted_at IS NULL
+         JOIN defect_results d ON d.sample_id = x.id AND d.deleted_at IS NULL
+        GROUP BY 1`,
+      p,
+    ),
   ])
+  const byDisposition: Partial<Record<Disposition, number>> = {}
+  for (const r of dispositionRows.rows) byDisposition[r.disposition] = r.pieces
   const months: string[] = []
   for (let m = f.from.slice(0, 7); m <= f.to.slice(0, 7) && months.length < 60; m = nextMonth(m)) months.push(m)
   const perMonth = new Map(monthRows.rows.map((r) => [r.month, r]))
@@ -1058,28 +1079,37 @@ export async function loadBreakdown(q: Queryable, f: PeriodFilters): Promise<Bre
     shareOfMonthPct: (rejectedOf.get(month) ?? 0) > 0 ? pct(pieces, rejectedOf.get(month)!) : null,
     shareOfPeriodPct: totalRejected > 0 ? pct(pieces, totalRejected) : null,
   })
-  const seriesOf = (rows: { key: string; month: string; produced: number; defectPieces: number }[], labelOf: (key: string) => string): KpiBreakdownSeries[] => {
-    const byKey = new Map<string, Map<string, { produced: number; defectPieces: number }>>()
+  const seriesOf = (rows: { key: string; label?: string; sub?: string; month: string; produced: number; defectPieces: number }[]): KpiBreakdownSeries[] => {
+    const byKey = new Map<string, { label: string; sub?: string; per: Map<string, { produced: number; defectPieces: number }> }>()
     for (const r of rows) {
       const key = r.key || '(no factory)'
-      if (!byKey.has(key)) byKey.set(key, new Map())
-      byKey.get(key)!.set(r.month, r)
+      if (!byKey.has(key)) byKey.set(key, { label: r.label ?? key, sub: r.sub || undefined, per: new Map() })
+      byKey.get(key)!.per.set(r.month, r)
     }
-    return Array.from(byKey, ([key, per]) => ({
-      key,
-      label: labelOf(key),
-      months: months.map((month) => {
-        const m = per.get(month)
-        const produced = m?.produced ?? 0
-        const defectPieces = m?.defectPieces ?? 0
-        return { month, made: produced + defectPieces, productionDefectPieces: defectPieces, defectRatePct: m ? rejectRate(defectPieces, produced) : null }
-      }),
-    })).sort((a, b) => a.label.localeCompare(b.label))
+    return Array.from(byKey, ([key, { label, sub, per }]) => {
+      const produced = Array.from(per.values()).reduce((n, m) => n + m.produced, 0)
+      const defectPieces = Array.from(per.values()).reduce((n, m) => n + m.defectPieces, 0)
+      return {
+        key,
+        label,
+        ...(sub ? { sub } : {}),
+        made: produced + defectPieces,
+        productionDefectPieces: defectPieces,
+        defectRatePct: per.size > 0 ? rejectRate(defectPieces, produced) : null,
+        months: months.map((month) => {
+          const m = per.get(month)
+          const mp = m?.produced ?? 0
+          const md = m?.defectPieces ?? 0
+          return { month, made: mp + md, productionDefectPieces: md, defectRatePct: m ? rejectRate(md, mp) : null }
+        }),
+      }
+    }).sort((a, b) => a.label.localeCompare(b.label))
   }
   return {
     months: monthsOut,
-    series: { factories: seriesOf(factoryRows.rows, (k) => k), processes: seriesOf(processRows.rows, (k) => k) },
+    series: { factories: seriesOf(factoryRows.rows), processes: seriesOf(processRows.rows), machines: seriesOf(machineRows.rows) },
     defects,
+    byDisposition,
     byOrder: orderRows.rows.map((r) => row(r.month, r.orderId, r.orderNumber, `${r.itemCode} · ${r.item}`, r.pieces, r.produced)),
     byItem: itemRows.rows.map((r) => row(r.month, r.itemCode, r.item, r.itemCode, r.pieces, r.produced)),
   }
