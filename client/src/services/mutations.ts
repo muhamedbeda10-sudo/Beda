@@ -42,8 +42,9 @@ import {
   type UpdateGroupRequest,
   type ReleaseStateResponse,
   type HiddenInsightsResponse,
+  type DashboardLayoutResponse,
 } from '@qc/shared/api'
-import type { KpiThresholds } from '@qc/shared/kpi'
+import type { DashboardLayouts, KpiThresholds } from '@qc/shared/kpi'
 import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
 import { api } from '@/lib/api'
 import { chunk } from '@/lib/utils'
@@ -398,6 +399,19 @@ export async function uploadChatFile(file: File): Promise<StoredFile> {
   const form = new FormData()
   form.set('file', file, file.name)
   return api<StoredFile>('/chat/files', { method: 'POST', form })
+}
+
+/** §15 — the board's layout, saved by an administrator for everyone. */
+export async function saveDashboardLayout(qc: QueryClient, layouts: DashboardLayouts): Promise<DashboardLayoutResponse> {
+  const res = await api<DashboardLayoutResponse>('/kpi/layout', { method: 'PUT', body: { layouts } })
+  qc.setQueryData(['kpi', 'layout'], res)
+  return res
+}
+
+export async function resetDashboardLayout(qc: QueryClient): Promise<DashboardLayoutResponse> {
+  const res = await api<DashboardLayoutResponse>('/kpi/layout', { method: 'DELETE' })
+  qc.setQueryData(['kpi', 'layout'], res)
+  return res
 }
 
 /** §15 — hide an insight for this person, on every device, until they show it again. */

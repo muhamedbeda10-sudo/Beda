@@ -849,3 +849,131 @@ export function rankInspectors(rows: KpiInspectorRaw[], minSamples: number): Kpi
   const unranked = scored.filter((r) => r.samples < minSamples).sort((a, b) => b.samples - a.samples || a.name.localeCompare(b.name))
   return { factory: rows[0]?.factory ?? '', ranked, unranked }
 }
+
+// ---- The dashboard board (§15) ----------------------------------------------
+// The charts of the dashboard sit on a 12-column grid an administrator can
+// rearrange: each widget has a place and a size, one layout per page, the
+// same for everyone.
+
+export type DashboardPage = 'general' | 'details'
+
+export interface DashboardLayoutItem {
+  /** The widget id, one of DASHBOARD_WIDGETS[page]. */
+  i: string
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export type DashboardLayouts = Record<DashboardPage, DashboardLayoutItem[]>
+
+export const DASHBOARD_COLS = 12
+/** A row of the grid in pixels; a widget's `h` is a count of these. */
+export const DASHBOARD_ROW_HEIGHT = 36
+export const DASHBOARD_MAX_H = 80
+
+/** The widgets each page can show, in their default reading order, with a default size. */
+export const DASHBOARD_WIDGETS: Record<DashboardPage, { id: string; title: string; w: number; h: number }[]> = {
+  general: [
+    { id: 'g.trend', title: 'Trend of the pick', w: 7, h: 9 },
+    { id: 'g.machines', title: 'Machines of the pick', w: 5, h: 9 },
+    { id: 'g.factoriesByMonth', title: 'Factories by month', w: 6, h: 8 },
+    { id: 'g.machinesByMonth', title: 'Machines by month', w: 6, h: 8 },
+    { id: 'g.tiles', title: 'Reject rate, PPM, first part', w: 12, h: 5 },
+    { id: 'g.pareto', title: 'Pareto of defects', w: 5, h: 9 },
+    { id: 'g.defectsByMonth', title: 'Defects by month', w: 7, h: 9 },
+    { id: 'g.byOrder', title: 'By order line', w: 6, h: 10 },
+    { id: 'g.byItem', title: 'By item', w: 6, h: 10 },
+    { id: 'g.firstPart', title: 'First part released', w: 12, h: 14 },
+  ],
+  details: [
+    { id: 'd.tiles', title: 'KPI tiles', w: 12, h: 8 },
+    { id: 'd.machines', title: 'Machines', w: 12, h: 9 },
+    { id: 'd.monthly', title: 'Month by month', w: 5, h: 8 },
+    { id: 'd.defectDetails', title: 'Defect details', w: 7, h: 8 },
+    { id: 'd.dailyTrend', title: 'Daily trend', w: 8, h: 8 },
+    { id: 'd.dispositions', title: 'Dispositions', w: 4, h: 8 },
+    { id: 'd.pareto', title: 'Pareto of defects', w: 8, h: 9 },
+    { id: 'd.rateByMachine', title: 'Defect rate by machine', w: 4, h: 9 },
+    { id: 'd.byShift', title: 'Defects of inspected by shift', w: 4, h: 8 },
+    { id: 'd.byInspector', title: 'Defects of inspected by inspector', w: 4, h: 8 },
+    { id: 'd.rateByItem', title: 'Defect rate by item', w: 4, h: 8 },
+    { id: 'd.topMachines', title: 'Defects by machine', w: 6, h: 8 },
+    { id: 'd.topItems', title: 'Defects by item (top down)', w: 6, h: 8 },
+    { id: 'd.rateBands', title: 'Samples by defect rate', w: 4, h: 8 },
+    { id: 'd.paintByItem', title: 'Paint thickness by item', w: 8, h: 8 },
+    { id: 'd.itemDefects', title: 'Defects by item', w: 12, h: 10 },
+    { id: 'd.suppliers', title: 'Defects of inspected by coil supplier', w: 6, h: 9 },
+    { id: 'd.holdAgeing', title: 'Hold ageing', w: 6, h: 9 },
+    { id: 'd.tableMachine', title: 'By machine (table)', w: 6, h: 10 },
+    { id: 'd.tableInspector', title: 'By inspector (table)', w: 6, h: 10 },
+    { id: 'd.tableShift', title: 'By shift (table)', w: 6, h: 8 },
+    { id: 'd.tableItem', title: 'By item (table)', w: 6, h: 10 },
+    { id: 'd.coilSuppliers', title: 'Coil suppliers', w: 6, h: 9 },
+    { id: 'd.onHold', title: 'On Hold', w: 6, h: 9 },
+    { id: 'd.discipline', title: 'Recording discipline', w: 12, h: 7 },
+  ],
+}
+
+/** The default layout of a page: the widgets in reading order, packed left to right, row by row. */
+export function defaultDashboardLayout(page: DashboardPage): DashboardLayoutItem[] {
+  const out: DashboardLayoutItem[] = []
+  let x = 0
+  let y = 0
+  let rowH = 0
+  for (const w of DASHBOARD_WIDGETS[page]) {
+    if (x + w.w > DASHBOARD_COLS) {
+      x = 0
+      y += rowH
+      rowH = 0
+    }
+    out.push({ i: w.id, x, y, w: w.w, h: w.h })
+    x += w.w
+    rowH = Math.max(rowH, w.h)
+  }
+  return out
+}
+
+export function defaultDashboardLayouts(): DashboardLayouts {
+  return { general: defaultDashboardLayout('general'), details: defaultDashboardLayout('details') }
+}
+
+/**
+ * A stored layout brought up to date: unknown widgets dropped, sizes kept
+ * within the grid, and widgets the code has since added placed below at
+ * their default size, so a layout saved before a widget existed still shows it.
+ */
+export function normaliseDashboardLayout(page: DashboardPage, stored: unknown): DashboardLayoutItem[] {
+  const known = new Map(DASHBOARD_WIDGETS[page].map((w) => [w.id, w]))
+  const out: DashboardLayoutItem[] = []
+  const seen = new Set<string>()
+  const int = (v: unknown, lo: number, hi: number, fallback: number): number => {
+    const n = typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : fallback
+    return Math.min(hi, Math.max(lo, n))
+  }
+  if (Array.isArray(stored)) {
+    for (const raw of stored) {
+      if (!raw || typeof raw !== 'object') continue
+      const r = raw as Record<string, unknown>
+      const id = typeof r.i === 'string' ? r.i : ''
+      const spec = known.get(id)
+      if (!spec || seen.has(id)) continue
+      const w = int(r.w, 1, DASHBOARD_COLS, spec.w)
+      out.push({ i: id, x: int(r.x, 0, DASHBOARD_COLS - w, 0), y: int(r.y, 0, 100000, 0), w, h: int(r.h, 1, DASHBOARD_MAX_H, spec.h) })
+      seen.add(id)
+    }
+  }
+  let bottom = out.reduce((n, it) => Math.max(n, it.y + it.h), 0)
+  for (const spec of DASHBOARD_WIDGETS[page]) {
+    if (seen.has(spec.id)) continue
+    out.push({ i: spec.id, x: 0, y: bottom, w: spec.w, h: spec.h })
+    bottom += spec.h
+  }
+  return out
+}
+
+export function normaliseDashboardLayouts(stored: unknown): DashboardLayouts {
+  const o = stored && typeof stored === 'object' ? (stored as Record<string, unknown>) : {}
+  return { general: normaliseDashboardLayout('general', o.general), details: normaliseDashboardLayout('details', o.details) }
+}
