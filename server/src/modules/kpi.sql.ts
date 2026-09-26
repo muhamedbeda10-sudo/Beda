@@ -988,11 +988,12 @@ export async function loadBreakdown(q: Queryable, f: PeriodFilters): Promise<Bre
         GROUP BY 1, 2 ORDER BY 1, 3 DESC`,
       p,
     ),
-    q.query<{ month: string; orderNumber: string; item: string; itemCode: string; pieces: number; produced: number }>(
+    // One row per order LINE: an order number can carry several items, and each line answers for its own pieces.
+    q.query<{ month: string; orderId: string; orderNumber: string; item: string; itemCode: string; pieces: number; produced: number }>(
       `WITH ${PRODUCED}
-       SELECT to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month, order_number AS "orderNumber", max(item) AS item, max(item_code) AS "itemCode",
+       SELECT to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month, order_id::text AS "orderId", max(order_number) AS "orderNumber", max(item) AS item, max(item_code) AS "itemCode",
               COALESCE(sum(defect_pieces), 0)::float8 AS pieces, COALESCE(sum(produced), 0)::float8 AS produced
-         FROM produced GROUP BY 1, 2 HAVING COALESCE(sum(defect_pieces), 0) > 0 ORDER BY 1, 5 DESC`,
+         FROM produced GROUP BY 1, 2 HAVING COALESCE(sum(defect_pieces), 0) > 0 ORDER BY 1, 6 DESC`,
       p,
     ),
     q.query<{ month: string; itemCode: string; item: string; pieces: number; produced: number }>(
@@ -1079,7 +1080,7 @@ export async function loadBreakdown(q: Queryable, f: PeriodFilters): Promise<Bre
     months: monthsOut,
     series: { factories: seriesOf(factoryRows.rows, (k) => k), processes: seriesOf(processRows.rows, (k) => k) },
     defects,
-    byOrder: orderRows.rows.map((r) => row(r.month, r.orderNumber, r.orderNumber, `${r.itemCode} · ${r.item}`, r.pieces, r.produced)),
+    byOrder: orderRows.rows.map((r) => row(r.month, r.orderId, r.orderNumber, `${r.itemCode} · ${r.item}`, r.pieces, r.produced)),
     byItem: itemRows.rows.map((r) => row(r.month, r.itemCode, r.item, r.itemCode, r.pieces, r.produced)),
   }
 }

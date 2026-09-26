@@ -11,6 +11,7 @@ import 'react-grid-layout/css/styles.css'
 import { GripVertical } from 'lucide-react'
 import { DASHBOARD_COLS, DASHBOARD_ROW_HEIGHT, normaliseDashboardLayout, type DashboardLayoutItem, type DashboardLayouts, type DashboardPage } from '@qc/shared/kpi'
 import { cn } from '@/lib/utils'
+import { ChartFillContext } from './charts'
 
 export interface BoardWidget {
   id: string
@@ -50,7 +51,8 @@ export function Board({ page, widgets, className }: { page: DashboardPage; widge
       <div ref={ref} className={cn('space-y-4', className)}>
         {order.map((id) => {
           const w = byId.get(id)
-          return w ? <div key={id}>{w.node}</div> : null
+          // One scroll per widget here too: the box caps the height and the section body scrolls inside it.
+          return w ? <div key={id} className="flex max-h-[36rem] flex-col">{w.node}</div> : null
         })}
       </div>
     )
@@ -79,7 +81,7 @@ export function Board({ page, widgets, className }: { page: DashboardPage; widge
                     <span className="ml-auto font-normal opacity-80">drag to move · pull the corner to size</span>
                   </div>
                 )}
-                <div className="min-h-0 flex-1">{w?.node}</div>
+                <div className="min-h-0 flex-1"><ChartFillContext.Provider value>{w?.node}</ChartFillContext.Provider></div>
               </div>
             )
           })}

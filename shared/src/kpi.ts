@@ -444,6 +444,7 @@ export interface KpiBreakdownDefect {
 /** The rejected pieces of one month laid on one order line or one item. */
 export interface KpiBreakdownRow {
   month: string
+  /** The order line's id, or the item code: unique within the month. */
   key: string
   label: string
   sub?: string
@@ -885,7 +886,9 @@ export const DASHBOARD_WIDGETS: Record<DashboardPage, { id: string; title: strin
     { id: 'g.defectsByMonth', title: 'Defects by month', w: 7, h: 9 },
     { id: 'g.byOrder', title: 'By order line', w: 6, h: 10 },
     { id: 'g.byItem', title: 'By item', w: 6, h: 10 },
-    { id: 'g.firstPart', title: 'First part released', w: 12, h: 14 },
+    { id: 'g.firstPartTiles', title: 'First part: yield and months', w: 4, h: 8 },
+    { id: 'g.firstPartChart', title: 'First part: machines by month', w: 8, h: 8 },
+    { id: 'g.firstPartTable', title: 'First part: sessions not clean', w: 12, h: 9 },
   ],
   details: [
     { id: 'd.tiles', title: 'KPI tiles', w: 12, h: 8 },

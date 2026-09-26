@@ -188,7 +188,9 @@ describe('§15 — process groups and the month view', () => {
     expect(b.defects[0].sharePct).toBe(100)
     expect(b.defects[0].months.find((m) => m.month === month.month)!.pctOfMade).toBeCloseTo(1.64, 2)
     // Laid on the orders, each against what it made itself: 3 of 203 for the second, 2 of 102 for the first.
-    expect(b.byOrder.map((r) => [r.key, r.pieces, r.made, r.pctOfMade, r.shareOfMonthPct, r.shareOfPeriodPct])).toEqual([
+    // One row per order line, keyed by the line, named by its order number.
+    expect(new Set(b.byOrder.map((r) => r.key)).size).toBe(2)
+    expect(b.byOrder.map((r) => [r.label, r.pieces, r.made, r.pctOfMade, r.shareOfMonthPct, r.shareOfPeriodPct])).toEqual([
       ['30002-B', 3, 203, 1.478, 60, 60],
       ['30001-A', 2, 102, 1.961, 40, 40],
     ])
