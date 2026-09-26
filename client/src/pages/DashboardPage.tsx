@@ -4,7 +4,7 @@
 // manager would say about them. Administrators only.
 // ============================================================================
 
-import { Fragment, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useContext, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -49,8 +49,8 @@ import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
-import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, Sparkline, TrendChart } from '@/components/dashboard/charts'
-import { Board, BoardContext, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
+import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, TrendChart, slicesOf } from '@/components/dashboard/charts'
+import { Board, BoardContext, WidgetLabelContext, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
@@ -312,7 +312,11 @@ function groupColumns(t: KpiThresholds, first: Column<KpiGroupRow>): Column<KpiG
   ]
 }
 
-function Section({ title, hint, icon, children, className, action }: { title: string; hint?: string; icon?: ReactNode; children: ReactNode; className?: string; action?: ReactNode }) {
+function Section({ title: ownTitle, hint: ownHint, icon, children, className, action }: { title: string; hint?: string; icon?: ReactNode; children: ReactNode; className?: string; action?: ReactNode }) {
+  // On a board an administrator may have named and described the widget; that wins over the code's words.
+  const label = useContext(WidgetLabelContext)
+  const title = label.title || ownTitle
+  const hint = label.title || label.hint ? label.hint || undefined : ownHint
   return (
     <Card className={cn('flex h-full min-h-0 flex-col p-4 sm:p-5', className)}>
       <div className="mb-3 flex shrink-0 flex-wrap items-start justify-between gap-2">
@@ -347,37 +351,6 @@ function PlainTile({ label, value, sub, icon, tone = 'neutral', control }: { lab
       <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>{value}</p>
       {sub && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{sub}</p>}
     </Card>
-  )
-}
-
-/**
- * One of the two first-part cards, with a machine list of its own: the card
- * reads for every machine of the pick, or for the one chosen in it.
- */
-function FirstPartCard({ fp, kind }: { fp: KpiBreakdown['firstPart']; kind: 'released' | 'cumulative' }) {
-  const [machine, setMachine] = useState('')
-  const row = machine ? fp.byMachine.find((m) => m.workCenterCode === machine) : undefined
-  const sessions = row ? row.sessions : fp.sessions
-  const clean = row ? row.clean : fp.clean
-  const rejected = row ? row.rejectedPieces : fp.rejectedPieces
-  const releasedPct = sessions > 0 ? Math.round((clean / sessions) * 1000) / 10 : null
-  const cumulativePct = clean + rejected > 0 ? Math.round((rejected / (clean + rejected)) * 1000) / 10 : null
-  const releasedTone: KpiTone = releasedPct === null ? 'neutral' : releasedPct >= 95 ? 'green' : releasedPct >= 85 ? 'amber' : 'red'
-  const cumulativeTone: KpiTone = cumulativePct === null ? 'neutral' : cumulativePct === 0 ? 'green' : cumulativePct <= 15 ? 'amber' : 'red'
-  const control = (
-    <Select value={machine} onChange={(e) => setMachine(e.target.value)} className="min-h-[32px] max-w-full py-0 text-xs" aria-label={`${kind === 'released' ? 'First part released' : 'First pass yield cumulative'}: machine`}>
-      <option value="">All machines</option>
-      {fp.byMachine.map((m) => (
-        <option key={m.workCenterCode} value={m.workCenterCode}>
-          {m.label}
-        </option>
-      ))}
-    </Select>
-  )
-  return kind === 'released' ? (
-    <PlainTile label="First part released" value={pctStr(releasedPct, 0)} sub={`${num(clean)} of ${num(sessions)} sessions with nothing rejected before release${row ? ` on ${row.label}` : ''}`} icon={<PackageCheck className="h-4 w-4" />} tone={releasedTone} control={control} />
-  ) : (
-    <PlainTile label="First pass yield cumulative" value={pctStr(cumulativePct, 0)} sub={`${num(rejected)} rejected before release ÷ (${num(clean)} clean sessions + ${num(rejected)})${row ? ` on ${row.label}` : ''} · lower is better`} icon={<PackageCheck className="h-4 w-4" />} tone={cumulativeTone} control={control} />
   )
 }
 
@@ -498,6 +471,8 @@ const NO_PICKS: ScopePicks = { factories: [], processes: [], machines: {} }
 
 function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'factory' | 'process'; general: KpiGeneral; factories: string[]; t: KpiThresholds; picks: ScopePicks; setPicks: (next: ScopePicks | ((prev: ScopePicks) => ScopePicks)) => void }) {
   const navigate = useNavigate()
+  /** One machine for the three first-part widgets, kept on the device. */
+  const [fpMachine, setFpMachine] = usePersistedState('qc-dash:fp-machine', '')
   const chosenFactories = picks.factories
   const chosenProcesses = picks.processes
   const pickedByScope = picks.machines
@@ -519,6 +494,11 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
   const scopeLabel = chosen.length === 0 ? (kind === 'factory' ? 'All factories' : 'All processes') : chosen.map((k) => options.find((o) => o.key === k)?.label ?? k).join(', ')
   const scopeKey = `${kind}:${[...chosen].sort().join('|') || '*'}`
   const machines = general.machines.filter((m) => inScope(kind === 'factory' ? m.factory : m.process))
+  // The machines listed in groups: by process when reading by process, by factory when reading by factory; worst first within each group.
+  const machineGroups = (kind === 'process'
+    ? PROCESSES.map((p) => ({ key: p, label: PROCESS_LABEL[p], machines: machines.filter((m) => m.process === p) }))
+    : Array.from(new Set(machines.map((m) => m.factory))).sort().map((f) => ({ key: f, label: f || '(no factory)', machines: machines.filter((m) => m.factory === f) }))
+  ).filter((g) => g.machines.length > 0)
   const picked = (pickedByScope[scopeKey] ?? []).filter((code) => machines.some((m) => m.workCenterCode === code))
   const togglePick = (code: string) =>
     setPickedByScope((prev) => {
@@ -534,21 +514,15 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
     workCenterCodes: picked.length ? picked : undefined,
   })
   const maxRate = Math.max(...machines.map((m) => m.defectRatePct ?? 0), 0.0001)
-  // One line per member of the pick on the trend: the factories or the processes chosen, or all of them.
-  const memberSeries = (breakdown ? (kind === 'factory' ? breakdown.series.factories : breakdown.series.processes) : []).filter((x) => inScope(x.key))
-  const memberLines = memberSeries.slice(0, LINE_CLASSES.length).map((x, i) => ({ label: kind === 'process' ? (PROCESS_LABEL[x.key as Process] ?? x.key) : x.label, values: x.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
-  // The month charts under the pick run over the trend window to today; the period strip does not narrow them.
+  // The plant trend runs over the trend window to today, whole plant, a line per factory: neither the period strip nor the picks narrow it.
   const windowLabels = general.months.map((m) => monthLabel(m.month, false))
   const factoryLines = general.factories.slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.factory, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
-  // Plant-wide and untouched by the picks: the machines with the highest reject rate over the window's months.
-  const windowRate = (m: KpiMachineTrend) => {
-    const made = m.months.reduce((n, x) => n + x.piecesProduced + x.productionDefectPieces, 0)
-    const rejected = m.months.reduce((n, x) => n + x.productionDefectPieces, 0)
-    return made > 0 ? rejected / made : -1
-  }
-  const machinesForLines = [...general.machines].filter((m) => m.months.some((x) => x.defectRatePct !== null)).sort((a, b) => windowRate(b) - windowRate(a)).slice(0, LINE_CLASSES.length)
-  const machineLines = machinesForLines.map((m, i) => ({ label: m.label, values: m.months.map((x) => x.defectRatePct), className: LINE_CLASSES[i] }))
   const windowSpan = `${monthLabel(general.window.from.slice(0, 7))} – ${monthLabel(general.window.to.slice(0, 7))}`
+  // The month charts of the pick: the period's months, the pick's factories, and its machines with the highest reject rate.
+  const pickLabels = (breakdown?.months ?? []).map((m) => monthLabel(m.month, false))
+  const pickFactoryLines = (breakdown?.series.factories ?? []).slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.label, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
+  const pickMachines = [...(breakdown?.series.machines ?? [])].filter((m) => m.made > 0).sort((a, b) => (b.defectRatePct ?? -1) - (a.defectRatePct ?? -1) || b.made - a.made).slice(0, LINE_CLASSES.length)
+  const pickMachineLines = pickMachines.map((m, i) => ({ label: m.label, values: m.months.map((x) => x.defectRatePct), className: LINE_CLASSES[i] }))
   const detailTitle = picked.length ? `${picked.length === 1 ? 'Machine' : `${picked.length} machines`}: ${machines.filter((m) => picked.includes(m.workCenterCode)).map((m) => m.label).join(', ')}` : scopeLabel
   return (
     <div className="space-y-4">
@@ -584,26 +558,29 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
         page="general"
         className={cn('transition-opacity', isFetching && 'opacity-70')}
         widgets={[
-          { id: 'g.trend', title: 'Trend of the pick', node: (
-        <Section title={`${scopeLabel}: trend`} hint={`Pieces made each month of ${describeRange({ from: general.from, to: general.to })} (produced + rejected) with the reject rate over them, and a line for each ${kind} in the pick.`} icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
-          {breakdown ? (
-            breakdown.months.some((m) => m.made > 0) ? (
-              <TrendChart points={breakdown.months.map((m) => ({ label: monthLabel(m.month, false), bar: m.made, line: m.defectRatePct }))} barLabel="Pieces made" lineLabel={`Reject rate · ${scopeLabel}`} lines={memberLines.length > 1 || (memberLines.length === 1 && chosen.length === 0) ? memberLines : []} />
-            ) : (
-              <p className="py-10 text-center text-sm text-slate-400">No session closed with a final quantity in this period.</p>
-            )
+          { id: 'g.trend', title: 'Plant trend, last months', node: (
+        <Section title="Plant: trend" hint={`Pieces made each month, ${windowSpan} (produced + rejected), with the plant's reject rate over them and a line for each factory. Neither the period strip nor the picks narrow this chart.`} icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
+          {general.months.some((m) => m.piecesProduced + m.productionDefectPieces > 0) ? (
+            <TrendChart points={general.months.map((m) => ({ label: monthLabel(m.month, false), bar: m.piecesProduced + m.productionDefectPieces, line: m.defectRatePct }))} barLabel="Pieces made" lineLabel="Reject rate · plant" lines={factoryLines} />
           ) : (
-            <div className="skeleton h-48" />
+            <p className="py-10 text-center text-sm text-slate-400">No session closed with a final quantity in these months.</p>
           )}
         </Section>
           ) },
           { id: 'g.machines', title: 'Machines of the pick', node: (
-        <Section title={`${scopeLabel}: machines`} hint="Reject rate of each machine over the period, worst first, with its trend. Tick machines to compare them; the breakdown below follows the ticks." icon={<Layers className="h-4 w-4" />} className="xl:col-span-2" action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-slate-500 hover:text-rose-600">Clear {picked.length} ticked</button>}>
+        <Section title={`${scopeLabel}: machines`} hint={`Reject rate of each machine over the period, grouped by ${kind}, worst first in each group, with its trend. Tick machines to compare them; the breakdown below follows the ticks.`} icon={<Layers className="h-4 w-4" />} className="xl:col-span-2" action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-slate-500 hover:text-rose-600">Clear {picked.length} ticked</button>}>
           {machines.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-400">No production closed in this period.</p>
           ) : (
-            <ul className="space-y-1.5 pr-1">
-              {machines.map((m) => {
+            <div className="space-y-3 pr-1">
+              {machineGroups.map((g) => (
+                <div key={g.key}>
+                  <p className="mb-1 flex items-baseline justify-between px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    <span>{g.label}</span>
+                    <span className="tabular-nums">{g.machines.length}</span>
+                  </p>
+                  <ul className="space-y-1.5">
+              {g.machines.map((m) => {
                 const on = picked.includes(m.workCenterCode)
                 const tone = toneLowIsGood(m.defectRatePct, t.defectRateGreen, t.defectRateAmber)
                 return (
@@ -622,21 +599,24 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
                   </li>
                 )
               })}
-            </ul>
+                  </ul>
+                </div>
+              ))}
+            </div>
           )}
         </Section>
           ) },
           { id: 'g.factoriesByMonth', title: 'Factories by month', node: (
-        <Section title="Factories by month" hint={`Reject rate of every factory, ${windowSpan}. Neither the period strip nor the picks narrow this chart.`} icon={<Factory className="h-4 w-4" />}>
-          <LineChart labels={windowLabels} series={factoryLines} />
+        <Section title={`${scopeLabel}: factories by month`} hint={`Reject rate of each factory in the pick, month by month over ${describeRange({ from: general.from, to: general.to })}.`} icon={<Factory className="h-4 w-4" />}>
+          {breakdown ? <LineChart labels={pickLabels} series={pickFactoryLines} /> : <div className="skeleton h-48" />}
         </Section>
           ) },
           { id: 'g.machinesByMonth', title: 'Machines by month', node: (
-        <Section title="Machines by month" hint={`The ${machinesForLines.length} machines with the highest reject rate across the plant, ${windowSpan}. Neither the period strip nor the picks narrow this chart.`} icon={<Layers className="h-4 w-4" />}>
-          <LineChart labels={windowLabels} series={machineLines} />
+        <Section title={`${scopeLabel}: machines by month`} hint={`The ${pickMachines.length} machines of the pick with the highest reject rate, month by month over ${describeRange({ from: general.from, to: general.to })}. Tick machines above to choose them yourself.`} icon={<Layers className="h-4 w-4" />}>
+          {breakdown ? <LineChart labels={pickLabels} series={pickMachineLines} /> : <div className="skeleton h-48" />}
         </Section>
           ) },
-          ...(breakdown ? scopeDetailWidgets({ title: detailTitle, data: breakdown, t, navigate }) : []),
+          ...(breakdown ? scopeDetailWidgets({ title: detailTitle, kind, data: breakdown, t, navigate, fpMachine, setFpMachine }) : []),
         ]}
       />
     </div>
@@ -644,12 +624,40 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
 }
 
 /** What a pick's rejected pieces are: which defects, in which months, on which orders and items; and how often the first part was clean. */
-function scopeDetailWidgets({ title, data, t, navigate }: { title: string; data: KpiBreakdown; t: KpiThresholds; navigate: (to: string) => void }): BoardWidget[] {
+function scopeDetailWidgets({ title, kind, data, t, navigate, fpMachine, setFpMachine }: { title: string; kind: 'factory' | 'process'; data: KpiBreakdown; t: KpiThresholds; navigate: (to: string) => void; fpMachine: string; setFpMachine: (code: string) => void }): BoardWidget[] {
   const made = data.months.reduce((n, m) => n + m.made, 0)
   const rejected = data.months.reduce((n, m) => n + m.productionDefectPieces, 0)
   const rate = made > 0 ? Math.round((rejected / made) * 10000) / 100 : null
   const monthsWithData = data.months.filter((m) => m.made > 0)
-  const fp = data.firstPart
+  const fpAll = data.firstPart
+  // The three first-part widgets share one machine filter: the pick's machines, or one of them.
+  const fpRow = fpMachine ? fpAll.byMachine.find((m) => m.workCenterCode === fpMachine) : undefined
+  const fpMonthRow = fpMachine ? fpAll.byMachineMonth.find((m) => m.workCenterCode === fpMachine) : undefined
+  const fp = fpRow
+    ? {
+        ...fpAll,
+        sessions: fpRow.sessions,
+        clean: fpRow.clean,
+        pct: fpRow.pct,
+        rejectedPieces: fpRow.rejectedPieces,
+        cumulativePct: fpRow.clean + fpRow.rejectedPieces > 0 ? Math.round((fpRow.rejectedPieces / (fpRow.clean + fpRow.rejectedPieces)) * 1000) / 10 : null,
+        months: (fpMonthRow?.months ?? []).map((m) => ({ month: m.month, sessions: m.sessions, clean: m.clean, pct: m.sessions > 0 ? Math.round((m.clean / m.sessions) * 1000) / 10 : null, rejectedPieces: m.rejectedPieces, cumulativePct: m.cumulativePct })),
+        byMachineMonth: fpMonthRow ? [fpMonthRow] : [],
+        failed: fpAll.failed.filter((r) => r.workCenterCode === fpMachine),
+      }
+    : fpMachine
+      ? { ...fpAll, sessions: 0, clean: 0, pct: null, rejectedPieces: 0, cumulativePct: null, months: fpAll.months.map((m) => ({ ...m, sessions: 0, clean: 0, pct: null, rejectedPieces: 0, cumulativePct: null })), byMachineMonth: [], failed: [] }
+      : fpAll
+  const fpFilter = (
+    <Select value={fpMachine} onChange={(e) => setFpMachine(e.target.value)} className="print-hidden min-h-[36px] max-w-[14rem] py-0 text-xs" aria-label="First part: machine">
+      <option value="">All machines</option>
+      {fpAll.byMachine.map((m) => (
+        <option key={m.workCenterCode} value={m.workCenterCode}>
+          {m.label}
+        </option>
+      ))}
+    </Select>
+  )
   const fpTone: KpiTone = fp.pct === null ? 'neutral' : fp.pct >= 95 ? 'green' : fp.pct >= 85 ? 'amber' : 'red'
   /** The cumulative yield reads the other way: lower is better, zero is clean. */
   const cumTone = (v: number | null): KpiTone => (v === null ? 'neutral' : v === 0 ? 'green' : v <= 15 ? 'amber' : 'red')
@@ -691,7 +699,7 @@ function scopeDetailWidgets({ title, data, t, navigate }: { title: string; data:
     </div>
   )
   return [
-    { id: 'g.tiles', title: 'Reject rate, PPM, first part', node: (
+    { id: 'g.tiles', title: 'Reject rate, PPM, first part', labelled: false, node: (
 <div className="h-full space-y-3 overflow-auto">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <h2 className="text-lg font-extrabold tracking-tight">{title}</h2>
@@ -700,10 +708,30 @@ function scopeDetailWidgets({ title, data, t, navigate }: { title: string; data:
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <PlainTile label="Reject rate" value={pctStr(rate)} sub={`${num(rejected)} rejected of ${num(made)} made`} icon={<Target className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} />
         <PlainTile label="PPM" value={ppmStr(rate)} sub="rejected pieces per million made" icon={<AlertTriangle className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} />
-        <FirstPartCard fp={fp} kind="released" />
-        <FirstPartCard fp={fp} kind="cumulative" />
+        <PlainTile label="First part released" value={pctStr(fp.pct, 0)} sub={`${num(fp.clean)} of ${num(fp.sessions)} sessions with nothing rejected before release`} icon={<PackageCheck className="h-4 w-4" />} tone={fpTone} />
+        <PlainTile label="First pass yield cumulative" value={pctStr(fp.cumulativePct, 0)} sub={`${num(fp.rejectedPieces)} rejected before release ÷ (${num(fp.clean)} clean sessions + ${num(fp.rejectedPieces)}) · lower is better`} icon={<PackageCheck className="h-4 w-4" />} tone={cumTone(fp.cumulativePct)} />
       </div>
 </div>
+    ) },
+    { id: 'g.pieScope', title: 'Rejected by factory or process', node: (
+        <Section title={kind === 'factory' ? 'Rejected by factory' : 'Rejected by process'} hint={`Each ${kind}'s share of the rejected pieces in the period.`} icon={kind === 'factory' ? <Factory className="h-4 w-4" /> : <Layers className="h-4 w-4" />}>
+          <PieChart centerLabel="rejected" slices={slicesOf((kind === 'factory' ? data.series.factories : data.series.processes).map((x) => ({ label: kind === 'process' ? (PROCESS_LABEL[x.key as Process] ?? x.label) : x.label, value: x.productionDefectPieces })))} />
+        </Section>
+    ) },
+    { id: 'g.pieDefects', title: 'Share of each defect', node: (
+        <Section title="Share of each defect" hint="Each defect's share of the rejected pieces in the period; the smaller ones together as Others." icon={<AlertTriangle className="h-4 w-4" />}>
+          <PieChart centerLabel="rejected" slices={slicesOf(data.defects.map((d) => ({ label: d.defectName, value: d.pieces })))} />
+        </Section>
+    ) },
+    { id: 'g.pieMachines', title: 'Rejected by machine', node: (
+        <Section title="Rejected by machine" hint="Each machine's share of the rejected pieces in the period; the smaller ones together as Others." icon={<Layers className="h-4 w-4" />}>
+          <PieChart centerLabel="rejected" slices={slicesOf(data.series.machines.map((m) => ({ label: m.label, sub: m.sub, value: m.productionDefectPieces })))} />
+        </Section>
+    ) },
+    { id: 'g.dispositions', title: 'Dispositions', node: (
+        <Section title="Dispositions" hint="The period's rejected pieces by what was decided for them." icon={<ClipboardList className="h-4 w-4" />}>
+          <PieChart centerLabel="rejected" slices={(Object.keys(DISPOSITION_CLASS) as Disposition[]).map((d) => ({ label: d, value: data.byDisposition[d] ?? 0, className: DISPOSITION_CLASS[d].replace(/stroke-/g, 'fill-') }))} />
+        </Section>
     ) },
     { id: 'g.pareto', title: 'Pareto of defects', node: (
         <Section title="Pareto of defects" hint="Rejected pieces by defect, largest first, with the running share: the few defects that make most of the pieces." icon={<AlertTriangle className="h-4 w-4" />} className="xl:col-span-2">
@@ -757,7 +785,7 @@ function scopeDetailWidgets({ title, data, t, navigate }: { title: string; data:
         </Section>
     ) },
     { id: 'g.firstPartTiles', title: 'First part: yield and months', node: (
-      <Section title="First part released" hint="By session: clean when nothing was rejected on the line before the release inspection. Sessions started in the period." icon={<PackageCheck className="h-4 w-4" />}>
+      <Section title="First part released" hint="By session: clean when nothing was rejected on the line before the release inspection. Sessions started in the period." icon={<PackageCheck className="h-4 w-4" />} action={fpFilter}>
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {[
@@ -787,12 +815,12 @@ function scopeDetailWidgets({ title, data, t, navigate }: { title: string; data:
       </Section>
     ) },
     { id: 'g.firstPartChart', title: 'First part: machines by month', node: (
-      <Section title="Rejected before release, by machine" hint="Each machine's pieces rejected before the release inspection, month by month; the six machines with the most." icon={<Layers className="h-4 w-4" />}>
+      <Section title="Rejected before release, by machine" hint="Each machine's pieces rejected before the release inspection, month by month; the six machines with the most." icon={<Layers className="h-4 w-4" />} action={fpFilter}>
         <LineChart labels={fp.months.map((m) => monthLabel(m.month, false))} series={fp.byMachineMonth.slice(0, LINE_CLASSES.length).map((m, i) => ({ label: m.label, values: m.months.map((x) => (x.sessions > 0 ? x.rejectedPieces : null)), className: LINE_CLASSES[i] }))} unit="" height={200} />
       </Section>
     ) },
     { id: 'g.firstPartTable', title: 'First part: sessions not clean', node: (
-      <Section title="Sessions not clean" hint="The sessions that started with pieces already rejected on the line, newest first." icon={<PackageCheck className="h-4 w-4" />}>
+      <Section title="Sessions not clean" hint="The sessions that started with pieces already rejected on the line, newest first." icon={<PackageCheck className="h-4 w-4" />} action={fpFilter}>
         <Table
           rows={fp.failed}
           rowKey={(r) => r.sessionId}
@@ -965,6 +993,11 @@ export function DashboardPage() {
       layouts: editingLayout && draftLayouts ? draftLayouts : savedLayouts,
       editing: editingLayout,
       setLayout: (page, layout) => setDraftLayouts((prev) => ({ ...(prev ?? savedLayouts), [page]: layout })),
+      setLabel: (page, id, label) =>
+        setDraftLayouts((prev) => {
+          const base = prev ?? savedLayouts
+          return { ...base, [page]: base[page].map((it) => (it.i === id ? { ...it, title: label.title || undefined, hint: label.hint || undefined } : it)) }
+        }),
     }),
     [editingLayout, draftLayouts, savedLayouts],
   )
@@ -1398,7 +1431,7 @@ export function DashboardPage() {
           <Board
             page="details"
             widgets={[
-              { id: 'd.tiles', title: 'KPI tiles', node: (
+              { id: 'd.tiles', title: 'KPI tiles', labelled: false, node: (
 <div className="h-full overflow-auto">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             {/* Defect pieces per 100 produced, over the sessions closed in the period with a final quantity. */}

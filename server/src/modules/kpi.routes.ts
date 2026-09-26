@@ -7,7 +7,9 @@ import { Router } from 'express'
 import { z } from 'zod'
 import {
   DASHBOARD_COLS,
+  DASHBOARD_HINT_MAX,
   DASHBOARD_MAX_H,
+  DASHBOARD_TITLE_MAX,
   DEFAULT_KPI_THRESHOLDS,
   GENERAL_MONTHS,
   defaultDashboardLayouts,
@@ -109,6 +111,8 @@ const layoutItem = z.object({
   y: z.number().int().min(0).max(100000),
   w: z.number().int().min(1).max(DASHBOARD_COLS),
   h: z.number().int().min(1).max(DASHBOARD_MAX_H),
+  title: z.string().trim().max(DASHBOARD_TITLE_MAX).optional(),
+  hint: z.string().trim().max(DASHBOARD_HINT_MAX).optional(),
 })
 const LayoutBody = z.object({ layouts: z.object({ general: z.array(layoutItem).max(100), details: z.array(layoutItem).max(100) }) })
 

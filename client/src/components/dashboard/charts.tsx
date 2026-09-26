@@ -326,6 +326,101 @@ export function DonutChart({ slices, centerLabel, size = 160 }: { slices: Slice[
   )
 }
 
+/** Fill classes for the slices of a pie, in the order the slices come; the last one is for "Others". */
+export const PIE_CLASSES = ['fill-brand-500', 'fill-rose-500', 'fill-emerald-500', 'fill-amber-500', 'fill-violet-500', 'fill-sky-500', 'fill-pink-500', 'fill-teal-500', 'fill-orange-500', 'fill-slate-400']
+
+export interface PieSlice {
+  label: string
+  sub?: string
+  value: number
+  /** A fill-* class. */
+  className: string
+}
+
+/**
+ * The slices of a pie: the largest `keep` rows of `rows` in their own colour,
+ * the rest of them as one "Others" slice. Rows worth nothing are left out.
+ */
+export function slicesOf(rows: { label: string; sub?: string; value: number }[], keep = PIE_CLASSES.length - 1): PieSlice[] {
+  const sorted = rows.filter((r) => r.value > 0).sort((a, b) => b.value - a.value)
+  const head = sorted.slice(0, keep).map((r, i) => ({ ...r, className: PIE_CLASSES[i] }))
+  const tail = sorted.slice(keep)
+  if (tail.length) head.push({ label: `Others (${tail.length})`, value: tail.reduce((n, r) => n + r.value, 0), className: PIE_CLASSES[PIE_CLASSES.length - 1] })
+  return head
+}
+
+/**
+ * A pie with the share written on every slice wide enough to carry it, the
+ * total in the middle, and the legend beside it: each slice's pieces and
+ * share. On a board it fills its box; the legend scrolls when it is long.
+ */
+export function PieChart({ slices, centerLabel, unit = '' }: { slices: PieSlice[]; centerLabel: string; unit?: string }) {
+  const fill = useContext(ChartFillContext)
+  const total = slices.reduce((n, s) => n + s.value, 0)
+  const cx = 100
+  const cy = 100
+  const r = 78
+  const hole = 40
+  const arc = (from: number, to: number): string => {
+    // A ring sector from angle `from` to `to` (turns, clockwise from twelve o'clock).
+    const a0 = (from - 0.25) * 2 * Math.PI
+    const a1 = (to - 0.25) * 2 * Math.PI
+    const big = to - from > 0.5 ? 1 : 0
+    const o0 = [cx + r * Math.cos(a0), cy + r * Math.sin(a0)]
+    const o1 = [cx + r * Math.cos(a1), cy + r * Math.sin(a1)]
+    const i0 = [cx + hole * Math.cos(a0), cy + hole * Math.sin(a0)]
+    const i1 = [cx + hole * Math.cos(a1), cy + hole * Math.sin(a1)]
+    return `M${o0[0]},${o0[1]} A${r},${r} 0 ${big} 1 ${o1[0]},${o1[1]} L${i1[0]},${i1[1]} A${hole},${hole} 0 ${big} 0 ${i0[0]},${i0[1]} Z`
+  }
+  let at = 0
+  const drawn = slices
+    .filter((s) => s.value > 0)
+    .map((s) => {
+      const share = total > 0 ? s.value / total : 0
+      const from = at
+      at += share
+      const mid = (from + share / 2 - 0.25) * 2 * Math.PI
+      const lr = (r + hole) / 2
+      return { ...s, share, from, to: at, lx: cx + lr * Math.cos(mid), ly: cy + lr * Math.sin(mid) }
+    })
+  if (total <= 0) return <ChartEmpty height={fill ? 120 : 160} />
+  return (
+    <div className={cn('flex gap-4', fill ? 'h-full min-h-0 flex-col sm:flex-row' : 'flex-wrap items-center')}>
+      <svg viewBox="0 0 200 200" className={cn(fill ? 'mx-auto h-auto max-h-full min-h-0 w-auto flex-1 sm:mx-0' : 'h-44 w-44')} role="img" aria-label={`${centerLabel}: ${total}${unit}`}>
+        {drawn.length === 1 ? (
+          <circle cx={cx} cy={cy} r={(r + hole) / 2} fill="none" strokeWidth={r - hole} className={drawn[0].className.replace(/fill-/g, 'stroke-')} />
+        ) : (
+          drawn.map((s) => <path key={s.label} d={arc(s.from, s.to)} className={cn(s.className, 'stroke-white dark:stroke-slate-900')} strokeWidth="1.5" />)
+        )}
+        {drawn.map((s) => s.share >= 0.06 && (
+          <text key={`t-${s.label}`} x={s.lx} y={s.ly} textAnchor="middle" dominantBaseline="middle" fontSize="11" fontWeight="700" className="fill-white" style={{ paintOrder: 'stroke', stroke: 'rgba(15,23,42,.45)', strokeWidth: 2 }}>
+            {Math.round(s.share * 100)}%
+          </text>
+        ))}
+        <text x={cx} y={cy - 4} textAnchor="middle" fontSize="16" fontWeight="700" className="fill-slate-800 dark:fill-white">
+          {fmt(total)}{unit}
+        </text>
+        <text x={cx} y={cy + 10} textAnchor="middle" fontSize="8" className="fill-slate-500 dark:fill-slate-400">
+          {centerLabel}
+        </text>
+      </svg>
+      <ul className={cn('min-w-0 space-y-1 text-sm', fill ? 'max-h-full shrink-0 overflow-auto sm:w-[46%]' : 'min-w-[10rem] flex-1')}>
+        {drawn.map((s) => (
+          <li key={s.label} className="flex items-center gap-2">
+            <i className={cn('inline-block h-2.5 w-2.5 shrink-0 rounded-full', s.className.replace(/fill-/g, 'bg-'))} />
+            <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300" title={s.sub ? `${s.label} · ${s.sub}` : s.label}>
+              {s.label}
+              {s.sub && <span className="ml-1 text-xs text-slate-400">{s.sub}</span>}
+            </span>
+            <span className="font-semibold tabular-nums">{fmt(s.value)}</span>
+            <span className="w-11 text-right text-xs tabular-nums text-slate-400">{`${Math.round(s.share * 1000) / 10}%`}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 export interface HBar {
   label: string
   sub?: string

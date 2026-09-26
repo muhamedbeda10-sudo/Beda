@@ -49,6 +49,22 @@ describe('§15 — the dashboard layout', () => {
     expect(read.body.layouts).toEqual(saved.body.layouts)
   })
 
+  it('keeps a name and a description an administrator gave a widget, for everyone', async () => {
+    const layouts = defaultDashboardLayouts()
+    layouts.general = layouts.general.map((it) => (it.i === 'g.pareto' ? { ...it, title: 'أهم العيوب', hint: 'Look here first every morning.' } : it))
+    const saved = await app.api<DashboardLayoutResponse>('PUT', '/api/kpi/layout', { token: admin.token, body: { layouts } })
+    expect(saved.status).toBe(200)
+    expect(saved.body.layouts.general.find((it) => it.i === 'g.pareto')).toMatchObject({ title: 'أهم العيوب', hint: 'Look here first every morning.' })
+    const read = await app.api<DashboardLayoutResponse>('GET', '/api/kpi/layout', { token: viewer.token })
+    expect(read.body.layouts.general.find((it) => it.i === 'g.pareto')?.title).toBe('أهم العيوب')
+    // A blank name means the code's own; an over-long one is refused.
+    layouts.general = layouts.general.map((it) => (it.i === 'g.pareto' ? { ...it, title: '   ', hint: '' } : it))
+    const cleared = await app.api<DashboardLayoutResponse>('PUT', '/api/kpi/layout', { token: admin.token, body: { layouts } })
+    expect(cleared.body.layouts.general.find((it) => it.i === 'g.pareto')?.title).toBeUndefined()
+    layouts.general = layouts.general.map((it) => (it.i === 'g.pareto' ? { ...it, title: 'x'.repeat(81) } : it))
+    expect((await app.api('PUT', '/api/kpi/layout', { token: admin.token, body: { layouts } })).status).toBe(400)
+  })
+
   it('refuses a widget outside the grid and drops an unknown one', async () => {
     const layouts = defaultDashboardLayouts()
     expect((await app.api('PUT', '/api/kpi/layout', { token: admin.token, body: { layouts: { ...layouts, general: [{ i: 'g.trend', x: 0, y: 0, w: 13, h: 5 }] } } })).status).toBe(400)

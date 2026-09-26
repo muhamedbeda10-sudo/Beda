@@ -201,6 +201,11 @@ describe('§15 — process groups and the month view', () => {
     expect(b.series.factories.map((x) => x.key)).toEqual(['Factory 1'])
     expect(b.series.processes.map((x) => x.key)).toEqual(['forming'])
     expect(b.series.factories[0].months.find((m) => m.made > 0)).toMatchObject({ made: 305, productionDefectPieces: 5 })
+    expect(b.series.factories[0]).toMatchObject({ made: 305, productionDefectPieces: 5 })
+    expect(b.series.factories[0].defectRatePct).toBeCloseTo(1.64, 2)
+    // And one series per machine of the scope, named as the register names it, with its factory.
+    expect(b.series.machines.map((x) => [x.key, x.sub, x.productionDefectPieces])).toEqual([['31', 'Factory 1', 5]])
+    expect(b.byDisposition).toEqual({ Repair: 5 })
 
     const all = (await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}`, { token: admin.token })).body
     expect(all.firstPart).toMatchObject({ sessions: 3, clean: 2 })
