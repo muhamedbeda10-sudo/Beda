@@ -877,7 +877,8 @@ export const DASHBOARD_MAX_H = 80
 /** The widgets each page can show, in their default reading order, with a default size. */
 export const DASHBOARD_WIDGETS: Record<DashboardPage, { id: string; title: string; w: number; h: number }[]> = {
   general: [
-    { id: 'g.trend', title: 'Trend of the pick', w: 12, h: 9 },
+    { id: 'g.trend', title: 'Trend of the pick', w: 7, h: 9 },
+    { id: 'g.machines', title: 'Machines of the pick', w: 5, h: 9 },
     { id: 'g.factoriesByMonth', title: 'Factories by month', w: 6, h: 8 },
     { id: 'g.machinesByMonth', title: 'Machines by month', w: 6, h: 8 },
     { id: 'g.tiles', title: 'Reject rate, PPM, first part', w: 12, h: 5 },

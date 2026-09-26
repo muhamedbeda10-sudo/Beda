@@ -28,14 +28,6 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-09-26.5',
-    date: '2026-09-26',
-    title: 'Dashboard: the picks stay on the left',
-    items: [
-      { text: 'The factories or processes to pick and the machines to tick sit in a column on the left that stays put while the page scrolls; the period strip stays on top on its own. In Details the filters sit in that column too.' },
-    ],
-  },
-  {
     id: '2026-09-26.4',
     date: '2026-09-26',
     title: 'By order line: one row per line',
