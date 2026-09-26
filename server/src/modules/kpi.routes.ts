@@ -6,8 +6,12 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import {
+  DASHBOARD_COLS,
+  DASHBOARD_MAX_H,
   DEFAULT_KPI_THRESHOLDS,
   GENERAL_MONTHS,
+  defaultDashboardLayouts,
+  normaliseDashboardLayouts,
   INSIGHT_KEY_MAX,
   RANKING_WEIGHTS,
   pct,
@@ -21,7 +25,7 @@ import {
   type KpiOverview,
   type KpiThresholds,
 } from '@qc/shared/kpi'
-import type { HiddenInsightRequest, HiddenInsightsResponse, KpiSpanResponse, KpiThresholdsResponse } from '@qc/shared/api'
+import type { DashboardLayoutResponse, HiddenInsightRequest, HiddenInsightsResponse, KpiSpanResponse, KpiThresholdsResponse, SaveDashboardLayoutRequest } from '@qc/shared/api'
 import { PROCESSES, type Process } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import type { Queryable } from '../db/pool'
@@ -54,6 +58,7 @@ import {
 } from './kpi.sql'
 
 export const KPI_THRESHOLDS_KEY = 'kpi-thresholds'
+export const DASHBOARD_LAYOUT_KEY = 'dashboard-layout'
 const MAX_PERIOD_DAYS = 366
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD')
@@ -97,6 +102,15 @@ const BreakdownQuery = z.object({
   workCenterCode: optionalText,
   itemCode: optionalText,
 })
+
+const layoutItem = z.object({
+  i: z.string().trim().min(1).max(60),
+  x: z.number().int().min(0).max(DASHBOARD_COLS - 1),
+  y: z.number().int().min(0).max(100000),
+  w: z.number().int().min(1).max(DASHBOARD_COLS),
+  h: z.number().int().min(1).max(DASHBOARD_MAX_H),
+})
+const LayoutBody = z.object({ layouts: z.object({ general: z.array(layoutItem).max(100), details: z.array(layoutItem).max(100) }) })
 
 const rate = z.number().min(0).max(100)
 const ThresholdsBody = z
@@ -258,6 +272,69 @@ export function kpiRoutes(ctx: AppContext): Router {
       return loadThresholds(tx)
     })
     res.json(body)
+  })
+
+  // ---- The board's layout -----------------------------------------------------
+  // One layout per page, the same for everyone; an administrator moves and
+  // sizes the widgets. Stored beside the thresholds; the defaults show
+  // until one is saved, and a widget added later lands below the rest.
+
+  async function loadLayout(q: Queryable): Promise<DashboardLayoutResponse> {
+    const { rows } = await q.query<{ value: unknown; updatedAt: string; updatedByName: string | null }>(
+      `SELECT value, updated_at AS "updatedAt", updated_by_name AS "updatedByName" FROM app_settings WHERE key = $1`,
+      [DASHBOARD_LAYOUT_KEY],
+    )
+    const row = rows[0]
+    if (!row) return { layouts: defaultDashboardLayouts(), isDefault: true }
+    return { layouts: normaliseDashboardLayouts(row.value), isDefault: false, updatedAt: row.updatedAt, updatedByName: row.updatedByName ?? undefined }
+  }
+
+  r.get('/layout', async (_req, res) => {
+    res.json(await loadLayout(ctx.db))
+  })
+
+  r.put('/layout', requireCapability('manage-admin-data'), async (req, res) => {
+    const user = requireUser(req)
+    const body = parse(LayoutBody, req.body) as SaveDashboardLayoutRequest
+    // Unknown widgets are dropped and missing ones appended, so what is stored is always whole.
+    const layouts = normaliseDashboardLayouts(body.layouts)
+    const out = await withTransaction(ctx.db, async (tx) => {
+      const before = await loadLayout(tx)
+      await tx.query(
+        `INSERT INTO app_settings (key, value, updated_by_id, updated_by_name, updated_at)
+         VALUES ($1, $2::jsonb, $3, $4, now())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by_id = EXCLUDED.updated_by_id,
+           updated_by_name = EXCLUDED.updated_by_name, updated_at = now()`,
+        [DASHBOARD_LAYOUT_KEY, JSON.stringify(layouts), user.id, user.name],
+      )
+      await auditChanges(
+        tx,
+        { userId: user.id, userName: user.name, entity: 'AppSettings', entityId: DASHBOARD_LAYOUT_KEY },
+        { general: JSON.stringify(before.layouts.general), details: JSON.stringify(before.layouts.details) },
+        { general: JSON.stringify(layouts.general), details: JSON.stringify(layouts.details) },
+      )
+      return loadLayout(tx)
+    })
+    res.json(out)
+  })
+
+  /** Back to the defaults: the saved layout is removed, and every page reads the code's own arrangement. */
+  r.delete('/layout', requireCapability('manage-admin-data'), async (req, res) => {
+    const user = requireUser(req)
+    const out = await withTransaction(ctx.db, async (tx) => {
+      const before = await loadLayout(tx)
+      await tx.query(`DELETE FROM app_settings WHERE key = $1`, [DASHBOARD_LAYOUT_KEY])
+      if (!before.isDefault) {
+        await auditChanges(
+          tx,
+          { userId: user.id, userName: user.name, entity: 'AppSettings', entityId: DASHBOARD_LAYOUT_KEY },
+          { general: JSON.stringify(before.layouts.general), details: JSON.stringify(before.layouts.details) },
+          { general: 'default', details: 'default' },
+        )
+      }
+      return loadLayout(tx)
+    })
+    res.json(out)
   })
 
   r.get('/overview', async (req, res) => {

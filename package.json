@@ -22,6 +22,10 @@
     "db:seed": "npm run db:seed -w server"
   },
   "devDependencies": {
+    "@types/react-grid-layout": "^2.1.0",
     "concurrently": "^9.1.2"
+  },
+  "dependencies": {
+    "react-grid-layout": "^2.2.4"
   }
 }

@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-26.3',
+    date: '2026-09-26',
+    title: 'Dashboard: arrange the charts',
+    items: [
+      { text: 'The charts of General (By factory / By process) and of Details sit on a grid. An administrator taps Arrange, drags a chart by its blue bar to move it and pulls its corner to size it, then Save keeps the arrangement for everyone; Default puts the original back.' },
+      { text: 'Each chart keeps its own scroll inside its box, so a small box still shows the whole chart. On a tablet or phone the grid becomes a stack in the same order.' },
+    ],
+  },
+  {
     id: '2026-09-26.2',
     date: '2026-09-26',
     title: 'Reset all, on every filter bar',

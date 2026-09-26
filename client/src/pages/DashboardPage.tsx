@@ -29,8 +29,11 @@ import {
   Minus,
   PauseCircle,
   Printer,
+  LayoutDashboard,
   RefreshCw,
   RotateCcw,
+  Save,
+  Undo2,
   Ruler,
   ShieldAlert,
   Sparkles,
@@ -41,19 +44,20 @@ import {
 } from 'lucide-react'
 import { can, shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
-import { deltaPct, insightKey, ppm, toneHighIsGood, toneLowIsGood, type KpiBreakdown, type KpiFilters, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiMachineTrend, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
+import { defaultDashboardLayouts, deltaPct, insightKey, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiFilters, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiMachineTrend, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
 import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
 import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, Sparkline, TrendChart } from '@/components/dashboard/charts'
+import { Board, BoardContext, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn, formatDateTime } from '@/lib/utils'
-import { useHiddenInsights, useKpiBreakdown, useKpiGeneral, useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
-import { hideInsight, restoreInsight } from '@/services/mutations'
+import { useDashboardLayout, useHiddenInsights, useKpiBreakdown, useKpiGeneral, useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
+import { hideInsight, resetDashboardLayout, restoreInsight, saveDashboardLayout } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { ApiError } from '@/lib/api'
@@ -310,8 +314,8 @@ function groupColumns(t: KpiThresholds, first: Column<KpiGroupRow>): Column<KpiG
 
 function Section({ title, hint, icon, children, className, action }: { title: string; hint?: string; icon?: ReactNode; children: ReactNode; className?: string; action?: ReactNode }) {
   return (
-    <Card className={cn('p-4 sm:p-5', className)}>
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+    <Card className={cn('flex h-full min-h-0 flex-col p-4 sm:p-5', className)}>
+      <div className="mb-3 flex shrink-0 flex-wrap items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5">
           {icon && <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{icon}</span>}
           <div className="min-w-0">
@@ -321,7 +325,7 @@ function Section({ title, hint, icon, children, className, action }: { title: st
         </div>
         {action}
       </div>
-      {children}
+      <div className="min-h-0 flex-1 overflow-auto">{children}</div>
     </Card>
   )
 }
@@ -459,6 +463,7 @@ interface ScopePicks {
 const NO_PICKS: ScopePicks = { factories: [], processes: [], machines: {} }
 
 function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'factory' | 'process'; general: KpiGeneral; factories: string[]; t: KpiThresholds; picks: ScopePicks; setPicks: (next: ScopePicks | ((prev: ScopePicks) => ScopePicks)) => void }) {
+  const navigate = useNavigate()
   const chosenFactories = picks.factories
   const chosenProcesses = picks.processes
   const pickedByScope = picks.machines
@@ -535,7 +540,11 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
         {options.length === 0 && <p className="text-sm text-slate-400">No {kind === 'factory' ? 'factory' : 'process'} in the machine register yet.</p>}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+      <Board
+        page="general"
+        className={cn('transition-opacity', isFetching && 'opacity-70')}
+        widgets={[
+          { id: 'g.trend', title: 'Trend of the pick', node: (
         <Section title={`${scopeLabel}: trend`} hint={`Pieces made each month of ${describeRange({ from: general.from, to: general.to })} (produced + rejected) with the reject rate over them, and a line for each ${kind} in the pick.`} icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
           {breakdown ? (
             breakdown.months.some((m) => m.made > 0) ? (
@@ -547,6 +556,8 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
             <div className="skeleton h-48" />
           )}
         </Section>
+          ) },
+          { id: 'g.machines', title: 'Machines of the pick', node: (
         <Section title={`${scopeLabel}: machines`} hint="Reject rate of each machine over the period, worst first, with its trend. Tick machines to compare them; the breakdown below follows the ticks." icon={<Layers className="h-4 w-4" />} className="xl:col-span-2" action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-slate-500 hover:text-rose-600">Clear {picked.length} ticked</button>}>
           {machines.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-400">No production closed in this period.</p>
@@ -574,25 +585,26 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
             </ul>
           )}
         </Section>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          ) },
+          { id: 'g.factoriesByMonth', title: 'Factories by month', node: (
         <Section title="Factories by month" hint={`Reject rate of every factory, ${windowSpan}. The period strip does not narrow this chart.`} icon={<Factory className="h-4 w-4" />}>
           <LineChart labels={windowLabels} series={factoryLines} />
         </Section>
+          ) },
+          { id: 'g.machinesByMonth', title: 'Machines by month', node: (
         <Section title="Machines by month" hint={`${picked.length ? 'The ticked machines' : `The ${machinesForLines.length} worst machines of ${scopeLabel}`}, ${windowSpan}. The period strip does not narrow this chart; tick machines to choose the lines.`} icon={<Layers className="h-4 w-4" />}>
           <LineChart labels={windowLabels} series={machineLines} />
         </Section>
-      </div>
-
-      {breakdown && <ScopeDetails title={detailTitle} data={breakdown} t={t} dim={isFetching} />}
+          ) },
+          ...(breakdown ? scopeDetailWidgets({ title: detailTitle, data: breakdown, t, navigate }) : []),
+        ]}
+      />
     </div>
   )
 }
 
 /** What a pick's rejected pieces are: which defects, in which months, on which orders and items; and how often the first part was clean. */
-function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdown; t: KpiThresholds; dim: boolean }) {
-  const navigate = useNavigate()
+function scopeDetailWidgets({ title, data, t, navigate }: { title: string; data: KpiBreakdown; t: KpiThresholds; navigate: (to: string) => void }): BoardWidget[] {
   const made = data.months.reduce((n, m) => n + m.made, 0)
   const rejected = data.months.reduce((n, m) => n + m.productionDefectPieces, 0)
   const rate = made > 0 ? Math.round((rejected / made) * 10000) / 100 : null
@@ -638,8 +650,9 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
       </table>
     </div>
   )
-  return (
-    <div className={cn('space-y-4 transition-opacity', dim && 'opacity-70')}>
+  return [
+    { id: 'g.tiles', title: 'Reject rate, PPM, first part', node: (
+<div className="h-full space-y-3 overflow-auto">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <h2 className="text-lg font-extrabold tracking-tight">{title}</h2>
         <p className="text-xs text-slate-400">{describeRange({ from: data.filters.from, to: data.filters.to })}</p>
@@ -650,11 +663,14 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
         <PlainTile label="First part released" value={pctStr(fp.pct, 0)} sub={`${num(fp.clean)} of ${num(fp.sessions)} sessions with nothing rejected before release`} icon={<PackageCheck className="h-4 w-4" />} tone={fpTone} />
         <PlainTile label="First pass yield cumulative" value={pctStr(fp.cumulativePct, 0)} sub={`${num(fp.rejectedPieces)} rejected before release ÷ (${num(fp.clean)} clean sessions + ${num(fp.rejectedPieces)}) · lower is better`} icon={<PackageCheck className="h-4 w-4" />} tone={cumTone(fp.cumulativePct)} />
       </div>
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+</div>
+    ) },
+    { id: 'g.pareto', title: 'Pareto of defects', node: (
         <Section title="Pareto of defects" hint="Rejected pieces by defect, largest first, with the running share: the few defects that make most of the pieces." icon={<AlertTriangle className="h-4 w-4" />} className="xl:col-span-2">
           <ParetoChart bars={paretoOf(data.defects.map((d) => ({ label: d.defectName, value: d.pieces })))} />
         </Section>
+    ) },
+    { id: 'g.defectsByMonth', title: 'Defects by month', node: (
         <Section title="Defects by month" hint="Each defect's rejected pieces in each month, and its share of that month's rejected pieces against the other defects." icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
           {data.defects.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-400">No rejected piece in these months.</p>
@@ -689,17 +705,18 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
             </div>
           )}
         </Section>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+    ) },
+    { id: 'g.byOrder', title: 'By order line', node: (
         <Section title="By order line" hint="Each month's rejected pieces laid on the order lines closed in it. Of made is against what that order line itself made (its produced + rejected); Of period is the share of every rejected piece in the period." icon={<ClipboardList className="h-4 w-4" />}>
           {breakdownTable(data.byOrder, 'Order')}
         </Section>
+    ) },
+    { id: 'g.byItem', title: 'By item', node: (
         <Section title="By item" hint="The same rejected pieces laid on the items." icon={<Layers className="h-4 w-4" />}>
           {breakdownTable(data.byItem, 'Item')}
         </Section>
-      </div>
-
+    ) },
+    { id: 'g.firstPart', title: 'First part released', node: (
       <Section title="First part released" hint="By session: clean when nothing was rejected on the line before the release inspection. Sessions started in the period." icon={<PackageCheck className="h-4 w-4" />}>
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
           <div className="space-y-3 xl:col-span-2">
@@ -752,8 +769,8 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
           </div>
         )}
       </Section>
-    </div>
-  )
+    ) },
+  ]
 }
 
 /** One card per machine of the selection: the rate, its trend, and the pieces behind it. */
@@ -898,6 +915,20 @@ export function DashboardPage() {
   /** The ones this person put away: hidden on every device until shown again. */
   const [hiddenOpen, setHiddenOpen] = useState(false)
   const { data: hiddenState } = useHiddenInsights(allowed)
+  // §15 — the board's layout: one for everyone, edited by an administrator here.
+  const { data: layoutState } = useDashboardLayout(allowed)
+  const canArrange = can(role, 'manage-admin-data')
+  const [editingLayout, setEditingLayout] = useState(false)
+  const [draftLayouts, setDraftLayouts] = useState<DashboardLayouts | null>(null)
+  const savedLayouts = layoutState?.layouts ?? defaultDashboardLayouts()
+  const boardState = useMemo<BoardState>(
+    () => ({
+      layouts: editingLayout && draftLayouts ? draftLayouts : savedLayouts,
+      editing: editingLayout,
+      setLayout: (page, layout) => setDraftLayouts((prev) => ({ ...(prev ?? savedLayouts), [page]: layout })),
+    }),
+    [editingLayout, draftLayouts, savedLayouts],
+  )
   const qc = useQueryClient()
   const { toast } = useApp()
   const { visibleInsights, hiddenInsights } = useMemo(() => {
@@ -905,6 +936,32 @@ export function DashboardPage() {
     const hidden = new Set(hiddenState?.keys ?? [])
     return { visibleInsights: all.filter((i) => !hidden.has(insightKey(i))), hiddenInsights: all.filter((i) => hidden.has(insightKey(i))) }
   }, [data, hiddenState])
+  const startArranging = () => {
+    setDraftLayouts(savedLayouts)
+    setEditingLayout(true)
+  }
+  const stopArranging = () => {
+    setEditingLayout(false)
+    setDraftLayouts(null)
+  }
+  const saveArrangement = async () => {
+    try {
+      await saveDashboardLayout(qc, draftLayouts ?? savedLayouts)
+      stopArranging()
+      toast('Layout saved for everyone.', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not save the layout.', 'error')
+    }
+  }
+  const resetArrangement = async () => {
+    try {
+      await resetDashboardLayout(qc)
+      stopArranging()
+      toast('Layout back to the default.', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not reset the layout.', 'error')
+    }
+  }
   const onHide = async (key: string) => {
     try {
       await hideInsight(qc, key)
@@ -1014,7 +1071,13 @@ export function DashboardPage() {
   const attention = visibleInsights.filter((i) => i.severity === 'critical' || i.severity === 'warning').length
 
   return (
+    <BoardContext.Provider value={boardState}>
     <div className="mx-auto max-w-[110rem] space-y-5">
+      {editingLayout && (
+        <div className="print-hidden rounded-xl border border-brand-300 bg-brand-50 px-4 py-2 text-sm text-brand-800 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-100">
+          Arranging: drag a chart by its blue bar, pull its bottom-right corner to size it. Save keeps it for everyone; Default puts the code's arrangement back.
+        </div>
+      )}
       {/* Heading */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
@@ -1070,6 +1133,24 @@ export function DashboardPage() {
                 {attention > 0 ? attention : '✓'}
               </span>
             </button>
+          )}
+          {canArrange && view === 'general' && !editingLayout && (
+            <Button className="min-h-[44px]" onClick={startArranging} aria-label="Arrange the charts">
+              <LayoutDashboard className="h-4 w-4" /> Arrange
+            </Button>
+          )}
+          {canArrange && view === 'general' && editingLayout && (
+            <>
+              <Button variant="primary" className="min-h-[44px]" onClick={() => void saveArrangement()} aria-label="Save the layout for everyone">
+                <Save className="h-4 w-4" /> Save layout
+              </Button>
+              <Button className="min-h-[44px]" onClick={() => void resetArrangement()} aria-label="Back to the default layout">
+                <Undo2 className="h-4 w-4" /> Default
+              </Button>
+              <Button className="min-h-[44px]" onClick={stopArranging} aria-label="Stop arranging without saving">
+                <X className="h-4 w-4" /> Cancel
+              </Button>
+            </>
           )}
           <Button className="min-h-[44px]" onClick={() => void refetch()} disabled={isFetching} aria-label="Refresh">
             <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} /> Refresh
@@ -1241,37 +1322,7 @@ export function DashboardPage() {
 
       {data && t && cur && prevT && (
         <div className={cn('space-y-5 transition-opacity', isFetching && 'opacity-70')}>
-          {/* Everything but the ranking. Hidden on screen when the Inspectors
-              tab is open; still printed, so the PDF stays the whole dashboard. */}
-          <div className={cn('grid grid-cols-1 gap-4 xl:grid-cols-4', !(view === 'general' && pick === 'details') && '[@media_screen]:hidden')}>
-          <div className="min-w-0 space-y-5 xl:col-span-3">
-          {/* Tiles */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-            {/* Defect pieces per 100 produced, over the sessions closed in the period with a final quantity. */}
-            <KpiTile
-              label="Defect rate"
-              value={pctStr(cur.defectRatePct)}
-              current={cur.defectRatePct}
-              previous={prevT.defectRatePct}
-              goodWhen="down"
-              tone={toneLowIsGood(cur.defectRatePct, t.defectRateGreen, t.defectRateAmber)}
-              sub={
-                filters.inspectorId || filters.shift
-                  ? 'Production belongs to a whole session: not by inspector or shift. Of inspected: ' + pctStr(cur.inspectedDefectPct)
-                  : cur.producedSessions === 0
-                    ? `No session closed with a final quantity in this period · of inspected ${pctStr(cur.inspectedDefectPct)}`
-                    : `${num(cur.productionDefectPieces)} defect pcs of ${num(cur.piecesProduced)} produced · ${num(cur.producedSessions)} closed sessions · target ≤ ${t.defectRateGreen}%`
-              }
-              icon={<AlertTriangle className="h-4 w-4" />}
-            />
-            <KpiTile label="First-pass yield" value={pctStr(cur.fpyPct)} current={cur.fpyPct} previous={prevT.fpyPct} goodWhen="up" tone={toneHighIsGood(cur.fpyPct, t.fpyGreen, t.fpyAmber)} sub={`samples with no defect · ${num(cur.samples)} samples · target ≥ ${t.fpyGreen}%`} icon={<Target className="h-4 w-4" />} />
-            <KpiTile label="Dimensions out of tolerance" value={pctStr(cur.dimFailPct)} current={cur.dimFailPct} previous={prevT.dimFailPct} goodWhen="down" tone={toneLowIsGood(cur.dimFailPct, t.dimFailGreen, t.dimFailAmber)} sub={`${num(cur.dimensionsFail)} fail · ${num(cur.dimensionsWarning)} warning of ${num(cur.dimensionsMeasured)} measured`} icon={<Ruler className="h-4 w-4" />} />
-            <KpiTile label="Pieces inspected" value={num(cur.pieces)} current={cur.pieces} previous={prevT.pieces} goodWhen="up" sub={`${num(cur.samples)} samples · ${num(cur.samplesPerSession, 1)} per session · ${pctStr(cur.inspectedDefectPct)} defective of inspected`} icon={<ClipboardList className="h-4 w-4" />} />
-            <KpiTile label="Sessions" value={num(cur.sessions)} current={cur.sessions} previous={prevT.sessions} goodWhen="none" sub={`${num(cur.sessionsClosed)} closed · ${num(cur.machinesInspected)} machines · ${num(cur.activeInspectors)} inspectors`} icon={<Users className="h-4 w-4" />} />
-            <KpiTile label="On Hold now" value={num(data.holds.length)} current={null} previous={null} goodWhen="down" tone={data.holds.some((h) => h.ageDays >= t.holdAgeRedDays) ? 'red' : data.holds.some((h) => h.ageDays >= t.holdAgeAmberDays) ? 'amber' : data.holds.length ? 'neutral' : 'green'} sub={`${num(holdPieces)} pieces waiting for a disposition`} icon={<PauseCircle className="h-4 w-4" />} />
-          </div>
-
-          {/* Insights live behind the bulb; on paper they print in full. */}
+          <div className={cn('space-y-5', !(view === 'general' && pick === 'details') && '[@media_screen]:hidden')}>
           <Section title="Insights" hint="What the numbers say, by rule, not by guess. Most serious first." icon={<Sparkles className="h-4 w-4" />} className="hidden print:block">
             <InsightList insights={visibleInsights} onLink={onLink} />
           </Section>
@@ -1305,8 +1356,38 @@ export function DashboardPage() {
               )}
             </Modal>
           )}
-
-          {/* §15 — the analysis: each machine of the selection, the months, and how spread each defect is. */}
+          <Board
+            page="details"
+            widgets={[
+              { id: 'd.tiles', title: 'KPI tiles', node: (
+<div className="h-full overflow-auto">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            {/* Defect pieces per 100 produced, over the sessions closed in the period with a final quantity. */}
+            <KpiTile
+              label="Defect rate"
+              value={pctStr(cur.defectRatePct)}
+              current={cur.defectRatePct}
+              previous={prevT.defectRatePct}
+              goodWhen="down"
+              tone={toneLowIsGood(cur.defectRatePct, t.defectRateGreen, t.defectRateAmber)}
+              sub={
+                filters.inspectorId || filters.shift
+                  ? 'Production belongs to a whole session: not by inspector or shift. Of inspected: ' + pctStr(cur.inspectedDefectPct)
+                  : cur.producedSessions === 0
+                    ? `No session closed with a final quantity in this period · of inspected ${pctStr(cur.inspectedDefectPct)}`
+                    : `${num(cur.productionDefectPieces)} defect pcs of ${num(cur.piecesProduced)} produced · ${num(cur.producedSessions)} closed sessions · target ≤ ${t.defectRateGreen}%`
+              }
+              icon={<AlertTriangle className="h-4 w-4" />}
+            />
+            <KpiTile label="First-pass yield" value={pctStr(cur.fpyPct)} current={cur.fpyPct} previous={prevT.fpyPct} goodWhen="up" tone={toneHighIsGood(cur.fpyPct, t.fpyGreen, t.fpyAmber)} sub={`samples with no defect · ${num(cur.samples)} samples · target ≥ ${t.fpyGreen}%`} icon={<Target className="h-4 w-4" />} />
+            <KpiTile label="Dimensions out of tolerance" value={pctStr(cur.dimFailPct)} current={cur.dimFailPct} previous={prevT.dimFailPct} goodWhen="down" tone={toneLowIsGood(cur.dimFailPct, t.dimFailGreen, t.dimFailAmber)} sub={`${num(cur.dimensionsFail)} fail · ${num(cur.dimensionsWarning)} warning of ${num(cur.dimensionsMeasured)} measured`} icon={<Ruler className="h-4 w-4" />} />
+            <KpiTile label="Pieces inspected" value={num(cur.pieces)} current={cur.pieces} previous={prevT.pieces} goodWhen="up" sub={`${num(cur.samples)} samples · ${num(cur.samplesPerSession, 1)} per session · ${pctStr(cur.inspectedDefectPct)} defective of inspected`} icon={<ClipboardList className="h-4 w-4" />} />
+            <KpiTile label="Sessions" value={num(cur.sessions)} current={cur.sessions} previous={prevT.sessions} goodWhen="none" sub={`${num(cur.sessionsClosed)} closed · ${num(cur.machinesInspected)} machines · ${num(cur.activeInspectors)} inspectors`} icon={<Users className="h-4 w-4" />} />
+            <KpiTile label="On Hold now" value={num(data.holds.length)} current={null} previous={null} goodWhen="down" tone={data.holds.some((h) => h.ageDays >= t.holdAgeRedDays) ? 'red' : data.holds.some((h) => h.ageDays >= t.holdAgeAmberDays) ? 'amber' : data.holds.length ? 'neutral' : 'green'} sub={`${num(holdPieces)} pieces waiting for a disposition`} icon={<PauseCircle className="h-4 w-4" />} />
+          </div>
+</div>
+              ) },
+              { id: 'd.machines', title: 'Machines', node: (
           <Section
             title="Machines"
             hint={`Each machine of the selection: defect pieces per 100 produced, against ${describeRange(prev)}; produced, released and defective are the sessions closed in the period. Tap a machine to filter the page to it.${showing(data.byMachine.length, data.counts.machines)}`}
@@ -1314,10 +1395,13 @@ export function DashboardPage() {
           >
             <MachineCards rows={data.byMachine} previous={data.byMachinePrevious} t={t} onPick={(code) => patch({ workCenterCode: code })} />
           </Section>
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+              ) },
+              { id: 'd.monthly', title: 'Month by month', node: (
             <Section title="Month by month" hint="Pieces produced each month of the period, with the defect rate over them." icon={<Activity className="h-4 w-4" />} className="xl:col-span-2">
               <TrendChart points={data.monthly.map((m) => ({ label: monthLabel(m.month, false), bar: m.piecesProduced, line: m.defectRatePct }))} barLabel="Pieces produced" lineLabel="Defect rate" />
             </Section>
+              ) },
+              { id: 'd.defectDetails', title: 'Defect details', node: (
             <Section title="Defect details" hint={`Every defect of the selection, largest first: the pieces, on how many distinct days it was recorded, and on how many order lines.${showing(Math.min(12, data.defectDetails.length), data.counts.defectTypes)}`} icon={<AlertTriangle className="h-4 w-4" />} className="xl:col-span-3">
               <Table
                 rows={data.defectDetails}
@@ -1345,23 +1429,21 @@ export function DashboardPage() {
                 ]}
               />
             </Section>
-          </div>
-
-          {/* Trend + dispositions */}
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              ) },
+              { id: 'd.dailyTrend', title: 'Daily trend', node: (
             <Section title="Daily trend" hint="Each day: pieces inspected beside pieces found defective, on one scale." icon={<Activity className="h-4 w-4" />} className="xl:col-span-2">
               <PairedBarChart points={dailyPoints} totalLabel="Pieces inspected" partLabel="Defect pieces" />
             </Section>
+              ) },
+              { id: 'd.dispositions', title: 'Dispositions', node: (
             <Section title="Dispositions" hint="Defect pieces by what was decided." icon={<ClipboardList className="h-4 w-4" />}>
               <DonutChart
                 centerLabel="defect pieces"
                 slices={(Object.keys(DISPOSITION_CLASS) as Disposition[]).map((d) => ({ label: d, value: cur.byDisposition[d] ?? 0, className: DISPOSITION_CLASS[d] }))}
               />
             </Section>
-          </div>
-
-          {/* Pareto + machines */}
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              ) },
+              { id: 'd.pareto', title: 'Pareto of defects', node: (
             <Section
               title="Pareto of defects"
               hint={
@@ -1403,6 +1485,8 @@ export function DashboardPage() {
                 }
               />
             </Section>
+              ) },
+              { id: 'd.rateByMachine', title: 'Defect rate by machine', node: (
             <Section title="Defect rate by machine" hint={`Defect pieces per 100 produced on the machine (sessions closed in the period). Tap a machine to filter the page to it.${showing(Math.min(12, data.byMachine.length), data.counts.machines)}`} icon={<Activity className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
@@ -1416,10 +1500,8 @@ export function DashboardPage() {
                 }))}
               />
             </Section>
-          </div>
-
-          {/* Who and what: one bar per row, coloured against the target. */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              ) },
+              { id: 'd.byShift', title: 'Defects of inspected by shift', node: (
             <Section title="Defects of inspected by shift" hint="Same machines, different hours. A session's production cannot be split by shift, so this is defect pieces per 100 inspected." icon={<Users className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
@@ -1432,6 +1514,8 @@ export function DashboardPage() {
                 }))}
               />
             </Section>
+              ) },
+              { id: 'd.byInspector', title: 'Defects of inspected by inspector', node: (
             <Section title="Defects of inspected by inspector" hint={`Defect pieces per 100 inspected by each person: production belongs to the session, not the inspector. Tap a name to filter the page to them.${showing(Math.min(10, data.byInspector.length), data.counts.inspectors)}`} icon={<Users className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
@@ -1444,6 +1528,8 @@ export function DashboardPage() {
                 }))}
               />
             </Section>
+              ) },
+              { id: 'd.rateByItem', title: 'Defect rate by item', node: (
             <Section title="Defect rate by item" hint={`Defect pieces per 100 produced of the item (sessions closed in the period). Tap an item to filter the page to it.${showing(Math.min(10, data.byItem.length), data.counts.items)}`} icon={<ClipboardList className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
@@ -1457,11 +1543,8 @@ export function DashboardPage() {
                 }))}
               />
             </Section>
-          </div>
-
-          </div>
-          {/* The fixed right side: top down, the machines then the items, by defect pieces. */}
-          <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
+              ) },
+              { id: 'd.topMachines', title: 'Defects by machine', node: (
             <TopDown
               title="Defects by machine"
               hint="Defect pieces of the sessions closed in the period, largest first."
@@ -1471,6 +1554,8 @@ export function DashboardPage() {
                 .map((m) => ({ key: m.key, label: m.label, sub: m.sub, pieces: m.productionDefectPieces ?? m.defectPieces, rate: m.defectRatePct, onClick: () => patch({ workCenterCode: m.key }) }))}
               t={t}
             />
+              ) },
+              { id: 'd.topItems', title: 'Defects by item (top down)', node: (
             <TopDown
               title="Defects by item"
               hint="Defect pieces per item, largest first, with the item's defect rate over its production."
@@ -1480,13 +1565,8 @@ export function DashboardPage() {
                 .map((r) => ({ key: r.key, label: r.label, sub: r.key, pieces: r.productionDefectPieces ?? r.defectPieces, rate: r.defectRatePct, onClick: () => patch({ itemCode: r.key }) }))}
               t={t}
             />
-          </aside>
-          </div>
-
-          {/* Everything that was on the Overview page, full width, unchanged. */}
-          <div className={cn('space-y-5', !(view === 'general' && pick === 'details') && '[@media_screen]:hidden')}>
-          {/* The shape of the period, and the paint line's readings per item. */}
-          <div className="print-break grid grid-cols-1 gap-4 xl:grid-cols-3">
+              ) },
+              { id: 'd.rateBands', title: 'Samples by defect rate', node: (
             <Section title="Samples by defect rate" hint="How many samples had no defect, a few, or many. An average hides this shape." icon={<AlertTriangle className="h-4 w-4" />}>
               <ColumnChart
                 columns={data.defectRateBands.map((b, i) => ({
@@ -1497,6 +1577,8 @@ export function DashboardPage() {
                 }))}
               />
             </Section>
+              ) },
+              { id: 'd.paintByItem', title: 'Paint thickness by item', node: (
             <Section
               title="Paint thickness by item"
               hint={`Readings as recorded on paint samples, in µm.${showing(Math.min(10, data.paintByItem.length), data.counts.paintItems)}`}
@@ -1518,9 +1600,8 @@ export function DashboardPage() {
                 ]}
               />
             </Section>
-          </div>
-
-          {/* What each item is known to suffer, and where. */}
+              ) },
+              { id: 'd.itemDefects', title: 'Defects by item', node: (
           <Section title="Defects by item" hint="For the items with the most defect pieces: each defect, the machine it came from, and its share of that item's defect pieces." icon={<ClipboardList className="h-4 w-4" />}>
             <Table
               rows={data.itemDefects}
@@ -1537,9 +1618,8 @@ export function DashboardPage() {
               ]}
             />
           </Section>
-
-          {/* Materials, and what is waiting */}
-          <div className="print-break grid grid-cols-1 gap-4 lg:grid-cols-2">
+              ) },
+              { id: 'd.suppliers', title: 'Defects of inspected by coil supplier', node: (
             <Section title="Defects of inspected by coil supplier" hint={`Roll forming only — the coil is consumed there. Defect pieces per 100 inspected from each supplier and grade.${showing(Math.min(10, data.suppliers.length), data.counts.suppliers)}`} icon={<ClipboardList className="h-4 w-4" />}>
               <HorizontalBars
                 unit="%"
@@ -1552,6 +1632,8 @@ export function DashboardPage() {
                 }))}
               />
             </Section>
+              ) },
+              { id: 'd.holdAgeing', title: 'Hold ageing', node: (
             <Section
               title="Hold ageing"
               hint={`Days a defect has waited for a disposition; amber from ${t.holdAgeAmberDays}, red from ${t.holdAgeRedDays}. Tap to open the session.${showing(
@@ -1584,26 +1666,28 @@ export function DashboardPage() {
                   }))}
               />
             </Section>
-          </div>
-
-          {/* Group tables */}
-          <div className="print-break grid grid-cols-1 gap-4 xl:grid-cols-2">
+              ) },
+              { id: 'd.tableMachine', title: 'By machine (table)', node: (
             <Section title="By machine" icon={<Activity className="h-4 w-4" />}>
               <Table rows={data.byMachine} total={data.counts.machines} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Machine', render: (r) => (<span className="font-semibold">{r.label}{r.sub && <span className="ml-1 text-xs font-normal text-slate-400">{r.sub}</span>}</span>) })} />
             </Section>
+              ) },
+              { id: 'd.tableInspector', title: 'By inspector (table)', node: (
             <Section title="By inspector" icon={<Users className="h-4 w-4" />}>
               <Table rows={data.byInspector} total={data.counts.inspectors} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Inspector', render: (r) => <span className="font-semibold">{r.label}</span> })} />
             </Section>
+              ) },
+              { id: 'd.tableShift', title: 'By shift (table)', node: (
             <Section title="By shift" icon={<Users className="h-4 w-4" />}>
               <Table rows={data.byShift} rowKey={(r) => r.key} columns={groupColumns(t, { key: 'k', label: 'Shift', render: (r) => (<span className="font-semibold">{r.label} <span className="text-xs font-normal text-slate-400">{shiftName(r.key as ShiftLetter)}</span></span>) })} />
             </Section>
+              ) },
+              { id: 'd.tableItem', title: 'By item (table)', node: (
             <Section title="By item" icon={<ClipboardList className="h-4 w-4" />}>
               <Table rows={data.byItem} total={data.counts.items} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Item', render: (r) => (<span className="font-semibold">{r.label}<span className="ml-1 text-xs font-normal text-slate-400">{r.key}</span></span>) })} />
             </Section>
-          </div>
-
-          {/* Materials + Holds */}
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              ) },
+              { id: 'd.coilSuppliers', title: 'Coil suppliers', node: (
             <Section title="Coil suppliers" hint="Roll forming only. Defect pieces per 100 inspected from each supplier and grade." icon={<ClipboardList className="h-4 w-4" />}>
               <Table
                 rows={data.suppliers}
@@ -1621,6 +1705,8 @@ export function DashboardPage() {
                 ]}
               />
             </Section>
+              ) },
+              { id: 'd.onHold', title: 'On Hold', node: (
             <Section
               title="On Hold"
               hint={`Defects waiting for a disposition; amber from ${t.holdAgeAmberDays} days, red from ${t.holdAgeRedDays}.${
@@ -1652,9 +1738,8 @@ export function DashboardPage() {
                 ]}
               />
             </Section>
-          </div>
-
-          {/* Discipline */}
+              ) },
+              { id: 'd.discipline', title: 'Recording discipline', node: (
           <Section title="Recording discipline" hint="How the records themselves are kept. Not a KPI of the product; a KPI of the inspection." icon={<CheckCircle2 className="h-4 w-4" />}>
             <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
               {[
@@ -1675,6 +1760,9 @@ export function DashboardPage() {
               ))}
             </dl>
           </Section>
+              ) },
+            ]}
+          />
           </div>
 
           {/* §16 — who inspected, and how well. Its own tab, and its own page
@@ -1700,5 +1788,6 @@ export function DashboardPage() {
         </div>
       )}
     </div>
+    </BoardContext.Provider>
   )
 }

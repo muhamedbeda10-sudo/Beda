@@ -41,7 +41,7 @@ import type {
   ChatUnreadResponse,
 } from '@qc/shared/api'
 import type { KpiBreakdown, KpiBreakdownFilters, KpiFilters, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
-import type { HiddenInsightsResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
+import type { DashboardLayoutResponse, HiddenInsightsResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
@@ -78,6 +78,7 @@ export const keys = {
   kpiGeneral: (range: KpiRange) => ['kpi', 'general', range] as const,
   kpiBreakdown: (filters: KpiBreakdownFilters) => ['kpi', 'breakdown', filters] as const,
   hiddenInsights: ['kpi', 'insights', 'hidden'] as const,
+  dashboardLayout: ['kpi', 'layout'] as const,
   noticeInbox: ['notices', 'inbox'] as const,
   noticesAdmin: ['notices', 'admin'] as const,
   noticeAcks: (id: string) => ['notices', id, 'acknowledgements'] as const,
@@ -367,6 +368,11 @@ export function useKpiGeneral(range: KpiRange, enabled = true) {
 
 export function useKpiSpan(enabled = true) {
   return useQuery({ queryKey: keys.kpiSpan, queryFn: () => api<KpiSpanResponse>('/kpi/span'), enabled, staleTime: 60 * 60_000 })
+}
+
+/** §15 — where each chart sits on the dashboard, the same for everyone. */
+export function useDashboardLayout(enabled = true) {
+  return useQuery({ queryKey: keys.dashboardLayout, queryFn: () => api<DashboardLayoutResponse>('/kpi/layout'), enabled, staleTime: 5 * 60_000 })
 }
 
 /** §15 — the insight keys this person has hidden, on every device. */

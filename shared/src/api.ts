@@ -8,7 +8,7 @@
 // a sample together with its children, and so on).
 // ============================================================================
 
-import type { KpiThresholds } from './kpi'
+import type { DashboardLayouts, KpiThresholds } from './kpi'
 import type {
   ChatConversation,
   ChatMessage,
@@ -693,6 +693,19 @@ export interface KpiThresholdsResponse {
   thresholds: KpiThresholds
   updatedAt?: string
   updatedByName?: string
+}
+
+/** §15 — where each chart sits on the dashboard, one layout per page, the same for everyone. */
+export interface DashboardLayoutResponse {
+  layouts: DashboardLayouts
+  /** True while no administrator has saved a layout: the defaults are showing. */
+  isDefault: boolean
+  updatedAt?: string
+  updatedByName?: string
+}
+
+export interface SaveDashboardLayoutRequest {
+  layouts: DashboardLayouts
 }
 
 // ---- §16 Notices -----------------------------------------------------------
