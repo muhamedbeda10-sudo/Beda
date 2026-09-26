@@ -444,6 +444,7 @@ export interface KpiBreakdownDefect {
 /** The rejected pieces of one month laid on one order line or one item. */
 export interface KpiBreakdownRow {
   month: string
+  /** The order line's id, or the item code: unique within the month. */
   key: string
   label: string
   sub?: string

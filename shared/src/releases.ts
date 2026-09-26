@@ -28,6 +28,14 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-26.4',
+    date: '2026-09-26',
+    title: 'By order line: one row per line',
+    items: [
+      { text: 'An order number can carry several item lines. By order line now shows each line on its own row, with its item, its rejected pieces and its Of made against what that line itself made; before, the lines of one order were summed under one item.' },
+    ],
+  },
+  {
     id: '2026-09-26.3',
     date: '2026-09-26',
     title: 'Dashboard: arrange the charts',
