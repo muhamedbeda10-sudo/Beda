@@ -28,6 +28,14 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-26.2',
+    date: '2026-09-26',
+    title: 'Reset all, on every filter bar',
+    items: [
+      { text: 'Dashboard, History and Access each get a Reset all button that puts every filter back to how the tab opens the first time. On the Dashboard it also clears the factories, processes and machines picked on General.' },
+    ],
+  },
+  {
     id: '2026-09-26.1',
     date: '2026-09-26',
     title: 'Dashboard: numbers on the charts, a line per factory, cumulative first pass yield',

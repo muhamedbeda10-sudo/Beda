@@ -23,6 +23,7 @@ import {
   SprayCan,
   X,
   Camera,
+  RotateCcw,
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Stat } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
@@ -287,6 +288,19 @@ export function HistoryPage() {
   /** Any part of a code or a name; a pick from the list ("code — name") sends the code. */
   const [itemFilter, setItemFilter] = usePersistedState('qc-history:item', '')
   const settledItem = useDebounced((itemFilter.includes(' — ') ? itemFilter.split(' — ')[0] : itemFilter).trim(), 300)
+  /** Every filter back to how the tab opens the first time. */
+  const filtersSet = term !== '' || status !== 'All' || workCenter !== 'all' || range !== 'all' || inspectorFilter !== 'all' || factoryFilter !== 'all' || itemFilter !== ''
+  const resetFilters = () => {
+    setTerm('')
+    setStatus('All')
+    setWorkCenter('all')
+    setRange('all')
+    setFromDay(todayISO())
+    setToDay(todayISO())
+    setInspectorFilter('all')
+    setFactoryFilter('all')
+    setItemFilter('')
+  }
 
   const [openSessionId, setOpenSessionId] = useState<string | null>(null)
   const grid = useResizableColumns('qc-history:grid', HISTORY_COLUMNS)
@@ -624,7 +638,12 @@ export function HistoryPage() {
             </>
           )}
         </div>
-        {isFetching && !loading && <p className="text-xs text-slate-400">Searching the whole record…</p>}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {isFetching && !loading ? <p className="text-xs text-slate-400">Searching the whole record…</p> : <span />}
+          <Button className="min-h-[40px]" onClick={resetFilters} disabled={!filtersSet} aria-label="Reset all filters">
+            <RotateCcw className="h-4 w-4" /> Reset all
+          </Button>
+        </div>
       </Card>
 
       {loading ? (
