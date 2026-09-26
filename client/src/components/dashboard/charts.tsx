@@ -50,7 +50,8 @@ export interface TrendPoint {
 }
 
 /** Bars for volume with a line for a rate over the same days. */
-export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height = 220 }: { points: TrendPoint[]; barLabel: string; lineLabel: string; lineUnit?: string; height?: number }) {
+/** Bars for volume with a line for a rate over the same days; more lines on the rate axis when `lines` is given. Values are written on the marks while they fit. */
+export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height = 220, lines = [] }: { points: TrendPoint[]; barLabel: string; lineLabel: string; lineUnit?: string; height?: number; lines?: LineSeries[] }) {
   const [hover, setHover] = useState<number | null>(null)
   const id = useId()
   const W = 720
@@ -63,7 +64,8 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
   const n = points.length
   if (n === 0) return <ChartEmpty height={height} />
   const barMax = niceMax(Math.max(...points.map((p) => p.bar)))
-  const lineMax = niceMax(Math.max(...points.map((p) => p.line ?? 0)))
+  const lineMax = niceMax(Math.max(...points.map((p) => p.line ?? 0), ...lines.flatMap((l) => l.values.map((v) => v ?? 0))))
+  const labelled = n <= 16
   const slot = (x1 - x0) / n
   const bw = Math.max(2, Math.min(28, slot * 0.6))
   const xAt = (i: number) => x0 + slot * i + slot / 2
@@ -102,6 +104,11 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
           <g key={p.label} onMouseEnter={() => setHover(i)}>
             <rect x={xAt(i) - slot / 2} y={y0} width={slot} height={y1 - y0} fill="transparent" />
             <rect x={xAt(i) - bw / 2} y={yBar(p.bar)} width={bw} height={Math.max(0, y1 - yBar(p.bar))} rx={3} className={cn('fill-brand-300 transition-opacity dark:fill-brand-600', hover !== null && hover !== i && 'opacity-50')} />
+            {labelled && p.bar > 0 && (
+              <text x={xAt(i)} y={Math.max(y0 + 9, yBar(p.bar) - 4)} textAnchor="middle" fontSize="10" fontWeight={700} className="fill-slate-600 dark:fill-slate-300">
+                {fmt(p.bar)}
+              </text>
+            )}
             {i % every === 0 && (
               <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-slate-500 dark:fill-slate-400">
                 {p.label}
@@ -113,6 +120,33 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
           <polyline key={i} points={d} fill="none" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" className="stroke-rose-500" />
         ))}
         {points.map((p, i) => p.line !== null && <circle key={p.label} cx={xAt(i)} cy={yLine(p.line)} r={hover === i ? 5 : 3} className="fill-white stroke-rose-500 dark:fill-slate-900" strokeWidth={2} />)}
+        {labelled && points.map((p, i) => p.line !== null && (
+          <text key={`v-${p.label}`} x={xAt(i) + bw / 2 + 4} y={yLine(p.line) - 6} fontSize="10" fontWeight={700} className="fill-rose-600 dark:fill-rose-400">
+            {fmt(p.line)}{lineUnit}
+          </text>
+        ))}
+        {lines.map((l) => {
+          const segs: string[] = []
+          let cur: string[] = []
+          l.values.forEach((v, i) => {
+            if (v === null) {
+              if (cur.length) segs.push(cur.join(' '))
+              cur = []
+            } else cur.push(`${xAt(i)},${yLine(v)}`)
+          })
+          if (cur.length) segs.push(cur.join(' '))
+          return (
+            <g key={l.label}>
+              {segs.map((d, i) => <polyline key={i} points={d} fill="none" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" className={l.className} />)}
+              {l.values.map((v, i) => v !== null && <circle key={i} cx={xAt(i)} cy={yLine(v)} r={hover === i ? 4 : 2.5} className={cn('fill-white dark:fill-slate-900', l.className)} strokeWidth={2} />)}
+              {labelled && lines.length <= 3 && l.values.map((v, i) => v !== null && (
+                <text key={`t-${i}`} x={xAt(i) + bw / 2 + 4} y={yLine(v) + 10} fontSize="9" fontWeight={600} className="fill-slate-500 dark:fill-slate-400">
+                  {fmt(v)}{lineUnit}
+                </text>
+              ))}
+            </g>
+          )
+        })}
         {h && (
           <line x1={xAt(hover!)} x2={xAt(hover!)} y1={y0} y2={y1} className="stroke-slate-400" strokeDasharray="3 3" />
         )}
@@ -124,6 +158,13 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
         <span className="inline-flex items-center gap-1.5">
           <i className="inline-block h-0.5 w-4 rounded bg-rose-500" /> {lineLabel}
         </span>
+        {lines.map((l) => (
+          <span key={l.label} className="inline-flex items-center gap-1.5">
+            <svg width="16" height="6" aria-hidden><line x1="0" y1="3" x2="16" y2="3" strokeWidth={3} className={l.className} /></svg>
+            {l.label}
+            {h && <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{l.values[hover!] === null ? '—' : `${fmt(l.values[hover!]!)}${lineUnit}`}</span>}
+          </span>
+        ))}
         {h && (
           <span className="ml-auto font-semibold tabular-nums text-slate-700 dark:text-slate-200">
             {h.label}: {fmt(h.bar)} · {h.line === null ? '—' : `${fmt(h.line)}${lineUnit}`}
@@ -538,6 +579,13 @@ export function LineChart({ labels, series, unit = '%', height = 220 }: { labels
         )}
         {series.map((s) =>
           s.values.map((v, i) => v !== null && <circle key={`${s.label}-${i}`} cx={xAt(i)} cy={yAt(v)} r={hover === i ? 5 : 3} className={cn('fill-white dark:fill-slate-900', s.className)} strokeWidth={2} />),
+        )}
+        {n <= 8 && series.length <= 6 && series.map((s) =>
+          s.values.map((v, i) => v !== null && (
+            <text key={`${s.label}-t-${i}`} x={xAt(i)} y={yAt(v) - 7} textAnchor="middle" fontSize="9" fontWeight={700} className="fill-slate-600 dark:fill-slate-300">
+              {fmt(v)}{unit}
+            </text>
+          )),
         )}
         {hover !== null && <line x1={xAt(hover)} x2={xAt(hover)} y1={y0} y2={y1} className="stroke-slate-400" strokeDasharray="3 3" />}
       </svg>

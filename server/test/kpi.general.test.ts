@@ -117,6 +117,7 @@ describe('§15 — process groups and the month view', () => {
     expect(g.months[g.months.length - 1].month).toBe(g.to.slice(0, 7))
     expect(g.from.slice(8)).toBe('01')
     expect(g.window.from).toBe(g.from)
+    expect(g.window.to).toBe(g.to)
     expect(g.totals.piecesProduced).toBe(600)
     expect(g.totals.productionDefectPieces).toBe(6)
     expect(g.totals.releasedPieces).toBe(594)
@@ -142,7 +143,10 @@ describe('§15 — process groups and the month view', () => {
     expect(short.factories[0].months.length).toBe(GENERAL_MONTHS)
     const empty = (await app.api<KpiGeneral>('GET', `/api/kpi/general?from=${today(-40)}&to=${today(-30)}`, { token: admin.token })).body
     expect(empty.totals.piecesProduced).toBe(0)
-    expect(empty.factories).toEqual([])
+    // Nothing in the period, but the factories and machines of the trend window are still listed, their months intact.
+    expect(empty.factories.map((f) => [f.factory, f.piecesProduced, f.defectRatePct])).toEqual([['Factory 1', 0, null], ['Factory 2', 0, null]])
+    expect(empty.machines.map((m) => m.workCenterCode).sort()).toEqual(['31', '77'])
+    expect(empty.window.to).toBe(g.window.to)
     expect((await app.api('GET', `/api/kpi/general?from=${today(1)}&to=${today(-1)}`, { token: admin.token })).status).toBe(400)
   })
 
@@ -183,22 +187,33 @@ describe('§15 — process groups and the month view', () => {
     expect(b.defects.map((d) => d.defectName)).toEqual(['Scratch'])
     expect(b.defects[0].sharePct).toBe(100)
     expect(b.defects[0].months.find((m) => m.month === month.month)!.pctOfMade).toBeCloseTo(1.64, 2)
-    // Laid on the orders: 3 of 305 for the second, 2 of 305 for the first.
-    expect(b.byOrder.map((r) => [r.key, r.pieces, r.pctOfMade, r.shareOfMonthPct])).toEqual([
-      ['30002-B', 3, 0.98, 60],
-      ['30001-A', 2, 0.66, 40],
+    // Laid on the orders, each against what it made itself: 3 of 203 for the second, 2 of 102 for the first.
+    expect(b.byOrder.map((r) => [r.key, r.pieces, r.made, r.pctOfMade, r.shareOfMonthPct, r.shareOfPeriodPct])).toEqual([
+      ['30002-B', 3, 203, 1.478, 60, 60],
+      ['30001-A', 2, 102, 1.961, 40, 40],
     ])
-    expect(b.byItem).toEqual([expect.objectContaining({ key: 'UP8060', pieces: 5, pctOfMade: 1.64, shareOfMonthPct: 100 })])
+    expect(b.byItem).toEqual([expect.objectContaining({ key: 'UP8060', pieces: 5, made: 305, pctOfMade: 1.639, shareOfMonthPct: 100, shareOfPeriodPct: 100 })])
     // Both forming sessions had nothing rejected before release.
     expect(b.firstPart).toMatchObject({ sessions: 2, clean: 2, pct: 100, failed: [] })
+    // The scope split for the trend lines: one factory here, one process.
+    expect(b.series.factories.map((x) => x.key)).toEqual(['Factory 1'])
+    expect(b.series.processes.map((x) => x.key)).toEqual(['forming'])
+    expect(b.series.factories[0].months.find((m) => m.made > 0)).toMatchObject({ made: 305, productionDefectPieces: 5 })
 
     const all = (await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}`, { token: admin.token })).body
     expect(all.firstPart).toMatchObject({ sessions: 3, clean: 2 })
     expect(all.firstPart.pct).toBeCloseTo(66.67, 2)
     expect(all.firstPart.rejectedPieces).toBe(7)
+    // 7 rejected before release over 2 clean sessions + 7: the floor's cumulative first pass yield.
+    expect(all.firstPart.cumulativePct).toBeCloseTo(77.78, 2)
+    expect(b.firstPart.cumulativePct).toBe(0)
     expect(all.firstPart.byMachine[0]).toMatchObject({ workCenterCode: '77', sessions: 1, clean: 0, pct: 0, rejectedPieces: 7 })
     expect(all.firstPart.failed).toEqual([expect.objectContaining({ workCenterCode: '77', orderNumber: '30003-C', rejectedBeforeRelease: 7 })])
-    expect(all.firstPart.months.find((m) => m.sessions > 0)).toMatchObject({ sessions: 3, clean: 2 })
+    expect(all.firstPart.months.find((m) => m.sessions > 0)).toMatchObject({ sessions: 3, clean: 2, rejectedPieces: 7 })
+    expect(all.firstPart.months.find((m) => m.sessions > 0)!.cumulativePct).toBeCloseTo(77.78, 2)
+    expect(all.firstPart.byMachineMonth[0]).toMatchObject({ workCenterCode: '77', rejectedPieces: 7 })
+    expect(all.firstPart.byMachineMonth[0].months.find((m) => m.sessions > 0)).toMatchObject({ sessions: 1, clean: 0, rejectedPieces: 7, cumulativePct: 100 })
+    expect(all.firstPart.byMachineMonth[1].months.find((m) => m.sessions > 0)).toMatchObject({ sessions: 2, clean: 2, rejectedPieces: 0, cumulativePct: 0 })
     // A process scope and a machine scope work the same way.
     const mast = (await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}&process=mast`, { token: admin.token })).body
     expect(mast.defects.map((d) => d.defectName)).toEqual(['Dent'])

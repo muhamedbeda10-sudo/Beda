@@ -12,6 +12,7 @@ import type {
   KpiBreakdownDefect,
   KpiBreakdownMonth,
   KpiBreakdownRow,
+  KpiBreakdownSeries,
   KpiDailyPoint,
   KpiDefectDetailRow,
   KpiFactoryTrend,
@@ -962,6 +963,7 @@ export async function loadMachineMonths(q: Queryable, f: PeriodFilters): Promise
  *  a defect, an order line or an item. */
 export interface BreakdownResult {
   months: KpiBreakdownMonth[]
+  series: { factories: KpiBreakdownSeries[]; processes: KpiBreakdownSeries[] }
   defects: KpiBreakdownDefect[]
   byOrder: KpiBreakdownRow[]
   byItem: KpiBreakdownRow[]
@@ -969,7 +971,7 @@ export interface BreakdownResult {
 
 export async function loadBreakdown(q: Queryable, f: PeriodFilters): Promise<BreakdownResult> {
   const p = params(f)
-  const [monthRows, defectRows, orderRows, itemRows] = await Promise.all([
+  const [monthRows, defectRows, orderRows, itemRows, factoryRows, processRows] = await Promise.all([
     q.query<{ month: string; sessions: number; produced: number; defectPieces: number }>(
       `WITH ${PRODUCED}
        SELECT to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month, count(*)::int AS sessions,
@@ -986,18 +988,32 @@ export async function loadBreakdown(q: Queryable, f: PeriodFilters): Promise<Bre
         GROUP BY 1, 2 ORDER BY 1, 3 DESC`,
       p,
     ),
-    q.query<{ month: string; orderNumber: string; item: string; itemCode: string; pieces: number }>(
+    q.query<{ month: string; orderNumber: string; item: string; itemCode: string; pieces: number; produced: number }>(
       `WITH ${PRODUCED}
        SELECT to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month, order_number AS "orderNumber", max(item) AS item, max(item_code) AS "itemCode",
-              COALESCE(sum(defect_pieces), 0)::float8 AS pieces
+              COALESCE(sum(defect_pieces), 0)::float8 AS pieces, COALESCE(sum(produced), 0)::float8 AS produced
          FROM produced GROUP BY 1, 2 HAVING COALESCE(sum(defect_pieces), 0) > 0 ORDER BY 1, 5 DESC`,
       p,
     ),
-    q.query<{ month: string; itemCode: string; item: string; pieces: number }>(
+    q.query<{ month: string; itemCode: string; item: string; pieces: number; produced: number }>(
       `WITH ${PRODUCED}
        SELECT to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month, max(item_code) AS "itemCode", max(item) AS item,
-              COALESCE(sum(defect_pieces), 0)::float8 AS pieces
+              COALESCE(sum(defect_pieces), 0)::float8 AS pieces, COALESCE(sum(produced), 0)::float8 AS produced
          FROM produced GROUP BY 1, lower(item_code) HAVING COALESCE(sum(defect_pieces), 0) > 0 ORDER BY 1, 4 DESC`,
+      p,
+    ),
+    q.query<{ key: string; month: string; produced: number; defectPieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT factory AS key, to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month,
+              COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+         FROM produced GROUP BY 1, 2 ORDER BY 1, 2`,
+      p,
+    ),
+    q.query<{ key: string; month: string; produced: number; defectPieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT process AS key, to_char(closed_at AT TIME ZONE $1, 'YYYY-MM') AS month,
+              COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+         FROM produced GROUP BY 1, 2 ORDER BY 1, 2`,
       p,
     ),
   ])
@@ -1029,20 +1045,42 @@ export async function loadBreakdown(q: Queryable, f: PeriodFilters): Promise<Bre
     }
   }).sort((a, b) => b.pieces - a.pieces || a.defectName.localeCompare(b.defectName))
 
-  const row = (month: string, key: string, label: string, sub: string | undefined, pieces: number): KpiBreakdownRow => ({
+  const pct3 = (part: number, whole: number): number | null => (whole > 0 ? Math.round((part / whole) * 100000) / 1000 : null)
+  const row = (month: string, key: string, label: string, sub: string | undefined, pieces: number, produced: number): KpiBreakdownRow => ({
     month,
     key,
     label,
     sub,
     pieces,
-    pctOfMade: (madeOf.get(month) ?? 0) > 0 ? pct(pieces, madeOf.get(month)!) : null,
+    made: produced + pieces,
+    pctOfMade: pct3(pieces, produced + pieces),
     shareOfMonthPct: (rejectedOf.get(month) ?? 0) > 0 ? pct(pieces, rejectedOf.get(month)!) : null,
+    shareOfPeriodPct: totalRejected > 0 ? pct(pieces, totalRejected) : null,
   })
+  const seriesOf = (rows: { key: string; month: string; produced: number; defectPieces: number }[], labelOf: (key: string) => string): KpiBreakdownSeries[] => {
+    const byKey = new Map<string, Map<string, { produced: number; defectPieces: number }>>()
+    for (const r of rows) {
+      const key = r.key || '(no factory)'
+      if (!byKey.has(key)) byKey.set(key, new Map())
+      byKey.get(key)!.set(r.month, r)
+    }
+    return Array.from(byKey, ([key, per]) => ({
+      key,
+      label: labelOf(key),
+      months: months.map((month) => {
+        const m = per.get(month)
+        const produced = m?.produced ?? 0
+        const defectPieces = m?.defectPieces ?? 0
+        return { month, made: produced + defectPieces, productionDefectPieces: defectPieces, defectRatePct: m ? rejectRate(defectPieces, produced) : null }
+      }),
+    })).sort((a, b) => a.label.localeCompare(b.label))
+  }
   return {
     months: monthsOut,
+    series: { factories: seriesOf(factoryRows.rows, (k) => k), processes: seriesOf(processRows.rows, (k) => k) },
     defects,
-    byOrder: orderRows.rows.map((r) => row(r.month, r.orderNumber, r.orderNumber, `${r.itemCode} · ${r.item}`, r.pieces)),
-    byItem: itemRows.rows.map((r) => row(r.month, r.itemCode, r.item, r.itemCode, r.pieces)),
+    byOrder: orderRows.rows.map((r) => row(r.month, r.orderNumber, r.orderNumber, `${r.itemCode} · ${r.item}`, r.pieces, r.produced)),
+    byItem: itemRows.rows.map((r) => row(r.month, r.itemCode, r.item, r.itemCode, r.pieces, r.produced)),
   }
 }
 
@@ -1073,7 +1111,7 @@ WITH sessions AS (
 
 export async function loadFirstPart(q: Queryable, f: PeriodFilters): Promise<KpiFirstPart> {
   const p = [f.tz, f.from, f.to, factories(f), wcs(f), f.itemCode ?? null, processes(f)]
-  const [totals, byMachine, byMonth, failed] = await Promise.all([
+  const [totals, byMachine, byMonth, byMachineMonthRows, failed] = await Promise.all([
     q.query<{ sessions: number; clean: number; pieces: number }>(`${FIRST_PART} SELECT count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean, COALESCE(sum(rejected_before), 0)::float8 AS pieces FROM sessions`, p),
     q.query<{ code: string; label: string; factory: string; sessions: number; clean: number; pieces: number }>(
       `${FIRST_PART}
@@ -1082,10 +1120,18 @@ export async function loadFirstPart(q: Queryable, f: PeriodFilters): Promise<Kpi
          FROM sessions GROUP BY lower(wc) ORDER BY pieces DESC, sessions DESC, code`,
       p,
     ),
-    q.query<{ month: string; sessions: number; clean: number }>(
+    q.query<{ month: string; sessions: number; clean: number; pieces: number }>(
       `${FIRST_PART}
-       SELECT to_char(started_at AT TIME ZONE $1, 'YYYY-MM') AS month, count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean
+       SELECT to_char(started_at AT TIME ZONE $1, 'YYYY-MM') AS month, count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean,
+              COALESCE(sum(rejected_before), 0)::float8 AS pieces
          FROM sessions GROUP BY 1 ORDER BY 1`,
+      p,
+    ),
+    q.query<{ code: string; label: string; month: string; sessions: number; clean: number; pieces: number }>(
+      `${FIRST_PART}
+       SELECT max(wc) AS code, max(machine_label) AS label, to_char(started_at AT TIME ZONE $1, 'YYYY-MM') AS month,
+              count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean, COALESCE(sum(rejected_before), 0)::float8 AS pieces
+         FROM sessions GROUP BY lower(wc), 3 ORDER BY 1, 3`,
       p,
     ),
     q.query<{ sessionId: string; startedAt: string; orderNumber: string; item: string; itemCode: string; workCenterCode: string; machineLabel: string; rejectedBeforeRelease: number; inspectorName: string }>(
@@ -1105,10 +1151,30 @@ export async function loadFirstPart(q: Queryable, f: PeriodFilters): Promise<Kpi
     clean: t.clean,
     pct: pct(t.clean, t.sessions),
     rejectedPieces: t.pieces,
+    cumulativePct: pct(t.pieces, t.clean + t.pieces),
     byMachine: byMachine.rows.map((r) => ({ workCenterCode: r.code, label: r.label, factory: r.factory, sessions: r.sessions, clean: r.clean, pct: pct(r.clean, r.sessions), rejectedPieces: r.pieces })),
+    byMachineMonth: (() => {
+      const grouped = new Map<string, { code: string; label: string; per: Map<string, { sessions: number; clean: number; pieces: number }> }>()
+      for (const r of byMachineMonthRows.rows) {
+        const key = r.code.toLowerCase()
+        if (!grouped.has(key)) grouped.set(key, { code: r.code, label: r.label, per: new Map() })
+        grouped.get(key)!.per.set(r.month, r)
+      }
+      return Array.from(grouped.values())
+        .map((g) => ({
+          workCenterCode: g.code,
+          label: g.label,
+          rejectedPieces: Array.from(g.per.values()).reduce((n, r) => n + r.pieces, 0),
+          months: months.map((month) => {
+            const r = g.per.get(month)
+            return { month, sessions: r?.sessions ?? 0, clean: r?.clean ?? 0, rejectedPieces: r?.pieces ?? 0, cumulativePct: r ? pct(r.pieces, r.clean + r.pieces) : null }
+          }),
+        }))
+        .sort((a, b) => b.rejectedPieces - a.rejectedPieces || a.label.localeCompare(b.label))
+    })(),
     months: months.map((month) => {
       const r = perMonth.get(month)
-      return { month, sessions: r?.sessions ?? 0, clean: r?.clean ?? 0, pct: r ? pct(r.clean, r.sessions) : null }
+      return { month, sessions: r?.sessions ?? 0, clean: r?.clean ?? 0, pct: r ? pct(r.clean, r.sessions) : null, rejectedPieces: r?.pieces ?? 0, cumulativePct: r ? pct(r.pieces, r.clean + r.pieces) : null }
     }),
     failed: failed.rows.map((r) => ({ ...r, startedAt: new Date(r.startedAt).toISOString() })),
   }

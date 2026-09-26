@@ -45,7 +45,7 @@ import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
-import { ColumnChart, DonutChart, HorizontalBars, PairedBarChart, ParetoChart, Sparkline, TrendChart } from '@/components/dashboard/charts'
+import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, Sparkline, TrendChart } from '@/components/dashboard/charts'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
@@ -407,7 +407,7 @@ function GeneralOverview({ data, loading, error }: { data: KpiGeneral | null; lo
   const trendSpan = `${monthLabel(data.window.from.slice(0, 7))} – ${monthLabel(data.window.to.slice(0, 7))}`
   const cards = [
     { key: '__plant', label: 'Whole plant', sub: `${num(data.totals.factories)} factories · ${num(data.totals.machines)} machines`, rate: data.totals.defectRatePct, months: data.months },
-    ...data.factories.map((f) => ({ key: f.factory, label: f.factory, sub: `${num(f.piecesProduced)} produced`, rate: f.defectRatePct, months: f.months })),
+    ...data.factories.map((f) => ({ key: f.factory, label: f.factory, sub: Array.from(new Set(data.machines.filter((m) => m.factory === f.factory).map((m) => PROCESS_LABEL[m.process]))).join(' · ') || 'no process', rate: f.defectRatePct, months: f.months })),
   ]
   return (
     <div className="space-y-4">
@@ -483,6 +483,15 @@ function ScopeView({ kind, general, factories, t }: { kind: 'factory' | 'process
     workCenterCodes: picked.length ? picked : undefined,
   })
   const maxRate = Math.max(...machines.map((m) => m.defectRatePct ?? 0), 0.0001)
+  // One line per member of the pick on the trend: the factories or the processes chosen, or all of them.
+  const memberSeries = (breakdown ? (kind === 'factory' ? breakdown.series.factories : breakdown.series.processes) : []).filter((x) => inScope(x.key))
+  const memberLines = memberSeries.slice(0, LINE_CLASSES.length).map((x, i) => ({ label: kind === 'process' ? (PROCESS_LABEL[x.key as Process] ?? x.key) : x.label, values: x.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
+  // The month charts under the pick run over the trend window to today; the period strip does not narrow them.
+  const windowLabels = general.months.map((m) => monthLabel(m.month, false))
+  const factoryLines = general.factories.slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.factory, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
+  const machinesForLines = (picked.length ? machines.filter((m) => picked.includes(m.workCenterCode)) : machines).slice(0, LINE_CLASSES.length)
+  const machineLines = machinesForLines.map((m, i) => ({ label: m.label, values: m.months.map((x) => x.defectRatePct), className: LINE_CLASSES[i] }))
+  const windowSpan = `${monthLabel(general.window.from.slice(0, 7))} – ${monthLabel(general.window.to.slice(0, 7))}`
   const detailTitle = picked.length ? `${picked.length === 1 ? 'Machine' : `${picked.length} machines`}: ${machines.filter((m) => picked.includes(m.workCenterCode)).map((m) => m.label).join(', ')}` : scopeLabel
   return (
     <div className="space-y-4">
@@ -515,10 +524,10 @@ function ScopeView({ kind, general, factories, t }: { kind: 'factory' | 'process
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
-        <Section title={`${scopeLabel}: trend`} hint={`Pieces made each month of ${describeRange({ from: general.from, to: general.to })} (produced + rejected) with the reject rate over them.`} icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
+        <Section title={`${scopeLabel}: trend`} hint={`Pieces made each month of ${describeRange({ from: general.from, to: general.to })} (produced + rejected) with the reject rate over them, and a line for each ${kind} in the pick.`} icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
           {breakdown ? (
             breakdown.months.some((m) => m.made > 0) ? (
-              <TrendChart points={breakdown.months.map((m) => ({ label: monthLabel(m.month, false), bar: m.made, line: m.defectRatePct }))} barLabel="Pieces made" lineLabel="Reject rate" />
+              <TrendChart points={breakdown.months.map((m) => ({ label: monthLabel(m.month, false), bar: m.made, line: m.defectRatePct }))} barLabel="Pieces made" lineLabel={`Reject rate · ${scopeLabel}`} lines={memberLines.length > 1 || (memberLines.length === 1 && chosen.length === 0) ? memberLines : []} />
             ) : (
               <p className="py-10 text-center text-sm text-slate-400">No session closed with a final quantity in this period.</p>
             )
@@ -530,7 +539,7 @@ function ScopeView({ kind, general, factories, t }: { kind: 'factory' | 'process
           {machines.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-400">No production closed in this period.</p>
           ) : (
-            <ul className="space-y-1.5">
+            <ul className="max-h-[26rem] space-y-1.5 overflow-y-auto pr-1">
               {machines.map((m) => {
                 const on = picked.includes(m.workCenterCode)
                 const tone = toneLowIsGood(m.defectRatePct, t.defectRateGreen, t.defectRateAmber)
@@ -555,6 +564,15 @@ function ScopeView({ kind, general, factories, t }: { kind: 'factory' | 'process
         </Section>
       </div>
 
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Section title="Factories by month" hint={`Reject rate of every factory, ${windowSpan}. The period strip does not narrow this chart.`} icon={<Factory className="h-4 w-4" />}>
+          <LineChart labels={windowLabels} series={factoryLines} />
+        </Section>
+        <Section title="Machines by month" hint={`${picked.length ? 'The ticked machines' : `The ${machinesForLines.length} worst machines of ${scopeLabel}`}, ${windowSpan}. The period strip does not narrow this chart; tick machines to choose the lines.`} icon={<Layers className="h-4 w-4" />}>
+          <LineChart labels={windowLabels} series={machineLines} />
+        </Section>
+      </div>
+
       {breakdown && <ScopeDetails title={detailTitle} data={breakdown} t={t} dim={isFetching} />}
     </div>
   )
@@ -569,6 +587,8 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
   const monthsWithData = data.months.filter((m) => m.made > 0)
   const fp = data.firstPart
   const fpTone: KpiTone = fp.pct === null ? 'neutral' : fp.pct >= 95 ? 'green' : fp.pct >= 85 ? 'amber' : 'red'
+  /** The cumulative yield reads the other way: lower is better, zero is clean. */
+  const cumTone = (v: number | null): KpiTone => (v === null ? 'neutral' : v === 0 ? 'green' : v <= 15 ? 'amber' : 'red')
   const group = (rows: KpiBreakdown['byOrder']) => monthsWithData.map((m) => ({ month: m, rows: rows.filter((r) => r.month === m.month) })).filter((g) => g.rows.length > 0)
   const breakdownTable = (rows: KpiBreakdown['byOrder'], what: string) => (
     <div className="overflow-x-auto">
@@ -578,7 +598,7 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
             <th className="px-2 py-1.5 font-semibold">{what}</th>
             <th className="px-2 py-1.5 text-right font-semibold">Rejected</th>
             <th className="px-2 py-1.5 text-right font-semibold">Of made</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Of month</th>
+            <th className="px-2 py-1.5 text-right font-semibold">Of period</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -593,8 +613,8 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
                 <tr key={`${r.month}|${r.key}`}>
                   <td className="px-2 py-1.5"><span className="font-semibold">{r.label}</span>{r.sub && <span className="ml-1 text-xs text-slate-400">{r.sub}</span>}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{num(r.pieces)}</td>
-                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{pctStr(r.pctOfMade)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{pctStr(r.shareOfMonthPct, 0)}</td>
+                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums" title={`${num(r.pieces)} rejected of ${num(r.made)} made by this ${what.toLowerCase()} in the month`}>{pctStr(r.pctOfMade, 3)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{pctStr(r.shareOfPeriodPct, 0)}</td>
                 </tr>
               ))}
             </Fragment>
@@ -616,14 +636,14 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
         <PlainTile label="Reject rate" value={pctStr(rate)} sub={`${num(rejected)} rejected of ${num(made)} made`} icon={<Target className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} />
         <PlainTile label="PPM" value={ppmStr(rate)} sub="rejected pieces per million made" icon={<AlertTriangle className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} />
         <PlainTile label="First part released" value={pctStr(fp.pct, 0)} sub={`${num(fp.clean)} of ${num(fp.sessions)} sessions with nothing rejected before release`} icon={<PackageCheck className="h-4 w-4" />} tone={fpTone} />
-        <PlainTile label="Sessions" value={num(data.months.reduce((n, m) => n + m.sessions, 0))} sub="closed with a final quantity" icon={<Users className="h-4 w-4" />} />
+        <PlainTile label="First pass yield cumulative" value={pctStr(fp.cumulativePct, 0)} sub={`${num(fp.rejectedPieces)} rejected before release ÷ (${num(fp.clean)} clean sessions + ${num(fp.rejectedPieces)}) · lower is better`} icon={<PackageCheck className="h-4 w-4" />} tone={cumTone(fp.cumulativePct)} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
         <Section title="Pareto of defects" hint="Rejected pieces by defect, largest first, with the running share: the few defects that make most of the pieces." icon={<AlertTriangle className="h-4 w-4" />} className="xl:col-span-2">
           <ParetoChart bars={paretoOf(data.defects.map((d) => ({ label: d.defectName, value: d.pieces })))} />
         </Section>
-        <Section title="Defects by month" hint="Each defect's rejected pieces in each month, and what they are of that month's made pieces." icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
+        <Section title="Defects by month" hint="Each defect's rejected pieces in each month, and its share of that month's rejected pieces against the other defects." icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
           {data.defects.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-400">No rejected piece in these months.</p>
           ) : (
@@ -645,7 +665,10 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
                   {data.defects.slice(0, 15).map((d) => (
                     <tr key={d.defectName}>
                       <td className="px-2 py-1.5" dir="auto">{d.defectName}</td>
-                      {d.months.map((m) => <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-slate-400">{pctStr(m.pctOfMade)}</span></> : <span className="text-slate-300">—</span>}</td>)}
+                      {d.months.map((m) => {
+                        const monthRejected = data.months.find((x) => x.month === m.month)?.productionDefectPieces ?? 0
+                        return <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-slate-400">{pctStr(monthRejected > 0 ? Math.round((m.pieces / monthRejected) * 1000) / 10 : null, 0)}</span></> : <span className="text-slate-300">—</span>}</td>
+                      })}
                       <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{num(d.pieces)} <span className="text-xs font-normal text-slate-400">{pctStr(d.sharePct, 0)}</span></td>
                     </tr>
                   ))}
@@ -657,7 +680,7 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Section title="By order line" hint="Each month's rejected pieces laid on the order lines closed in it: the 3% of a 15% month that one order carried." icon={<ClipboardList className="h-4 w-4" />}>
+        <Section title="By order line" hint="Each month's rejected pieces laid on the order lines closed in it. Of made is against what that order line itself made (its produced + rejected); Of period is the share of every rejected piece in the period." icon={<ClipboardList className="h-4 w-4" />}>
           {breakdownTable(data.byOrder, 'Order')}
         </Section>
         <Section title="By item" hint="The same rejected pieces laid on the items." icon={<Layers className="h-4 w-4" />}>
@@ -670,8 +693,8 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
           <div className="space-y-3 xl:col-span-2">
             <div className="grid grid-cols-3 gap-2">
               {[
-                { k: 'Clean', v: pctStr(fp.pct, 0), s: `${num(fp.clean)} of ${num(fp.sessions)} sessions`, tone: fpTone },
-                { k: 'Not clean', v: num(fp.sessions - fp.clean), s: 'sessions', tone: fp.sessions - fp.clean > 0 ? ('red' as KpiTone) : ('green' as KpiTone) },
+                { k: 'First pass yield cumulative', v: pctStr(fp.cumulativePct, 1), s: `${num(fp.rejectedPieces)} ÷ (${num(fp.clean)} clean + ${num(fp.rejectedPieces)})`, tone: cumTone(fp.cumulativePct) },
+                { k: 'Not clean', v: num(fp.sessions - fp.clean), s: `of ${num(fp.sessions)} sessions`, tone: fp.sessions - fp.clean > 0 ? ('red' as KpiTone) : ('green' as KpiTone) },
                 { k: 'Rejected before release', v: num(fp.rejectedPieces), s: 'pieces', tone: 'neutral' as KpiTone },
               ].map((x) => (
                 <div key={x.k} className={cn('rounded-xl p-3 ring-1', TONE_RING[x.tone])}>
@@ -687,15 +710,15 @@ function ScopeDetails({ title, data, t, dim }: { title: string; data: KpiBreakdo
                 {fp.months.map((m) => (
                   <li key={m.month} className="rounded-lg bg-slate-50 px-2 py-1 dark:bg-slate-800/60">
                     <span className="font-semibold">{monthLabel(m.month, false)}</span>{' '}
-                    {m.sessions > 0 ? <><span className={cn('font-semibold', TONE_TEXT[m.pct !== null && m.pct >= 95 ? 'green' : m.pct !== null && m.pct >= 85 ? 'amber' : 'red'])}>{pctStr(m.pct, 0)}</span> <span className="text-slate-400">{num(m.clean)}/{num(m.sessions)}</span></> : <span className="text-slate-300">—</span>}
+                    {m.sessions > 0 ? <><span className={cn('font-semibold', TONE_TEXT[cumTone(m.cumulativePct)])}>{pctStr(m.cumulativePct, 1)}</span> <span className="text-slate-400">{num(m.rejectedPieces)} ÷ ({num(m.clean)} + {num(m.rejectedPieces)})</span></> : <span className="text-slate-300">—</span>}
                   </li>
                 ))}
               </ul>
             </div>
           </div>
           <div className="xl:col-span-3">
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Pareto: pieces rejected before release, by machine</p>
-            <ParetoChart bars={paretoOf(fp.byMachine.map((m) => ({ label: m.label, value: m.rejectedPieces })))} height={200} />
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Pieces rejected before release, by machine, month by month</p>
+            <LineChart labels={fp.months.map((m) => monthLabel(m.month, false))} series={fp.byMachineMonth.slice(0, LINE_CLASSES.length).map((m, i) => ({ label: m.label, values: m.months.map((x) => (x.sessions > 0 ? x.rejectedPieces : null)), className: LINE_CLASSES[i] }))} unit="" height={200} />
           </div>
         </div>
         {fp.failed.length > 0 && (

@@ -28,6 +28,18 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-26.1',
+    date: '2026-09-26',
+    title: 'Dashboard: numbers on the charts, a line per factory, cumulative first pass yield',
+    items: [
+      { text: 'Every chart writes its numbers on the bars and points. The trend of a pick carries a line for each factory (or process) in it, all on the same chart.' },
+      { text: 'Two month charts under the pick, Factories by month and Machines by month, run over the last four months to today whatever the period strip says; tick machines to choose the lines. The machine list scrolls.' },
+      { text: 'The factory cards name the processes in the factory. First pass yield cumulative is a card of its own: rejected before release ÷ (clean sessions + rejected pieces); the Sessions card is gone.' },
+      { text: 'Defects by month shows each defect\'s share of that month\'s rejected pieces against the other defects. By order line and By item: Of made is against what that order or item itself made, to three decimals; the last column is the share of the period.' },
+      { text: 'First part released: the block reads by the cumulative formula, month by month too, and its chart is each machine\'s pieces rejected before release month by month.' },
+    ],
+  },
+  {
     id: '2026-09-24.4',
     date: '2026-09-24',
     title: 'Dashboard: one period for everything, several factories at once',

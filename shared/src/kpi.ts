@@ -448,10 +448,14 @@ export interface KpiBreakdownRow {
   label: string
   sub?: string
   pieces: number
-  /** Of the month's made pieces: the "3% for order X" of a 15% month. */
+  /** What the order line (or item) itself made that month: its produced + its rejected. */
+  made: number
+  /** Of the row's own made pieces, to three decimals: 2 rejected of 305 made is 0.656%. */
   pctOfMade: number | null
   /** Of the month's rejected pieces. */
   shareOfMonthPct: number | null
+  /** Of every rejected piece in the period. */
+  shareOfPeriodPct: number | null
 }
 
 /**
@@ -465,11 +469,26 @@ export interface KpiFirstPart {
   pct: number | null
   /** Pieces rejected before release across the sessions that were not clean. */
   rejectedPieces: number
+  /**
+   * First pass yield, cumulative, as the floor reads it: the pieces rejected
+   * before release over the clean sessions plus those pieces. 9 clean sessions
+   * and one with 5 rejected: 5 ÷ (9 + 5) = 36%. Lower is better.
+   */
+  cumulativePct: number | null
   /** Largest first, so the list reads as a Pareto of where the first part fails. */
   byMachine: { workCenterCode: string; label: string; factory: string; sessions: number; clean: number; pct: number | null; rejectedPieces: number }[]
-  months: { month: string; sessions: number; clean: number; pct: number | null }[]
+  /** Each machine's pieces rejected before release month by month, largest machine first. */
+  byMachineMonth: { workCenterCode: string; label: string; rejectedPieces: number; months: { month: string; sessions: number; clean: number; rejectedPieces: number; cumulativePct: number | null }[] }[]
+  months: { month: string; sessions: number; clean: number; pct: number | null; rejectedPieces: number; cumulativePct: number | null }[]
   /** The sessions that were not clean, newest first, the fifty most recent. */
   failed: { sessionId: string; startedAt: string; orderNumber: string; item: string; itemCode: string; workCenterCode: string; machineLabel: string; rejectedBeforeRelease: number; inspectorName: string }[]
+}
+
+/** One member of the scope (a factory or a process) month by month, for a line of its own on the trend. */
+export interface KpiBreakdownSeries {
+  key: string
+  label: string
+  months: { month: string; made: number; productionDefectPieces: number; defectRatePct: number | null }[]
 }
 
 export interface KpiBreakdown {
@@ -477,6 +496,8 @@ export interface KpiBreakdown {
   generatedAt: string
   thresholds: KpiThresholds
   months: KpiBreakdownMonth[]
+  /** The scope split by factory and by process, each month by month, so each can be a line on the same chart. */
+  series: { factories: KpiBreakdownSeries[]; processes: KpiBreakdownSeries[] }
   defects: KpiBreakdownDefect[]
   byOrder: KpiBreakdownRow[]
   byItem: KpiBreakdownRow[]
