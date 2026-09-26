@@ -417,12 +417,13 @@ export function kpiRoutes(ctx: AppContext): Router {
     if (q) checkRange(q.from, q.to, 'Period')
     const { thresholds } = await loadThresholds(ctx.db)
     const today = factoryToday(tz)
-    // The period the cards are counted over; without one, the trend window itself.
+    // The period the cards are counted over; the trend window is always the
+    // last months to today, whatever the period, so the month lines stay put.
+    const windowFrom = `${monthsBefore(today.slice(0, 7), GENERAL_MONTHS - 1)}-01`
     const to = q?.to ?? today
-    const windowFrom = `${monthsBefore(to.slice(0, 7), GENERAL_MONTHS - 1)}-01`
     const from = q?.from ?? windowFrom
     const period: PeriodFilters = { tz, from, to }
-    const window: PeriodFilters = { tz, from: windowFrom, to }
+    const window: PeriodFilters = { tz, from: windowFrom, to: today }
     const [totals, months, factoriesInPeriod, machinesInPeriod, factoryTrends, machineTrends] = await Promise.all([
       loadTotals(ctx.db, period),
       loadMonthly(ctx.db, window),
@@ -431,16 +432,32 @@ export function kpiRoutes(ctx: AppContext): Router {
       loadFactoryMonths(ctx.db, window),
       loadMachineMonths(ctx.db, window),
     ])
-    // The figures of the period, with the months of the trend window beside them.
-    const factoryMonths = new Map(factoryTrends.map((f) => [f.factory, f.months]))
-    const machineMonths = new Map(machineTrends.map((m) => [m.workCenterCode.toLowerCase(), m.months]))
+    // The figures of the period, with the months of the trend window beside
+    // them: a factory or machine seen in either is listed, with the period's
+    // figures where it has any and the window's months where it has any.
     const emptyMonths = months.map((m) => ({ month: m.month, piecesProduced: 0, productionDefectPieces: 0, defectRatePct: null }))
-    const factories = factoriesInPeriod.map((f) => ({ ...f, months: factoryMonths.get(f.factory) ?? emptyMonths }))
-    const machines = machinesInPeriod.map((m) => ({ ...m, months: machineMonths.get(m.workCenterCode.toLowerCase()) ?? emptyMonths }))
+    const factoryMonths = new Map(factoryTrends.map((f) => [f.factory, f.months]))
+    const factoryNamesSeen = Array.from(new Set([...factoriesInPeriod.map((f) => f.factory), ...factoryTrends.map((f) => f.factory)]))
+    const factories = factoryNamesSeen
+      .map((name) => {
+        const inPeriod = factoriesInPeriod.find((f) => f.factory === name)
+        return { factory: name, piecesProduced: inPeriod?.piecesProduced ?? 0, productionDefectPieces: inPeriod?.productionDefectPieces ?? 0, defectRatePct: inPeriod?.defectRatePct ?? null, months: factoryMonths.get(name) ?? emptyMonths }
+      })
+      .sort((a, b) => b.piecesProduced - a.piecesProduced || a.factory.localeCompare(b.factory))
+    const machineMonths = new Map(machineTrends.map((m) => [m.workCenterCode.toLowerCase(), m]))
+    const machineCodesSeen = Array.from(new Set([...machinesInPeriod.map((m) => m.workCenterCode.toLowerCase()), ...machineTrends.map((m) => m.workCenterCode.toLowerCase())]))
+    const machines = machineCodesSeen
+      .map((code) => {
+        const inPeriod = machinesInPeriod.find((m) => m.workCenterCode.toLowerCase() === code)
+        const inWindow = machineMonths.get(code)
+        const base = inPeriod ?? inWindow!
+        return { ...base, piecesProduced: inPeriod?.piecesProduced ?? 0, productionDefectPieces: inPeriod?.productionDefectPieces ?? 0, defectRatePct: inPeriod?.defectRatePct ?? null, months: inWindow?.months ?? emptyMonths }
+      })
+      .sort((a, b) => (b.defectRatePct ?? -1) - (a.defectRatePct ?? -1) || b.piecesProduced - a.piecesProduced || a.label.localeCompare(b.label))
     const body: KpiGeneral = {
       from,
       to,
-      window: { from: windowFrom, to },
+      window: { from: windowFrom, to: today },
       monthsBack: GENERAL_MONTHS,
       generatedAt: new Date().toISOString(),
       thresholds,
