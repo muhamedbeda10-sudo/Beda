@@ -496,8 +496,16 @@ interface ScopePicks {
 }
 const NO_PICKS: ScopePicks = { factories: [], processes: [], machines: {} }
 
-function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'factory' | 'process'; general: KpiGeneral; factories: string[]; t: KpiThresholds; picks: ScopePicks; setPicks: (next: ScopePicks | ((prev: ScopePicks) => ScopePicks)) => void }) {
-  const navigate = useNavigate()
+interface ScopeProps {
+  kind: 'factory' | 'process'
+  general: KpiGeneral
+  factories: string[]
+  picks: ScopePicks
+  setPicks: (next: ScopePicks | ((prev: ScopePicks) => ScopePicks)) => void
+}
+
+/** What a pick means: the members chosen, the machines in them, and the machines ticked to compare. */
+function useScope({ kind, general, factories, picks, setPicks }: ScopeProps) {
   const chosenFactories = picks.factories
   const chosenProcesses = picks.processes
   const pickedByScope = picks.machines
@@ -526,6 +534,78 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
       return { ...prev, [scopeKey]: now.includes(code) ? now.filter((c) => c !== code) : [...now, code] }
     })
   const clearPick = () => setPickedByScope((prev) => ({ ...prev, [scopeKey]: [] }))
+  const maxRate = Math.max(...machines.map((m) => m.defectRatePct ?? 0), 0.0001)
+  return { options, chosen, toggleScope, allScopes, inScope, scopeLabel, machines, picked, togglePick, clearPick, maxRate }
+}
+
+/** The left side: the factories or processes to pick, several at once, and the machines in them to tick. */
+function ScopeSidebar(props: ScopeProps & { t: KpiThresholds }) {
+  const { kind, t } = props
+  const { options, chosen, toggleScope, allScopes, machines, picked, togglePick, clearPick, maxRate } = useScope(props)
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-1.5" role="group" aria-label={kind === 'factory' ? 'Factory' : 'Process'}>
+        <button
+          type="button"
+          aria-pressed={chosen.length === 0}
+          onClick={allScopes}
+          className={cn('min-h-[40px] rounded-xl px-3 text-left text-sm font-semibold ring-1 transition-colors', chosen.length === 0 ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
+        >
+          {kind === 'factory' ? 'All factories' : 'All processes'}
+        </button>
+        {options.map((o) => {
+          const on = chosen.includes(o.key)
+          return (
+            <button
+              key={o.key}
+              type="button"
+              aria-pressed={on}
+              onClick={() => toggleScope(o.key)}
+              className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3 text-left text-sm font-semibold ring-1 transition-colors', on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
+            >
+              {on && <Check className="h-3.5 w-3.5" />}
+              {o.label}
+            </button>
+          )
+        })}
+        <span className="px-1 text-xs text-slate-400">Tap several to see them together.</span>
+        {options.length === 0 && <p className="text-sm text-slate-400">No {kind === 'factory' ? 'factory' : 'process'} in the machine register yet.</p>}
+      </div>
+        <Section title="Machines" hint="Worst reject rate first. Tick machines to compare them; the board follows the ticks." icon={<Layers className="h-4 w-4" />} action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-slate-500 hover:text-rose-600">Clear {picked.length} ticked</button>}>
+          {machines.length === 0 ? (
+            <p className="py-6 text-center text-sm text-slate-400">No production closed in this period.</p>
+          ) : (
+            <ul className="space-y-1.5 pr-1">
+              {machines.map((m) => {
+                const on = picked.includes(m.workCenterCode)
+                const tone = toneLowIsGood(m.defectRatePct, t.defectRateGreen, t.defectRateAmber)
+                return (
+                  <li key={m.workCenterCode}>
+                    <button type="button" onClick={() => togglePick(m.workCenterCode)} aria-pressed={on} className={cn('flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60', on && 'bg-brand-50 ring-1 ring-brand-300 dark:bg-brand-500/10 dark:ring-brand-500/40')}>
+                      <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded border', on ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 dark:border-slate-600')}>{on && <Check className="h-3.5 w-3.5" />}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-col text-sm">
+                          <span className="truncate font-medium text-slate-700 dark:text-slate-200">{m.label}<span className="ml-1.5 text-xs font-normal text-slate-400">{kind === 'process' ? m.factory : PROCESS_LABEL[m.process]}</span></span>
+                          <span className="text-xs tabular-nums text-slate-500 dark:text-slate-400"><span className={cn('font-semibold', TONE_TEXT[tone])}>{pctStr(m.defectRatePct)}</span> · {ppmStr(m.defectRatePct)} PPM</span>
+                        </span>
+                        <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><span className={cn('block h-full rounded-full', tone === 'red' ? 'bg-rose-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-slate-300')} style={{ width: `${Math.min(100, ((m.defectRatePct ?? 0) / maxRate) * 100)}%` }} /></span>
+                      </span>
+                      <Sparkline values={m.months.map((x) => x.defectRatePct)} width={56} height={20} />
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </Section>
+    </div>
+  )
+}
+
+/** The board of a pick: its trend, the month charts, and the breakdown. */
+function ScopeBoard({ kind, general, factories, t, picks, setPicks }: ScopeProps & { t: KpiThresholds }) {
+  const navigate = useNavigate()
+  const { chosen, inScope, scopeLabel, machines, picked } = useScope({ kind, general, factories, picks, setPicks })
   const { data: breakdown, isFetching } = useKpiBreakdown({
     from: general.from,
     to: general.to,
@@ -533,7 +613,6 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
     processes: kind === 'process' && chosen.length ? (chosen as Process[]) : undefined,
     workCenterCodes: picked.length ? picked : undefined,
   })
-  const maxRate = Math.max(...machines.map((m) => m.defectRatePct ?? 0), 0.0001)
   // One line per member of the pick on the trend: the factories or the processes chosen, or all of them.
   const memberSeries = (breakdown ? (kind === 'factory' ? breakdown.series.factories : breakdown.series.processes) : []).filter((x) => inScope(x.key))
   const memberLines = memberSeries.slice(0, LINE_CLASSES.length).map((x, i) => ({ label: kind === 'process' ? (PROCESS_LABEL[x.key as Process] ?? x.key) : x.label, values: x.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
@@ -552,33 +631,6 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
   const detailTitle = picked.length ? `${picked.length === 1 ? 'Machine' : `${picked.length} machines`}: ${machines.filter((m) => picked.includes(m.workCenterCode)).map((m) => m.label).join(', ')}` : scopeLabel
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label={kind === 'factory' ? 'Factory' : 'Process'}>
-        <button
-          type="button"
-          aria-pressed={chosen.length === 0}
-          onClick={allScopes}
-          className={cn('min-h-[40px] rounded-xl px-3 text-sm font-semibold ring-1 transition-colors', chosen.length === 0 ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
-        >
-          {kind === 'factory' ? 'All factories' : 'All processes'}
-        </button>
-        {options.map((o) => {
-          const on = chosen.includes(o.key)
-          return (
-            <button
-              key={o.key}
-              type="button"
-              aria-pressed={on}
-              onClick={() => toggleScope(o.key)}
-              className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3 text-sm font-semibold ring-1 transition-colors', on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
-            >
-              {on && <Check className="h-3.5 w-3.5" />}
-              {o.label}
-            </button>
-          )
-        })}
-        <span className="text-xs text-slate-400">Tap several to see them together.</span>
-        {options.length === 0 && <p className="text-sm text-slate-400">No {kind === 'factory' ? 'factory' : 'process'} in the machine register yet.</p>}
-      </div>
 
       <Board
         page="general"
@@ -594,35 +646,6 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
             )
           ) : (
             <div className="skeleton h-48" />
-          )}
-        </Section>
-          ) },
-          { id: 'g.machines', title: 'Machines of the pick', node: (
-        <Section title={`${scopeLabel}: machines`} hint="Reject rate of each machine over the period, worst first, with its trend. Tick machines to compare them; the breakdown below follows the ticks." icon={<Layers className="h-4 w-4" />} className="xl:col-span-2" action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-slate-500 hover:text-rose-600">Clear {picked.length} ticked</button>}>
-          {machines.length === 0 ? (
-            <p className="py-6 text-center text-sm text-slate-400">No production closed in this period.</p>
-          ) : (
-            <ul className="space-y-1.5 pr-1">
-              {machines.map((m) => {
-                const on = picked.includes(m.workCenterCode)
-                const tone = toneLowIsGood(m.defectRatePct, t.defectRateGreen, t.defectRateAmber)
-                return (
-                  <li key={m.workCenterCode}>
-                    <button type="button" onClick={() => togglePick(m.workCenterCode)} aria-pressed={on} className={cn('flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60', on && 'bg-brand-50 ring-1 ring-brand-300 dark:bg-brand-500/10 dark:ring-brand-500/40')}>
-                      <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded border', on ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 dark:border-slate-600')}>{on && <Check className="h-3.5 w-3.5" />}</span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-baseline justify-between gap-2 text-sm">
-                          <span className="truncate font-medium text-slate-700 dark:text-slate-200">{m.label}<span className="ml-1.5 text-xs font-normal text-slate-400">{kind === 'process' ? m.factory : PROCESS_LABEL[m.process]}</span></span>
-                          <span className="shrink-0 text-xs tabular-nums text-slate-500 dark:text-slate-400"><span className={cn('font-semibold', TONE_TEXT[tone])}>{pctStr(m.defectRatePct)}</span> · {ppmStr(m.defectRatePct)} PPM</span>
-                        </span>
-                        <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><span className={cn('block h-full rounded-full', tone === 'red' ? 'bg-rose-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-slate-300')} style={{ width: `${Math.min(100, ((m.defectRatePct ?? 0) / maxRate) * 100)}%` }} /></span>
-                      </span>
-                      <Sparkline values={m.months.map((x) => x.defectRatePct)} width={56} height={20} />
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
           )}
         </Section>
           ) },
@@ -1213,137 +1236,145 @@ export function DashboardPage() {
         />
       </Card>
 
-      {/* §15 — the general page: the plant and its factories on three figures, then one angle to read it from. */}
+
+
+      {/* §15 — the filters and picks sit on the left and stay put; the page scrolls beside them. */}
+      <div className="xl:flex xl:items-start xl:gap-5">
+        <aside className="print-hidden mb-5 space-y-4 xl:sticky xl:top-20 xl:mb-0 xl:max-h-[calc(100vh-6rem)] xl:w-72 xl:shrink-0 xl:overflow-y-auto xl:pr-1">
+          {view === 'general' && (
+            <Card className="space-y-2 p-3">
+              <span className="block px-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Read it</span>
+              <div className="flex flex-col gap-1">
+                {(
+                  [
+                    ['factory', 'By factory', Factory],
+                    ['process', 'By process', Layers],
+                    ['details', 'Details', LayoutGrid],
+                  ] as const
+                ).map(([key, label, Icon]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setPick(key)}
+                    aria-pressed={pick === key}
+                    className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-[10px] px-3 text-left text-sm font-semibold transition-colors', pick === key ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800')}
+                  >
+                    <Icon className="h-4 w-4" /> {label}
+                  </button>
+                ))}
+              </div>
+              {pick === 'details' && <p className="px-1 text-xs text-slate-400">The full analysis: the filters below narrow it.</p>}
+              <Button className="min-h-[40px] w-full" onClick={resetAll} disabled={!anythingSet} aria-label="Reset all filters and picks">
+                <RotateCcw className="h-4 w-4" /> Reset all
+              </Button>
+            </Card>
+          )}
+          {view === 'general' && pick !== 'details' && general && <ScopeSidebar kind={pick} general={general} factories={factories} t={general.thresholds} picks={picks} setPicks={setPicks} />}
+      {/* Filters — for the details and the inspector ranking. */}
+        <Card className={cn('print-hidden space-y-3 p-4', !showDetails && 'hidden')}>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-1">
+            <Field label="Compare with">
+              <Select value={f.compare} onChange={(e) => patch({ compare: e.target.value as ComparePreset })}>
+                {COMPARE_PRESETS.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Factory">
+              <Select value={f.factory} onChange={(e) => patch({ factory: e.target.value, workCenterCode: '' })}>
+                <option value="">All factories</option>
+                {factories.map((x) => (
+                  <option key={x} value={x}>
+                    {x}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Process">
+              <Select value={f.process} onChange={(e) => patch({ process: e.target.value as DashFilters['process'], workCenterCode: '' })}>
+                <option value="">All processes</option>
+                {PROCESSES.map((p) => (
+                  <option key={p} value={p}>
+                    {PROCESS_LABEL[p]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Machine">
+              <Select value={f.workCenterCode} onChange={(e) => patch({ workCenterCode: e.target.value })}>
+                <option value="">All machines</option>
+                {machineOptions.map((m) => (
+                  <option key={m.id} value={m.code}>
+                    {m.displayName}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Item code">
+              <Input list="dash-items" value={f.itemCode} onChange={(e) => patch({ itemCode: e.target.value })} placeholder="All items" />
+              <datalist id="dash-items">{data?.byItem.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}</datalist>
+            </Field>
+            <Field label="Inspector">
+              <Select value={f.inspectorId} onChange={(e) => patch({ inspectorId: e.target.value })}>
+                <option value="">All inspectors</option>
+                {inspectorChoices.withRecord.length > 0 && (
+                  <optgroup label="Recorded in this period">
+                    {inspectorChoices.withRecord.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {inspectorChoices.without.length > 0 && (
+                  <optgroup label="Nothing recorded in this period">
+                    {inspectorChoices.without.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </Select>
+            </Field>
+            <Field label="Shift">
+              <Select value={f.shift} onChange={(e) => patch({ shift: e.target.value as DashFilters['shift'] })}>
+                <option value="">All shifts</option>
+                {(['A', 'B', 'C'] as ShiftLetter[]).map((s) => (
+                  <option key={s} value={s}>
+                    {s} · {shiftName(s)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+          {activeFilters.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {activeFilters.map((a) => (
+                <Badge key={a} tone="blue">
+                  {a}
+                </Badge>
+              ))}
+              <button type="button" onClick={() => patch({ factory: '', process: '', workCenterCode: '', itemCode: '', inspectorId: '', shift: '' })} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
+                <X className="h-3.5 w-3.5" /> Clear filters
+              </button>
+              <button type="button" onClick={resetAll} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
+                <RotateCcw className="h-3.5 w-3.5" /> Reset all
+              </button>
+            </div>
+          )}
+        </Card>
+        </aside>
+        <div className="min-w-0 flex-1 space-y-5">
+      {/* §15 — the general page: the plant and its factories on three figures, then the pick's board. */}
       {view === 'general' && (
         <>
           <GeneralOverview data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} />
-          <div className="print-hidden flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Read it</span>
-            <div className="inline-flex rounded-xl p-0.5 ring-1 ring-slate-200 dark:ring-slate-700">
-              {(
-                [
-                  ['factory', 'By factory', Factory],
-                  ['process', 'By process', Layers],
-                  ['details', 'Details', LayoutGrid],
-                ] as const
-              ).map(([key, label, Icon]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setPick(key)}
-                  aria-pressed={pick === key}
-                  className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-[10px] px-3 text-sm font-semibold transition-colors', pick === key ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800')}
-                >
-                  <Icon className="h-4 w-4" /> {label}
-                </button>
-              ))}
-            </div>
-            {pick === 'details' && <span className="text-xs text-slate-400">The full analysis: the filters below narrow it.</span>}
-            <Button className="ml-auto min-h-[40px]" onClick={resetAll} disabled={!anythingSet} aria-label="Reset all filters and picks">
-              <RotateCcw className="h-4 w-4" /> Reset all
-            </Button>
-          </div>
-          {general && pick !== 'details' && <ScopeView kind={pick} general={general} factories={factories} t={general.thresholds} picks={picks} setPicks={setPicks} />}
+          {general && pick !== 'details' && <ScopeBoard kind={pick} general={general} factories={factories} t={general.thresholds} picks={picks} setPicks={setPicks} />}
         </>
       )}
-
-
-      {/* Filters — for the details and the inspector ranking. */}
-      <Card className={cn('print-hidden space-y-3 p-4', !showDetails && 'hidden')}>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-7">
-          <Field label="Compare with">
-            <Select value={f.compare} onChange={(e) => patch({ compare: e.target.value as ComparePreset })}>
-              {COMPARE_PRESETS.map((p) => (
-                <option key={p.key} value={p.key}>
-                  {p.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Factory">
-            <Select value={f.factory} onChange={(e) => patch({ factory: e.target.value, workCenterCode: '' })}>
-              <option value="">All factories</option>
-              {factories.map((x) => (
-                <option key={x} value={x}>
-                  {x}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Process">
-            <Select value={f.process} onChange={(e) => patch({ process: e.target.value as DashFilters['process'], workCenterCode: '' })}>
-              <option value="">All processes</option>
-              {PROCESSES.map((p) => (
-                <option key={p} value={p}>
-                  {PROCESS_LABEL[p]}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Machine">
-            <Select value={f.workCenterCode} onChange={(e) => patch({ workCenterCode: e.target.value })}>
-              <option value="">All machines</option>
-              {machineOptions.map((m) => (
-                <option key={m.id} value={m.code}>
-                  {m.displayName}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Item code">
-            <Input list="dash-items" value={f.itemCode} onChange={(e) => patch({ itemCode: e.target.value })} placeholder="All items" />
-            <datalist id="dash-items">{data?.byItem.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}</datalist>
-          </Field>
-          <Field label="Inspector">
-            <Select value={f.inspectorId} onChange={(e) => patch({ inspectorId: e.target.value })}>
-              <option value="">All inspectors</option>
-              {inspectorChoices.withRecord.length > 0 && (
-                <optgroup label="Recorded in this period">
-                  {inspectorChoices.withRecord.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              {inspectorChoices.without.length > 0 && (
-                <optgroup label="Nothing recorded in this period">
-                  {inspectorChoices.without.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </Select>
-          </Field>
-          <Field label="Shift">
-            <Select value={f.shift} onChange={(e) => patch({ shift: e.target.value as DashFilters['shift'] })}>
-              <option value="">All shifts</option>
-              {(['A', 'B', 'C'] as ShiftLetter[]).map((s) => (
-                <option key={s} value={s}>
-                  {s} · {shiftName(s)}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </div>
-        {activeFilters.length > 0 && (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {activeFilters.map((a) => (
-              <Badge key={a} tone="blue">
-                {a}
-              </Badge>
-            ))}
-            <button type="button" onClick={() => patch({ factory: '', process: '', workCenterCode: '', itemCode: '', inspectorId: '', shift: '' })} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
-              <X className="h-3.5 w-3.5" /> Clear filters
-            </button>
-            <button type="button" onClick={resetAll} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
-              <RotateCcw className="h-3.5 w-3.5" /> Reset all
-            </button>
-          </div>
-        )}
-      </Card>
 
       {error && showDetails && (
         <Card className="border border-rose-200 p-4 text-sm text-rose-700 dark:border-rose-500/30 dark:text-rose-300">
@@ -1820,6 +1851,9 @@ export function DashboardPage() {
           </p>
         </div>
       )}
+
+        </div>
+      </div>
 
       {isFetching && !isLoading && (
         <div className="print-hidden fixed bottom-4 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-slate-900/90 px-3 py-1.5 text-xs font-semibold text-white shadow-lg dark:bg-white/90 dark:text-slate-900">
