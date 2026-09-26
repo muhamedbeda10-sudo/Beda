@@ -252,9 +252,9 @@ function Table<T>({
   if (rows.length === 0) return <p className="py-6 text-center text-sm text-slate-400">{empty}</p>
   const visible = maxRows && !showAll ? rows.slice(0, maxRows) : rows
   return (
-    <div className="overflow-x-auto">
+    <div className="max-h-[32rem] overflow-auto">
       <table className="w-full text-sm">
-        <thead>
+        <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
           <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
             {columns.map((c) => (
               <th key={c.key} className={cn('whitespace-nowrap px-2 py-1.5 font-semibold', c.className)}>
@@ -332,11 +332,14 @@ function Section({ title, hint, icon, children, className, action }: { title: st
 
 // ---- The general page and the analysis blocks --------------------------------
 
-function PlainTile({ label, value, sub, icon, tone = 'neutral' }: { label: string; value: string; sub?: ReactNode; icon: ReactNode; tone?: KpiTone }) {
+function PlainTile({ label, value, sub, icon, tone = 'neutral', control }: { label: string; value: string; sub?: ReactNode; icon: ReactNode; tone?: KpiTone; control?: ReactNode }) {
   return (
     <Card className={cn('p-4 ring-1', TONE_RING[tone])}>
       <div className="flex items-start justify-between gap-2">
-        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+          {control && <div className="print-hidden mt-1">{control}</div>}
+        </div>
         <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', tone === 'neutral' ? 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300' : tone === 'green' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : tone === 'amber' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400')}>
           {icon}
         </span>
@@ -344,6 +347,37 @@ function PlainTile({ label, value, sub, icon, tone = 'neutral' }: { label: strin
       <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>{value}</p>
       {sub && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{sub}</p>}
     </Card>
+  )
+}
+
+/**
+ * One of the two first-part cards, with a machine list of its own: the card
+ * reads for every machine of the pick, or for the one chosen in it.
+ */
+function FirstPartCard({ fp, kind }: { fp: KpiBreakdown['firstPart']; kind: 'released' | 'cumulative' }) {
+  const [machine, setMachine] = useState('')
+  const row = machine ? fp.byMachine.find((m) => m.workCenterCode === machine) : undefined
+  const sessions = row ? row.sessions : fp.sessions
+  const clean = row ? row.clean : fp.clean
+  const rejected = row ? row.rejectedPieces : fp.rejectedPieces
+  const releasedPct = sessions > 0 ? Math.round((clean / sessions) * 1000) / 10 : null
+  const cumulativePct = clean + rejected > 0 ? Math.round((rejected / (clean + rejected)) * 1000) / 10 : null
+  const releasedTone: KpiTone = releasedPct === null ? 'neutral' : releasedPct >= 95 ? 'green' : releasedPct >= 85 ? 'amber' : 'red'
+  const cumulativeTone: KpiTone = cumulativePct === null ? 'neutral' : cumulativePct === 0 ? 'green' : cumulativePct <= 15 ? 'amber' : 'red'
+  const control = (
+    <Select value={machine} onChange={(e) => setMachine(e.target.value)} className="min-h-[32px] max-w-full py-0 text-xs" aria-label={`${kind === 'released' ? 'First part released' : 'First pass yield cumulative'}: machine`}>
+      <option value="">All machines</option>
+      {fp.byMachine.map((m) => (
+        <option key={m.workCenterCode} value={m.workCenterCode}>
+          {m.label}
+        </option>
+      ))}
+    </Select>
+  )
+  return kind === 'released' ? (
+    <PlainTile label="First part released" value={pctStr(releasedPct, 0)} sub={`${num(clean)} of ${num(sessions)} sessions with nothing rejected before release${row ? ` on ${row.label}` : ''}`} icon={<PackageCheck className="h-4 w-4" />} tone={releasedTone} control={control} />
+  ) : (
+    <PlainTile label="First pass yield cumulative" value={pctStr(cumulativePct, 0)} sub={`${num(rejected)} rejected before release ÷ (${num(clean)} clean sessions + ${num(rejected)})${row ? ` on ${row.label}` : ''} · lower is better`} icon={<PackageCheck className="h-4 w-4" />} tone={cumulativeTone} control={control} />
   )
 }
 
@@ -615,9 +649,9 @@ function scopeDetailWidgets({ title, data, t, navigate }: { title: string; data:
   const cumTone = (v: number | null): KpiTone => (v === null ? 'neutral' : v === 0 ? 'green' : v <= 15 ? 'amber' : 'red')
   const group = (rows: KpiBreakdown['byOrder']) => monthsWithData.map((m) => ({ month: m, rows: rows.filter((r) => r.month === m.month) })).filter((g) => g.rows.length > 0)
   const breakdownTable = (rows: KpiBreakdown['byOrder'], what: string) => (
-    <div className="overflow-x-auto">
+    <div className="max-h-[32rem] overflow-auto">
       <table className="w-full text-sm">
-        <thead>
+        <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
           <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
             <th className="px-2 py-1.5 font-semibold">{what}</th>
             <th className="px-2 py-1.5 text-right font-semibold">Rejected</th>
@@ -660,8 +694,8 @@ function scopeDetailWidgets({ title, data, t, navigate }: { title: string; data:
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <PlainTile label="Reject rate" value={pctStr(rate)} sub={`${num(rejected)} rejected of ${num(made)} made`} icon={<Target className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} />
         <PlainTile label="PPM" value={ppmStr(rate)} sub="rejected pieces per million made" icon={<AlertTriangle className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} />
-        <PlainTile label="First part released" value={pctStr(fp.pct, 0)} sub={`${num(fp.clean)} of ${num(fp.sessions)} sessions with nothing rejected before release`} icon={<PackageCheck className="h-4 w-4" />} tone={fpTone} />
-        <PlainTile label="First pass yield cumulative" value={pctStr(fp.cumulativePct, 0)} sub={`${num(fp.rejectedPieces)} rejected before release ÷ (${num(fp.clean)} clean sessions + ${num(fp.rejectedPieces)}) · lower is better`} icon={<PackageCheck className="h-4 w-4" />} tone={cumTone(fp.cumulativePct)} />
+        <FirstPartCard fp={fp} kind="released" />
+        <FirstPartCard fp={fp} kind="cumulative" />
       </div>
 </div>
     ) },
@@ -675,9 +709,9 @@ function scopeDetailWidgets({ title, data, t, navigate }: { title: string; data:
           {data.defects.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-400">No rejected piece in these months.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="max-h-[32rem] overflow-auto">
               <table className="w-full text-sm">
-                <thead>
+                <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
                   <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
                     <th className="px-2 py-1.5 font-semibold">Defect</th>
                     {data.months.map((m) => <th key={m.month} className="px-2 py-1.5 text-right font-semibold">{monthLabel(m.month, false)}</th>)}

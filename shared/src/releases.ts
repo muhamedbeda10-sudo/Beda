@@ -34,6 +34,7 @@ export const RELEASES: readonly Release[] = [
     items: [
       { text: 'The charts of General (By factory / By process) and of Details sit on a grid. An administrator taps Arrange, drags a chart by its blue bar to move it and pulls its corner to size it, then Save keeps the arrangement for everyone; Default puts the original back.' },
       { text: 'Each chart keeps its own scroll inside its box, so a small box still shows the whole chart. On a tablet or phone the grid becomes a stack in the same order.' },
+      { text: 'The two first-part cards carry a machine list of their own: pick a machine and the card reads for it alone. Every long table scrolls inside its box with its header pinned.' },
     ],
   },
   {
