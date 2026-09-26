@@ -30,6 +30,7 @@ import {
   PauseCircle,
   Printer,
   RefreshCw,
+  RotateCcw,
   Ruler,
   ShieldAlert,
   Sparkles,
@@ -449,10 +450,21 @@ function GeneralOverview({ data, loading, error }: { data: KpiGeneral | null; lo
  * compare them, and the breakdown below follows the pick: defects, their
  * months, the orders and items behind them, and first part released.
  */
-function ScopeView({ kind, general, factories, t }: { kind: 'factory' | 'process'; general: KpiGeneral; factories: string[]; t: KpiThresholds }) {
-  const [chosenFactories, setChosenFactories] = usePersistedState<string[]>('qc-dash:scope-factories', [])
-  const [chosenProcesses, setChosenProcesses] = usePersistedState<Process[]>('qc-dash:scope-processes', [])
-  const [pickedByScope, setPickedByScope] = usePersistedState<Record<string, string[]>>('qc-dash:scope-machines', {})
+/** What is picked on the general page: factories, processes, and the machines ticked under each scope. */
+interface ScopePicks {
+  factories: string[]
+  processes: Process[]
+  machines: Record<string, string[]>
+}
+const NO_PICKS: ScopePicks = { factories: [], processes: [], machines: {} }
+
+function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'factory' | 'process'; general: KpiGeneral; factories: string[]; t: KpiThresholds; picks: ScopePicks; setPicks: (next: ScopePicks | ((prev: ScopePicks) => ScopePicks)) => void }) {
+  const chosenFactories = picks.factories
+  const chosenProcesses = picks.processes
+  const pickedByScope = picks.machines
+  const setChosenFactories = (f: (prev: string[]) => string[]) => setPicks((prev) => ({ ...prev, factories: f(prev.factories) }))
+  const setChosenProcesses = (f: (prev: Process[]) => Process[]) => setPicks((prev) => ({ ...prev, processes: f(prev.processes) }))
+  const setPickedByScope = (f: (prev: Record<string, string[]>) => Record<string, string[]>) => setPicks((prev) => ({ ...prev, machines: f(prev.machines) }))
   const options: { key: string; label: string }[] =
     kind === 'factory'
       ? Array.from(new Set([...factories, ...general.factories.map((f) => f.factory)])).sort().map((f) => ({ key: f, label: f }))
@@ -463,7 +475,7 @@ function ScopeView({ kind, general, factories, t }: { kind: 'factory' | 'process
     if (kind === 'factory') setChosenFactories((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
     else setChosenProcesses((prev) => (prev.includes(key as Process) ? prev.filter((k) => k !== key) : [...prev, key as Process]))
   }
-  const allScopes = () => (kind === 'factory' ? setChosenFactories([]) : setChosenProcesses([]))
+  const allScopes = () => (kind === 'factory' ? setChosenFactories(() => []) : setChosenProcesses(() => []))
   const inScope = (key: string) => chosen.length === 0 || chosen.includes(key)
   const scopeLabel = chosen.length === 0 ? (kind === 'factory' ? 'All factories' : 'All processes') : chosen.map((k) => options.find((o) => o.key === k)?.label ?? k).join(', ')
   const scopeKey = `${kind}:${[...chosen].sort().join('|') || '*'}`
@@ -912,10 +924,18 @@ export function DashboardPage() {
   const [view, setView] = usePersistedState<'general' | 'inspectors'>('qc-dash:tab', 'general')
   /** Which angle the general page is read from; Details is the full analysis behind the filters. */
   const [pick, setPick] = usePersistedState<GeneralPick>('qc-dash:pick', 'factory')
+  const [picks, setPicks] = usePersistedState<ScopePicks>('qc-dash:picks', NO_PICKS)
   const showDetails = view === 'inspectors' || pick === 'details'
   const { data: general, isLoading: generalLoading, error: generalError } = useKpiGeneral(range, allowed)
   /** The Pareto can be read for one machine without narrowing the whole page. */
   const [paretoMachine, setParetoMachine] = usePersistedState('qc-dash:pareto-machine', '')
+  /** Back to the page as it opens the first time: this month, no filter, nothing picked. */
+  const resetAll = () => {
+    setF(DEFAULT_FILTERS)
+    setPicks(NO_PICKS)
+    setParetoMachine('')
+  }
+  const anythingSet = JSON.stringify(f) !== JSON.stringify(DEFAULT_FILTERS) || picks.factories.length > 0 || picks.processes.length > 0 || Object.values(picks.machines).some((m) => m.length > 0) || paretoMachine !== ''
   const { data: machines = [] } = useMaster('machines', undefined, allowed)
   const { data: users = [] } = useUsers()
   const { data: span } = useKpiSpan(allowed)
@@ -1099,8 +1119,11 @@ export function DashboardPage() {
               ))}
             </div>
             {pick === 'details' && <span className="text-xs text-slate-400">The full analysis: the filters below narrow it.</span>}
+            <Button className="ml-auto min-h-[40px]" onClick={resetAll} disabled={!anythingSet} aria-label="Reset all filters and picks">
+              <RotateCcw className="h-4 w-4" /> Reset all
+            </Button>
           </div>
-          {general && pick !== 'details' && <ScopeView kind={pick} general={general} factories={factories} t={general.thresholds} />}
+          {general && pick !== 'details' && <ScopeView kind={pick} general={general} factories={factories} t={general.thresholds} picks={picks} setPicks={setPicks} />}
         </>
       )}
 
@@ -1194,6 +1217,9 @@ export function DashboardPage() {
             ))}
             <button type="button" onClick={() => patch({ factory: '', process: '', workCenterCode: '', itemCode: '', inspectorId: '', shift: '' })} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
               <X className="h-3.5 w-3.5" /> Clear filters
+            </button>
+            <button type="button" onClick={resetAll} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
+              <RotateCcw className="h-3.5 w-3.5" /> Reset all
             </button>
           </div>
         )}

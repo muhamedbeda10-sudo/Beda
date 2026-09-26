@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Search, Table2, X } from 'lucide-react'
+import { ChevronRight, RotateCcw, Search, Table2, X } from 'lucide-react'
 import type { OrderListFilters, OrderListRow } from '@qc/shared/api'
 import { Badge, Button, Card, EmptyState, Field, Input, Select } from '@/components/ui'
 import { ColumnPicker, FitColumnsButton, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
@@ -148,6 +148,17 @@ export function AccessPage() {
   const [remaining, setRemaining] = usePersistedState<'all' | 'open' | 'done'>('qc-access:remaining', 'all')
   const [inspected, setInspected] = usePersistedState<'all' | 'yes' | 'no'>('qc-access:inspected', 'all')
   const debounced = useDebounced(term.trim())
+  /** Every filter back to how the tab opens the first time. */
+  const filtersSet = term !== '' || machine !== 'all' || factory !== 'all' || erpStatus !== 'all' || item !== '' || remaining !== 'all' || inspected !== 'all'
+  const resetFilters = () => {
+    setTerm('')
+    setMachine('all')
+    setFactory('all')
+    setErpStatus('all')
+    setItem('')
+    setRemaining('all')
+    setInspected('all')
+  }
   const settledItem = useDebounced(itemTermOf(item))
   const filters = useMemo<OrderListFilters>(
     () => ({
@@ -290,6 +301,11 @@ export function AccessPage() {
               <option value="no">Not inspected yet</option>
             </Select>
           </Field>
+        </div>
+        <div className="flex justify-end">
+          <Button className="min-h-[40px]" onClick={resetFilters} disabled={!filtersSet} aria-label="Reset all filters">
+            <RotateCcw className="h-4 w-4" /> Reset all
+          </Button>
         </div>
       </Card>
 
