@@ -44,7 +44,9 @@ import {
   loadDefectRateBands,
   loadDiscipline,
   loadFactoryMonths,
+  loadFirstDataMonth,
   loadFirstPart,
+  loadScopeTotals,
   loadGroups,
   loadHolds,
   loadInspectorRaw,
@@ -170,6 +172,13 @@ function monthsBefore(month: string, n: number): string {
   const [y, m] = month.split('-').map(Number)
   const idx = y * 12 + (m - 1) - n
   return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`
+}
+
+/** Whole months from `from` to `to` (both YYYY-MM): 2026-06 to 2026-09 is 3. */
+function monthsBetween(from: string, to: string): number {
+  const [fy, fm] = from.split('-').map(Number)
+  const [ty, tm] = to.split('-').map(Number)
+  return ty * 12 + tm - (fy * 12 + fm)
 }
 
 function checkRange(from: string, to: string, label: string): void {
@@ -500,18 +509,27 @@ export function kpiRoutes(ctx: AppContext): Router {
     const today = factoryToday(tz)
     // The period the cards are counted over; the trend window is always the
     // last months to today, whatever the period, so the month lines stay put.
-    const windowFrom = `${monthsBefore(today.slice(0, 7), GENERAL_MONTHS - 1)}-01`
+    // It starts no earlier than the first month with production: a plant new
+    // to the system does not open its trend on empty months.
+    const thisMonth = today.slice(0, 7)
+    const firstDataMonth = await loadFirstDataMonth(ctx.db, tz)
+    const earliest = monthsBefore(thisMonth, GENERAL_MONTHS - 1)
+    const windowMonth = firstDataMonth === null || firstDataMonth > thisMonth ? thisMonth : firstDataMonth > earliest ? firstDataMonth : earliest
+    const windowFrom = `${windowMonth}-01`
+    const monthsBack = monthsBetween(windowMonth, thisMonth) + 1
     const to = q?.to ?? today
     const from = q?.from ?? windowFrom
     const period: PeriodFilters = { tz, from, to }
     const window: PeriodFilters = { tz, from: windowFrom, to: today }
-    const [totals, months, factoriesInPeriod, machinesInPeriod, factoryTrends, machineTrends] = await Promise.all([
+    const allTimeFrom = firstDataMonth !== null && firstDataMonth <= thisMonth ? `${firstDataMonth}-01` : `${thisMonth}-01`
+    const [totals, months, factoriesInPeriod, machinesInPeriod, factoryTrends, machineTrends, allTime] = await Promise.all([
       loadTotals(ctx.db, period),
       loadMonthly(ctx.db, window),
       loadFactoryMonths(ctx.db, period),
       loadMachineMonths(ctx.db, period),
       loadFactoryMonths(ctx.db, window),
       loadMachineMonths(ctx.db, window),
+      loadScopeTotals(ctx.db, { tz, from: allTimeFrom, to: today }),
     ])
     // The figures of the period, with the months of the trend window beside
     // them: a factory or machine seen in either is listed, with the period's
@@ -539,7 +557,7 @@ export function kpiRoutes(ctx: AppContext): Router {
       from,
       to,
       window: { from: windowFrom, to: today },
-      monthsBack: GENERAL_MONTHS,
+      monthsBack,
       generatedAt: new Date().toISOString(),
       thresholds,
       totals: {
@@ -558,6 +576,7 @@ export function kpiRoutes(ctx: AppContext): Router {
       months,
       factories,
       machines,
+      allTime,
     }
     res.json(body)
   })

@@ -112,8 +112,11 @@ describe('§15 — process groups and the month view', () => {
     const res = await app.api<KpiGeneral>('GET', '/api/kpi/general', { token: admin.token })
     expect(res.status).toBe(200)
     const g = res.body
-    expect(g.monthsBack).toBe(GENERAL_MONTHS)
-    expect(g.months.length).toBe(GENERAL_MONTHS)
+    // Every session of this suite closed this month: the trend starts on the first month with production, not on empty ones.
+    expect(g.monthsBack).toBe(1)
+    expect(g.monthsBack).toBeLessThanOrEqual(GENERAL_MONTHS)
+    expect(g.months.length).toBe(g.monthsBack)
+    expect(g.months[0].month).toBe(g.to.slice(0, 7))
     expect(g.months[g.months.length - 1].month).toBe(g.to.slice(0, 7))
     expect(g.from.slice(8)).toBe('01')
     expect(g.window.from).toBe(g.from)
@@ -127,26 +130,31 @@ describe('§15 — process groups and the month view', () => {
     expect(g.factories.map((f) => f.factory)).toEqual(['Factory 1', 'Factory 2'])
     const f1 = g.factories[0]
     expect(f1.piecesProduced).toBe(300)
-    expect(f1.months.length).toBe(GENERAL_MONTHS)
+    expect(f1.months.length).toBe(g.monthsBack)
     expect(f1.months[f1.months.length - 1].productionDefectPieces).toBe(5)
     expect(f1.defectRatePct).toBeCloseTo(1.64, 2)
     // Every machine with production, worst rate first, with its months.
     expect(g.machines.map((m) => m.workCenterCode)).toEqual(['31', '77'])
     expect(g.machines[0].process).toBe('forming')
-    expect(g.machines[0].months.length).toBe(GENERAL_MONTHS)
+    expect(g.machines[0].months.length).toBe(g.monthsBack)
+    // Since the first session on record, whatever the period: by factory and by process.
+    expect(g.allTime.factories.map((x) => [x.key, x.made, x.productionDefectPieces])).toEqual([['Factory 1', 305, 5], ['Factory 2', 301, 1]])
+    expect(g.allTime.processes.map((x) => x.key).sort()).toEqual(['forming', 'mast'])
     expect(g.machines[0].defectRatePct).toBeCloseTo(1.64, 2)
     // On a period: the figures follow it, the trend keeps its months.
     const short = (await app.api<KpiGeneral>('GET', `/api/kpi/general?from=${today(-1)}&to=${today(1)}`, { token: admin.token })).body
     expect(short.from).toBe(today(-1))
     expect(short.totals.piecesProduced).toBe(600)
-    expect(short.months.length).toBe(GENERAL_MONTHS)
-    expect(short.factories[0].months.length).toBe(GENERAL_MONTHS)
+    expect(short.months.length).toBe(g.monthsBack)
+    expect(short.factories[0].months.length).toBe(g.monthsBack)
     const empty = (await app.api<KpiGeneral>('GET', `/api/kpi/general?from=${today(-40)}&to=${today(-30)}`, { token: admin.token })).body
     expect(empty.totals.piecesProduced).toBe(0)
     // Nothing in the period, but the factories and machines of the trend window are still listed, their months intact.
     expect(empty.factories.map((f) => [f.factory, f.piecesProduced, f.defectRatePct])).toEqual([['Factory 1', 0, null], ['Factory 2', 0, null]])
     expect(empty.machines.map((m) => m.workCenterCode).sort()).toEqual(['31', '77'])
     expect(empty.window.to).toBe(g.window.to)
+    // The all-time pie does not follow the period.
+    expect(empty.allTime).toEqual(g.allTime)
     expect((await app.api('GET', `/api/kpi/general?from=${today(1)}&to=${today(-1)}`, { token: admin.token })).status).toBe(400)
   })
 
@@ -216,6 +224,14 @@ describe('§15 — process groups and the month view', () => {
     expect(b.firstPart.cumulativePct).toBe(0)
     expect(all.firstPart.byMachine[0]).toMatchObject({ workCenterCode: '77', sessions: 1, clean: 0, pct: 0, rejectedPieces: 7 })
     expect(all.firstPart.failed).toEqual([expect.objectContaining({ workCenterCode: '77', orderNumber: '30003-C', rejectedBeforeRelease: 7 })])
+    // The part on the machine, how many of its sessions were not clean, and the orders behind them.
+    expect(all.firstPart.byPart).toEqual([
+      expect.objectContaining({ workCenterCode: '77', itemCode: 'MAST120', sessions: 1, notClean: 1, rejectedPieces: 7, orders: [expect.objectContaining({ orderNumber: '30003-C', notClean: 1, rejectedPieces: 7 })] }),
+    ])
+    expect(all.firstPart.byPart[0].orders[0].sessionIds).toHaveLength(1)
+    // One session with 7 pieces rejected before release.
+    expect(all.firstPart.byQty).toEqual([{ workCenterCode: '77', qty: 7, sessions: 1 }])
+    expect(b.firstPart.byPart).toEqual([])
     expect(all.firstPart.months.find((m) => m.sessions > 0)).toMatchObject({ sessions: 3, clean: 2, rejectedPieces: 7 })
     expect(all.firstPart.months.find((m) => m.sessions > 0)!.cumulativePct).toBeCloseTo(77.78, 2)
     expect(all.firstPart.byMachineMonth[0]).toMatchObject({ workCenterCode: '77', rejectedPieces: 7 })

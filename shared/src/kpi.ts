@@ -398,6 +398,21 @@ export interface KpiGeneral {
   factories: KpiFactoryTrend[]
   /** Every machine with production in the span, largest first. */
   machines: KpiMachineTrend[]
+  /** Since the first session on record, whatever the period: by factory and by process. */
+  allTime: {
+    from: string
+    to: string
+    factories: KpiScopeTotal[]
+    processes: KpiScopeTotal[]
+  }
+}
+
+/** A factory's or a process's made and rejected pieces over a span. */
+export interface KpiScopeTotal {
+  key: string
+  made: number
+  productionDefectPieces: number
+  defectRatePct: number | null
 }
 
 /** A machine's reject rate month by month, for the general page's overview. */
@@ -483,6 +498,24 @@ export interface KpiFirstPart {
   months: { month: string; sessions: number; clean: number; pct: number | null; rejectedPieces: number; cumulativePct: number | null }[]
   /** The sessions that were not clean, newest first, the fifty most recent. */
   failed: { sessionId: string; startedAt: string; orderNumber: string; item: string; itemCode: string; workCenterCode: string; machineLabel: string; rejectedBeforeRelease: number; inspectorName: string }[]
+  /**
+   * A part (item) on a machine that had sessions not clean: how many of its
+   * sessions, of how many, and the pieces rejected before release, with the
+   * orders behind them. Most sessions not clean first.
+   */
+  byPart: {
+    workCenterCode: string
+    machineLabel: string
+    factory: string
+    itemCode: string
+    item: string
+    sessions: number
+    notClean: number
+    rejectedPieces: number
+    orders: { orderNumber: string; notClean: number; rejectedPieces: number; sessionIds: string[] }[]
+  }[]
+  /** How many sessions were not clean by the pieces rejected before release: 3 sessions with 1 piece, 1 with 2, per machine. */
+  byQty: { workCenterCode: string; qty: number; sessions: number }[]
 }
 
 /** One member of the scope (a factory or a process) month by month, for a line of its own on the trend. */
@@ -898,6 +931,7 @@ export const DASHBOARD_WIDGETS: Record<DashboardPage, { id: string; title: strin
     { id: 'g.machinesByMonth', title: 'Machines by month', w: 6, h: 8 },
     { id: 'g.tiles', title: 'Reject rate, PPM, first part', w: 12, h: 5 },
     { id: 'g.pieScope', title: 'Rejected by factory or process', w: 4, h: 8 },
+    { id: 'g.pieScopeTotal', title: 'Rejected by factory or process, all time', w: 4, h: 8 },
     { id: 'g.pieDefects', title: 'Share of each defect', w: 4, h: 8 },
     { id: 'g.pieMachines', title: 'Rejected by machine', w: 4, h: 8 },
     { id: 'g.dispositions', title: 'Dispositions', w: 4, h: 8 },
@@ -907,7 +941,8 @@ export const DASHBOARD_WIDGETS: Record<DashboardPage, { id: string; title: strin
     { id: 'g.byItem', title: 'By item', w: 6, h: 10 },
     { id: 'g.firstPartTiles', title: 'First part: yield and months', w: 4, h: 8 },
     { id: 'g.firstPartChart', title: 'First part: machines by month', w: 8, h: 8 },
-    { id: 'g.firstPartTable', title: 'First part: sessions not clean', w: 12, h: 9 },
+    { id: 'g.firstPartQty', title: 'First part: sessions by pieces rejected', w: 5, h: 8 },
+    { id: 'g.firstPartTable', title: 'First part: parts not clean', w: 12, h: 9 },
   ],
   details: [
     { id: 'd.tiles', title: 'KPI tiles', w: 12, h: 8 },
