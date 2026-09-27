@@ -44,13 +44,14 @@ import {
 } from 'lucide-react'
 import { can, shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
-import { defaultDashboardLayouts, deltaPct, insightKey, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiFilters, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiMachineTrend, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
+import { GENERAL_MONTHS, defaultDashboardLayouts, deltaPct, insightKey, pct, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiFilters, type KpiFirstPart, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
 import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
 import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, TrendChart, slicesOf } from '@/components/dashboard/charts'
 import { Board, BoardContext, WidgetLabelContext, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
+import { FilterNote, FilterTh, MultiSelectMenu, byName, useColumnFilters } from '@/components/dashboard/filters'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
@@ -404,6 +405,18 @@ function paretoOf(rows: { label: string; value: number }[]): { label: string; va
  * three. Nothing about samples, rejected counts or dimensions: those live in
  * the details.
  */
+/** The trend window in words: "Sept 2026" for one month, "Jun 2026 – Sept 2026" for several. */
+function windowWords(g: KpiGeneral): string {
+  const a = g.window.from.slice(0, 7)
+  const b = g.window.to.slice(0, 7)
+  return a === b ? monthLabel(a) : `${monthLabel(a)} – ${monthLabel(b)}`
+}
+
+/** How the trend window reads in a sentence: "this month" or "the last 3 months". */
+function windowLength(g: KpiGeneral): string {
+  return g.monthsBack <= 1 ? 'this month' : `the last ${g.monthsBack} months`
+}
+
 function GeneralOverview({ data, loading, error }: { data: KpiGeneral | null; loading: boolean; error: string | null }) {
   if (error) return <Card className="border border-rose-200 p-4 text-sm text-rose-700 dark:border-rose-500/30 dark:text-rose-300">{error}</Card>
   if (!data) {
@@ -416,10 +429,10 @@ function GeneralOverview({ data, loading, error }: { data: KpiGeneral | null; lo
     ) : null
   }
   const t = data.thresholds
-  const trendSpan = `${monthLabel(data.window.from.slice(0, 7))} – ${monthLabel(data.window.to.slice(0, 7))}`
+  const trendSpan = windowWords(data)
   const cards = [
     { key: '__plant', label: 'Whole plant', sub: `${num(data.totals.factories)} factories · ${num(data.totals.machines)} machines`, rate: data.totals.defectRatePct, months: data.months },
-    ...data.factories.map((f) => ({ key: f.factory, label: f.factory, sub: Array.from(new Set(data.machines.filter((m) => m.factory === f.factory).map((m) => PROCESS_LABEL[m.process]))).join(' · ') || 'no process', rate: f.defectRatePct, months: f.months })),
+    ...[...data.factories].sort((a, b) => byName(a.factory, b.factory)).map((f) => ({ key: f.factory, label: f.factory, sub: Array.from(new Set(data.machines.filter((m) => m.factory === f.factory).map((m) => PROCESS_LABEL[m.process]))).join(' · ') || 'no process', rate: f.defectRatePct, months: f.months })),
   ]
   return (
     <div className="space-y-4">
@@ -450,7 +463,7 @@ function GeneralOverview({ data, loading, error }: { data: KpiGeneral | null; lo
           )
         })}
       </div>
-      <p className="text-xs text-slate-400">Reject rate and PPM over {describeRange({ from: data.from, to: data.to })}; the trend line is the last {data.monthsBack} months, {trendSpan}, against the month before.</p>
+      <p className="text-xs text-slate-400">Reject rate and PPM over {describeRange({ from: data.from, to: data.to })}; the trend line is {windowLength(data)}, {trendSpan}{data.monthsBack > 1 ? ', against the month before' : ''}; it starts on the first month with production.</p>
     </div>
   )
 }
@@ -471,8 +484,8 @@ const NO_PICKS: ScopePicks = { factories: [], processes: [], machines: {} }
 
 function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'factory' | 'process'; general: KpiGeneral; factories: string[]; t: KpiThresholds; picks: ScopePicks; setPicks: (next: ScopePicks | ((prev: ScopePicks) => ScopePicks)) => void }) {
   const navigate = useNavigate()
-  /** One machine for the three first-part widgets, kept on the device. */
-  const [fpMachine, setFpMachine] = usePersistedState('qc-dash:fp-machine', '')
+  /** The machines of the first-part widgets, several at once, kept on the device. */
+  const [fpMachines, setFpMachines] = usePersistedState<string[]>('qc-dash:fp-machines', [])
   const chosenFactories = picks.factories
   const chosenProcesses = picks.processes
   const pickedByScope = picks.machines
@@ -481,7 +494,7 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
   const setPickedByScope = (f: (prev: Record<string, string[]>) => Record<string, string[]>) => setPicks((prev) => ({ ...prev, machines: f(prev.machines) }))
   const options: { key: string; label: string }[] =
     kind === 'factory'
-      ? Array.from(new Set([...factories, ...general.factories.map((f) => f.factory)])).sort().map((f) => ({ key: f, label: f }))
+      ? Array.from(new Set([...factories, ...general.factories.map((f) => f.factory)])).sort(byName).map((f) => ({ key: f, label: f }))
       : PROCESSES.map((p) => ({ key: p, label: PROCESS_LABEL[p] }))
   // Several at once; none chosen means all of them together.
   const chosen = (kind === 'factory' ? chosenFactories : chosenProcesses).filter((k) => options.some((o) => o.key === k))
@@ -494,11 +507,16 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
   const scopeLabel = chosen.length === 0 ? (kind === 'factory' ? 'All factories' : 'All processes') : chosen.map((k) => options.find((o) => o.key === k)?.label ?? k).join(', ')
   const scopeKey = `${kind}:${[...chosen].sort().join('|') || '*'}`
   const machines = general.machines.filter((m) => inScope(kind === 'factory' ? m.factory : m.process))
-  // The machines listed in groups: by process when reading by process, by factory when reading by factory; worst first within each group.
-  const machineGroups = (kind === 'process'
-    ? PROCESSES.map((p) => ({ key: p, label: PROCESS_LABEL[p], machines: machines.filter((m) => m.process === p) }))
-    : Array.from(new Set(machines.map((m) => m.factory))).sort().map((f) => ({ key: f, label: f || '(no factory)', machines: machines.filter((m) => m.factory === f) }))
-  ).filter((g) => g.machines.length > 0)
+  // By process the machines are listed under their process; by factory they are one list, worst first, whatever the factory.
+  const machineGroups =
+    kind === 'process'
+      ? PROCESSES.map((p) => ({ key: p, label: PROCESS_LABEL[p] as string | null, machines: machines.filter((m) => m.process === p) })).filter((g) => g.machines.length > 0)
+      : [{ key: 'all', label: null as string | null, machines }]
+  // The period's rejected pieces by factory or by process, the whole plant: the picks do not narrow the pie.
+  const periodScopeRows =
+    kind === 'factory'
+      ? general.factories.map((f) => ({ label: f.factory || '(no factory)', value: f.productionDefectPieces }))
+      : PROCESSES.map((p) => ({ label: PROCESS_LABEL[p], value: general.machines.filter((m) => m.process === p).reduce((n, m) => n + m.productionDefectPieces, 0) }))
   const picked = (pickedByScope[scopeKey] ?? []).filter((code) => machines.some((m) => m.workCenterCode === code))
   const togglePick = (code: string) =>
     setPickedByScope((prev) => {
@@ -516,8 +534,8 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
   const maxRate = Math.max(...machines.map((m) => m.defectRatePct ?? 0), 0.0001)
   // The plant trend runs over the trend window to today, whole plant, a line per factory: neither the period strip nor the picks narrow it.
   const windowLabels = general.months.map((m) => monthLabel(m.month, false))
-  const factoryLines = general.factories.slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.factory, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
-  const windowSpan = `${monthLabel(general.window.from.slice(0, 7))} – ${monthLabel(general.window.to.slice(0, 7))}`
+  const factoryLines = [...general.factories].sort((a, b) => byName(a.factory, b.factory)).slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.factory, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
+  const windowSpan = windowWords(general)
   // The month charts of the pick: the period's months, the pick's factories, and its machines with the highest reject rate.
   const pickLabels = (breakdown?.months ?? []).map((m) => monthLabel(m.month, false))
   const pickFactoryLines = (breakdown?.series.factories ?? []).slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.label, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
@@ -559,7 +577,7 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
         className={cn('transition-opacity', isFetching && 'opacity-70')}
         widgets={[
           { id: 'g.trend', title: 'Plant trend, last months', node: (
-        <Section title="Plant: trend" hint={`Pieces made each month, ${windowSpan} (produced + rejected), with the plant's reject rate over them and a line for each factory. Neither the period strip nor the picks narrow this chart.`} icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
+        <Section title="Plant: trend" hint={`Pieces made each month, ${windowSpan} (produced + rejected), from the first month with production and at most the last ${GENERAL_MONTHS}, with the plant's reject rate over them and a line for each factory. Neither the period strip nor the picks narrow this chart.`} icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
           {general.months.some((m) => m.piecesProduced + m.productionDefectPieces > 0) ? (
             <TrendChart points={general.months.map((m) => ({ label: monthLabel(m.month, false), bar: m.piecesProduced + m.productionDefectPieces, line: m.defectRatePct }))} barLabel="Pieces made" lineLabel="Reject rate · plant" lines={factoryLines} />
           ) : (
@@ -568,17 +586,19 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
         </Section>
           ) },
           { id: 'g.machines', title: 'Machines of the pick', node: (
-        <Section title={`${scopeLabel}: machines`} hint={`Reject rate of each machine over the period, grouped by ${kind}, worst first in each group, with its trend. Tick machines to compare them; the breakdown below follows the ticks.`} icon={<Layers className="h-4 w-4" />} className="xl:col-span-2" action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-slate-500 hover:text-rose-600">Clear {picked.length} ticked</button>}>
+        <Section title={`${scopeLabel}: machines`} hint={kind === 'process' ? 'Reject rate of each machine over the period, under its process, worst first in each, with its trend. Tick machines to compare them; the breakdown below follows the ticks.' : 'Reject rate of each machine over the period, worst first, with its trend. Tick machines to compare them; the breakdown below follows the ticks.'} icon={<Layers className="h-4 w-4" />} className="xl:col-span-2" action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-slate-500 hover:text-rose-600">Clear {picked.length} ticked</button>}>
           {machines.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-400">No production closed in this period.</p>
           ) : (
             <div className="space-y-3 pr-1">
               {machineGroups.map((g) => (
                 <div key={g.key}>
-                  <p className="mb-1 flex items-baseline justify-between px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                    <span>{g.label}</span>
-                    <span className="tabular-nums">{g.machines.length}</span>
-                  </p>
+                  {g.label !== null && (
+                    <p className="mb-1 flex items-baseline justify-between px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      <span>{g.label}</span>
+                      <span className="tabular-nums">{g.machines.length}</span>
+                    </p>
+                  )}
                   <ul className="space-y-1.5">
               {g.machines.map((m) => {
                 const on = picked.includes(m.workCenterCode)
@@ -616,7 +636,22 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
           {breakdown ? <LineChart labels={pickLabels} series={pickMachineLines} /> : <div className="skeleton h-48" />}
         </Section>
           ) },
-          ...(breakdown ? scopeDetailWidgets({ title: detailTitle, kind, data: breakdown, t, navigate, fpMachine, setFpMachine }) : []),
+                    { id: 'g.pieScope', title: 'Rejected by factory or process', node: (
+        <Section title={kind === 'factory' ? 'Rejected by factory' : 'Rejected by process'} hint={`Each ${kind}'s share of the rejected pieces over ${describeRange({ from: general.from, to: general.to })}. The picks do not narrow it.`} icon={kind === 'factory' ? <Factory className="h-4 w-4" /> : <Layers className="h-4 w-4" />}>
+          <PieChart centerLabel="rejected" slices={slicesOf(periodScopeRows)} />
+        </Section>
+          ) },
+          { id: 'g.pieScopeTotal', title: 'Rejected by factory or process, all time', node: (
+        <Section title={kind === 'factory' ? 'Rejected by factory, all time' : 'Rejected by process, all time'} hint={`Each ${kind}'s share of every rejected piece since ${describeRange({ from: general.allTime.from, to: general.allTime.to })}. Neither the period nor the picks narrow it.`} icon={kind === 'factory' ? <Factory className="h-4 w-4" /> : <Layers className="h-4 w-4" />}>
+          <PieChart centerLabel="rejected" slices={slicesOf((kind === 'factory' ? general.allTime.factories : general.allTime.processes).map((x) => ({ label: kind === 'process' ? (PROCESS_LABEL[x.key as Process] ?? x.key) : x.key, value: x.productionDefectPieces })))} />
+        </Section>
+          ) },
+          { id: 'g.pieMachines', title: 'Rejected by machine', node: (
+        <Section title={`${scopeLabel}: rejected by machine`} hint={`Each machine's share of the rejected pieces over ${describeRange({ from: general.from, to: general.to })}, in the ${kind === 'factory' ? 'factories' : 'processes'} picked; ticking machines does not narrow it.`} icon={<Layers className="h-4 w-4" />}>
+          <PieChart centerLabel="rejected" slices={slicesOf(machines.map((m) => ({ label: m.label, sub: kind === 'factory' ? m.factory : PROCESS_LABEL[m.process], value: m.productionDefectPieces })))} />
+        </Section>
+          ) },
+          ...(breakdown ? scopeDetailWidgets({ title: detailTitle, data: breakdown, t, navigate, fpMachines, setFpMachines }) : []),
         ]}
       />
     </div>
@@ -624,80 +659,27 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
 }
 
 /** What a pick's rejected pieces are: which defects, in which months, on which orders and items; and how often the first part was clean. */
-function scopeDetailWidgets({ title, kind, data, t, navigate, fpMachine, setFpMachine }: { title: string; kind: 'factory' | 'process'; data: KpiBreakdown; t: KpiThresholds; navigate: (to: string) => void; fpMachine: string; setFpMachine: (code: string) => void }): BoardWidget[] {
+function scopeDetailWidgets({ title, data, t, navigate, fpMachines, setFpMachines }: { title: string; data: KpiBreakdown; t: KpiThresholds; navigate: (to: string) => void; fpMachines: string[]; setFpMachines: (codes: string[]) => void }): BoardWidget[] {
   const made = data.months.reduce((n, m) => n + m.made, 0)
   const rejected = data.months.reduce((n, m) => n + m.productionDefectPieces, 0)
   const rate = made > 0 ? Math.round((rejected / made) * 10000) / 100 : null
   const monthsWithData = data.months.filter((m) => m.made > 0)
   const fpAll = data.firstPart
-  // The three first-part widgets share one machine filter: the pick's machines, or one of them.
-  const fpRow = fpMachine ? fpAll.byMachine.find((m) => m.workCenterCode === fpMachine) : undefined
-  const fpMonthRow = fpMachine ? fpAll.byMachineMonth.find((m) => m.workCenterCode === fpMachine) : undefined
-  const fp = fpRow
-    ? {
-        ...fpAll,
-        sessions: fpRow.sessions,
-        clean: fpRow.clean,
-        pct: fpRow.pct,
-        rejectedPieces: fpRow.rejectedPieces,
-        cumulativePct: fpRow.clean + fpRow.rejectedPieces > 0 ? Math.round((fpRow.rejectedPieces / (fpRow.clean + fpRow.rejectedPieces)) * 1000) / 10 : null,
-        months: (fpMonthRow?.months ?? []).map((m) => ({ month: m.month, sessions: m.sessions, clean: m.clean, pct: m.sessions > 0 ? Math.round((m.clean / m.sessions) * 1000) / 10 : null, rejectedPieces: m.rejectedPieces, cumulativePct: m.cumulativePct })),
-        byMachineMonth: fpMonthRow ? [fpMonthRow] : [],
-        failed: fpAll.failed.filter((r) => r.workCenterCode === fpMachine),
-      }
-    : fpMachine
-      ? { ...fpAll, sessions: 0, clean: 0, pct: null, rejectedPieces: 0, cumulativePct: null, months: fpAll.months.map((m) => ({ ...m, sessions: 0, clean: 0, pct: null, rejectedPieces: 0, cumulativePct: null })), byMachineMonth: [], failed: [] }
-      : fpAll
+  // The first-part widgets share one machine filter, several machines at once; none ticked is every machine of the pick.
+  const fp = firstPartOf(fpAll, fpMachines)
   const fpFilter = (
-    <Select value={fpMachine} onChange={(e) => setFpMachine(e.target.value)} className="print-hidden min-h-[36px] max-w-[14rem] py-0 text-xs" aria-label="First part: machine">
-      <option value="">All machines</option>
-      {fpAll.byMachine.map((m) => (
-        <option key={m.workCenterCode} value={m.workCenterCode}>
-          {m.label}
-        </option>
-      ))}
-    </Select>
+    <MultiSelectMenu
+      options={fpAll.byMachine.map((m) => ({ value: m.workCenterCode, label: m.label, sub: m.factory }))}
+      selected={fpMachines}
+      onChange={setFpMachines}
+      allLabel="All machines"
+      noun="machines"
+      ariaLabel="First part: machines"
+    />
   )
   const fpTone: KpiTone = fp.pct === null ? 'neutral' : fp.pct >= 95 ? 'green' : fp.pct >= 85 ? 'amber' : 'red'
   /** The cumulative yield reads the other way: lower is better, zero is clean. */
   const cumTone = (v: number | null): KpiTone => (v === null ? 'neutral' : v === 0 ? 'green' : v <= 15 ? 'amber' : 'red')
-  const group = (rows: KpiBreakdown['byOrder']) => monthsWithData.map((m) => ({ month: m, rows: rows.filter((r) => r.month === m.month) })).filter((g) => g.rows.length > 0)
-  const breakdownTable = (rows: KpiBreakdown['byOrder'], what: string) => (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
-          <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
-            <th className="px-2 py-1.5 font-semibold">{what}</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Rejected</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Of made</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Of period</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-          {group(rows).map((g) => (
-            <Fragment key={g.month.month}>
-              <tr className="bg-slate-50 dark:bg-slate-800/60">
-                <td className="px-2 py-1.5 font-bold" colSpan={2}>{monthLabel(g.month.month)}</td>
-                <td className="px-2 py-1.5 text-right"><ToneCell value={g.month.defectRatePct} tone={toneLowIsGood(g.month.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /></td>
-                <td className="px-2 py-1.5 text-right text-xs text-slate-400">{num(g.month.productionDefectPieces)} of {num(g.month.made)}</td>
-              </tr>
-              {g.rows.map((r) => (
-                <tr key={`${r.month}|${r.key}`}>
-                  <td className="px-2 py-1.5"><span className="font-semibold">{r.label}</span>{r.sub && <span className="ml-1 text-xs text-slate-400">{r.sub}</span>}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{num(r.pieces)}</td>
-                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums" title={`${num(r.pieces)} rejected of ${num(r.made)} made by this ${what.toLowerCase()} in the month`}>{pctStr(r.pctOfMade, 3)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{pctStr(r.shareOfPeriodPct, 0)}</td>
-                </tr>
-              ))}
-            </Fragment>
-          ))}
-          {group(rows).length === 0 && (
-            <tr><td colSpan={4} className="py-6 text-center text-sm text-slate-400">No rejected piece in these months.</td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  )
   return [
     { id: 'g.tiles', title: 'Reject rate, PPM, first part', labelled: false, node: (
 <div className="h-full space-y-3 overflow-auto">
@@ -713,19 +695,9 @@ function scopeDetailWidgets({ title, kind, data, t, navigate, fpMachine, setFpMa
       </div>
 </div>
     ) },
-    { id: 'g.pieScope', title: 'Rejected by factory or process', node: (
-        <Section title={kind === 'factory' ? 'Rejected by factory' : 'Rejected by process'} hint={`Each ${kind}'s share of the rejected pieces in the period.`} icon={kind === 'factory' ? <Factory className="h-4 w-4" /> : <Layers className="h-4 w-4" />}>
-          <PieChart centerLabel="rejected" slices={slicesOf((kind === 'factory' ? data.series.factories : data.series.processes).map((x) => ({ label: kind === 'process' ? (PROCESS_LABEL[x.key as Process] ?? x.label) : x.label, value: x.productionDefectPieces })))} />
-        </Section>
-    ) },
     { id: 'g.pieDefects', title: 'Share of each defect', node: (
         <Section title="Share of each defect" hint="Each defect's share of the rejected pieces in the period; the smaller ones together as Others." icon={<AlertTriangle className="h-4 w-4" />}>
           <PieChart centerLabel="rejected" slices={slicesOf(data.defects.map((d) => ({ label: d.defectName, value: d.pieces })))} />
-        </Section>
-    ) },
-    { id: 'g.pieMachines', title: 'Rejected by machine', node: (
-        <Section title="Rejected by machine" hint="Each machine's share of the rejected pieces in the period; the smaller ones together as Others." icon={<Layers className="h-4 w-4" />}>
-          <PieChart centerLabel="rejected" slices={slicesOf(data.series.machines.map((m) => ({ label: m.label, sub: m.sub, value: m.productionDefectPieces })))} />
         </Section>
     ) },
     { id: 'g.dispositions', title: 'Dispositions', node: (
@@ -740,48 +712,17 @@ function scopeDetailWidgets({ title, kind, data, t, navigate, fpMachine, setFpMa
     ) },
     { id: 'g.defectsByMonth', title: 'Defects by month', node: (
         <Section title="Defects by month" hint="Each defect's rejected pieces in each month, and its share of that month's rejected pieces against the other defects." icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
-          {data.defects.length === 0 ? (
-            <p className="py-6 text-center text-sm text-slate-400">No rejected piece in these months.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
-                  <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
-                    <th className="px-2 py-1.5 font-semibold">Defect</th>
-                    {data.months.map((m) => <th key={m.month} className="px-2 py-1.5 text-right font-semibold">{monthLabel(m.month, false)}</th>)}
-                    <th className="px-2 py-1.5 text-right font-semibold">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  <tr className="bg-slate-50 font-semibold dark:bg-slate-800/60">
-                    <td className="px-2 py-1.5">All rejected · rate</td>
-                    {data.months.map((m) => <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{m.made > 0 ? <>{num(m.productionDefectPieces)} <span className="text-xs text-slate-400">{pctStr(m.defectRatePct)}</span></> : <span className="text-slate-300">—</span>}</td>)}
-                    <td className="px-2 py-1.5 text-right tabular-nums">{num(rejected)} <span className="text-xs text-slate-400">{pctStr(rate)}</span></td>
-                  </tr>
-                  {data.defects.slice(0, 15).map((d) => (
-                    <tr key={d.defectName}>
-                      <td className="px-2 py-1.5 text-left"><span dir="auto" className="inline-block font-medium">{d.defectName}</span></td>
-                      {d.months.map((m) => {
-                        const monthRejected = data.months.find((x) => x.month === m.month)?.productionDefectPieces ?? 0
-                        return <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-slate-400">{pctStr(monthRejected > 0 ? Math.round((m.pieces / monthRejected) * 1000) / 10 : null, 0)}</span></> : <span className="text-slate-300">—</span>}</td>
-                      })}
-                      <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{num(d.pieces)} <span className="text-xs font-normal text-slate-400">{pctStr(d.sharePct, 0)}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <DefectsByMonthTable data={data} rejected={rejected} rate={rate} />
         </Section>
     ) },
     { id: 'g.byOrder', title: 'By order line', node: (
         <Section title="By order line" hint="Each month's rejected pieces laid on the order lines closed in it. Of made is against what that order line itself made (its produced + rejected); Of period is the share of every rejected piece in the period." icon={<ClipboardList className="h-4 w-4" />}>
-          {breakdownTable(data.byOrder, 'Order')}
+          <BreakdownTable rows={data.byOrder} months={monthsWithData} what="order" t={t} />
         </Section>
     ) },
     { id: 'g.byItem', title: 'By item', node: (
         <Section title="By item" hint="The same rejected pieces laid on the items." icon={<Layers className="h-4 w-4" />}>
-          {breakdownTable(data.byItem, 'Item')}
+          <BreakdownTable rows={data.byItem} months={monthsWithData} what="item" t={t} />
         </Section>
     ) },
     { id: 'g.firstPartTiles', title: 'First part: yield and months', node: (
@@ -815,29 +756,263 @@ function scopeDetailWidgets({ title, kind, data, t, navigate, fpMachine, setFpMa
       </Section>
     ) },
     { id: 'g.firstPartChart', title: 'First part: machines by month', node: (
-      <Section title="Rejected before release, by machine" hint="Each machine's pieces rejected before the release inspection, month by month; the six machines with the most." icon={<Layers className="h-4 w-4" />} action={fpFilter}>
-        <LineChart labels={fp.months.map((m) => monthLabel(m.month, false))} series={fp.byMachineMonth.slice(0, LINE_CLASSES.length).map((m, i) => ({ label: m.label, values: m.months.map((x) => (x.sessions > 0 ? x.rejectedPieces : null)), className: LINE_CLASSES[i] }))} unit="" height={200} />
+      <Section title="First pass yield cumulative, by machine" hint={`Each machine's pieces rejected before release ÷ (its clean sessions + those pieces), month by month; lower is better. ${fpMachines.length ? 'The machines ticked.' : `The ${Math.min(LINE_CLASSES.length, fp.byMachineMonth.length)} machines with the most pieces rejected before release.`}`} icon={<Layers className="h-4 w-4" />} action={fpFilter}>
+        <LineChart labels={fp.months.map((m) => monthLabel(m.month, false))} series={fp.byMachineMonth.slice(0, LINE_CLASSES.length).map((m, i) => ({ label: m.label, values: m.months.map((x) => (x.sessions > 0 ? x.cumulativePct : null)), className: LINE_CLASSES[i] }))} height={200} />
       </Section>
     ) },
-    { id: 'g.firstPartTable', title: 'First part: sessions not clean', node: (
-      <Section title="Sessions not clean" hint="The sessions that started with pieces already rejected on the line, newest first." icon={<PackageCheck className="h-4 w-4" />} action={fpFilter}>
-        <Table
-          rows={fp.failed}
-          rowKey={(r) => r.sessionId}
-          empty="Every session started clean."
-          columns={[
-            { key: 'd', label: 'Started', className: 'whitespace-nowrap', render: (r) => shortDay(r.startedAt.slice(0, 10)) },
-            { key: 'o', label: 'Order', render: (r) => <span className="font-semibold">{r.orderNumber}</span> },
-            { key: 'i', label: 'Item', render: (r) => <span className="text-slate-600 dark:text-slate-300">{r.item}</span> },
-            { key: 'm', label: 'Machine', render: (r) => r.machineLabel },
-            { key: 'w', label: 'Inspector', render: (r) => r.inspectorName },
-            { key: 'q', label: 'Rejected before', className: 'text-right', render: (r) => <Badge tone="red">{num(r.rejectedBeforeRelease)} pcs</Badge> },
-            { key: 'go', label: '', className: 'print-hidden text-right', render: (r) => (<button type="button" onClick={() => navigate(`/wizard/${r.sessionId}`)} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">Session</button>) },
-          ]}
-        />
+    { id: 'g.firstPartQty', title: 'First part: sessions by pieces rejected', node: (
+      <Section title="Sessions by pieces rejected before release" hint="Of the sessions not clean: how many had 1 piece rejected before release, how many 2, and so on." icon={<PackageCheck className="h-4 w-4" />} action={fpFilter}>
+        {fp.byQty.length === 0 ? <p className="py-6 text-center text-sm text-slate-400">Every session started clean.</p> : <ColumnChart columns={qtyColumns(fp.byQty)} />}
+      </Section>
+    ) },
+    { id: 'g.firstPartTable', title: 'First part: parts not clean', node: (
+      <Section title="Parts not clean, by machine" hint="Each part on each machine: how many of its sessions started with pieces already rejected on the line, and those pieces. Tap a row for the orders behind it." icon={<PackageCheck className="h-4 w-4" />} action={fpFilter}>
+        <FirstPartParts rows={fp.byPart} navigate={navigate} />
       </Section>
     ) },
   ]
+}
+
+/** The first-part figures of the machines ticked, summed from the pick's; none ticked is the pick as it is. */
+function firstPartOf(all: KpiFirstPart, machines: string[]): KpiFirstPart {
+  if (machines.length === 0) return all
+  const ticked = new Set(machines.map((c) => c.toLowerCase()))
+  const on = (code: string) => ticked.has(code.toLowerCase())
+  const rows = all.byMachine.filter((m) => on(m.workCenterCode))
+  const monthRows = all.byMachineMonth.filter((m) => on(m.workCenterCode))
+  const sum = <R,>(list: R[], f: (r: R) => number) => list.reduce((n, r) => n + f(r), 0)
+  const sessions = sum(rows, (r) => r.sessions)
+  const clean = sum(rows, (r) => r.clean)
+  const pieces = sum(rows, (r) => r.rejectedPieces)
+  return {
+    ...all,
+    sessions,
+    clean,
+    pct: pct(clean, sessions),
+    rejectedPieces: pieces,
+    cumulativePct: pct(pieces, clean + pieces),
+    byMachine: rows,
+    byMachineMonth: monthRows,
+    months: all.months.map((m) => {
+      const inMonth = monthRows.map((r) => r.months.find((x) => x.month === m.month)).filter((x): x is NonNullable<typeof x> => x !== undefined)
+      const ms = sum(inMonth, (x) => x.sessions)
+      const mc = sum(inMonth, (x) => x.clean)
+      const mp = sum(inMonth, (x) => x.rejectedPieces)
+      return { month: m.month, sessions: ms, clean: mc, pct: ms > 0 ? pct(mc, ms) : null, rejectedPieces: mp, cumulativePct: ms > 0 ? pct(mp, mc + mp) : null }
+    }),
+    failed: all.failed.filter((r) => on(r.workCenterCode)),
+    byPart: all.byPart.filter((r) => on(r.workCenterCode)),
+    byQty: all.byQty.filter((r) => on(r.workCenterCode)),
+  }
+}
+
+/** The bands of the sessions-by-pieces chart: each count up to 5 on its own, then wider bands. */
+const QTY_BANDS: { label: string; from: number; to: number }[] = [
+  { label: '1 pc', from: 1, to: 1 },
+  { label: '2 pcs', from: 2, to: 2 },
+  { label: '3 pcs', from: 3, to: 3 },
+  { label: '4 pcs', from: 4, to: 4 },
+  { label: '5 pcs', from: 5, to: 5 },
+  { label: '6–10', from: 6, to: 10 },
+  { label: '11–20', from: 11, to: 20 },
+  { label: '21–50', from: 21, to: 50 },
+  { label: '51+', from: 51, to: Number.POSITIVE_INFINITY },
+]
+
+/** One column per band, 1 to 5 always shown, the wider bands only when a session falls in them. */
+function qtyColumns(rows: KpiFirstPart['byQty']): { label: string; value: number; sub: string }[] {
+  const total = rows.reduce((n, r) => n + r.sessions, 0)
+  return QTY_BANDS.map((b) => {
+    const value = rows.filter((r) => r.qty >= b.from && r.qty <= b.to).reduce((n, r) => n + r.sessions, 0)
+    return { label: b.label, value, sub: total > 0 ? `${Math.round((value / total) * 100)}%` : '' }
+  }).filter((c, i) => i < 5 || c.value > 0)
+}
+
+type PartRow = KpiFirstPart['byPart'][number]
+
+/** The parts not clean, one row per part on a machine, filtered like Excel; a row opens the orders behind it. */
+function FirstPartParts({ rows, navigate }: { rows: PartRow[]; navigate: (to: string) => void }) {
+  const [open, setOpen] = useState<PartRow | null>(null)
+  const filters = useColumnFilters(rows, [
+    { key: 'machine', value: (r) => r.machineLabel },
+    { key: 'part', value: (r) => r.item },
+    { key: 'code', value: (r) => r.itemCode },
+    { key: 'notClean', value: (r) => String(r.notClean), numeric: true },
+    { key: 'pieces', value: (r) => String(r.rejectedPieces), numeric: true },
+  ])
+  if (rows.length === 0) return <p className="py-6 text-center text-sm text-slate-400">Every session started clean.</p>
+  return (
+    <>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
+            <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+              <FilterTh filters={filters} column="machine" label="Machine" />
+              <FilterTh filters={filters} column="part" label="Part" />
+              <FilterTh filters={filters} column="code" label="Code" />
+              <FilterTh filters={filters} column="notClean" label="Sessions not clean" className="text-right" />
+              <FilterTh filters={filters} column="pieces" label="Rejected before" className="text-right" />
+              <th className="print-hidden px-2 py-1.5" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            {filters.rows.map((r) => (
+              <tr key={`${r.workCenterCode}|${r.itemCode}`} onClick={() => setOpen(r)} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                <td className="px-2 py-1.5">{r.machineLabel}{r.factory && <span className="ml-1 text-xs text-slate-400">{r.factory}</span>}</td>
+                <td className="px-2 py-1.5 font-semibold" dir="auto">{r.item}</td>
+                <td className="px-2 py-1.5 text-xs text-slate-500">{r.itemCode}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums"><span className="font-semibold">{num(r.notClean)}</span> <span className="text-xs text-slate-400">of {num(r.sessions)}</span></td>
+                <td className="px-2 py-1.5 text-right"><Badge tone="red">{num(r.rejectedPieces)} pcs</Badge></td>
+                <td className="print-hidden px-2 py-1.5 text-right">
+                  <button type="button" onClick={(e) => { e.stopPropagation(); setOpen(r) }} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
+                    {r.orders.length === 1 ? '1 order' : `${r.orders.length} orders`}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {filters.rows.length === 0 && (
+              <tr><td colSpan={6} className="py-6 text-center text-sm text-slate-400">No row matches the filters.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <FilterNote filters={filters} total={rows.length} />
+      <Modal open={open !== null} onClose={() => setOpen(null)} title={open ? `${open.item} on ${open.machineLabel}` : ''} icon={<PackageCheck className="h-5 w-5" />} size="lg">
+        {open && (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              {num(open.notClean)} of {num(open.sessions)} sessions started with pieces already rejected, {num(open.rejectedPieces)} pieces in all. The orders behind them:
+            </p>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                  <th className="px-2 py-1.5 font-semibold">Order</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Sessions not clean</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Rejected before</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Open</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {open.orders.map((o) => (
+                  <tr key={o.orderNumber}>
+                    <td className="whitespace-nowrap px-2 py-1.5 font-semibold">{o.orderNumber}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{num(o.notClean)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{num(o.rejectedPieces)} pcs</td>
+                    <td className="px-2 py-1.5 text-right">
+                      <span className="inline-flex flex-wrap justify-end gap-1">
+                        {o.sessionIds.map((id, i) => (
+                          <button key={id} type="button" onClick={() => navigate(`/wizard/${id}`)} className="rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300">
+                            {o.sessionIds.length === 1 ? 'Session' : `Session ${i + 1}`}
+                          </button>
+                        ))}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Modal>
+    </>
+  )
+}
+
+type BreakdownRow = KpiBreakdown['byOrder'][number]
+
+/** Each month's rejected pieces laid on the order lines or the items, filtered like Excel on every column. */
+function BreakdownTable({ rows, months, what, t }: { rows: BreakdownRow[]; months: KpiBreakdown['months']; what: 'order' | 'item'; t: KpiThresholds }) {
+  const filters = useColumnFilters(rows, [
+    { key: 'label', value: (r) => r.label },
+    { key: 'sub', value: (r) => (what === 'order' ? (r.sub ?? '') : r.key) },
+    { key: 'pieces', value: (r) => String(r.pieces), numeric: true },
+    { key: 'made', value: (r) => pctStr(r.pctOfMade, 3), numeric: true },
+    { key: 'period', value: (r) => pctStr(r.shareOfPeriodPct, 0), numeric: true },
+  ])
+  const groups = months.map((m) => ({ month: m, rows: filters.rows.filter((r) => r.month === m.month) })).filter((g) => g.rows.length > 0)
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
+          <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+            <FilterTh filters={filters} column="label" label={what === 'order' ? 'Order' : 'Item'} />
+            <FilterTh filters={filters} column="sub" label={what === 'order' ? 'Item' : 'Code'} />
+            <FilterTh filters={filters} column="pieces" label="Rejected" className="text-right" />
+            <FilterTh filters={filters} column="made" label="Of made" className="text-right" />
+            <FilterTh filters={filters} column="period" label="Of period" className="text-right" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          {groups.map((g) => (
+            <Fragment key={g.month.month}>
+              <tr className="bg-slate-50 dark:bg-slate-800/60">
+                <td className="px-2 py-1.5 font-bold" colSpan={3}>{monthLabel(g.month.month)}</td>
+                <td className="px-2 py-1.5 text-right"><ToneCell value={g.month.defectRatePct} tone={toneLowIsGood(g.month.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /></td>
+                <td className="px-2 py-1.5 text-right text-xs text-slate-400">{num(g.month.productionDefectPieces)} of {num(g.month.made)}</td>
+              </tr>
+              {g.rows.map((r) => (
+                <tr key={`${r.month}|${r.key}`}>
+                  <td className="px-2 py-1.5 font-semibold" dir="auto">{r.label}</td>
+                  <td className="px-2 py-1.5 text-xs text-slate-500" dir="auto">{what === 'order' ? r.sub : r.key}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{num(r.pieces)}</td>
+                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums" title={`${num(r.pieces)} rejected of ${num(r.made)} made by this ${what} in the month`}>{pctStr(r.pctOfMade, 3)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{pctStr(r.shareOfPeriodPct, 0)}</td>
+                </tr>
+              ))}
+            </Fragment>
+          ))}
+          {groups.length === 0 && (
+            <tr><td colSpan={5} className="py-6 text-center text-sm text-slate-400">{rows.length === 0 ? 'No rejected piece in these months.' : 'No row matches the filters.'}</td></tr>
+          )}
+        </tbody>
+      </table>
+      <FilterNote filters={filters} total={rows.length} />
+    </div>
+  )
+}
+
+/** Each defect's rejected pieces month by month and its share of the month's, filtered like Excel on the defect and its total. */
+function DefectsByMonthTable({ data, rejected, rate }: { data: KpiBreakdown; rejected: number; rate: number | null }) {
+  const filters = useColumnFilters(data.defects, [
+    { key: 'defect', value: (d) => d.defectName },
+    { key: 'total', value: (d) => String(d.pieces), numeric: true },
+  ])
+  if (data.defects.length === 0) return <p className="py-6 text-center text-sm text-slate-400">No rejected piece in these months.</p>
+  const shown = filters.active > 0 ? filters.rows : filters.rows.slice(0, 15)
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
+          <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+            <FilterTh filters={filters} column="defect" label="Defect" />
+            {data.months.map((m) => <th key={m.month} className="px-2 py-1.5 text-right font-semibold">{monthLabel(m.month, false)}</th>)}
+            <FilterTh filters={filters} column="total" label="Total" className="text-right" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tr className="bg-slate-50 font-semibold dark:bg-slate-800/60">
+            <td className="px-2 py-1.5">All rejected · rate</td>
+            {data.months.map((m) => <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{m.made > 0 ? <>{num(m.productionDefectPieces)} <span className="text-xs text-slate-400">{pctStr(m.defectRatePct)}</span></> : <span className="text-slate-300">—</span>}</td>)}
+            <td className="px-2 py-1.5 text-right tabular-nums">{num(rejected)} <span className="text-xs text-slate-400">{pctStr(rate)}</span></td>
+          </tr>
+          {shown.map((d) => (
+            <tr key={d.defectName}>
+              <td className="px-2 py-1.5 text-left"><span dir="auto" className="inline-block font-medium">{d.defectName}</span></td>
+              {d.months.map((m) => {
+                const monthRejected = data.months.find((x) => x.month === m.month)?.productionDefectPieces ?? 0
+                return <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-slate-400">{pctStr(monthRejected > 0 ? Math.round((m.pieces / monthRejected) * 1000) / 10 : null, 0)}</span></> : <span className="text-slate-300">—</span>}</td>
+              })}
+              <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{num(d.pieces)} <span className="text-xs font-normal text-slate-400">{pctStr(d.sharePct, 0)}</span></td>
+            </tr>
+          ))}
+          {shown.length === 0 && (
+            <tr><td colSpan={data.months.length + 2} className="py-6 text-center text-sm text-slate-400">No row matches the filters.</td></tr>
+          )}
+        </tbody>
+      </table>
+      <FilterNote filters={filters} total={data.defects.length} />
+    </div>
+  )
 }
 
 /** One card per machine of the selection: the rate, its trend, and the pieces behind it. */
@@ -1157,7 +1332,7 @@ export function DashboardPage() {
           <h1 className="mt-1 text-2xl font-extrabold tracking-tight">Dashboard</h1>
           {view === 'general' && pick !== 'details' ? (
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              <span className="font-semibold text-slate-700 dark:text-slate-200">{describeRange(range)}</span> · reject rate = rejected ÷ (produced + rejected) · trend over the last {general?.monthsBack ?? 4} months
+              <span className="font-semibold text-slate-700 dark:text-slate-200">{describeRange(range)}</span> · reject rate = rejected ÷ (produced + rejected) · trend over {general ? windowLength(general) : 'the last months'}
               {general && <span className="hidden print:inline"> · generated {formatDateTime(general.generatedAt)}</span>}
             </p>
           ) : (

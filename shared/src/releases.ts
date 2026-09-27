@@ -28,6 +28,20 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-27.1',
+    date: '2026-09-27',
+    title: 'Dashboard: first part by part, Excel filters, fixed pies',
+    items: [
+      { text: 'Plant: trend starts on the first month with production instead of empty months, and grows to the last four months as time passes.' },
+      { text: 'The factory cards read in name order: LM1, LM2, LM2-Ext., LM3, LM4.' },
+      { text: 'By factory, the machine list is one list again, worst first whatever the factory; pick a factory and it ranks inside it. By process keeps the machines under their process.' },
+      { text: 'Rejected by factory (or process) follows the period only, not the picks. A second pie beside it, all time, follows nothing. Rejected by machine follows the period and the factories or processes picked, not the ticked machines.' },
+      { text: 'First part: the machine list takes several machines at once. The chart by machine now reads first pass yield cumulative per machine, month by month. A new chart counts the sessions by pieces rejected before release: 1 piece, 2, and so on.' },
+      { text: 'Sessions not clean became Parts not clean: one row per part on a machine, how many of its sessions started with pieces already rejected, of how many, and the pieces. Tap a row for the orders behind it and open their sessions.' },
+      { text: 'Every table of General filters like Excel: the funnel on a column header lists its values with ticks and a search. Clear filters shows every row again.' },
+    ],
+  },
+  {
     id: '2026-09-26.6',
     date: '2026-09-26',
     title: 'Dashboard: picks back under the overview',

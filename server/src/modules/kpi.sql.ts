@@ -17,6 +17,7 @@ import type {
   KpiDefectDetailRow,
   KpiFactoryTrend,
   KpiFirstPart,
+  KpiGeneral,
   KpiGroupRow,
   KpiHoldRow,
   KpiInspectorRaw,
@@ -884,6 +885,38 @@ export async function loadDefectDetails(q: Queryable, f: PeriodFilters, limit = 
   }))
 }
 
+/** The first month, in the factory's zone, that has a session closed with a final quantity: where the plant trend starts. */
+export async function loadFirstDataMonth(q: Queryable, tz: string): Promise<string | null> {
+  const { rows } = await q.query<{ month: string | null }>(
+    `SELECT to_char(min(closed_at) AT TIME ZONE $1, 'YYYY-MM') AS month
+       FROM inspection_sessions
+      WHERE deleted_at IS NULL AND status = 'Closed' AND final_qty IS NOT NULL AND closed_at IS NOT NULL`,
+    [tz],
+  )
+  return rows[0]?.month ?? null
+}
+
+/** Made (produced + rejected) and rejected pieces by factory and by process, over the span of `f`. */
+export async function loadScopeTotals(q: Queryable, f: PeriodFilters): Promise<KpiGeneral['allTime']> {
+  const p = params(f)
+  const [byFactory, byProcess] = await Promise.all([
+    q.query<{ key: string; produced: number; defectPieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT factory AS key, COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+         FROM produced GROUP BY 1 ORDER BY 1`,
+      p,
+    ),
+    q.query<{ key: string; produced: number; defectPieces: number }>(
+      `WITH ${PRODUCED}
+       SELECT process AS key, COALESCE(sum(produced), 0)::float8 AS produced, COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+         FROM produced GROUP BY 1 ORDER BY 1`,
+      p,
+    ),
+  ])
+  const row = (r: { key: string; produced: number; defectPieces: number }) => ({ key: r.key || '(no factory)', made: r.produced + r.defectPieces, productionDefectPieces: r.defectPieces, defectRatePct: rejectRate(r.defectPieces, r.produced) })
+  return { from: f.from, to: f.to, factories: byFactory.rows.map(row), processes: byProcess.rows.map(row) }
+}
+
 /** Each factory's production month by month, for the general page's trend.
  *  A factory is the register's; a machine without one counts as "(no factory)". */
 export async function loadFactoryMonths(q: Queryable, f: PeriodFilters): Promise<KpiFactoryTrend[]> {
@@ -1142,7 +1175,7 @@ WITH sessions AS (
 
 export async function loadFirstPart(q: Queryable, f: PeriodFilters): Promise<KpiFirstPart> {
   const p = [f.tz, f.from, f.to, factories(f), wcs(f), f.itemCode ?? null, processes(f)]
-  const [totals, byMachine, byMonth, byMachineMonthRows, failed] = await Promise.all([
+  const [totals, byMachine, byMonth, byMachineMonthRows, failed, byPartRows, byOrderRows, byQtyRows] = await Promise.all([
     q.query<{ sessions: number; clean: number; pieces: number }>(`${FIRST_PART} SELECT count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before = 0)::int AS clean, COALESCE(sum(rejected_before), 0)::float8 AS pieces FROM sessions`, p),
     q.query<{ code: string; label: string; factory: string; sessions: number; clean: number; pieces: number }>(
       `${FIRST_PART}
@@ -1172,7 +1205,40 @@ export async function loadFirstPart(q: Queryable, f: PeriodFilters): Promise<Kpi
          FROM sessions WHERE rejected_before > 0 ORDER BY started_at DESC LIMIT 50`,
       p,
     ),
+    // A part on a machine: how many of its sessions started with pieces already rejected, of how many, and those pieces.
+    q.query<{ code: string; machineLabel: string; factory: string; itemCode: string; item: string; sessions: number; notClean: number; pieces: number }>(
+      `${FIRST_PART}
+       SELECT max(wc) AS code, max(machine_label) AS "machineLabel", max(factory) AS factory, max(item_code) AS "itemCode", max(item) AS item,
+              count(*)::int AS sessions, count(*) FILTER (WHERE rejected_before > 0)::int AS "notClean", COALESCE(sum(rejected_before), 0)::float8 AS pieces
+         FROM sessions GROUP BY lower(wc), lower(item_code)
+        HAVING count(*) FILTER (WHERE rejected_before > 0) > 0
+        ORDER BY "notClean" DESC, pieces DESC, code, "itemCode"`,
+      p,
+    ),
+    // The orders behind each part on a machine, for the pop-up: its sessions that were not clean.
+    q.query<{ code: string; itemCode: string; orderNumber: string; notClean: number; pieces: number; sessionIds: string[] }>(
+      `${FIRST_PART}
+       SELECT max(wc) AS code, max(item_code) AS "itemCode", order_number AS "orderNumber", count(*)::int AS "notClean",
+              COALESCE(sum(rejected_before), 0)::float8 AS pieces, array_agg(id::text ORDER BY started_at DESC) AS "sessionIds"
+         FROM sessions WHERE rejected_before > 0
+        GROUP BY lower(wc), lower(item_code), order_number
+        ORDER BY pieces DESC, "orderNumber"`,
+      p,
+    ),
+    // How many sessions had 1 piece rejected before release, how many 2, and so on, per machine.
+    q.query<{ code: string; qty: number; sessions: number }>(
+      `${FIRST_PART}
+       SELECT max(wc) AS code, rejected_before AS qty, count(*)::int AS sessions
+         FROM sessions WHERE rejected_before > 0 GROUP BY lower(wc), rejected_before ORDER BY 2, 1`,
+      p,
+    ),
   ])
+  const ordersOf = new Map<string, KpiFirstPart['byPart'][number]['orders']>()
+  for (const r of byOrderRows.rows) {
+    const key = `${r.code.toLowerCase()}|${r.itemCode.toLowerCase()}`
+    if (!ordersOf.has(key)) ordersOf.set(key, [])
+    ordersOf.get(key)!.push({ orderNumber: r.orderNumber, notClean: r.notClean, rejectedPieces: r.pieces, sessionIds: r.sessionIds })
+  }
   const months: string[] = []
   for (let m = f.from.slice(0, 7); m <= f.to.slice(0, 7) && months.length < 60; m = nextMonth(m)) months.push(m)
   const perMonth = new Map(byMonth.rows.map((r) => [r.month, r]))
@@ -1208,5 +1274,17 @@ export async function loadFirstPart(q: Queryable, f: PeriodFilters): Promise<Kpi
       return { month, sessions: r?.sessions ?? 0, clean: r?.clean ?? 0, pct: r ? pct(r.clean, r.sessions) : null, rejectedPieces: r?.pieces ?? 0, cumulativePct: r ? pct(r.pieces, r.clean + r.pieces) : null }
     }),
     failed: failed.rows.map((r) => ({ ...r, startedAt: new Date(r.startedAt).toISOString() })),
+    byPart: byPartRows.rows.map((r) => ({
+      workCenterCode: r.code,
+      machineLabel: r.machineLabel,
+      factory: r.factory,
+      itemCode: r.itemCode,
+      item: r.item,
+      sessions: r.sessions,
+      notClean: r.notClean,
+      rejectedPieces: r.pieces,
+      orders: ordersOf.get(`${r.code.toLowerCase()}|${r.itemCode.toLowerCase()}`) ?? [],
+    })),
+    byQty: byQtyRows.rows.map((r) => ({ workCenterCode: r.code, qty: r.qty, sessions: r.sessions })),
   }
 }
