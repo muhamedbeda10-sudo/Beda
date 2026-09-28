@@ -486,7 +486,7 @@ export interface KpiFirstPart {
   /** Pieces rejected before release across the sessions that were not clean. */
   rejectedPieces: number
   /**
-   * First pass yield, cumulative, as the floor reads it: the pieces rejected
+   * First pass released, cumulative, as the floor reads it: the pieces rejected
    * before release over the clean sessions plus those pieces. 9 clean sessions
    * and one with 5 rejected: 5 ÷ (9 + 5) = 36%. Lower is better.
    */

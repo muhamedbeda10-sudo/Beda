@@ -28,6 +28,12 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-28.91',
+    date: '2026-09-28',
+    title: 'Dashboard: first pass released cumulative',
+    items: [{ text: 'The card at the top of the dashboard is now called First pass released cumulative. Its figure is unchanged: pieces rejected before release ÷ (clean sessions + those pieces), lower is better.' }],
+  },
+  {
     id: '2026-09-28.9',
     date: '2026-09-28',
     title: 'Access: the same window of sessions',
