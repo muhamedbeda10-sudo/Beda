@@ -240,6 +240,8 @@ export function ordersRoutes(ctx: AppContext): Router {
         search: z.string().trim().max(120).default(''),
         machine: z.string().trim().max(40).default(''),
         includeCancelled: z.coerce.boolean().default(false),
+        /** `contains` finds the number by any part of it, those that start with it first. */
+        match: z.enum(['prefix', 'contains']).default('prefix'),
         limit: z.coerce.number().int().min(1).max(100).default(40),
       }),
       req.query,
@@ -251,9 +253,17 @@ export function ordersRoutes(ctx: AppContext): Router {
       params.push(q.machine.toLowerCase())
       where.push(`lower(work_center_code) = $${params.length}`)
     }
+    let orderBy = 'lower(min(order_number))'
     if (q.search) {
-      params.push(likePrefix(q.search))
-      where.push(`lower(order_number) LIKE $${params.length}`)
+      if (q.match === 'contains') {
+        params.push(`%${q.search.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
+        where.push(`lower(order_number) LIKE $${params.length}`)
+        params.push(likePrefix(q.search))
+        orderBy = `(lower(min(order_number)) LIKE $${params.length}) DESC, lower(min(order_number))`
+      } else {
+        params.push(likePrefix(q.search))
+        where.push(`lower(order_number) LIKE $${params.length}`)
+      }
     }
     params.push(q.limit)
     const { rows } = await ctx.db.query<OrderNumberSummary>(
@@ -261,7 +271,7 @@ export function ordersRoutes(ctx: AppContext): Router {
          FROM production_orders
         WHERE ${where.join(' AND ')}
         GROUP BY lower(order_number)
-        ORDER BY lower(order_number)
+        ORDER BY ${orderBy}
         LIMIT $${params.length}`,
       params,
     )

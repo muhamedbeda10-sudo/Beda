@@ -25,7 +25,9 @@ import type {
   OpenSessionsResponse,
   OrderHistory,
   OrderNumberSummary,
-  PDIWithOrder,
+  PDIListFilters,
+  PDIListResponse,
+  PDIOptionsResponse,
   SampleDetail,
   SampleSummary,
   SessionWithOrder,
@@ -111,10 +113,11 @@ export function useOpenBoard() {
 
 /** §6 — a first page of the sessions the filters match. The filters go to the
  *  API, not to the page in hand, so nothing matching is left behind. */
-export function useHistory(filters: HistoryFilters, limit = 100) {
+export function useHistory(filters: HistoryFilters, limit = 100, enabled = true) {
   return useQuery({
     queryKey: keys.history(filters),
     queryFn: () => api<HistoryResponse>(`/sessions/history${qs({ limit, ...filters })}`),
+    enabled,
     // The list stays put while a new search settles, instead of blinking empty.
     placeholderData: keepPreviousData,
   })
@@ -287,8 +290,43 @@ export function useMaster<K extends MasterKind>(kind: K, filters?: MasterListQue
 
 // ---- PDI, audit, users -----------------------------------------------------
 
-export function usePdiList(limit = 50) {
-  return useQuery({ queryKey: keys.pdi, queryFn: () => api<PDIWithOrder[]>(`/pdi${qs({ limit })}`) })
+/** A page of PDIs, newest first, every filter answered over the whole record. */
+export function usePdiList(filters: PDIListFilters, limit = 50, enabled = true) {
+  return useQuery({
+    queryKey: ['pdi', 'list', filters, limit] as const,
+    queryFn: () => api<PDIListResponse>(`/pdi${qs({ limit, ...filters })}`),
+    enabled,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** The page of PDIs recorded before `before`, for walking back. */
+export function loadOlderPdi(filters: PDIListFilters, before: string, limit = 50): Promise<PDIListResponse> {
+  return api<PDIListResponse>(`/pdi${qs({ limit, ...filters, before })}`)
+}
+
+export function usePdiOptions(enabled = true) {
+  return useQuery({ queryKey: ['pdi', 'options'] as const, queryFn: () => api<PDIOptionsResponse>('/pdi/options'), enabled, staleTime: 5 * 60_000 })
+}
+
+/** Order numbers found by any part of the number, on any machine: the PDI's first step. */
+export function useOrderNumbersAnywhere(term: string, limit = 40) {
+  const t = useDebounced(term.trim())
+  return useQuery({
+    queryKey: keys.orderNumbers(`*|contains|${t}|${limit}`),
+    queryFn: () => api<OrderNumberSummary[]>(`/orders/numbers${qs({ search: t, match: 'contains', limit })}`),
+    enabled: t !== '',
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** Every line of one order, on every machine: the items a PDI may cover. */
+export function useOrderAllLines(orderNumber: string) {
+  return useQuery({
+    queryKey: keys.orderLines(`*|${orderNumber}`),
+    queryFn: () => api<ProductionOrder[]>(`/orders${qs({ orderNumber, limit: 500 })}`),
+    enabled: orderNumber !== '',
+  })
 }
 
 /** §11 — a first page of the log entries the filters match, counted over the

@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-28.2',
+    date: '2026-09-28',
+    title: 'PDI: the whole order, and in History',
+    items: [
+      { text: 'New PDI finds the order by any part of its number and shows every item of it, however many, each with its drawing number. Untick the items that do not ship this time; the PDI covers the rest.' },
+      { text: 'A PDI shows its items with their drawing numbers. Tap one for its items, notes and photos.' },
+      { text: 'History has a Sessions | PDI switch at the top. PDI lists every PDI on record, newest first, and filters by order, customer, item, drawing, note, who recorded it and date; Show older walks back as far as the record goes.' },
+      { text: 'The PDI screen searches the whole record too, not only the latest fifty.' },
+    ],
+  },
+  {
     id: '2026-09-28.1',
     date: '2026-09-28',
     title: 'Dashboard: choose the charts everyone sees',

@@ -622,14 +622,58 @@ export type ImageAssetResponse = ImageAsset
 
 // ---- PDI -------------------------------------------------------------------
 
-export interface PDIWithOrder extends PDIDocument {
-  order: OrderSummary | null
+/** One item a PDI covers: the order's lines of that item, on whichever machines they ran. */
+export interface PDIItem {
+  itemCode: string
+  item: string
+  /** The drawing numbers of those lines; one item can carry a drawing per machine. */
+  drawings: string[]
+  /** The order lines of the item the PDI covers. */
+  lineIds: string[]
 }
 
+export interface PDIWithOrder extends PDIDocument {
+  /** The anchor line: the first line the PDI covers. */
+  order: OrderSummary | null
+  orderNumber: string
+  customer: string
+  /** The items covered, by item code. */
+  items: PDIItem[]
+}
+
+/**
+ * A PDI names the order lines it covers: the lines of the items ticked. They
+ * must all belong to one order number.
+ */
 export interface CreatePDIRequest {
-  orderId: string
+  orderIds: string[]
   notes?: string
   imageIds: string[]
+}
+
+/** How the PDI list narrows. Every filter is applied in SQL over every PDI on record. */
+export interface PDIListFilters {
+  /** Any part of the order number, customer, item, item code, drawing, note or who recorded it. */
+  q?: string
+  /** Any part of an item code, item name or drawing number. */
+  item?: string
+  createdById?: string
+  /** Factory days, YYYY-MM-DD, both inclusive. */
+  from?: string
+  to?: string
+}
+
+export interface PDIListResponse {
+  documents: PDIWithOrder[]
+  /** Older PDIs than the last one here exist; ask again with `before`. */
+  hasMore: boolean
+  /** Counted over everything that matches, sent with a first page only. */
+  total?: number
+}
+
+export interface PDIOptionsResponse {
+  /** Everyone who recorded a PDI, named as they were most recently. */
+  createdBy: { id: string; name: string }[]
 }
 
 // ---- Audit -----------------------------------------------------------------
