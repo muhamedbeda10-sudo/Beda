@@ -8,6 +8,7 @@ import type {
   HistoryResponse,
   OpenSessionsResponse,
   OrderHistory,
+  PDIListResponse,
   PDIWithOrder,
   ReRecordSampleResponse,
   SampleDetail,
@@ -972,13 +973,16 @@ describe('images', () => {
 describe('PDI documents', () => {
   it('creates and lists with the order attached', async () => {
     const photo = await uploadImage(inspector, 21, { orderId: weldOrder.id })
-    const created = await app.api<PDIWithOrder>('POST', '/api/pdi', { token: inspector.token, body: { orderId: weldOrder.id, notes: 'ready', imageIds: [photo.id] } })
+    const created = await app.api<PDIWithOrder>('POST', '/api/pdi', { token: inspector.token, body: { orderIds: [weldOrder.id], notes: 'ready', imageIds: [photo.id] } })
     expect(created.status).toBe(201)
     expect(created.body.order?.orderNumber).toBe('20095-QC1-HYH')
+    expect(created.body.orderNumber).toBe('20095-QC1-HYH')
+    expect(created.body.items).toEqual([{ itemCode: '125185TA3', item: 'XL Light Beam', drawings: ['BS9059/58'], lineIds: [weldOrder.id] }])
     expect(created.body.imageIds).toEqual([photo.id])
     expect(created.body.createdByName).toBe('Inspector One')
-    const list = await app.api<PDIWithOrder[]>('GET', '/api/pdi', { token: inspector.token })
-    expect(list.body).toHaveLength(1)
+    const list = await app.api<PDIListResponse>('GET', '/api/pdi', { token: inspector.token })
+    expect(list.body.documents).toHaveLength(1)
+    expect(list.body.total).toBe(1)
   })
 })
 

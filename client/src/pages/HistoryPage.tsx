@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ClipboardList,
   Droplets,
+  FileText,
   History as HistoryIcon,
   Info,
   Layers,
@@ -33,6 +34,7 @@ import { DefectEditDialog, DimensionEditDialog } from '@/components/inspection/C
 import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { SessionPhotos } from '@/components/inspection/SessionPhotos'
+import { PdiList } from '@/components/pdi/PdiList'
 import { loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
@@ -262,10 +264,13 @@ export function HistoryPage() {
   const { role } = useAuth()
   const { toast } = useApp()
   const [params, setParams] = useSearchParams()
+  /** What History lists: inspection sessions, or PDI documents. Kept on this device. */
+  const [kind, setKind] = usePersistedState<'sessions' | 'pdi'>('qc-history:kind', 'sessions')
   // Access sends an order number in the address: it becomes the search, once, and leaves the address.
   useEffect(() => {
     const q = params.get('q')
     if (q === null) return
+    setKind('sessions')
     setTerm(q)
     const next = new URLSearchParams(params)
     next.delete('q')
@@ -384,7 +389,12 @@ export function HistoryPage() {
     return f
   }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, settledItem, range, fromDay, toDay, dispositionFilter])
 
-  const { data: history, isLoading: loading, isFetching } = useHistory(filters, SESSION_PAGE)
+  const { data: history, isLoading: loading, isFetching } = useHistory(filters, SESSION_PAGE, kind === 'sessions')
+  // A link to the sessions with a disposition lands on the sessions, whatever was last shown.
+  useEffect(() => {
+    if (dispositionFilter) setKind('sessions')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dispositionFilter])
   /** Pages walked back from the first one, so an older session is never out of reach. */
   const [older, setOlder] = useState<SessionWithOrder[]>([])
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -526,8 +536,36 @@ export function HistoryPage() {
     setParams(next, { replace: true })
   }
 
+  const kindToggle = (
+    <div role="tablist" aria-label="What History lists" className="inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+      {(['sessions', 'pdi'] as const).map((k) => (
+        <button
+          key={k}
+          type="button"
+          role="tab"
+          aria-selected={kind === k}
+          onClick={() => setKind(k)}
+          className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-lg px-4 text-sm font-semibold transition-colors', kind === k ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200')}
+        >
+          {k === 'sessions' ? <HistoryIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+          {k === 'sessions' ? 'Sessions' : 'PDI'}
+        </button>
+      ))}
+    </div>
+  )
+
+  if (kind === 'pdi') {
+    return (
+      <div className="space-y-5">
+        {kindToggle}
+        <PdiList />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-5">
+      {kindToggle}
       {/* No page heading: the tab says where you are, and the counters take the top of the page. */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <Stat
