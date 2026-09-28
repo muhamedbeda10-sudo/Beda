@@ -50,6 +50,8 @@ import type {
   SessionNotesResponse,
   SessionStagesResponse,
   HistoryExportResponse,
+  HistoryGroupResponse,
+  HistoryGroupSession,
   SessionWithOrder,
   WizardContext,
   StartSessionRequest,
@@ -59,7 +61,7 @@ import type {
   SessionImageKind,
   SessionImagesResponse,
 } from '@qc/shared/api'
-import { EXPORT_MAX_RECORDS } from '@qc/shared/api'
+import { EXPORT_MAX_RECORDS, HISTORY_GROUP_LIMIT } from '@qc/shared/api'
 import type { AuditContext } from '@qc/shared/audit'
 import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
@@ -398,6 +400,60 @@ export function sessionsRoutes(ctx: AppContext): Router {
 
     const body: HistoryResponse = { sessions: rows.rows.slice(0, q.limit).map(toSessionWithOrder), hasMore: rows.rows.length > q.limit }
     if (counted) body.totals = counted.rows[0]
+    res.json(body)
+  })
+
+  /**
+   * §6 — History's grouped view: the sessions of an order (read whole), or of
+   * an item, a machine or the filters as they stand, newest first, each with
+   * its counts and its defects. Bounded at HISTORY_GROUP_LIMIT sessions.
+   */
+  r.get('/history/group', async (req, res) => {
+    requireUser(req)
+    const q = parse(
+      historyFilterSchema.extend({
+        orderNumber: z.string().trim().min(1).max(120).optional(),
+        itemCode: z.string().trim().min(1).max(120).optional(),
+      }),
+      req.query,
+    )
+    // An order is its whole record: the other filters do not narrow it.
+    const { where, params } = q.orderNumber ? { where: 's.deleted_at IS NULL', params: [] as unknown[] } : historyWhere(q, ctx.config.FACTORY_TIMEZONE)
+    const p = (v: unknown) => `$${params.push(v)}`
+    const clauses = [where]
+    if (q.orderNumber) clauses.push(`lower(btrim(o.order_number)) = lower(btrim(${p(q.orderNumber)}))`)
+    if (q.itemCode) clauses.push(`lower(btrim(o.item_code)) = lower(btrim(${p(q.itemCode)}))`)
+    const { rows } = await db.query<HistoryGroupSession & { total: number }>(
+      `SELECT s.id AS "sessionId", s.seq, s.order_id AS "orderId", COALESCE(o.order_number, '') AS "orderNumber", COALESCE(o.item, '') AS item,
+              COALESCE(o.item_code, '') AS "itemCode", s.work_center_code AS "workCenterCode", COALESCE(m.display_name, s.work_center_code) AS machine,
+              COALESCE(m.factory, '') AS factory, s.status, s.stage, s.started_at AS "startedAt", s.closed_at AS "closedAt", s.inspector_name AS "inspectorName",
+              (SELECT count(*)::int FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS samples,
+              (SELECT COALESCE(sum(x.sample_qty), 0)::float8 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "piecesInspected",
+              (SELECT COALESCE(sum(d.qty), 0)::float8 FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+                WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL) AS "defectPieces",
+              COALESCE((SELECT jsonb_agg(jsonb_build_object('defectName', t.defect_name, 'pieces', t.pieces) ORDER BY t.pieces DESC, t.defect_name)
+                          FROM (SELECT d.defect_name, sum(d.qty)::float8 AS pieces
+                                  FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+                                 WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL
+                                 GROUP BY d.defect_name) t), '[]') AS defects,
+              count(*) OVER ()::int AS total
+         FROM inspection_sessions s
+         LEFT JOIN production_orders o ON o.id = s.order_id
+         LEFT JOIN LATERAL (
+           SELECT m.display_name, m.factory FROM machines m
+            WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY s.started_at DESC, s.seq DESC
+        LIMIT ${p(HISTORY_GROUP_LIMIT)}`,
+      params,
+    )
+    const iso = (v: string | Date | null) => (v === null ? null : new Date(v).toISOString())
+    const total = rows[0]?.total ?? 0
+    const body: HistoryGroupResponse = {
+      sessions: rows.map(({ total: _t, ...r }) => ({ ...r, startedAt: iso(r.startedAt)!, closedAt: iso(r.closedAt) })),
+      total,
+      truncated: total > rows.length,
+    }
     res.json(body)
   })
 

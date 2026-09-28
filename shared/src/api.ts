@@ -648,6 +648,49 @@ export interface HistoryExportResponse {
   defects: { sessionRef: string; sampleIndex: number; defectName: string; qty: number; disposition: string; notes: string }[]
 }
 
+/**
+ * §6 — History's grouped view: the sessions of an order, an item, a machine or
+ * the filters as a whole, each with its counts and defects, for the pop-up
+ * that lays them on their order lines. An order is read whole; the others
+ * read History's filters as they stand.
+ */
+export interface HistoryGroupQuery extends HistoryFilters {
+  orderNumber?: string
+  /** One item, by its exact code. */
+  itemCode?: string
+}
+
+export interface HistoryGroupSession {
+  sessionId: string
+  seq: number
+  orderId: string
+  orderNumber: string
+  item: string
+  itemCode: string
+  workCenterCode: string
+  machine: string
+  factory: string
+  status: SessionStatus
+  stage: number | null
+  startedAt: string
+  closedAt: string | null
+  inspectorName: string
+  samples: number
+  piecesInspected: number
+  defectPieces: number
+  defects: { defectName: string; pieces: number }[]
+}
+
+export interface HistoryGroupResponse {
+  sessions: HistoryGroupSession[]
+  /** How many match; past the limit the newest are listed. */
+  total: number
+  truncated: boolean
+}
+
+/** The most sessions a grouped view lists: the newest. */
+export const HISTORY_GROUP_LIMIT = 500
+
 /** The items of the open order lines, for the PDI's item list: one per code and name. */
 export interface OrderItemOption {
   itemCode: string

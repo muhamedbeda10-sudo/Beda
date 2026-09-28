@@ -28,6 +28,8 @@ import type {
   PDIListFilters,
   PDIWithOrder,
   HistoryExportResponse,
+  HistoryGroupQuery,
+  HistoryGroupResponse,
   OrderItemOption,
   SessionStagesResponse,
   PDIListResponse,
@@ -403,6 +405,15 @@ export function useOrderItems(factory: string, machine: string, search: string, 
     enabled,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
+  })
+}
+
+/** §6 — History's grouped view: an order whole, or an item, a machine or the filters. Nothing is fetched until it opens. */
+export function useHistoryGroup(q: HistoryGroupQuery | null) {
+  return useQuery({
+    queryKey: ['history', 'group', q] as const,
+    queryFn: () => api<HistoryGroupResponse>(`/sessions/history/group${qs({ ...q })}`),
+    enabled: q !== null,
   })
 }
 

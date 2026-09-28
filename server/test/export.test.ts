@@ -6,7 +6,7 @@
 
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import type { HistoryExportResponse, PDIWithOrder, SessionWithOrder } from '@qc/shared/api'
+import type { HistoryExportResponse, HistoryGroupResponse, PDIWithOrder, SessionWithOrder } from '@qc/shared/api'
 import type { ProductionOrder } from '@qc/shared/types'
 import { TestApp, type Session } from './harness'
 
@@ -85,3 +85,22 @@ describe('§4 — PDIs to Excel', () => {
     expect((await app.api<PDIWithOrder[]>('GET', '/api/pdi/export?q=nothing-like-it', { token: viewer.token })).body).toEqual([])
   })
 })
+
+describe('§6 — History grouped by order, item, machine or filters', () => {
+  const group = (query: string) => app.api<HistoryGroupResponse>('GET', `/api/sessions/history/group?${query}`, { token: inspector.token })
+
+  it('reads an order whole, whatever the filters say', async () => {
+    const order = (await group('orderNumber=40001-a&q=gamma&status=Closed')).body
+    expect(order.total).toBe(1)
+    expect(order.sessions[0]).toMatchObject({ orderNumber: '40001-A', item: 'Upright 80x60', machine: '31-Roll Forming-LM2', status: 'Open', samples: 1, piecesInspected: 10, defectPieces: 3, defects: [{ defectName: 'Scratch', pieces: 3 }] })
+  })
+
+  it('reads an item, a machine or the filters as they stand', async () => {
+    expect((await group('itemCode=bp-1')).body.sessions.map((x) => x.orderNumber)).toEqual(['40002-B'])
+    expect((await group('workCenterCode=31')).body.total).toBe(2)
+    expect((await group('workCenterCode=31&q=beta')).body.sessions.map((x) => x.orderNumber)).toEqual(['40001-A'])
+    expect((await group('status=Open')).body.total).toBe(2)
+    expect((await group('status=Closed')).body).toEqual({ sessions: [], total: 0, truncated: false })
+  })
+})
+

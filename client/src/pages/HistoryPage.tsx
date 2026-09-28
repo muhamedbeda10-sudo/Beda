@@ -38,8 +38,9 @@ import { SessionPhotos } from '@/components/inspection/SessionPhotos'
 import { PdiList } from '@/components/pdi/PdiList'
 import { StageBadge } from '@/components/inspection/StagePicker'
 import { historySheets } from '@/components/history/exportHistory'
+import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
-import { loadHistoryExport, loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
+import { loadHistoryExport, loadOlderSessions, useSession, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { ColumnPicker, FitColumnsButton, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
@@ -135,6 +136,27 @@ interface HistoryCellContext {
   workCenterName: (code: string) => string
   factoryOf: (code: string) => string
   processOf: (code: string) => Process
+  /** The grouped views a cell opens: the order whole, the item or the machine within the filters. */
+  openOrder: (s: SessionWithOrder) => void
+  openItem: (s: SessionWithOrder) => void
+  openMachine: (s: SessionWithOrder) => void
+}
+
+/** A cell's text as a link to a grouped view; the row's own click (the session) is not triggered. */
+function GroupLink({ onOpen, children, title }: { onOpen: () => void; children: ReactNode; title: string }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpen()
+      }}
+      className="max-w-full truncate text-left underline decoration-slate-300 decoration-dotted underline-offset-4 hover:text-brand-700 hover:decoration-brand-500 dark:decoration-slate-600 dark:hover:text-brand-300"
+    >
+      {children}
+    </button>
+  )
 }
 
 const pctText = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 1000) / 10}%` : '—')
@@ -161,23 +183,33 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
     case 'order':
       return (
         <td key={key} className={cn('px-4 py-3 font-bold', clip)} title={s.order?.orderNumber ?? undefined}>
-          {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : (s.order?.orderNumber ?? '—')}
+          {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : s.order?.orderNumber ? <GroupLink title="Every session of this order" onOpen={() => ctx.openOrder(s)}>{s.order.orderNumber}</GroupLink> : '—'}
         </td>
       )
     case 'item':
       return (
         <td key={key} className={cn('px-4 py-3', ctx.fixed ? 'truncate' : 'max-w-[220px] truncate')} title={s.order?.item ?? undefined}>
-          {s.order?.item ?? '—'}
+          {s.order?.item ? <GroupLink title="This item's sessions, within the filters" onOpen={() => ctx.openItem(s)}>{s.order.item}</GroupLink> : '—'}
         </td>
       )
     case 'itemCode':
-      return text(s.order?.itemCode ?? '', 'font-mono text-xs')
+      return s.order?.itemCode ? (
+        <td key={key} className={cn('px-4 py-3 font-mono text-xs', clip)} title={s.order.itemCode}>
+          <GroupLink title="This item's sessions, within the filters" onOpen={() => ctx.openItem(s)}>{s.order.itemCode}</GroupLink>
+        </td>
+      ) : (
+        text('', 'font-mono text-xs')
+      )
     case 'customer':
       return text(s.order?.customer ?? '')
     case 'factory':
       return text(ctx.factoryOf(s.workCenterCode))
     case 'machine':
-      return text(ctx.workCenterName(s.workCenterCode))
+      return (
+        <td key={key} className={cn('px-4 py-3', clip)} title={ctx.workCenterName(s.workCenterCode)}>
+          <GroupLink title="This machine's sessions, within the filters" onOpen={() => ctx.openMachine(s)}>{ctx.workCenterName(s.workCenterCode)}</GroupLink>
+        </td>
+      )
     case 'inspector':
       return text(s.inspectorName)
     case 'date':
@@ -444,14 +476,42 @@ export function HistoryPage() {
   const sessionSamples = useMemo(() => [...samples].sort((a, b) => a.index - b.index), [samples])
 
   const workCenterName = (code: string) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`
+
+  // §6 — the grouped views: an order whole, an item or a machine within the filters, or the filters themselves.
+  const [groupSpec, setGroupSpec] = useState<GroupSpec | null>(null)
+  const withinFilters = 'Within the filters above'
+  function openOrder(s: SessionWithOrder) {
+    if (!s.order?.orderNumber || isStockOrder(s.order)) return
+    setGroupSpec({ title: `Order ${s.order.orderNumber}`, subtitle: `${s.order.customer ? `${s.order.customer} · ` : ''}every session of the order, whatever the filters`, query: { orderNumber: s.order.orderNumber } })
+  }
+  function openItem(s: SessionWithOrder) {
+    if (!s.order) return
+    const query = s.order.itemCode ? { ...filters, itemCode: s.order.itemCode } : { ...filters, item: s.order.item }
+    setGroupSpec({ title: s.order.item, subtitle: `${s.order.itemCode ? `${s.order.itemCode} · ` : ''}${withinFilters}`, query })
+  }
+  function openMachine(s: SessionWithOrder) {
+    setGroupSpec({ title: workCenterName(s.workCenterCode), subtitle: withinFilters, query: { ...filters, workCenterCode: s.workCenterCode } })
+  }
+  function openCounter(status?: 'Open' | 'Closed') {
+    setGroupSpec({ title: status ? `${status} sessions` : 'Sessions', subtitle: withinFilters, query: { ...filters, ...(status ? { status } : {}) } })
+  }
+  function openFromGroup(sessionId: string) {
+    setGroupSpec(null)
+    setOpenSampleId(null)
+    setOpenSessionId(sessionId)
+  }
   const cellContext = useMemo<HistoryCellContext>(
     () => ({
       fixed: grid.enabled,
       workCenterName: (code) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`,
       factoryOf: (code) => machines.find((m) => m.code === code)?.factory ?? '',
       processOf: (code) => processForMachine(machines.find((m) => m.code === code) ?? null, code),
+      openOrder,
+      openItem,
+      openMachine,
     }),
-    [grid.enabled, machines],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [grid.enabled, machines, filters],
   )
 
   // The lists a filter may offer come from the record, not from the page on
@@ -490,7 +550,10 @@ export function HistoryPage() {
     return { sessions: matched.sessions, open: matched.open, closed: matched.sessions - matched.open }
   }, [history, filtered])
 
-  const openSession = openSessionId ? (sessions.find((s) => s.id === openSessionId) ?? null) : null
+  // A session opened from a grouped view may sit outside the filters: it is fetched on its own then.
+  const openInList = openSessionId ? (sessions.find((s) => s.id === openSessionId) ?? null) : null
+  const { data: openFetched } = useSession(openSessionId && !openInList ? openSessionId : null)
+  const openSession = openInList ?? (openSessionId && openFetched?.id === openSessionId ? openFetched : null)
   const openSample = openSampleId && detail ? detail.sample : null
 
   /** §14 — an inspector may correct an open session; a closed one needs a
@@ -594,15 +657,21 @@ export function HistoryPage() {
       {kindToggle}
       {/* No page heading: the tab says where you are, and the counters take the top of the page. */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
-        <Stat
-          compact
-          label="Sessions"
-          value={totals.sessions}
-          sub={totals.sessions > filtered.length ? `${filtered.length} on screen, the rest below` : 'All of them on screen'}
-          icon={<HistoryIcon className="h-5 w-5" />}
-        />
-        <Stat compact label="Open" value={totals.open} tone={totals.open > 0 ? 'green' : 'neutral'} icon={<ClipboardList className="h-5 w-5" />} />
-        <Stat compact label="Closed" value={totals.closed} tone="neutral" icon={<Lock className="h-5 w-5" />} />
+        <button type="button" className="text-left" onClick={() => openCounter()} disabled={totals.sessions === 0} aria-label="Sessions: grouped by order line">
+          <Stat
+            compact
+            label="Sessions"
+            value={totals.sessions}
+            sub={totals.sessions > filtered.length ? `${filtered.length} on screen, the rest below` : 'All of them on screen'}
+            icon={<HistoryIcon className="h-5 w-5" />}
+          />
+        </button>
+        <button type="button" className="text-left" onClick={() => openCounter('Open')} disabled={totals.open === 0} aria-label="Open sessions: grouped by order line">
+          <Stat compact label="Open" value={totals.open} tone={totals.open > 0 ? 'green' : 'neutral'} icon={<ClipboardList className="h-5 w-5" />} />
+        </button>
+        <button type="button" className="text-left" onClick={() => openCounter('Closed')} disabled={totals.closed === 0} aria-label="Closed sessions: grouped by order line">
+          <Stat compact label="Closed" value={totals.closed} tone="neutral" icon={<Lock className="h-5 w-5" />} />
+        </button>
       </div>
 
 
@@ -871,6 +940,23 @@ export function HistoryPage() {
       >
         {openSession && (
           <div className="space-y-4">
+            {!openSampleId && (
+              <div className="print-hidden flex flex-wrap gap-2 text-xs">
+                {openSession.order?.orderNumber && !isStockOrder(openSession.order) && (
+                  <Button className="min-h-[36px]" onClick={() => openOrder(openSession)}>
+                    <Layers className="h-3.5 w-3.5" /> Whole order
+                  </Button>
+                )}
+                {openSession.order?.item && (
+                  <Button className="min-h-[36px]" onClick={() => openItem(openSession)}>
+                    <Layers className="h-3.5 w-3.5" /> This item
+                  </Button>
+                )}
+                <Button className="min-h-[36px]" onClick={() => openMachine(openSession)}>
+                  <Layers className="h-3.5 w-3.5" /> This machine
+                </Button>
+              </div>
+            )}
             {openSampleId ? (
               <>
                 <button
@@ -1040,6 +1126,7 @@ export function HistoryPage() {
       </Modal>
 
       {correctingQty && <SessionQuantitiesDialog session={correctingQty} onClose={() => setCorrectingQty(null)} />}
+      <SessionGroupModal spec={groupSpec} onClose={() => setGroupSpec(null)} onOpenSession={openFromGroup} />
       {editingDim && <DimensionEditDialog dimension={editingDim} saving={saving} onClose={() => setEditingDim(null)} onSave={(actual) => saveDimension(editingDim, actual)} />}
 
       {editingDefect && <DefectEditDialog defect={editingDefect} saving={saving} onClose={() => setEditingDefect(null)} onSave={(patch) => saveDefect(editingDefect, patch)} />}
