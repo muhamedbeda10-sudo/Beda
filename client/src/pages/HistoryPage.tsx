@@ -303,6 +303,18 @@ export function HistoryPage() {
   const [params, setParams] = useSearchParams()
   /** What History lists: inspection sessions, or PDI documents. Kept on this device. */
   const [kind, setKind] = usePersistedState<'sessions' | 'pdi'>('qc-history:kind', 'sessions')
+  // A grouped view elsewhere (Access) sends a session in the address: it opens, once, and leaves the address.
+  useEffect(() => {
+    const id = params.get('session')
+    if (id === null) return
+    setKind('sessions')
+    setOpenSampleId(null)
+    setOpenSessionId(id)
+    const next = new URLSearchParams(params)
+    next.delete('session')
+    setParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params])
   // Access sends an order number in the address: it becomes the search, once, and leaves the address.
   useEffect(() => {
     const q = params.get('q')

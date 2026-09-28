@@ -2,10 +2,10 @@
 // §6 — History's grouped view: the sessions of an order (read whole), of an
 // item, of a machine, or of the filters as they stand, laid on their order
 // lines with what each line's sessions inspected and found. A session chip
-// opens that session in History.
+// opens that session: in place in History, through History from Access.
 // ============================================================================
 
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { Layers } from 'lucide-react'
 import type { HistoryGroupQuery, HistoryGroupSession } from '@qc/shared/api'
 import { HISTORY_GROUP_LIMIT } from '@qc/shared/api'
@@ -60,7 +60,7 @@ function byLine(sessions: HistoryGroupSession[]): LineRow[] {
   return Array.from(lines.values()).sort((a, b) => b.defectPieces - a.defectPieces || b.inspected - a.inspected || a.orderNumber.localeCompare(b.orderNumber))
 }
 
-export function SessionGroupModal({ spec, onClose, onOpenSession }: { spec: GroupSpec | null; onClose: () => void; onOpenSession: (sessionId: string) => void }) {
+export function SessionGroupModal({ spec, onClose, onOpenSession, footer }: { spec: GroupSpec | null; onClose: () => void; onOpenSession: (sessionId: string) => void; footer?: ReactNode }) {
   const { data, isLoading, error } = useHistoryGroup(spec?.query ?? null)
   const rows = useMemo(() => byLine(data?.sessions ?? []), [data])
   if (!spec) return null
@@ -68,7 +68,7 @@ export function SessionGroupModal({ spec, onClose, onOpenSession }: { spec: Grou
   const defectPieces = rows.reduce((n, r) => n + r.defectPieces, 0)
   const open = rows.reduce((n, r) => n + r.open, 0)
   return (
-    <Modal open onClose={onClose} title={spec.title} icon={<Layers className="h-5 w-5" />} size="xl">
+    <Modal open onClose={onClose} title={spec.title} icon={<Layers className="h-5 w-5" />} size="xl" footer={footer}>
       <div className="space-y-3">
         {spec.subtitle && <p className="text-xs text-slate-400">{spec.subtitle}</p>}
         {isLoading ? (

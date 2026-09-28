@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronRight, RotateCcw, Search, Table2, X } from 'lucide-react'
 import type { OrderListFilters, OrderListRow } from '@qc/shared/api'
 import { Badge, Button, Card, EmptyState, Field, Input, Select } from '@/components/ui'
+import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
 import { ColumnPicker, FitColumnsButton, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { loadMoreOrders, useDebounced, useMaster, useOrderList, useOrderListOptions } from '@/services/queries'
 import { usePersistedState } from '@/lib/usePersistedState'
@@ -58,7 +59,32 @@ function statusTone(s: string): 'green' | 'amber' | 'violet' | 'neutral' | 'red'
   return 'neutral'
 }
 
-function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: string) => string): ReactNode {
+/** What a cell opens: the order, the line, the item or the machine, laid on their sessions. */
+interface Opens {
+  order: (o: OrderListRow) => void
+  line: (o: OrderListRow) => void
+  item: (o: OrderListRow) => void
+  machine: (o: OrderListRow) => void
+}
+
+/** A cell's text as a link to a grouped view; the row's own click is not triggered. */
+function Opener({ onOpen, title, children }: { onOpen: () => void; title: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpen()
+      }}
+      className="max-w-full truncate text-left underline decoration-slate-300 decoration-dotted underline-offset-4 hover:text-brand-700 hover:decoration-brand-500 dark:decoration-slate-600 dark:hover:text-brand-300"
+    >
+      {children}
+    </button>
+  )
+}
+
+function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: string) => string, opens: Opens): ReactNode {
   const clip = fixed ? 'truncate' : ''
   const text = (value: string, extra = '') => (
     <td key={key} className={cn('px-4 py-3', extra, clip)} title={value || undefined}>
@@ -72,19 +98,35 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
   )
   switch (key) {
     case 'orderNumber':
-      return text(o.orderNumber, 'font-bold')
+      return (
+        <td key={key} className={cn('px-4 py-3 font-bold', clip)} title={o.orderNumber}>
+          <Opener title="Every session of this order" onOpen={() => opens.order(o)}>{o.orderNumber}</Opener>
+        </td>
+      )
     case 'lineKey':
       return text(o.lineKey, 'font-mono text-xs')
     case 'item':
       return (
         <td key={key} className={cn('px-4 py-3', fixed ? 'truncate' : 'max-w-[240px] truncate')} title={o.item}>
-          {o.item || '—'}
+          {o.item ? <Opener title="Every session of this item" onOpen={() => opens.item(o)}>{o.item}</Opener> : '—'}
         </td>
       )
     case 'itemCode':
-      return text(o.itemCode, 'font-mono text-xs')
+      return o.itemCode ? (
+        <td key={key} className={cn('px-4 py-3 font-mono text-xs', clip)} title={o.itemCode}>
+          <Opener title="Every session of this item" onOpen={() => opens.item(o)}>{o.itemCode}</Opener>
+        </td>
+      ) : (
+        text('', 'font-mono text-xs')
+      )
     case 'machine':
-      return text(machineName(o.workCenterCode))
+      return o.workCenterCode ? (
+        <td key={key} className={cn('px-4 py-3', clip)} title={machineName(o.workCenterCode)}>
+          <Opener title="The latest sessions on this machine" onOpen={() => opens.machine(o)}>{machineName(o.workCenterCode)}</Opener>
+        </td>
+      ) : (
+        text('')
+      )
     case 'factory':
       return text(o.factory)
     case 'erpStatus':
@@ -118,11 +160,23 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
     case 'date':
       return text(o.date ? formatDate(o.date) : '', 'tabular-nums')
     case 'sessions':
-      return number(o.sessions, o.sessions > 0 ? 'font-semibold' : 'text-slate-400')
+      return o.sessions > 0 ? (
+        <td key={key} className="px-4 py-3 text-right font-semibold tabular-nums">
+          <Opener title="This line's sessions" onOpen={() => opens.line(o)}>{num(o.sessions)}</Opener>
+        </td>
+      ) : (
+        number(o.sessions, 'text-slate-400')
+      )
     case 'samples':
       return number(o.samples, o.samples > 0 ? '' : 'text-slate-400')
     case 'defectPieces':
-      return number(o.defectPieces, o.defectPieces > 0 ? 'font-bold text-rose-600 dark:text-rose-400' : 'text-slate-400')
+      return o.defectPieces > 0 ? (
+        <td key={key} className="px-4 py-3 text-right font-bold tabular-nums text-rose-600 dark:text-rose-400">
+          <Opener title="This line's sessions" onOpen={() => opens.line(o)}>{num(o.defectPieces)}</Opener>
+        </td>
+      ) : (
+        number(o.defectPieces, 'text-slate-400')
+      )
     case 'lastInspected':
       return text(o.lastInspectedAt ? formatDateTime(o.lastInspectedAt) : '', 'tabular-nums')
     case 'open':
@@ -217,9 +271,30 @@ export function AccessPage() {
     setRemaining('all')
     setInspected('all')
   }
-  /** A line that has been inspected opens History on its order number. */
+  // §6 — the grouped views, as in History: the order whole, one line, an item or a machine, with every session behind them.
+  const [groupSpec, setGroupSpec] = useState<GroupSpec | null>(null)
+  const [groupOrder, setGroupOrder] = useState<string | null>(null)
+  const opens: Opens = {
+    order: (o) => {
+      setGroupOrder(o.orderNumber)
+      setGroupSpec({ title: `Order ${o.orderNumber}`, subtitle: `${o.customer ? `${o.customer} · ` : ''}every session of the order, on every item and machine`, query: { orderNumber: o.orderNumber } })
+    },
+    line: (o) => {
+      setGroupOrder(o.orderNumber)
+      setGroupSpec({ title: `${o.orderNumber} · ${o.item}`, subtitle: `${machineName(o.workCenterCode)} · this line's sessions`, query: { orderId: o.id } })
+    },
+    item: (o) => {
+      setGroupOrder(null)
+      setGroupSpec({ title: o.item, subtitle: `${o.itemCode ? `${o.itemCode} · ` : ''}every order it was inspected on, the latest first`, query: o.itemCode ? { itemCode: o.itemCode } : { item: o.item } })
+    },
+    machine: (o) => {
+      setGroupOrder(null)
+      setGroupSpec({ title: machineName(o.workCenterCode), subtitle: 'The latest sessions on the machine', query: { workCenterCode: o.workCenterCode } })
+    },
+  }
+  /** A line that has been inspected opens its order's sessions. */
   const open = (o: OrderListRow) => {
-    if (o.sessions > 0) navigate(`/history?q=${encodeURIComponent(o.orderNumber)}`)
+    if (o.sessions > 0) opens.order(o)
   }
 
   return (
@@ -396,9 +471,9 @@ export function AccessPage() {
                       key={o.id}
                       onClick={() => open(o)}
                       className={cn('transition-colors', o.sessions > 0 ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50' : '', o.erpStatus.trim().toLowerCase() === 'cancel' && 'text-slate-400')}
-                      title={o.sessions > 0 ? 'Open its inspections in History' : undefined}
+                      title={o.sessions > 0 ? "Every session of this line's order" : undefined}
                     >
-                      {grid.visible.map((c) => cell(c.key, o, grid.enabled, machineName))}
+                      {grid.visible.map((c) => cell(c.key, o, grid.enabled, machineName, opens))}
                     </tr>
                   ))}
                 </tbody>
@@ -415,6 +490,19 @@ export function AccessPage() {
           )}
         </>
       )}
+
+      <SessionGroupModal
+        spec={groupSpec}
+        onClose={() => setGroupSpec(null)}
+        onOpenSession={(id) => navigate(`/history?session=${encodeURIComponent(id)}`)}
+        footer={
+          groupOrder !== null ? (
+            <Button onClick={() => navigate(`/history?q=${encodeURIComponent(groupOrder)}`)}>
+              Open in History <ChevronRight className="h-4 w-4" />
+            </Button>
+          ) : undefined
+        }
+      />
     </div>
   )
 }

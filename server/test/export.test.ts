@@ -95,6 +95,11 @@ describe('§6 — History grouped by order, item, machine or filters', () => {
     expect(order.sessions[0]).toMatchObject({ orderNumber: '40001-A', item: 'Upright 80x60', machine: '31-Roll Forming-LM2', status: 'Open', samples: 1, piecesInspected: 10, defectPieces: 3, defects: [{ defectName: 'Scratch', pieces: 3 }] })
   })
 
+  it('reads one order line whole too', async () => {
+    const one = (await group(`orderId=${line('E-2').id}&q=beta`)).body
+    expect(one.sessions.map((x) => [x.orderNumber, x.item])).toEqual([['40002-B', 'Base Plate']])
+  })
+
   it('reads an item, a machine or the filters as they stand', async () => {
     expect((await group('itemCode=bp-1')).body.sessions.map((x) => x.orderNumber)).toEqual(['40002-B'])
     expect((await group('workCenterCode=31')).body.total).toBe(2)
