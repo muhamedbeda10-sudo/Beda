@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-28.93',
+    date: '2026-09-28',
+    title: 'Dashboard: each administrator arranges their own',
+    items: [
+      { text: 'The dashboard as it is laid out today is now the fixed default: everyone sees it, and it no longer changes when an administrator saves.' },
+      { text: 'An administrator who arranges the dashboard (moving, sizing, hiding or naming charts) now keeps it for themselves only; Default puts the default back on their board.' },
+      { text: 'The colour thresholds of the figures stay one for everyone.' },
+    ],
+  },
+  {
     id: '2026-09-28.92',
     date: '2026-09-28',
     title: 'Dashboard: exact PPM, rates to two decimals',

@@ -844,12 +844,17 @@ export interface KpiThresholdsResponse {
   updatedByName?: string
 }
 
-/** §15 — where each chart sits on the dashboard, one layout per page, the same for everyone. */
+/**
+ * §15 — where each chart sits on the dashboard, one layout per page. Everyone
+ * reads the fixed default; an administrator may keep an arrangement of their own.
+ */
 export interface DashboardLayoutResponse {
   layouts: DashboardLayouts
-  /** True while no administrator has saved a layout: the defaults are showing. */
+  /** True when this is the default everyone reads; false when it is the caller's own arrangement. */
   isDefault: boolean
+  /** When the layout shown was saved. */
   updatedAt?: string
+  /** Who saved the default, when it is the default that is shown. */
   updatedByName?: string
 }
 

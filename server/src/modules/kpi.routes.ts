@@ -36,7 +36,8 @@ import type { Queryable } from '../db/pool'
 import { withTransaction } from '../db/pool'
 import { parse } from '../lib/validate'
 import { badRequest } from '../lib/errors'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
+import { can } from '@qc/shared/rules'
 import { auditChanges } from '../audit/service'
 import { buildInsights } from './kpi.insights'
 import {
@@ -320,66 +321,58 @@ export function kpiRoutes(ctx: AppContext): Router {
   })
 
   // ---- The board's layout -----------------------------------------------------
-  // One layout per page, the same for everyone; an administrator moves and
-  // sizes the widgets. Stored beside the thresholds; the defaults show
-  // until one is saved, and a widget added later lands below the rest.
+  // The layout an administrator saved for everyone, before layouts became
+  // personal, is the fixed default: nothing here writes it any more. Every
+  // person without a layout of their own reads it (the code's defaults while
+  // none was ever saved); an administrator arranges the board for themselves
+  // only, and a widget added later lands below the rest either way.
 
-  async function loadLayout(q: Queryable): Promise<DashboardLayoutResponse> {
+  async function loadDefaultLayout(q: Queryable): Promise<DashboardLayoutResponse> {
     const { rows } = await q.query<{ value: unknown; updatedAt: string; updatedByName: string | null }>(
       `SELECT value, updated_at AS "updatedAt", updated_by_name AS "updatedByName" FROM app_settings WHERE key = $1`,
       [DASHBOARD_LAYOUT_KEY],
     )
     const row = rows[0]
-    if (!row) return { layouts: defaultDashboardLayouts(), isDefault: true }
-    return { layouts: normaliseDashboardLayouts(row.value), isDefault: false, updatedAt: row.updatedAt, updatedByName: row.updatedByName ?? undefined }
+    const layouts = row ? normaliseDashboardLayouts(row.value) : defaultDashboardLayouts()
+    return { layouts, isDefault: true, updatedAt: row?.updatedAt, updatedByName: row?.updatedByName ?? undefined }
   }
 
-  r.get('/layout', async (_req, res) => {
-    res.json(await loadLayout(ctx.db))
+  /** What this person sees: their own arrangement if they may keep one and have, the default otherwise. */
+  async function loadLayout(q: Queryable, user: AuthUser): Promise<DashboardLayoutResponse> {
+    if (can(user.role, 'manage-admin-data')) {
+      const { rows } = await q.query<{ layouts: unknown; updatedAt: string }>(
+        `SELECT layouts, updated_at AS "updatedAt" FROM dashboard_user_layouts WHERE user_id = $1 AND layouts IS NOT NULL`,
+        [user.id],
+      )
+      const own = rows[0]
+      if (own) return { layouts: normaliseDashboardLayouts(own.layouts), isDefault: false, updatedAt: own.updatedAt }
+    }
+    return loadDefaultLayout(q)
+  }
+
+  r.get('/layout', async (req, res) => {
+    res.json(await loadLayout(ctx.db, requireUser(req)))
   })
 
+  /** An administrator's own arrangement: nobody else's board changes. */
   r.put('/layout', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
     const body = parse(LayoutBody, req.body) as SaveDashboardLayoutRequest
     // Unknown widgets are dropped and missing ones appended, so what is stored is always whole.
     const layouts = normaliseDashboardLayouts(body.layouts)
-    const out = await withTransaction(ctx.db, async (tx) => {
-      const before = await loadLayout(tx)
-      await tx.query(
-        `INSERT INTO app_settings (key, value, updated_by_id, updated_by_name, updated_at)
-         VALUES ($1, $2::jsonb, $3, $4, now())
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by_id = EXCLUDED.updated_by_id,
-           updated_by_name = EXCLUDED.updated_by_name, updated_at = now()`,
-        [DASHBOARD_LAYOUT_KEY, JSON.stringify(layouts), user.id, user.name],
-      )
-      await auditChanges(
-        tx,
-        { userId: user.id, userName: user.name, entity: 'AppSettings', entityId: DASHBOARD_LAYOUT_KEY },
-        { general: JSON.stringify(before.layouts.general), details: JSON.stringify(before.layouts.details) },
-        { general: JSON.stringify(layouts.general), details: JSON.stringify(layouts.details) },
-      )
-      return loadLayout(tx)
-    })
-    res.json(out)
+    await ctx.db.query(
+      `INSERT INTO dashboard_user_layouts (user_id, layouts) VALUES ($1, $2::jsonb)
+         ON CONFLICT (user_id) DO UPDATE SET layouts = EXCLUDED.layouts`,
+      [user.id, JSON.stringify(layouts)],
+    )
+    res.json(await loadLayout(ctx.db, user))
   })
 
-  /** Back to the defaults: the saved layout is removed, and every page reads the code's own arrangement. */
+  /** Back to the default, for this administrator only; the row stays with its layout cleared. */
   r.delete('/layout', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
-    const out = await withTransaction(ctx.db, async (tx) => {
-      const before = await loadLayout(tx)
-      await tx.query(`DELETE FROM app_settings WHERE key = $1`, [DASHBOARD_LAYOUT_KEY])
-      if (!before.isDefault) {
-        await auditChanges(
-          tx,
-          { userId: user.id, userName: user.name, entity: 'AppSettings', entityId: DASHBOARD_LAYOUT_KEY },
-          { general: JSON.stringify(before.layouts.general), details: JSON.stringify(before.layouts.details) },
-          { general: 'default', details: 'default' },
-        )
-      }
-      return loadLayout(tx)
-    })
-    res.json(out)
+    await ctx.db.query(`UPDATE dashboard_user_layouts SET layouts = NULL WHERE user_id = $1 AND layouts IS NOT NULL`, [user.id])
+    res.json(await loadLayout(ctx.db, user))
   })
 
   r.get('/overview', async (req, res) => {

@@ -32,7 +32,7 @@ export interface BoardState {
   setLayout: (page: DashboardPage, layout: DashboardLayoutItem[]) => void
   /** Name and describe one widget; empty strings put the code's own back. */
   setLabel: (page: DashboardPage, id: string, label: { title: string; hint: string }) => void
-  /** Put a widget away for everyone, or show it again. */
+  /** Put a widget away on this administrator's board, or show it again. */
   setHidden: (page: DashboardPage, id: string, hidden: boolean) => void
 }
 
@@ -161,14 +161,14 @@ export function Board({ page, widgets, className }: { page: DashboardPage; widge
   )
 }
 
-/** Name and describe a widget: what everyone reads on its header once the layout is saved. */
+/** Name and describe a widget: what its header reads on your board once the layout is saved. */
 function LabelDialog({ item, fallback, onClose, onSave }: { item: DashboardLayoutItem; fallback: string; onClose: () => void; onSave: (label: { title: string; hint: string }) => void }) {
   const [title, setTitle] = useState(item.title ?? '')
   const [hint, setHint] = useState(item.hint ?? '')
   return (
     <Modal open onClose={onClose} title="Name this chart" icon={<Pencil className="h-5 w-5" />}>
       <div className="space-y-3">
-        <p className="text-sm text-slate-500 dark:text-slate-400">Everyone sees the name and the description on the chart once you save the layout. Leave a field empty to keep the chart's own.</p>
+        <p className="text-sm text-slate-500 dark:text-slate-400">The name and the description show on your dashboard once you save the layout; nobody else's changes. Leave a field empty to keep the chart's own.</p>
         <Field label="Name" hint={`Its own name: ${fallback}`}>
           <Input value={title} onChange={(e) => setTitle(e.target.value.slice(0, DASHBOARD_TITLE_MAX))} placeholder={fallback} className="min-h-[48px]" dir="auto" />
         </Field>
@@ -199,7 +199,7 @@ const PAGE_NAME: Record<DashboardPage, string> = { general: 'General', details: 
 
 /**
  * The gallery of every chart the dashboard has, page by page: tick a tile to
- * show it, untick it to put it away for everyone. A chart shown again goes to
+ * show it, untick it to put it away on your own board. A chart shown again goes to
  * the bottom of its page, to be dragged where it belongs. Nothing is kept
  * until the layout is saved.
  */
@@ -209,7 +209,7 @@ export function ChartGallery({ open, onClose }: { open: boolean; onClose: () => 
   return (
     <Modal open={open} onClose={onClose} title="Charts on the dashboard" icon={<LayoutGrid className="h-5 w-5" />} size="xl" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
       <div className="space-y-5">
-        <p className="text-sm text-slate-500 dark:text-slate-400">Tick the charts everyone sees. A chart you untick is hidden for everyone once you save the layout; tick it again and it comes back at the bottom of its page.</p>
+        <p className="text-sm text-slate-500 dark:text-slate-400">Tick the charts you see. A chart you untick is hidden on your dashboard once you save the layout, and nobody else's changes; tick it again and it comes back at the bottom of its page.</p>
         {pages.map((page) => {
           const items = normaliseDashboardLayout(page, layouts[page])
           const byId = new Map(items.map((it) => [it.i, it]))
