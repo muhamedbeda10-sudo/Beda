@@ -43,7 +43,8 @@ function pickable(onPick: (() => void) | undefined, label: string) {
   }
 }
 
-const fmt = (n: number, digits = 1): string => (Number.isInteger(n) ? String(n) : n.toFixed(digits))
+/** Whole numbers as they are; anything else to at most two decimals, trailing zeros dropped. */
+const fmt = (n: number, digits = 2): string => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(digits))))
 
 function niceMax(v: number): number {
   if (!(v > 0)) return 1
@@ -438,7 +439,7 @@ export function PieChart({ slices, centerLabel, unit = '', onPick }: { slices: P
               {s.sub && <span className="ml-1 text-xs text-slate-400">{s.sub}</span>}
             </span>
             <span className="font-semibold tabular-nums">{fmt(s.value)}</span>
-            <span className="w-11 text-right text-xs tabular-nums text-slate-400">{`${Math.round(s.share * 1000) / 10}%`}</span>
+            <span className="w-14 text-right text-xs tabular-nums text-slate-400">{`${Math.round(s.share * 10000) / 100}%`}</span>
           </li>
         ))}
       </ul>

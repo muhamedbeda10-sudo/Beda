@@ -12,7 +12,7 @@ import { deltaPct, type KpiInsight, type KpiOverview, type KpiThresholds } from 
 type Draft = Omit<KpiOverview, 'insights'>
 
 const fmt = (n: number | null, digits = 1): string => (n === null ? '—' : n.toFixed(digits))
-const pctText = (n: number | null): string => (n === null ? '—' : `${fmt(n)}%`)
+const pctText = (n: number | null): string => (n === null ? '—' : `${fmt(n, 2)}%`)
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`
 
 function defectRateRules(o: Draft, t: KpiThresholds): KpiInsight[] {

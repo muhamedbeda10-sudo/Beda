@@ -67,7 +67,7 @@ import { ApiError } from '@/lib/api'
 // ---- Formatting ------------------------------------------------------------
 
 const num = (v: number | null | undefined, digits = 0): string => (v === null || v === undefined || !Number.isFinite(v) ? '—' : v.toLocaleString('en-GB', { maximumFractionDigits: digits, minimumFractionDigits: 0 }))
-const pctStr = (v: number | null | undefined, digits = 1): string => (v === null || v === undefined ? '—' : `${v.toFixed(digits)}%`)
+const pctStr = (v: number | null | undefined, digits = 2): string => (v === null || v === undefined ? '—' : `${v.toFixed(digits)}%`)
 
 const TONE_BADGE: Record<KpiTone, BadgeTone> = { green: 'green', amber: 'amber', red: 'red', neutral: 'neutral' }
 const TONE_TEXT: Record<KpiTone, string> = {
@@ -117,7 +117,7 @@ function KpiTile({
 }) {
   const delta = deltaPct(current, previous)
   const up = delta !== null && delta > 0
-  const flat = delta !== null && Math.abs(delta) < 0.05
+  const flat = delta !== null && Math.abs(delta) < 0.005
   const good = goodWhen === 'none' || flat ? null : goodWhen === 'up' ? up : !up
   return (
     <Card className={cn('p-4 ring-1 transition-shadow hover:shadow-hover', TONE_RING[tone])}>
@@ -139,7 +139,7 @@ function KpiTile({
         ) : (
           <span className={cn('inline-flex items-center gap-0.5 font-semibold tabular-nums', good === null ? 'text-slate-500' : good ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
             {flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
-            {flat ? 'flat' : `${Math.abs(delta).toFixed(1)}%`}
+            {flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
           </span>
         )}
         {previous !== null && <span className="text-slate-400">prev {typeof previous === 'number' ? (unit === '%' ? pctStr(previous) : num(previous, 1)) : '—'}</span>}
@@ -298,7 +298,7 @@ function Table<T>({
   )
 }
 
-function ToneCell({ value, tone, digits = 1 }: { value: number | null; tone: KpiTone; digits?: number }) {
+function ToneCell({ value, tone, digits = 2 }: { value: number | null; tone: KpiTone; digits?: number }) {
   return <span className={cn('font-semibold tabular-nums', TONE_TEXT[tone])}>{pctStr(value, digits)}</span>
 }
 
@@ -376,14 +376,14 @@ function monthTrend(months: { defectRatePct: number | null }[]): { delta: number
 /** An arrow and a figure for a trend where a fall is good. */
 function TrendMark({ delta, title }: { delta: number | null; title?: string }) {
   const up = delta !== null && delta > 0
-  const flat = delta !== null && Math.abs(delta) < 0.05
+  const flat = delta !== null && Math.abs(delta) < 0.005
   return (
     <span
       className={cn('inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold tabular-nums', delta === null ? 'text-slate-400' : flat ? 'text-slate-500' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}
       title={title ?? (delta === null ? 'No month to compare with' : 'Against the month before')}
     >
       {delta === null || flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
-      {delta === null ? '—' : flat ? 'flat' : `${Math.abs(delta).toFixed(1)}%`}
+      {delta === null ? '—' : flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
     </span>
   )
 }
@@ -400,7 +400,7 @@ function paretoOf(rows: { label: string; value: number }[]): { label: string; va
   let running = 0
   const out = head.map((r) => {
     running += r.value
-    return { label: r.label, value: r.value, cumulativePct: Math.round((running / total) * 1000) / 10 }
+    return { label: r.label, value: r.value, cumulativePct: Math.round((running / total) * 10000) / 100 }
   })
   if (tail.length) out.push({ label: `Others (${tail.length})`, value: tail.reduce((n, r) => n + r.value, 0), cumulativePct: 100 })
   return out
@@ -749,8 +749,8 @@ function scopeDetailWidgets({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <PlainTile label="Reject rate" value={pctStr(rate)} sub={`${num(rejected)} rejected of ${num(made)} made`} icon={<Target className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} onOpen={rejected > 0 ? () => openRejects('Rejected pieces') : undefined} />
         <PlainTile label="PPM" value={ppmStr(rate)} sub="rejected pieces per million made" icon={<AlertTriangle className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} onOpen={rejected > 0 ? () => openRejects('Rejected pieces') : undefined} />
-        <PlainTile label="First part released" value={pctStr(fp.pct, 0)} sub={`${num(fp.clean)} of ${num(fp.sessions)} sessions with nothing rejected before release`} icon={<PackageCheck className="h-4 w-4" />} tone={fpTone} onOpen={fp.sessions > fp.clean ? () => openFirstPart('Sessions not clean', 1) : undefined} />
-        <PlainTile label="First pass released cumulative" value={pctStr(fp.cumulativePct, 0)} sub={`${num(fp.rejectedPieces)} rejected before release ÷ (${num(fp.clean)} clean sessions + ${num(fp.rejectedPieces)}) · lower is better`} icon={<PackageCheck className="h-4 w-4" />} tone={cumTone(fp.cumulativePct)} onOpen={fp.rejectedPieces > 0 ? () => openFirstPart('Pieces rejected before release', 1) : undefined} />
+        <PlainTile label="First part released" value={pctStr(fp.pct)} sub={`${num(fp.clean)} of ${num(fp.sessions)} sessions with nothing rejected before release`} icon={<PackageCheck className="h-4 w-4" />} tone={fpTone} onOpen={fp.sessions > fp.clean ? () => openFirstPart('Sessions not clean', 1) : undefined} />
+        <PlainTile label="First pass released cumulative" value={pctStr(fp.cumulativePct)} sub={`${num(fp.rejectedPieces)} rejected before release ÷ (${num(fp.clean)} clean sessions + ${num(fp.rejectedPieces)}) · lower is better`} icon={<PackageCheck className="h-4 w-4" />} tone={cumTone(fp.cumulativePct)} onOpen={fp.rejectedPieces > 0 ? () => openFirstPart('Pieces rejected before release', 1) : undefined} />
       </div>
 </div>
     ) },
@@ -798,7 +798,7 @@ function scopeDetailWidgets({
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {[
-              { k: 'First part released', v: pctStr(fp.pct, 1), s: `${num(fp.clean)} clean ÷ ${num(fp.sessions)} sessions`, tone: fpTone, open: undefined },
+              { k: 'First part released', v: pctStr(fp.pct), s: `${num(fp.clean)} clean ÷ ${num(fp.sessions)} sessions`, tone: fpTone, open: undefined },
               { k: 'Not clean', v: num(fp.sessions - fp.clean), s: `of ${num(fp.sessions)} sessions`, tone: fp.sessions - fp.clean > 0 ? ('red' as KpiTone) : ('green' as KpiTone), open: fp.sessions > fp.clean ? () => openFirstPart('Sessions not clean', 1) : undefined },
               { k: 'Rejected before release', v: num(fp.rejectedPieces), s: 'pieces', tone: 'neutral' as KpiTone, open: fp.rejectedPieces > 0 ? () => openFirstPart('Pieces rejected before release', 1) : undefined },
             ].map((x) => (
@@ -819,7 +819,7 @@ function scopeDetailWidgets({
               {fp.months.map((m) => (
                 <li key={m.month} className="rounded-lg bg-slate-50 px-2 py-1 dark:bg-slate-800/60">
                   <span className="font-semibold">{monthLabel(m.month, false)}</span>{' '}
-                  {m.sessions > 0 ? <><span className={cn('font-semibold', TONE_TEXT[releasedTone(m.pct)])}>{pctStr(m.pct, 1)}</span> <span className="text-slate-400">{num(m.clean)} ÷ {num(m.sessions)}</span></> : <span className="text-slate-300">—</span>}
+                  {m.sessions > 0 ? <><span className={cn('font-semibold', TONE_TEXT[releasedTone(m.pct)])}>{pctStr(m.pct)}</span> <span className="text-slate-400">{num(m.clean)} ÷ {num(m.sessions)}</span></> : <span className="text-slate-300">—</span>}
                 </li>
               ))}
             </ul>
@@ -1024,7 +1024,7 @@ function BreakdownTable({
     { key: 'sub', value: (r) => (what === 'order' ? (r.sub ?? '') : r.key) },
     { key: 'pieces', value: (r) => String(r.pieces), numeric: true },
     { key: 'made', value: (r) => pctStr(r.pctOfMade, 3), numeric: true },
-    { key: 'period', value: (r) => pctStr(r.shareOfPeriodPct, 0), numeric: true },
+    { key: 'period', value: (r) => pctStr(r.shareOfPeriodPct), numeric: true },
   ])
   const groups = months.map((m) => ({ month: m, rows: filters.rows.filter((r) => r.month === m.month) })).filter((g) => g.rows.length > 0)
   return (
@@ -1053,7 +1053,7 @@ function BreakdownTable({
                   <td className="px-2 py-1.5 text-xs text-slate-500" dir="auto">{what === 'order' ? r.sub : r.key}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{num(r.pieces)}</td>
                   <td className="px-2 py-1.5 text-right font-semibold tabular-nums" title={`${num(r.pieces)} rejected of ${num(r.made)} made by this ${what} in the month`}>{pctStr(r.pctOfMade, 3)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{pctStr(r.shareOfPeriodPct, 0)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{pctStr(r.shareOfPeriodPct)}</td>
                 </tr>
               ))}
             </Fragment>
@@ -1104,9 +1104,9 @@ function DefectsByMonthTable({ data, rejected, rate, onOpen }: { data: KpiBreakd
               {d.months.map((m) => {
                 const monthRejected = data.months.find((x) => x.month === m.month)?.productionDefectPieces ?? 0
                 const o = opens(d.defectName, m.month, m.pieces)
-                return <td key={m.month} onClick={o.onClick} className={cn('px-2 py-1.5 text-right tabular-nums', o.className)}>{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-slate-400">{pctStr(monthRejected > 0 ? Math.round((m.pieces / monthRejected) * 1000) / 10 : null, 0)}</span></> : <span className="text-slate-300">—</span>}</td>
+                return <td key={m.month} onClick={o.onClick} className={cn('px-2 py-1.5 text-right tabular-nums', o.className)}>{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-slate-400">{pctStr(pct(m.pieces, monthRejected))}</span></> : <span className="text-slate-300">—</span>}</td>
               })}
-              <td onClick={opens(d.defectName, null, d.pieces).onClick} className={cn('px-2 py-1.5 text-right font-semibold tabular-nums', opens(d.defectName, null, d.pieces).className)}>{num(d.pieces)} <span className="text-xs font-normal text-slate-400">{pctStr(d.sharePct, 0)}</span></td>
+              <td onClick={opens(d.defectName, null, d.pieces).onClick} className={cn('px-2 py-1.5 text-right font-semibold tabular-nums', opens(d.defectName, null, d.pieces).className)}>{num(d.pieces)} <span className="text-xs font-normal text-slate-400">{pctStr(d.sharePct)}</span></td>
             </tr>
           ))}
           {shown.length === 0 && (
@@ -1130,7 +1130,7 @@ function MachineCards({ rows, previous, t, onPick }: { rows: KpiGroupRow[]; prev
         const prev = before.get(m.key.toLowerCase())
         const delta = deltaPct(m.defectRatePct, prev?.defectRatePct ?? null)
         const up = delta !== null && delta > 0
-        const flat = delta !== null && Math.abs(delta) < 0.05
+        const flat = delta !== null && Math.abs(delta) < 0.005
         const tone = toneLowIsGood(m.defectRatePct, t.defectRateGreen, t.defectRateAmber)
         const produced = m.piecesProduced ?? 0
         const defective = m.productionDefectPieces ?? 0
@@ -1144,7 +1144,7 @@ function MachineCards({ rows, previous, t, onPick }: { rows: KpiGroupRow[]; prev
                 </div>
                 <span className={cn('inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold tabular-nums', delta === null ? 'text-slate-400' : flat ? 'text-slate-500' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')} title={prev ? `Was ${pctStr(prev.defectRatePct)} in the comparison period` : 'Nothing in the comparison period'}>
                   {delta === null ? <Minus className="h-3 w-3" /> : flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
-                  {delta === null ? 'new' : flat ? 'flat' : `${Math.abs(delta).toFixed(1)}%`}
+                  {delta === null ? 'new' : flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
                 </span>
               </div>
               <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
@@ -2145,10 +2145,10 @@ export function DashboardPage() {
           <Section title="Recording discipline" hint="How the records themselves are kept. Not a KPI of the product; a KPI of the inspection." icon={<CheckCircle2 className="h-4 w-4" />}>
             <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
               {[
-                { k: 'Coverage of open lines', v: pctStr(data.discipline.coveragePct, 0), s: `${num(data.discipline.openLinesInspected)} of ${num(data.discipline.openLines)} lines` },
+                { k: 'Coverage of open lines', v: pctStr(data.discipline.coveragePct), s: `${num(data.discipline.openLinesInspected)} of ${num(data.discipline.openLines)} lines` },
                 { k: 'Open sessions, no sample', v: num(data.discipline.emptyOpenSessions), s: 'right now' },
                 { k: 'Closed without final qty', v: num(data.discipline.closedWithoutFinalQty), s: 'in the period' },
-                { k: 'Coils typed by hand', v: pctStr(data.discipline.typedCoilPct, 0), s: 'not from the register' },
+                { k: 'Coils typed by hand', v: pctStr(data.discipline.typedCoilPct), s: 'not from the register' },
                 { k: 'Re-recorded / corrected', v: `${num(data.discipline.samplesReRecorded)} / ${num(data.discipline.corrections)}`, s: 'samples / fields' },
                 { k: 'Discarded sessions', v: num(data.discipline.sessionsDiscarded), s: 'no sample recorded' },
                 { k: 'Grade mismatches acknowledged', v: num(data.discipline.gradeAcknowledgements), s: 'coil vs expected' },
