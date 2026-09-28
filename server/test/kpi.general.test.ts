@@ -8,7 +8,7 @@ import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import type { SaveSampleRequest, SessionWithOrder } from '@qc/shared/api'
 import type { Machine, ProductionOrder } from '@qc/shared/types'
-import { GENERAL_MONTHS, type KpiBreakdown, type KpiGeneral, type KpiOverview } from '@qc/shared/kpi'
+import { GENERAL_MONTHS, type KpiBreakdown, type KpiDrillResponse, type KpiGeneral, type KpiOverview } from '@qc/shared/kpi'
 import { TestApp, type Session } from './harness'
 
 const app = new TestApp()
@@ -247,3 +247,51 @@ describe('§15 — process groups and the month view', () => {
     expect(two.defects.map((d) => d.defectName)).toEqual(['Scratch', 'Dent'])
   })
 })
+
+describe('§15 — what is behind a number', () => {
+  const span = () => `from=${today(-1)}&to=${today(1)}`
+  const drill = (query = '') => app.api<KpiDrillResponse>('GET', `/api/kpi/drill?${span()}${query}`, { token: admin.token })
+
+  it('lists the sessions whose rejected pieces make the period, largest first, with their defects', async () => {
+    expect((await app.api('GET', `/api/kpi/drill?${span()}`, { token: inspector.token })).status).toBe(403)
+    const all = (await drill()).body
+    expect(all.totalSessions).toBe(3)
+    expect(all.totalPieces).toBe(6)
+    expect(all.truncated).toBe(false)
+    expect(all.sessions.map((s) => [s.orderNumber, s.pieces])).toEqual([
+      ['30002-B', 3],
+      ['30001-A', 2],
+      ['30003-C', 1],
+    ])
+    expect(all.sessions[0]).toMatchObject({ item: 'Upright 80x60', machine: '31-Roll Forming-LM2', factory: 'Factory 1', defects: [{ defectName: 'Scratch', pieces: 3 }] })
+  })
+
+  it('narrows to a defect, a disposition, a factory, a process, an order line or a month', async () => {
+    const scratch = (await drill('&defect=scratch')).body
+    expect([scratch.totalSessions, scratch.totalPieces]).toEqual([2, 5])
+    expect((await drill('&disposition=Rejected')).body.sessions.map((s) => s.orderNumber)).toEqual(['30003-C'])
+    expect((await drill('&factory=Factory%202')).body.sessions.map((s) => s.orderNumber)).toEqual(['30003-C'])
+    expect((await drill('&process=forming')).body.totalPieces).toBe(5)
+    const orders = (await app.api<ProductionOrder[]>('GET', '/api/orders', { token: admin.token })).body
+    const g1 = orders.find((o) => o.lineKey === 'G-1')!
+    expect((await drill(`&orderId=${g1.id}`)).body.sessions.map((s) => [s.orderNumber, s.pieces])).toEqual([['30001-A', 2]])
+    const thisMonth = new Date().toISOString().slice(0, 7)
+    expect((await drill(`&month=${thisMonth}`)).body.totalSessions).toBe(3)
+    expect((await drill('&month=2001-01')).body).toEqual({ sessions: [], totalSessions: 0, totalPieces: 0, truncated: false })
+  })
+
+  it('reads samples on the sampled basis, which an inspector or a shift may narrow', async () => {
+    expect((await drill(`&inspectorId=${inspector.user.id}`)).status).toBe(400)
+    const sampled = (await drill(`&basis=sampled&inspectorId=${inspector.user.id}`)).body
+    expect(sampled.totalPieces).toBe(6)
+  })
+
+  it('lists the sessions that started with pieces already rejected, by band', async () => {
+    const firstPart = (query: string) => app.api<KpiDrillResponse>('GET', `/api/kpi/first-part/drill?${span()}${query}`, { token: admin.token })
+    const band = (await firstPart('&qtyFrom=6&qtyTo=10')).body
+    expect(band.sessions.map((s) => [s.orderNumber, s.pieces])).toEqual([['30003-C', 7]])
+    expect((await firstPart('&qtyFrom=8')).body.totalSessions).toBe(0)
+    expect((await firstPart('&qtyFrom=5&qtyTo=2')).status).toBe(400)
+  })
+})
+

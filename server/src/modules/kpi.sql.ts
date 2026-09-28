@@ -10,6 +10,7 @@ import type { Disposition, Process, ShiftLetter } from '@qc/shared/types'
 import { PAINT_THICKNESS_NAME } from '@qc/shared/rules'
 import type {
   KpiBreakdown,
+  KpiDrillResponse,
   KpiBreakdownDefect,
   KpiBreakdownMonth,
   KpiBreakdownRow,
@@ -1326,5 +1327,114 @@ export async function loadFirstPart(q: Queryable, f: PeriodFilters): Promise<Kpi
       orders: ordersOf.get(`${r.code.toLowerCase()}|${r.itemCode.toLowerCase()}`) ?? [],
     })),
     byQty: byQtyRows.rows.map((r) => ({ workCenterCode: r.code, qty: r.qty, sessions: r.sessions })),
+  }
+}
+
+// ---- What is behind a number ---------------------------------------------------
+
+/** The slice a drill-down reads, on top of the period's filters. */
+export interface DrillSlice {
+  basis: 'produced' | 'sampled'
+  orderId?: string
+  month?: string
+  defect?: string
+  disposition?: string
+}
+
+interface DrillRow {
+  sessionId: string
+  seq: number
+  orderId: string
+  orderNumber: string
+  item: string
+  itemCode: string
+  workCenterCode: string
+  machine: string
+  factory: string
+  at: string
+  inspectorName: string
+  pieces: number
+  defects: { defectName: string; pieces: number }[] | null
+  totalSessions: number
+  totalPieces: number
+}
+
+/**
+ * §15 — the sessions whose rejected pieces make a number on the dashboard,
+ * largest first: the period's production (sessions closed in it) or its
+ * samples (recorded in it), narrowed to an order line, a month, a defect or
+ * a disposition. Each session carries its pieces in the slice and their
+ * defects.
+ */
+export async function loadDrill(q: Queryable, f: PeriodFilters, slice: DrillSlice, limit: number): Promise<KpiDrillResponse> {
+  const p = [...params(f), slice.orderId ?? null, slice.month ?? null, slice.defect ?? null, slice.disposition ?? null, limit]
+  const defectMatch = `($12::text IS NULL OR lower(btrim(d.defect_name)) = lower(btrim($12))) AND ($13::text IS NULL OR d.disposition::text = $13)`
+  const hits =
+    slice.basis === 'produced'
+      ? `WITH ${PRODUCED},
+         hits AS (
+           SELECT pr.session_id, pr.order_id, pr.order_number, pr.item, pr.item_code, pr.wc, pr.machine_label, pr.factory, pr.closed_at AS at,
+                  d.defect_name, d.qty::float8 AS qty
+             FROM produced pr
+             JOIN inspection_samples x ON x.session_id = pr.session_id AND x.deleted_at IS NULL
+             JOIN defect_results d ON d.sample_id = x.id AND d.deleted_at IS NULL
+            WHERE ($10::uuid IS NULL OR pr.order_id = $10)
+              AND ($11::text IS NULL OR to_char(pr.closed_at AT TIME ZONE $1, 'YYYY-MM') = $11)
+              AND ${defectMatch})`
+      : `${BASE},
+         hits AS (
+           SELECT b.session_id, b.order_id, b.order_number, b.item, b.item_code, b.wc, b.machine_label, b.factory, b.created_at AS at,
+                  d.defect_name, d.qty::float8 AS qty
+             FROM base b
+             JOIN defect_results d ON d.sample_id = b.sample_id AND d.deleted_at IS NULL
+            WHERE ($10::uuid IS NULL OR b.order_id = $10)
+              AND ($11::text IS NULL OR to_char(b.created_at AT TIME ZONE $1, 'YYYY-MM') = $11)
+              AND ${defectMatch})`
+  const { rows } = await q.query<DrillRow>(
+    `${hits},
+     per_session AS (
+       SELECT session_id, max(order_id::text) AS order_id, max(order_number) AS order_number, max(item) AS item, max(item_code) AS item_code,
+              max(wc) AS wc, max(machine_label) AS machine_label, max(factory) AS factory, max(at) AS at, sum(qty)::float8 AS pieces
+         FROM hits GROUP BY session_id
+     ),
+     per_defect AS (SELECT session_id, defect_name, sum(qty)::float8 AS pieces FROM hits GROUP BY 1, 2)
+     SELECT ps.session_id AS "sessionId", s.seq, ps.order_id AS "orderId", ps.order_number AS "orderNumber", ps.item, ps.item_code AS "itemCode",
+            ps.wc AS "workCenterCode", ps.machine_label AS machine, ps.factory, ps.at, s.inspector_name AS "inspectorName", ps.pieces,
+            (SELECT jsonb_agg(jsonb_build_object('defectName', pd.defect_name, 'pieces', pd.pieces) ORDER BY pd.pieces DESC, pd.defect_name)
+               FROM per_defect pd WHERE pd.session_id = ps.session_id) AS defects,
+            count(*) OVER ()::int AS "totalSessions", (sum(ps.pieces) OVER ())::float8 AS "totalPieces"
+       FROM per_session ps JOIN inspection_sessions s ON s.id = ps.session_id
+      ORDER BY ps.pieces DESC, ps.at DESC
+      LIMIT $14`,
+    p,
+  )
+  return {
+    sessions: rows.map(({ totalSessions: _n, totalPieces: _p, ...r }) => ({ ...r, at: new Date(r.at).toISOString(), defects: r.defects ?? [] })),
+    totalSessions: rows[0]?.totalSessions ?? 0,
+    totalPieces: rows[0]?.totalPieces ?? 0,
+    truncated: (rows[0]?.totalSessions ?? 0) > rows.length,
+  }
+}
+
+/** First part: the sessions of the period that started with `qtyFrom`…`qtyTo` pieces already rejected on the line. */
+export async function loadFirstPartDrill(q: Queryable, f: PeriodFilters, qtyFrom: number, qtyTo: number | null, limit: number): Promise<KpiDrillResponse> {
+  const p = [f.tz, f.from, f.to, factories(f), wcs(f), f.itemCode ?? null, processes(f), qtyFrom, qtyTo, limit]
+  const { rows } = await q.query<DrillRow>(
+    `${FIRST_PART}
+     SELECT fs.id AS "sessionId", s.seq, s.order_id::text AS "orderId", fs.order_number AS "orderNumber", fs.item, fs.item_code AS "itemCode",
+            fs.wc AS "workCenterCode", fs.machine_label AS machine, fs.factory, fs.started_at AS at, fs.inspector_name AS "inspectorName",
+            fs.rejected_before AS pieces, NULL::jsonb AS defects,
+            count(*) OVER ()::int AS "totalSessions", (sum(fs.rejected_before) OVER ())::float8 AS "totalPieces"
+       FROM sessions fs JOIN inspection_sessions s ON s.id = fs.id
+      WHERE fs.rejected_before >= $8 AND ($9::float8 IS NULL OR fs.rejected_before <= $9)
+      ORDER BY fs.rejected_before DESC, fs.started_at DESC
+      LIMIT $10`,
+    p,
+  )
+  return {
+    sessions: rows.map(({ totalSessions: _n, totalPieces: _p, ...r }) => ({ ...r, at: new Date(r.at).toISOString(), defects: [] })),
+    totalSessions: rows[0]?.totalSessions ?? 0,
+    totalPieces: rows[0]?.totalPieces ?? 0,
+    truncated: (rows[0]?.totalSessions ?? 0) > rows.length,
   }
 }

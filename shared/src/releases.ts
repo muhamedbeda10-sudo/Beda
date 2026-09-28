@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-28.7',
+    date: '2026-09-28',
+    title: 'Dashboard: every number opens its sessions',
+    items: [
+      { text: 'Tap a number on the dashboard to see what is behind it: the order lines, their items and machines, the defects and the rejected pieces, with a link to every session.' },
+      { text: 'On General: the Reject rate and PPM tiles, the Pareto bars, the pies (by factory or process, by machine, by defect, by disposition), every number of Defects by month, every row and month of By order line and By item, and the first-part tiles and the sessions-by-pieces columns.' },
+      { text: 'On Details: the Pareto bars, the dispositions and the rows of Defect details. The widgets that already filter the page when tapped still do.' },
+    ],
+  },
+  {
     id: '2026-09-28.6',
     date: '2026-09-28',
     title: 'History to Excel; PDI opens on a new record',

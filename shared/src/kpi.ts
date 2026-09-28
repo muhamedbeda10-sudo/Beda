@@ -552,6 +552,72 @@ export interface KpiBreakdown {
   firstPart: KpiFirstPart
 }
 
+/**
+ * §15 — what is behind a number on the dashboard: the sessions whose rejected
+ * pieces make it, with the order line, the machine and the defects of each.
+ * `produced` reads the sessions closed in the span (the General page);
+ * `sampled` reads the samples recorded in it (the Details page), and may be
+ * narrowed by inspector and shift as that page is.
+ */
+export interface KpiDrillQuery {
+  from: string
+  to: string
+  basis?: 'produced' | 'sampled'
+  factories?: string[]
+  processes?: Process[]
+  workCenterCodes?: string[]
+  itemCode?: string
+  inspectorId?: string
+  shift?: ShiftLetter
+  /** One order line. */
+  orderId?: string
+  /** YYYY-MM: the month the session closed in (produced) or the sample was recorded in (sampled). */
+  month?: string
+  defect?: string
+  disposition?: Disposition
+}
+
+export interface KpiDrillSession {
+  sessionId: string
+  seq: number
+  orderId: string
+  orderNumber: string
+  item: string
+  itemCode: string
+  workCenterCode: string
+  machine: string
+  factory: string
+  /** When the session closed (produced), or its last matching sample was recorded (sampled). */
+  at: string
+  inspectorName: string
+  /** The rejected pieces of the slice in this session. */
+  pieces: number
+  defects: { defectName: string; pieces: number }[]
+}
+
+export interface KpiDrillResponse {
+  sessions: KpiDrillSession[]
+  totalSessions: number
+  totalPieces: number
+  /** More sessions match than are listed; the largest are. */
+  truncated: boolean
+}
+
+/** The most sessions a drill-down lists: the ones with the most pieces. */
+export const KPI_DRILL_LIMIT = 300
+
+/** First part: the sessions that started with `qtyFrom`…`qtyTo` pieces already rejected. */
+export interface KpiFirstPartDrillQuery {
+  from: string
+  to: string
+  factories?: string[]
+  processes?: Process[]
+  workCenterCodes?: string[]
+  itemCode?: string
+  qtyFrom: number
+  qtyTo?: number
+}
+
 /** How many calendar months the general page shows, the current one included. */
 export const GENERAL_MONTHS = 4
 

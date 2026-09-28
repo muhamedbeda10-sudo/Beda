@@ -22,6 +22,27 @@ function useChartFrame(): { figure: string; svg: string } {
 }
 import { cn } from '@/lib/utils'
 
+/** A slice that lumps several together cannot be opened on its own. */
+const isOthers = (label: string) => /^Others\b/.test(label)
+
+/** What makes a mark of a chart open its detail: a pointer, a tap, Enter or Space. */
+function pickable(onPick: (() => void) | undefined, label: string) {
+  if (!onPick || isOthers(label)) return {}
+  return {
+    role: 'button' as const,
+    tabIndex: 0,
+    'aria-label': `Open ${label}`,
+    style: { cursor: 'pointer' },
+    onClick: onPick,
+    onKeyDown: (e: { key: string; preventDefault: () => void }) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        onPick()
+      }
+    },
+  }
+}
+
 const fmt = (n: number, digits = 1): string => (Number.isInteger(n) ? String(n) : n.toFixed(digits))
 
 function niceMax(v: number): number {
@@ -196,7 +217,7 @@ export interface ParetoBar {
 }
 
 /** Bars sorted largest first with the running share drawn over them. */
-export function ParetoChart({ bars, height = 240 }: { bars: ParetoBar[]; height?: number }) {
+export function ParetoChart({ bars, height = 240, onPick }: { bars: ParetoBar[]; height?: number; onPick?: (label: string) => void }) {
   const frame = useChartFrame()
   const id = useId()
   const [hover, setHover] = useState<number | null>(null)
@@ -234,7 +255,8 @@ export function ParetoChart({ bars, height = 240 }: { bars: ParetoBar[]; height?
           const vital = eighty === -1 || i <= eighty
           const label = b.label.length > 14 ? `${b.label.slice(0, 13)}…` : b.label
           return (
-            <g key={b.label} onMouseEnter={() => setHover(i)}>
+            <g key={b.label} onMouseEnter={() => setHover(i)} {...pickable(onPick && (() => onPick(b.label)), b.label)}>
+              {onPick && !isOthers(b.label) && <rect x={xAt(i) - slot / 2} y={y0} width={slot} height={y1 - y0} fill="transparent" />}
               <rect x={xAt(i) - bw / 2} y={yBar(b.value)} width={bw} height={Math.max(0, y1 - yBar(b.value))} rx={4} className={cn(vital ? 'fill-rose-500' : 'fill-slate-300 dark:fill-slate-600', hover !== null && hover !== i && 'opacity-60')} />
               <text x={xAt(i)} y={yBar(b.value) - 4} textAnchor="middle" fontSize="10" className="fill-slate-600 dark:fill-slate-300">
                 {fmt(b.value)}
@@ -257,6 +279,7 @@ export function ParetoChart({ bars, height = 240 }: { bars: ParetoBar[]; height?
         <span className="inline-flex items-center gap-1.5">
           <i className="inline-block h-0.5 w-4 rounded bg-brand-600 dark:bg-brand-300" /> Cumulative share
         </span>
+        {onPick && hover === null && <span className="print-hidden ml-auto text-slate-400">Tap a bar for its sessions</span>}
         {hover !== null && (
           <span className="ml-auto font-semibold tabular-nums text-slate-700 dark:text-slate-200">
             {bars[hover].label}: {fmt(bars[hover].value)} pieces · {fmt(bars[hover].cumulativePct)}% cumulative
@@ -274,7 +297,7 @@ export interface Slice {
 }
 
 /** A donut with the total in the middle and the legend beside it. */
-export function DonutChart({ slices, centerLabel, size = 160 }: { slices: Slice[]; centerLabel: string; size?: number }) {
+export function DonutChart({ slices, centerLabel, size = 160, onPick }: { slices: Slice[]; centerLabel: string; size?: number; onPick?: (label: string) => void }) {
   const total = slices.reduce((n, s) => n + s.value, 0)
   const r = 46
   const c = 2 * Math.PI * r
@@ -314,7 +337,7 @@ export function DonutChart({ slices, centerLabel, size = 160 }: { slices: Slice[
       </svg>
       <ul className="min-w-[10rem] flex-1 space-y-1.5 text-sm">
         {slices.map((s) => (
-          <li key={s.label} className="flex items-center gap-2">
+          <li key={s.label} className={cn('flex items-center gap-2', onPick && s.value > 0 && 'rounded-md hover:bg-slate-50 dark:hover:bg-slate-800')} {...(s.value > 0 ? pickable(onPick && (() => onPick(s.label)), s.label) : {})}>
             <i className={cn('inline-block h-2.5 w-2.5 rounded-full', s.className.replace(/stroke-/g, 'bg-'))} />
             <span className="flex-1 text-slate-600 dark:text-slate-300">{s.label}</span>
             <span className="font-semibold tabular-nums">{fmt(s.value)}</span>
@@ -330,6 +353,8 @@ export function DonutChart({ slices, centerLabel, size = 160 }: { slices: Slice[
 export const PIE_CLASSES = ['fill-brand-500', 'fill-rose-500', 'fill-emerald-500', 'fill-amber-500', 'fill-violet-500', 'fill-sky-500', 'fill-pink-500', 'fill-teal-500', 'fill-orange-500', 'fill-slate-400']
 
 export interface PieSlice {
+  /** What the slice stands for, when its label is not enough to find it again: a machine code, a factory. */
+  key?: string
   label: string
   sub?: string
   value: number
@@ -341,7 +366,7 @@ export interface PieSlice {
  * The slices of a pie: the largest `keep` rows of `rows` in their own colour,
  * the rest of them as one "Others" slice. Rows worth nothing are left out.
  */
-export function slicesOf(rows: { label: string; sub?: string; value: number }[], keep = PIE_CLASSES.length - 1): PieSlice[] {
+export function slicesOf(rows: { key?: string; label: string; sub?: string; value: number }[], keep = PIE_CLASSES.length - 1): PieSlice[] {
   const sorted = rows.filter((r) => r.value > 0).sort((a, b) => b.value - a.value)
   const head = sorted.slice(0, keep).map((r, i) => ({ ...r, className: PIE_CLASSES[i] }))
   const tail = sorted.slice(keep)
@@ -354,7 +379,7 @@ export function slicesOf(rows: { label: string; sub?: string; value: number }[],
  * total in the middle, and the legend beside it: each slice's pieces and
  * share. On a board it fills its box; the legend scrolls when it is long.
  */
-export function PieChart({ slices, centerLabel, unit = '' }: { slices: PieSlice[]; centerLabel: string; unit?: string }) {
+export function PieChart({ slices, centerLabel, unit = '', onPick }: { slices: PieSlice[]; centerLabel: string; unit?: string; onPick?: (slice: PieSlice) => void }) {
   const fill = useContext(ChartFillContext)
   const total = slices.reduce((n, s) => n + s.value, 0)
   const cx = 100
@@ -388,9 +413,9 @@ export function PieChart({ slices, centerLabel, unit = '' }: { slices: PieSlice[
     <div className={cn('flex gap-4', fill ? 'h-full min-h-0 flex-col sm:flex-row' : 'flex-wrap items-center')}>
       <svg viewBox="0 0 200 200" className={cn(fill ? 'mx-auto h-auto max-h-full min-h-0 w-auto flex-1 sm:mx-0' : 'h-44 w-44')} role="img" aria-label={`${centerLabel}: ${total}${unit}`}>
         {drawn.length === 1 ? (
-          <circle cx={cx} cy={cy} r={(r + hole) / 2} fill="none" strokeWidth={r - hole} className={drawn[0].className.replace(/fill-/g, 'stroke-')} />
+          <circle cx={cx} cy={cy} r={(r + hole) / 2} fill="none" strokeWidth={r - hole} className={drawn[0].className.replace(/fill-/g, 'stroke-')} {...pickable(onPick && (() => onPick(drawn[0])), drawn[0].label)} />
         ) : (
-          drawn.map((s) => <path key={s.label} d={arc(s.from, s.to)} className={cn(s.className, 'stroke-white dark:stroke-slate-900')} strokeWidth="1.5" />)
+          drawn.map((s) => <path key={s.label} d={arc(s.from, s.to)} className={cn(s.className, 'stroke-white dark:stroke-slate-900', onPick && !isOthers(s.label) && 'hover:opacity-80')} strokeWidth="1.5" {...pickable(onPick && (() => onPick(s)), s.label)} />)
         )}
         {drawn.map((s) => s.share >= 0.06 && (
           <text key={`t-${s.label}`} x={s.lx} y={s.ly} textAnchor="middle" dominantBaseline="middle" fontSize="11" fontWeight="700" className="fill-white" style={{ paintOrder: 'stroke', stroke: 'rgba(15,23,42,.45)', strokeWidth: 2 }}>
@@ -406,7 +431,7 @@ export function PieChart({ slices, centerLabel, unit = '' }: { slices: PieSlice[
       </svg>
       <ul className={cn('min-w-0 space-y-1 text-sm', fill ? 'max-h-full shrink-0 overflow-auto sm:w-[46%]' : 'min-w-[10rem] flex-1')}>
         {drawn.map((s) => (
-          <li key={s.label} className="flex items-center gap-2">
+          <li key={s.label} className={cn('flex items-center gap-2', onPick && !isOthers(s.label) && 'rounded-md hover:bg-slate-50 dark:hover:bg-slate-800')} {...pickable(onPick && (() => onPick(s)), s.label)}>
             <i className={cn('inline-block h-2.5 w-2.5 shrink-0 rounded-full', s.className.replace(/fill-/g, 'bg-'))} />
             <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300" title={s.sub ? `${s.label} · ${s.sub}` : s.label}>
               {s.label}
@@ -582,7 +607,7 @@ export interface Column {
 }
 
 /** Columns in a fixed order — a histogram: how many fell in each band. */
-export function ColumnChart({ columns, height = 200, unit = '' }: { columns: Column[]; height?: number; unit?: string }) {
+export function ColumnChart({ columns, height = 200, unit = '', onPick }: { columns: Column[]; height?: number; unit?: string; onPick?: (index: number) => void }) {
   const frame = useChartFrame()
   const id = useId()
   const W = 520
@@ -610,7 +635,8 @@ export function ColumnChart({ columns, height = 200, unit = '' }: { columns: Col
         <title id={`${id}-t`}>{columns.map((c) => `${c.label}: ${fmt(c.value)}${unit}`).join(', ')}</title>
         <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} unit={unit} />
         {columns.map((c, i) => (
-          <g key={c.label}>
+          <g key={c.label} {...(c.value > 0 ? pickable(onPick && (() => onPick(i)), c.label) : {})}>
+            {onPick && c.value > 0 && <rect x={xAt(i) - slot / 2} y={y0} width={slot} height={y1 - y0} fill="transparent" />}
             <rect x={xAt(i) - bw / 2} y={yAt(c.value)} width={bw} height={Math.max(0, y1 - yAt(c.value))} rx={4} className={fill[c.tone ?? 'neutral']} />
             {c.value > 0 && (
               <text x={xAt(i)} y={yAt(c.value) - 5} textAnchor="middle" fontSize="11" fontWeight={700} className="fill-slate-700 dark:fill-slate-200">
