@@ -535,6 +535,12 @@ export interface KpiBreakdown {
   filters: KpiBreakdownFilters
   generatedAt: string
   thresholds: KpiThresholds
+  /**
+   * The span as a whole. Not the sum of the months: a universal machine's
+   * line counts its order-sheet quantity once in each month it closed in,
+   * and once in the span.
+   */
+  totals: { made: number; productionDefectPieces: number; defectRatePct: number | null }
   months: KpiBreakdownMonth[]
   /** The scope split by factory, by process and by machine, each month by month, so each can be a line on one chart or a slice of one pie. */
   series: { factories: KpiBreakdownSeries[]; processes: KpiBreakdownSeries[]; machines: KpiBreakdownSeries[] }

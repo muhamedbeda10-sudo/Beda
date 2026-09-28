@@ -660,9 +660,10 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
 
 /** What a pick's rejected pieces are: which defects, in which months, on which orders and items; and how often the first part was clean. */
 function scopeDetailWidgets({ title, data, t, navigate, fpMachines, setFpMachines }: { title: string; data: KpiBreakdown; t: KpiThresholds; navigate: (to: string) => void; fpMachines: string[]; setFpMachines: (codes: string[]) => void }): BoardWidget[] {
-  const made = data.months.reduce((n, m) => n + m.made, 0)
-  const rejected = data.months.reduce((n, m) => n + m.productionDefectPieces, 0)
-  const rate = made > 0 ? Math.round((rejected / made) * 10000) / 100 : null
+  // The span as a whole, not the months added up: a universal machine's line counts its sheet quantity once in the span.
+  const made = data.totals.made
+  const rejected = data.totals.productionDefectPieces
+  const rate = data.totals.defectRatePct
   const monthsWithData = data.months.filter((m) => m.made > 0)
   const fpAll = data.firstPart
   // The first-part widgets share one machine filter, several machines at once; none ticked is every machine of the pick.

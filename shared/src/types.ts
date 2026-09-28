@@ -31,18 +31,16 @@ export const PT_WORK_CENTERS: readonly WorkCenterCode[] = ['22', '58']
  *   paint   — paint sample photos, paint thickness readings, defects
  *   other   — the forming flow
  */
-export type Process = 'forming' | 'welding' | 'paint' | 'universal' | 'mast' | 'other'
+export type Process = 'forming' | 'welding' | 'paint' | 'universal'
 
 /** In the order the dashboard's process filter lists them. */
-export const PROCESSES: readonly Process[] = ['forming', 'welding', 'paint', 'universal', 'mast', 'other']
+export const PROCESSES: readonly Process[] = ['forming', 'welding', 'paint', 'universal']
 
 export const PROCESS_LABEL: Record<Process, string> = {
   forming: 'Roll forming / fabrication',
   welding: 'Welding',
   paint: 'Painting',
   universal: 'Universal machines',
-  mast: 'Mast machines',
-  other: 'Others',
 }
 
 export interface Machine {
@@ -162,6 +160,12 @@ export interface InspectionSession {
   }
   /** Final produced quantity captured when closing. */
   finalQty?: number
+  /**
+   * On a universal machine: the stage of the item this session inspected.
+   * The first session on a line is stage 1; a later one is given its stage
+   * when it closes. Empty on every other machine and while open.
+   */
+  stage?: number
   /** On a make-to-stock machine: how many pieces (pairs, for a right/left
    *  item) came out, entered when the session is started. */
   producedQty?: number

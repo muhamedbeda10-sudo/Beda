@@ -122,13 +122,13 @@ describe('§5.1 step gating by process', () => {
     expect(stepsForProcess('welding')).toEqual(['setup', 'dimensions', 'defects', 'pt', 'review'])
   })
 
-  it('gives forming and other machines the plain flow', () => {
+  it('gives forming and universal machines the plain flow', () => {
     expect(stepsForProcess('forming')).toEqual(['setup', 'dimensions', 'defects', 'review'])
-    expect(stepsForProcess('other')).toEqual(['setup', 'dimensions', 'defects', 'review'])
+    expect(stepsForProcess('universal')).toEqual(['setup', 'dimensions', 'defects', 'review'])
   })
 
   it('always keeps review last', () => {
-    for (const p of ['forming', 'welding', 'paint', 'other'] as const) {
+    for (const p of ['forming', 'welding', 'paint', 'universal'] as const) {
       const steps = stepsForProcess(p)
       expect(steps[steps.length - 1]).toBe('review')
     }

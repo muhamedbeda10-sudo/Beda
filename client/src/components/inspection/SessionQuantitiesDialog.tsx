@@ -13,6 +13,8 @@ import type { SessionWithOrder } from '@qc/shared/api'
 import { isStockOrder } from '@qc/shared/rules'
 import { Button, Field, Input, Modal } from '@/components/ui'
 import { updateSessionQuantities } from '@/services/mutations'
+import { useSessionStages } from '@/services/queries'
+import { StagePicker } from './StagePicker'
 import { useApp } from '@/store/AppContext'
 
 /** A quantity field: empty reads as zero, anything else must be a non-negative number. */
@@ -30,6 +32,10 @@ export function SessionQuantitiesDialog({ session, onClose }: { session: Session
   const [start, setStart] = useState(String(session.startQtyConfirmed?.qty ?? 0))
   const [produced, setProduced] = useState(String(session.producedQty ?? 0))
   const [final, setFinal] = useState(String(session.finalQty ?? 0))
+  // A closed session on a universal machine carries its stage, corrected here like a quantity.
+  const hasStage = closed && session.stage !== undefined
+  const { data: stageOptions } = useSessionStages(session.id, hasStage)
+  const [stage, setStage] = useState<number | null>(session.stage ?? null)
   const [saving, setSaving] = useState(false)
 
   const startQty = parseQty(start)
@@ -42,6 +48,7 @@ export function SessionQuantitiesDialog({ session, onClose }: { session: Session
     ...(!stock && startQty !== null && startQty !== (session.startQtyConfirmed?.qty ?? 0) ? { startQty } : {}),
     ...(stock && producedQty !== null && producedQty !== (session.producedQty ?? 0) ? { producedQty } : {}),
     ...(closed && finalQty !== null && finalQty !== (session.finalQty ?? 0) ? { finalQty } : {}),
+    ...(hasStage && stage !== null && stage !== session.stage ? { stage } : {}),
   }
   const dirty = Object.keys(changes).length > 0
 
@@ -110,6 +117,12 @@ export function SessionQuantitiesDialog({ session, onClose }: { session: Session
           <Field label="Final quantity (at close)">{qtyInput(final, setFinal)}</Field>
         ) : (
           <p className="text-xs text-slate-400">The final quantity is typed when the session closes, and can be corrected here after that.</p>
+        )}
+        {hasStage && stageOptions && (
+          <div>
+            <span className="label">Stage of this item</span>
+            <StagePicker options={stageOptions} value={stage} onChange={setStage} />
+          </div>
         )}
         {!valid && <p className="text-sm font-semibold text-rose-600 dark:text-rose-400">Enter zero or a positive quantity.</p>}
       </div>
