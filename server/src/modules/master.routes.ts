@@ -42,20 +42,22 @@ const processSchema = z.preprocess(
   (v) => (typeof v === 'string' ? normaliseProcess(v) : v),
   z.enum(PROCESSES as unknown as [Process, ...Process[]]),
 )
+/**
+ * The floor's four kinds of machine. Universal is everything that is not
+ * welding, painting or roll forming: presses, benders, mast machines, others.
+ */
 export function normaliseProcess(raw: string): string {
   const v = raw.trim().toLowerCase()
-  if (['universal', 'يونيفرسال'].some((k) => v.includes(k))) return 'universal'
-  if (['mast', 'ماست'].some((k) => v.includes(k))) return 'mast'
+  if (['universal', 'يونيفرسال', 'mast', 'ماست', 'press', 'مكبس', 'مكابس', 'bend', 'تناي', 'ثني', 'punch', 'other', 'أخرى', 'اخرى'].some((k) => v.includes(k))) return 'universal'
   if (['weld', 'welding', 'لحام'].some((k) => v.includes(k))) return 'welding'
   if (['paint', 'painting', 'coat', 'دهان'].some((k) => v.includes(k))) return 'paint'
-  if (['form', 'forming', 'fabrication', 'roll', 'punch', 'cut', 'bend', 'تشكيل'].some((k) => v.includes(k))) return 'forming'
-  if (['other', 'أخرى', 'اخرى'].some((k) => v.includes(k))) return 'other'
+  if (['form', 'forming', 'fabrication', 'roll', 'تشكيل'].some((k) => v.includes(k))) return 'forming'
   return v
 }
-/** A machine sheet without a process column: guess from the machine name, else forming. */
+/** A machine sheet without a process column: guess from the machine name, else universal — anything that is not the other three. */
 function processFromName(name: string): Process {
   const guessed = normaliseProcess(name)
-  return (PROCESSES as readonly string[]).includes(guessed) ? (guessed as Process) : 'forming'
+  return (PROCESSES as readonly string[]).includes(guessed) ? (guessed as Process) : 'universal'
 }
 const optText = (max = 500) => z.string().trim().max(max).optional().nullable().transform((v) => (v ? v : null))
 const num = () => z.coerce.number().finite()

@@ -48,6 +48,7 @@ import type {
   SampleSummary,
   SaveSampleResponse,
   SessionNotesResponse,
+  SessionStagesResponse,
   SessionWithOrder,
   WizardContext,
   StartSessionRequest,
@@ -108,7 +109,9 @@ const startSchema = z.union([
   z.object({ orderId: uuid, startQty: z.coerce.number().min(0) }),
   z.object({ workCenterCode: z.string().trim().min(1).max(40), producedQty: z.coerce.number().min(0) }),
 ])
-const closeSchema = z.object({ finalQty: z.coerce.number().min(0), version: z.coerce.number().int().min(0) })
+/** A stage of an item on a universal machine. */
+const stageSchema = z.coerce.number().int().min(1).max(50)
+const closeSchema = z.object({ finalQty: z.coerce.number().min(0), stage: stageSchema.optional(), version: z.coerce.number().int().min(0) })
 
 /** A defect quantity counts defective pieces of the batch (§15): the final quantity is the batch, so it cannot be below them. */
 const reopenSchema = z.object({ version: z.coerce.number().int().min(0) })
@@ -117,9 +120,10 @@ const quantitiesSchema = z
     startQty: z.coerce.number().min(0).optional(),
     producedQty: z.coerce.number().min(0).optional(),
     finalQty: z.coerce.number().min(0).optional(),
+    stage: stageSchema.optional(),
     version: z.coerce.number().int().min(0),
   })
-  .refine((b) => b.startQty !== undefined || b.producedQty !== undefined || b.finalQty !== undefined, { message: 'Nothing to change.' })
+  .refine((b) => b.startQty !== undefined || b.producedQty !== undefined || b.finalQty !== undefined || b.stage !== undefined, { message: 'Nothing to change.' })
 
 const optText = (max: number) => z.string().trim().max(max).optional().transform((v) => (v ? v : undefined))
 const nullableNum = z.union([z.number().finite(), z.null()])
@@ -834,6 +838,16 @@ export function sessionsRoutes(ctx: AppContext): Router {
     res.json(rows)
   })
 
+  /** §4 — what the close asks of a session on a universal machine: its stage, when the line already has a session. */
+  r.get('/:id/stages', async (req, res) => {
+    requireUser(req)
+    const id = parse(uuid, req.params.id)
+    const session = await loadSessionWithOrder(db, id)
+    if (!session) throw notFound('That session')
+    const { universal: _universal, ...body } = await stageOptions(db, session)
+    res.json(body satisfies SessionStagesResponse)
+  })
+
   /** §8.6 — close with the confirmed final quantity. Rejected if the session moved. */
   r.post('/:id/close', requireCapability('record-inspection'), async (req, res) => {
     const user = requireUser(req)
@@ -849,16 +863,27 @@ export function sessionsRoutes(ctx: AppContext): Router {
       if ((before.sampleCount ?? 0) === 0) throw badRequest('No sample has been recorded in this session. Record one before closing, or discard the session.')
       // The defect quantities are the defective pieces of the batch, so the batch cannot be smaller than them.
       // The final quantity is the good production; the rejected pieces were made on top of it, so no floor applies.
+      // On a universal machine the session is a stage of its line: the first is stage 1, a later one says which.
+      const options = await stageOptions(tx, before)
+      let stage: number | null = null
+      if (options.universal) {
+        if (!options.asks) stage = 1
+        else {
+          if (body.stage === undefined) throw badRequest('This item already has a session on this machine: choose the stage this one was.')
+          if (body.stage > options.next) throw badRequest(`The stage can be at most ${options.next}: one of the item's stages, or the next one.`)
+          stage = body.stage
+        }
+      }
       await tx.query(
-        `UPDATE inspection_sessions SET status = 'Closed', final_qty = $2, closed_at = now(), closed_by_id = $3, version = version + 1 WHERE id = $1`,
-        [id, body.finalQty, user.id],
+        `UPDATE inspection_sessions SET status = 'Closed', final_qty = $2, stage = $4, closed_at = now(), closed_by_id = $3, version = version + 1 WHERE id = $1`,
+        [id, body.finalQty, user.id, stage],
       )
       const after = (await loadSessionWithOrder(tx, id))!
       await auditChanges(
         tx,
         auditCtxFor(user, before, 'InspectionSession', id),
-        { status: before.status, finalQty: before.finalQty, closedAt: before.closedAt, closedById: before.closedById },
-        { status: after.status, finalQty: after.finalQty, closedAt: after.closedAt, closedById: after.closedById },
+        { status: before.status, finalQty: before.finalQty, stage: before.stage ?? null, closedAt: before.closedAt, closedById: before.closedById },
+        { status: after.status, finalQty: after.finalQty, stage: after.stage ?? null, closedAt: after.closedAt, closedById: after.closedById },
       )
       return after
     })
@@ -1142,20 +1167,27 @@ export function sessionsRoutes(ctx: AppContext): Router {
       if (body.startQty !== undefined && stock) throw badRequest('A make-to-stock session has no rejected quantity before release.')
       if (body.producedQty !== undefined && !stock) throw badRequest('Only a make-to-stock session has a quantity produced.')
       if (body.finalQty !== undefined && before.status !== 'Closed') throw badRequest('The final quantity is recorded when the session closes.')
+      if (body.stage !== undefined) {
+        if (before.status !== 'Closed') throw badRequest('The stage is given when the session closes.')
+        const options = await stageOptions(tx, before)
+        if (!options.universal) throw badRequest('Only a session on a universal machine has a stage.')
+        if (body.stage > options.next) throw badRequest(`The stage can be at most ${options.next}: one of the item's stages, or the next one.`)
+      }
       const sets: string[] = ['version = version + 1']
       const params: unknown[] = [id]
       const p = (v: unknown) => `$${params.push(v)}`
       if (body.startQty !== undefined) sets.push(`start_qty = ${p(body.startQty)}, start_qty_by_id = ${p(user.id)}, start_qty_by_name = ${p(user.name)}, start_qty_at = now()`)
       if (body.producedQty !== undefined) sets.push(`produced_qty = ${p(body.producedQty)}`)
       if (body.finalQty !== undefined) sets.push(`final_qty = ${p(body.finalQty)}`)
+      if (body.stage !== undefined) sets.push(`stage = ${p(body.stage)}`)
       await tx.query(`UPDATE inspection_sessions SET ${sets.join(', ')} WHERE id = $1`, params)
 
       const after = (await loadSessionWithOrder(tx, id))!
       await auditChanges(
         tx,
         auditCtxFor(user, before, 'InspectionSession', id),
-        { startQty: before.startQtyConfirmed?.qty ?? null, producedQty: before.producedQty ?? null, finalQty: before.finalQty ?? null },
-        { startQty: after.startQtyConfirmed?.qty ?? null, producedQty: after.producedQty ?? null, finalQty: after.finalQty ?? null },
+        { startQty: before.startQtyConfirmed?.qty ?? null, producedQty: before.producedQty ?? null, finalQty: before.finalQty ?? null, stage: before.stage ?? null },
+        { startQty: after.startQtyConfirmed?.qty ?? null, producedQty: after.producedQty ?? null, finalQty: after.finalQty ?? null, stage: after.stage ?? null },
       )
       return after
     })
@@ -1163,6 +1195,31 @@ export function sessionsRoutes(ctx: AppContext): Router {
   })
 
   return r
+}
+
+/**
+ * §4 — the stages a session on a universal machine may be given. One line (an
+ * item of an order on the machine) passes through several stages, a session
+ * each: the first session on the line is stage 1 without asking; a later one
+ * is given one of the line's stages or the next one when it closes. A
+ * make-to-stock line has no stages. A sibling recorded before stages existed
+ * counts as stage 1.
+ */
+async function stageOptions(tx: Queryable, session: SessionWithOrder): Promise<SessionStagesResponse & { universal: boolean }> {
+  const none = { universal: false, asks: false, stages: [], next: 1 }
+  if (isStockOrder(session.order)) return none
+  const machine = (await tx.query<{ process: string }>(
+    `SELECT process FROM machines WHERE lower(code) = lower($1) AND deleted_at IS NULL ORDER BY created_at LIMIT 1`,
+    [session.workCenterCode],
+  )).rows[0]
+  if (machine?.process !== 'universal') return none
+  const { rows } = await tx.query<{ stage: number; n: number }>(
+    `SELECT COALESCE(stage, 1)::int AS stage, count(*)::int AS n FROM inspection_sessions
+      WHERE order_id = $1 AND id <> $2 AND deleted_at IS NULL GROUP BY 1 ORDER BY 1`,
+    [session.orderId, session.id],
+  )
+  const stages = rows.map((r) => ({ stage: r.stage, sessions: r.n }))
+  return { universal: true, asks: stages.length > 0, stages, next: Math.max(0, ...stages.map((x) => x.stage)) + 1 }
 }
 
 const reRecordSchema = saveSampleSchema.omit({ submissionId: true }).extend({ version: z.coerce.number().int().min(0) })

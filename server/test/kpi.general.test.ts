@@ -46,7 +46,8 @@ beforeAll(async () => {
   await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '31', name: 'Roll Forming', line: 'LM2', displayName: '31-Roll Forming-LM2', process: 'forming', factory: 'Factory 1' } })
   const mast = await app.api<Machine>('POST', '/api/master/machines', { token: admin.token, body: { code: '77', name: 'Mast Line', line: 'LM7', displayName: '77-Mast Line-LM7', process: 'mast', factory: 'Factory 2' } })
   expect(mast.status).toBe(201)
-  expect(mast.body.process).toBe('mast')
+  // A mast machine is a universal machine: the register files it so.
+  expect(mast.body.process).toBe('universal')
   await app.api('POST', '/api/orders/import', {
     token: admin.token,
     body: {
@@ -69,7 +70,7 @@ afterAll(() => app.stop())
 
 describe('§15 — process groups and the month view', () => {
   it('narrows the analysis to a process group of the register', async () => {
-    const mast = await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}&process=mast`, { token: admin.token })
+    const mast = await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}&process=universal`, { token: admin.token })
     expect(mast.status).toBe(200)
     expect(mast.body.byMachine.map((m) => m.key)).toEqual(['77'])
     expect(mast.body.current.piecesProduced).toBe(300)
@@ -139,7 +140,7 @@ describe('§15 — process groups and the month view', () => {
     expect(g.machines[0].months.length).toBe(g.monthsBack)
     // Since the first session on record, whatever the period: by factory and by process.
     expect(g.allTime.factories.map((x) => [x.key, x.made, x.productionDefectPieces])).toEqual([['Factory 1', 305, 5], ['Factory 2', 301, 1]])
-    expect(g.allTime.processes.map((x) => x.key).sort()).toEqual(['forming', 'mast'])
+    expect(g.allTime.processes.map((x) => x.key).sort()).toEqual(['forming', 'universal'])
     expect(g.machines[0].defectRatePct).toBeCloseTo(1.64, 2)
     // On a period: the figures follow it, the trend keeps its months.
     const short = (await app.api<KpiGeneral>('GET', `/api/kpi/general?from=${today(-1)}&to=${today(1)}`, { token: admin.token })).body
@@ -164,8 +165,8 @@ describe('§15 — process groups and the month view', () => {
     expect(both.body.filters.factories).toEqual(['Factory 1', 'Factory 2'])
     const one = await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}&factory=Factory%202`, { token: admin.token })
     expect(one.body.current.piecesProduced).toBe(300)
-    const procs = await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}&process=forming,mast`, { token: admin.token })
-    expect(procs.body.filters.processes).toEqual(['forming', 'mast'])
+    const procs = await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}&process=forming,universal`, { token: admin.token })
+    expect(procs.body.filters.processes).toEqual(['forming', 'universal'])
     expect(procs.body.defects.map((d) => d.defectName)).toEqual(['Scratch', 'Dent'])
     expect((await app.api('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}&process=forming,lathe`, { token: admin.token })).status).toBe(400)
   })
@@ -238,9 +239,9 @@ describe('§15 — process groups and the month view', () => {
     expect(all.firstPart.byMachineMonth[0].months.find((m) => m.sessions > 0)).toMatchObject({ sessions: 1, clean: 0, rejectedPieces: 7, cumulativePct: 100 })
     expect(all.firstPart.byMachineMonth[1].months.find((m) => m.sessions > 0)).toMatchObject({ sessions: 2, clean: 2, rejectedPieces: 0, cumulativePct: 0 })
     // A process scope and a machine scope work the same way.
-    const mast = (await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}&process=mast`, { token: admin.token })).body
+    const mast = (await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}&process=universal`, { token: admin.token })).body
     expect(mast.defects.map((d) => d.defectName)).toEqual(['Dent'])
-    expect(mast.filters.processes).toEqual(['mast'])
+    expect(mast.filters.processes).toEqual(['universal'])
     const two = (await app.api<KpiBreakdown>('GET', `/api/kpi/breakdown?from=${today(-1)}&to=${today(1)}&workCenterCode=31,77`, { token: admin.token })).body
     expect(two.filters.workCenterCodes).toEqual(['31', '77'])
     expect(two.defects.map((d) => d.defectName)).toEqual(['Scratch', 'Dent'])

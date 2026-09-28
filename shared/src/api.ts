@@ -293,8 +293,24 @@ export interface StartWithSampleResponse {
 
 export interface CloseSessionRequest {
   finalQty: number
+  /**
+   * On a universal machine, when the line already has a session: the stage
+   * this one was, one of the line's stages or the next one. The first session
+   * on a line is stage 1 without asking.
+   */
+  stage?: number
   /** Version the client loaded — the close is rejected if it moved. */
   version: number
+}
+
+/** The stages a session on a universal machine may be given when it closes. */
+export interface SessionStagesResponse {
+  /** True when the session's stage must be chosen: a universal machine, and the line already has a session. */
+  asks: boolean
+  /** The stages the line's other sessions were given, with how many sessions each. */
+  stages: { stage: number; sessions: number }[]
+  /** The stage a new one would be: one past the highest. */
+  next: number
 }
 
 /** What the wizard needs to open: the session, its order line, and the
@@ -482,6 +498,8 @@ export interface UpdateSessionQuantitiesRequest {
   startQty?: number
   producedQty?: number
   finalQty?: number
+  /** A closed session on a universal machine: its stage, corrected. */
+  stage?: number
   /** Version the client loaded — the change is rejected if it moved. */
   version: number
 }

@@ -30,7 +30,8 @@ import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantiti
 import { HoldDecisionDialog } from '@/components/inspection/HoldDecisionDialog'
 import { OrderDetailsPanel } from '@/components/inspection/OrderDetailsPanel'
 import { InstallBanner } from '@/components/layout/InstallBanner'
-import { useMaster, useOpenBoard, useSampleDetail } from '@/services/queries'
+import { useMaster, useOpenBoard, useSampleDetail, useSessionStages } from '@/services/queries'
+import { StagePicker } from '@/components/inspection/StagePicker'
 import { closeSession, correctDefect, correctDimension, discardSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
@@ -768,9 +769,9 @@ export function InspectionsPage() {
           process={processForMachine(machines.find((m) => m.code === closing.workCenterCode) ?? null, closing.workCenterCode)}
           session={closing}
           onClose={() => setClosing(null)}
-          onConfirm={async (qty) => {
+          onConfirm={async (qty, stage) => {
             try {
-              await closeSession(queryClient, closing.id, { finalQty: qty, version: closing.version })
+              await closeSession(queryClient, closing.id, { finalQty: qty, version: closing.version, ...(stage !== null ? { stage } : {}) })
               toast('Session closed.', 'success')
             } catch (e) {
               toast(e instanceof Error ? e.message : 'Could not close the session.', 'error')
@@ -857,14 +858,18 @@ function CloseSessionDialog({
   /** The machine's process: a welding session shows its PT coverage against the quantity typed. */
   process: Process
   onClose: () => void
-  onConfirm: (qty: number) => void
+  onConfirm: (qty: number, stage: number | null) => void
   onDiscard: () => void
 }) {
   // A stock session confirms the quantity that came out; an order session its starting count.
   const stock = isStockOrder(session.order)
   const [qty, setQty] = useState(String(stock ? (session.producedQty ?? '') : (session.startQtyConfirmed?.qty ?? '')))
   const parsed = Number(qty)
-  const valid = qty.trim() !== '' && !Number.isNaN(parsed) && parsed >= 0
+  // §4 — on a universal machine, a line that already has a session asks which stage this one was.
+  const { data: stages, isLoading: stagesLoading } = useSessionStages(session.id, process === 'universal' && !stock && (session.sampleCount ?? 0) > 0)
+  const [stage, setStage] = useState<number | null>(null)
+  const asksStage = stages?.asks === true
+  const valid = qty.trim() !== '' && !Number.isNaN(parsed) && parsed >= 0 && (!asksStage || stage !== null) && !(process === 'universal' && !stock && stagesLoading)
 
   // With no sample there is nothing to close as a record: the session is discarded instead.
   if ((session.sampleCount ?? 0) === 0) {
@@ -906,7 +911,7 @@ function CloseSessionDialog({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={!valid} onClick={() => onConfirm(parsed)}>
+          <Button variant="primary" disabled={!valid} onClick={() => onConfirm(parsed, asksStage ? stage : null)}>
             <Lock className="h-4 w-4" /> Close session
           </Button>
         </>
@@ -916,6 +921,13 @@ function CloseSessionDialog({
         <Field label={stock ? 'Final quantity produced (pairs)' : 'Final produced quantity'} hint="Recorded against this session and audited.">
           <Input autoFocus type="number" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} className="min-h-[48px] text-lg" />
         </Field>
+        {asksStage && stages && (
+          <div>
+            <span className="label">Which stage of this item was this session?</span>
+            <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">This item of this order already has a session on this machine. The dashboard counts the order sheet's quantity once for all the stages.</p>
+            <StagePicker options={stages} value={stage} onChange={setStage} />
+          </div>
+        )}
         {process === 'welding' && (
           // §5.6 — the PT requirement follows the quantity as it is typed: 5% of it, rounded up, against what was tested.
           <div

@@ -136,7 +136,7 @@ export function processForMachine(machine: { process?: Process | null } | null |
 /**
  * The steps a process gets. An inspector must never see a step that does
  * not apply, nor be able to skip one that does.
- *   forming / other — setup (drawing, coils), dimensions, defects
+ *   forming / universal — setup (drawing, coils), dimensions, defects
  *   welding         — setup (drawing, welding wire), dimensions, VT defects, PT
  *   paint           — paint sample photos, three thickness readings (actual
  *                     values only), defects

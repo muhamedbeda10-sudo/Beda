@@ -19,7 +19,7 @@ interface MachineDraft {
   dimensions: 'item' | 'inspector'
 }
 
-const PROCESS_TONE: Record<Process, 'neutral' | 'amber' | 'violet' | 'blue' | 'green'> = { forming: 'blue', welding: 'amber', paint: 'violet', universal: 'green', mast: 'green', other: 'neutral' }
+const PROCESS_TONE: Record<Process, 'neutral' | 'amber' | 'violet' | 'blue' | 'green'> = { forming: 'blue', welding: 'amber', paint: 'violet', universal: 'green' }
 
 export function MachinesSection() {
   const { data: rows = [], isLoading: loading } = useMaster('machines')

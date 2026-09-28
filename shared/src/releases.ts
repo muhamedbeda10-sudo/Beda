@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-28.3',
+    date: '2026-09-28',
+    title: 'Universal machines and their stages',
+    items: [
+      { text: 'Machines are roll forming, welding, painting or universal. Presses, benders, mast machines and every other machine are universal; the machines filed as Mast or Others moved there.' },
+      { text: 'On a universal machine an item of an order can pass through several stages, a session each. The first session on the item closes as stage 1 as before; a later one asks, when it closes, which stage it was: one of the item\'s stages or a new one.' },
+      { text: 'History shows "Stage 2" (and on) beside a session of a later stage. A supervisor corrects a stage in Correct quantities.' },
+      { text: 'The dashboard reads a universal item\'s quantity from the order sheet (Finished on Access), once for all its stages, and its rejects from every stage. The final quantity typed at each close no longer counts the same pieces twice. A month counts the item once, and so does any period.' },
+    ],
+  },
+  {
     id: '2026-09-28.2',
     date: '2026-09-28',
     title: 'PDI: the whole order, and in History',

@@ -26,6 +26,7 @@ import type {
   OrderHistory,
   OrderNumberSummary,
   PDIListFilters,
+  SessionStagesResponse,
   PDIListResponse,
   PDIOptionsResponse,
   SampleDetail,
@@ -289,6 +290,15 @@ export function useMaster<K extends MasterKind>(kind: K, filters?: MasterListQue
 }
 
 // ---- PDI, audit, users -----------------------------------------------------
+
+/** The stages a session on a universal machine may be given, asked when it closes or is corrected. */
+export function useSessionStages(sessionId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['sessions', sessionId, 'stages'] as const,
+    queryFn: () => api<SessionStagesResponse>(`/sessions/${sessionId}/stages`),
+    enabled: enabled && sessionId !== '',
+  })
+}
 
 /** A page of PDIs, newest first, every filter answered over the whole record. */
 export function usePdiList(filters: PDIListFilters, limit = 50, enabled = true) {

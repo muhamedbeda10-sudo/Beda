@@ -17,7 +17,7 @@ export const SESSION_SELECT = `
   s.id, s.seq, s.order_id AS "orderId", s.work_center_code AS "workCenterCode",
   s.inspector_id AS "inspectorId", s.inspector_name AS "inspectorName", s.started_at AS "startedAt", s.status,
   s.start_qty AS "startQty", s.start_qty_by_id AS "startQtyById", s.start_qty_by_name AS "startQtyByName",
-  s.start_qty_at AS "startQtyAt", s.final_qty AS "finalQty", s.produced_qty AS "producedQty", s.closed_at AS "closedAt",
+  s.start_qty_at AS "startQtyAt", s.final_qty AS "finalQty", s.produced_qty AS "producedQty", s.stage, s.closed_at AS "closedAt",
   s.closed_by_id AS "closedById", (SELECT u.name FROM users u WHERE u.id = s.closed_by_id) AS "closedByName",
   s.version, s.deleted_at AS "deletedAt",
   (SELECT count(*)::int FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "sampleCount",
@@ -84,6 +84,7 @@ export interface SessionRow {
   startQtyAt: string | null
   finalQty: number | null
   producedQty: number | null
+  stage: number | null
   closedAt: string | null
   closedById: string | null
   closedByName: string | null
@@ -138,6 +139,7 @@ export function toSession(r: SessionRow): InspectionSession {
   }
   if (r.finalQty !== null) out.finalQty = r.finalQty
   if (r.producedQty !== null) out.producedQty = r.producedQty
+  if (r.stage !== null && r.stage !== undefined) out.stage = r.stage
   if (r.closedAt) out.closedAt = r.closedAt
   if (r.closedById) out.closedById = r.closedById
   if (r.closedByName) out.closedByName = r.closedByName

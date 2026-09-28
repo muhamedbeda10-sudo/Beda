@@ -35,6 +35,7 @@ import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantiti
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { SessionPhotos } from '@/components/inspection/SessionPhotos'
 import { PdiList } from '@/components/pdi/PdiList'
+import { StageBadge } from '@/components/inspection/StagePicker'
 import { loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
@@ -191,6 +192,7 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
         <td key={key} className="px-4 py-3">
           <span className="inline-flex flex-wrap items-center gap-1.5">
             <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
+            <StageBadge stage={s.stage} />
             <SessionToneBadge session={s} />
           </span>
         </td>
@@ -707,6 +709,7 @@ export function HistoryPage() {
                   <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
                   {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{s.order?.orderNumber ?? '—'}</span>}
                   <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status.toUpperCase()}</Badge>
+                  <StageBadge stage={s.stage} />
                   <SessionToneBadge session={s} />
                 </div>
                 <p className="mt-1 truncate text-sm font-medium text-brand-600 dark:text-brand-400">{s.order?.item ?? 'Unknown item'}</p>
