@@ -14,11 +14,27 @@ import { registerSW } from 'virtual:pwa-register'
 // A tablet on the floor stays open for a whole shift: besides the check on
 // each load, ask for a new build every hour so a deploy reaches it without
 // anyone reloading. autoUpdate then swaps it in and reloads.
+// A sleeping tablet pauses that timer, so it also asks when the screen comes
+// back on and when the network returns — at most every five minutes.
+const UPDATE_CHECK_GAP = 5 * 60 * 1000
 registerSW({
   immediate: true,
   onRegisteredSW(_url, registration) {
     if (!registration) return
-    window.setInterval(() => void registration.update(), 60 * 60 * 1000)
+    let lastCheck = Date.now()
+    const check = () => {
+      if (Date.now() - lastCheck < UPDATE_CHECK_GAP) return
+      lastCheck = Date.now()
+      void registration.update().catch(() => {})
+    }
+    window.setInterval(() => {
+      lastCheck = 0
+      check()
+    }, 60 * 60 * 1000)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') check()
+    })
+    window.addEventListener('online', check)
   },
 })
 
