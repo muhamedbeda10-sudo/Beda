@@ -115,6 +115,7 @@ const layoutItem = z.object({
   h: z.number().int().min(1).max(DASHBOARD_MAX_H),
   title: z.string().trim().max(DASHBOARD_TITLE_MAX).optional(),
   hint: z.string().trim().max(DASHBOARD_HINT_MAX).optional(),
+  hidden: z.boolean().optional(),
 })
 const LayoutBody = z.object({ layouts: z.object({ general: z.array(layoutItem).max(100), details: z.array(layoutItem).max(100) }) })
 

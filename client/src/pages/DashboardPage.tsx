@@ -44,13 +44,13 @@ import {
 } from 'lucide-react'
 import { can, shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
-import { GENERAL_MONTHS, defaultDashboardLayouts, deltaPct, insightKey, pct, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiFilters, type KpiFirstPart, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
+import { GENERAL_MONTHS, defaultDashboardLayouts, deltaPct, normaliseDashboardLayout, insightKey, pct, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiFilters, type KpiFirstPart, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
 import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
 import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, TrendChart, slicesOf } from '@/components/dashboard/charts'
-import { Board, BoardContext, WidgetLabelContext, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
+import { Board, BoardContext, ChartGallery, WidgetLabelContext, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
 import { FilterNote, FilterTh, MultiSelectMenu, byName, useColumnFilters } from '@/components/dashboard/filters'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
@@ -677,7 +677,9 @@ function scopeDetailWidgets({ title, data, t, navigate, fpMachines, setFpMachine
       ariaLabel="First part: machines"
     />
   )
-  const fpTone: KpiTone = fp.pct === null ? 'neutral' : fp.pct >= 95 ? 'green' : fp.pct >= 85 ? 'amber' : 'red'
+  /** First part released reads high-is-good: 95% and over is green, 85% amber. */
+  const releasedTone = (v: number | null): KpiTone => (v === null ? 'neutral' : v >= 95 ? 'green' : v >= 85 ? 'amber' : 'red')
+  const fpTone: KpiTone = releasedTone(fp.pct)
   /** The cumulative yield reads the other way: lower is better, zero is clean. */
   const cumTone = (v: number | null): KpiTone => (v === null ? 'neutral' : v === 0 ? 'green' : v <= 15 ? 'amber' : 'red')
   return [
@@ -730,7 +732,7 @@ function scopeDetailWidgets({ title, data, t, navigate, fpMachines, setFpMachine
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {[
-              { k: 'First pass yield cumulative', v: pctStr(fp.cumulativePct, 1), s: `${num(fp.rejectedPieces)} ÷ (${num(fp.clean)} clean + ${num(fp.rejectedPieces)})`, tone: cumTone(fp.cumulativePct) },
+              { k: 'First part released', v: pctStr(fp.pct, 1), s: `${num(fp.clean)} clean ÷ ${num(fp.sessions)} sessions`, tone: fpTone },
               { k: 'Not clean', v: num(fp.sessions - fp.clean), s: `of ${num(fp.sessions)} sessions`, tone: fp.sessions - fp.clean > 0 ? ('red' as KpiTone) : ('green' as KpiTone) },
               { k: 'Rejected before release', v: num(fp.rejectedPieces), s: 'pieces', tone: 'neutral' as KpiTone },
             ].map((x) => (
@@ -747,7 +749,7 @@ function scopeDetailWidgets({ title, data, t, navigate, fpMachines, setFpMachine
               {fp.months.map((m) => (
                 <li key={m.month} className="rounded-lg bg-slate-50 px-2 py-1 dark:bg-slate-800/60">
                   <span className="font-semibold">{monthLabel(m.month, false)}</span>{' '}
-                  {m.sessions > 0 ? <><span className={cn('font-semibold', TONE_TEXT[cumTone(m.cumulativePct)])}>{pctStr(m.cumulativePct, 1)}</span> <span className="text-slate-400">{num(m.rejectedPieces)} ÷ ({num(m.clean)} + {num(m.rejectedPieces)})</span></> : <span className="text-slate-300">—</span>}
+                  {m.sessions > 0 ? <><span className={cn('font-semibold', TONE_TEXT[releasedTone(m.pct)])}>{pctStr(m.pct, 1)}</span> <span className="text-slate-400">{num(m.clean)} ÷ {num(m.sessions)}</span></> : <span className="text-slate-300">—</span>}
                 </li>
               ))}
             </ul>
@@ -756,8 +758,8 @@ function scopeDetailWidgets({ title, data, t, navigate, fpMachines, setFpMachine
       </Section>
     ) },
     { id: 'g.firstPartChart', title: 'First part: machines by month', node: (
-      <Section title="First pass yield cumulative, by machine" hint={`Each machine's pieces rejected before release ÷ (its clean sessions + those pieces), month by month; lower is better. ${fpMachines.length ? 'The machines ticked.' : `The ${Math.min(LINE_CLASSES.length, fp.byMachineMonth.length)} machines with the most pieces rejected before release.`}`} icon={<Layers className="h-4 w-4" />} action={fpFilter}>
-        <LineChart labels={fp.months.map((m) => monthLabel(m.month, false))} series={fp.byMachineMonth.slice(0, LINE_CLASSES.length).map((m, i) => ({ label: m.label, values: m.months.map((x) => (x.sessions > 0 ? x.cumulativePct : null)), className: LINE_CLASSES[i] }))} height={200} />
+      <Section title="First part released, by machine" hint={`Each machine's clean sessions ÷ all its sessions, month by month; higher is better. ${fpMachines.length ? 'The machines ticked.' : `The ${Math.min(LINE_CLASSES.length, fp.byMachineMonth.length)} machines with the most pieces rejected before release.`}`} icon={<Layers className="h-4 w-4" />} action={fpFilter}>
+        <LineChart labels={fp.months.map((m) => monthLabel(m.month, false))} series={fp.byMachineMonth.slice(0, LINE_CLASSES.length).map((m, i) => ({ label: m.label, values: m.months.map((x) => (x.sessions > 0 ? pct(x.clean, x.sessions) : null)), className: LINE_CLASSES[i] }))} height={200} />
       </Section>
     ) },
     { id: 'g.firstPartQty', title: 'First part: sessions by pieces rejected', node: (
@@ -1162,12 +1164,34 @@ export function DashboardPage() {
   const canArrange = can(role, 'manage-admin-data')
   const [editingLayout, setEditingLayout] = useState(false)
   const [draftLayouts, setDraftLayouts] = useState<DashboardLayouts | null>(null)
+  /** The gallery of charts, open while arranging. */
+  const [galleryOpen, setGalleryOpen] = useState(false)
   const savedLayouts = layoutState?.layouts ?? defaultDashboardLayouts()
   const boardState = useMemo<BoardState>(
     () => ({
       layouts: editingLayout && draftLayouts ? draftLayouts : savedLayouts,
       editing: editingLayout,
-      setLayout: (page, layout) => setDraftLayouts((prev) => ({ ...(prev ?? savedLayouts), [page]: layout })),
+      // The grid reports places only, and only for the widgets on screen: merge them in, so a name, a description,
+      // a hidden widget and one not drawn yet keep what they had.
+      setLayout: (page, layout) =>
+        setDraftLayouts((prev) => {
+          const base = prev ?? savedLayouts
+          const moved = new Map(layout.map((it) => [it.i, it]))
+          const kept = base[page].map((it) => {
+            const m = moved.get(it.i)
+            return m ? { ...it, x: m.x, y: m.y, w: m.w, h: m.h } : it
+          })
+          const added = layout.filter((it) => !base[page].some((b) => b.i === it.i))
+          return { ...base, [page]: [...kept, ...added] }
+        }),
+      // Hidden for everyone once saved; shown again at the bottom of the page, so it lands on nothing.
+      setHidden: (page, id, hidden) =>
+        setDraftLayouts((prev) => {
+          const base = prev ?? savedLayouts
+          const items = normaliseDashboardLayout(page, base[page])
+          const bottom = items.filter((it) => !it.hidden && it.i !== id).reduce((n, it) => Math.max(n, it.y + it.h), 0)
+          return { ...base, [page]: items.map((it) => (it.i !== id ? it : hidden ? { ...it, hidden: true } : { ...it, hidden: undefined, x: 0, y: bottom })) }
+        }),
       setLabel: (page, id, label) =>
         setDraftLayouts((prev) => {
           const base = prev ?? savedLayouts
@@ -1188,6 +1212,7 @@ export function DashboardPage() {
     setEditingLayout(true)
   }
   const stopArranging = () => {
+    setGalleryOpen(false)
     setEditingLayout(false)
     setDraftLayouts(null)
   }
@@ -1319,6 +1344,7 @@ export function DashboardPage() {
 
   return (
     <BoardContext.Provider value={boardState}>
+      {canArrange && editingLayout && <ChartGallery open={galleryOpen} onClose={() => setGalleryOpen(false)} />}
     <div className="mx-auto max-w-[110rem] space-y-5">
       {editingLayout && (
         <div className="print-hidden rounded-xl border border-brand-300 bg-brand-50 px-4 py-2 text-sm text-brand-800 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-100">
@@ -1388,6 +1414,9 @@ export function DashboardPage() {
           )}
           {canArrange && view === 'general' && editingLayout && (
             <>
+              <Button className="min-h-[44px]" onClick={() => setGalleryOpen(true)} aria-label="Choose the charts shown">
+                <LayoutGrid className="h-4 w-4" /> Charts
+              </Button>
               <Button variant="primary" className="min-h-[44px]" onClick={() => void saveArrangement()} aria-label="Save the layout for everyone">
                 <Save className="h-4 w-4" /> Save layout
               </Button>

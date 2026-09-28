@@ -65,6 +65,27 @@ describe('§15 — the dashboard layout', () => {
     expect((await app.api('PUT', '/api/kpi/layout', { token: admin.token, body: { layouts } })).status).toBe(400)
   })
 
+  it('hides a widget for everyone and shows it again', async () => {
+    const layouts = defaultDashboardLayouts()
+    layouts.general = layouts.general.map((it) => (it.i === 'g.pieDefects' ? { ...it, hidden: true } : it))
+    layouts.details = layouts.details.map((it) => (it.i === 'd.pareto' ? { ...it, hidden: true } : it))
+    const saved = await app.api<DashboardLayoutResponse>('PUT', '/api/kpi/layout', { token: admin.token, body: { layouts } })
+    expect(saved.status).toBe(200)
+    const read = await app.api<DashboardLayoutResponse>('GET', '/api/kpi/layout', { token: viewer.token })
+    expect(read.body.layouts.general.filter((it) => it.hidden).map((it) => it.i)).toEqual(['g.pieDefects'])
+    expect(read.body.layouts.details.filter((it) => it.hidden).map((it) => it.i)).toEqual(['d.pareto'])
+    // A hidden widget keeps its place in the layout, so every widget is still listed.
+    expect(read.body.layouts.general.length).toBe(DASHBOARD_WIDGETS.general.length)
+    // Shown again: the flag goes, whatever else rides on the item.
+    layouts.general = layouts.general.map((it) => (it.i === 'g.pieDefects' ? { ...it, hidden: false } : it))
+    const shown = await app.api<DashboardLayoutResponse>('PUT', '/api/kpi/layout', { token: admin.token, body: { layouts } })
+    expect(shown.body.layouts.general.find((it) => it.i === 'g.pieDefects')?.hidden).toBeUndefined()
+    // Only a true or false; the viewer cannot hide anything.
+    const bad = { ...layouts, general: layouts.general.map((it) => (it.i === 'g.trend' ? { ...it, hidden: 'yes' } : it)) }
+    expect((await app.api('PUT', '/api/kpi/layout', { token: admin.token, body: { layouts: bad } })).status).toBe(400)
+    expect((await app.api('PUT', '/api/kpi/layout', { token: viewer.token, body: { layouts } })).status).toBe(403)
+  })
+
   it('refuses a widget outside the grid and drops an unknown one', async () => {
     const layouts = defaultDashboardLayouts()
     expect((await app.api('PUT', '/api/kpi/layout', { token: admin.token, body: { layouts: { ...layouts, general: [{ i: 'g.trend', x: 0, y: 0, w: 13, h: 5 }] } } })).status).toBe(400)
