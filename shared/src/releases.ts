@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-28.92',
+    date: '2026-09-28',
+    title: 'Dashboard: exact PPM, rates to two decimals',
+    items: [
+      { text: 'PPM is now worked from the pieces themselves: 52 rejected on 9,130 accepted reads 5,663 PPM, where it read 5,700 because it was taken from the rate already rounded to 0.57%.' },
+      { text: 'Every percentage on the dashboard reads to two decimals (0.57%, not 0.6%): reject rates, first part, shares, the changes against the period before, the chart labels and the ideas.' },
+    ],
+  },
+  {
     id: '2026-09-28.91',
     date: '2026-09-28',
     title: 'Dashboard: first pass released cumulative',

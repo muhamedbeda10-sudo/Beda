@@ -717,10 +717,13 @@ export function pct(part: number, whole: number): number | null {
 /**
  * The reject rate: rejected pieces per 100 made. A session's final quantity
  * is the good production; the rejected pieces were made on top of it, so
- * the base is produced + rejected, never produced alone.
+ * the base is produced + rejected, never produced alone. Kept to four
+ * decimals (one piece per million) so the PPM taken from it is exact:
+ * 52 ÷ (9,130 + 52) is 0.5663%, 5,663 PPM, never 0.57% × 10,000 = 5,700.
  */
 export function rejectRate(defectPieces: number, produced: number): number | null {
-  return pct(defectPieces, produced + defectPieces)
+  const made = produced + defectPieces
+  return made > 0 ? Math.round((defectPieces / made) * 1_000_000) / 10_000 : null
 }
 
 /** The same rate as parts per million, the figure a customer audit asks for. */
@@ -731,7 +734,7 @@ export function ppm(rate: number | null): number | null {
 /** Change from the previous value in percent, null when there was nothing before. */
 export function deltaPct(current: number | null, previous: number | null): number | null {
   if (current === null || previous === null || !Number.isFinite(previous) || previous === 0) return null
-  return Math.round(((current - previous) / Math.abs(previous)) * 1000) / 10
+  return Math.round(((current - previous) / Math.abs(previous)) * 10000) / 100
 }
 
 /**
