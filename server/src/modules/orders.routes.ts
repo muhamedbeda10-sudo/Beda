@@ -33,6 +33,7 @@ import { dropNulls, normaliseKey } from '../lib/rows'
 import { SAMPLE_SUMMARY_SELECT, SESSION_SELECT } from './sessions.sql'
 import { NORMALISED_CODE } from './sessions.routes'
 import { loadOrderNotes } from './notes'
+import { cancelledSql } from '../lib/orderStatus'
 
 export const ORDER_SELECT = `
   id, line_key AS "lineKey", order_number AS "orderNumber", item, item_code AS "itemCode", work_center_code AS "workCenterCode",
@@ -71,8 +72,8 @@ const importRow = z.object({
 const importSchema = z.object({ rows: z.array(importRow).min(1).max(1000) })
 const existingKeysSchema = z.object({ keys: z.array(z.string().trim().min(1)).max(EXISTING_KEYS_MAX) })
 
-/** The ERP marks a withdrawn line "Cancel"; such a line is history, not work. */
-const NOT_CANCELLED = `lower(erp_status) <> 'cancel'`
+/** The ERP marks a withdrawn line "Cancel" (or "Cancelled", "ملغي"…); such a line is history, not work. */
+const NOT_CANCELLED = `NOT ${cancelledSql('erp_status')}`
 
 /** A LIKE pattern matching values that start with `term`, wildcards escaped. */
 function likePrefix(term: string): string {
@@ -232,47 +233,74 @@ export function ordersRoutes(ctx: AppContext): Router {
   /**
    * The distinct order numbers that have lines on a machine (or anywhere),
    * with how many lines each has there. This is what the new-inspection
-   * screen offers once a machine is chosen.
+   * screen offers once a machine is chosen: a prefix search, `lineCount` the
+   * lines on that machine.
+   *
+   * `match=contains` is the PDI's search: every word typed must appear
+   * somewhere in the number ("20542 ph4" finds 20542-Ph4.1-EHF-KS), those that
+   * start with the first word come first, and the list may be narrowed to the
+   * orders with a line in a factory, on a machine, or of an item (any part of
+   * its name, code or drawing). `lineCount` is then every line of the order.
    */
   r.get('/numbers', async (req, res) => {
     const q = parse(
       z.object({
         search: z.string().trim().max(120).default(''),
         machine: z.string().trim().max(40).default(''),
+        factory: z.string().trim().max(120).default(''),
+        item: z.string().trim().max(120).default(''),
         includeCancelled: z.coerce.boolean().default(false),
-        /** `contains` finds the number by any part of it, those that start with it first. */
         match: z.enum(['prefix', 'contains']).default('prefix'),
-        limit: z.coerce.number().int().min(1).max(100).default(40),
+        limit: z.coerce.number().int().min(1).max(200).default(40),
       }),
       req.query,
     )
-    const where: string[] = ['deleted_at IS NULL']
     const params: unknown[] = []
-    if (!q.includeCancelled) where.push(NOT_CANCELLED)
-    if (q.machine) {
-      params.push(q.machine.toLowerCase())
-      where.push(`lower(work_center_code) = $${params.length}`)
+    const p = (v: unknown) => `$${params.push(v)}`
+    const contains = (t: string) => `%${t.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+
+    if (q.match === 'prefix') {
+      const where: string[] = ['deleted_at IS NULL']
+      if (!q.includeCancelled) where.push(NOT_CANCELLED)
+      if (q.machine) where.push(`lower(work_center_code) = ${p(q.machine.toLowerCase())}`)
+      if (q.search) where.push(`lower(order_number) LIKE ${p(likePrefix(q.search))}`)
+      const { rows } = await ctx.db.query<OrderNumberSummary>(
+        `SELECT min(order_number) AS "orderNumber", min(customer) AS customer, count(*)::int AS "lineCount"
+           FROM production_orders
+          WHERE ${where.join(' AND ')}
+          GROUP BY lower(order_number)
+          ORDER BY lower(min(order_number))
+          LIMIT ${p(q.limit)}`,
+        params,
+      )
+      res.json(rows)
+      return
     }
-    let orderBy = 'lower(min(order_number))'
-    if (q.search) {
-      if (q.match === 'contains') {
-        params.push(`%${q.search.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
-        where.push(`lower(order_number) LIKE $${params.length}`)
-        params.push(likePrefix(q.search))
-        orderBy = `(lower(min(order_number)) LIKE $${params.length}) DESC, lower(min(order_number))`
-      } else {
-        params.push(likePrefix(q.search))
-        where.push(`lower(order_number) LIKE $${params.length}`)
-      }
+
+    // The lines that make an order a match; the order is then listed with all its lines.
+    const match: string[] = ['x.deleted_at IS NULL']
+    if (!q.includeCancelled) match.push(`NOT ${cancelledSql('x.erp_status')}`)
+    const words = q.search.split(/\s+/).filter(Boolean).slice(0, 8)
+    for (const w of words) match.push(`lower(x.order_number) LIKE ${p(contains(w))}`)
+    if (q.machine) match.push(`lower(x.work_center_code) = ${p(q.machine.toLowerCase())}`)
+    if (q.factory) {
+      match.push(`EXISTS (SELECT 1 FROM machines m WHERE lower(m.code) = lower(x.work_center_code) AND m.deleted_at IS NULL
+                           AND lower(btrim(COALESCE(m.factory, ''))) = lower(btrim(${p(q.factory)})))`)
     }
-    params.push(q.limit)
+    if (q.item) {
+      const t = p(contains(q.item))
+      match.push(`(lower(x.item) LIKE ${t} OR lower(x.item_code) LIKE ${t} OR lower(x.drawing) LIKE ${t})`)
+    }
+    const first = words[0] ? p(likePrefix(words[0])) : null
+    const lines = [`o.deleted_at IS NULL`, ...(q.includeCancelled ? [] : [`NOT ${cancelledSql('o.erp_status')}`])]
     const { rows } = await ctx.db.query<OrderNumberSummary>(
-      `SELECT min(order_number) AS "orderNumber", min(customer) AS customer, count(*)::int AS "lineCount"
-         FROM production_orders
-        WHERE ${where.join(' AND ')}
-        GROUP BY lower(order_number)
-        ORDER BY ${orderBy}
-        LIMIT $${params.length}`,
+      `SELECT min(o.order_number) AS "orderNumber", min(o.customer) AS customer, count(*)::int AS "lineCount"
+         FROM production_orders o
+        WHERE ${lines.join(' AND ')}
+          AND lower(o.order_number) IN (SELECT lower(x.order_number) FROM production_orders x WHERE ${match.join(' AND ')})
+        GROUP BY lower(o.order_number)
+        ORDER BY ${first ? `(lower(min(o.order_number)) LIKE ${first}) DESC, ` : ''}lower(min(o.order_number))
+        LIMIT ${p(q.limit)}`,
       params,
     )
     res.json(rows)
