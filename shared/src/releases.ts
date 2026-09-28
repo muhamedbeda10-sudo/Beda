@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-28.9',
+    date: '2026-09-28',
+    title: 'Access: the same window of sessions',
+    items: [
+      { text: 'In Access, tap an inspected line, or its order number, for every session of that order on every item and machine; Open in History keeps the old way.' },
+      { text: 'Tap an item (name or code) for its sessions on every order, a machine for its latest sessions, or the Sessions or Defect pieces figure for that one line\'s sessions.' },
+      { text: 'A session tapped in the window opens in History straight away.' },
+    ],
+  },
+  {
     id: '2026-09-28.8',
     date: '2026-09-28',
     title: 'History: an order, an item or a machine at a glance',

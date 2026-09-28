@@ -656,6 +656,8 @@ export interface HistoryExportResponse {
  */
 export interface HistoryGroupQuery extends HistoryFilters {
   orderNumber?: string
+  /** One order line, read whole like an order. */
+  orderId?: string
   /** One item, by its exact code. */
   itemCode?: string
 }

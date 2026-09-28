@@ -413,15 +413,18 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const q = parse(
       historyFilterSchema.extend({
         orderNumber: z.string().trim().min(1).max(120).optional(),
+        orderId: uuid.optional(),
         itemCode: z.string().trim().min(1).max(120).optional(),
       }),
       req.query,
     )
-    // An order is its whole record: the other filters do not narrow it.
-    const { where, params } = q.orderNumber ? { where: 's.deleted_at IS NULL', params: [] as unknown[] } : historyWhere(q, ctx.config.FACTORY_TIMEZONE)
+    // An order, or one of its lines, is its whole record: the other filters do not narrow it.
+    const whole = q.orderNumber !== undefined || q.orderId !== undefined
+    const { where, params } = whole ? { where: 's.deleted_at IS NULL', params: [] as unknown[] } : historyWhere(q, ctx.config.FACTORY_TIMEZONE)
     const p = (v: unknown) => `$${params.push(v)}`
     const clauses = [where]
     if (q.orderNumber) clauses.push(`lower(btrim(o.order_number)) = lower(btrim(${p(q.orderNumber)}))`)
+    if (q.orderId) clauses.push(`s.order_id = ${p(q.orderId)}::uuid`)
     if (q.itemCode) clauses.push(`lower(btrim(o.item_code)) = lower(btrim(${p(q.itemCode)}))`)
     const { rows } = await db.query<HistoryGroupSession & { total: number }>(
       `SELECT s.id AS "sessionId", s.seq, s.order_id AS "orderId", COALESCE(o.order_number, '') AS "orderNumber", COALESCE(o.item, '') AS item,
