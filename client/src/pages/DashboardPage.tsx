@@ -44,13 +44,14 @@ import {
 } from 'lucide-react'
 import { can, shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
-import { GENERAL_MONTHS, defaultDashboardLayouts, deltaPct, normaliseDashboardLayout, insightKey, pct, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiFilters, type KpiFirstPart, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
+import { GENERAL_MONTHS, defaultDashboardLayouts, deltaPct, normaliseDashboardLayout, insightKey, pct, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiDrillQuery, type KpiFilters, type KpiFirstPart, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone } from '@qc/shared/kpi'
 import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
 import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, TrendChart, slicesOf } from '@/components/dashboard/charts'
 import { Board, BoardContext, ChartGallery, WidgetLabelContext, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
+import { DrillModal, type DrillSpec } from '@/components/dashboard/DrillModal'
 import { FilterNote, FilterTh, MultiSelectMenu, byName, useColumnFilters } from '@/components/dashboard/filters'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
@@ -240,10 +241,13 @@ function Table<T>({
   empty = 'Nothing in this period.',
   maxRows,
   total,
+  onRowClick,
 }: {
   rows: T[]
   columns: Column<T>[]
   rowKey: (r: T) => string
+  /** A row opens what is behind it. */
+  onRowClick?: (r: T) => void
   empty?: string
   maxRows?: number
   /** How many rows exist in the period when `rows` is the largest few of them. */
@@ -266,7 +270,7 @@ function Table<T>({
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {visible.map((r) => (
-            <tr key={rowKey(r)} className="transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+            <tr key={rowKey(r)} onClick={onRowClick && (() => onRowClick(r))} className={cn('transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40', onRowClick && 'cursor-pointer')}>
               {columns.map((c) => (
                 <td key={c.key} className={cn('px-2 py-1.5 align-top', c.className)}>
                   {c.render(r)}
@@ -337,9 +341,12 @@ function Section({ title: ownTitle, hint: ownHint, icon, children, className, ac
 
 // ---- The general page and the analysis blocks --------------------------------
 
-function PlainTile({ label, value, sub, icon, tone = 'neutral', control }: { label: string; value: string; sub?: ReactNode; icon: ReactNode; tone?: KpiTone; control?: ReactNode }) {
+function PlainTile({ label, value, sub, icon, tone = 'neutral', control, onOpen }: { label: string; value: string; sub?: ReactNode; icon: ReactNode; tone?: KpiTone; control?: ReactNode; onOpen?: () => void }) {
+  const opens = onOpen
+    ? { role: 'button' as const, tabIndex: 0, onClick: onOpen, onKeyDown: (e: { key: string; preventDefault: () => void }) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onOpen()), 'aria-label': `${label}: open the sessions behind it` }
+    : {}
   return (
-    <Card className={cn('p-4 ring-1', TONE_RING[tone])}>
+    <Card className={cn('p-4 ring-1', TONE_RING[tone], onOpen && 'cursor-pointer transition-shadow hover:shadow-hover')} {...opens}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
@@ -515,8 +522,8 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
   // The period's rejected pieces by factory or by process, the whole plant: the picks do not narrow the pie.
   const periodScopeRows =
     kind === 'factory'
-      ? general.factories.map((f) => ({ label: f.factory || '(no factory)', value: f.productionDefectPieces }))
-      : PROCESSES.map((p) => ({ label: PROCESS_LABEL[p], value: general.machines.filter((m) => m.process === p).reduce((n, m) => n + m.productionDefectPieces, 0) }))
+      ? general.factories.map((f) => ({ key: f.factory, label: f.factory || '(no factory)', value: f.productionDefectPieces }))
+      : PROCESSES.map((p) => ({ key: p as string, label: PROCESS_LABEL[p], value: general.machines.filter((m) => m.process === p).reduce((n, m) => n + m.productionDefectPieces, 0) }))
   const picked = (pickedByScope[scopeKey] ?? []).filter((code) => machines.some((m) => m.workCenterCode === code))
   const togglePick = (code: string) =>
     setPickedByScope((prev) => {
@@ -531,6 +538,17 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
     processes: kind === 'process' && chosen.length ? (chosen as Process[]) : undefined,
     workCenterCodes: picked.length ? picked : undefined,
   })
+  // §15 — what is behind a number: the pick as the breakdown reads it, the scope chips alone, or the whole period.
+  const pickQuery: KpiDrillQuery = {
+    from: general.from,
+    to: general.to,
+    factories: kind === 'factory' && chosen.length ? chosen : undefined,
+    processes: kind === 'process' && chosen.length ? (chosen as Process[]) : undefined,
+    workCenterCodes: picked.length ? picked : undefined,
+  }
+  const scopeQuery: KpiDrillQuery = { ...pickQuery, workCenterCodes: undefined }
+  const spanWords = describeRange({ from: general.from, to: general.to })
+  const [drill, setDrill] = useState<DrillSpec | null>(null)
   const maxRate = Math.max(...machines.map((m) => m.defectRatePct ?? 0), 0.0001)
   // The plant trend runs over the trend window to today, whole plant, a line per factory: neither the period strip nor the picks narrow it.
   const windowLabels = general.months.map((m) => monthLabel(m.month, false))
@@ -637,8 +655,15 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
         </Section>
           ) },
                     { id: 'g.pieScope', title: 'Rejected by factory or process', node: (
-        <Section title={kind === 'factory' ? 'Rejected by factory' : 'Rejected by process'} hint={`Each ${kind}'s share of the rejected pieces over ${describeRange({ from: general.from, to: general.to })}. The picks do not narrow it.`} icon={kind === 'factory' ? <Factory className="h-4 w-4" /> : <Layers className="h-4 w-4" />}>
-          <PieChart centerLabel="rejected" slices={slicesOf(periodScopeRows)} />
+        <Section title={kind === 'factory' ? 'Rejected by factory' : 'Rejected by process'} hint={`Each ${kind}'s share of the rejected pieces over ${describeRange({ from: general.from, to: general.to })}. The picks do not narrow it. Tap a slice for the sessions behind it.`} icon={kind === 'factory' ? <Factory className="h-4 w-4" /> : <Layers className="h-4 w-4" />}>
+          <PieChart
+            centerLabel="rejected"
+            slices={slicesOf(periodScopeRows)}
+            onPick={(sl) => {
+              if (!sl.key) return
+              setDrill({ title: `${sl.label}: rejected pieces`, subtitle: spanWords, query: { from: general.from, to: general.to, ...(kind === 'factory' ? { factories: [sl.key] } : { processes: [sl.key as Process] }) } })
+            }}
+          />
         </Section>
           ) },
           { id: 'g.pieScopeTotal', title: 'Rejected by factory or process, all time', node: (
@@ -647,19 +672,50 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
         </Section>
           ) },
           { id: 'g.pieMachines', title: 'Rejected by machine', node: (
-        <Section title={`${scopeLabel}: rejected by machine`} hint={`Each machine's share of the rejected pieces over ${describeRange({ from: general.from, to: general.to })}, in the ${kind === 'factory' ? 'factories' : 'processes'} picked; ticking machines does not narrow it.`} icon={<Layers className="h-4 w-4" />}>
-          <PieChart centerLabel="rejected" slices={slicesOf(machines.map((m) => ({ label: m.label, sub: kind === 'factory' ? m.factory : PROCESS_LABEL[m.process], value: m.productionDefectPieces })))} />
+        <Section title={`${scopeLabel}: rejected by machine`} hint={`Each machine's share of the rejected pieces over ${describeRange({ from: general.from, to: general.to })}, in the ${kind === 'factory' ? 'factories' : 'processes'} picked; ticking machines does not narrow it. Tap a slice for the sessions behind it.`} icon={<Layers className="h-4 w-4" />}>
+          <PieChart
+            centerLabel="rejected"
+            slices={slicesOf(machines.map((m) => ({ key: m.workCenterCode, label: m.label, sub: kind === 'factory' ? m.factory : PROCESS_LABEL[m.process], value: m.productionDefectPieces })))}
+            onPick={(sl) => sl.key && setDrill({ title: `${sl.label}: rejected pieces`, subtitle: spanWords, query: { ...scopeQuery, workCenterCodes: [sl.key] } })}
+          />
         </Section>
           ) },
-          ...(breakdown ? scopeDetailWidgets({ title: detailTitle, data: breakdown, t, navigate, fpMachines, setFpMachines }) : []),
+          ...(breakdown ? scopeDetailWidgets({ title: detailTitle, data: breakdown, t, navigate, fpMachines, setFpMachines, drill: setDrill, pickQuery, spanWords }) : []),
         ]}
       />
+      <DrillModal spec={drill} onClose={() => setDrill(null)} />
     </div>
   )
 }
 
 /** What a pick's rejected pieces are: which defects, in which months, on which orders and items; and how often the first part was clean. */
-function scopeDetailWidgets({ title, data, t, navigate, fpMachines, setFpMachines }: { title: string; data: KpiBreakdown; t: KpiThresholds; navigate: (to: string) => void; fpMachines: string[]; setFpMachines: (codes: string[]) => void }): BoardWidget[] {
+function scopeDetailWidgets({
+  title,
+  data,
+  t,
+  navigate,
+  fpMachines,
+  setFpMachines,
+  drill,
+  pickQuery,
+  spanWords,
+}: {
+  title: string
+  data: KpiBreakdown
+  t: KpiThresholds
+  navigate: (to: string) => void
+  fpMachines: string[]
+  setFpMachines: (codes: string[]) => void
+  /** Open the sessions behind a number. */
+  drill: (spec: DrillSpec) => void
+  /** The pick as the breakdown reads it. */
+  pickQuery: KpiDrillQuery
+  spanWords: string
+}): BoardWidget[] {
+  const openRejects = (what: string, slice: Partial<KpiDrillQuery> = {}) => drill({ title: `${what}`, subtitle: `${title} · ${spanWords}`, query: { ...pickQuery, ...slice } })
+  // First part reads the machines ticked for it, else the pick's.
+  const fpBase = { from: pickQuery.from, to: pickQuery.to, factories: pickQuery.factories, processes: pickQuery.processes, workCenterCodes: fpMachines.length ? fpMachines : pickQuery.workCenterCodes }
+  const openFirstPart = (what: string, qtyFrom: number, qtyTo?: number) => drill({ title: what, subtitle: `${title} · ${spanWords}`, firstPart: { ...fpBase, qtyFrom, qtyTo } })
   // The span as a whole, not the months added up: a universal machine's line counts its sheet quantity once in the span.
   const made = data.totals.made
   const rejected = data.totals.productionDefectPieces
@@ -691,41 +747,50 @@ function scopeDetailWidgets({ title, data, t, navigate, fpMachines, setFpMachine
         <p className="text-xs text-slate-400">{describeRange({ from: data.filters.from, to: data.filters.to })}</p>
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <PlainTile label="Reject rate" value={pctStr(rate)} sub={`${num(rejected)} rejected of ${num(made)} made`} icon={<Target className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} />
-        <PlainTile label="PPM" value={ppmStr(rate)} sub="rejected pieces per million made" icon={<AlertTriangle className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} />
-        <PlainTile label="First part released" value={pctStr(fp.pct, 0)} sub={`${num(fp.clean)} of ${num(fp.sessions)} sessions with nothing rejected before release`} icon={<PackageCheck className="h-4 w-4" />} tone={fpTone} />
-        <PlainTile label="First pass yield cumulative" value={pctStr(fp.cumulativePct, 0)} sub={`${num(fp.rejectedPieces)} rejected before release ÷ (${num(fp.clean)} clean sessions + ${num(fp.rejectedPieces)}) · lower is better`} icon={<PackageCheck className="h-4 w-4" />} tone={cumTone(fp.cumulativePct)} />
+        <PlainTile label="Reject rate" value={pctStr(rate)} sub={`${num(rejected)} rejected of ${num(made)} made`} icon={<Target className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} onOpen={rejected > 0 ? () => openRejects('Rejected pieces') : undefined} />
+        <PlainTile label="PPM" value={ppmStr(rate)} sub="rejected pieces per million made" icon={<AlertTriangle className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} onOpen={rejected > 0 ? () => openRejects('Rejected pieces') : undefined} />
+        <PlainTile label="First part released" value={pctStr(fp.pct, 0)} sub={`${num(fp.clean)} of ${num(fp.sessions)} sessions with nothing rejected before release`} icon={<PackageCheck className="h-4 w-4" />} tone={fpTone} onOpen={fp.sessions > fp.clean ? () => openFirstPart('Sessions not clean', 1) : undefined} />
+        <PlainTile label="First pass yield cumulative" value={pctStr(fp.cumulativePct, 0)} sub={`${num(fp.rejectedPieces)} rejected before release ÷ (${num(fp.clean)} clean sessions + ${num(fp.rejectedPieces)}) · lower is better`} icon={<PackageCheck className="h-4 w-4" />} tone={cumTone(fp.cumulativePct)} onOpen={fp.rejectedPieces > 0 ? () => openFirstPart('Pieces rejected before release', 1) : undefined} />
       </div>
 </div>
     ) },
     { id: 'g.pieDefects', title: 'Share of each defect', node: (
-        <Section title="Share of each defect" hint="Each defect's share of the rejected pieces in the period; the smaller ones together as Others." icon={<AlertTriangle className="h-4 w-4" />}>
-          <PieChart centerLabel="rejected" slices={slicesOf(data.defects.map((d) => ({ label: d.defectName, value: d.pieces })))} />
+        <Section title="Share of each defect" hint="Each defect's share of the rejected pieces in the period; the smaller ones together as Others. Tap a slice for the sessions behind it." icon={<AlertTriangle className="h-4 w-4" />}>
+          <PieChart centerLabel="rejected" slices={slicesOf(data.defects.map((d) => ({ label: d.defectName, value: d.pieces })))} onPick={(sl) => openRejects(`${sl.label}: rejected pieces`, { defect: sl.label })} />
         </Section>
     ) },
     { id: 'g.dispositions', title: 'Dispositions', node: (
-        <Section title="Dispositions" hint="The period's rejected pieces by what was decided for them." icon={<ClipboardList className="h-4 w-4" />}>
-          <PieChart centerLabel="rejected" slices={(Object.keys(DISPOSITION_CLASS) as Disposition[]).map((d) => ({ label: d, value: data.byDisposition[d] ?? 0, className: DISPOSITION_CLASS[d].replace(/stroke-/g, 'fill-') }))} />
+        <Section title="Dispositions" hint="The period's rejected pieces by what was decided for them. Tap a slice for the sessions behind it." icon={<ClipboardList className="h-4 w-4" />}>
+          <PieChart
+            centerLabel="rejected"
+            slices={(Object.keys(DISPOSITION_CLASS) as Disposition[]).map((d) => ({ label: d, value: data.byDisposition[d] ?? 0, className: DISPOSITION_CLASS[d].replace(/stroke-/g, 'fill-') }))}
+            onPick={(sl) => openRejects(`${sl.label}: rejected pieces`, { disposition: sl.label as Disposition })}
+          />
         </Section>
     ) },
     { id: 'g.pareto', title: 'Pareto of defects', node: (
         <Section title="Pareto of defects" hint="Rejected pieces by defect, largest first, with the running share: the few defects that make most of the pieces." icon={<AlertTriangle className="h-4 w-4" />} className="xl:col-span-2">
-          <ParetoChart bars={paretoOf(data.defects.map((d) => ({ label: d.defectName, value: d.pieces })))} />
+          <ParetoChart bars={paretoOf(data.defects.map((d) => ({ label: d.defectName, value: d.pieces })))} onPick={(label) => openRejects(`${label}: rejected pieces`, { defect: label })} />
         </Section>
     ) },
     { id: 'g.defectsByMonth', title: 'Defects by month', node: (
-        <Section title="Defects by month" hint="Each defect's rejected pieces in each month, and its share of that month's rejected pieces against the other defects." icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
-          <DefectsByMonthTable data={data} rejected={rejected} rate={rate} />
+        <Section title="Defects by month" hint="Each defect's rejected pieces in each month, and its share of that month's rejected pieces against the other defects. Tap a number for the sessions behind it." icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
+          <DefectsByMonthTable
+            data={data}
+            rejected={rejected}
+            rate={rate}
+            onOpen={(defect, month) => openRejects(`${defect ?? 'Rejected pieces'}${month ? ` · ${monthLabel(month)}` : ''}`, { ...(defect ? { defect } : {}), ...(month ? { month } : {}) })}
+          />
         </Section>
     ) },
     { id: 'g.byOrder', title: 'By order line', node: (
-        <Section title="By order line" hint="Each month's rejected pieces laid on the order lines closed in it. Of made is against what that order line itself made (its produced + rejected); Of period is the share of every rejected piece in the period." icon={<ClipboardList className="h-4 w-4" />}>
-          <BreakdownTable rows={data.byOrder} months={monthsWithData} what="order" t={t} />
+        <Section title="By order line" hint="Each month's rejected pieces laid on the order lines closed in it. Of made is against what that order line itself made (its produced + rejected); Of period is the share of every rejected piece in the period. Tap a row for the sessions behind it." icon={<ClipboardList className="h-4 w-4" />}>
+          <BreakdownTable rows={data.byOrder} months={monthsWithData} what="order" t={t} onOpen={(r) => openRejects(`Order ${r.label} · ${monthLabel(r.month)}`, { orderId: r.key, month: r.month })} onOpenMonth={(month) => openRejects(`Rejected pieces · ${monthLabel(month)}`, { month })} />
         </Section>
     ) },
     { id: 'g.byItem', title: 'By item', node: (
-        <Section title="By item" hint="The same rejected pieces laid on the items." icon={<Layers className="h-4 w-4" />}>
-          <BreakdownTable rows={data.byItem} months={monthsWithData} what="item" t={t} />
+        <Section title="By item" hint="The same rejected pieces laid on the items. Tap a row for the sessions behind it." icon={<Layers className="h-4 w-4" />}>
+          <BreakdownTable rows={data.byItem} months={monthsWithData} what="item" t={t} onOpen={(r) => openRejects(`${r.label} · ${monthLabel(r.month)}`, { itemCode: r.key, month: r.month })} onOpenMonth={(month) => openRejects(`Rejected pieces · ${monthLabel(month)}`, { month })} />
         </Section>
     ) },
     { id: 'g.firstPartTiles', title: 'First part: yield and months', node: (
@@ -733,11 +798,15 @@ function scopeDetailWidgets({ title, data, t, navigate, fpMachines, setFpMachine
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {[
-              { k: 'First part released', v: pctStr(fp.pct, 1), s: `${num(fp.clean)} clean ÷ ${num(fp.sessions)} sessions`, tone: fpTone },
-              { k: 'Not clean', v: num(fp.sessions - fp.clean), s: `of ${num(fp.sessions)} sessions`, tone: fp.sessions - fp.clean > 0 ? ('red' as KpiTone) : ('green' as KpiTone) },
-              { k: 'Rejected before release', v: num(fp.rejectedPieces), s: 'pieces', tone: 'neutral' as KpiTone },
+              { k: 'First part released', v: pctStr(fp.pct, 1), s: `${num(fp.clean)} clean ÷ ${num(fp.sessions)} sessions`, tone: fpTone, open: undefined },
+              { k: 'Not clean', v: num(fp.sessions - fp.clean), s: `of ${num(fp.sessions)} sessions`, tone: fp.sessions - fp.clean > 0 ? ('red' as KpiTone) : ('green' as KpiTone), open: fp.sessions > fp.clean ? () => openFirstPart('Sessions not clean', 1) : undefined },
+              { k: 'Rejected before release', v: num(fp.rejectedPieces), s: 'pieces', tone: 'neutral' as KpiTone, open: fp.rejectedPieces > 0 ? () => openFirstPart('Pieces rejected before release', 1) : undefined },
             ].map((x) => (
-              <div key={x.k} className={cn('rounded-xl p-3 ring-1', TONE_RING[x.tone])}>
+              <div
+                key={x.k}
+                className={cn('rounded-xl p-3 ring-1', TONE_RING[x.tone], x.open && 'cursor-pointer hover:shadow-hover')}
+                {...(x.open ? { role: 'button', tabIndex: 0, onClick: x.open, onKeyDown: (e: { key: string }) => e.key === 'Enter' && x.open!() } : {})}
+              >
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{x.k}</p>
                 <p className={cn('mt-1 text-xl font-extrabold tabular-nums', TONE_TEXT[x.tone])}>{x.v}</p>
                 <p className="text-xs text-slate-400">{x.s}</p>
@@ -764,8 +833,18 @@ function scopeDetailWidgets({ title, data, t, navigate, fpMachines, setFpMachine
       </Section>
     ) },
     { id: 'g.firstPartQty', title: 'First part: sessions by pieces rejected', node: (
-      <Section title="Sessions by pieces rejected before release" hint="Of the sessions not clean: how many had 1 piece rejected before release, how many 2, and so on." icon={<PackageCheck className="h-4 w-4" />} action={fpFilter}>
-        {fp.byQty.length === 0 ? <p className="py-6 text-center text-sm text-slate-400">Every session started clean.</p> : <ColumnChart columns={qtyColumns(fp.byQty)} />}
+      <Section title="Sessions by pieces rejected before release" hint="Of the sessions not clean: how many had 1 piece rejected before release, how many 2, and so on. Tap a column for those sessions." icon={<PackageCheck className="h-4 w-4" />} action={fpFilter}>
+        {fp.byQty.length === 0 ? (
+          <p className="py-6 text-center text-sm text-slate-400">Every session started clean.</p>
+        ) : (
+          <ColumnChart
+            columns={qtyColumns(fp.byQty)}
+            onPick={(i) => {
+              const band = qtyColumns(fp.byQty)[i]
+              openFirstPart(`Sessions with ${band.label} rejected before release`, band.from, Number.isFinite(band.to) ? band.to : undefined)
+            }}
+          />
+        )}
       </Section>
     ) },
     { id: 'g.firstPartTable', title: 'First part: parts not clean', node: (
@@ -822,12 +901,12 @@ const QTY_BANDS: { label: string; from: number; to: number }[] = [
   { label: '51+', from: 51, to: Number.POSITIVE_INFINITY },
 ]
 
-/** One column per band, 1 to 5 always shown, the wider bands only when a session falls in them. */
-function qtyColumns(rows: KpiFirstPart['byQty']): { label: string; value: number; sub: string }[] {
+/** One column per band, 1 to 5 always shown, the wider bands only when a session falls in them; each keeps its band's bounds. */
+function qtyColumns(rows: KpiFirstPart['byQty']): { label: string; value: number; sub: string; from: number; to: number }[] {
   const total = rows.reduce((n, r) => n + r.sessions, 0)
   return QTY_BANDS.map((b) => {
     const value = rows.filter((r) => r.qty >= b.from && r.qty <= b.to).reduce((n, r) => n + r.sessions, 0)
-    return { label: b.label, value, sub: total > 0 ? `${Math.round((value / total) * 100)}%` : '' }
+    return { label: b.label, value, sub: total > 0 ? `${Math.round((value / total) * 100)}%` : '', from: b.from, to: b.to }
   }).filter((c, i) => i < 5 || c.value > 0)
 }
 
@@ -924,7 +1003,22 @@ function FirstPartParts({ rows, navigate }: { rows: PartRow[]; navigate: (to: st
 type BreakdownRow = KpiBreakdown['byOrder'][number]
 
 /** Each month's rejected pieces laid on the order lines or the items, filtered like Excel on every column. */
-function BreakdownTable({ rows, months, what, t }: { rows: BreakdownRow[]; months: KpiBreakdown['months']; what: 'order' | 'item'; t: KpiThresholds }) {
+function BreakdownTable({
+  rows,
+  months,
+  what,
+  t,
+  onOpen,
+  onOpenMonth,
+}: {
+  rows: BreakdownRow[]
+  months: KpiBreakdown['months']
+  what: 'order' | 'item'
+  t: KpiThresholds
+  /** A row opens the sessions behind its rejected pieces. */
+  onOpen?: (row: BreakdownRow) => void
+  onOpenMonth?: (month: string) => void
+}) {
   const filters = useColumnFilters(rows, [
     { key: 'label', value: (r) => r.label },
     { key: 'sub', value: (r) => (what === 'order' ? (r.sub ?? '') : r.key) },
@@ -948,13 +1042,13 @@ function BreakdownTable({ rows, months, what, t }: { rows: BreakdownRow[]; month
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {groups.map((g) => (
             <Fragment key={g.month.month}>
-              <tr className="bg-slate-50 dark:bg-slate-800/60">
+              <tr className={cn('bg-slate-50 dark:bg-slate-800/60', onOpenMonth && 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800')} onClick={onOpenMonth && (() => onOpenMonth(g.month.month))}>
                 <td className="px-2 py-1.5 font-bold" colSpan={3}>{monthLabel(g.month.month)}</td>
                 <td className="px-2 py-1.5 text-right"><ToneCell value={g.month.defectRatePct} tone={toneLowIsGood(g.month.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /></td>
                 <td className="px-2 py-1.5 text-right text-xs text-slate-400">{num(g.month.productionDefectPieces)} of {num(g.month.made)}</td>
               </tr>
               {g.rows.map((r) => (
-                <tr key={`${r.month}|${r.key}`}>
+                <tr key={`${r.month}|${r.key}`} onClick={onOpen && (() => onOpen(r))} className={cn(onOpen && 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60')}>
                   <td className="px-2 py-1.5 font-semibold" dir="auto">{r.label}</td>
                   <td className="px-2 py-1.5 text-xs text-slate-500" dir="auto">{what === 'order' ? r.sub : r.key}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{num(r.pieces)}</td>
@@ -975,7 +1069,10 @@ function BreakdownTable({ rows, months, what, t }: { rows: BreakdownRow[]; month
 }
 
 /** Each defect's rejected pieces month by month and its share of the month's, filtered like Excel on the defect and its total. */
-function DefectsByMonthTable({ data, rejected, rate }: { data: KpiBreakdown; rejected: number; rate: number | null }) {
+function DefectsByMonthTable({ data, rejected, rate, onOpen }: { data: KpiBreakdown; rejected: number; rate: number | null; onOpen?: (defect: string | null, month: string | null) => void }) {
+  /** A cell with pieces opens the sessions behind them. */
+  const opens = (defect: string | null, month: string | null, pieces: number): { onClick?: () => void; className: string } =>
+    onOpen && pieces > 0 ? { onClick: () => onOpen(defect, month), className: 'cursor-pointer hover:bg-brand-50 dark:hover:bg-brand-500/10' } : { className: '' }
   const filters = useColumnFilters(data.defects, [
     { key: 'defect', value: (d) => d.defectName },
     { key: 'total', value: (d) => String(d.pieces), numeric: true },
@@ -995,17 +1092,21 @@ function DefectsByMonthTable({ data, rejected, rate }: { data: KpiBreakdown; rej
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           <tr className="bg-slate-50 font-semibold dark:bg-slate-800/60">
             <td className="px-2 py-1.5">All rejected · rate</td>
-            {data.months.map((m) => <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{m.made > 0 ? <>{num(m.productionDefectPieces)} <span className="text-xs text-slate-400">{pctStr(m.defectRatePct)}</span></> : <span className="text-slate-300">—</span>}</td>)}
-            <td className="px-2 py-1.5 text-right tabular-nums">{num(rejected)} <span className="text-xs text-slate-400">{pctStr(rate)}</span></td>
+            {data.months.map((m) => {
+              const o = opens(null, m.month, m.productionDefectPieces)
+              return <td key={m.month} onClick={o.onClick} className={cn('px-2 py-1.5 text-right tabular-nums', o.className)}>{m.made > 0 ? <>{num(m.productionDefectPieces)} <span className="text-xs text-slate-400">{pctStr(m.defectRatePct)}</span></> : <span className="text-slate-300">—</span>}</td>
+            })}
+            <td onClick={opens(null, null, rejected).onClick} className={cn('px-2 py-1.5 text-right tabular-nums', opens(null, null, rejected).className)}>{num(rejected)} <span className="text-xs text-slate-400">{pctStr(rate)}</span></td>
           </tr>
           {shown.map((d) => (
             <tr key={d.defectName}>
-              <td className="px-2 py-1.5 text-left"><span dir="auto" className="inline-block font-medium">{d.defectName}</span></td>
+              <td onClick={opens(d.defectName, null, d.pieces).onClick} className={cn('px-2 py-1.5 text-left', opens(d.defectName, null, d.pieces).className)}><span dir="auto" className="inline-block font-medium">{d.defectName}</span></td>
               {d.months.map((m) => {
                 const monthRejected = data.months.find((x) => x.month === m.month)?.productionDefectPieces ?? 0
-                return <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-slate-400">{pctStr(monthRejected > 0 ? Math.round((m.pieces / monthRejected) * 1000) / 10 : null, 0)}</span></> : <span className="text-slate-300">—</span>}</td>
+                const o = opens(d.defectName, m.month, m.pieces)
+                return <td key={m.month} onClick={o.onClick} className={cn('px-2 py-1.5 text-right tabular-nums', o.className)}>{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-slate-400">{pctStr(monthRejected > 0 ? Math.round((m.pieces / monthRejected) * 1000) / 10 : null, 0)}</span></> : <span className="text-slate-300">—</span>}</td>
               })}
-              <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{num(d.pieces)} <span className="text-xs font-normal text-slate-400">{pctStr(d.sharePct, 0)}</span></td>
+              <td onClick={opens(d.defectName, null, d.pieces).onClick} className={cn('px-2 py-1.5 text-right font-semibold tabular-nums', opens(d.defectName, null, d.pieces).className)}>{num(d.pieces)} <span className="text-xs font-normal text-slate-400">{pctStr(d.sharePct, 0)}</span></td>
             </tr>
           ))}
           {shown.length === 0 && (
@@ -1285,6 +1386,26 @@ export function DashboardPage() {
     [data, paretoMachine],
   )
 
+  // §15 — a Details number opens the sessions behind it. The page reads samples, so the drill does too, with every filter set above.
+  const [detailDrill, setDetailDrill] = useState<DrillSpec | null>(null)
+  const openDetail = (title: string, slice: Partial<KpiDrillQuery>) =>
+    setDetailDrill({
+      title,
+      subtitle: `Samples recorded ${describeRange(range)}`,
+      query: {
+        from: filters.from,
+        to: filters.to,
+        basis: 'sampled',
+        factories: filters.factories,
+        processes: filters.processes,
+        workCenterCodes: filters.workCenterCodes,
+        itemCode: filters.itemCode,
+        inspectorId: filters.inspectorId,
+        shift: filters.shift,
+        ...slice,
+      },
+    })
+
   const inspectorChoices = useMemo(() => {
     const ranking = data ? [...data.inspectorRanking.overall.ranked, ...data.inspectorRanking.overall.unranked] : []
     const recorded = new Map(ranking.map((r) => [r.inspectorId, r.name]))
@@ -1346,6 +1467,7 @@ export function DashboardPage() {
   return (
     <BoardContext.Provider value={boardState}>
       {canArrange && editingLayout && <ChartGallery open={galleryOpen} onClose={() => setGalleryOpen(false)} />}
+      <DrillModal spec={detailDrill} onClose={() => setDetailDrill(null)} />
     <div className="mx-auto max-w-[110rem] space-y-5">
       {editingLayout && (
         <div className="print-hidden rounded-xl border border-brand-300 bg-brand-50 px-4 py-2 text-sm text-brand-800 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-100">
@@ -1683,6 +1805,7 @@ export function DashboardPage() {
               <Table
                 rows={data.defectDetails}
                 rowKey={(r) => r.defectName}
+                onRowClick={(r) => openDetail(r.defectName, { defect: r.defectName })}
                 maxRows={12}
                 total={data.counts.defectTypes}
                 empty="No defects recorded in this period."
@@ -1713,10 +1836,11 @@ export function DashboardPage() {
             </Section>
               ) },
               { id: 'd.dispositions', title: 'Dispositions', node: (
-            <Section title="Dispositions" hint="Defect pieces by what was decided." icon={<ClipboardList className="h-4 w-4" />}>
+            <Section title="Dispositions" hint="Defect pieces by what was decided. Tap one for the sessions behind it." icon={<ClipboardList className="h-4 w-4" />}>
               <DonutChart
                 centerLabel="defect pieces"
                 slices={(Object.keys(DISPOSITION_CLASS) as Disposition[]).map((d) => ({ label: d, value: cur.byDisposition[d] ?? 0, className: DISPOSITION_CLASS[d] }))}
+                onPick={(label) => openDetail(`${label}: defect pieces`, { disposition: label as Disposition })}
               />
             </Section>
               ) },
@@ -1760,6 +1884,7 @@ export function DashboardPage() {
                         ...(data.paretoOthers ? [{ label: `Others (${data.paretoOthers.types})`, value: data.paretoOthers.pieces, cumulativePct: 100 }] : []),
                       ]
                 }
+                onPick={(label) => openDetail(`${label}${machinePareto ? ` on ${machinePareto.label}` : ''}`, { defect: label, ...(machinePareto ? { workCenterCodes: [machinePareto.workCenterCode] } : {}) })}
               />
             </Section>
               ) },

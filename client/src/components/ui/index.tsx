@@ -2,6 +2,7 @@ import {
   useEffect,
   type ReactNode,
   type ButtonHTMLAttributes,
+  type HTMLAttributes,
   type InputHTMLAttributes,
   type SelectHTMLAttributes,
 } from 'react'
@@ -82,8 +83,13 @@ export function Button({
 }
 
 // ---- Card ------------------------------------------------------------------
-export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cn('card', className)}>{children}</div>
+/** A card; any other attribute (a role, a click, a label) reaches its element. */
+export function Card({ className, children, ...rest }: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
+  return (
+    <div className={cn('card', className)} {...rest}>
+      {children}
+    </div>
+  )
 }
 
 // ---- Inputs ----------------------------------------------------------------

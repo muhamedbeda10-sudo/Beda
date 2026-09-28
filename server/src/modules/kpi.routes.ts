@@ -15,10 +15,12 @@ import {
   defaultDashboardLayouts,
   normaliseDashboardLayouts,
   INSIGHT_KEY_MAX,
+  KPI_DRILL_LIMIT,
   RANKING_WEIGHTS,
   pct,
   rankInspectors,
   type KpiBreakdown,
+  type KpiDrillResponse,
   type KpiFilters,
   type KpiGeneral,
   type KpiInspectorRanking,
@@ -28,7 +30,7 @@ import {
   type KpiThresholds,
 } from '@qc/shared/kpi'
 import type { DashboardLayoutResponse, HiddenInsightRequest, HiddenInsightsResponse, KpiSpanResponse, KpiThresholdsResponse, SaveDashboardLayoutRequest } from '@qc/shared/api'
-import { PROCESSES, type Process } from '@qc/shared/types'
+import { DISPOSITIONS, PROCESSES, type Disposition, type Process } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import type { Queryable } from '../db/pool'
 import { withTransaction } from '../db/pool'
@@ -45,7 +47,9 @@ import {
   loadDiscipline,
   loadFactoryMonths,
   loadFirstDataMonth,
+  loadDrill,
   loadFirstPart,
+  loadFirstPartDrill,
   loadScopeTotals,
   loadGroups,
   loadHolds,
@@ -105,6 +109,33 @@ const BreakdownQuery = z.object({
   process: optionalText,
   workCenterCode: optionalText,
   itemCode: optionalText,
+})
+
+const DrillQuery = z.object({
+  from: day,
+  to: day,
+  basis: z.enum(['produced', 'sampled']).default('produced'),
+  factory: optionalText,
+  process: optionalText,
+  workCenterCode: optionalText,
+  itemCode: optionalText,
+  inspectorId: z.string().uuid().optional(),
+  shift: z.enum(['A', 'B', 'C']).optional(),
+  orderId: z.string().uuid().optional(),
+  month: z.string().regex(/^\d{4}-\d{2}$/, 'YYYY-MM').optional(),
+  defect: z.string().trim().min(1).max(200).optional(),
+  disposition: z.enum(DISPOSITIONS as unknown as [Disposition, ...Disposition[]]).optional(),
+})
+
+const FirstPartDrillQuery = z.object({
+  from: day,
+  to: day,
+  factory: optionalText,
+  process: optionalText,
+  workCenterCode: optionalText,
+  itemCode: optionalText,
+  qtyFrom: z.coerce.number().min(0),
+  qtyTo: z.coerce.number().min(0).optional(),
 })
 
 const layoutItem = z.object({
@@ -597,6 +628,38 @@ export function kpiRoutes(ctx: AppContext): Router {
       ...breakdown,
       firstPart,
     }
+    res.json(body)
+  })
+
+  // ---- What is behind a number ----------------------------------------------
+  // A dashboard number opens on the sessions that make it, largest first.
+
+  r.get('/drill', async (req, res) => {
+    const q = parse(DrillQuery, req.query)
+    checkRange(q.from, q.to, 'Period')
+    // Inspector and shift narrow samples; production belongs to a whole session.
+    if (q.basis === 'produced' && (q.inspectorId || q.shift)) throw badRequest('Production is read by session: narrow by inspector or shift on the sampled basis.')
+    const f: PeriodFilters = {
+      tz: ctx.config.FACTORY_TIMEZONE,
+      from: q.from,
+      to: q.to,
+      factories: factoryNames(q.factory),
+      processes: processNames(q.process),
+      workCenterCodes: machineCodes(q.workCenterCode),
+      itemCode: q.itemCode,
+      inspectorId: q.inspectorId,
+      shift: q.shift,
+    }
+    const body: KpiDrillResponse = await loadDrill(ctx.db, f, { basis: q.basis, orderId: q.orderId, month: q.month, defect: q.defect, disposition: q.disposition }, KPI_DRILL_LIMIT)
+    res.json(body)
+  })
+
+  r.get('/first-part/drill', async (req, res) => {
+    const q = parse(FirstPartDrillQuery, req.query)
+    checkRange(q.from, q.to, 'Period')
+    if (q.qtyTo !== undefined && q.qtyTo < q.qtyFrom) throw badRequest('The band ends before it starts.')
+    const f: PeriodFilters = { tz: ctx.config.FACTORY_TIMEZONE, from: q.from, to: q.to, factories: factoryNames(q.factory), processes: processNames(q.process), workCenterCodes: machineCodes(q.workCenterCode), itemCode: q.itemCode }
+    const body: KpiDrillResponse = await loadFirstPartDrill(ctx.db, f, q.qtyFrom, q.qtyTo ?? null, KPI_DRILL_LIMIT)
     res.json(body)
   })
 

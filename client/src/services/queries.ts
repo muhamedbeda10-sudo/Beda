@@ -46,7 +46,7 @@ import type {
   ChatMessagesResponse,
   ChatUnreadResponse,
 } from '@qc/shared/api'
-import type { KpiBreakdown, KpiBreakdownFilters, KpiFilters, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
+import type { KpiBreakdown, KpiBreakdownFilters, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
 import type { DashboardLayoutResponse, HiddenInsightsResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
@@ -344,6 +344,53 @@ export function useOrderNumbersAnywhere(term: string, filters: { factory?: strin
     },
     enabled: any,
     placeholderData: keepPreviousData,
+  })
+}
+
+/** §15 — the sessions behind a dashboard number. Nothing is fetched until a number is opened. */
+export function useKpiDrill(q: KpiDrillQuery | null) {
+  return useQuery({
+    queryKey: ['kpi', 'drill', q] as const,
+    queryFn: () =>
+      api<KpiDrillResponse>(
+        `/kpi/drill${qs({
+          from: q!.from,
+          to: q!.to,
+          basis: q!.basis,
+          factory: q!.factories?.join(','),
+          process: q!.processes?.join(','),
+          workCenterCode: q!.workCenterCodes?.join(','),
+          itemCode: q!.itemCode,
+          inspectorId: q!.inspectorId,
+          shift: q!.shift,
+          orderId: q!.orderId,
+          month: q!.month,
+          defect: q!.defect,
+          disposition: q!.disposition,
+        })}`,
+      ),
+    enabled: q !== null,
+  })
+}
+
+/** §15 — the sessions that started with pieces already rejected, in a band. */
+export function useFirstPartDrill(q: KpiFirstPartDrillQuery | null) {
+  return useQuery({
+    queryKey: ['kpi', 'first-part-drill', q] as const,
+    queryFn: () =>
+      api<KpiDrillResponse>(
+        `/kpi/first-part/drill${qs({
+          from: q!.from,
+          to: q!.to,
+          factory: q!.factories?.join(','),
+          process: q!.processes?.join(','),
+          workCenterCode: q!.workCenterCodes?.join(','),
+          itemCode: q!.itemCode,
+          qtyFrom: q!.qtyFrom,
+          qtyTo: q!.qtyTo,
+        })}`,
+      ),
+    enabled: q !== null,
   })
 }
 
