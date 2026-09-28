@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-28.4',
+    date: '2026-09-28',
+    title: 'Updates reach a tablet that was asleep',
+    items: [
+      { text: 'The app looks for a new version when the tablet wakes or its network comes back, not only once an hour: a tablet left asleep no longer keeps an old screen, such as the old PDI order list, for hours.' },
+      { text: 'New PDI: the list of an order\'s items uses more of the screen on a tablet.' },
+    ],
+  },
+  {
     id: '2026-09-28.3',
     date: '2026-09-28',
     title: 'Universal machines and their stages',

@@ -116,7 +116,7 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
                 <Input value={itemTerm} onChange={(e) => setItemTerm(e.target.value)} placeholder="Find an item, code or drawing…" className="min-h-[44px] pl-9" aria-label="Find an item" />
               </div>
             )}
-            <ul className="max-h-72 divide-y divide-slate-100 overflow-auto rounded-xl ring-1 ring-slate-200 dark:divide-slate-800 dark:ring-slate-700" aria-label="Items of the order">
+            <ul className="max-h-[45vh] min-h-[12rem] divide-y divide-slate-100 overflow-auto rounded-xl ring-1 ring-slate-200 dark:divide-slate-800 dark:ring-slate-700" aria-label="Items of the order">
               {linesLoading && <li className="px-3 py-4 text-center text-sm text-slate-400">Loading the items…</li>}
               {shownItems.map((i) => {
                 const on = !unticked.has(i.key)
