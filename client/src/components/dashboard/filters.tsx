@@ -151,6 +151,83 @@ export function MultiSelectMenu({ options, selected, onChange, allLabel, noun, a
   )
 }
 
+/**
+ * A dropdown with a search box, for one choice out of many: the button reads
+ * the choice or `placeholder`; the list is what `options` holds for the words
+ * typed (the caller fetches them), with a first row that clears the choice.
+ */
+export function SearchSelect({
+  value,
+  options,
+  search,
+  onSearch,
+  onPick,
+  placeholder,
+  clearLabel,
+  ariaLabel,
+  loading = false,
+  className,
+}: {
+  value: PickOption | null
+  options: PickOption[]
+  search: string
+  onSearch: (term: string) => void
+  onPick: (option: PickOption | null) => void
+  placeholder: string
+  clearLabel: string
+  ariaLabel: string
+  loading?: boolean
+  className?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const anchor = useRef<HTMLButtonElement>(null)
+  const pick = (o: PickOption | null) => {
+    onPick(o)
+    setOpen(false)
+  }
+  return (
+    <>
+      <button
+        ref={anchor}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        onClick={() => setOpen((o) => !o)}
+        className={cn('input flex min-h-[44px] w-full items-center gap-2 text-left', className)}
+      >
+        <span className={cn('min-w-0 flex-1 truncate', !value && 'text-slate-400')} dir="auto">
+          {value ? value.label : placeholder}
+          {value?.sub && <span className="ml-1.5 text-xs text-slate-400">{value.sub}</span>}
+        </span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+      </button>
+      <FloatingPanel anchor={anchor} open={open} onClose={() => setOpen(false)} label={ariaLabel} width={340}>
+        <SearchBox value={search} onChange={onSearch} placeholder="Search…" />
+        <button type="button" onClick={() => pick(null)} className={cn('w-full rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800', !value && 'font-semibold text-brand-700 dark:text-brand-300')}>
+          {clearLabel}
+        </button>
+        <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <div className="max-h-72 overflow-auto" role="listbox" aria-label={`${ariaLabel} options`}>
+          {options.map((o) => {
+            const on = value?.value === o.value
+            return (
+              <button key={o.value} type="button" role="option" aria-selected={on} onClick={() => pick(o)} className={cn('flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800', on && 'bg-brand-50 dark:bg-brand-500/10')}>
+                <span className="min-w-0 flex-1" dir="auto">
+                  <span className="block font-medium">{o.label}</span>
+                  {o.sub && <span className="block text-xs text-slate-400">{o.sub}</span>}
+                </span>
+                {on && <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />}
+              </button>
+            )
+          })}
+          {options.length === 0 && <p className="px-2 py-3 text-center text-xs text-slate-400">{loading ? 'Searching…' : 'Nothing matches.'}</p>}
+        </div>
+      </FloatingPanel>
+    </>
+  )
+}
+
 // ---- Excel-like column filters ----------------------------------------------
 
 export interface FilterColumn<T> {

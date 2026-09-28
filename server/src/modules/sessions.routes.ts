@@ -49,6 +49,7 @@ import type {
   SaveSampleResponse,
   SessionNotesResponse,
   SessionStagesResponse,
+  HistoryExportResponse,
   SessionWithOrder,
   WizardContext,
   StartSessionRequest,
@@ -58,6 +59,7 @@ import type {
   SessionImageKind,
   SessionImagesResponse,
 } from '@qc/shared/api'
+import { EXPORT_MAX_RECORDS } from '@qc/shared/api'
 import type { AuditContext } from '@qc/shared/audit'
 import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
@@ -360,97 +362,15 @@ export function sessionsRoutes(ctx: AppContext): Router {
   r.get('/history', async (req, res) => {
     requireUser(req)
     const q = parse(
-      z.object({
+      historyFilterSchema.extend({
         limit: z.coerce.number().int().min(1).max(500).default(100),
-        disposition: z.enum(DISPOSITIONS as unknown as [string, ...string[]]).optional(),
         /** Sessions started before this instant: the end of the page already read. */
         before: z.string().datetime({ offset: true }).optional(),
-        /** Free text over the order, the item, the customer, the inspector,
-         *  the machine and the session number. */
-        q: z.string().trim().max(120).optional(),
-        status: z.enum(['Open', 'Closed']).optional(),
-        workCenterCode: z.string().trim().max(60).optional(),
-        item: z.string().trim().max(120).optional(),
-        factory: z.string().trim().max(120).optional(),
-        inspectorId: uuid.optional(),
-        since: z.string().datetime({ offset: true }).optional(),
-        from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a day, YYYY-MM-DD').optional(),
-        to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a day, YYYY-MM-DD').optional(),
       }),
       req.query,
     )
-
-    // The filters, as SQL over the whole table. They are built here — not
-    // applied to a page already fetched — so a session that matches is found
-    // wherever it sits in the record.
-    const clauses = ['s.deleted_at IS NULL']
-    const params: unknown[] = []
+    const { where, params } = historyWhere(q, ctx.config.FACTORY_TIMEZONE)
     const p = (v: unknown) => `$${params.push(v)}`
-
-    if (q.disposition) {
-      clauses.push(`EXISTS (SELECT 1 FROM inspection_samples sm
-                              JOIN defect_results d ON d.sample_id = sm.id AND d.deleted_at IS NULL
-                             WHERE sm.session_id = s.id AND sm.deleted_at IS NULL AND d.disposition::text = ${p(q.disposition)})`)
-    }
-    if (q.status) clauses.push(`s.status = ${p(q.status)}`)
-    if (q.inspectorId) {
-      // Two inspectors may share a session (§4.4): the one who opened it and
-      // any who recorded a sample in it. A filter by inspector finds both —
-      // otherwise a sample recorded in a colleague's session is on the
-      // dashboard under this name and nowhere to be found in History.
-      const who = p(q.inspectorId)
-      clauses.push(`(s.inspector_id = ${who}::uuid OR EXISTS (
-                      SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.inspector_id = ${who}::uuid))`)
-    }
-    if (q.since) {
-      // A session started earlier but still being sampled is part of this
-      // period too: the dashboard puts a sample on the day it was recorded,
-      // so History must land on the same session for the same date range.
-      const since = p(q.since)
-      clauses.push(`(s.started_at >= ${since}::timestamptz OR EXISTS (
-                      SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.created_at >= ${since}::timestamptz))`)
-    }
-    if (q.from || q.to) {
-      // Factory days, both ends inclusive, in the factory's zone — the same
-      // reading of a day the dashboard uses. A session is in the range when it
-      // started in it or a sample was recorded in it.
-      if (q.from && q.to && q.from > q.to) throw badRequest('The range ends before it starts.')
-      const tz = p(ctx.config.FACTORY_TIMEZONE)
-      const start = q.from ? `(${p(q.from)}::date)::timestamp AT TIME ZONE ${tz}` : null
-      const end = q.to ? `((${p(q.to)}::date + 1)::timestamp) AT TIME ZONE ${tz}` : null
-      const within = (col: string) => [start && `${col} >= ${start}`, end && `${col} < ${end}`].filter(Boolean).join(' AND ')
-      clauses.push(`(${within('s.started_at')} OR EXISTS (
-                      SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND ${within('x.created_at')}))`)
-    }
-    if (q.workCenterCode) {
-      // "STAM 24", "stam24" and "024" all name the same machine on the floor.
-      clauses.push(`${NORMALISED_CODE('s.work_center_code')} = ${NORMALISED_CODE(p(q.workCenterCode) + '::text')}`)
-    }
-    if (q.factory) {
-      clauses.push(`EXISTS (SELECT 1 FROM machines m
-                             WHERE m.deleted_at IS NULL AND lower(btrim(COALESCE(m.factory, ''))) = lower(btrim(${p(q.factory)}))
-                               AND ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('s.work_center_code')})`)
-    }
-    if (q.item) {
-      // Any part of the code or the name, as typed: no need to pick one from the list.
-      const t = p(`%${q.item.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
-      clauses.push(`(o.item_code ILIKE ${t} OR o.item ILIKE ${t})`)
-    }
-    if (q.q) {
-      // A literal search: the wildcards a person types are text, not pattern.
-      const like = `%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
-      const t = p(like)
-      const seq = /^#?\d+$/.test(q.q) ? Number(q.q.replace('#', '')) : null
-      clauses.push(`(o.order_number ILIKE ${t} OR o.item ILIKE ${t} OR o.item_code ILIKE ${t} OR o.customer ILIKE ${t}
-                     OR s.inspector_name ILIKE ${t} OR s.work_center_code ILIKE ${t}
-                     OR EXISTS (SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.inspector_name ILIKE ${t})
-                     OR EXISTS (SELECT 1 FROM machines m
-                                 WHERE m.deleted_at IS NULL AND ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('s.work_center_code')}
-                                   AND (m.display_name ILIKE ${t} OR m.name ILIKE ${t} OR m.line ILIKE ${t}))
-                     OR (${p(seq)}::int IS NOT NULL AND s.seq = ${p(seq)}::int))`)
-    }
-
-    const where = clauses.join(' AND ')
     const filterParams = [...params]
     // The cursor is not a filter: the totals below count the whole match, and
     // only the page walks back from where the last one ended.
@@ -478,6 +398,81 @@ export function sessionsRoutes(ctx: AppContext): Router {
 
     const body: HistoryResponse = { sessions: rows.rows.slice(0, q.limit).map(toSessionWithOrder), hasMore: rows.rows.length > q.limit }
     if (counted) body.totals = counted.rows[0]
+    res.json(body)
+  })
+
+  /**
+   * §6 — History to Excel: every session the filters match, oldest first,
+   * with its samples, measurements and defects. Bounded: past
+   * EXPORT_MAX_RECORDS sessions the filters must narrow.
+   */
+  r.get('/history/export', requireCapability('export-records'), async (req, res) => {
+    const q = parse(historyFilterSchema, req.query)
+    const { where, params } = historyWhere(q, ctx.config.FACTORY_TIMEZONE)
+    const counted = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id WHERE ${where}`,
+      params,
+    )
+    if (counted.rows[0].n > EXPORT_MAX_RECORDS) {
+      throw badRequest(`${counted.rows[0].n} sessions match; one export holds ${EXPORT_MAX_RECORDS}. Narrow the date range or the filters.`)
+    }
+    const sessions = await db.query<HistoryExportResponse['sessions'][number]>(
+      `SELECT s.id AS ref, s.seq, COALESCE(o.order_number, '') AS "orderNumber", COALESCE(o.item, '') AS item, COALESCE(o.item_code, '') AS "itemCode",
+              COALESCE(o.customer, '') AS customer, s.work_center_code AS "workCenterCode",
+              COALESCE(m.display_name, s.work_center_code) AS machine, COALESCE(m.factory, '') AS factory, COALESCE(m.process, '') AS process,
+              s.stage, s.inspector_name AS "inspectorName", s.started_at AS "startedAt", s.closed_at AS "closedAt",
+              (SELECT u.name FROM users u WHERE u.id = s.closed_by_id) AS "closedByName", s.status,
+              s.start_qty::float8 AS "rejectedBeforeRelease", s.final_qty::float8 AS "finalQty", s.produced_qty::float8 AS "producedQty",
+              (SELECT count(*)::int FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS samples,
+              (SELECT COALESCE(sum(x.sample_qty), 0)::float8 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "piecesInspected",
+              (SELECT COALESCE(sum(d.qty), 0)::float8 FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+                WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL) AS "defectPieces",
+              (SELECT COALESCE(sum(d.qty), 0)::float8 FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+                WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL AND d.disposition = 'Hold') AS "holdPieces"
+         FROM inspection_sessions s
+         LEFT JOIN production_orders o ON o.id = s.order_id
+         LEFT JOIN LATERAL (
+           SELECT m.display_name, m.factory, m.process FROM machines m
+            WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
+        WHERE ${where}
+        ORDER BY s.started_at, s.seq`,
+      params,
+    )
+    const ids = sessions.rows.map((r) => r.ref)
+    const [samples, measurements, defects] = await Promise.all([
+      db.query<HistoryExportResponse['samples'][number]>(
+        `SELECT x.session_id AS "sessionRef", x.index, x.created_at AS "recordedAt", x.inspector_name AS "inspectorName", x.shift,
+                x.sample_qty::float8 AS "sampleQty", x.drawing, COALESCE(x.issue, '') AS issue,
+                COALESCE((SELECT string_agg(c.coil_number, ', ' ORDER BY c.coil_number) FROM sample_coils c
+                           WHERE c.sample_id = x.id AND c.deleted_at IS NULL), '') AS coils
+           FROM inspection_samples x WHERE x.session_id = ANY($1::uuid[]) AND x.deleted_at IS NULL
+          ORDER BY x.created_at, x.index`,
+        [ids],
+      ),
+      db.query<HistoryExportResponse['measurements'][number]>(
+        `SELECT x.session_id AS "sessionRef", x.index AS "sampleIndex", r.name, r.nominal::float8 AS nominal, r.tol_plus::float8 AS "tolPlus",
+                r.tol_minus::float8 AS "tolMinus", COALESCE(r.unit, '') AS unit, r.actual::float8 AS actual, r.status
+           FROM dimension_results r JOIN inspection_samples x ON x.id = r.sample_id AND x.deleted_at IS NULL
+          WHERE x.session_id = ANY($1::uuid[]) AND r.deleted_at IS NULL
+          ORDER BY x.created_at, x.index, r.sequence`,
+        [ids],
+      ),
+      db.query<HistoryExportResponse['defects'][number]>(
+        `SELECT x.session_id AS "sessionRef", x.index AS "sampleIndex", d.defect_name AS "defectName", d.qty::float8 AS qty,
+                d.disposition::text AS disposition, COALESCE(d.notes, '') AS notes
+           FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id AND x.deleted_at IS NULL
+          WHERE x.session_id = ANY($1::uuid[]) AND d.deleted_at IS NULL
+          ORDER BY x.created_at, x.index, d.defect_name`,
+        [ids],
+      ),
+    ])
+    const iso = (v: string | Date | null) => (v === null ? null : new Date(v).toISOString())
+    const body: HistoryExportResponse = {
+      sessions: sessions.rows.map((r) => ({ ...r, startedAt: iso(r.startedAt)!, closedAt: iso(r.closedAt) })),
+      samples: samples.rows.map((r) => ({ ...r, recordedAt: iso(r.recordedAt)! })),
+      measurements: measurements.rows,
+      defects: defects.rows,
+    }
     res.json(body)
   })
 
@@ -1220,6 +1215,100 @@ async function stageOptions(tx: Queryable, session: SessionWithOrder): Promise<S
   )
   const stages = rows.map((r) => ({ stage: r.stage, sessions: r.n }))
   return { universal: true, asks: stages.length > 0, stages, next: Math.max(0, ...stages.map((x) => x.stage)) + 1 }
+}
+
+/** §6 — what History narrows by. The export reads the same filters. */
+const historyFilterSchema = z.object({
+  disposition: z.enum(DISPOSITIONS as unknown as [string, ...string[]]).optional(),
+  /** Free text over the order, the item, the customer, the inspector,
+   *  the machine and the session number. */
+  q: z.string().trim().max(120).optional(),
+  status: z.enum(['Open', 'Closed']).optional(),
+  workCenterCode: z.string().trim().max(60).optional(),
+  item: z.string().trim().max(120).optional(),
+  factory: z.string().trim().max(120).optional(),
+  inspectorId: z.string().uuid().optional(),
+  since: z.string().datetime({ offset: true }).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a day, YYYY-MM-DD').optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a day, YYYY-MM-DD').optional(),
+})
+
+/**
+ * History's filters as SQL over inspection_sessions `s` joined to its order
+ * line `o`: the clause and its parameters, to which a caller may add more.
+ */
+function historyWhere(q: z.infer<typeof historyFilterSchema>, tz: string): { where: string; params: unknown[] } {
+  // The filters, as SQL over the whole table. They are built here — not
+  // applied to a page already fetched — so a session that matches is found
+  // wherever it sits in the record.
+  const clauses = ['s.deleted_at IS NULL']
+  const params: unknown[] = []
+  const p = (v: unknown) => `$${params.push(v)}`
+
+  if (q.disposition) {
+    clauses.push(`EXISTS (SELECT 1 FROM inspection_samples sm
+                            JOIN defect_results d ON d.sample_id = sm.id AND d.deleted_at IS NULL
+                           WHERE sm.session_id = s.id AND sm.deleted_at IS NULL AND d.disposition::text = ${p(q.disposition)})`)
+  }
+  if (q.status) clauses.push(`s.status = ${p(q.status)}`)
+  if (q.inspectorId) {
+    // Two inspectors may share a session (§4.4): the one who opened it and
+    // any who recorded a sample in it. A filter by inspector finds both —
+    // otherwise a sample recorded in a colleague's session is on the
+    // dashboard under this name and nowhere to be found in History.
+    const who = p(q.inspectorId)
+    clauses.push(`(s.inspector_id = ${who}::uuid OR EXISTS (
+                    SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.inspector_id = ${who}::uuid))`)
+  }
+  if (q.since) {
+    // A session started earlier but still being sampled is part of this
+    // period too: the dashboard puts a sample on the day it was recorded,
+    // so History must land on the same session for the same date range.
+    const since = p(q.since)
+    clauses.push(`(s.started_at >= ${since}::timestamptz OR EXISTS (
+                    SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.created_at >= ${since}::timestamptz))`)
+  }
+  if (q.from || q.to) {
+    // Factory days, both ends inclusive, in the factory's zone — the same
+    // reading of a day the dashboard uses. A session is in the range when it
+    // started in it or a sample was recorded in it.
+    if (q.from && q.to && q.from > q.to) throw badRequest('The range ends before it starts.')
+    const zone = p(tz)
+    const start = q.from ? `(${p(q.from)}::date)::timestamp AT TIME ZONE ${zone}` : null
+    const end = q.to ? `((${p(q.to)}::date + 1)::timestamp) AT TIME ZONE ${zone}` : null
+    const within = (col: string) => [start && `${col} >= ${start}`, end && `${col} < ${end}`].filter(Boolean).join(' AND ')
+    clauses.push(`(${within('s.started_at')} OR EXISTS (
+                    SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND ${within('x.created_at')}))`)
+  }
+  if (q.workCenterCode) {
+    // "STAM 24", "stam24" and "024" all name the same machine on the floor.
+    clauses.push(`${NORMALISED_CODE('s.work_center_code')} = ${NORMALISED_CODE(p(q.workCenterCode) + '::text')}`)
+  }
+  if (q.factory) {
+    clauses.push(`EXISTS (SELECT 1 FROM machines m
+                           WHERE m.deleted_at IS NULL AND lower(btrim(COALESCE(m.factory, ''))) = lower(btrim(${p(q.factory)}))
+                             AND ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('s.work_center_code')})`)
+  }
+  if (q.item) {
+    // Any part of the code or the name, as typed: no need to pick one from the list.
+    const t = p(`%${q.item.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
+    clauses.push(`(o.item_code ILIKE ${t} OR o.item ILIKE ${t})`)
+  }
+  if (q.q) {
+    // A literal search: the wildcards a person types are text, not pattern.
+    const like = `%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+    const t = p(like)
+    const seq = /^#?\d+$/.test(q.q) ? Number(q.q.replace('#', '')) : null
+    clauses.push(`(o.order_number ILIKE ${t} OR o.item ILIKE ${t} OR o.item_code ILIKE ${t} OR o.customer ILIKE ${t}
+                   OR s.inspector_name ILIKE ${t} OR s.work_center_code ILIKE ${t}
+                   OR EXISTS (SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.inspector_name ILIKE ${t})
+                   OR EXISTS (SELECT 1 FROM machines m
+                               WHERE m.deleted_at IS NULL AND ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('s.work_center_code')}
+                                 AND (m.display_name ILIKE ${t} OR m.name ILIKE ${t} OR m.line ILIKE ${t}))
+                   OR (${p(seq)}::int IS NOT NULL AND s.seq = ${p(seq)}::int))`)
+  }
+
+  return { where: clauses.join(' AND '), params }
 }
 
 const reRecordSchema = saveSampleSchema.omit({ submissionId: true }).extend({ version: z.coerce.number().int().min(0) })

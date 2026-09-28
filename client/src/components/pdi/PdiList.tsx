@@ -1,21 +1,20 @@
 // §4 — the PDI record: every PDI on record, filtered in SQL, newest first and
-// walked back page by page. Used by the PDI screen and by History's PDI view;
-// both keep the same filters on this device.
+// walked back page by page, in History's PDI view. The filters are kept on
+// this device; Export takes every PDI they match.
 
 import { useEffect, useMemo, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
-import { ChevronRight, FileText, Plus, RotateCcw, Search } from 'lucide-react'
+import { ChevronRight, Download, FileText, RotateCcw, Search } from 'lucide-react'
 import type { PDIListFilters, PDIWithOrder } from '@qc/shared/api'
 import { can } from '@qc/shared/rules'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Stat } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
-import { loadOlderPdi, useDebounced, usePdiList, usePdiOptions } from '@/services/queries'
-import { createPdi } from '@/services/mutations'
+import { loadOlderPdi, loadPdiExport, useDebounced, usePdiList, usePdiOptions } from '@/services/queries'
+import { downloadWorkbook } from '@/lib/xlsxWrite'
+import { pdiSheets } from '@/components/history/exportHistory'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { formatDateTime } from '@/lib/utils'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { NewPdiDialog } from './NewPdiDialog'
 
 const PAGE = 50
 
@@ -97,8 +96,7 @@ export function PdiDetail({ doc, onClose }: { doc: PDIWithOrder; onClose: () => 
   )
 }
 
-export function PdiList({ allowCreate = false }: { allowCreate?: boolean }) {
-  const queryClient = useQueryClient()
+export function PdiList() {
   const { toast } = useApp()
   const { role } = useAuth()
   const [term, setTerm] = usePersistedState('qc-pdi:term', '')
@@ -107,8 +105,7 @@ export function PdiList({ allowCreate = false }: { allowCreate?: boolean }) {
   const [toDay, setToDay] = usePersistedState('qc-pdi:to', localDay())
   const [item, setItem] = usePersistedState('qc-pdi:item', '')
   const [by, setBy] = usePersistedState('qc-pdi:by', 'all')
-  const [adding, setAdding] = useState(false)
-  const [saving, setSaving] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [open, setOpen] = useState<PDIWithOrder | null>(null)
 
   const settledTerm = useDebounced(term.trim(), 300)
@@ -167,20 +164,26 @@ export function PdiList({ allowCreate = false }: { allowCreate?: boolean }) {
     }
   }
 
-  async function save(orderIds: string[], notes: string, imageIds: string[]) {
-    setSaving(true)
+  // §4 — the PDIs the filters match, to Excel: one row per item.
+  const canExport = can(role, 'export-records')
+  async function exportExcel() {
+    if (exporting) return
+    setExporting(true)
     try {
-      await createPdi(queryClient, { orderIds, notes: notes.trim() || undefined, imageIds })
-      toast('PDI document saved.', 'success')
-      setAdding(false)
+      const all = await loadPdiExport(filters)
+      if (all.length === 0) {
+        toast('No PDI matches these filters.', 'info')
+        return
+      }
+      downloadWorkbook(`QC-PDI-${localDay()}.xlsx`, pdiSheets(all))
+      toast(`Exported ${all.length} ${all.length === 1 ? 'PDI' : 'PDIs'}.`, 'success')
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Could not save.', 'error')
+      toast(e instanceof Error ? e.message : 'Could not build the export.', 'error')
     } finally {
-      setSaving(false)
+      setExporting(false)
     }
   }
 
-  const canCreate = allowCreate && can(role, 'record-inspection')
 
   return (
     <div className="space-y-5">
@@ -188,11 +191,7 @@ export function PdiList({ allowCreate = false }: { allowCreate?: boolean }) {
         <div className="min-w-[12rem] flex-1">
           <Stat compact label="PDI documents" value={total} sub={total > docs.length ? `${docs.length} on screen, the rest below` : 'All of them on screen'} icon={<FileText className="h-5 w-5" />} />
         </div>
-        {canCreate && (
-          <Button variant="primary" className="min-h-[48px] self-center" onClick={() => setAdding(true)}>
-            <Plus className="h-4 w-4" /> New PDI
-          </Button>
-        )}
+
       </div>
 
       <Card className="space-y-3 p-4">
@@ -236,9 +235,16 @@ export function PdiList({ allowCreate = false }: { allowCreate?: boolean }) {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           {isFetching && !isLoading ? <p className="text-xs text-slate-400">Searching the whole record…</p> : <span />}
-          <Button className="min-h-[40px]" onClick={resetFilters} disabled={!filtersSet} aria-label="Reset all PDI filters">
-            <RotateCcw className="h-4 w-4" /> Reset all
-          </Button>
+          <span className="flex flex-wrap gap-2">
+            {canExport && (
+              <Button className="min-h-[40px]" onClick={() => void exportExcel()} disabled={exporting || total === 0} aria-label="Export the PDIs to Excel">
+                <Download className="h-4 w-4" /> {exporting ? 'Building…' : 'Export Excel'}
+              </Button>
+            )}
+            <Button className="min-h-[40px]" onClick={resetFilters} disabled={!filtersSet} aria-label="Reset all PDI filters">
+              <RotateCcw className="h-4 w-4" /> Reset all
+            </Button>
+          </span>
         </div>
       </Card>
 
@@ -248,14 +254,7 @@ export function PdiList({ allowCreate = false }: { allowCreate?: boolean }) {
         <EmptyState
           icon={<FileText className="h-10 w-10" />}
           title={filtersSet ? 'No PDI matches' : 'No PDI documents yet'}
-          hint={filtersSet ? 'Nothing in the whole record matches these filters — widen the date range or clear the search.' : 'Attach pre-delivery photos to an order so they travel with the record.'}
-          action={
-            canCreate && !filtersSet ? (
-              <Button variant="primary" onClick={() => setAdding(true)}>
-                <Plus className="h-4 w-4" /> New PDI
-              </Button>
-            ) : undefined
-          }
+          hint={filtersSet ? 'Nothing in the whole record matches these filters — widen the date range or clear the search.' : 'A PDI recorded from the PDI button on Inspections shows here.'}
         />
       ) : (
         <>
@@ -326,7 +325,6 @@ export function PdiList({ allowCreate = false }: { allowCreate?: boolean }) {
       )}
 
       {open && <PdiDetail doc={open} onClose={() => setOpen(null)} />}
-      {adding && <NewPdiDialog onClose={() => setAdding(false)} onSave={(ids, notes, images) => void save(ids, notes, images)} saving={saving} />}
     </div>
   )
 }

@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ClipboardList,
   Droplets,
+  Download,
   FileText,
   History as HistoryIcon,
   Info,
@@ -36,7 +37,9 @@ import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { SessionPhotos } from '@/components/inspection/SessionPhotos'
 import { PdiList } from '@/components/pdi/PdiList'
 import { StageBadge } from '@/components/inspection/StagePicker'
-import { loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
+import { historySheets } from '@/components/history/exportHistory'
+import { downloadWorkbook } from '@/lib/xlsxWrite'
+import { loadHistoryExport, loadOlderSessions, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { ColumnPicker, FitColumnsButton, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
@@ -525,6 +528,27 @@ export function HistoryPage() {
     }
   }
 
+  // §6 — History to Excel: every session the filters match, not only the page on screen.
+  const canExport = can(role, 'export-records')
+  const [exporting, setExporting] = useState(false)
+  async function exportExcel() {
+    if (exporting) return
+    setExporting(true)
+    try {
+      const data = await loadHistoryExport(filters)
+      if (data.sessions.length === 0) {
+        toast('No session matches these filters.', 'info')
+        return
+      }
+      downloadWorkbook(`QC-history-${todayISO()}.xlsx`, historySheets(data))
+      toast(`Exported ${data.sessions.length} ${data.sessions.length === 1 ? 'session' : 'sessions'} with their samples, measurements and defects.`, 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not build the export.', 'error')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   function closeDrilldown() {
     setOpenSessionId(null)
     setOpenSampleId(null)
@@ -680,9 +704,16 @@ export function HistoryPage() {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           {isFetching && !loading ? <p className="text-xs text-slate-400">Searching the whole record…</p> : <span />}
-          <Button className="min-h-[40px]" onClick={resetFilters} disabled={!filtersSet} aria-label="Reset all filters">
-            <RotateCcw className="h-4 w-4" /> Reset all
-          </Button>
+          <span className="flex flex-wrap gap-2">
+            {canExport && (
+              <Button className="min-h-[40px]" onClick={() => void exportExcel()} disabled={exporting || totals.sessions === 0} aria-label="Export the sessions to Excel">
+                <Download className="h-4 w-4" /> {exporting ? 'Building…' : 'Export Excel'}
+              </Button>
+            )}
+            <Button className="min-h-[40px]" onClick={resetFilters} disabled={!filtersSet} aria-label="Reset all filters">
+              <RotateCcw className="h-4 w-4" /> Reset all
+            </Button>
+          </span>
         </div>
       </Card>
 

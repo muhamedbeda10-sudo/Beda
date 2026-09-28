@@ -26,6 +26,9 @@ import type {
   OrderHistory,
   OrderNumberSummary,
   PDIListFilters,
+  PDIWithOrder,
+  HistoryExportResponse,
+  OrderItemOption,
   SessionStagesResponse,
   PDIListResponse,
   PDIOptionsResponse,
@@ -325,21 +328,45 @@ export function usePdiOptions(enabled = true) {
  * of an item. One more than `limit` is asked for, so the screen knows when
  * there are more than it shows.
  */
-export function useOrderNumbersAnywhere(term: string, filters: { factory?: string; machine?: string; item?: string }, limit = 100) {
+export function useOrderNumbersAnywhere(term: string, filters: { factory?: string; machine?: string; item?: { itemCode: string; item: string } | null }, limit = 100) {
   const t = useDebounced(term.trim())
-  const item = useDebounced((filters.item ?? '').trim())
   const factory = filters.factory ?? ''
   const machine = filters.machine ?? ''
-  const any = t !== '' || item !== '' || factory !== '' || machine !== ''
+  const item = filters.item ?? null
+  const any = t !== '' || item !== null || factory !== '' || machine !== ''
   return useQuery({
-    queryKey: keys.orderNumbers(`*|contains|${t}|${factory}|${machine}|${item}|${limit}`),
+    queryKey: keys.orderNumbers(`*|contains|${t}|${factory}|${machine}|${item ? `${item.itemCode}|${item.item}` : ''}|${limit}`),
     queryFn: async () => {
-      const rows = await api<OrderNumberSummary[]>(`/orders/numbers${qs({ search: t, match: 'contains', factory, machine, item, limit: limit + 1 })}`)
+      const rows = await api<OrderNumberSummary[]>(
+        `/orders/numbers${qs({ search: t, match: 'contains', factory, machine, ...(item ? { itemCode: item.itemCode, itemName: item.item } : {}), limit: limit + 1 })}`,
+      )
       return { orders: rows.slice(0, limit), more: rows.length > limit }
     },
     enabled: any,
     placeholderData: keepPreviousData,
   })
+}
+
+/** The items of the open order lines, for the PDI's item list: narrowed to a factory or machine, searched by name or code. */
+export function useOrderItems(factory: string, machine: string, search: string, enabled = true) {
+  const t = useDebounced(search.trim())
+  return useQuery({
+    queryKey: ['orders', 'items', factory, machine, t] as const,
+    queryFn: () => api<OrderItemOption[]>(`/orders/items${qs({ factory, machine, search: t, limit: 200 })}`),
+    enabled,
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  })
+}
+
+/** §6 — every session the History filters match, with its samples, measurements and defects, for Excel. */
+export function loadHistoryExport(filters: HistoryFilters): Promise<HistoryExportResponse> {
+  return api<HistoryExportResponse>(`/sessions/history/export${qs({ ...filters })}`)
+}
+
+/** §4 — every PDI the filters match, for Excel. */
+export function loadPdiExport(filters: PDIListFilters): Promise<PDIWithOrder[]> {
+  return api<PDIWithOrder[]>(`/pdi/export${qs({ ...filters })}`)
 }
 
 /** Every line of one order, on every machine: the items a PDI may cover. */

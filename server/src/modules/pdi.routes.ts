@@ -7,6 +7,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import type { OrderSummary, PDIItem, PDIListResponse, PDIOptionsResponse, PDIWithOrder } from '@qc/shared/api'
+import { EXPORT_MAX_RECORDS } from '@qc/shared/api'
 import type { AppContext } from '../context'
 import { withTransaction } from '../db/pool'
 import { badRequest } from '../lib/errors'
@@ -27,15 +28,18 @@ const createSchema = z.object({
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a day, YYYY-MM-DD')
 
-const listSchema = z.object({
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  /** PDIs recorded before this instant: the end of the page already read. */
-  before: z.string().datetime({ offset: true }).optional(),
+const filterSchema = z.object({
   q: z.string().trim().max(120).optional(),
   item: z.string().trim().max(120).optional(),
   createdById: z.string().uuid().optional(),
   from: day.optional(),
   to: day.optional(),
+})
+
+const listSchema = filterSchema.extend({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  /** PDIs recorded before this instant: the end of the page already read. */
+  before: z.string().datetime({ offset: true }).optional(),
 })
 
 interface Row {
@@ -98,31 +102,37 @@ function toDto(r: Row): PDIWithOrder {
 /** A literal ILIKE pattern: the wildcards a person types are text. */
 const contains = (term: string): string => `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
 
+/** The PDI list's filters as SQL over pdi_documents `d` joined to its anchor line `o`. */
+function pdiWhere(q: z.infer<typeof filterSchema>, tz: string): { where: string; params: unknown[] } {
+  if (q.from && q.to && q.from > q.to) throw badRequest('The range ends before it starts.')
+  const clauses = ['d.deleted_at IS NULL']
+  const params: unknown[] = []
+  const p = (v: unknown) => `$${params.push(v)}`
+  // A line of the PDI whose item, code or drawing matches.
+  const lineMatches = (t: string) => `EXISTS (SELECT 1 FROM pdi_lines pl JOIN production_orders l ON l.id = pl.order_id
+                                       WHERE pl.pdi_id = d.id AND (l.item ILIKE ${t} OR l.item_code ILIKE ${t} OR l.drawing ILIKE ${t}))`
+  if (q.q) {
+    const t = p(contains(q.q))
+    clauses.push(`(o.order_number ILIKE ${t} OR o.customer ILIKE ${t} OR d.notes ILIKE ${t} OR d.created_by_name ILIKE ${t} OR ${lineMatches(t)})`)
+  }
+  if (q.item) clauses.push(lineMatches(p(contains(q.item))))
+  if (q.createdById) clauses.push(`d.created_by_id = ${p(q.createdById)}::uuid`)
+  if (q.from || q.to) {
+    // Factory days in the factory's zone, both ends inclusive, as History reads a day.
+    const zone = p(tz)
+    if (q.from) clauses.push(`d.created_at >= (${p(q.from)}::date)::timestamp AT TIME ZONE ${zone}`)
+    if (q.to) clauses.push(`d.created_at < ((${p(q.to)}::date + 1)::timestamp) AT TIME ZONE ${zone}`)
+  }
+  return { where: clauses.join(' AND '), params }
+}
+
 export function pdiRoutes(ctx: AppContext): Router {
   const r = Router()
 
   r.get('/', async (req, res) => {
     const q = parse(listSchema, req.query)
-    if (q.from && q.to && q.from > q.to) throw badRequest('The range ends before it starts.')
-    const clauses = ['d.deleted_at IS NULL']
-    const params: unknown[] = []
+    const { where, params } = pdiWhere(q, ctx.config.FACTORY_TIMEZONE)
     const p = (v: unknown) => `$${params.push(v)}`
-    // A line of the PDI whose item, code or drawing matches.
-    const lineMatches = (t: string) => `EXISTS (SELECT 1 FROM pdi_lines pl JOIN production_orders l ON l.id = pl.order_id
-                                         WHERE pl.pdi_id = d.id AND (l.item ILIKE ${t} OR l.item_code ILIKE ${t} OR l.drawing ILIKE ${t}))`
-    if (q.q) {
-      const t = p(contains(q.q))
-      clauses.push(`(o.order_number ILIKE ${t} OR o.customer ILIKE ${t} OR d.notes ILIKE ${t} OR d.created_by_name ILIKE ${t} OR ${lineMatches(t)})`)
-    }
-    if (q.item) clauses.push(lineMatches(p(contains(q.item))))
-    if (q.createdById) clauses.push(`d.created_by_id = ${p(q.createdById)}::uuid`)
-    if (q.from || q.to) {
-      // Factory days in the factory's zone, both ends inclusive, as History reads a day.
-      const tz = p(ctx.config.FACTORY_TIMEZONE)
-      if (q.from) clauses.push(`d.created_at >= (${p(q.from)}::date)::timestamp AT TIME ZONE ${tz}`)
-      if (q.to) clauses.push(`d.created_at < ((${p(q.to)}::date + 1)::timestamp) AT TIME ZONE ${tz}`)
-    }
-    const where = clauses.join(' AND ')
     const filterParams = [...params]
     const paged = q.before ? `${where} AND d.created_at < ${p(q.before)}::timestamptz` : where
     const limit = p(q.limit + 1)
@@ -133,6 +143,18 @@ export function pdiRoutes(ctx: AppContext): Router {
     const body: PDIListResponse = { documents: page.rows.slice(0, q.limit).map(toDto), hasMore: page.rows.length > q.limit }
     if (counted) body.total = counted.rows[0].n
     res.json(body)
+  })
+
+  /** §4 — the PDIs the filters match, oldest first, for Excel. Bounded like History's export. */
+  r.get('/export', requireCapability('export-records'), async (req, res) => {
+    const q = parse(filterSchema, req.query)
+    const { where, params } = pdiWhere(q, ctx.config.FACTORY_TIMEZONE)
+    const counted = await ctx.db.query<{ n: number }>(`SELECT count(*)::int AS n ${PDI_FROM} WHERE ${where}`, params)
+    if (counted.rows[0].n > EXPORT_MAX_RECORDS) {
+      throw badRequest(`${counted.rows[0].n} PDIs match; one export holds ${EXPORT_MAX_RECORDS}. Narrow the date range or the filters.`)
+    }
+    const { rows } = await ctx.db.query<Row>(`SELECT ${PDI_SELECT} ${PDI_FROM} WHERE ${where} ORDER BY d.created_at, d.id`, params)
+    res.json(rows.map(toDto))
   })
 
   /** Who the PDI list may be narrowed to: everyone who ever recorded one. */

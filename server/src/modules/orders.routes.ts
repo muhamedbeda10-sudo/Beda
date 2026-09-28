@@ -19,6 +19,7 @@ import {
   type OrderListResponse,
   type OrderListRow,
   type OrderNumberSummary,
+  type OrderItemOption,
   type SampleSummary,
   type SessionNotesResponse,
 } from '@qc/shared/api'
@@ -249,6 +250,9 @@ export function ordersRoutes(ctx: AppContext): Router {
         machine: z.string().trim().max(40).default(''),
         factory: z.string().trim().max(120).default(''),
         item: z.string().trim().max(120).default(''),
+        /** One item picked from the list: its code and name, both exact. */
+        itemCode: z.string().trim().max(120).optional(),
+        itemName: z.string().trim().max(300).optional(),
         includeCancelled: z.coerce.boolean().default(false),
         match: z.enum(['prefix', 'contains']).default('prefix'),
         limit: z.coerce.number().int().min(1).max(200).default(40),
@@ -291,6 +295,8 @@ export function ordersRoutes(ctx: AppContext): Router {
       const t = p(contains(q.item))
       match.push(`(lower(x.item) LIKE ${t} OR lower(x.item_code) LIKE ${t} OR lower(x.drawing) LIKE ${t})`)
     }
+    if (q.itemCode !== undefined) match.push(`lower(btrim(x.item_code)) = lower(btrim(${p(q.itemCode)}))`)
+    if (q.itemName !== undefined) match.push(`lower(btrim(x.item)) = lower(btrim(${p(q.itemName)}))`)
     const first = words[0] ? p(likePrefix(words[0])) : null
     const lines = [`o.deleted_at IS NULL`, ...(q.includeCancelled ? [] : [`NOT ${cancelledSql('o.erp_status')}`])]
     const { rows } = await ctx.db.query<OrderNumberSummary>(
@@ -300,6 +306,45 @@ export function ordersRoutes(ctx: AppContext): Router {
           AND lower(o.order_number) IN (SELECT lower(x.order_number) FROM production_orders x WHERE ${match.join(' AND ')})
         GROUP BY lower(o.order_number)
         ORDER BY ${first ? `(lower(min(o.order_number)) LIKE ${first}) DESC, ` : ''}lower(min(o.order_number))
+        LIMIT ${p(q.limit)}`,
+      params,
+    )
+    res.json(rows)
+  })
+
+  /**
+   * The items of the open order lines, one per code and name, for the PDI's
+   * item list: narrowed to a factory or a machine, and searched by any part of
+   * the name or code. A page, largest first by lines.
+   */
+  r.get('/items', async (req, res) => {
+    const q = parse(
+      z.object({
+        factory: z.string().trim().max(120).default(''),
+        machine: z.string().trim().max(40).default(''),
+        search: z.string().trim().max(120).default(''),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      }),
+      req.query,
+    )
+    const params: unknown[] = []
+    const p = (v: unknown) => `$${params.push(v)}`
+    const where = ['x.deleted_at IS NULL', `NOT ${cancelledSql('x.erp_status')}`]
+    if (q.machine) where.push(`lower(x.work_center_code) = ${p(q.machine.toLowerCase())}`)
+    if (q.factory) {
+      where.push(`EXISTS (SELECT 1 FROM machines m WHERE lower(m.code) = lower(x.work_center_code) AND m.deleted_at IS NULL
+                           AND lower(btrim(COALESCE(m.factory, ''))) = lower(btrim(${p(q.factory)})))`)
+    }
+    for (const w of q.search.split(/\s+/).filter(Boolean).slice(0, 8)) {
+      const t = p(`%${w.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
+      where.push(`(lower(x.item) LIKE ${t} OR lower(x.item_code) LIKE ${t})`)
+    }
+    const { rows } = await ctx.db.query<OrderItemOption>(
+      `SELECT min(btrim(x.item_code)) AS "itemCode", min(btrim(x.item)) AS item, count(*)::int AS "lineCount"
+         FROM production_orders x
+        WHERE ${where.join(' AND ')}
+        GROUP BY lower(btrim(x.item_code)), lower(btrim(x.item))
+        ORDER BY lower(min(btrim(x.item))), lower(min(btrim(x.item_code)))
         LIMIT ${p(q.limit)}`,
       params,
     )

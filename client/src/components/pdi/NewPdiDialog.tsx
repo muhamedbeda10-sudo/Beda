@@ -1,5 +1,5 @@
 // §4 — a new PDI: find the order by any words of its number, or narrow the
-// orders to a factory, a machine or an item; see every item the order carries
+// orders to a factory, a machine or an item picked from a list; see every item the order carries
 // with its drawing number, untick what does not ship this time, then notes
 // and photos.
 
@@ -7,16 +7,18 @@ import { useEffect, useMemo, useState } from 'react'
 import { Check, FileText, Search, X } from 'lucide-react'
 import { Button, Field, Input, Modal, Select } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
-import { useMaster, useOrderAllLines, useOrderNumbersAnywhere } from '@/services/queries'
+import { useMaster, useOrderAllLines, useOrderItems, useOrderNumbersAnywhere } from '@/services/queries'
 import { cn } from '@/lib/utils'
-import { byName } from '@/components/dashboard/filters'
+import { SearchSelect, byName, type PickOption } from '@/components/dashboard/filters'
 import { itemsOfLines } from './pdiItems'
 
 export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void; onSave: (orderIds: string[], notes: string, imageIds: string[]) => void; saving: boolean }) {
   const [orderTerm, setOrderTerm] = useState('')
   const [factory, setFactory] = useState('')
   const [machine, setMachine] = useState('')
-  const [itemFilter, setItemFilter] = useState('')
+  /** One item picked from the list of the open lines' items: the orders narrow to it, and it starts ticked alone. */
+  const [itemPick, setItemPick] = useState<PickOption | null>(null)
+  const [itemSearch, setItemSearch] = useState('')
   const [orderNumber, setOrderNumber] = useState('')
   /** An order found through an item: only the matching items start ticked, once its lines arrive. */
   const [tickOnly, setTickOnly] = useState<string | null>(null)
@@ -33,17 +35,17 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
     [machines, factory],
   )
   const searchingOrders = orderNumber === ''
-  const { data: found, isFetching: searching } = useOrderNumbersAnywhere(searchingOrders ? orderTerm : '', searchingOrders ? { factory, machine, item: itemFilter } : {})
+  const pickedItem = itemPick ? { itemCode: itemPick.value.split('|')[0], item: itemPick.label } : null
+  const { data: itemOptions = [], isFetching: itemsSearching } = useOrderItems(factory, machine, itemSearch, searchingOrders)
+  const { data: found, isFetching: searching } = useOrderNumbersAnywhere(searchingOrders ? orderTerm : '', searchingOrders ? { factory, machine, item: pickedItem } : {})
   const numbers = found?.orders ?? []
-  const anyFilter = orderTerm.trim() !== '' || factory !== '' || machine !== '' || itemFilter.trim() !== ''
+  const anyFilter = orderTerm.trim() !== '' || factory !== '' || machine !== '' || itemPick !== null
   const { data: lines = [], isLoading: linesLoading } = useOrderAllLines(orderNumber)
   const items = useMemo(() => itemsOfLines(lines), [lines])
   useEffect(() => {
     if (tickOnly === null || items.length === 0) return
-    const t = tickOnly.toLowerCase()
-    const matching = items.filter((i) => `${i.item} ${i.itemCode} ${i.drawings.join(' ')}`.toLowerCase().includes(t))
-    // An item filter that no item of the order matches leaves every item ticked.
-    if (matching.length > 0) setUnticked(new Set(items.filter((i) => !matching.includes(i)).map((i) => i.key)))
+    // The item picked starts ticked alone; one the order does not carry leaves every item ticked.
+    if (items.some((i) => i.key === tickOnly)) setUnticked(new Set(items.filter((i) => i.key !== tickOnly).map((i) => i.key)))
     setTickOnly(null)
   }, [items, tickOnly])
   const shownItems = useMemo(() => {
@@ -60,7 +62,7 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
     setUnticked(new Set())
     setItemTerm('')
     setImageIds([])
-    setTickOnly(n && itemFilter.trim() ? itemFilter.trim() : null)
+    setTickOnly(n && pickedItem ? `${pickedItem.itemCode.trim()}|${pickedItem.item.trim()}`.toLowerCase() : null)
   }
   const toggle = (key: string) =>
     setUnticked((prev) => {
@@ -122,7 +124,17 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
                   </option>
                 ))}
               </Select>
-              <Input value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} placeholder="Item, code or drawing" className="min-h-[44px]" aria-label="PDI item filter" dir="auto" />
+              <SearchSelect
+                value={itemPick}
+                options={itemOptions.map((i) => ({ value: `${i.itemCode}|${i.item}`, label: i.item, sub: [i.itemCode, `${i.lineCount} ${i.lineCount === 1 ? 'line' : 'lines'}`].filter(Boolean).join(' · ') }))}
+                search={itemSearch}
+                onSearch={setItemSearch}
+                onPick={setItemPick}
+                placeholder="All items"
+                clearLabel="All items"
+                ariaLabel="PDI item"
+                loading={itemsSearching}
+              />
             </div>
             {anyFilter && (
               <ul className="max-h-72 divide-y divide-slate-100 overflow-auto rounded-xl ring-1 ring-slate-200 dark:divide-slate-800 dark:ring-slate-700" aria-label="Orders found">
