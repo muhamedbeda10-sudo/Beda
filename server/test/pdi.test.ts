@@ -32,10 +32,20 @@ beforeAll(async () => {
         { lineKey: 'P-3', orderNumber: '19868-Ph2.2B-EHF', item: 'XL Light Beam', itemCode: '125185TA3', workCenterCode: '58', customer: 'Beta Storage', drawing: 'BS9059/58' },
         { lineKey: 'P-4', orderNumber: '19868-Ph2.2B-EHF', item: 'Base Plate', itemCode: 'BP-10', workCenterCode: '58', customer: 'Beta Storage', drawing: '' },
         { lineKey: 'P-5', orderNumber: '20480-Ph1.4-SMA', item: 'Shuttle Beam', itemCode: 'LB406015', workCenterCode: '48', customer: 'Alpha Racking', drawing: 'BS9059/48' },
+        // Cancelled lines, however the sheet spells it: never offered.
+        { lineKey: 'P-6', orderNumber: '19868-Ph2.2B-EHF', item: 'Old Beam', itemCode: 'OB-1', workCenterCode: '58', customer: 'Beta Storage', drawing: 'X', erpStatus: 'Cancelled' },
+        { lineKey: 'P-7', orderNumber: '19868-Ph2.2B-EHF', item: 'Old Spacer', itemCode: 'OS-1', workCenterCode: '58', customer: 'Beta Storage', drawing: 'X', erpStatus: 'ملغي' },
+        { lineKey: 'P-8', orderNumber: '77777-CAN', item: 'Gone', itemCode: 'G-1', workCenterCode: '31', customer: 'Nobody', drawing: 'X', erpStatus: 'Canceled' },
+        // Two items that share an item code stay two.
+        { lineKey: 'S-1', orderNumber: '31000-SHARED', item: 'Frame A', itemCode: 'FR-1', workCenterCode: '31', customer: 'Gamma', drawing: 'FA' },
+        { lineKey: 'S-2', orderNumber: '31000-SHARED', item: 'Frame B', itemCode: 'FR-1', workCenterCode: '31', customer: 'Gamma', drawing: 'FB' },
       ],
     },
   })
-  lines = (await app.api<ProductionOrder[]>('GET', '/api/orders?limit=100', { token: admin.token })).body
+  await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '31', name: 'Roll Forming', line: 'LM2', displayName: '31-Roll Forming-LM2', process: 'forming', factory: 'Factory 1' } })
+  await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '48', name: 'Painting', line: 'LM4', displayName: '48-Painting-LM4', process: 'paint', factory: 'Factory 2' } })
+  await app.api('POST', '/api/master/machines', { token: admin.token, body: { code: '58', name: 'Welding', line: 'LM4', displayName: '58-Welding-LM4', process: 'welding', factory: 'Factory 1' } })
+  lines = (await app.api<ProductionOrder[]>('GET', '/api/orders?limit=100&includeCancelled=true', { token: admin.token })).body
 })
 afterAll(() => app.stop())
 
@@ -48,6 +58,36 @@ describe('§4 — finding the order', () => {
     expect((await app.api<OrderNumberSummary[]>('GET', '/api/orders/numbers?search=Ph2.2B', { token: inspector.token })).body).toEqual([])
     const both = await app.api<OrderNumberSummary[]>('GET', '/api/orders/numbers?search=2&match=contains', { token: inspector.token })
     expect(both.body.map((o) => o.orderNumber)).toEqual(['20480-Ph1.4-SMA', '19868-Ph2.2B-EHF'])
+  })
+
+  it('finds it by every word typed, in any order', async () => {
+    for (const search of ['19868 ph2', 'ph2 19868', 'EHF 2.2b']) {
+      const res = await app.api<OrderNumberSummary[]>('GET', `/api/orders/numbers?search=${encodeURIComponent(search)}&match=contains`, { token: inspector.token })
+      expect(res.body.map((o) => o.orderNumber)).toEqual(['19868-Ph2.2B-EHF'])
+    }
+  })
+
+  it('never offers a cancelled line, however the sheet spells it', async () => {
+    const all = await app.api<OrderNumberSummary[]>('GET', '/api/orders/numbers?match=contains&search=-', { token: inspector.token })
+    expect(all.body.map((o) => o.orderNumber)).not.toContain('77777-CAN')
+    // The order's own lines leave the cancelled ones out, and so does its count.
+    expect(all.body.find((o) => o.orderNumber === '19868-Ph2.2B-EHF')!.lineCount).toBe(4)
+    const lines19868 = await app.api<ProductionOrder[]>('GET', '/api/orders?orderNumber=19868-Ph2.2B-EHF&limit=500', { token: inspector.token })
+    expect(lines19868.body.map((o) => o.lineKey).sort()).toEqual(['P-1', 'P-2', 'P-3', 'P-4'])
+  })
+
+  it('narrows to the orders with a line in a factory, on a machine or of an item', async () => {
+    const list = async (query: string) => (await app.api<OrderNumberSummary[]>('GET', `/api/orders/numbers?match=contains&${query}`, { token: inspector.token })).body
+    expect((await list('factory=Factory%202')).map((o) => o.orderNumber)).toEqual(['19868-Ph2.2B-EHF', '20480-Ph1.4-SMA'])
+    const onWelding = await list('machine=58')
+    expect(onWelding.map((o) => o.orderNumber)).toEqual(['19868-Ph2.2B-EHF'])
+    // The count is every line of the order, not the lines on that machine.
+    expect(onWelding[0].lineCount).toBe(4)
+    expect((await list('item=shuttle')).map((o) => o.orderNumber)).toEqual(['20480-Ph1.4-SMA'])
+    expect((await list('item=DR-100')).map((o) => o.orderNumber)).toEqual(['19868-Ph2.2B-EHF'])
+    expect((await list('item=beam&factory=Factory%201&search=198')).map((o) => o.orderNumber)).toEqual(['19868-Ph2.2B-EHF'])
+    // A cancelled line does not make its order a match.
+    expect(await list('item=old%20beam')).toEqual([])
   })
 
   it('lists every line of the order, however many', async () => {
@@ -74,6 +114,20 @@ describe('§4 — a PDI covers the items ticked', () => {
     ])
   })
 
+  it('keeps two items that share a code apart', async () => {
+    const res = await app.api<PDIWithOrder>('POST', '/api/pdi', { token: inspector.token, body: { orderIds: [line('S-1').id, line('S-2').id], notes: 'Frames', imageIds: [] } })
+    expect(res.status).toBe(201)
+    expect(res.body.items.map((i) => [i.itemCode, i.item, i.drawings])).toEqual([
+      ['FR-1', 'Frame A', ['FA']],
+      ['FR-1', 'Frame B', ['FB']],
+    ])
+  })
+
+  it('refuses a cancelled line', async () => {
+    const res = await app.api<{ error: string }>('POST', '/api/pdi', { token: inspector.token, body: { orderIds: [line('P-1').id, line('P-6').id], imageIds: [] } })
+    expect(res.status).toBe(400)
+  })
+
   it('refuses lines of two orders, an unknown line, and nothing ticked', async () => {
     const mixed = await app.api('POST', '/api/pdi', { token: inspector.token, body: { orderIds: [line('P-3').id, line('P-5').id], imageIds: [] } })
     expect(mixed.status).toBe(400)
@@ -98,12 +152,12 @@ describe('§4 — the PDI list', () => {
   it('lists every PDI newest first, with the total, and walks back', async () => {
     const page = await app.api<PDIListResponse>('GET', '/api/pdi?limit=2', { token: viewer.token })
     expect(page.status).toBe(200)
-    expect(page.body.total).toBe(3)
+    expect(page.body.total).toBe(4)
     expect(page.body.hasMore).toBe(true)
     expect(page.body.documents.map((d) => d.notes)).toEqual(['Shuttle beams', 'Second delivery'])
     const before = page.body.documents[1].createdAt
     const older = await app.api<PDIListResponse>('GET', `/api/pdi?limit=2&before=${encodeURIComponent(before)}`, { token: viewer.token })
-    expect(older.body.documents.map((d) => d.notes)).toEqual(['First delivery'])
+    expect(older.body.documents.map((d) => d.notes)).toEqual(['Frames', 'First delivery'])
     expect(older.body.hasMore).toBe(false)
     expect(older.body.total).toBeUndefined()
   })
@@ -119,7 +173,7 @@ describe('§4 — the PDI list', () => {
     expect(byWho.body.documents.map((d) => d.notes)).toEqual(['Second delivery'])
     const today = new Date().toISOString().slice(0, 10)
     const tomorrow = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10)
-    expect((await app.api<PDIListResponse>('GET', `/api/pdi?from=${today}&to=${tomorrow}`, { token: viewer.token })).body.total).toBe(3)
+    expect((await app.api<PDIListResponse>('GET', `/api/pdi?from=${today}&to=${tomorrow}`, { token: viewer.token })).body.total).toBe(4)
     expect((await app.api<PDIListResponse>('GET', `/api/pdi?from=${tomorrow}&to=${tomorrow}`, { token: viewer.token })).body.total).toBe(0)
     expect((await app.api('GET', `/api/pdi?from=${tomorrow}&to=${today}`, { token: viewer.token })).status).toBe(400)
   })

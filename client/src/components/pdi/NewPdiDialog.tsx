@@ -1,27 +1,51 @@
-// §4 — a new PDI: find the order by any part of its number, see every item
-// it carries with its drawing number, untick what does not ship this time,
-// then notes and photos.
+// §4 — a new PDI: find the order by any words of its number, or narrow the
+// orders to a factory, a machine or an item; see every item the order carries
+// with its drawing number, untick what does not ship this time, then notes
+// and photos.
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, FileText, Search, X } from 'lucide-react'
-import { Button, Field, Input, Modal } from '@/components/ui'
+import { Button, Field, Input, Modal, Select } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
-import { useOrderAllLines, useOrderNumbersAnywhere } from '@/services/queries'
+import { useMaster, useOrderAllLines, useOrderNumbersAnywhere } from '@/services/queries'
 import { cn } from '@/lib/utils'
+import { byName } from '@/components/dashboard/filters'
 import { itemsOfLines } from './pdiItems'
 
 export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void; onSave: (orderIds: string[], notes: string, imageIds: string[]) => void; saving: boolean }) {
   const [orderTerm, setOrderTerm] = useState('')
+  const [factory, setFactory] = useState('')
+  const [machine, setMachine] = useState('')
+  const [itemFilter, setItemFilter] = useState('')
   const [orderNumber, setOrderNumber] = useState('')
+  /** An order found through an item: only the matching items start ticked, once its lines arrive. */
+  const [tickOnly, setTickOnly] = useState<string | null>(null)
   const [itemTerm, setItemTerm] = useState('')
   /** The items left out of this delivery; everything else is covered. */
   const [unticked, setUnticked] = useState<Set<string>>(new Set())
   const [notes, setNotes] = useState('')
   const [imageIds, setImageIds] = useState<string[]>([])
 
-  const { data: numbers = [], isFetching: searching } = useOrderNumbersAnywhere(orderNumber ? '' : orderTerm)
+  const { data: machines = [] } = useMaster('machines')
+  const factories = useMemo(() => Array.from(new Set(machines.map((m) => m.factory?.trim() ?? '').filter(Boolean))).sort(byName), [machines])
+  const machineOptions = useMemo(
+    () => machines.filter((m) => !factory || (m.factory ?? '').trim().toLowerCase() === factory.toLowerCase()).sort((a, b) => byName(a.displayName || a.code, b.displayName || b.code)),
+    [machines, factory],
+  )
+  const searchingOrders = orderNumber === ''
+  const { data: found, isFetching: searching } = useOrderNumbersAnywhere(searchingOrders ? orderTerm : '', searchingOrders ? { factory, machine, item: itemFilter } : {})
+  const numbers = found?.orders ?? []
+  const anyFilter = orderTerm.trim() !== '' || factory !== '' || machine !== '' || itemFilter.trim() !== ''
   const { data: lines = [], isLoading: linesLoading } = useOrderAllLines(orderNumber)
   const items = useMemo(() => itemsOfLines(lines), [lines])
+  useEffect(() => {
+    if (tickOnly === null || items.length === 0) return
+    const t = tickOnly.toLowerCase()
+    const matching = items.filter((i) => `${i.item} ${i.itemCode} ${i.drawings.join(' ')}`.toLowerCase().includes(t))
+    // An item filter that no item of the order matches leaves every item ticked.
+    if (matching.length > 0) setUnticked(new Set(items.filter((i) => !matching.includes(i)).map((i) => i.key)))
+    setTickOnly(null)
+  }, [items, tickOnly])
   const shownItems = useMemo(() => {
     const t = itemTerm.trim().toLowerCase()
     if (!t) return items
@@ -36,6 +60,7 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
     setUnticked(new Set())
     setItemTerm('')
     setImageIds([])
+    setTickOnly(n && itemFilter.trim() ? itemFilter.trim() : null)
   }
   const toggle = (key: string) =>
     setUnticked((prev) => {
@@ -65,13 +90,42 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
     >
       <div className="space-y-4">
         {orderNumber === '' ? (
-          <Field label="Production order" hint="Type any part of the order number.">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input autoFocus value={orderTerm} onChange={(e) => setOrderTerm(e.target.value)} placeholder="Order number…" className="min-h-[48px] pl-9" aria-label="Order number" />
+          <div className="space-y-3">
+            <Field label="Production order" hint="Type any words of the order number, in any order: 20542 ph4.">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input autoFocus value={orderTerm} onChange={(e) => setOrderTerm(e.target.value)} placeholder="Order number…" className="min-h-[48px] pl-9" aria-label="Order number" />
+              </div>
+            </Field>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <Select
+                value={factory}
+                onChange={(e) => {
+                  setFactory(e.target.value)
+                  setMachine('')
+                }}
+                className="min-h-[44px]"
+                aria-label="PDI factory"
+              >
+                <option value="">All factories</option>
+                {factories.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </Select>
+              <Select value={machine} onChange={(e) => setMachine(e.target.value)} className="min-h-[44px]" aria-label="PDI machine">
+                <option value="">All machines</option>
+                {machineOptions.map((m) => (
+                  <option key={m.id} value={m.code}>
+                    {m.displayName || m.code}
+                  </option>
+                ))}
+              </Select>
+              <Input value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} placeholder="Item, code or drawing" className="min-h-[44px]" aria-label="PDI item filter" dir="auto" />
             </div>
-            {orderTerm.trim() !== '' && (
-              <ul className="mt-2 max-h-64 divide-y divide-slate-100 overflow-auto rounded-xl ring-1 ring-slate-200 dark:divide-slate-800 dark:ring-slate-700" aria-label="Orders found">
+            {anyFilter && (
+              <ul className="max-h-72 divide-y divide-slate-100 overflow-auto rounded-xl ring-1 ring-slate-200 dark:divide-slate-800 dark:ring-slate-700" aria-label="Orders found">
                 {numbers.map((n) => (
                   <li key={n.orderNumber}>
                     <button type="button" onClick={() => pickOrder(n.orderNumber)} className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800">
@@ -81,10 +135,11 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
                     </button>
                   </li>
                 ))}
-                {numbers.length === 0 && <li className="px-3 py-4 text-center text-sm text-slate-400">{searching ? 'Searching…' : 'No order number contains that.'}</li>}
+                {numbers.length === 0 && <li className="px-3 py-4 text-center text-sm text-slate-400">{searching ? 'Searching…' : 'No open order matches.'}</li>}
+                {found?.more && <li className="px-3 py-2.5 text-center text-xs font-semibold text-amber-700 dark:text-amber-300">More orders match than are listed: type more of the number, or narrow by factory, machine or item.</li>}
               </ul>
             )}
-          </Field>
+          </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2 rounded-xl bg-brand-50 px-3 py-2.5 ring-1 ring-brand-200 dark:bg-brand-500/10 dark:ring-brand-500/30">
             <span className="font-bold">{orderNumber}</span>

@@ -14,6 +14,7 @@ import { parse } from '../lib/validate'
 import { requireCapability, requireUser } from '../auth/middleware'
 import { auditCreate } from '../audit/service'
 import { assertImagesUsable, linkImages } from './images.links'
+import { cancelledSql } from '../lib/orderStatus'
 
 /** One order can carry a few hundred lines; a PDI covers some or all of them. */
 const MAX_LINES = 500
@@ -53,7 +54,8 @@ interface Row {
 
 /**
  * A PDI with its anchor line, and its items: the lines it covers grouped by
- * item code (by name when a line has no code), each with its drawings.
+ * item code and name together, so two items that share a code stay two, each
+ * with its drawings.
  */
 const PDI_SELECT = `
   d.id, d.order_id AS "orderId", d.notes, d.created_at AS "createdAt", d.created_by_id AS "createdById",
@@ -72,7 +74,7 @@ const PDI_SELECT = `
                array_agg(l.id::text ORDER BY l.work_center_code) AS line_ids
           FROM pdi_lines pl JOIN production_orders l ON l.id = pl.order_id
          WHERE pl.pdi_id = d.id
-         GROUP BY lower(COALESCE(NULLIF(btrim(l.item_code), ''), l.item))
+         GROUP BY lower(btrim(l.item_code)), lower(btrim(l.item))
       ) g), '[]') AS items`
 
 const PDI_FROM = `FROM pdi_documents d LEFT JOIN production_orders o ON o.id = d.order_id`
@@ -149,13 +151,15 @@ export function pdiRoutes(ctx: AppContext): Router {
     const body = parse(createSchema, req.body)
     const ids = Array.from(new Set(body.orderIds))
     const created = await withTransaction(ctx.db, async (tx) => {
-      const { rows: lines } = await tx.query<{ id: string; orderNumber: string; item: string; itemCode: string }>(
-        `SELECT id, order_number AS "orderNumber", item, item_code AS "itemCode"
+      const { rows: lines } = await tx.query<{ id: string; orderNumber: string; item: string; itemCode: string; cancelled: boolean }>(
+        `SELECT id, order_number AS "orderNumber", item, item_code AS "itemCode", ${cancelledSql('erp_status')} AS cancelled
            FROM production_orders WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
           ORDER BY lower(item_code), lower(item), work_center_code`,
         [ids],
       )
       if (lines.length !== ids.length) throw badRequest('Some of those order lines do not exist.')
+      // A cancelled line does not ship, so a PDI does not cover it.
+      if (lines.some((l) => l.cancelled)) throw badRequest('Some of those lines are cancelled on the order sheet: a PDI covers only what ships.')
       const numbers = new Set(lines.map((l) => l.orderNumber.trim().toLowerCase()))
       if (numbers.size > 1) throw badRequest('A PDI covers one order: those lines belong to more than one.')
       await assertImagesUsable(tx, body.imageIds)
@@ -167,7 +171,7 @@ export function pdiRoutes(ctx: AppContext): Router {
       const id = rows[0].id
       await tx.query(`INSERT INTO pdi_lines (pdi_id, order_id) SELECT $1, unnest($2::uuid[])`, [id, lines.map((l) => l.id)])
       await linkImages(tx, 'pdi_images', 'pdi_id', id, body.imageIds)
-      const itemCount = new Set(lines.map((l) => (l.itemCode.trim() || l.item).toLowerCase())).size
+      const itemCount = new Set(lines.map((l) => `${l.itemCode.trim()}|${l.item.trim()}`.toLowerCase())).size
       await auditCreate(tx, {
         userId: user.id,
         userName: user.name,

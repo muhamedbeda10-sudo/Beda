@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-28.5',
+    date: '2026-09-28',
+    title: 'PDI: find the order any way, nothing left out',
+    items: [
+      { text: 'New PDI finds an order by every word typed, in any order: "20542 ph4" finds 20542-Ph4.1-EHF-KS.' },
+      { text: 'New PDI narrows the orders by factory, machine or item (any part of its name, code or drawing). An order found through an item starts with only the matching items ticked.' },
+      { text: 'Cancelled lines stay out however the order sheet spells it: Cancel, Cancelled, Canceled or ملغي. A PDI cannot cover one.' },
+      { text: 'Up to 100 orders are listed, and the list says when more match. Two items that share an item code are no longer merged into one.' },
+    ],
+  },
+  {
     id: '2026-09-28.4',
     date: '2026-09-28',
     title: 'Updates reach a tablet that was asleep',

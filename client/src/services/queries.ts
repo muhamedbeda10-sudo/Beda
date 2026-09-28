@@ -319,13 +319,25 @@ export function usePdiOptions(enabled = true) {
   return useQuery({ queryKey: ['pdi', 'options'] as const, queryFn: () => api<PDIOptionsResponse>('/pdi/options'), enabled, staleTime: 5 * 60_000 })
 }
 
-/** Order numbers found by any part of the number, on any machine: the PDI's first step. */
-export function useOrderNumbersAnywhere(term: string, limit = 40) {
+/**
+ * Order numbers for the PDI's first step: every word typed found anywhere in
+ * the number, narrowed to the orders with a line in a factory, on a machine or
+ * of an item. One more than `limit` is asked for, so the screen knows when
+ * there are more than it shows.
+ */
+export function useOrderNumbersAnywhere(term: string, filters: { factory?: string; machine?: string; item?: string }, limit = 100) {
   const t = useDebounced(term.trim())
+  const item = useDebounced((filters.item ?? '').trim())
+  const factory = filters.factory ?? ''
+  const machine = filters.machine ?? ''
+  const any = t !== '' || item !== '' || factory !== '' || machine !== ''
   return useQuery({
-    queryKey: keys.orderNumbers(`*|contains|${t}|${limit}`),
-    queryFn: () => api<OrderNumberSummary[]>(`/orders/numbers${qs({ search: t, match: 'contains', limit })}`),
-    enabled: t !== '',
+    queryKey: keys.orderNumbers(`*|contains|${t}|${factory}|${machine}|${item}|${limit}`),
+    queryFn: async () => {
+      const rows = await api<OrderNumberSummary[]>(`/orders/numbers${qs({ search: t, match: 'contains', factory, machine, item, limit: limit + 1 })}`)
+      return { orders: rows.slice(0, limit), more: rows.length > limit }
+    },
+    enabled: any,
     placeholderData: keepPreviousData,
   })
 }

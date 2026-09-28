@@ -34,6 +34,7 @@ import type {
 } from '@qc/shared/kpi'
 import { pct, rejectRate } from '@qc/shared/kpi'
 import type { Queryable } from '../db/pool'
+import { cancelledSql } from '../lib/orderStatus'
 
 export interface PeriodFilters {
   tz: string
@@ -561,7 +562,7 @@ export async function loadDiscipline(q: Queryable, f: PeriodFilters): Promise<Di
          FROM production_orders o
          LEFT JOIN LATERAL (
            SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(o.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
-        WHERE o.deleted_at IS NULL AND lower(o.erp_status) <> 'cancel' AND o.required_qty > o.finished_qty
+        WHERE o.deleted_at IS NULL AND NOT ${cancelledSql('o.erp_status')} AND o.required_qty > o.finished_qty
           AND ($1::text[] IS NULL OR COALESCE(m.factory, '') = ANY($1::text[]))
           AND ($2::text[] IS NULL OR lower(o.work_center_code) = ANY($2::text[]))
           AND ($3::text IS NULL OR lower(o.item_code) = lower($3))
