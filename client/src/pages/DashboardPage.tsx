@@ -1261,7 +1261,7 @@ export function DashboardPage() {
   /** The ones this person put away: hidden on every device until shown again. */
   const [hiddenOpen, setHiddenOpen] = useState(false)
   const { data: hiddenState } = useHiddenInsights(allowed)
-  // §15 — the board's layout: one for everyone, edited by an administrator here.
+  // §15 — the board's layout: the fixed default for everyone, or an administrator's own arrangement, made here.
   const { data: layoutState } = useDashboardLayout(allowed)
   const canArrange = can(role, 'manage-admin-data')
   const [editingLayout, setEditingLayout] = useState(false)
@@ -1286,7 +1286,7 @@ export function DashboardPage() {
           const added = layout.filter((it) => !base[page].some((b) => b.i === it.i))
           return { ...base, [page]: [...kept, ...added] }
         }),
-      // Hidden for everyone once saved; shown again at the bottom of the page, so it lands on nothing.
+      // Hidden on this administrator's board once saved; shown again at the bottom of the page, so it lands on nothing.
       setHidden: (page, id, hidden) =>
         setDraftLayouts((prev) => {
           const base = prev ?? savedLayouts
@@ -1322,7 +1322,7 @@ export function DashboardPage() {
     try {
       await saveDashboardLayout(qc, draftLayouts ?? savedLayouts)
       stopArranging()
-      toast('Layout saved for everyone.', 'success')
+      toast('Layout saved for you. Nobody else\'s dashboard changed.', 'success')
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Could not save the layout.', 'error')
     }
@@ -1331,7 +1331,7 @@ export function DashboardPage() {
     try {
       await resetDashboardLayout(qc)
       stopArranging()
-      toast('Layout back to the default.', 'success')
+      toast('Your dashboard is back to the default layout.', 'success')
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Could not reset the layout.', 'error')
     }
@@ -1471,7 +1471,7 @@ export function DashboardPage() {
     <div className="mx-auto max-w-[110rem] space-y-5">
       {editingLayout && (
         <div className="print-hidden rounded-xl border border-brand-300 bg-brand-50 px-4 py-2 text-sm text-brand-800 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-100">
-          Arranging: drag a chart by its blue bar, pull its bottom-right corner to size it. Save keeps it for everyone; Default puts the code's arrangement back.
+          Arranging your own dashboard: drag a chart by its blue bar, pull its bottom-right corner to size it. Save keeps it for you only; everyone else keeps the default. Default puts the default back on yours.
         </div>
       )}
       {/* Heading */}
@@ -1540,7 +1540,7 @@ export function DashboardPage() {
               <Button className="min-h-[44px]" onClick={() => setGalleryOpen(true)} aria-label="Choose the charts shown">
                 <LayoutGrid className="h-4 w-4" /> Charts
               </Button>
-              <Button variant="primary" className="min-h-[44px]" onClick={() => void saveArrangement()} aria-label="Save the layout for everyone">
+              <Button variant="primary" className="min-h-[44px]" onClick={() => void saveArrangement()} aria-label="Save the layout for you">
                 <Save className="h-4 w-4" /> Save layout
               </Button>
               <Button className="min-h-[44px]" onClick={() => void resetArrangement()} aria-label="Back to the default layout">

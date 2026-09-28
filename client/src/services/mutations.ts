@@ -401,7 +401,7 @@ export async function uploadChatFile(file: File): Promise<StoredFile> {
   return api<StoredFile>('/chat/files', { method: 'POST', form })
 }
 
-/** §15 — the board's layout, saved by an administrator for everyone. */
+/** §15 — an administrator's own board layout; everyone else keeps the default. */
 export async function saveDashboardLayout(qc: QueryClient, layouts: DashboardLayouts): Promise<DashboardLayoutResponse> {
   const res = await api<DashboardLayoutResponse>('/kpi/layout', { method: 'PUT', body: { layouts } })
   qc.setQueryData(['kpi', 'layout'], res)
