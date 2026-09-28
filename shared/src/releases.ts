@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-28.1',
+    date: '2026-09-28',
+    title: 'Dashboard: choose the charts everyone sees',
+    items: [
+      { text: 'Arrange → Charts opens a gallery of every chart on General and Details. Untick a chart to hide it for everyone, tick it to show it again; Save layout keeps the choice. A chart shown again comes back at the bottom of its page.' },
+      { text: 'Each chart also has Hide in its bar while arranging.' },
+      { text: 'Moving or resizing a chart while arranging no longer drops the name and description an administrator gave it.' },
+      { text: 'The First part released widget and its machine chart now read first part released: clean sessions ÷ all sessions, higher is better. First pass yield cumulative stays on its own card at the top.' },
+    ],
+  },
+  {
     id: '2026-09-27.1',
     date: '2026-09-27',
     title: 'Dashboard: first part by part, Excel filters, fixed pies',

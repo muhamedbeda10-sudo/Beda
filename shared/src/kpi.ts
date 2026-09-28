@@ -910,6 +910,8 @@ export interface DashboardLayoutItem {
   title?: string
   /** A description an administrator wrote under that name. */
   hint?: string
+  /** Put away by an administrator: nobody sees it until it is shown again. */
+  hidden?: boolean
 }
 
 export const DASHBOARD_TITLE_MAX = 80
@@ -1022,6 +1024,7 @@ export function normaliseDashboardLayout(page: DashboardPage, stored: unknown): 
       const hint = typeof r.hint === 'string' ? r.hint.trim().slice(0, DASHBOARD_HINT_MAX) : ''
       if (title) item.title = title
       if (hint) item.hint = hint
+      if (r.hidden === true) item.hidden = true
       out.push(item)
       seen.add(id)
     }
