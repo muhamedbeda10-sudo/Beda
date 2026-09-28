@@ -1,20 +1,33 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
-import { PdiList } from '@/components/pdi/PdiList'
+import { useQueryClient } from '@tanstack/react-query'
+import { NewPdiDialog } from '@/components/pdi/NewPdiDialog'
+import { createPdi } from '@/services/mutations'
+import { useApp } from '@/store/AppContext'
 
-/** §4 — Pre-Delivery Inspection: photo documentation of the items of an order that ship. */
+/**
+ * §4 — Pre-Delivery Inspection: the PDI button opens a new record and nothing
+ * else. Recorded PDIs are read in History, under PDI.
+ */
 export function PDIPage() {
   const navigate = useNavigate()
-  return (
-    <div className="space-y-4">
-      <button
-        onClick={() => navigate('/')}
-        className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400"
-      >
-        <ArrowLeft className="h-4 w-4" /> Inspections
-      </button>
-      <h1 className="text-2xl font-extrabold tracking-tight">PDI Documents</h1>
-      <PdiList allowCreate />
-    </div>
-  )
+  const queryClient = useQueryClient()
+  const { toast } = useApp()
+  const [saving, setSaving] = useState(false)
+  const leave = () => navigate('/', { replace: true })
+
+  async function save(orderIds: string[], notes: string, imageIds: string[]) {
+    setSaving(true)
+    try {
+      await createPdi(queryClient, { orderIds, notes: notes.trim() || undefined, imageIds })
+      toast('PDI document saved. It is in History, under PDI.', 'success')
+      leave()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not save.', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <NewPdiDialog onClose={leave} onSave={(ids, notes, images) => void save(ids, notes, images)} saving={saving} />
 }

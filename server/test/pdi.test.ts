@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
-import type { OrderNumberSummary, PDIListResponse, PDIOptionsResponse, PDIWithOrder } from '@qc/shared/api'
+import type { OrderItemOption, OrderNumberSummary, PDIListResponse, PDIOptionsResponse, PDIWithOrder } from '@qc/shared/api'
 import type { ProductionOrder } from '@qc/shared/types'
 import { TestApp, type Session } from './harness'
 
@@ -88,6 +88,19 @@ describe('§4 — finding the order', () => {
     expect((await list('item=beam&factory=Factory%201&search=198')).map((o) => o.orderNumber)).toEqual(['19868-Ph2.2B-EHF'])
     // A cancelled line does not make its order a match.
     expect(await list('item=old%20beam')).toEqual([])
+  })
+
+  it('lists the items of the open lines for the item list, narrowed and searched', async () => {
+    const all = (await app.api<OrderItemOption[]>('GET', '/api/orders/items', { token: inspector.token })).body
+    expect(all.map((i) => i.item)).toEqual(['Base Plate', 'Frame A', 'Frame B', 'Shuttle Beam', 'Upright 80x60', 'XL Light Beam'])
+    expect(all.find((i) => i.item === 'Upright 80x60')!.lineCount).toBe(2)
+    const onPaint = (await app.api<OrderItemOption[]>('GET', '/api/orders/items?factory=Factory%202', { token: inspector.token })).body
+    expect(onPaint.map((i) => i.item)).toEqual(['Shuttle Beam', 'Upright 80x60'])
+    expect((await app.api<OrderItemOption[]>('GET', '/api/orders/items?search=light%20xl', { token: inspector.token })).body.map((i) => i.item)).toEqual(['XL Light Beam'])
+    // An item picked from the list narrows the orders to it exactly.
+    const picked = await app.api<OrderNumberSummary[]>('GET', '/api/orders/numbers?match=contains&itemCode=FR-1&itemName=Frame%20B', { token: inspector.token })
+    expect(picked.body.map((o) => o.orderNumber)).toEqual(['31000-SHARED'])
+    expect((await app.api<OrderNumberSummary[]>('GET', '/api/orders/numbers?match=contains&itemCode=FR-1&itemName=Frame%20C', { token: inspector.token })).body).toEqual([])
   })
 
   it('lists every line of the order, however many', async () => {

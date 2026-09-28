@@ -613,6 +613,48 @@ export interface HistoryResponse {
   totals?: { sessions: number; open: number }
 }
 
+/** The most sessions (or PDIs) one export holds; past it the filters must narrow. */
+export const EXPORT_MAX_RECORDS = 5000
+
+/** §6 — History to Excel: every session that matches the filters, with its samples, measurements and defects. */
+export interface HistoryExportResponse {
+  sessions: {
+    ref: string
+    seq: number
+    orderNumber: string
+    item: string
+    itemCode: string
+    customer: string
+    workCenterCode: string
+    machine: string
+    factory: string
+    process: string
+    stage: number | null
+    inspectorName: string
+    startedAt: string
+    closedAt: string | null
+    closedByName: string | null
+    status: string
+    rejectedBeforeRelease: number | null
+    finalQty: number | null
+    producedQty: number | null
+    samples: number
+    piecesInspected: number
+    defectPieces: number
+    holdPieces: number
+  }[]
+  samples: { sessionRef: string; index: number; recordedAt: string; inspectorName: string; shift: string | null; sampleQty: number; drawing: string; issue: string; coils: string }[]
+  measurements: { sessionRef: string; sampleIndex: number; name: string; nominal: number | null; tolPlus: number | null; tolMinus: number | null; unit: string; actual: number | null; status: string }[]
+  defects: { sessionRef: string; sampleIndex: number; defectName: string; qty: number; disposition: string; notes: string }[]
+}
+
+/** The items of the open order lines, for the PDI's item list: one per code and name. */
+export interface OrderItemOption {
+  itemCode: string
+  item: string
+  lineCount: number
+}
+
 /** What the History filters may offer, drawn from every session on record. */
 export interface HistoryOptionsResponse {
   inspectors: { id: string; name: string }[]

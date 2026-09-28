@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-09-28.6',
+    date: '2026-09-28',
+    title: 'History to Excel; PDI opens on a new record',
+    items: [
+      { text: 'History has Export Excel: every session the filters match, not only the page on screen, with four sheets — Sessions, Samples, Measurements and Defects — joined by each session\'s Ref. Up to 5,000 sessions a file; narrow the filters past that. Supervisors, administrators and viewers.' },
+      { text: 'History\'s PDI view has Export Excel too: one row per item a PDI covers, with its drawing numbers.' },
+      { text: 'The PDI button on Inspections opens a new PDI straight away; recorded PDIs are read in History, under PDI.' },
+      { text: 'New PDI: the item is picked from a list of the open lines\' items, searched as you type and narrowed by the factory and machine chosen.' },
+    ],
+  },
+  {
     id: '2026-09-28.5',
     date: '2026-09-28',
     title: 'PDI: find the order any way, nothing left out',

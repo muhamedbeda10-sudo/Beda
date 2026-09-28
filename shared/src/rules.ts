@@ -617,16 +617,19 @@ export type Capability =
   | 'read-notices'
   /** The Access tab: the ERP order sheet as a table. Supervisors, administrators and viewers. */
   | 'view-order-sheet'
+  /** Export History's records to Excel: sessions, samples, measurements, defects, PDIs. Supervisors, administrators and viewers. */
+  | 'export-records'
 
 const CAPABILITIES: Record<Role, Capability[]> = {
   // Reads everything the floor produces; writes nothing, hears nothing.
-  viewer: ['view-all-sessions', 'view-dashboard', 'view-order-sheet'],
+  viewer: ['view-all-sessions', 'view-dashboard', 'view-order-sheet', 'export-records'],
   inspector: ['record-inspection', 'edit-open-session', 'use-chat', 'read-notices'],
   supervisor: [
     'record-inspection',
     'use-chat',
     'read-notices',
     'view-order-sheet',
+    'export-records',
     'view-all-sessions',
     'edit-open-session',
     'edit-closed-session',
@@ -638,6 +641,7 @@ const CAPABILITIES: Record<Role, Capability[]> = {
     'use-chat',
     'read-notices',
     'view-order-sheet',
+    'export-records',
     'view-all-sessions',
     'edit-open-session',
     'edit-closed-session',
