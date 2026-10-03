@@ -41,15 +41,16 @@ import {
   Trophy,
   Users,
   X,
+  Truck,
 } from 'lucide-react'
 import { can, shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
-import { GENERAL_MONTHS, defaultDashboardLayouts, deltaPct, normaliseDashboardLayout, insightKey, pct, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiDrillQuery, type KpiFilters, type KpiFirstPart, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone, type KpiCompareBlock, type KpiCompareBucket, type KpiCompareSeries, type KpiGrain } from '@qc/shared/kpi'
+import { GENERAL_MONTHS, defaultDashboardLayouts, deltaPct, normaliseDashboardLayout, insightKey, pct, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiDrillQuery, type KpiFilters, type KpiFirstPart, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone, type KpiCompareBlock, type KpiCompareBucket, type KpiCompareSeries, type KpiGrain, MATERIAL_KIND_LABEL, type MaterialKind } from '@qc/shared/kpi'
 import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
-import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, TrendChart, slicesOf, PIE_CLASSES, PIE_STROKES, type PieSlice } from '@/components/dashboard/charts'
+import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, TrendChart, slicesOf, PIE_CLASSES, PIE_STROKES, type HBar, type PieSlice } from '@/components/dashboard/charts'
 import { Board, BoardContext, ChartGallery, WidgetLabelContext, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
 import { DrillModal, type DrillSpec } from '@/components/dashboard/DrillModal'
 import { FilterNote, FilterTh, MultiSelectMenu, byName, useColumnFilters } from '@/components/dashboard/filters'
@@ -58,7 +59,7 @@ import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, 
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn, formatDateTime } from '@/lib/utils'
-import { useDashboardLayout, useHiddenInsights, useKpiBreakdown, useKpiComparisons, useKpiGeneral, useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
+import { useDashboardLayout, useHiddenInsights, useKpiBreakdown, useKpiComparisons, useKpiGeneral, useKpiMaterials, useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
 import { hideInsight, resetDashboardLayout, restoreInsight, saveDashboardLayout } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
@@ -834,7 +835,119 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
           ) },
         ]}
       />
+      <RawMaterialSection from={general.from} to={general.to} t={t} />
       <DrillModal spec={drill} onClose={() => setDrill(null)} />
+    </div>
+  )
+}
+
+/** A thickness in a filter: millimetres as typed, the empty string for every thickness. */
+const thicknessText = (t: number): string => String(Number(t.toFixed(3)))
+
+/**
+ * §15 — Comparisons, roll forming's raw material: the reject rate and PPM by
+ * coil supplier and by thickness, and one thickness and material (black or
+ * galvanized, from the coil's grade) over the period. A slicer of the roll
+ * forming machines narrows all three; the process picked above does not.
+ */
+function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiThresholds }) {
+  const { data: allMachines = [] } = useMaster('machines')
+  const rollForming = useMemo(() => allMachines.filter((m) => m.process === 'forming').sort((a, b) => byName(a.displayName || a.code, b.displayName || b.code)), [allMachines])
+  const [machineCodes, setMachineCodes] = usePersistedState<string[]>('qc-dash:rf-machines', [])
+  const [thickness, setThickness] = usePersistedState<string>('qc-dash:rf-thickness', '')
+  const [material, setMaterial] = usePersistedState<MaterialKind | 'all'>('qc-dash:rf-material', 'all')
+  const chosen = machineCodes.filter((c) => rollForming.some((m) => m.code.toLowerCase() === c.toLowerCase()))
+  const picked = thickness === '' ? null : Number(thickness)
+  const { data, isFetching } = useKpiMaterials({ from, to, workCenterCodes: chosen, thickness: picked !== null && Number.isFinite(picked) ? picked : null, material })
+  const periodWords = describeRange({ from, to })
+  const scope = chosen.length === 0 ? 'every roll forming machine' : chosen.length === 1 ? (rollForming.find((m) => m.code.toLowerCase() === chosen[0].toLowerCase())?.displayName ?? chosen[0]) : `${chosen.length} roll forming machines`
+  const rateTone = (v: number | null) => toneLowIsGood(v, t.defectRateGreen, t.defectRateAmber)
+  const bar = (r: { label: string; made: number; productionDefectPieces: number; defectRatePct: number | null }): HBar => ({
+    label: r.label,
+    sub: `${num(r.made)} made · ${num(r.productionDefectPieces)} rejected`,
+    value: r.defectRatePct,
+    tone: rateTone(r.defectRatePct),
+    text: r.defectRatePct === null ? '—' : `${pctStr(r.defectRatePct)} · ${ppmStr(r.defectRatePct)} PPM`,
+  })
+  const trendWhat = `${picked === null ? 'Every thickness' : `${thicknessText(picked)} mm`} · ${material === 'all' ? 'black and galvanized' : MATERIAL_KIND_LABEL[material].toLowerCase()}`
+  const selectClass = '!w-auto min-h-[36px] rounded-lg py-1 text-xs font-semibold'
+
+  return (
+    <div className="space-y-3 pt-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-lg font-extrabold tracking-tight">Roll forming: raw material</h2>
+        <MultiSelectMenu
+          options={rollForming.map((m) => ({ value: m.code, label: m.displayName || m.code, sub: m.factory ?? undefined }))}
+          selected={chosen}
+          onChange={setMachineCodes}
+          allLabel="All roll forming machines"
+          noun="machines"
+          ariaLabel="Roll forming machines"
+        />
+        <span className="text-xs text-slate-400">The reject rate of what the machines made from each coil, {periodWords}. The process picked above does not move it.</span>
+      </div>
+      <Board
+        page="comparisons"
+        className={cn('transition-opacity', isFetching && 'opacity-70')}
+        widgets={[
+          { id: 'c.suppliers', title: 'Roll forming: reject rate by coil supplier', node: (
+            <Section title="Reject rate by coil supplier" hint={`Rejected ÷ (produced + rejected) of what ${scope} made from each supplier's coils, with the PPM. A session's pieces are shared among its coils by its samples.`} icon={<Truck className="h-4 w-4" />}>
+              {data ? <HorizontalBars rows={data.suppliers.map(bar)} unit="%" /> : <div className="skeleton h-48" />}
+            </Section>
+          ) },
+          { id: 'c.thickness', title: 'Roll forming: reject rate by thickness', node: (
+            <Section title="Reject rate by thickness" hint={`The reject rate of what ${scope} made from coils of each thickness, black and galvanized together, with the PPM.`} icon={<Layers className="h-4 w-4" />}>
+              {data ? (
+                <HorizontalBars
+                  rows={data.thicknesses.map((r) => ({
+                    ...bar(r),
+                    sub: `${num(r.made)} made · black ${pctStr(r.black.defectRatePct)} · galvanized ${pctStr(r.galvanized.defectRatePct)}`,
+                  }))}
+                  unit="%"
+                />
+              ) : <div className="skeleton h-48" />}
+            </Section>
+          ) },
+          { id: 'c.thicknessTrend', title: 'Roll forming: one thickness and material over the period', node: (
+            <Section
+              title={`${trendWhat}: over the period`}
+              hint={`Pieces made and the reject rate of ${scope} on ${trendWhat.toLowerCase()}, a point ${data ? GRAIN_WORD[data.trend.grain] : 'a day'}. Black or galvanized is read off the coil's grade.`}
+              icon={<Activity className="h-4 w-4" />}
+              action={
+                <span className="flex flex-nowrap items-center gap-2">
+                  <Select value={thickness} onChange={(e) => setThickness(e.target.value)} className={selectClass} aria-label="Thickness">
+                    <option value="">All thicknesses</option>
+                    {(data?.thicknessOptions ?? []).map((v) => (
+                      <option key={v} value={thicknessText(v)}>
+                        {thicknessText(v)} mm
+                      </option>
+                    ))}
+                    {picked !== null && !(data?.thicknessOptions ?? []).some((v) => thicknessText(v) === thickness) && <option value={thickness}>{thickness} mm</option>}
+                  </Select>
+                  <Select value={material} onChange={(e) => setMaterial(e.target.value as MaterialKind | 'all')} className={selectClass} aria-label="Material">
+                    <option value="all">Black and galvanized</option>
+                    <option value="black">Black</option>
+                    <option value="galvanized">Galvanized</option>
+                  </Select>
+                </span>
+              }
+            >
+              {!data ? (
+                <div className="skeleton h-56" />
+              ) : data.trend.total.made > 0 ? (
+                <>
+                  <p className="mb-2 text-sm text-slate-500 dark:text-slate-400">
+                    Over the period: <span className={cn('font-bold', TONE_TEXT[rateTone(data.trend.total.defectRatePct)])}>{pctStr(data.trend.total.defectRatePct)}</span> · {ppmStr(data.trend.total.defectRatePct)} PPM · {num(data.trend.total.productionDefectPieces)} rejected of {num(data.trend.total.made)} made
+                  </p>
+                  <TrendChart points={data.trend.buckets.map((b, i) => ({ label: bucketLabel(b, data.trend.grain), bar: data.trend.points[i].made, line: data.trend.points[i].defectRatePct }))} barLabel="Pieces made" lineLabel="Reject rate" />
+                </>
+              ) : (
+                <p className="py-10 text-center text-sm text-slate-400">Nothing of {trendWhat.toLowerCase()} was made on {scope} in this period.</p>
+              )}
+            </Section>
+          ) },
+        ]}
+      />
     </div>
   )
 }

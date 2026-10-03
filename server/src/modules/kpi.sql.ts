@@ -33,7 +33,7 @@ import type {
   KpiSupplierRow,
   KpiTotals,
 } from '@qc/shared/kpi'
-import { compareBuckets, pct, rejectRate, type KpiCompareBlock, type KpiComparePoint, type KpiGrain } from '@qc/shared/kpi'
+import { compareBuckets, materialOfGrade, pct, rejectRate, type KpiCompareBlock, type KpiComparePoint, type KpiGrain, type KpiMaterialRow, type KpiMaterials, type KpiThicknessRow, type MaterialKind } from '@qc/shared/kpi'
 import type { Queryable } from '../db/pool'
 import { cancelledSql } from '../lib/orderStatus'
 
@@ -1498,4 +1498,115 @@ export async function loadCompareBlock(q: Queryable, f: PeriodFilters, grain: Kp
     }),
   })).sort((a, b) => b.made - a.made || a.label.localeCompare(b.label))
   return { from: f.from, to: f.to, grain, buckets, series }
+}
+
+// ---- Raw material on roll forming ----------------------------------------------
+
+/** Black, galvanized or every kind; a thickness or every one. */
+export interface MaterialPick {
+  thickness: number | null
+  material: MaterialKind | 'all'
+}
+
+/** A thickness as a key: millimetres to the thousandth, or none. */
+const thicknessKey = (t: number | null): string => (t === null ? '' : t.toFixed(3))
+
+/**
+ * Roll forming's production and rejects by the coils it ran: by supplier, by
+ * thickness, and black or galvanized (from the grade). A coil's details are
+ * the sample's, else the coil register's. A session's made pieces are shared
+ * among its coils by its samples: each sample counts once, split evenly over
+ * the coils it records; a sample's rejected pieces go to its own coils the
+ * same way. A session with no coil recorded keeps its figures under "no coil
+ * recorded", so the rows add up to the machines' totals.
+ */
+export async function loadMaterials(q: Queryable, f: PeriodFilters, grain: KpiGrain, pick: MaterialPick): Promise<Omit<KpiMaterials, 'generatedAt' | 'workCenterCodes'>> {
+  const { rows } = await q.query<{ supplier: string | null; thickness: number | null; grade: string | null; bucket: string; produced: number; rejected: number }>(
+    `WITH ${PRODUCED},
+     sess AS (SELECT r.session_id, r.produced AS made_qty, ${BUCKET_SQL[grain]} AS bucket FROM produced r),
+     samp AS (
+       SELECT x.id AS sample_id, x.session_id,
+              COALESCE((SELECT sum(d.qty) FROM defect_results d WHERE d.sample_id = x.id AND d.deleted_at IS NULL), 0)::float8 AS rejected,
+              count(*) OVER (PARTITION BY x.session_id) AS n_samples
+         FROM inspection_samples x JOIN sess ON sess.session_id = x.session_id
+        WHERE x.deleted_at IS NULL),
+     coil AS (
+       SELECT sess.session_id, sess.made_qty, sess.bucket, sm.sample_id, COALESCE(sm.rejected, 0) AS rejected, COALESCE(sm.n_samples, 1) AS n_samples,
+              COALESCE(NULLIF(btrim(c.supplier), ''), NULLIF(btrim(r.supplier), '')) AS supplier,
+              COALESCE(c.thickness, r.thickness)::float8 AS thickness,
+              COALESCE(NULLIF(btrim(c.grade), ''), NULLIF(btrim(r.grade), '')) AS grade
+         FROM sess
+         LEFT JOIN samp sm ON sm.session_id = sess.session_id
+         LEFT JOIN sample_coils c ON c.sample_id = sm.sample_id AND c.deleted_at IS NULL
+         LEFT JOIN coils r ON lower(r.coil_number) = lower(c.coil_number) AND r.deleted_at IS NULL),
+     weighted AS (
+       -- A sample's weight, split over its coils; a session with no sample is one row of weight one.
+       SELECT k.*, 1.0 / count(*) OVER (PARTITION BY k.session_id, k.sample_id) AS w FROM coil k)
+     SELECT supplier, round(thickness::numeric, 3)::float8 AS thickness, grade, bucket,
+            COALESCE(sum(made_qty * w / n_samples), 0)::float8 AS produced,
+            COALESCE(sum(rejected * w), 0)::float8 AS rejected
+       FROM weighted GROUP BY 1, 2, 3, 4`,
+    params(f),
+  )
+  const point = (produced: number, rejected: number): KpiComparePoint => ({ made: produced + rejected, productionDefectPieces: rejected, defectRatePct: rejectRate(rejected, produced) })
+  type Acc = { produced: number; rejected: number }
+  const add = (m: Map<string, Acc>, key: string, r: { produced: number; rejected: number }) => {
+    const a = m.get(key) ?? { produced: 0, rejected: 0 }
+    a.produced += r.produced
+    a.rejected += r.rejected
+    m.set(key, a)
+  }
+  const suppliers = new Map<string, Acc>()
+  const thick = new Map<string, { all: Acc; black: Acc; galvanized: Acc; thickness: number | null }>()
+  const trend = new Map<string, Acc>()
+  const seen = new Set<number>()
+  for (const r of rows) {
+    add(suppliers, r.supplier ?? '', r)
+    const kind = materialOfGrade(r.grade)
+    const tk = thicknessKey(r.thickness)
+    const t = thick.get(tk) ?? { all: { produced: 0, rejected: 0 }, black: { produced: 0, rejected: 0 }, galvanized: { produced: 0, rejected: 0 }, thickness: r.thickness }
+    t.all.produced += r.produced
+    t.all.rejected += r.rejected
+    if (kind !== 'unknown') {
+      t[kind].produced += r.produced
+      t[kind].rejected += r.rejected
+    }
+    thick.set(tk, t)
+    if (r.thickness !== null) seen.add(r.thickness)
+    const thicknessMatches = pick.thickness === null || (r.thickness !== null && thicknessKey(r.thickness) === thicknessKey(pick.thickness))
+    if (thicknessMatches && (pick.material === 'all' || pick.material === kind)) add(trend, r.bucket, r)
+  }
+  const supplierRows: KpiMaterialRow[] = Array.from(suppliers, ([key, a]) => ({ key, label: key || 'No supplier recorded', ...point(a.produced, a.rejected) }))
+    .filter((r) => r.made > 0)
+    .sort((a, b) => b.made - a.made || a.label.localeCompare(b.label))
+  const thicknessRows: KpiThicknessRow[] = Array.from(thick, ([key, t]) => ({
+    key,
+    label: t.thickness === null ? 'No thickness recorded' : `${Number(t.thickness.toFixed(3))} mm`,
+    thickness: t.thickness,
+    ...point(t.all.produced, t.all.rejected),
+    black: point(t.black.produced, t.black.rejected),
+    galvanized: point(t.galvanized.produced, t.galvanized.rejected),
+  }))
+    .filter((r) => r.made > 0)
+    .sort((a, b) => (a.thickness === null ? 1 : b.thickness === null ? -1 : a.thickness - b.thickness))
+  const buckets = compareBuckets(f.from, f.to, grain)
+  const total = Array.from(trend.values()).reduce((n, a) => ({ produced: n.produced + a.produced, rejected: n.rejected + a.rejected }), { produced: 0, rejected: 0 })
+  return {
+    from: f.from,
+    to: f.to,
+    suppliers: supplierRows,
+    thicknesses: thicknessRows,
+    thicknessOptions: Array.from(seen).sort((a, b) => a - b),
+    trend: {
+      thickness: pick.thickness,
+      material: pick.material,
+      grain,
+      buckets,
+      points: buckets.map((b) => {
+        const a = trend.get(b.key)
+        return a ? point(a.produced, a.rejected) : { made: 0, productionDefectPieces: 0, defectRatePct: null }
+      }),
+      total: point(total.produced, total.rejected),
+    },
+  }
 }
