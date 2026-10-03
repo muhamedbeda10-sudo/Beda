@@ -36,7 +36,7 @@ export interface BoardState {
   setHidden: (page: DashboardPage, id: string, hidden: boolean) => void
 }
 
-export const BoardContext = createContext<BoardState>({ layouts: { general: [], details: [] }, editing: false, setLayout: () => {}, setLabel: () => {}, setHidden: () => {} })
+export const BoardContext = createContext<BoardState>({ layouts: { general: [], details: [], comparisons: [] }, editing: false, setLayout: () => {}, setLabel: () => {}, setHidden: () => {} })
 
 /** Below this width the grid is a stack: phones and tablets read, they do not arrange. */
 const GRID_MIN_WIDTH = 1024
@@ -195,7 +195,7 @@ function widgetIcon(id: string) {
   return BarChart3
 }
 
-const PAGE_NAME: Record<DashboardPage, string> = { general: 'General', details: 'Details' }
+const PAGE_NAME: Record<DashboardPage, string> = { general: 'General', details: 'Details', comparisons: 'Comparisons' }
 
 /**
  * The gallery of every chart the dashboard has, page by page: tick a tile to
@@ -205,7 +205,7 @@ const PAGE_NAME: Record<DashboardPage, string> = { general: 'General', details: 
  */
 export function ChartGallery({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { layouts, setHidden } = useContext(BoardContext)
-  const pages: DashboardPage[] = ['general', 'details']
+  const pages: DashboardPage[] = ['general', 'comparisons', 'details']
   return (
     <Modal open={open} onClose={onClose} title="Charts on the dashboard" icon={<LayoutGrid className="h-5 w-5" />} size="xl" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
       <div className="space-y-5">

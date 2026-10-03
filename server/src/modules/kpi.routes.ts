@@ -17,9 +17,11 @@ import {
   INSIGHT_KEY_MAX,
   KPI_DRILL_LIMIT,
   RANKING_WEIGHTS,
+  compareGrain,
   pct,
   rankInspectors,
   type KpiBreakdown,
+  type KpiComparisons,
   type KpiDrillResponse,
   type KpiFilters,
   type KpiGeneral,
@@ -47,6 +49,7 @@ import {
   loadDefectRateBands,
   loadDiscipline,
   loadFactoryMonths,
+  loadCompareBlock,
   loadFirstDataMonth,
   loadDrill,
   loadFirstPart,
@@ -149,7 +152,10 @@ const layoutItem = z.object({
   hint: z.string().trim().max(DASHBOARD_HINT_MAX).optional(),
   hidden: z.boolean().optional(),
 })
-const LayoutBody = z.object({ layouts: z.object({ general: z.array(layoutItem).max(100), details: z.array(layoutItem).max(100) }) })
+// The comparisons page came later: a client that does not send it keeps its defaults.
+const LayoutBody = z.object({ layouts: z.object({ general: z.array(layoutItem).max(100), details: z.array(layoutItem).max(100), comparisons: z.array(layoutItem).max(100).default([]) }) })
+
+const CompareQuery = z.object({ from: day, to: day, process: z.enum(PROCESSES as unknown as [Process, ...Process[]]) })
 
 const rate = z.number().min(0).max(100)
 const ThresholdsBody = z
@@ -526,22 +532,46 @@ export function kpiRoutes(ctx: AppContext): Router {
   // date, with no filter: the same picture for everyone, whatever the
   // analysis page is narrowed to.
 
+  /**
+   * The trend window: the last months to today, whatever the period, so the
+   * month lines stay put. It starts no earlier than the first month with
+   * production: a plant new to the system does not open its trend on empty months.
+   */
+  async function trendWindow(tz: string): Promise<{ today: string; thisMonth: string; firstDataMonth: string | null; windowFrom: string; monthsBack: number }> {
+    const today = factoryToday(tz)
+    const thisMonth = today.slice(0, 7)
+    const firstDataMonth = await loadFirstDataMonth(ctx.db, tz)
+    const earliest = monthsBefore(thisMonth, GENERAL_MONTHS - 1)
+    const windowMonth = firstDataMonth === null || firstDataMonth > thisMonth ? thisMonth : firstDataMonth > earliest ? firstDataMonth : earliest
+    return { today, thisMonth, firstDataMonth, windowFrom: `${windowMonth}-01`, monthsBack: monthsBetween(windowMonth, thisMonth) + 1 }
+  }
+
+  /**
+   * §15 — Comparisons: the processes month by month over the trend window and
+   * over the period, and the machines of one process over the period. The
+   * period's grain follows its length (compareGrain).
+   */
+  r.get('/comparisons', async (req, res) => {
+    const tz = ctx.config.FACTORY_TIMEZONE
+    const q = parse(CompareQuery, req.query)
+    checkRange(q.from, q.to, 'Period')
+    const { today, windowFrom } = await trendWindow(tz)
+    const grain = compareGrain(q.from, q.to)
+    const [window, period, machines] = await Promise.all([
+      loadCompareBlock(ctx.db, { tz, from: windowFrom, to: today }, 'month', 'process'),
+      loadCompareBlock(ctx.db, { tz, from: q.from, to: q.to }, grain, 'process'),
+      loadCompareBlock(ctx.db, { tz, from: q.from, to: q.to, processes: [q.process] }, grain, 'machine'),
+    ])
+    const body: KpiComparisons = { generatedAt: new Date().toISOString(), process: q.process, window, period, machines }
+    res.json(body)
+  })
+
   r.get('/general', async (req, res) => {
     const tz = ctx.config.FACTORY_TIMEZONE
     const q = req.query.from === undefined && req.query.to === undefined ? null : parse(GeneralQuery, req.query)
     if (q) checkRange(q.from, q.to, 'Period')
     const { thresholds } = await loadThresholds(ctx.db)
-    const today = factoryToday(tz)
-    // The period the cards are counted over; the trend window is always the
-    // last months to today, whatever the period, so the month lines stay put.
-    // It starts no earlier than the first month with production: a plant new
-    // to the system does not open its trend on empty months.
-    const thisMonth = today.slice(0, 7)
-    const firstDataMonth = await loadFirstDataMonth(ctx.db, tz)
-    const earliest = monthsBefore(thisMonth, GENERAL_MONTHS - 1)
-    const windowMonth = firstDataMonth === null || firstDataMonth > thisMonth ? thisMonth : firstDataMonth > earliest ? firstDataMonth : earliest
-    const windowFrom = `${windowMonth}-01`
-    const monthsBack = monthsBetween(windowMonth, thisMonth) + 1
+    const { today, thisMonth, firstDataMonth, windowFrom, monthsBack } = await trendWindow(tz)
     const to = q?.to ?? today
     const from = q?.from ?? windowFrom
     const period: PeriodFilters = { tz, from, to }

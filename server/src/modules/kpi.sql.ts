@@ -33,7 +33,7 @@ import type {
   KpiSupplierRow,
   KpiTotals,
 } from '@qc/shared/kpi'
-import { pct, rejectRate } from '@qc/shared/kpi'
+import { compareBuckets, pct, rejectRate, type KpiCompareBlock, type KpiComparePoint, type KpiGrain } from '@qc/shared/kpi'
 import type { Queryable } from '../db/pool'
 import { cancelledSql } from '../lib/orderStatus'
 
@@ -1437,4 +1437,65 @@ export async function loadFirstPartDrill(q: Queryable, f: PeriodFilters, qtyFrom
     totalPieces: rows[0]?.totalPieces ?? 0,
     truncated: (rows[0]?.totalSessions ?? 0) > rows.length,
   }
+}
+
+// ---- Comparisons -------------------------------------------------------------
+
+/** What a point groups by, per grain; constants, never built from input. */
+const BUCKET_SQL: Record<KpiGrain, string> = {
+  day: `to_char((r.closed_at AT TIME ZONE $1)::date, 'YYYY-MM-DD')`,
+  // Weeks run from the period's first day, as compareBuckets lays them out.
+  week: `to_char($2::date + (((r.closed_at AT TIME ZONE $1)::date - $2::date) / 7) * 7, 'YYYY-MM-DD')`,
+  month: `to_char(r.closed_at AT TIME ZONE $1, 'YYYY-MM')`,
+}
+
+/**
+ * Each process, or each machine, point by point over the span of `f`: what
+ * was made and rejected, and the reject rate. A universal line's quantity is
+ * counted once in each point and once in the span, as PRODUCED counts it in
+ * a month or a day, so a line closed in three stages is not made three times.
+ */
+export async function loadCompareBlock(q: Queryable, f: PeriodFilters, grain: KpiGrain, by: 'process' | 'machine'): Promise<KpiCompareBlock> {
+  const bucket = BUCKET_SQL[grain]
+  const key = by === 'process' ? 'process' : 'lower(wc)'
+  const { rows } = await q.query<{ key: string; code: string; label: string; factory: string; bucket: string; produced: number; producedSpan: number; defectPieces: number }>(
+    `WITH ${PRODUCED},
+     bucketed AS (
+       SELECT r.*, ${bucket} AS bucket,
+              CASE WHEN r.sheet_qty > 0 THEN r.sheet_qty ELSE max(r.final_qty) OVER (PARTITION BY r.order_id) END AS line_qty,
+              row_number() OVER (PARTITION BY r.order_id, ${bucket} ORDER BY r.closed_at, r.session_id) AS first_in_bucket,
+              row_number() OVER (PARTITION BY r.order_id ORDER BY r.closed_at, r.session_id) AS first_in_span
+         FROM produced_raw r)
+     SELECT ${key} AS key, max(wc) AS code, max(machine_label) AS label, max(factory) AS factory, bucket,
+            COALESCE(sum(CASE WHEN NOT by_line THEN final_qty WHEN first_in_bucket = 1 THEN line_qty ELSE 0 END), 0)::float8 AS produced,
+            COALESCE(sum(CASE WHEN NOT by_line THEN final_qty WHEN first_in_span = 1 THEN line_qty ELSE 0 END), 0)::float8 AS "producedSpan",
+            COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
+       FROM bucketed GROUP BY ${key}, bucket`,
+    params(f),
+  )
+  const buckets = compareBuckets(f.from, f.to, grain)
+  const point = (produced: number, defectPieces: number): KpiComparePoint => ({ made: produced + defectPieces, productionDefectPieces: defectPieces, defectRatePct: rejectRate(defectPieces, produced) })
+  const byKey = new Map<string, { code: string; label: string; factory: string; perBucket: Map<string, { produced: number; defectPieces: number }>; produced: number; defectPieces: number }>()
+  for (const r of rows) {
+    let entry = byKey.get(r.key)
+    if (!entry) {
+      entry = { code: r.code, label: r.label, factory: r.factory, perBucket: new Map(), produced: 0, defectPieces: 0 }
+      byKey.set(r.key, entry)
+    }
+    entry.perBucket.set(r.bucket, { produced: r.produced, defectPieces: r.defectPieces })
+    entry.produced += r.producedSpan
+    entry.defectPieces += r.defectPieces
+  }
+  const series = Array.from(byKey, ([k, e]) => ({
+    key: by === 'process' ? k : e.code,
+    label: by === 'process' ? k : e.label,
+    factory: by === 'process' ? '' : e.factory,
+    ...point(e.produced, e.defectPieces),
+    // A point with nothing made has no rate: the line breaks there rather than dropping to zero.
+    points: buckets.map((b) => {
+      const x = e.perBucket.get(b.key)
+      return x ? point(x.produced, x.defectPieces) : { made: 0, productionDefectPieces: 0, defectRatePct: null }
+    }),
+  })).sort((a, b) => b.made - a.made || a.label.localeCompare(b.label))
+  return { from: f.from, to: f.to, grain, buckets, series }
 }

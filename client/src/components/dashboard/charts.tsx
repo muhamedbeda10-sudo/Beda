@@ -668,8 +668,12 @@ export interface LineSeries {
   className: string
 }
 
-/** A few lines over the same x axis — one per factory, month by month. */
-export function LineChart({ labels, series, unit = '%', height = 220 }: { labels: string[]; series: LineSeries[]; unit?: string; height?: number }) {
+/**
+ * A few lines over the same x axis — one per factory, month by month. A null
+ * breaks the line; with `connectGaps` the line runs on to the next known
+ * point instead, for days or weeks when nothing was made.
+ */
+export function LineChart({ labels, series, unit = '%', height = 220, connectGaps = false }: { labels: string[]; series: LineSeries[]; unit?: string; height?: number; connectGaps?: boolean }) {
   const [hover, setHover] = useState<number | null>(null)
   const frame = useChartFrame()
   const id = useId()
@@ -691,6 +695,7 @@ export function LineChart({ labels, series, unit = '%', height = 220 }: { labels
     let current: string[] = []
     values.forEach((v, i) => {
       if (v === null) {
+        if (connectGaps) return
         if (current.length) out.push(current.join(' '))
         current = []
       } else current.push(`${xAt(i)},${yAt(v)}`)
@@ -749,6 +754,9 @@ export function LineChart({ labels, series, unit = '%', height = 220 }: { labels
 
 /** Up to six lines that stay apart in both themes. */
 export const LINE_CLASSES = ['stroke-brand-500', 'stroke-rose-500', 'stroke-emerald-500', 'stroke-amber-500', 'stroke-violet-500', 'stroke-sky-500']
+
+/** The pie's colours as strokes, in the same order, so a line and its slice share a colour. */
+export const PIE_STROKES = ['stroke-brand-500', 'stroke-rose-500', 'stroke-emerald-500', 'stroke-amber-500', 'stroke-violet-500', 'stroke-sky-500', 'stroke-pink-500', 'stroke-teal-500', 'stroke-orange-500', 'stroke-slate-400']
 
 /** A tiny line for a card: a few values, no axes, the last point marked. null draws a gap. */
 export function Sparkline({ values, className = 'stroke-brand-500', width = 96, height = 28 }: { values: (number | null)[]; className?: string; width?: number; height?: number }) {
