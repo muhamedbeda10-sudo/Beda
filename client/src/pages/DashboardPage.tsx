@@ -41,16 +41,17 @@ import {
   Trophy,
   Users,
   X,
+  Table2,
   Truck,
 } from 'lucide-react'
 import { can, shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
-import { GENERAL_MONTHS, defaultDashboardLayouts, deltaPct, normaliseDashboardLayout, insightKey, pct, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiDrillQuery, type KpiFilters, type KpiFirstPart, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone, type KpiCompareBlock, type KpiCompareBucket, type KpiCompareSeries, type KpiGrain, MATERIAL_KIND_LABEL, type MaterialKind } from '@qc/shared/kpi'
+import { GENERAL_MONTHS, defaultDashboardLayouts, deltaPct, normaliseDashboardLayout, insightKey, pct, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiDrillQuery, type KpiFilters, type KpiFirstPart, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone, type KpiCompareBlock, type KpiCompareBucket, type KpiCompareSeries, type KpiGrain, type KpiGrainChoice, type KpiMaterialDetail, MATERIAL_KIND_LABEL, type MaterialKind } from '@qc/shared/kpi'
 import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
-import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, TrendChart, slicesOf, PIE_CLASSES, PIE_STROKES, type HBar, type PieSlice } from '@/components/dashboard/charts'
+import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, StackedColumnChart, TrendChart, slicesOf, PIE_CLASSES, PIE_STROKES, type HBar, type PieSlice } from '@/components/dashboard/charts'
 import { Board, BoardContext, ChartGallery, WidgetLabelContext, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
 import { DrillModal, type DrillSpec } from '@/components/dashboard/DrillModal'
 import { FilterNote, FilterTh, MultiSelectMenu, byName, useColumnFilters } from '@/components/dashboard/filters'
@@ -698,26 +699,56 @@ function bucketLabel(b: KpiCompareBucket, grain: KpiGrain): string {
 
 const GRAIN_WORD: Record<KpiGrain, string> = { day: 'a day', week: 'a week', month: 'a month' }
 
+const GRAIN_CHOICES: { value: KpiGrainChoice; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'day', label: 'Days' },
+  { value: 'week', label: 'Weeks' },
+  { value: 'month', label: 'Months' },
+]
+
+/** How finely a chart over the period is drawn, picked on the chart itself. Auto follows the period's length. */
+function GrainPicker({ value, onChange }: { value: KpiGrainChoice; onChange: (g: KpiGrainChoice) => void }) {
+  return (
+    <span className="inline-flex rounded-lg p-0.5 ring-1 ring-slate-200 dark:ring-slate-700" role="group" aria-label="Points of the chart">
+      {GRAIN_CHOICES.map((g) => (
+        <button
+          key={g.value}
+          type="button"
+          aria-pressed={value === g.value}
+          onClick={() => onChange(g.value)}
+          className={cn('min-h-[30px] rounded-md px-2 text-xs font-semibold transition-colors', value === g.value ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800')}
+        >
+          {g.label}
+        </button>
+      ))}
+    </span>
+  )
+}
+
+/** The largest defects in their own colour on the stacked columns; the rest together. */
+const STACKED_DEFECTS = 8
+
 /**
- * §15 — Comparisons. The processes side by side: month by month over the
- * trend window (the period does not move it), and over the period at its
- * grain. Then one process picked: its four headline figures, and its
- * machines side by side over the period. Each line chart has its pie: the
- * share of the rejected pieces over the same span.
+ * §15 — Comparisons. First what does not move with the group picked: a card
+ * for each group (its reject rate and PPM over the period, its months), and
+ * the groups month by month with their pie. Then one group picked: its
+ * machines over the period (days, weeks or months, picked on the chart) and
+ * month by month, and how its defects spread over its machines. Last, roll
+ * forming's raw material.
  */
 function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds }) {
   const [process, setProcess] = usePersistedState<Process>('qc-dash:compare-process', 'forming')
   const picked: Process = PROCESSES.includes(process) ? process : 'forming'
-  /** Machines chosen for the lines; none chosen draws the busiest ones. Cleared when the process changes. */
+  const [grain, setGrain] = usePersistedState<KpiGrainChoice>('qc-dash:compare-grain', 'auto')
+  /** Machines chosen for the lines; none chosen draws the most rejected ones. Cleared when the group changes. */
   const [lineMachines, setLineMachines] = useState<string[]>([])
-  const { data, isFetching } = useKpiComparisons({ from: general.from, to: general.to, process: picked })
-  const { data: breakdown } = useKpiBreakdown({ from: general.from, to: general.to, processes: [picked] })
+  const { data, isFetching } = useKpiComparisons({ from: general.from, to: general.to, process: picked, grain })
   const [drill, setDrill] = useState<DrillSpec | null>(null)
   const processName = PROCESS_LABEL[picked]
   const periodWords = describeRange({ from: general.from, to: general.to })
   const windowWordsText = data ? describeRange({ from: data.window.from, to: data.window.to }) : ''
 
-  // A process keeps its colour on every chart and pie of the tab.
+  // A group keeps its colour on every chart and pie of the tab.
   const processLines = (block: KpiCompareBlock) =>
     PROCESSES.map((p) => block.series.find((x) => x.key === p))
       .filter((x): x is KpiCompareSeries => x !== undefined && x.made > 0)
@@ -729,25 +760,100 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
       .map((x) => ({ key: x.key, label: PROCESS_LABEL[x.key as Process] ?? x.key, value: x.productionDefectPieces, className: PIE_CLASSES[PROCESSES.indexOf(x.key as Process)] }))
   const openProcess = (block: KpiCompareBlock, words: string) => (sl: PieSlice) => sl.key && setDrill({ title: `${sl.label}: rejected pieces`, subtitle: words, query: { from: block.from, to: block.to, processes: [sl.key as Process] } })
 
-  // The machines in the pie's order — most rejected first — so a machine's line has its slice's colour.
+  // The machines, most rejected first; a machine seen only in the months comes after. A machine keeps its colour on both charts.
   const machines = [...(data?.machines.series ?? [])].filter((m) => m.made > 0).sort((a, b) => b.productionDefectPieces - a.productionDefectPieces || b.made - a.made || a.label.localeCompare(b.label))
-  const colourOf = (code: string) => {
-    const rank = machines.findIndex((m) => m.key === code)
-    return PIE_STROKES[Math.min(rank, PIE_STROKES.length - 1)]
-  }
-  const chosen = lineMachines.filter((c) => machines.some((m) => m.key === c))
-  const drawn = (chosen.length ? machines.filter((m) => chosen.includes(m.key)) : machines).slice(0, LINE_CLASSES.length)
-  const machineLines = drawn.map((m) => ({ label: m.label, values: m.points.map((pt) => pt.defectRatePct), className: colourOf(m.key) }))
-  const leftOut = chosen.length ? Math.max(0, chosen.length - LINE_CLASSES.length) : Math.max(0, machines.length - LINE_CLASSES.length)
+  const monthMachines = (data?.machinesWindow.series ?? []).filter((m) => m.made > 0)
+  const ranked = [...machines.map((m) => m.key), ...monthMachines.map((m) => m.key).filter((k) => !machines.some((m) => m.key === k))]
+  const colourOf = (code: string) => PIE_STROKES[Math.min(Math.max(ranked.indexOf(code), 0), PIE_STROKES.length - 1)]
+  const options = ranked.map((k) => machines.find((m) => m.key === k) ?? monthMachines.find((m) => m.key === k)!)
+  const chosen = lineMachines.filter((c) => ranked.includes(c))
+  const drawnKeys = (chosen.length ? chosen : ranked).slice(0, LINE_CLASSES.length)
+  const linesOf = (series: KpiCompareSeries[]) =>
+    drawnKeys
+      .map((k) => series.find((m) => m.key === k))
+      .filter((m): m is KpiCompareSeries => m !== undefined && m.made > 0)
+      .map((m) => ({ label: m.label, values: m.points.map((pt) => pt.defectRatePct), className: colourOf(m.key) }))
+  const leftOut = Math.max(0, (chosen.length || ranked.length) - LINE_CLASSES.length)
+  const machinePicker = ranked.length > 0 && (
+    <MultiSelectMenu
+      options={options.map((m) => ({ value: m.key, label: m.label, sub: m.factory }))}
+      selected={chosen}
+      onChange={setLineMachines}
+      allLabel={ranked.length > LINE_CLASSES.length ? `The ${LINE_CLASSES.length} most rejected` : 'All machines'}
+      noun="machines"
+      ariaLabel="Machines drawn"
+    />
+  )
 
-  const pickQuery: KpiDrillQuery = { from: general.from, to: general.to, processes: [picked] }
-  const fp = breakdown ? firstPartOf(breakdown.firstPart, []) : null
+  // The defects on the machines: the largest in their own colour, the rest as Others.
+  const defects = data?.defects
+  const topDefects = (defects?.rows ?? []).slice(0, STACKED_DEFECTS)
+  const restDefects = (defects?.rows ?? []).slice(STACKED_DEFECTS)
+  const defectColumns = (defects?.machines ?? []).map((m, i) => ({
+    label: m.label,
+    segments: [
+      ...topDefects.map((d, k) => ({ label: d.defectName, value: d.byMachine[i], className: PIE_CLASSES[k] })),
+      ...(restDefects.length ? [{ label: `Others (${restDefects.length})`, value: restDefects.reduce((n, d) => n + d.byMachine[i], 0), className: PIE_CLASSES[PIE_CLASSES.length - 1] }] : []),
+    ],
+  }))
+  const defectLegend = [...topDefects.map((d, k) => ({ label: d.defectName, className: PIE_CLASSES[k] })), ...(restDefects.length ? [{ label: `Others (${restDefects.length})`, className: PIE_CLASSES[PIE_CLASSES.length - 1] }] : [])]
+  const defectTotal = (defects?.rows ?? []).reduce((n, d) => n + d.pieces, 0)
+
   const empty = (words: string) => <p className="py-10 text-center text-sm text-slate-400">Nothing was closed with a final quantity {words}.</p>
+  const pickQuery: KpiDrillQuery = { from: general.from, to: general.to, processes: [picked] }
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Process to compare">
-        <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Process</span>
+      <Board
+        page="comparisons"
+        className={cn('transition-opacity', isFetching && 'opacity-70')}
+        widgets={[
+          { id: 'c.groupCards', title: 'Reject rate of each group', labelled: false, node: data ? (
+            <div className="grid h-full grid-cols-2 gap-3 overflow-auto md:grid-cols-4">
+              {PROCESSES.map((p) => {
+                const inPeriod = data.period.series.find((x) => x.key === p)
+                const months = data.window.series.find((x) => x.key === p)?.points ?? []
+                const rate = inPeriod?.defectRatePct ?? null
+                const tone = toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)
+                return (
+                  <Card key={p} className={cn('p-4 ring-1', TONE_RING[tone])}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{PROCESS_LABEL[p]}</p>
+                        <p className="truncate text-[11px] text-slate-400">{num(inPeriod?.productionDefectPieces ?? 0)} rejected of {num(inPeriod?.made ?? 0)} made</p>
+                      </div>
+                      <TrendMark delta={monthTrend(months).delta} />
+                    </div>
+                    <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
+                      {pctStr(rate)}
+                      <span className="ml-1 text-[11px] font-semibold uppercase text-slate-400">reject</span>
+                    </p>
+                    <div className="mt-1 flex items-end justify-between gap-2">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{ppmStr(rate)}</span> PPM
+                      </p>
+                      <Sparkline values={months.map((m) => m.defectRatePct)} className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
+                    </div>
+                  </Card>
+                )
+              })}
+            </div>
+          ) : <div className="skeleton h-full min-h-[7rem]" /> },
+          { id: 'c.processMonths', title: 'Groups by month', node: (
+            <Section title="Groups by month" hint={`Each group's reject rate month by month, ${windowWordsText}: from the first month with production and at most the last ${GENERAL_MONTHS}. Neither the period nor the group picked moves it.`} icon={<Activity className="h-4 w-4" />}>
+              {!data ? <div className="skeleton h-48" /> : data.window.series.some((x) => x.made > 0) ? <LineChart labels={data.window.buckets.map((b) => bucketLabel(b, 'month'))} series={processLines(data.window)} /> : empty('in these months')}
+            </Section>
+          ) },
+          { id: 'c.processMonthsPie', title: 'Rejected by group, by month', node: (
+            <Section title="Rejected by group" hint={`Each group's share of the rejected pieces, ${windowWordsText}. Tap a slice for the sessions behind it.`} icon={<Layers className="h-4 w-4" />}>
+              {data ? <PieChart centerLabel="rejected" slices={processSlices(data.window)} onPick={openProcess(data.window, windowWordsText)} /> : <div className="skeleton h-44" />}
+            </Section>
+          ) },
+        ]}
+      />
+
+      <div className="flex flex-wrap items-center gap-2 pt-2" role="group" aria-label="Group to compare">
+        <h2 className="mr-1 text-lg font-extrabold tracking-tight">Machines of a group</h2>
         {PROCESSES.map((p) => {
           const on = p === picked
           return (
@@ -766,71 +872,70 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
             </button>
           )
         })}
-        <span className="text-xs text-slate-400">The figures and the machines follow it; the process charts do not.</span>
       </div>
 
       <Board
         page="comparisons"
         className={cn('transition-opacity', isFetching && 'opacity-70')}
         widgets={[
-          { id: 'c.tiles', title: 'Reject rate, PPM, first part of the process', labelled: false, node: breakdown && fp ? (
-            <PickTiles
-              title={processName}
-              data={breakdown}
-              t={t}
-              fp={fp}
-              openRejects={(what) => setDrill({ title: what, subtitle: `${processName} · ${periodWords}`, query: pickQuery })}
-              openFirstPart={(what, qtyFrom) => setDrill({ title: what, subtitle: `${processName} · ${periodWords}`, firstPart: { ...pickQuery, qtyFrom } })}
-            />
-          ) : <div className="skeleton h-full min-h-[8rem]" /> },
-          { id: 'c.processMonths', title: 'Processes by month', node: (
-            <Section title="Processes by month" hint={`Each process's reject rate month by month, ${windowWordsText}: from the first month with production and at most the last ${GENERAL_MONTHS}. Neither the period strip nor the process picked moves it.`} icon={<Activity className="h-4 w-4" />}>
-              {!data ? <div className="skeleton h-48" /> : data.window.series.some((x) => x.made > 0) ? <LineChart labels={data.window.buckets.map((b) => bucketLabel(b, 'month'))} series={processLines(data.window)} /> : empty('in these months')}
-            </Section>
-          ) },
-          { id: 'c.processMonthsPie', title: 'Rejected by process, by month', node: (
-            <Section title="Rejected by process" hint={`Each process's share of the rejected pieces, ${windowWordsText}. Tap a slice for the sessions behind it.`} icon={<Layers className="h-4 w-4" />}>
-              {data ? <PieChart centerLabel="rejected" slices={processSlices(data.window)} onPick={openProcess(data.window, windowWordsText)} /> : <div className="skeleton h-44" />}
-            </Section>
-          ) },
-          { id: 'c.processPeriod', title: 'Processes over the period', node: (
-            <Section title="Processes over the period" hint={`Each process's reject rate over ${periodWords}, a point ${data ? GRAIN_WORD[data.period.grain] : 'a day'}; a line runs on over the points when nothing was made. The period strip moves it; the process picked does not.`} icon={<Activity className="h-4 w-4" />}>
-              {!data ? <div className="skeleton h-48" /> : data.period.series.some((x) => x.made > 0) ? <LineChart labels={data.period.buckets.map((b) => bucketLabel(b, data.period.grain))} series={processLines(data.period)} connectGaps /> : empty('in this period')}
-            </Section>
-          ) },
-          { id: 'c.processPeriodPie', title: 'Rejected by process, over the period', node: (
-            <Section title="Rejected by process, the period" hint={`Each process's share of the rejected pieces over ${periodWords}. Tap a slice for the sessions behind it.`} icon={<Layers className="h-4 w-4" />}>
-              {data ? <PieChart centerLabel="rejected" slices={processSlices(data.period)} onPick={openProcess(data.period, periodWords)} /> : <div className="skeleton h-44" />}
-            </Section>
-          ) },
-          { id: 'c.machines', title: 'Machines of the process over the period', node: (
+          { id: 'c.machines', title: 'Machines of the group over the period', node: (
             <Section
-              title={`${processName}: machines`}
+              title={`${processName}: machines over the period`}
               hint={`Each machine's reject rate over ${periodWords}, a point ${data ? GRAIN_WORD[data.machines.grain] : 'a day'}; a line runs on over the points when nothing was made.${leftOut > 0 ? ` ${leftOut} more ${leftOut === 1 ? 'machine is' : 'machines are'} not drawn: choose up to ${LINE_CLASSES.length}.` : ''}`}
               icon={<Factory className="h-4 w-4" />}
-              action={machines.length > 0 && (
-                <MultiSelectMenu
-                  options={machines.map((m) => ({ value: m.key, label: m.label, sub: m.factory }))}
-                  selected={chosen}
-                  onChange={setLineMachines}
-                  allLabel={machines.length > LINE_CLASSES.length ? `The ${LINE_CLASSES.length} busiest` : 'All machines'}
-                  noun="machines"
-                  ariaLabel="Machines drawn"
-                />
-              )}
+              action={<span className="flex flex-wrap items-center justify-end gap-2"><GrainPicker value={grain} onChange={setGrain} />{machinePicker}</span>}
             >
-              {!data ? <div className="skeleton h-56" /> : machines.length ? <LineChart labels={data.machines.buckets.map((b) => bucketLabel(b, data.machines.grain))} series={machineLines} height={260} connectGaps /> : empty(`on ${processName.toLowerCase()} in this period`)}
+              {!data ? <div className="skeleton h-56" /> : machines.length ? <LineChart labels={data.machines.buckets.map((b) => bucketLabel(b, data.machines.grain))} series={linesOf(data.machines.series)} height={260} connectGaps /> : empty(`on ${processName.toLowerCase()} in this period`)}
             </Section>
           ) },
-          { id: 'c.machinesPie', title: 'Rejected by machine of the process', node: (
-            <Section title={`${processName}: rejected by machine`} hint={`Each machine's share of the process's rejected pieces over ${periodWords}. Tap a slice for the sessions behind it.`} icon={<Layers className="h-4 w-4" />}>
-              {data ? (
-                <PieChart
-                  centerLabel="rejected"
-                  slices={slicesOf(machines.map((m) => ({ key: m.key, label: m.label, sub: m.factory, value: m.productionDefectPieces })))}
-                  onPick={(sl) => sl.key && setDrill({ title: `${sl.label}: rejected pieces`, subtitle: periodWords, query: { ...pickQuery, workCenterCodes: [sl.key] } })}
-                />
-              ) : <div className="skeleton h-44" />}
+          { id: 'c.machinesMonths', title: 'Machines of the group by month', node: (
+            <Section title={`${processName}: machines by month`} hint={`Each machine's reject rate month by month, ${windowWordsText}. The period does not move it; the machines are the ones drawn beside.`} icon={<Activity className="h-4 w-4" />}>
+              {!data ? <div className="skeleton h-56" /> : monthMachines.length ? <LineChart labels={data.machinesWindow.buckets.map((b) => bucketLabel(b, 'month'))} series={linesOf(data.machinesWindow.series)} height={260} /> : empty(`on ${processName.toLowerCase()} in these months`)}
+            </Section>
+          ) },
+          { id: 'c.machineDefects', title: 'Defects on each machine of the group', node: (
+            <Section title={`${processName}: defects on each machine`} hint={`The rejected pieces of each machine over ${periodWords}, stacked by defect: the ${STACKED_DEFECTS} largest in their own colour, the rest as Others. Hover a machine for its defects.`} icon={<AlertTriangle className="h-4 w-4" />}>
+              {!data ? <div className="skeleton h-56" /> : defectTotal > 0 ? <StackedColumnChart columns={defectColumns} legend={defectLegend} height={260} /> : <p className="py-10 text-center text-sm text-slate-400">No rejected piece on {processName.toLowerCase()} in this period.</p>}
+            </Section>
+          ) },
+          { id: 'c.machineDefectsTable', title: 'Defects of the group, most first', node: (
+            <Section title={`${processName}: defects, most first`} hint={`Each defect's rejected pieces over ${periodWords}, on each machine and in all. Tap a defect for the sessions behind it.`} icon={<ClipboardList className="h-4 w-4" />}>
+              {!defects ? (
+                <div className="skeleton h-48" />
+              ) : defects.rows.length === 0 ? (
+                <p className="py-10 text-center text-sm text-slate-400">No rejected piece on {processName.toLowerCase()} in this period.</p>
+              ) : (
+                <div className="min-h-0 overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-white text-left text-[11px] uppercase tracking-wide text-slate-400 dark:bg-slate-900">
+                      <tr>
+                        <th className="px-2 py-1.5 font-semibold">Defect</th>
+                        {defects.machines.map((m) => (
+                          <th key={m.key} className="whitespace-nowrap px-2 py-1.5 text-right font-semibold" title={m.label}>
+                            {m.label.length > 14 ? `${m.label.slice(0, 13)}…` : m.label}
+                          </th>
+                        ))}
+                        <th className="px-2 py-1.5 text-right font-semibold">Total</th>
+                        <th className="px-2 py-1.5 text-right font-semibold">Share</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {defects.rows.map((d) => (
+                        <tr key={d.defectName} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setDrill({ title: `${d.defectName}: rejected pieces`, subtitle: `${processName} · ${periodWords}`, query: { ...pickQuery, defect: d.defectName } })}>
+                          <td className="whitespace-nowrap px-2 py-1.5 font-medium" dir="auto">{d.defectName}</td>
+                          {d.byMachine.map((v, i) => (
+                            <td key={defects.machines[i].key} className={cn('px-2 py-1.5 text-right tabular-nums', v === 0 && 'text-slate-300 dark:text-slate-600')}>
+                              {num(v)}
+                            </td>
+                          ))}
+                          <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{num(d.pieces)}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{pctStr(pct(d.pieces, defectTotal))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </Section>
           ) },
         ]}
@@ -844,11 +949,16 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
 /** A thickness in a filter: millimetres as typed, the empty string for every thickness. */
 const thicknessText = (t: number): string => String(Number(t.toFixed(3)))
 
+/** The supplier filter's value for the coils with no supplier recorded. */
+const NO_SUPPLIER = '__none__'
+
 /**
  * §15 — Comparisons, roll forming's raw material: the reject rate and PPM by
- * coil supplier and by thickness, and one thickness and material (black or
- * galvanized, from the coil's grade) over the period. A slicer of the roll
- * forming machines narrows all three; the process picked above does not.
+ * coil supplier and by thickness, one supplier, thickness and material (black
+ * or galvanized, from the coil's grade) over the period, and every supplier,
+ * thickness and material together in a table; a row of the table puts the
+ * trend on it. A slicer of the roll forming machines narrows all of it; the
+ * group picked above does not.
  */
 function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiThresholds }) {
   const { data: allMachines = [] } = useMaster('machines')
@@ -856,9 +966,13 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
   const [machineCodes, setMachineCodes] = usePersistedState<string[]>('qc-dash:rf-machines', [])
   const [thickness, setThickness] = usePersistedState<string>('qc-dash:rf-thickness', '')
   const [material, setMaterial] = usePersistedState<MaterialKind | 'all'>('qc-dash:rf-material', 'all')
+  /** '' every supplier; NO_SUPPLIER the coils with none recorded; else the supplier's name. */
+  const [supplier, setSupplier] = usePersistedState<string>('qc-dash:rf-supplier', '')
+  const [grain, setGrain] = usePersistedState<KpiGrainChoice>('qc-dash:rf-grain', 'auto')
   const chosen = machineCodes.filter((c) => rollForming.some((m) => m.code.toLowerCase() === c.toLowerCase()))
   const picked = thickness === '' ? null : Number(thickness)
-  const { data, isFetching } = useKpiMaterials({ from, to, workCenterCodes: chosen, thickness: picked !== null && Number.isFinite(picked) ? picked : null, material })
+  const supplierPick = supplier === '' ? null : supplier === NO_SUPPLIER ? '' : supplier
+  const { data, isFetching } = useKpiMaterials({ from, to, workCenterCodes: chosen, thickness: picked !== null && Number.isFinite(picked) ? picked : null, material, supplier: supplierPick, grain })
   const periodWords = describeRange({ from, to })
   const scope = chosen.length === 0 ? 'every roll forming machine' : chosen.length === 1 ? (rollForming.find((m) => m.code.toLowerCase() === chosen[0].toLowerCase())?.displayName ?? chosen[0]) : `${chosen.length} roll forming machines`
   const rateTone = (v: number | null) => toneLowIsGood(v, t.defectRateGreen, t.defectRateAmber)
@@ -869,8 +983,28 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
     tone: rateTone(r.defectRatePct),
     text: r.defectRatePct === null ? '—' : `${pctStr(r.defectRatePct)} · ${ppmStr(r.defectRatePct)} PPM`,
   })
-  const trendWhat = `${picked === null ? 'Every thickness' : `${thicknessText(picked)} mm`} · ${material === 'all' ? 'black and galvanized' : MATERIAL_KIND_LABEL[material].toLowerCase()}`
+  const supplierWords = supplierPick === null ? 'every supplier' : supplierPick === '' ? 'no supplier recorded' : supplierPick
+  const trendWhat = `${picked === null ? 'Every thickness' : `${thicknessText(picked)} mm`} · ${material === 'all' ? 'black and galvanized' : MATERIAL_KIND_LABEL[material].toLowerCase()} · ${supplierWords}`
   const selectClass = '!w-auto min-h-[36px] rounded-lg py-1 text-xs font-semibold'
+  const details = data?.details ?? []
+  const filters = useColumnFilters(details, [
+    { key: 'supplier', value: (d) => d.supplier || 'No supplier recorded' },
+    { key: 'thickness', value: (d) => (d.thickness === null ? '—' : thicknessText(d.thickness)), numeric: true },
+    { key: 'material', value: (d) => MATERIAL_KIND_LABEL[d.material] },
+  ])
+  const rowPicked = (d: KpiMaterialDetail) =>
+    supplierPick !== null && supplierPick.toLowerCase() === d.supplier.toLowerCase() && picked !== null && d.thickness !== null && thicknessText(d.thickness) === thicknessText(picked) && material === d.material
+  const pickRow = (d: KpiMaterialDetail) => {
+    if (rowPicked(d)) {
+      setSupplier('')
+      setThickness('')
+      setMaterial('all')
+      return
+    }
+    setSupplier(d.supplier === '' ? NO_SUPPLIER : d.supplier)
+    setThickness(d.thickness === null ? '' : thicknessText(d.thickness))
+    setMaterial(d.material === 'unknown' ? 'all' : d.material)
+  }
 
   return (
     <div className="space-y-3 pt-2">
@@ -884,7 +1018,7 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
           noun="machines"
           ariaLabel="Roll forming machines"
         />
-        <span className="text-xs text-slate-400">The reject rate of what the machines made from each coil, {periodWords}. The process picked above does not move it.</span>
+        <span className="text-xs text-slate-400">The reject rate of what the machines made from each coil, {periodWords}. The group picked above does not move it.</span>
       </div>
       <Board
         page="comparisons"
@@ -914,7 +1048,17 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
               hint={`Pieces made and the reject rate of ${scope} on ${trendWhat.toLowerCase()}, a point ${data ? GRAIN_WORD[data.trend.grain] : 'a day'}. Black or galvanized is read off the coil's grade.`}
               icon={<Activity className="h-4 w-4" />}
               action={
-                <span className="flex flex-nowrap items-center gap-2">
+                <span className="flex flex-wrap items-center justify-end gap-2">
+                  <GrainPicker value={grain} onChange={setGrain} />
+                  <Select value={supplier} onChange={(e) => setSupplier(e.target.value)} className={selectClass} aria-label="Supplier">
+                    <option value="">All suppliers</option>
+                    {(data?.suppliers ?? []).map((r) => (
+                      <option key={r.key || NO_SUPPLIER} value={r.key || NO_SUPPLIER}>
+                        {r.label}
+                      </option>
+                    ))}
+                    {supplier !== '' && supplier !== NO_SUPPLIER && !(data?.suppliers ?? []).some((r) => r.key === supplier) && <option value={supplier}>{supplier}</option>}
+                  </Select>
                   <Select value={thickness} onChange={(e) => setThickness(e.target.value)} className={selectClass} aria-label="Thickness">
                     <option value="">All thicknesses</option>
                     {(data?.thicknessOptions ?? []).map((v) => (
@@ -939,10 +1083,57 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
                   <p className="mb-2 text-sm text-slate-500 dark:text-slate-400">
                     Over the period: <span className={cn('font-bold', TONE_TEXT[rateTone(data.trend.total.defectRatePct)])}>{pctStr(data.trend.total.defectRatePct)}</span> · {ppmStr(data.trend.total.defectRatePct)} PPM · {num(data.trend.total.productionDefectPieces)} rejected of {num(data.trend.total.made)} made
                   </p>
-                  <TrendChart points={data.trend.buckets.map((b, i) => ({ label: bucketLabel(b, data.trend.grain), bar: data.trend.points[i].made, line: data.trend.points[i].defectRatePct }))} barLabel="Pieces made" lineLabel="Reject rate" />
+                  <TrendChart points={data.trend.buckets.map((b, i) => ({ label: bucketLabel(b, data.trend.grain), bar: data.trend.points[i].made, line: data.trend.points[i].defectRatePct }))} barLabel="Pieces made" lineLabel="Reject rate" connectGaps />
                 </>
               ) : (
                 <p className="py-10 text-center text-sm text-slate-400">Nothing of {trendWhat.toLowerCase()} was made on {scope} in this period.</p>
+              )}
+            </Section>
+          ) },
+          { id: 'c.materialTable', title: 'Roll forming: every supplier, thickness and material', node: (
+            <Section title="Every supplier, thickness and material" hint={`What ${scope} made of each supplier's coils of each thickness, black or galvanized, ${periodWords}. Filter a column; tap a row to follow it over the period above, tap it again to let it go.`} icon={<Table2 className="h-4 w-4" />}>
+              {!data ? (
+                <div className="skeleton h-48" />
+              ) : details.length === 0 ? (
+                <p className="py-10 text-center text-sm text-slate-400">Nothing was made on {scope} in this period.</p>
+              ) : (
+                <div className="min-h-0 overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-white text-left text-[11px] uppercase tracking-wide text-slate-400 dark:bg-slate-900">
+                      <tr>
+                        <FilterTh filters={filters} column="supplier" label="Supplier" />
+                        <FilterTh filters={filters} column="thickness" label="Thickness" />
+                        <FilterTh filters={filters} column="material" label="Material" />
+                        <th className="px-2 py-1.5 text-right font-semibold">Made</th>
+                        <th className="px-2 py-1.5 text-right font-semibold">Rejected</th>
+                        <th className="px-2 py-1.5 text-right font-semibold">Reject rate</th>
+                        <th className="px-2 py-1.5 text-right font-semibold">PPM</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {filters.rows.map((d) => {
+                        const on = rowPicked(d)
+                        return (
+                          <tr
+                            key={`${d.supplier}|${d.thickness ?? ''}|${d.material}`}
+                            className={cn('cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50', on && 'bg-brand-50 dark:bg-brand-500/10')}
+                            onClick={() => pickRow(d)}
+                            aria-selected={on}
+                          >
+                            <td className="px-2 py-1.5 font-medium" dir="auto">{d.supplier || 'No supplier recorded'}</td>
+                            <td className="px-2 py-1.5 tabular-nums">{d.thickness === null ? '—' : `${thicknessText(d.thickness)} mm`}</td>
+                            <td className="px-2 py-1.5">{MATERIAL_KIND_LABEL[d.material]}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{num(d.made)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{num(d.productionDefectPieces)}</td>
+                            <td className={cn('px-2 py-1.5 text-right font-semibold tabular-nums', TONE_TEXT[rateTone(d.defectRatePct)])}>{pctStr(d.defectRatePct)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{ppmStr(d.defectRatePct)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                  <FilterNote filters={filters} total={details.length} />
+                </div>
               )}
             </Section>
           ) },

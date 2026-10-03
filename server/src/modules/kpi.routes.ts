@@ -17,7 +17,7 @@ import {
   INSIGHT_KEY_MAX,
   KPI_DRILL_LIMIT,
   RANKING_WEIGHTS,
-  compareGrain,
+  resolveGrain,
   pct,
   rankInspectors,
   type KpiBreakdown,
@@ -51,6 +51,7 @@ import {
   loadDiscipline,
   loadFactoryMonths,
   loadCompareBlock,
+  loadMachineDefects,
   loadMaterials,
   loadFirstDataMonth,
   loadDrill,
@@ -157,7 +158,9 @@ const layoutItem = z.object({
 // The comparisons page came later: a client that does not send it keeps its defaults.
 const LayoutBody = z.object({ layouts: z.object({ general: z.array(layoutItem).max(100), details: z.array(layoutItem).max(100), comparisons: z.array(layoutItem).max(100).default([]) }) })
 
-const CompareQuery = z.object({ from: day, to: day, process: z.enum(PROCESSES as unknown as [Process, ...Process[]]) })
+const grainChoice = z.enum(['auto', 'day', 'week', 'month']).default('auto')
+
+const CompareQuery = z.object({ from: day, to: day, process: z.enum(PROCESSES as unknown as [Process, ...Process[]]), grain: grainChoice })
 
 const MaterialsQuery = z.object({
   from: day,
@@ -171,6 +174,11 @@ const MaterialsQuery = z.object({
     .transform((v) => (v ? Array.from(new Set(v.split(',').map((c) => c.trim()).filter(Boolean))) : [])),
   thickness: z.coerce.number().positive().max(1000).optional(),
   material: z.enum(['all', 'black', 'galvanized']).default('all'),
+  /** One supplier for the trend. */
+  supplier: z.string().trim().min(1).max(200).optional(),
+  /** The trend reads the coils with no supplier recorded. */
+  noSupplier: z.enum(['1']).optional(),
+  grain: grainChoice,
 })
 
 const rate = z.number().min(0).max(100)
@@ -572,13 +580,17 @@ export function kpiRoutes(ctx: AppContext): Router {
     const q = parse(CompareQuery, req.query)
     checkRange(q.from, q.to, 'Period')
     const { today, windowFrom } = await trendWindow(tz)
-    const grain = compareGrain(q.from, q.to)
-    const [window, period, machines] = await Promise.all([
+    const grain = resolveGrain(q.grain, q.from, q.to)
+    const ofProcess: PeriodFilters = { tz, from: q.from, to: q.to, processes: [q.process] }
+    const [window, period, machines, machinesWindow] = await Promise.all([
       loadCompareBlock(ctx.db, { tz, from: windowFrom, to: today }, 'month', 'process'),
-      loadCompareBlock(ctx.db, { tz, from: q.from, to: q.to }, grain, 'process'),
-      loadCompareBlock(ctx.db, { tz, from: q.from, to: q.to, processes: [q.process] }, grain, 'machine'),
+      // The group cards read the period's totals only: a month a point keeps the query small whatever is drawn below.
+      loadCompareBlock(ctx.db, { tz, from: q.from, to: q.to }, 'month', 'process'),
+      loadCompareBlock(ctx.db, ofProcess, grain, 'machine'),
+      loadCompareBlock(ctx.db, { tz, from: windowFrom, to: today, processes: [q.process] }, 'month', 'machine'),
     ])
-    const body: KpiComparisons = { generatedAt: new Date().toISOString(), process: q.process, window, period, machines }
+    const defects = await loadMachineDefects(ctx.db, ofProcess, [...machines.series].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })).map((m) => ({ key: m.key, label: m.label })))
+    const body: KpiComparisons = { generatedAt: new Date().toISOString(), process: q.process, window, period, machines, machinesWindow, defects }
     res.json(body)
   })
 
@@ -592,12 +604,12 @@ export function kpiRoutes(ctx: AppContext): Router {
     checkRange(q.from, q.to, 'Period')
     if (q.workCenterCode.length > 200) throw badRequest('At most 200 machines.')
     const codes = q.workCenterCode.map((c) => c.toLowerCase())
-    const grain = compareGrain(q.from, q.to)
+    const grain = resolveGrain(q.grain, q.from, q.to)
     const body = await loadMaterials(
       ctx.db,
       { tz, from: q.from, to: q.to, processes: ['forming'], workCenterCodes: codes.length ? codes : undefined },
       grain,
-      { thickness: q.thickness ?? null, material: q.material },
+      { thickness: q.thickness ?? null, material: q.material, supplier: q.noSupplier ? '' : (q.supplier ?? null) },
     )
     const out: KpiMaterials = { generatedAt: new Date().toISOString(), workCenterCodes: q.workCenterCode, ...body }
     res.json(out)

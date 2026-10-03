@@ -120,6 +120,19 @@ describe('§15 — roll forming raw material', () => {
     expect((await materials('&thickness=2&material=black')).body.trend.total.made).toBe(0)
     expect((await materials('&material=black')).body.trend.total).toMatchObject({ made: 230, productionDefectPieces: 5 })
     expect((await materials()).body.trend.total).toMatchObject({ made: 401, productionDefectPieces: 11 })
+    // One supplier, or the coils with none recorded.
+    expect((await materials('&supplier=Suez%20Steel')).body.trend.total).toMatchObject({ made: 130, productionDefectPieces: 5 })
+    expect((await materials('&noSupplier=1')).body.trend.total).toMatchObject({ made: 41, productionDefectPieces: 1 })
+    expect((await materials('&grain=week')).body.trend.grain).toBe('week')
+  })
+
+  it('lists every supplier, thickness and kind together, for the table', async () => {
+    const { details } = (await materials()).body
+    expect(details.map((d) => [d.supplier, d.thickness, d.material, d.made, d.productionDefectPieces])).toEqual([
+      ['Ezz Steel', 1.5, 'black', 230, 5],
+      ['Suez Steel', 2, 'galvanized', 130, 5],
+      ['', null, 'unknown', 41, 1],
+    ])
   })
 
   it('narrows to the roll forming machines picked', async () => {

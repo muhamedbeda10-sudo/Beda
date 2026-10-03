@@ -1049,16 +1049,17 @@ export const DASHBOARD_WIDGETS: Record<DashboardPage, { id: string; title: strin
     { id: 'd.discipline', title: 'Recording discipline', w: 12, h: 7 },
   ],
   comparisons: [
-    { id: 'c.tiles', title: 'Reject rate, PPM, first part of the process', w: 12, h: 5 },
-    { id: 'c.processMonths', title: 'Processes by month', w: 8, h: 9 },
-    { id: 'c.processMonthsPie', title: 'Rejected by process, by month', w: 4, h: 9 },
-    { id: 'c.processPeriod', title: 'Processes over the period', w: 8, h: 9 },
-    { id: 'c.processPeriodPie', title: 'Rejected by process, over the period', w: 4, h: 9 },
-    { id: 'c.machines', title: 'Machines of the process over the period', w: 8, h: 10 },
-    { id: 'c.machinesPie', title: 'Rejected by machine of the process', w: 4, h: 10 },
+    { id: 'c.groupCards', title: 'Reject rate of each group', w: 12, h: 4 },
+    { id: 'c.processMonths', title: 'Groups by month', w: 8, h: 9 },
+    { id: 'c.processMonthsPie', title: 'Rejected by group, by month', w: 4, h: 9 },
+    { id: 'c.machines', title: 'Machines of the group over the period', w: 7, h: 10 },
+    { id: 'c.machinesMonths', title: 'Machines of the group by month', w: 5, h: 10 },
+    { id: 'c.machineDefects', title: 'Defects on each machine of the group', w: 7, h: 10 },
+    { id: 'c.machineDefectsTable', title: 'Defects of the group, most first', w: 5, h: 10 },
     { id: 'c.suppliers', title: 'Roll forming: reject rate by coil supplier', w: 6, h: 9 },
     { id: 'c.thickness', title: 'Roll forming: reject rate by thickness', w: 6, h: 9 },
     { id: 'c.thicknessTrend', title: 'Roll forming: one thickness and material over the period', w: 12, h: 10 },
+    { id: 'c.materialTable', title: 'Roll forming: every supplier, thickness and material', w: 12, h: 10 },
   ],
 }
 
@@ -1225,15 +1226,34 @@ export interface KpiCompareBlock {
   series: KpiCompareSeries[]
 }
 
+/** A grain asked for: one of the three, or `auto` for the period's own (compareGrain). */
+export type KpiGrainChoice = KpiGrain | 'auto'
+
+/** Each defect's rejected pieces on each machine of a process, most first. */
+export interface KpiMachineDefects {
+  /** The machines, in the order of `byMachine`. */
+  machines: { key: string; label: string }[]
+  rows: { defectName: string; pieces: number; byMachine: number[] }[]
+}
+
 export interface KpiComparisons {
   generatedAt: string
   process: Process
   /** The processes month by month over the trend window: the period does not move it. */
   window: KpiCompareBlock
-  /** The processes over the period, at its grain. */
+  /** The processes over the period: their figures are the group cards. */
   period: KpiCompareBlock
-  /** The machines of `process` over the period, at its grain. */
+  /** The machines of `process` over the period, at the grain asked for. */
   machines: KpiCompareBlock
+  /** The machines of `process` month by month over the trend window. */
+  machinesWindow: KpiCompareBlock
+  /** The rejected pieces of `process`'s machines over the period, by defect. */
+  defects: KpiMachineDefects
+}
+
+/** The grain a chart is drawn at: the one asked for, else the period's own. */
+export function resolveGrain(choice: KpiGrainChoice | undefined, from: string, to: string): KpiGrain {
+  return choice === undefined || choice === 'auto' ? compareGrain(from, to) : choice
 }
 
 // ---- Raw material on roll forming (§15) --------------------------------------
@@ -1273,6 +1293,13 @@ export interface KpiThicknessRow extends KpiMaterialRow {
   galvanized: KpiComparePoint
 }
 
+/** One supplier, thickness and kind of steel together: a row of the raw material table. */
+export interface KpiMaterialDetail extends KpiComparePoint {
+  supplier: string
+  thickness: number | null
+  material: MaterialKind
+}
+
 export interface KpiMaterials {
   generatedAt: string
   from: string
@@ -1285,10 +1312,14 @@ export interface KpiMaterials {
   thicknesses: KpiThicknessRow[]
   /** The thicknesses seen in the period, for the trend's filter. */
   thicknessOptions: number[]
+  /** Every supplier, thickness and kind seen, most made first. */
+  details: KpiMaterialDetail[]
   trend: {
     /** null: every thickness. */
     thickness: number | null
     material: MaterialKind | 'all'
+    /** null: every supplier; '' is the coils with none recorded. */
+    supplier: string | null
     grain: KpiGrain
     buckets: KpiCompareBucket[]
     points: KpiComparePoint[]

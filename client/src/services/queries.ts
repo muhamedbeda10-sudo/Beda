@@ -48,7 +48,7 @@ import type {
   ChatMessagesResponse,
   ChatUnreadResponse,
 } from '@qc/shared/api'
-import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiMaterials, MaterialKind, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
+import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiGrainChoice, KpiMaterials, MaterialKind, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
 import type { DashboardLayoutResponse, HiddenInsightsResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
@@ -85,7 +85,7 @@ export const keys = {
   kpiSpan: ['kpi', 'span'] as const,
   kpiGeneral: (range: KpiRange) => ['kpi', 'general', range] as const,
   kpiBreakdown: (filters: KpiBreakdownFilters) => ['kpi', 'breakdown', filters] as const,
-  kpiComparisons: (q: { from: string; to: string; process: Process }) => ['kpi', 'comparisons', q] as const,
+  kpiComparisons: (q: ComparisonsQuery) => ['kpi', 'comparisons', q] as const,
   kpiMaterials: (q: MaterialsQuery) => ['kpi', 'materials', q] as const,
   hiddenInsights: ['kpi', 'insights', 'hidden'] as const,
   dashboardLayout: ['kpi', 'layout'] as const,
@@ -498,11 +498,19 @@ export function useKpiOverview(filters: KpiFilters | null) {
 
 /** Where the period strip begins: the first day anything was recorded. */
 /** §15 — the drill-down of the general page: a factory, a process or a few machines, month by month. */
-/** §15 — Comparisons: the processes by month and over the period, and the machines of one process. */
-export function useKpiComparisons(q: { from: string; to: string; process: Process } | null) {
+export interface ComparisonsQuery {
+  from: string
+  to: string
+  process: Process
+  /** How finely the machines' line over the period is drawn. */
+  grain: KpiGrainChoice
+}
+
+/** §15 — Comparisons: the groups by month and over the period, and the machines of one group. */
+export function useKpiComparisons(q: ComparisonsQuery | null) {
   return useQuery({
-    queryKey: keys.kpiComparisons(q ?? { from: '', to: '', process: 'forming' }),
-    queryFn: () => api<KpiComparisons>(`/kpi/comparisons${qs({ from: q?.from, to: q?.to, process: q?.process })}`),
+    queryKey: keys.kpiComparisons(q ?? { from: '', to: '', process: 'forming', grain: 'auto' }),
+    queryFn: () => api<KpiComparisons>(`/kpi/comparisons${qs({ from: q?.from, to: q?.to, process: q?.process, grain: q?.grain })}`),
     enabled: q !== null,
     staleTime: 60_000,
     placeholderData: (prev) => prev,
@@ -516,15 +524,27 @@ export interface MaterialsQuery {
   workCenterCodes: string[]
   thickness: number | null
   material: MaterialKind | 'all'
+  /** One supplier for the trend; '' is the coils with none recorded; null is every one. */
+  supplier: string | null
+  grain: KpiGrainChoice
 }
 
 /** §15 — Comparisons: roll forming's reject rate by coil supplier, by thickness, and one thickness and material over the period. */
 export function useKpiMaterials(q: MaterialsQuery | null) {
   return useQuery({
-    queryKey: keys.kpiMaterials(q ?? { from: '', to: '', workCenterCodes: [], thickness: null, material: 'all' }),
+    queryKey: keys.kpiMaterials(q ?? { from: '', to: '', workCenterCodes: [], thickness: null, material: 'all', supplier: null, grain: 'auto' }),
     queryFn: () =>
       api<KpiMaterials>(
-        `/kpi/materials${qs({ from: q?.from, to: q?.to, workCenterCode: q?.workCenterCodes.join(',') || undefined, thickness: q?.thickness ?? undefined, material: q?.material })}`,
+        `/kpi/materials${qs({
+          from: q?.from,
+          to: q?.to,
+          workCenterCode: q?.workCenterCodes.join(',') || undefined,
+          thickness: q?.thickness ?? undefined,
+          material: q?.material,
+          supplier: q?.supplier || undefined,
+          noSupplier: q?.supplier === '' ? '1' : undefined,
+          grain: q?.grain,
+        })}`,
       ),
     enabled: q !== null,
     staleTime: 60_000,
