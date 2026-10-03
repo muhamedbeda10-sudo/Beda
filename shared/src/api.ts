@@ -535,6 +535,10 @@ export interface SessionDefectsResponse {
 export interface CorrectDefectRequest {
   disposition: Disposition
   qty: number
+  /** Another of the machine's defects, or "Other" (then `notes` describes it). Left out, the type stays. */
+  defectName?: string
+  /** Left out, the notes stay; null or empty clears them. Required when the defect is "Other". */
+  notes?: string | null
   version: number
 }
 

@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-03.1',
+    date: '2026-10-03',
+    title: 'Correct a defect picked by mistake',
+    items: [
+      { text: "Correct defect now changes the defect itself too: pick another of the machine's defects, or Other and describe it. Its photos stay with it; the quantity, disposition and notes are corrected in the same window." },
+      { text: 'An inspector corrects a defect while the session is open; once it is closed, a supervisor or an administrator does. Every change, the defect included, is in the audit log.' },
+    ],
+  },
+  {
     id: '2026-09-28.93',
     date: '2026-09-28',
     title: 'Dashboard: each administrator arranges their own',

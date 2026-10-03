@@ -2,6 +2,7 @@
 // §7 — a session's defects, listed with their samples, so a Hold can be
 // decided from the board without opening each sample. Deciding one goes
 // through the existing correction, which is what the last case exercises.
+// The correction also changes a defect's type picked by mistake (§9.4).
 // ============================================================================
 
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
@@ -72,5 +73,62 @@ describe('a session’s defects, for deciding Holds from the board', () => {
     expect(after.defects.filter((d) => d.disposition === 'Hold').map((d) => d.defectName)).toEqual(['Edge'])
     const s = (await app.api<SessionWithOrder>('GET', `/api/sessions/${session.id}`, { token: inspector.token })).body
     expect(s.holdCount).toBe(1)
+  })
+})
+
+describe('§9.4 — correcting a defect picked by mistake', () => {
+  const defectsOf = async () => (await app.api<SessionDefectsResponse>('GET', `/api/samples/defects?sessionId=${session.id}`, { token: inspector.token })).body.defects
+  const patch = (token: string, id: string, body: Record<string, unknown>) => app.api<DefectResult>('PATCH', `/api/samples/defects/${id}`, { token, body })
+
+  it("lets the inspector change the type to another of the machine's defects while the session is open, and audits it", async () => {
+    const edge = (await defectsOf()).find((d) => d.sampleIndex === 2 && d.defectName === 'Edge')!
+    const res = await patch(inspector.token, edge.id, { defectName: 'Scratch', disposition: edge.disposition, qty: edge.qty, version: edge.version })
+    expect(res.status).toBe(200)
+    expect(res.body.defectName).toBe('Scratch')
+    expect(res.body.version).toBe(edge.version + 1)
+    const audit = await app.db.query<{ field: string; oldValue: string; newValue: string }>(
+      `SELECT field, old_value AS "oldValue", new_value AS "newValue" FROM audit_log WHERE entity = 'DefectResult' AND entity_id = $1 AND field = 'defectName'`,
+      [edge.id],
+    )
+    expect(audit.rows).toEqual([{ field: 'defectName', oldValue: 'Edge', newValue: 'Scratch' }])
+  })
+
+  it("refuses a name that is not one of the machine's defects", async () => {
+    const d = (await defectsOf())[0]
+    const res = await patch(inspector.token, d.id, { defectName: 'Crack', disposition: d.disposition, qty: d.qty, version: d.version })
+    expect(res.status).toBe(400)
+  })
+
+  it('takes Other only with a description, and stores it as Other', async () => {
+    const d = (await defectsOf())[0]
+    expect((await patch(inspector.token, d.id, { defectName: 'Other', disposition: d.disposition, qty: d.qty, notes: '  ', version: d.version })).status).toBe(400)
+    const res = await patch(inspector.token, d.id, { defectName: 'other', disposition: d.disposition, qty: d.qty, notes: 'Burr on the lip', version: d.version })
+    expect(res.status).toBe(200)
+    expect(res.body.defectName).toBe('Other')
+    expect(res.body.notes).toBe('Burr on the lip')
+    // Back to a listed defect: the description may stay as a note.
+    const back = await patch(inspector.token, d.id, { defectName: 'Edge', disposition: d.disposition, qty: d.qty, version: res.body.version })
+    expect(back.status).toBe(200)
+    expect(back.body.defectName).toBe('Edge')
+    expect(back.body.notes).toBe('Burr on the lip')
+  })
+
+  it('keeps a name the machine no longer lists when only the quantity changes', async () => {
+    const res = await app.api('POST', `/api/sessions/${session.id}/samples`, { token: inspector.token, body: sample([{ name: 'Wavy', disposition: 'Repair' }]) })
+    expect(res.status).toBe(201)
+    const wavy = (await defectsOf()).find((d) => d.defectName === 'Wavy')!
+    const ok = await patch(inspector.token, wavy.id, { defectName: 'Wavy', disposition: 'Repair', qty: 5, version: wavy.version })
+    expect(ok.status).toBe(200)
+    expect(ok.body.qty).toBe(5)
+  })
+
+  it('leaves a closed session to a supervisor or an administrator', async () => {
+    const s = (await app.api<SessionWithOrder>('GET', `/api/sessions/${session.id}`, { token: inspector.token })).body
+    expect((await app.api('POST', `/api/sessions/${session.id}/close`, { token: inspector.token, body: { finalQty: 480, version: s.version } })).status).toBe(200)
+    const d = (await defectsOf())[0]
+    expect((await patch(inspector.token, d.id, { defectName: 'Scratch', disposition: d.disposition, qty: d.qty, version: d.version })).status).toBe(403)
+    const res = await patch(admin.token, d.id, { defectName: 'Scratch', disposition: d.disposition, qty: d.qty, version: d.version })
+    expect(res.status).toBe(200)
+    expect(res.body.defectName).toBe('Scratch')
   })
 })
