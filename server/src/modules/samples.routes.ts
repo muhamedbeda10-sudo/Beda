@@ -7,12 +7,12 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { DISPOSITIONS, type CoilRegisterDetails, type DefectResult, type DimensionResult, type PTRecord, type PTTestedLength, type PaintSampleRecord, type SampleCoil } from '@qc/shared/types'
-import { can, dimensionStatus } from '@qc/shared/rules'
+import { OTHER_DEFECT_NAME, can, dimensionStatus, isOtherDefect } from '@qc/shared/rules'
 import type {
   SessionDefectsResponse, SampleDetail } from '@qc/shared/api'
 import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
-import { ConflictError, forbidden, notFound } from '../lib/errors'
+import { ConflictError, badRequest, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
 import { auditChanges, auditDelete } from '../audit/service'
@@ -215,6 +215,13 @@ export function samplesRoutes(ctx: AppContext): Router {
     res.json(updated)
   })
 
+  /**
+   * §9.4 — correct one defect: its type, its disposition, its quantity, its
+   * notes. A type picked by mistake is changed to another of the machine's
+   * defects, or to "Other" with a description; the defect keeps its photos and
+   * its place on the sample. The name it already carries stays allowed, so a
+   * defect named before the machine's list changed can still be corrected.
+   */
   r.patch('/defects/:id', async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
@@ -222,6 +229,8 @@ export function samplesRoutes(ctx: AppContext): Router {
       z.object({
         disposition: z.enum(DISPOSITIONS as unknown as [string, ...string[]]),
         qty: z.number().positive('Quantity must be greater than zero.'),
+        defectName: z.string().trim().min(1, 'Choose the defect.').max(200).optional(),
+        notes: z.union([z.string().trim().max(2000), z.null()]).optional(),
         version: z.number().int().min(0),
       }),
       req.body,
@@ -238,15 +247,28 @@ export function samplesRoutes(ctx: AppContext): Router {
       assertMayCorrect(user, session.status)
       if (before.version !== body.version) throw new ConflictError(dropNulls(before))
 
+      const defectName = body.defectName ?? before.defectName
+      const notes = body.notes === undefined ? (before.notes ?? null) : body.notes === null || body.notes === '' ? null : body.notes
+      if (defectName.toLowerCase() !== before.defectName.trim().toLowerCase() && !isOtherDefect(defectName)) {
+        const listed = await tx.query(
+          `SELECT 1 FROM work_center_defects WHERE lower(work_center_code) = lower($1) AND lower(btrim(defect_name)) = lower($2) AND deleted_at IS NULL LIMIT 1`,
+          [session.workCenterCode, defectName],
+        )
+        if (listed.rowCount === 0) throw badRequest(`"${defectName}" is not one of machine ${session.workCenterCode}'s defects. Pick one from the list, or Other and describe it.`)
+      }
+      // The same rule as recording (§5.4): a defect outside the list is "Other", and says what it is.
+      const name = isOtherDefect(defectName) ? OTHER_DEFECT_NAME : defectName
+      if (isOtherDefect(name) && !notes) throw badRequest('Describe the "Other" defect.')
+
       const after = (await tx.query<DefectResult>(
-        `UPDATE defect_results d SET disposition = $2, qty = $3, version = version + 1 WHERE id = $1 RETURNING ${DEFECT_SELECT}`,
-        [id, body.disposition, body.qty],
+        `UPDATE defect_results d SET defect_name = $2, disposition = $3, qty = $4, notes = $5, version = version + 1 WHERE id = $1 RETURNING ${DEFECT_SELECT}`,
+        [id, name, body.disposition, body.qty, notes],
       )).rows[0]
       await auditChanges(
         tx,
         auditCtxFor(user, session, 'DefectResult', id, before.sampleId),
-        { disposition: before.disposition, qty: before.qty },
-        { disposition: after.disposition, qty: after.qty },
+        { defectName: before.defectName, disposition: before.disposition, qty: before.qty, notes: before.notes ?? null },
+        { defectName: after.defectName, disposition: after.disposition, qty: after.qty, notes: after.notes ?? null },
       )
       return dropNulls(after)
     })

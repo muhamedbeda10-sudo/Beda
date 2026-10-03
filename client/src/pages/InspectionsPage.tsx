@@ -25,7 +25,7 @@ import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
 import { PtCoverageBadge, SessionToneBadge, ptCoverageText, sessionToneClass } from '@/components/inspection/SessionTone'
 import { SampleDetail } from '@/components/inspection/SampleDetail'
-import { DefectEditDialog, DimensionEditDialog } from '@/components/inspection/CorrectionDialogs'
+import { DefectEditDialog, DimensionEditDialog, type DefectCorrection } from '@/components/inspection/CorrectionDialogs'
 import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
 import { HoldDecisionDialog } from '@/components/inspection/HoldDecisionDialog'
 import { OrderDetailsPanel } from '@/components/inspection/OrderDetailsPanel'
@@ -248,7 +248,7 @@ export function InspectionsPage() {
     }
   }
 
-  async function saveDefect(defect: DefectResult, patch: { disposition: Disposition; qty: number }) {
+  async function saveDefect(defect: DefectResult, patch: DefectCorrection) {
     setCorrecting(true)
     try {
       await correctDefect(queryClient, defect.id, { ...patch, version: defect.version })
@@ -842,7 +842,7 @@ export function InspectionsPage() {
       </Modal>
 
       {editingDim && <DimensionEditDialog dimension={editingDim} saving={correcting} onClose={() => setEditingDim(null)} onSave={(actual) => saveDimension(editingDim, actual)} />}
-      {editingDefect && <DefectEditDialog defect={editingDefect} saving={correcting} onClose={() => setEditingDefect(null)} onSave={(patch) => saveDefect(editingDefect, patch)} />}
+      {editingDefect && viewing && <DefectEditDialog defect={editingDefect} workCenterCode={viewing.session.workCenterCode} saving={correcting} onClose={() => setEditingDefect(null)} onSave={(patch) => saveDefect(editingDefect, patch)} />}
     </div>
   )
 }
