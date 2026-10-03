@@ -339,9 +339,9 @@ export function HistoryPage() {
   const [toDay, setToDay] = usePersistedState('qc-history:to', todayISO())
   const [inspectorFilter, setInspectorFilter] = usePersistedState('qc-history:inspector', 'all')
   const [factoryFilter, setFactoryFilter] = usePersistedState('qc-history:factory', 'all')
-  /** Any part of a code or a name; a pick from the list ("code — name") sends the code. */
+  /** Any part of a code or a name; a pick from the list ("code — name") is that one item, even where two share a code. */
   const [itemFilter, setItemFilter] = usePersistedState('qc-history:item', '')
-  const settledItem = useDebounced((itemFilter.includes(' — ') ? itemFilter.split(' — ')[0] : itemFilter).trim(), 300)
+  const settledItem = useDebounced(itemFilter.trim(), 300)
   /** Every filter back to how the tab opens the first time. */
   const filtersSet = term !== '' || status !== 'All' || workCenter !== 'all' || range !== 'all' || inspectorFilter !== 'all' || factoryFilter !== 'all' || itemFilter !== ''
   const resetFilters = () => {
@@ -498,7 +498,8 @@ export function HistoryPage() {
   }
   function openItem(s: SessionWithOrder) {
     if (!s.order) return
-    const query = s.order.itemCode ? { ...filters, itemCode: s.order.itemCode } : { ...filters, item: s.order.item }
+    // An item is its code and its name: two items may share a code.
+    const query = s.order.itemCode ? { ...filters, itemCode: s.order.itemCode, itemName: s.order.item || undefined } : { ...filters, item: s.order.item }
     setGroupSpec({ title: s.order.item, subtitle: `${s.order.itemCode ? `${s.order.itemCode} · ` : ''}${withinFilters}`, query })
   }
   function openMachine(s: SessionWithOrder) {
@@ -732,7 +733,7 @@ export function HistoryPage() {
             <Input list="history-items" value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} placeholder="Any part of a code or name" className="min-h-[48px]" aria-label="Item" />
             <datalist id="history-items">
               {itemOptions.map((i) => (
-                <option key={i.itemCode} value={`${i.itemCode} — ${i.item}`} />
+                <option key={`${i.itemCode}|${i.item}`} value={`${i.itemCode} — ${i.item}`} />
               ))}
             </datalist>
           </Field>

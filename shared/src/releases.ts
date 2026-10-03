@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-03.2',
+    date: '2026-10-03',
+    title: 'Two items with one code stay apart',
+    items: [
+      { text: 'Two items of one order that share a code (… : N2 and … : N3 on the same machine) no longer show each other\'s notes and photos: each line keeps its own.' },
+      { text: 'Their sessions no longer mark each other grey for earlier defects, and the nominals typed on one are not offered on the other.' },
+      { text: 'In History and Access, the item lists show both, and picking one shows that item only; tapping an item opens its own sessions.' },
+    ],
+  },
+  {
     id: '2026-10-03.1',
     date: '2026-10-03',
     title: 'Correct a defect picked by mistake',

@@ -37,7 +37,9 @@ export const SESSION_SELECT = `
     SELECT 1
       FROM production_orders o1
       JOIN production_orders o2
+        -- The same item is its code and its name: two items of one order may share a code.
         ON lower(o2.order_number) = lower(o1.order_number) AND lower(o2.item_code) = lower(o1.item_code)
+       AND lower(btrim(o2.item)) = lower(btrim(o1.item))
       JOIN inspection_sessions s2 ON s2.order_id = o2.id AND s2.id <> s.id AND s2.deleted_at IS NULL
       JOIN inspection_samples x2 ON x2.session_id = s2.id AND x2.deleted_at IS NULL
       JOIN defect_results d2 ON d2.sample_id = x2.id AND d2.deleted_at IS NULL

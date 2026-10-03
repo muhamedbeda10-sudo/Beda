@@ -35,13 +35,15 @@ export async function loadSessionNotes(q: Queryable, sessionId: string): Promise
  * machine, across all of its sessions — newest first. A note written on the
  * welding line stays on the welding line: the paint line's own notes are
  * its own. Matched on the line's identity rather than its row id, so a
- * re-imported catalogue keeps the notes with the line.
+ * re-imported catalogue keeps the notes with the line. The item is its code
+ * AND its name: two items of one order can share a code (…: N2 and …: N3 on
+ * the same press), and each keeps its own notes and photos.
  */
 export async function loadOrderNotes(q: Queryable, orderId: string): Promise<SessionNote[]> {
   const { rows } = await q.query<SessionNote>(
     `SELECT ${NOTE_SELECT} ${NOTE_FROM}
-        AND (lower(o.order_number), lower(o.item_code), lower(o.work_center_code)) =
-            (SELECT lower(order_number), lower(item_code), lower(work_center_code) FROM production_orders WHERE id = $1)
+        AND (lower(btrim(o.order_number)), lower(btrim(o.item_code)), lower(btrim(o.item)), lower(btrim(o.work_center_code))) =
+            (SELECT lower(btrim(order_number)), lower(btrim(item_code)), lower(btrim(item)), lower(btrim(work_center_code)) FROM production_orders WHERE id = $1)
       ORDER BY n.created_at DESC`,
     [orderId],
   )

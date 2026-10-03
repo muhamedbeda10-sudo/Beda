@@ -664,6 +664,8 @@ export interface HistoryGroupQuery extends HistoryFilters {
   orderId?: string
   /** One item, by its exact code. */
   itemCode?: string
+  /** With the code, the item's exact name: two items may share a code (…: N2, …: N3). */
+  itemName?: string
 }
 
 export interface HistoryGroupSession {
@@ -709,7 +711,7 @@ export interface HistoryOptionsResponse {
   inspectors: { id: string; name: string }[]
   /** Machine codes that actually appear in the record, newest use first. */
   workCenterCodes: string[]
-  /** Every item inspected so far, by code, with the name its latest line carries. */
+  /** Every item inspected so far: one row per code and name, since two items may share a code. */
   items: { itemCode: string; item: string }[]
 }
 
@@ -1003,6 +1005,6 @@ export interface OrderListOptionsResponse {
   erpStatuses: string[]
   factories: string[]
   workCenterCodes: string[]
-  /** Every item on the sheet, by code, with the name it carries. */
+  /** Every item on the sheet: one row per code and name, since two items may share a code. */
   items: { itemCode: string; item: string }[]
 }
