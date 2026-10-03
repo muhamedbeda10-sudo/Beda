@@ -28,6 +28,18 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-03.5',
+    date: '2026-10-03',
+    title: 'Comparisons, rearranged',
+    items: [
+      { text: 'Comparisons opens on a card for each group (roll forming, welding, painting, universal): its reject rate and PPM over the period, its months and the change against the month before. Then the groups month by month with their pie. Neither moves with the group picked.' },
+      { text: 'Pick a group under Machines of a group: its machines over the period, with Days, Weeks or Months picked on the chart itself, and its machines month by month beside them.' },
+      { text: 'How the group\'s defects spread over its machines: a column a machine with its defects stacked, and a table of the defects, most first, with each machine\'s pieces. Tap a defect for the sessions behind it.' },
+      { text: 'Roll forming raw material gains a table of every supplier, thickness and material, with the reject rate and PPM; filter its columns, or tap a row to follow it over the period. The trend picks a supplier too, and Days, Weeks or Months.' },
+      { text: 'The first part tiles are no longer on Comparisons; they stay under By factory.' },
+    ],
+  },
+  {
     id: '2026-10-03.4',
     date: '2026-10-03',
     title: 'Comparisons: roll forming raw material',

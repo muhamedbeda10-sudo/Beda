@@ -86,7 +86,8 @@ export interface TrendPoint {
 
 /** Bars for volume with a line for a rate over the same days. */
 /** Bars for volume with a line for a rate over the same days; more lines on the rate axis when `lines` is given. Values are written on the marks while they fit. */
-export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height = 220, lines = [] }: { points: TrendPoint[]; barLabel: string; lineLabel: string; lineUnit?: string; height?: number; lines?: LineSeries[] }) {
+/** Bars with a line on its own axis. A null breaks the line; with `connectGaps` it runs on to the next known point. */
+export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height = 220, lines = [], connectGaps = false }: { points: TrendPoint[]; barLabel: string; lineLabel: string; lineUnit?: string; height?: number; lines?: LineSeries[]; connectGaps?: boolean }) {
   const [hover, setHover] = useState<number | null>(null)
   const frame = useChartFrame()
   const id = useId()
@@ -111,6 +112,7 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
   let current: string[] = []
   points.forEach((p, i) => {
     if (p.line === null) {
+      if (connectGaps) return
       if (current.length) segments.push(current.join(' '))
       current = []
     } else current.push(`${xAt(i)},${yLine(p.line)}`)
@@ -656,6 +658,89 @@ export function ColumnChart({ columns, height = 200, unit = '', onPick }: { colu
           </g>
         ))}
       </svg>
+    </figure>
+  )
+}
+
+/** One part of a stacked column: a defect's pieces on one machine. */
+export interface StackSegment {
+  label: string
+  value: number
+  /** A fill-* class; the same series keeps the same class on every column. */
+  className: string
+}
+
+/**
+ * Columns of stacked parts: a column a machine, a part a defect, so one
+ * defect can be followed across the machines. The total is written on each
+ * column; hovering one lists its parts, largest first.
+ */
+export function StackedColumnChart({ columns, legend, height = 240, unit = '' }: { columns: { label: string; segments: StackSegment[] }[]; legend: { label: string; className: string }[]; height?: number; unit?: string }) {
+  const [hover, setHover] = useState<number | null>(null)
+  const frame = useChartFrame()
+  const id = useId()
+  const W = 720
+  const H = height
+  const pad = { l: 44, r: 12, t: 22, b: 34 }
+  const x0 = pad.l
+  const x1 = W - pad.r
+  const y0 = pad.t
+  const y1 = H - pad.b
+  const totals = columns.map((c) => c.segments.reduce((n, sg) => n + sg.value, 0))
+  if (columns.length === 0 || totals.every((v) => v === 0)) return <ChartEmpty height={height} />
+  const max = niceMax(Math.max(...totals))
+  const slot = (x1 - x0) / columns.length
+  const bw = Math.min(64, slot * 0.6)
+  const xAt = (i: number) => x0 + slot * i + slot / 2
+  const hAt = (v: number) => ((y1 - y0) * v) / max
+  return (
+    <figure className={frame.figure}>
+      <svg viewBox={`0 0 ${W} ${H}`} className={frame.svg} role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
+        <title id={`${id}-t`}>{columns.map((c, i) => `${c.label}: ${fmt(totals[i])}${unit}`).join(', ')}</title>
+        <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} unit={unit} />
+        {columns.map((c, i) => {
+          let top = y1
+          return (
+            <g key={c.label} onMouseEnter={() => setHover(i)}>
+              <rect x={xAt(i) - slot / 2} y={y0} width={slot} height={y1 - y0} fill="transparent" />
+              {c.segments.map((sg) => {
+                if (sg.value <= 0) return null
+                const h = hAt(sg.value)
+                top -= h
+                return <rect key={sg.label} x={xAt(i) - bw / 2} y={top} width={bw} height={Math.max(0, h)} className={cn(sg.className, 'stroke-white dark:stroke-slate-900')} strokeWidth={1} />
+              })}
+              {totals[i] > 0 && (
+                <text x={xAt(i)} y={top - 5} textAnchor="middle" fontSize="11" fontWeight={700} className="fill-slate-700 dark:fill-slate-200">
+                  {fmt(totals[i])}
+                  {unit}
+                </text>
+              )}
+              <text x={xAt(i)} y={y1 + 15} textAnchor="middle" fontSize="11" fontWeight={600} className="fill-slate-600 dark:fill-slate-300">
+                {c.label.length > 22 ? `${c.label.slice(0, 21)}…` : c.label}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+        {hover === null
+          ? legend.map((l) => (
+              <span key={l.label} className="inline-flex items-center gap-1.5" dir="auto">
+                <svg width="10" height="10" aria-hidden><rect width="10" height="10" rx="2" className={l.className} /></svg>
+                {l.label}
+              </span>
+            ))
+          : [...columns[hover].segments]
+              .filter((sg) => sg.value > 0)
+              .sort((a, b) => b.value - a.value)
+              .map((sg) => (
+                <span key={sg.label} className="inline-flex items-center gap-1.5" dir="auto">
+                  <svg width="10" height="10" aria-hidden><rect width="10" height="10" rx="2" className={sg.className} /></svg>
+                  {sg.label} <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{fmt(sg.value)}{unit}</span>
+                </span>
+              ))}
+        {hover !== null && <span className="ml-auto font-semibold text-slate-700 dark:text-slate-200">{columns[hover].label}</span>}
+      </div>
     </figure>
   )
 }

@@ -33,7 +33,7 @@ import type {
   KpiSupplierRow,
   KpiTotals,
 } from '@qc/shared/kpi'
-import { compareBuckets, materialOfGrade, pct, rejectRate, type KpiCompareBlock, type KpiComparePoint, type KpiGrain, type KpiMaterialRow, type KpiMaterials, type KpiThicknessRow, type MaterialKind } from '@qc/shared/kpi'
+import { compareBuckets, materialOfGrade, pct, rejectRate, type KpiCompareBlock, type KpiComparePoint, type KpiGrain, type KpiMachineDefects, type KpiMaterialDetail, type KpiMaterialRow, type KpiMaterials, type KpiThicknessRow, type MaterialKind } from '@qc/shared/kpi'
 import type { Queryable } from '../db/pool'
 import { cancelledSql } from '../lib/orderStatus'
 
@@ -1502,10 +1502,12 @@ export async function loadCompareBlock(q: Queryable, f: PeriodFilters, grain: Kp
 
 // ---- Raw material on roll forming ----------------------------------------------
 
-/** Black, galvanized or every kind; a thickness or every one. */
+/** Black, galvanized or every kind; a thickness or every one; a supplier or every one. */
 export interface MaterialPick {
   thickness: number | null
   material: MaterialKind | 'all'
+  /** '' picks the coils with no supplier recorded. */
+  supplier: string | null
 }
 
 /** A thickness as a key: millimetres to the thousandth, or none. */
@@ -1560,9 +1562,15 @@ export async function loadMaterials(q: Queryable, f: PeriodFilters, grain: KpiGr
   const thick = new Map<string, { all: Acc; black: Acc; galvanized: Acc; thickness: number | null }>()
   const trend = new Map<string, Acc>()
   const seen = new Set<number>()
+  const details = new Map<string, Acc & { supplier: string; thickness: number | null; material: MaterialKind }>()
   for (const r of rows) {
     add(suppliers, r.supplier ?? '', r)
     const kind = materialOfGrade(r.grade)
+    const dk = `${(r.supplier ?? '').toLowerCase()}|${thicknessKey(r.thickness)}|${kind}`
+    const d = details.get(dk) ?? { supplier: r.supplier ?? '', thickness: r.thickness, material: kind, produced: 0, rejected: 0 }
+    d.produced += r.produced
+    d.rejected += r.rejected
+    details.set(dk, d)
     const tk = thicknessKey(r.thickness)
     const t = thick.get(tk) ?? { all: { produced: 0, rejected: 0 }, black: { produced: 0, rejected: 0 }, galvanized: { produced: 0, rejected: 0 }, thickness: r.thickness }
     t.all.produced += r.produced
@@ -1574,7 +1582,8 @@ export async function loadMaterials(q: Queryable, f: PeriodFilters, grain: KpiGr
     thick.set(tk, t)
     if (r.thickness !== null) seen.add(r.thickness)
     const thicknessMatches = pick.thickness === null || (r.thickness !== null && thicknessKey(r.thickness) === thicknessKey(pick.thickness))
-    if (thicknessMatches && (pick.material === 'all' || pick.material === kind)) add(trend, r.bucket, r)
+    const supplierMatches = pick.supplier === null || (r.supplier ?? '').toLowerCase() === pick.supplier.toLowerCase()
+    if (thicknessMatches && supplierMatches && (pick.material === 'all' || pick.material === kind)) add(trend, r.bucket, r)
   }
   const supplierRows: KpiMaterialRow[] = Array.from(suppliers, ([key, a]) => ({ key, label: key || 'No supplier recorded', ...point(a.produced, a.rejected) }))
     .filter((r) => r.made > 0)
@@ -1597,9 +1606,14 @@ export async function loadMaterials(q: Queryable, f: PeriodFilters, grain: KpiGr
     suppliers: supplierRows,
     thicknesses: thicknessRows,
     thicknessOptions: Array.from(seen).sort((a, b) => a - b),
+    details: Array.from(details.values())
+      .map((d): KpiMaterialDetail => ({ supplier: d.supplier, thickness: d.thickness, material: d.material, ...point(d.produced, d.rejected) }))
+      .filter((d) => d.made > 0)
+      .sort((a, b) => b.made - a.made || a.supplier.localeCompare(b.supplier)),
     trend: {
       thickness: pick.thickness,
       material: pick.material,
+      supplier: pick.supplier,
       grain,
       buckets,
       points: buckets.map((b) => {
@@ -1609,4 +1623,34 @@ export async function loadMaterials(q: Queryable, f: PeriodFilters, grain: KpiGr
       total: point(total.produced, total.rejected),
     },
   }
+}
+
+/**
+ * The rejected pieces of the period's closed sessions, by machine and by
+ * defect, for the machines `f` reads: the same sessions as their reject rate.
+ * `machines` fixes the columns, in order; a machine with a defect but no line
+ * of its own is added after them.
+ */
+export async function loadMachineDefects(q: Queryable, f: PeriodFilters, machines: { key: string; label: string }[]): Promise<KpiMachineDefects> {
+  const { rows } = await q.query<{ code: string; label: string; defectName: string; pieces: number }>(
+    `WITH ${PRODUCED}
+     SELECT max(r.wc) AS code, max(r.machine_label) AS label, d.defect_name AS "defectName", COALESCE(sum(d.qty), 0)::float8 AS pieces
+       FROM produced_raw r
+       JOIN inspection_samples x ON x.session_id = r.session_id AND x.deleted_at IS NULL
+       JOIN defect_results d ON d.sample_id = x.id AND d.deleted_at IS NULL
+      GROUP BY lower(r.wc), d.defect_name`,
+    params(f),
+  )
+  const cols = [...machines]
+  for (const r of rows) if (!cols.some((c) => c.key.toLowerCase() === r.code.toLowerCase())) cols.push({ key: r.code, label: r.label })
+  const index = new Map(cols.map((c, i) => [c.key.toLowerCase(), i]))
+  const byDefect = new Map<string, number[]>()
+  for (const r of rows) {
+    const per = byDefect.get(r.defectName) ?? cols.map(() => 0)
+    per[index.get(r.code.toLowerCase())!] += r.pieces
+    byDefect.set(r.defectName, per)
+  }
+  const out = Array.from(byDefect, ([defectName, byMachine]) => ({ defectName, pieces: byMachine.reduce((n, v) => n + v, 0), byMachine }))
+    .sort((a, b) => b.pieces - a.pieces || a.defectName.localeCompare(b.defectName))
+  return { machines: cols, rows: out }
 }

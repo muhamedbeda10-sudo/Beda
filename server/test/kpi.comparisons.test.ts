@@ -62,19 +62,23 @@ beforeAll(async () => {
 afterAll(() => app.stop())
 
 describe('§15 — Comparisons', () => {
-  it('draws a short period a day a point, the processes side by side', async () => {
+  it('gives each process its figures over the period, for the group cards', async () => {
     const res = await compare(today(-1), today(1))
     expect(res.status).toBe(200)
     const { period } = res.body
-    expect(period.grain).toBe('day')
-    expect(period.buckets.map((b) => b.key)).toEqual([today(-1), today(0), today(1)])
     const forming = period.series.find((s) => s.key === 'forming')!
     expect(forming).toMatchObject({ made: 305, productionDefectPieces: 5, label: 'forming' })
     expect(forming.defectRatePct).toBeCloseTo((5 / 305) * 100, 3)
-    // Nothing made yesterday or tomorrow: no rate there, the line breaks.
-    expect(forming.points.map((p) => p.defectRatePct === null)).toEqual([true, false, true])
     // The universal line is made once: 300 pieces and the two stages' defects.
     expect(period.series.find((s) => s.key === 'universal')).toMatchObject({ made: 302, productionDefectPieces: 2 })
+  })
+
+  it("draws a short period's machines a day a point", async () => {
+    const { machines } = (await compare(today(-1), today(1))).body
+    expect(machines.grain).toBe('day')
+    expect(machines.buckets.map((b) => b.key)).toEqual([today(-1), today(0), today(1)])
+    // Nothing made yesterday or tomorrow: no rate there.
+    expect(machines.series.find((m) => m.key === '31')?.points.map((p) => p.defectRatePct === null)).toEqual([true, false, true])
   })
 
   it('lays the machines of the process picked side by side, and only those', async () => {
@@ -97,17 +101,43 @@ describe('§15 — Comparisons', () => {
     expect(short.series.find((s) => s.key === 'forming')?.made).toBe(305)
   })
 
-  it('draws up to three months a week a point and longer ones a month a point', async () => {
-    const weeks = (await compare(today(-59), today(0))).body.period
+  it("draws the machines up to three months a week a point and longer ones a month a point", async () => {
+    const weeks = (await compare(today(-59), today(0))).body.machines
     expect(weeks.grain).toBe('week')
     expect(weeks.buckets).toHaveLength(9)
     expect(weeks.buckets[0]).toEqual({ key: today(-59), from: today(-59), to: today(-53) })
     // Everything happened today: the last week holds it.
-    expect(weeks.series.find((s) => s.key === 'forming')?.points.at(-1)?.made).toBe(305)
-    const months = (await compare(today(-200), today(0))).body.period
+    expect(weeks.series.find((s) => s.key === '32')?.points.at(-1)?.made).toBe(203)
+    const months = (await compare(today(-200), today(0), 'universal')).body.machines
     expect(months.grain).toBe('month')
     expect(months.buckets.at(-1)?.to).toBe(today(0))
-    expect(months.series.find((s) => s.key === 'universal')?.points.at(-1)?.made).toBe(302)
+    expect(months.series.find((s) => s.key === '77')?.points.at(-1)?.made).toBe(302)
+  })
+
+  it('draws the machines at the grain asked for', async () => {
+    const days = (await app.api<KpiComparisons>('GET', `/api/kpi/comparisons?from=${today(-59)}&to=${today(0)}&process=forming&grain=day`, { token: admin.token })).body.machines
+    expect(days.grain).toBe('day')
+    expect(days.buckets).toHaveLength(60)
+    const weeks = (await app.api<KpiComparisons>('GET', `/api/kpi/comparisons?from=${today(-1)}&to=${today(1)}&process=forming&grain=week`, { token: admin.token })).body.machines
+    expect(weeks.grain).toBe('week')
+    expect(weeks.buckets).toHaveLength(1)
+    expect((await app.api('GET', `/api/kpi/comparisons?from=${today(-1)}&to=${today(1)}&process=forming&grain=hour`, { token: admin.token })).status).toBe(400)
+  })
+
+  it("follows the process's machines month by month, whatever the period", async () => {
+    const a = (await compare(today(-1), today(1))).body.machinesWindow
+    const b = (await compare(today(-200), today(0))).body.machinesWindow
+    expect(a).toEqual(b)
+    expect(a.grain).toBe('month')
+    expect(a.series.map((m) => m.key).sort()).toEqual(['31', '32'])
+  })
+
+  it("lays each defect's rejected pieces on the process's machines, most first", async () => {
+    const { defects } = (await compare(today(-1), today(1))).body
+    expect(defects.machines.map((m) => m.key)).toEqual(['31', '32'])
+    expect(defects.rows).toEqual([{ defectName: 'Scratch', pieces: 5, byMachine: [2, 3] }])
+    const universal = (await compare(today(-1), today(1), 'universal')).body.defects
+    expect(universal.rows).toEqual([{ defectName: 'Scratch', pieces: 2, byMachine: [2] }])
   })
 
   it('refuses a process it does not know, a period too long, and a reader without the dashboard', async () => {
@@ -118,10 +148,10 @@ describe('§15 — Comparisons', () => {
 
   it('keeps its own arrangement on the board, and gives one to a client that sends none', async () => {
     const layouts = defaultDashboardLayouts()
-    layouts.comparisons = layouts.comparisons.map((it) => (it.i === 'c.machinesPie' ? { ...it, hidden: true } : it))
+    layouts.comparisons = layouts.comparisons.map((it) => (it.i === 'c.machineDefects' ? { ...it, hidden: true } : it))
     const saved = await app.api<DashboardLayoutResponse>('PUT', '/api/kpi/layout', { token: admin.token, body: { layouts } })
     expect(saved.status).toBe(200)
-    expect(saved.body.layouts.comparisons.find((it) => it.i === 'c.machinesPie')?.hidden).toBe(true)
+    expect(saved.body.layouts.comparisons.find((it) => it.i === 'c.machineDefects')?.hidden).toBe(true)
     const older = await app.api<DashboardLayoutResponse>('PUT', '/api/kpi/layout', { token: admin.token, body: { layouts: { general: layouts.general, details: layouts.details } } })
     expect(older.status).toBe(200)
     expect(older.body.layouts.comparisons).toEqual(defaultDashboardLayouts().comparisons)
