@@ -73,6 +73,7 @@ import { auditEvent } from '@qc/shared/audit'
 import { dropNulls } from '../lib/rows'
 import { assertImagesUsable, linkImages } from './images.links'
 import { loadOrderNotes, loadSessionNotes, noteIsEmpty, writeSessionNote } from './notes'
+import { itemFilterSql } from '../lib/itemMatch'
 import { ORDER_SELECT, fetchOrdersByIds } from './orders.routes'
 import {
   ORDER_SUMMARY_SELECT,
@@ -415,6 +416,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
         orderNumber: z.string().trim().min(1).max(120).optional(),
         orderId: uuid.optional(),
         itemCode: z.string().trim().min(1).max(120).optional(),
+        itemName: z.string().trim().min(1).max(300).optional(),
       }),
       req.query,
     )
@@ -426,6 +428,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
     if (q.orderNumber) clauses.push(`lower(btrim(o.order_number)) = lower(btrim(${p(q.orderNumber)}))`)
     if (q.orderId) clauses.push(`s.order_id = ${p(q.orderId)}::uuid`)
     if (q.itemCode) clauses.push(`lower(btrim(o.item_code)) = lower(btrim(${p(q.itemCode)}))`)
+    if (q.itemName) clauses.push(`lower(btrim(o.item)) = lower(btrim(${p(q.itemName)}))`)
     const { rows } = await db.query<HistoryGroupSession & { total: number }>(
       `SELECT s.id AS "sessionId", s.seq, s.order_id AS "orderId", COALESCE(o.order_number, '') AS "orderNumber", COALESCE(o.item, '') AS item,
               COALESCE(o.item_code, '') AS "itemCode", s.work_center_code AS "workCenterCode", COALESCE(m.display_name, s.work_center_code) AS machine,
@@ -559,12 +562,12 @@ export function sessionsRoutes(ctx: AppContext): Router {
         `SELECT DISTINCT s.work_center_code AS code
            FROM inspection_sessions s WHERE s.deleted_at IS NULL AND btrim(s.work_center_code) <> ''`,
       ),
-      // The items that were inspected: one row per code, named as its latest session's line names it.
+      // The items that were inspected: one row per item, its code and its name, since two items may share a code.
       db.query<{ itemCode: string; item: string }>(
-        `SELECT DISTINCT ON (lower(btrim(o.item_code))) btrim(o.item_code) AS "itemCode", btrim(o.item) AS item
+        `SELECT DISTINCT ON (lower(btrim(o.item_code)), lower(btrim(o.item))) btrim(o.item_code) AS "itemCode", btrim(o.item) AS item
            FROM inspection_sessions s JOIN production_orders o ON o.id = s.order_id
           WHERE s.deleted_at IS NULL AND btrim(o.item_code) <> ''
-          ORDER BY lower(btrim(o.item_code)), s.started_at DESC`,
+          ORDER BY lower(btrim(o.item_code)), lower(btrim(o.item)), s.started_at DESC`,
       ),
     ])
     const body: HistoryOptionsResponse = {
@@ -761,13 +764,13 @@ export function sessionsRoutes(ctx: AppContext): Router {
                 JOIN production_orders o ON o.id = sm.order_id
                WHERE sm.deleted_at IS NULL AND s.deleted_at IS NULL
                  AND ${NORMALISED_CODE('s.work_center_code')} = $3
-                 -- The same item by code, or — when the ERP export left the
-                 -- code blank — the same order line.
-                 AND ((btrim($2) <> '' AND lower(o.item_code) = lower($2)) OR sm.order_id = $4::uuid)
+                 -- The same item by code and name (two items may share a code), or —
+                 -- when the ERP export left the code blank — the same order line.
+                 AND ((btrim($2) <> '' AND lower(o.item_code) = lower($2) AND lower(btrim(o.item)) = lower(btrim($5))) OR sm.order_id = $4::uuid)
                ORDER BY (sm.session_id = $1::uuid) DESC, (sm.order_id = $4::uuid) DESC, sm.created_at DESC
                LIMIT 1)
           ORDER BY d.sequence, d.name`,
-        [id, order.itemCode, normaliseMachineCode(wc), order.id || null],
+        [id, order.itemCode, normaliseMachineCode(wc), order.id || null, order.item ?? ''],
       ),
       // The welding wire batch of this session's latest sample, offered again.
       q.query<{ batch: string | null }>(
@@ -1284,7 +1287,7 @@ const historyFilterSchema = z.object({
   q: z.string().trim().max(120).optional(),
   status: z.enum(['Open', 'Closed']).optional(),
   workCenterCode: z.string().trim().max(60).optional(),
-  item: z.string().trim().max(120).optional(),
+  item: z.string().trim().max(440).optional(),
   factory: z.string().trim().max(120).optional(),
   inspectorId: z.string().uuid().optional(),
   since: z.string().datetime({ offset: true }).optional(),
@@ -1348,11 +1351,8 @@ function historyWhere(q: z.infer<typeof historyFilterSchema>, tz: string): { whe
                            WHERE m.deleted_at IS NULL AND lower(btrim(COALESCE(m.factory, ''))) = lower(btrim(${p(q.factory)}))
                              AND ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('s.work_center_code')})`)
   }
-  if (q.item) {
-    // Any part of the code or the name, as typed: no need to pick one from the list.
-    const t = p(`%${q.item.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
-    clauses.push(`(o.item_code ILIKE ${t} OR o.item ILIKE ${t})`)
-  }
+  // Any part of the code or the name, as typed; a pick from the list is that one item.
+  if (q.item) clauses.push(itemFilterSql(q.item, p, 'o.item_code', 'o.item'))
   if (q.q) {
     // A literal search: the wildcards a person types are text, not pattern.
     const like = `%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`

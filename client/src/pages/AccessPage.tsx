@@ -48,7 +48,8 @@ const num = (v: number | null | undefined) => (v === null || v === undefined || 
 
 /** The code out of what was typed or picked: "125185TA3 — XL Light Beam" and "125185TA3" both give the code. */
 /** A pick from the list is "code — name"; sending the code alone matches it. Anything else is sent as typed. */
-const itemTermOf = (typed: string) => (typed.includes(' — ') ? typed.split(' — ')[0] : typed).trim()
+/** Any part of a code or a name; a pick from the list ("code — name") is that one item, even where two share a code. */
+const itemTermOf = (typed: string) => typed.trim()
 
 function statusTone(s: string): 'green' | 'amber' | 'violet' | 'neutral' | 'red' {
   const v = s.trim().toLowerCase()
@@ -285,7 +286,7 @@ export function AccessPage() {
     },
     item: (o) => {
       setGroupOrder(null)
-      setGroupSpec({ title: o.item, subtitle: `${o.itemCode ? `${o.itemCode} · ` : ''}every order it was inspected on, the latest first`, query: o.itemCode ? { itemCode: o.itemCode } : { item: o.item } })
+      setGroupSpec({ title: o.item, subtitle: `${o.itemCode ? `${o.itemCode} · ` : ''}every order it was inspected on, the latest first`, query: o.itemCode ? { itemCode: o.itemCode, itemName: o.item || undefined } : { item: o.item } })
     },
     machine: (o) => {
       setGroupOrder(null)
@@ -358,7 +359,7 @@ export function AccessPage() {
             />
             <datalist id="access-items">
               {(options?.items ?? []).map((i) => (
-                <option key={i.itemCode} value={`${i.itemCode} — ${i.item}`} />
+                <option key={`${i.itemCode}|${i.item}`} value={`${i.itemCode} — ${i.item}`} />
               ))}
             </datalist>
           </Field>
