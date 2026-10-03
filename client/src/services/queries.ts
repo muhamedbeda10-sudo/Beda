@@ -48,7 +48,7 @@ import type {
   ChatMessagesResponse,
   ChatUnreadResponse,
 } from '@qc/shared/api'
-import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
+import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiMaterials, MaterialKind, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
 import type { DashboardLayoutResponse, HiddenInsightsResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
@@ -86,6 +86,7 @@ export const keys = {
   kpiGeneral: (range: KpiRange) => ['kpi', 'general', range] as const,
   kpiBreakdown: (filters: KpiBreakdownFilters) => ['kpi', 'breakdown', filters] as const,
   kpiComparisons: (q: { from: string; to: string; process: Process }) => ['kpi', 'comparisons', q] as const,
+  kpiMaterials: (q: MaterialsQuery) => ['kpi', 'materials', q] as const,
   hiddenInsights: ['kpi', 'insights', 'hidden'] as const,
   dashboardLayout: ['kpi', 'layout'] as const,
   noticeInbox: ['notices', 'inbox'] as const,
@@ -502,6 +503,29 @@ export function useKpiComparisons(q: { from: string; to: string; process: Proces
   return useQuery({
     queryKey: keys.kpiComparisons(q ?? { from: '', to: '', process: 'forming' }),
     queryFn: () => api<KpiComparisons>(`/kpi/comparisons${qs({ from: q?.from, to: q?.to, process: q?.process })}`),
+    enabled: q !== null,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+/** What the roll forming raw material charts read: the period, the machines (none is all), a thickness and a material for the trend. */
+export interface MaterialsQuery {
+  from: string
+  to: string
+  workCenterCodes: string[]
+  thickness: number | null
+  material: MaterialKind | 'all'
+}
+
+/** §15 — Comparisons: roll forming's reject rate by coil supplier, by thickness, and one thickness and material over the period. */
+export function useKpiMaterials(q: MaterialsQuery | null) {
+  return useQuery({
+    queryKey: keys.kpiMaterials(q ?? { from: '', to: '', workCenterCodes: [], thickness: null, material: 'all' }),
+    queryFn: () =>
+      api<KpiMaterials>(
+        `/kpi/materials${qs({ from: q?.from, to: q?.to, workCenterCode: q?.workCenterCodes.join(',') || undefined, thickness: q?.thickness ?? undefined, material: q?.material })}`,
+      ),
     enabled: q !== null,
     staleTime: 60_000,
     placeholderData: (prev) => prev,

@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-03.4',
+    date: '2026-10-03',
+    title: 'Comparisons: roll forming raw material',
+    items: [
+      { text: 'Under Comparisons, Roll forming: raw material. A slicer of the roll forming machines narrows it; none picked is every one.' },
+      { text: 'Reject rate and PPM by coil supplier, and by thickness with black and galvanized beside it. A session\'s pieces are shared among its coils by its samples.' },
+      { text: 'Pick a thickness and black or galvanized to see it over the period: pieces made and the reject rate. Galvanized is read off the grade (+Z, +AZ, DX51D…, S350GD…); any other grade is black.' },
+    ],
+  },
+  {
     id: '2026-10-03.3',
     date: '2026-10-03',
     title: 'Dashboard: Comparisons',

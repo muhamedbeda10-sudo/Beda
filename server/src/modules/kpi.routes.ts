@@ -22,6 +22,7 @@ import {
   rankInspectors,
   type KpiBreakdown,
   type KpiComparisons,
+  type KpiMaterials,
   type KpiDrillResponse,
   type KpiFilters,
   type KpiGeneral,
@@ -50,6 +51,7 @@ import {
   loadDiscipline,
   loadFactoryMonths,
   loadCompareBlock,
+  loadMaterials,
   loadFirstDataMonth,
   loadDrill,
   loadFirstPart,
@@ -156,6 +158,20 @@ const layoutItem = z.object({
 const LayoutBody = z.object({ layouts: z.object({ general: z.array(layoutItem).max(100), details: z.array(layoutItem).max(100), comparisons: z.array(layoutItem).max(100).default([]) }) })
 
 const CompareQuery = z.object({ from: day, to: day, process: z.enum(PROCESSES as unknown as [Process, ...Process[]]) })
+
+const MaterialsQuery = z.object({
+  from: day,
+  to: day,
+  /** Roll forming machine codes, comma separated; none is every roll forming machine. */
+  workCenterCode: z
+    .string()
+    .trim()
+    .max(2000)
+    .optional()
+    .transform((v) => (v ? Array.from(new Set(v.split(',').map((c) => c.trim()).filter(Boolean))) : [])),
+  thickness: z.coerce.number().positive().max(1000).optional(),
+  material: z.enum(['all', 'black', 'galvanized']).default('all'),
+})
 
 const rate = z.number().min(0).max(100)
 const ThresholdsBody = z
@@ -564,6 +580,27 @@ export function kpiRoutes(ctx: AppContext): Router {
     ])
     const body: KpiComparisons = { generatedAt: new Date().toISOString(), process: q.process, window, period, machines }
     res.json(body)
+  })
+
+  /**
+   * §15 — Comparisons, roll forming's raw material: the reject rate by coil
+   * supplier, by thickness, and one thickness and material over the period.
+   */
+  r.get('/materials', async (req, res) => {
+    const tz = ctx.config.FACTORY_TIMEZONE
+    const q = parse(MaterialsQuery, req.query)
+    checkRange(q.from, q.to, 'Period')
+    if (q.workCenterCode.length > 200) throw badRequest('At most 200 machines.')
+    const codes = q.workCenterCode.map((c) => c.toLowerCase())
+    const grain = compareGrain(q.from, q.to)
+    const body = await loadMaterials(
+      ctx.db,
+      { tz, from: q.from, to: q.to, processes: ['forming'], workCenterCodes: codes.length ? codes : undefined },
+      grain,
+      { thickness: q.thickness ?? null, material: q.material },
+    )
+    const out: KpiMaterials = { generatedAt: new Date().toISOString(), workCenterCodes: q.workCenterCode, ...body }
+    res.json(out)
   })
 
   r.get('/general', async (req, res) => {

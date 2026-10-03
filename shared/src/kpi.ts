@@ -1056,6 +1056,9 @@ export const DASHBOARD_WIDGETS: Record<DashboardPage, { id: string; title: strin
     { id: 'c.processPeriodPie', title: 'Rejected by process, over the period', w: 4, h: 9 },
     { id: 'c.machines', title: 'Machines of the process over the period', w: 8, h: 10 },
     { id: 'c.machinesPie', title: 'Rejected by machine of the process', w: 4, h: 10 },
+    { id: 'c.suppliers', title: 'Roll forming: reject rate by coil supplier', w: 6, h: 9 },
+    { id: 'c.thickness', title: 'Roll forming: reject rate by thickness', w: 6, h: 9 },
+    { id: 'c.thicknessTrend', title: 'Roll forming: one thickness and material over the period', w: 12, h: 10 },
   ],
 }
 
@@ -1231,4 +1234,64 @@ export interface KpiComparisons {
   period: KpiCompareBlock
   /** The machines of `process` over the period, at its grain. */
   machines: KpiCompareBlock
+}
+
+// ---- Raw material on roll forming (§15) --------------------------------------
+// The coils a roll forming session ran, by supplier and by thickness, and
+// black or galvanized steel, read off the coil's grade.
+
+export type MaterialKind = 'black' | 'galvanized' | 'unknown'
+export const MATERIAL_KIND_LABEL: Record<MaterialKind, string> = { black: 'Black', galvanized: 'Galvanized', unknown: 'Grade not recorded' }
+
+/**
+ * Black or galvanized steel, from the coil's grade. Galvanized is a zinc or
+ * zinc-alloy coating written on the grade (+Z, +ZE, +ZF, +ZA, +ZM, +AZ, with or
+ * without the coating mass: DX51D+Z275, S350GD+Z275MAC), a grade made for
+ * coating (DX51D…DX57D, S220GD…S550GD), or GI / GALV written as such.
+ * Any other grade is black (S235JR, S355JR, ST52-3, E355); no grade is unknown.
+ */
+export function materialOfGrade(grade: string | null | undefined): MaterialKind {
+  const g = (grade ?? '').trim().toUpperCase()
+  if (g === '') return 'unknown'
+  if (/\+\s*A?Z/.test(g)) return 'galvanized'
+  if (/(^|[^A-Z0-9])DX5[1-7]D/.test(g)) return 'galvanized'
+  if (/(^|[^A-Z0-9])S\d{3}GD/.test(g)) return 'galvanized'
+  if (/(^|[^A-Z])(GI|GALV)/.test(g)) return 'galvanized'
+  return 'black'
+}
+
+/** One supplier or one thickness: what roll forming made of its coils, what it rejected, and the rate. */
+export interface KpiMaterialRow extends KpiComparePoint {
+  key: string
+  label: string
+}
+
+export interface KpiThicknessRow extends KpiMaterialRow {
+  /** Millimetres; null when no coil of these sessions recorded one. */
+  thickness: number | null
+  black: KpiComparePoint
+  galvanized: KpiComparePoint
+}
+
+export interface KpiMaterials {
+  generatedAt: string
+  from: string
+  to: string
+  /** The roll forming machines read; none sent means every one. */
+  workCenterCodes: string[]
+  /** Largest made first. */
+  suppliers: KpiMaterialRow[]
+  /** Thinnest first; no thickness last. */
+  thicknesses: KpiThicknessRow[]
+  /** The thicknesses seen in the period, for the trend's filter. */
+  thicknessOptions: number[]
+  trend: {
+    /** null: every thickness. */
+    thickness: number | null
+    material: MaterialKind | 'all'
+    grain: KpiGrain
+    buckets: KpiCompareBucket[]
+    points: KpiComparePoint[]
+    total: KpiComparePoint
+  }
 }
