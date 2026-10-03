@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-03.3',
+    date: '2026-10-03',
+    title: 'Dashboard: Comparisons',
+    items: [
+      { text: 'By process is now Comparisons. Pick a process at the top: its reject rate, PPM, first part released and first pass released cumulative are the tiles.' },
+      { text: 'Processes by month: every process\'s reject rate month by month, with a pie of the rejected pieces; the period strip does not move it. Processes over the period: the same over the period you pick, a point a day up to a month, a week up to three months, else a month.' },
+      { text: 'The machines of the process picked (Roll forming 1, 2, 3…) side by side over the period, with a pie; a machine has the same colour on its line and its slice. Choose which machines to draw when there are more than six.' },
+      { text: 'Comparisons has its own arrangement: an administrator moves, sizes and hides its charts under Arrange, like the other pages.' },
+    ],
+  },
+  {
     id: '2026-10-03.2',
     date: '2026-10-03',
     title: 'Two items with one code stay apart',

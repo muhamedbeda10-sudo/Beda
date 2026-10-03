@@ -972,7 +972,7 @@ export function rankInspectors(rows: KpiInspectorRaw[], minSamples: number): Kpi
 // rearrange: each widget has a place and a size, one layout per page, the
 // same for everyone.
 
-export type DashboardPage = 'general' | 'details'
+export type DashboardPage = 'general' | 'details' | 'comparisons'
 
 export interface DashboardLayoutItem {
   /** The widget id, one of DASHBOARD_WIDGETS[page]. */
@@ -1048,6 +1048,15 @@ export const DASHBOARD_WIDGETS: Record<DashboardPage, { id: string; title: strin
     { id: 'd.onHold', title: 'On Hold', w: 6, h: 9 },
     { id: 'd.discipline', title: 'Recording discipline', w: 12, h: 7 },
   ],
+  comparisons: [
+    { id: 'c.tiles', title: 'Reject rate, PPM, first part of the process', w: 12, h: 5 },
+    { id: 'c.processMonths', title: 'Processes by month', w: 8, h: 9 },
+    { id: 'c.processMonthsPie', title: 'Rejected by process, by month', w: 4, h: 9 },
+    { id: 'c.processPeriod', title: 'Processes over the period', w: 8, h: 9 },
+    { id: 'c.processPeriodPie', title: 'Rejected by process, over the period', w: 4, h: 9 },
+    { id: 'c.machines', title: 'Machines of the process over the period', w: 8, h: 10 },
+    { id: 'c.machinesPie', title: 'Rejected by machine of the process', w: 4, h: 10 },
+  ],
 }
 
 /** The default layout of a page: the widgets in reading order, packed left to right, row by row. */
@@ -1070,7 +1079,7 @@ export function defaultDashboardLayout(page: DashboardPage): DashboardLayoutItem
 }
 
 export function defaultDashboardLayouts(): DashboardLayouts {
-  return { general: defaultDashboardLayout('general'), details: defaultDashboardLayout('details') }
+  return { general: defaultDashboardLayout('general'), details: defaultDashboardLayout('details'), comparisons: defaultDashboardLayout('comparisons') }
 }
 
 /**
@@ -1104,6 +1113,8 @@ export function normaliseDashboardLayout(page: DashboardPage, stored: unknown): 
       seen.add(id)
     }
   }
+  // Nothing stored for the page (a page added after the layout was saved): its own default arrangement.
+  if (out.length === 0) return defaultDashboardLayout(page)
   let bottom = out.reduce((n, it) => Math.max(n, it.y + it.h), 0)
   for (const spec of DASHBOARD_WIDGETS[page]) {
     if (seen.has(spec.id)) continue
@@ -1115,5 +1126,109 @@ export function normaliseDashboardLayout(page: DashboardPage, stored: unknown): 
 
 export function normaliseDashboardLayouts(stored: unknown): DashboardLayouts {
   const o = stored && typeof stored === 'object' ? (stored as Record<string, unknown>) : {}
-  return { general: normaliseDashboardLayout('general', o.general), details: normaliseDashboardLayout('details', o.details) }
+  return {
+    general: normaliseDashboardLayout('general', o.general),
+    details: normaliseDashboardLayout('details', o.details),
+    comparisons: normaliseDashboardLayout('comparisons', o.comparisons),
+  }
+}
+
+// ---- Comparisons (§15) ------------------------------------------------------
+// The processes side by side, month by month and over the period, and the
+// machines of one process side by side over the period. A point is the
+// reject rate of what was made in it: rejected ÷ (produced + rejected).
+
+/** How finely a period's line is drawn: a day each up to a month, a week each up to three, else a month each. */
+export type KpiGrain = 'day' | 'week' | 'month'
+
+/** The longest period drawn a day a point, and a week a point. */
+export const COMPARE_DAY_MAX = 31
+export const COMPARE_WEEK_MAX = 92
+
+const DAY_MS = 86_400_000
+const dayNumber = (d: string): number => Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10))) / DAY_MS
+const dayText = (n: number): string => new Date(n * DAY_MS).toISOString().slice(0, 10)
+
+/** The grain a period is drawn at. `from` and `to` are inclusive factory days, YYYY-MM-DD. */
+export function compareGrain(from: string, to: string): KpiGrain {
+  const days = dayNumber(to) - dayNumber(from) + 1
+  return days <= COMPARE_DAY_MAX ? 'day' : days <= COMPARE_WEEK_MAX ? 'week' : 'month'
+}
+
+/** One point of a comparison line: the days it covers, inclusive. */
+export interface KpiCompareBucket {
+  /** What the server groups by: the day, the week's first day (weeks run from the period's first day), or YYYY-MM. */
+  key: string
+  from: string
+  to: string
+}
+
+/**
+ * The points of a period at a grain, every one on the axis even when nothing
+ * was made in it. Weeks are counted from the period's first day, so a week
+ * never straddles the period's edge; months are calendar months, the first
+ * and last cut to the period.
+ */
+export function compareBuckets(from: string, to: string, grain: KpiGrain): KpiCompareBucket[] {
+  const a = dayNumber(from)
+  const b = dayNumber(to)
+  const out: KpiCompareBucket[] = []
+  if (b < a) return out
+  if (grain === 'day') {
+    for (let d = a; d <= b && out.length < 400; d++) out.push({ key: dayText(d), from: dayText(d), to: dayText(d) })
+    return out
+  }
+  if (grain === 'week') {
+    for (let d = a; d <= b && out.length < 400; d += 7) out.push({ key: dayText(d), from: dayText(d), to: dayText(Math.min(d + 6, b)) })
+    return out
+  }
+  let y = Number(from.slice(0, 4))
+  let m = Number(from.slice(5, 7))
+  while (out.length < 400) {
+    const key = `${y}-${String(m).padStart(2, '0')}`
+    const start = Math.max(a, Date.UTC(y, m - 1, 1) / DAY_MS)
+    if (start > b) break
+    const end = Math.min(b, Date.UTC(y, m, 1) / DAY_MS - 1)
+    out.push({ key, from: dayText(start), to: dayText(end) })
+    m = m === 12 ? 1 : m + 1
+    if (m === 1) y += 1
+  }
+  return out
+}
+
+/** What one process or machine made and rejected in one point, and its rate. */
+export interface KpiComparePoint {
+  made: number
+  productionDefectPieces: number
+  defectRatePct: number | null
+}
+
+/** One line: a process or a machine, its point at each bucket, and its figures over the whole span. */
+export interface KpiCompareSeries extends KpiComparePoint {
+  /** A process, or a machine code. */
+  key: string
+  /** The machine's name; a process is named by the client. */
+  label: string
+  factory: string
+  points: KpiComparePoint[]
+}
+
+export interface KpiCompareBlock {
+  from: string
+  to: string
+  grain: KpiGrain
+  buckets: KpiCompareBucket[]
+  /** Largest made first. */
+  series: KpiCompareSeries[]
+}
+
+export interface KpiComparisons {
+  generatedAt: string
+  process: Process
+  /** The processes month by month over the trend window: the period does not move it. */
+  window: KpiCompareBlock
+  /** The processes over the period, at its grain. */
+  period: KpiCompareBlock
+  /** The machines of `process` over the period, at its grain. */
+  machines: KpiCompareBlock
 }

@@ -48,9 +48,9 @@ import type {
   ChatMessagesResponse,
   ChatUnreadResponse,
 } from '@qc/shared/api'
-import type { KpiBreakdown, KpiBreakdownFilters, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
+import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
 import type { DashboardLayoutResponse, HiddenInsightsResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
-import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
+import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
 export const keys = {
@@ -85,6 +85,7 @@ export const keys = {
   kpiSpan: ['kpi', 'span'] as const,
   kpiGeneral: (range: KpiRange) => ['kpi', 'general', range] as const,
   kpiBreakdown: (filters: KpiBreakdownFilters) => ['kpi', 'breakdown', filters] as const,
+  kpiComparisons: (q: { from: string; to: string; process: Process }) => ['kpi', 'comparisons', q] as const,
   hiddenInsights: ['kpi', 'insights', 'hidden'] as const,
   dashboardLayout: ['kpi', 'layout'] as const,
   noticeInbox: ['notices', 'inbox'] as const,
@@ -496,6 +497,17 @@ export function useKpiOverview(filters: KpiFilters | null) {
 
 /** Where the period strip begins: the first day anything was recorded. */
 /** §15 — the drill-down of the general page: a factory, a process or a few machines, month by month. */
+/** §15 — Comparisons: the processes by month and over the period, and the machines of one process. */
+export function useKpiComparisons(q: { from: string; to: string; process: Process } | null) {
+  return useQuery({
+    queryKey: keys.kpiComparisons(q ?? { from: '', to: '', process: 'forming' }),
+    queryFn: () => api<KpiComparisons>(`/kpi/comparisons${qs({ from: q?.from, to: q?.to, process: q?.process })}`),
+    enabled: q !== null,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
 export function useKpiBreakdown(filters: KpiBreakdownFilters | null) {
   return useQuery({
     queryKey: keys.kpiBreakdown(filters ?? ({} as KpiBreakdownFilters)),
