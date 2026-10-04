@@ -93,6 +93,9 @@ function params(f: PeriodFilters): unknown[] {
  * session there. Its defects are every stage's. A make-to-stock line is not
  * an order line and keeps its sessions' own quantities.
  */
+// Every query here finds a session's machine with a LATERAL join and keeps
+// only the machines the dashboard counts (machines.on_dashboard); a session
+// on a code the register does not know is counted.
 const PRODUCED = `
 produced_raw AS (
   SELECT s.id AS session_id, s.work_center_code AS wc, COALESCE(m.factory, '') AS factory,
@@ -106,10 +109,10 @@ produced_raw AS (
     FROM inspection_sessions s
     JOIN production_orders o ON o.id = s.order_id
     LEFT JOIN LATERAL (
-      SELECT m.factory, m.display_name, m.process FROM machines m
+      SELECT m.factory, m.display_name, m.process, m.on_dashboard FROM machines m
        WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
        ORDER BY m.created_at LIMIT 1) m ON true
-   WHERE s.deleted_at IS NULL AND s.status = 'Closed' AND s.final_qty IS NOT NULL AND s.closed_at IS NOT NULL
+   WHERE m.on_dashboard IS NOT FALSE AND s.deleted_at IS NULL AND s.status = 'Closed' AND s.final_qty IS NOT NULL AND s.closed_at IS NOT NULL
      AND s.closed_at >= ($2::date)::timestamp AT TIME ZONE $1
      AND s.closed_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
      AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
@@ -146,10 +149,10 @@ WITH base AS (
     JOIN inspection_sessions s ON s.id = sm.session_id AND s.deleted_at IS NULL
     JOIN production_orders o ON o.id = sm.order_id
     LEFT JOIN LATERAL (
-      SELECT m.factory, m.display_name, m.process FROM machines m
+      SELECT m.factory, m.display_name, m.process, m.on_dashboard FROM machines m
        WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
        ORDER BY m.created_at LIMIT 1) m ON true
-   WHERE sm.deleted_at IS NULL
+   WHERE m.on_dashboard IS NOT FALSE AND sm.deleted_at IS NULL
      AND sm.created_at >= ($2::date)::timestamp AT TIME ZONE $1
      AND sm.created_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
      AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
@@ -235,8 +238,8 @@ export async function loadTotals(q: Queryable, f: PeriodFilters): Promise<KpiTot
          FROM inspection_sessions s
          JOIN production_orders o ON o.id = s.order_id
          LEFT JOIN LATERAL (
-           SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
-        WHERE s.deleted_at IS NULL
+           SELECT m.factory, m.process, m.on_dashboard FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
+        WHERE m.on_dashboard IS NOT FALSE AND s.deleted_at IS NULL
           AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
           AND s.started_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
           AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
@@ -484,8 +487,8 @@ export async function loadHolds(q: Queryable, f: PeriodFilters): Promise<CappedR
        JOIN inspection_sessions s ON s.id = sm.session_id AND s.deleted_at IS NULL
        JOIN production_orders o ON o.id = sm.order_id
        LEFT JOIN LATERAL (
-         SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
-      WHERE d.deleted_at IS NULL AND d.disposition = 'Hold'
+         SELECT m.factory, m.process, m.on_dashboard FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
+      WHERE m.on_dashboard IS NOT FALSE AND d.deleted_at IS NULL AND d.disposition = 'Hold'
         AND ($1::text[] IS NULL OR COALESCE(m.factory, '') = ANY($1::text[]))
         AND ($2::text[] IS NULL OR lower(s.work_center_code) = ANY($2::text[]))
         AND ($3::text IS NULL OR lower(o.item_code) = lower($3))
@@ -536,8 +539,8 @@ export async function loadDiscipline(q: Queryable, f: PeriodFilters): Promise<Di
          FROM inspection_sessions s
          JOIN production_orders o ON o.id = s.order_id
          LEFT JOIN LATERAL (
-           SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
-        WHERE s.deleted_at IS NULL
+           SELECT m.factory, m.process, m.on_dashboard FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
+        WHERE m.on_dashboard IS NOT FALSE AND s.deleted_at IS NULL
           AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
           AND ($5::text[] IS NULL OR lower(s.work_center_code) = ANY($5::text[]))
           AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
@@ -562,8 +565,8 @@ export async function loadDiscipline(q: Queryable, f: PeriodFilters): Promise<Di
       `SELECT count(*)::int AS "openLines"
          FROM production_orders o
          LEFT JOIN LATERAL (
-           SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(o.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
-        WHERE o.deleted_at IS NULL AND NOT ${cancelledSql('o.erp_status')} AND o.required_qty > o.finished_qty
+           SELECT m.factory, m.process, m.on_dashboard FROM machines m WHERE lower(m.code) = lower(o.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
+        WHERE m.on_dashboard IS NOT FALSE AND o.deleted_at IS NULL AND NOT ${cancelledSql('o.erp_status')} AND o.required_qty > o.finished_qty
           AND ($1::text[] IS NULL OR COALESCE(m.factory, '') = ANY($1::text[]))
           AND ($2::text[] IS NULL OR lower(o.work_center_code) = ANY($2::text[]))
           AND ($3::text IS NULL OR lower(o.item_code) = lower($3))
@@ -645,9 +648,9 @@ export async function loadInspectorRaw(q: Queryable, f: PeriodFilters): Promise<
            FROM inspection_sessions s
            JOIN production_orders o ON o.id = s.order_id
            LEFT JOIN LATERAL (
-             SELECT m.factory, m.process FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
+             SELECT m.factory, m.process, m.on_dashboard FROM machines m WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
               ORDER BY m.created_at LIMIT 1) m ON true
-          WHERE s.deleted_at IS NULL
+          WHERE m.on_dashboard IS NOT FALSE AND s.deleted_at IS NULL
             AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
             AND s.started_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
             AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
@@ -1202,10 +1205,10 @@ WITH sessions AS (
     FROM inspection_sessions s
     JOIN production_orders o ON o.id = s.order_id
     LEFT JOIN LATERAL (
-      SELECT m.factory, m.display_name, m.process FROM machines m
+      SELECT m.factory, m.display_name, m.process, m.on_dashboard FROM machines m
        WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
        ORDER BY m.created_at LIMIT 1) m ON true
-   WHERE s.deleted_at IS NULL
+   WHERE m.on_dashboard IS NOT FALSE AND s.deleted_at IS NULL
      AND s.started_at >= ($2::date)::timestamp AT TIME ZONE $1
      AND s.started_at <  (($3::date + 1)::timestamp) AT TIME ZONE $1
      AND ($4::text[] IS NULL OR COALESCE(m.factory, '') = ANY($4::text[]))
@@ -1508,6 +1511,8 @@ export interface MaterialPick {
   material: MaterialKind | 'all'
   /** '' picks the coils with no supplier recorded. */
   supplier: string | null
+  /** One grade, as recorded (case and spaces aside). */
+  grade: string | null
 }
 
 /** A thickness as a key: millimetres to the thousandth, or none. */
@@ -1562,12 +1567,16 @@ export async function loadMaterials(q: Queryable, f: PeriodFilters, grain: KpiGr
   const thick = new Map<string, { all: Acc; black: Acc; galvanized: Acc; thickness: number | null }>()
   const trend = new Map<string, Acc>()
   const seen = new Set<number>()
-  const details = new Map<string, Acc & { supplier: string; thickness: number | null; material: MaterialKind }>()
+  const details = new Map<string, Acc & { supplier: string; thickness: number | null; grade: string; material: MaterialKind }>()
+  const grades = new Map<string, string>()
   for (const r of rows) {
     add(suppliers, r.supplier ?? '', r)
     const kind = materialOfGrade(r.grade)
-    const dk = `${(r.supplier ?? '').toLowerCase()}|${thicknessKey(r.thickness)}|${kind}`
-    const d = details.get(dk) ?? { supplier: r.supplier ?? '', thickness: r.thickness, material: kind, produced: 0, rejected: 0 }
+    const grade = (r.grade ?? '').trim()
+    const gradeKey = grade.toUpperCase()
+    if (grade) grades.set(gradeKey, grades.get(gradeKey) ?? grade)
+    const dk = `${(r.supplier ?? '').toLowerCase()}|${thicknessKey(r.thickness)}|${gradeKey}`
+    const d = details.get(dk) ?? { supplier: r.supplier ?? '', thickness: r.thickness, grade, material: kind, produced: 0, rejected: 0 }
     d.produced += r.produced
     d.rejected += r.rejected
     details.set(dk, d)
@@ -1583,7 +1592,8 @@ export async function loadMaterials(q: Queryable, f: PeriodFilters, grain: KpiGr
     if (r.thickness !== null) seen.add(r.thickness)
     const thicknessMatches = pick.thickness === null || (r.thickness !== null && thicknessKey(r.thickness) === thicknessKey(pick.thickness))
     const supplierMatches = pick.supplier === null || (r.supplier ?? '').toLowerCase() === pick.supplier.toLowerCase()
-    if (thicknessMatches && supplierMatches && (pick.material === 'all' || pick.material === kind)) add(trend, r.bucket, r)
+    const gradeMatches = pick.grade === null || gradeKey === pick.grade.trim().toUpperCase()
+    if (thicknessMatches && supplierMatches && gradeMatches && (pick.material === 'all' || pick.material === kind)) add(trend, r.bucket, r)
   }
   const supplierRows: KpiMaterialRow[] = Array.from(suppliers, ([key, a]) => ({ key, label: key || 'No supplier recorded', ...point(a.produced, a.rejected) }))
     .filter((r) => r.made > 0)
@@ -1606,14 +1616,16 @@ export async function loadMaterials(q: Queryable, f: PeriodFilters, grain: KpiGr
     suppliers: supplierRows,
     thicknesses: thicknessRows,
     thicknessOptions: Array.from(seen).sort((a, b) => a - b),
+    gradeOptions: Array.from(grades.values()).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
     details: Array.from(details.values())
-      .map((d): KpiMaterialDetail => ({ supplier: d.supplier, thickness: d.thickness, material: d.material, ...point(d.produced, d.rejected) }))
+      .map((d): KpiMaterialDetail => ({ supplier: d.supplier, thickness: d.thickness, grade: d.grade, material: d.material, ...point(d.produced, d.rejected) }))
       .filter((d) => d.made > 0)
       .sort((a, b) => b.made - a.made || a.supplier.localeCompare(b.supplier)),
     trend: {
       thickness: pick.thickness,
       material: pick.material,
       supplier: pick.supplier,
+      grade: pick.grade,
       grain,
       buckets,
       points: buckets.map((b) => {

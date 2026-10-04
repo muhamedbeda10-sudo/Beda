@@ -17,6 +17,8 @@ interface MachineDraft {
   process: Process
   /** 'item' — the configured item dimensions pre-fill; 'inspector' — the inspector types them. */
   dimensions: 'item' | 'inspector'
+  /** Counted by the dashboard; off for a machine inspected but not weighed with production (manual welding). */
+  onDashboard: boolean
 }
 
 const PROCESS_TONE: Record<Process, 'neutral' | 'amber' | 'violet' | 'blue' | 'green'> = { forming: 'blue', welding: 'amber', paint: 'violet', universal: 'green' }
@@ -45,7 +47,7 @@ export function MachinesSection() {
       sort={sort}
       addLabel="Add machine"
       emptyHint="Add the machines used on the shop floor."
-      minTableWidth="min-w-[46rem]"
+      minTableWidth="min-w-[54rem]"
       columns={[
         { key: 'code', label: 'Code', render: (r) => <Badge tone="blue">{r.code}</Badge> },
         { key: 'name', label: 'Machine', render: (r) => r.name },
@@ -56,19 +58,25 @@ export function MachinesSection() {
           render: (r) => (r.usesItemDimensions === false ? <Badge tone="amber">Typed by inspector</Badge> : <Badge tone="neutral">From item setup</Badge>),
         },
         {
+          key: 'dashboard',
+          label: 'Dashboard',
+          render: (r) => (r.onDashboard === false ? <Badge tone="amber">Left out</Badge> : <Badge tone="neutral">Counted</Badge>),
+        },
+        {
           key: 'displayName',
           label: 'Shown as',
           render: (r) => <span className="font-semibold">{r.displayName}</span>,
         },
       ]}
       describe={(r) => r.displayName || r.name}
-      newDraft={() => ({ code: '', name: '', factory: '', process: 'forming', dimensions: 'item' })}
+      newDraft={() => ({ code: '', name: '', factory: '', process: 'forming', dimensions: 'item', onDashboard: true })}
       toDraft={(r) => ({
         code: r.code,
         name: r.name,
         factory: r.factory ?? '',
         process: r.process ?? 'forming',
         dimensions: r.usesItemDimensions === false ? 'inspector' : 'item',
+        onDashboard: r.onDashboard !== false,
       })}
       validate={(d) => requireText(d.code, 'Machine code') ?? requireText(d.name, 'Machine name')}
       toRecord={(d) => {
@@ -81,6 +89,7 @@ export function MachinesSection() {
           factory: d.factory.trim() || undefined,
           process: d.process,
           usesItemDimensions: d.dimensions === 'item',
+          onDashboard: d.onDashboard,
           // The label the shop floor recognises: "58-A. Welding Line".
           displayName: [code, name].filter(Boolean).join('-'),
         }
@@ -118,6 +127,15 @@ export function MachinesSection() {
               </Select>
             </Field>
           )}
+          <Field
+            label="Dashboard"
+            hint="Left out: the machine is still inspected and its sessions stay in History, but no dashboard figure counts it — for manual welding or a bench, not production."
+          >
+            <Select value={d.onDashboard ? 'counted' : 'out'} onChange={(e) => patch({ onDashboard: e.target.value === 'counted' })} className="min-h-[48px]">
+              <option value="counted">Counted on the dashboard</option>
+              <option value="out">Left out of the dashboard</option>
+            </Select>
+          </Field>
         </>
       )}
     />

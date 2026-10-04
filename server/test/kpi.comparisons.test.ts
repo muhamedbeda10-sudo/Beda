@@ -146,6 +146,22 @@ describe('§15 — Comparisons', () => {
     expect((await app.api('GET', `/api/kpi/comparisons?from=${today(-1)}&to=${today(1)}&process=forming`, { token: inspector.token })).status).toBe(403)
   })
 
+  it('leaves a machine off the dashboard out of every figure, and counts it again when put back', async () => {
+    const machines = (await app.api<{ id: string; code: string; name: string; line: string; displayName: string; process: string; factory?: string }[]>('GET', '/api/master/machines', { token: admin.token })).body
+    const m32 = machines.find((m) => m.code === '32')!
+    const put = (onDashboard: boolean) =>
+      app.api('PUT', `/api/master/machines/${m32.id}`, { token: admin.token, body: { code: m32.code, name: m32.name, line: m32.line, displayName: m32.displayName, factory: m32.factory, process: m32.process, usesItemDimensions: true, onDashboard } })
+    expect((await put(false)).status).toBe(200)
+    const off = (await compare(today(-1), today(1))).body
+    expect(off.machines.series.map((m) => m.key)).toEqual(['31'])
+    expect(off.period.series.find((s) => s.key === 'forming')).toMatchObject({ made: 102, productionDefectPieces: 2 })
+    expect(off.defects.machines.map((m) => m.key)).toEqual(['31'])
+    const general = await app.api<{ machines: { workCenterCode: string }[] }>('GET', `/api/kpi/general?from=${today(-1)}&to=${today(1)}`, { token: admin.token })
+    expect(general.body.machines.map((m) => m.workCenterCode)).not.toContain('32')
+    expect((await put(true)).status).toBe(200)
+    expect((await compare(today(-1), today(1))).body.machines.series.map((m) => m.key).sort()).toEqual(['31', '32'])
+  })
+
   it('keeps its own arrangement on the board, and gives one to a client that sends none', async () => {
     const layouts = defaultDashboardLayouts()
     layouts.comparisons = layouts.comparisons.map((it) => (it.i === 'c.machineDefects' ? { ...it, hidden: true } : it))

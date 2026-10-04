@@ -178,6 +178,8 @@ const MaterialsQuery = z.object({
   supplier: z.string().trim().min(1).max(200).optional(),
   /** The trend reads the coils with no supplier recorded. */
   noSupplier: z.enum(['1']).optional(),
+  /** One coil grade for the trend. */
+  grade: z.string().trim().min(1).max(60).optional(),
   grain: grainChoice,
 })
 
@@ -609,7 +611,7 @@ export function kpiRoutes(ctx: AppContext): Router {
       ctx.db,
       { tz, from: q.from, to: q.to, processes: ['forming'], workCenterCodes: codes.length ? codes : undefined },
       grain,
-      { thickness: q.thickness ?? null, material: q.material, supplier: q.noSupplier ? '' : (q.supplier ?? null) },
+      { thickness: q.thickness ?? null, material: q.material, supplier: q.noSupplier ? '' : (q.supplier ?? null), grade: q.grade ?? null },
     )
     const out: KpiMaterials = { generatedAt: new Date().toISOString(), workCenterCodes: q.workCenterCode, ...body }
     res.json(out)

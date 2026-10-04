@@ -66,6 +66,7 @@ describe('a write to the inspection record refreshes the dashboard too', () => {
       line: 'LM2',
       process: 'forming',
       usesItemDimensions: true,
+      onDashboard: true,
     })
     expect(keysInvalidated()).toEqual(expect.arrayContaining(['["master","machines"]', '["kpi"]']))
   })
