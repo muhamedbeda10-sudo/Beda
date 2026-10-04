@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Layers, Loader2, Table2, Trash2 } from 'lucide-react'
+import { Layers, Loader2, RefreshCw, Table2, Trash2 } from 'lucide-react'
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { CsvImporter } from '@/components/admin/CsvImporter'
+import { AccessSyncPanel } from '@/components/admin/AccessSyncPanel'
 import { COILS_IMPORTER, ORDERS_IMPORTER } from '@/components/admin/importers'
 import { Button, Modal } from '@/components/ui'
 import { clearOrders } from '@/services/mutations'
@@ -11,11 +12,13 @@ import { cn } from '@/lib/utils'
 
 /**
  * §7.7 — the two ERP exports that change every day: production order lines
- * and the coil register. Configuration sheets live with their sections.
+ * and the coil register, and the orders synced from Access on their own.
+ * Configuration sheets live with their sections.
  */
 const SOURCES = [
   { key: 'orders', label: 'Production orders', icon: Layers, importer: ORDERS_IMPORTER },
   { key: 'coils', label: 'Coils', icon: Table2, importer: COILS_IMPORTER },
+  { key: 'access', label: 'Access sync', icon: RefreshCw, importer: null },
 ] as const
 
 export function DataImportPage() {
@@ -75,7 +78,7 @@ export function DataImportPage() {
           })}
         </div>
         <div key={source.key} className="animate-page-in">
-          <CsvImporter importer={source.importer} />
+          {source.importer ? <CsvImporter importer={source.importer} /> : <AccessSyncPanel />}
         </div>
       </div>
 

@@ -7,6 +7,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import {
   EXISTING_KEYS_MAX,
   type ClearOrdersResult,
+  type CreateIntegrationKeyResponse,
   type CloseSessionRequest,
   type CorrectDefectRequest,
   type CorrectDimensionRequest,
@@ -202,6 +203,26 @@ export async function clearOrders(qc: QueryClient): Promise<ClearOrdersResult> {
   const result = await api<ClearOrdersResult>('/orders/clear', { method: 'POST' })
   await recordChanged(qc, ['orders'])
   return result
+}
+
+// ---- §7.7 Access order sync --------------------------------------------------
+
+/** Sync now: the agent picks it up within a minute. */
+export async function requestOrderSync(qc: QueryClient): Promise<void> {
+  await api<void>('/integrations/order-sync/request', { method: 'POST' })
+  await qc.invalidateQueries({ queryKey: ['integrations', 'order-sync'] })
+}
+
+/** A new key for the agent: the secret comes back this once. */
+export async function createIntegrationKey(qc: QueryClient, name: string): Promise<CreateIntegrationKeyResponse> {
+  const res = await api<CreateIntegrationKeyResponse>('/integrations/keys', { method: 'POST', body: { name } })
+  await qc.invalidateQueries({ queryKey: ['integrations', 'order-sync'] })
+  return res
+}
+
+export async function revokeIntegrationKey(qc: QueryClient, id: string): Promise<void> {
+  await api<void>(`/integrations/keys/${id}/revoke`, { method: 'POST' })
+  await qc.invalidateQueries({ queryKey: ['integrations', 'order-sync'] })
 }
 
 // ---- Bulk import -----------------------------------------------------------
