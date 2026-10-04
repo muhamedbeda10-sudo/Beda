@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-04.2',
+    date: '2026-10-04',
+    title: 'Machines left out of the dashboard; Comparisons tidied',
+    items: [
+      { text: 'A machine can be left out of the dashboard (Configuration › Machines › Dashboard): it is still inspected and stays in History, but no dashboard figure counts it — for manual welding. The machines left out are named under the dashboard\'s cards.' },
+      { text: 'Comparisons draws every machine of the group, each in its own colour; pick machines to compare a few. The machine names on the defects chart slant when they are long, so they no longer run into each other.' },
+      { text: 'Roll forming raw material: a Grade filter on the trend, a Grade column in the table, and the table\'s header row stays in view while it scrolls.' },
+    ],
+  },
+  {
     id: '2026-10-04.1',
     date: '2026-10-04',
     title: 'Orders straight from Access',

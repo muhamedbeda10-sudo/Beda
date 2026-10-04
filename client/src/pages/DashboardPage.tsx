@@ -51,7 +51,7 @@ import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
-import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, StackedColumnChart, TrendChart, slicesOf, PIE_CLASSES, PIE_STROKES, type HBar, type PieSlice } from '@/components/dashboard/charts'
+import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, StackedColumnChart, TrendChart, slicesOf, PIE_CLASSES, PIE_STROKES, SERIES_STROKES, type HBar, type PieSlice } from '@/components/dashboard/charts'
 import { Board, BoardContext, ChartGallery, WidgetLabelContext, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
 import { DrillModal, type DrillSpec } from '@/components/dashboard/DrillModal'
 import { FilterNote, FilterTh, MultiSelectMenu, byName, useColumnFilters } from '@/components/dashboard/filters'
@@ -426,7 +426,21 @@ function windowLength(g: KpiGeneral): string {
   return g.monthsBack <= 1 ? 'this month' : `the last ${g.monthsBack} months`
 }
 
-function GeneralOverview({ data, loading, error }: { data: KpiGeneral | null; loading: boolean; error: string | null }) {
+/** The machines the dashboard leaves out (Configuration → Machines), named under its figures so nobody wonders why a machine is missing. */
+function ScopeNote({ leftOut }: { leftOut: { code: string; displayName: string }[] }) {
+  return (
+    <p className="flex items-start gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>
+        {leftOut.length === 0
+          ? 'Every figure counts every machine of the register.'
+          : `Every figure counts only the machines on the dashboard. Left out: ${leftOut.map((m) => m.displayName || m.code).join(', ')} — set under Configuration › Machines.`}
+      </span>
+    </p>
+  )
+}
+
+function GeneralOverview({ data, loading, error, leftOut }: { data: KpiGeneral | null; loading: boolean; error: string | null; leftOut: { code: string; displayName: string }[] }) {
   if (error) return <Card className="border border-rose-200 p-4 text-sm text-rose-700 dark:border-rose-500/30 dark:text-rose-300">{error}</Card>
   if (!data) {
     return loading ? (
@@ -473,6 +487,7 @@ function GeneralOverview({ data, loading, error }: { data: KpiGeneral | null; lo
         })}
       </div>
       <p className="text-xs text-slate-400">Reject rate and PPM over {describeRange({ from: data.from, to: data.to })}; the trend line is {windowLength(data)}, {trendSpan}{data.monthsBack > 1 ? ', against the month before' : ''}; it starts on the first month with production.</p>
+      <ScopeNote leftOut={leftOut} />
     </div>
   )
 }
@@ -764,22 +779,22 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
   const machines = [...(data?.machines.series ?? [])].filter((m) => m.made > 0).sort((a, b) => b.productionDefectPieces - a.productionDefectPieces || b.made - a.made || a.label.localeCompare(b.label))
   const monthMachines = (data?.machinesWindow.series ?? []).filter((m) => m.made > 0)
   const ranked = [...machines.map((m) => m.key), ...monthMachines.map((m) => m.key).filter((k) => !machines.some((m) => m.key === k))]
-  const colourOf = (code: string) => PIE_STROKES[Math.min(Math.max(ranked.indexOf(code), 0), PIE_STROKES.length - 1)]
+  const colourOf = (code: string) => SERIES_STROKES[Math.min(Math.max(ranked.indexOf(code), 0), SERIES_STROKES.length - 1)]
   const options = ranked.map((k) => machines.find((m) => m.key === k) ?? monthMachines.find((m) => m.key === k)!)
   const chosen = lineMachines.filter((c) => ranked.includes(c))
-  const drawnKeys = (chosen.length ? chosen : ranked).slice(0, LINE_CLASSES.length)
+  const drawnKeys = (chosen.length ? chosen : ranked).slice(0, SERIES_STROKES.length)
   const linesOf = (series: KpiCompareSeries[]) =>
     drawnKeys
       .map((k) => series.find((m) => m.key === k))
       .filter((m): m is KpiCompareSeries => m !== undefined && m.made > 0)
       .map((m) => ({ label: m.label, values: m.points.map((pt) => pt.defectRatePct), className: colourOf(m.key) }))
-  const leftOut = Math.max(0, (chosen.length || ranked.length) - LINE_CLASSES.length)
+  const leftOut = Math.max(0, (chosen.length || ranked.length) - SERIES_STROKES.length)
   const machinePicker = ranked.length > 0 && (
     <MultiSelectMenu
       options={options.map((m) => ({ value: m.key, label: m.label, sub: m.factory }))}
       selected={chosen}
       onChange={setLineMachines}
-      allLabel={ranked.length > LINE_CLASSES.length ? `The ${LINE_CLASSES.length} most rejected` : 'All machines'}
+      allLabel={ranked.length > SERIES_STROKES.length ? `The ${SERIES_STROKES.length} most rejected` : 'All machines'}
       noun="machines"
       ariaLabel="Machines drawn"
     />
@@ -881,7 +896,7 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
           { id: 'c.machines', title: 'Machines of the group over the period', node: (
             <Section
               title={`${processName}: machines over the period`}
-              hint={`Each machine's reject rate over ${periodWords}, a point ${data ? GRAIN_WORD[data.machines.grain] : 'a day'}; a line runs on over the points when nothing was made.${leftOut > 0 ? ` ${leftOut} more ${leftOut === 1 ? 'machine is' : 'machines are'} not drawn: choose up to ${LINE_CLASSES.length}.` : ''}`}
+              hint={`Each machine's reject rate over ${periodWords}, a point ${data ? GRAIN_WORD[data.machines.grain] : 'a day'}; a line runs on over the points when nothing was made.${leftOut > 0 ? ` ${leftOut} more ${leftOut === 1 ? 'machine is' : 'machines are'} not drawn: choose up to ${SERIES_STROKES.length}.` : ''} Pick machines to compare a few.`}
               icon={<Factory className="h-4 w-4" />}
               action={<span className="flex flex-wrap items-center justify-end gap-2"><GrainPicker value={grain} onChange={setGrain} />{machinePicker}</span>}
             >
@@ -905,9 +920,9 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
               ) : defects.rows.length === 0 ? (
                 <p className="py-10 text-center text-sm text-slate-400">No rejected piece on {processName.toLowerCase()} in this period.</p>
               ) : (
-                <div className="min-h-0 overflow-auto">
+                <div>
                   <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-white text-left text-[11px] uppercase tracking-wide text-slate-400 dark:bg-slate-900">
+                    <thead className="sticky top-0 z-10 bg-white text-left text-[11px] uppercase tracking-wide text-slate-400 shadow-[0_1px_0_0_rgb(226_232_240)] dark:bg-slate-900 dark:shadow-[0_1px_0_0_rgb(30_41_59)]">
                       <tr>
                         <th className="px-2 py-1.5 font-semibold">Defect</th>
                         {defects.machines.map((m) => (
@@ -962,17 +977,19 @@ const NO_SUPPLIER = '__none__'
  */
 function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiThresholds }) {
   const { data: allMachines = [] } = useMaster('machines')
-  const rollForming = useMemo(() => allMachines.filter((m) => m.process === 'forming').sort((a, b) => byName(a.displayName || a.code, b.displayName || b.code)), [allMachines])
+  const rollForming = useMemo(() => allMachines.filter((m) => m.process === 'forming' && m.onDashboard !== false).sort((a, b) => byName(a.displayName || a.code, b.displayName || b.code)), [allMachines])
   const [machineCodes, setMachineCodes] = usePersistedState<string[]>('qc-dash:rf-machines', [])
   const [thickness, setThickness] = usePersistedState<string>('qc-dash:rf-thickness', '')
   const [material, setMaterial] = usePersistedState<MaterialKind | 'all'>('qc-dash:rf-material', 'all')
   /** '' every supplier; NO_SUPPLIER the coils with none recorded; else the supplier's name. */
   const [supplier, setSupplier] = usePersistedState<string>('qc-dash:rf-supplier', '')
   const [grain, setGrain] = usePersistedState<KpiGrainChoice>('qc-dash:rf-grain', 'auto')
+  /** '' every grade; else the coil grade as recorded. */
+  const [grade, setGrade] = usePersistedState<string>('qc-dash:rf-grade', '')
   const chosen = machineCodes.filter((c) => rollForming.some((m) => m.code.toLowerCase() === c.toLowerCase()))
   const picked = thickness === '' ? null : Number(thickness)
   const supplierPick = supplier === '' ? null : supplier === NO_SUPPLIER ? '' : supplier
-  const { data, isFetching } = useKpiMaterials({ from, to, workCenterCodes: chosen, thickness: picked !== null && Number.isFinite(picked) ? picked : null, material, supplier: supplierPick, grain })
+  const { data, isFetching } = useKpiMaterials({ from, to, workCenterCodes: chosen, thickness: picked !== null && Number.isFinite(picked) ? picked : null, material, supplier: supplierPick, grade: grade || null, grain })
   const periodWords = describeRange({ from, to })
   const scope = chosen.length === 0 ? 'every roll forming machine' : chosen.length === 1 ? (rollForming.find((m) => m.code.toLowerCase() === chosen[0].toLowerCase())?.displayName ?? chosen[0]) : `${chosen.length} roll forming machines`
   const rateTone = (v: number | null) => toneLowIsGood(v, t.defectRateGreen, t.defectRateAmber)
@@ -984,26 +1001,29 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
     text: r.defectRatePct === null ? '—' : `${pctStr(r.defectRatePct)} · ${ppmStr(r.defectRatePct)} PPM`,
   })
   const supplierWords = supplierPick === null ? 'every supplier' : supplierPick === '' ? 'no supplier recorded' : supplierPick
-  const trendWhat = `${picked === null ? 'Every thickness' : `${thicknessText(picked)} mm`} · ${material === 'all' ? 'black and galvanized' : MATERIAL_KIND_LABEL[material].toLowerCase()} · ${supplierWords}`
+  const trendWhat = `${picked === null ? 'Every thickness' : `${thicknessText(picked)} mm`} · ${grade || (material === 'all' ? 'black and galvanized' : MATERIAL_KIND_LABEL[material].toLowerCase())} · ${supplierWords}`
   const selectClass = '!w-auto min-h-[36px] rounded-lg py-1 text-xs font-semibold'
   const details = data?.details ?? []
   const filters = useColumnFilters(details, [
     { key: 'supplier', value: (d) => d.supplier || 'No supplier recorded' },
     { key: 'thickness', value: (d) => (d.thickness === null ? '—' : thicknessText(d.thickness)), numeric: true },
+    { key: 'grade', value: (d) => d.grade || '—' },
     { key: 'material', value: (d) => MATERIAL_KIND_LABEL[d.material] },
   ])
   const rowPicked = (d: KpiMaterialDetail) =>
-    supplierPick !== null && supplierPick.toLowerCase() === d.supplier.toLowerCase() && picked !== null && d.thickness !== null && thicknessText(d.thickness) === thicknessText(picked) && material === d.material
+    supplierPick !== null && supplierPick.toLowerCase() === d.supplier.toLowerCase() && picked !== null && d.thickness !== null && thicknessText(d.thickness) === thicknessText(picked) && grade.toUpperCase() === d.grade.toUpperCase()
   const pickRow = (d: KpiMaterialDetail) => {
     if (rowPicked(d)) {
       setSupplier('')
       setThickness('')
+      setGrade('')
       setMaterial('all')
       return
     }
     setSupplier(d.supplier === '' ? NO_SUPPLIER : d.supplier)
     setThickness(d.thickness === null ? '' : thicknessText(d.thickness))
-    setMaterial(d.material === 'unknown' ? 'all' : d.material)
+    setGrade(d.grade)
+    setMaterial('all')
   }
 
   return (
@@ -1068,6 +1088,15 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
                     ))}
                     {picked !== null && !(data?.thicknessOptions ?? []).some((v) => thicknessText(v) === thickness) && <option value={thickness}>{thickness} mm</option>}
                   </Select>
+                  <Select value={grade} onChange={(e) => setGrade(e.target.value)} className={selectClass} aria-label="Grade">
+                    <option value="">All grades</option>
+                    {(data?.gradeOptions ?? []).map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                    {grade !== '' && !(data?.gradeOptions ?? []).some((g) => g.toUpperCase() === grade.toUpperCase()) && <option value={grade}>{grade}</option>}
+                  </Select>
                   <Select value={material} onChange={(e) => setMaterial(e.target.value as MaterialKind | 'all')} className={selectClass} aria-label="Material">
                     <option value="all">Black and galvanized</option>
                     <option value="black">Black</option>
@@ -1091,18 +1120,19 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
             </Section>
           ) },
           { id: 'c.materialTable', title: 'Roll forming: every supplier, thickness and material', node: (
-            <Section title="Every supplier, thickness and material" hint={`What ${scope} made of each supplier's coils of each thickness, black or galvanized, ${periodWords}. Filter a column; tap a row to follow it over the period above, tap it again to let it go.`} icon={<Table2 className="h-4 w-4" />}>
+            <Section title="Every supplier, thickness and grade" hint={`What ${scope} made of each supplier's coils of each thickness and grade (black or galvanized read off the grade), ${periodWords}. Filter a column; tap a row to follow it over the period above, tap it again to let it go.`} icon={<Table2 className="h-4 w-4" />}>
               {!data ? (
                 <div className="skeleton h-48" />
               ) : details.length === 0 ? (
                 <p className="py-10 text-center text-sm text-slate-400">Nothing was made on {scope} in this period.</p>
               ) : (
-                <div className="min-h-0 overflow-auto">
+                <div>
                   <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-white text-left text-[11px] uppercase tracking-wide text-slate-400 dark:bg-slate-900">
+                    <thead className="sticky top-0 z-10 bg-white text-left text-[11px] uppercase tracking-wide text-slate-400 shadow-[0_1px_0_0_rgb(226_232_240)] dark:bg-slate-900 dark:shadow-[0_1px_0_0_rgb(30_41_59)]">
                       <tr>
                         <FilterTh filters={filters} column="supplier" label="Supplier" />
                         <FilterTh filters={filters} column="thickness" label="Thickness" />
+                        <FilterTh filters={filters} column="grade" label="Grade" />
                         <FilterTh filters={filters} column="material" label="Material" />
                         <th className="px-2 py-1.5 text-right font-semibold">Made</th>
                         <th className="px-2 py-1.5 text-right font-semibold">Rejected</th>
@@ -1115,13 +1145,14 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
                         const on = rowPicked(d)
                         return (
                           <tr
-                            key={`${d.supplier}|${d.thickness ?? ''}|${d.material}`}
+                            key={`${d.supplier}|${d.thickness ?? ''}|${d.grade}`}
                             className={cn('cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50', on && 'bg-brand-50 dark:bg-brand-500/10')}
                             onClick={() => pickRow(d)}
                             aria-selected={on}
                           >
                             <td className="px-2 py-1.5 font-medium" dir="auto">{d.supplier || 'No supplier recorded'}</td>
                             <td className="px-2 py-1.5 tabular-nums">{d.thickness === null ? '—' : `${thicknessText(d.thickness)} mm`}</td>
+                            <td className="whitespace-nowrap px-2 py-1.5" dir="auto">{d.grade || '—'}</td>
                             <td className="px-2 py-1.5">{MATERIAL_KIND_LABEL[d.material]}</td>
                             <td className="px-2 py-1.5 text-right tabular-nums">{num(d.made)}</td>
                             <td className="px-2 py-1.5 text-right tabular-nums">{num(d.productionDefectPieces)}</td>
@@ -1847,7 +1878,10 @@ export function DashboardPage() {
     setParetoMachine('')
   }
   const anythingSet = JSON.stringify(f) !== JSON.stringify(DEFAULT_FILTERS) || picks.factories.length > 0 || picks.processes.length > 0 || Object.values(picks.machines).some((m) => m.length > 0) || paretoMachine !== ''
-  const { data: machines = [] } = useMaster('machines', undefined, allowed)
+  const { data: registered = [] } = useMaster('machines', undefined, allowed)
+  // The dashboard offers and counts only the machines it is set to count; the others are named under its figures.
+  const machines = useMemo(() => registered.filter((m) => m.onDashboard !== false), [registered])
+  const leftOut = useMemo(() => registered.filter((m) => m.onDashboard === false).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true })), [registered])
   const { data: users = [] } = useUsers()
   const { data: span } = useKpiSpan(allowed)
 
@@ -2056,7 +2090,7 @@ export function DashboardPage() {
       {/* §15 — the general page: the plant and its factories on three figures, then one angle to read it from. */}
       {view === 'general' && (
         <>
-          <GeneralOverview data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} />
+          <GeneralOverview data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} leftOut={leftOut} />
           <div className="print-hidden flex flex-wrap items-center gap-2">
             <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Read it</span>
             <div className="inline-flex rounded-xl p-0.5 ring-1 ring-slate-200 dark:ring-slate-700">

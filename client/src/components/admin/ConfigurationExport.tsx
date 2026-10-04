@@ -36,11 +36,11 @@ export const EXPORTABLES: Exportable[] = [
   {
     key: 'machines',
     label: 'Machines',
-    hint: 'Code, name, line, factory, process, and whether item dimensions load',
+    hint: 'Code, name, line, factory, process, whether item dimensions load, and whether the dashboard counts it',
     sheet: 'Machines',
-    header: ['Code', 'Name', 'Line', 'Display name', 'Factory', 'Process', 'Loads item dimensions'],
+    header: ['Code', 'Name', 'Line', 'Display name', 'Factory', 'Process', 'Loads item dimensions', 'On the dashboard'],
     load: master('machines'),
-    row: (m: Machine) => [m.code, m.name, m.line, m.displayName, text(m.factory), PROCESS_LABEL[m.process] ?? m.process, m.usesItemDimensions ? 'Yes' : 'No'],
+    row: (m: Machine) => [m.code, m.name, m.line, m.displayName, text(m.factory), PROCESS_LABEL[m.process] ?? m.process, m.usesItemDimensions ? 'Yes' : 'No', m.onDashboard === false ? 'No' : 'Yes'],
   },
   {
     key: 'item-dimension-order',

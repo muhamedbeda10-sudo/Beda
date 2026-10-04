@@ -126,13 +126,21 @@ describe('§15 — roll forming raw material', () => {
     expect((await materials('&grain=week')).body.trend.grain).toBe('week')
   })
 
-  it('lists every supplier, thickness and kind together, for the table', async () => {
-    const { details } = (await materials()).body
-    expect(details.map((d) => [d.supplier, d.thickness, d.material, d.made, d.productionDefectPieces])).toEqual([
-      ['Ezz Steel', 1.5, 'black', 230, 5],
-      ['Suez Steel', 2, 'galvanized', 130, 5],
-      ['', null, 'unknown', 41, 1],
+  it('lists every supplier, thickness and grade together, for the table', async () => {
+    const { details, gradeOptions } = (await materials()).body
+    expect(details.map((d) => [d.supplier, d.thickness, d.grade, d.material, d.made, d.productionDefectPieces])).toEqual([
+      ['Ezz Steel', 1.5, 'S355JR', 'black', 230, 5],
+      ['Suez Steel', 2, 'DX51D+Z275', 'galvanized', 130, 5],
+      ['', null, '', 'unknown', 41, 1],
     ])
+    expect(gradeOptions).toEqual(['DX51D+Z275', 'S355JR'])
+  })
+
+  it('follows one grade over the period', async () => {
+    const g = (await materials('&grade=dx51d%2Bz275')).body.trend
+    expect(g.grade).toBe('dx51d+z275')
+    expect(g.total).toMatchObject({ made: 130, productionDefectPieces: 5 })
+    expect((await materials('&grade=S355JR&thickness=2')).body.trend.total.made).toBe(0)
   })
 
   it('narrows to the roll forming machines picked', async () => {

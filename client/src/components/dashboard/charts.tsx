@@ -680,8 +680,12 @@ export function StackedColumnChart({ columns, legend, height = 240, unit = '' }:
   const frame = useChartFrame()
   const id = useId()
   const W = 720
-  const H = height
-  const pad = { l: 44, r: 12, t: 22, b: 34 }
+  const slot0 = (W - 56) / Math.max(1, columns.length)
+  // Slanted names when a straight one would not fit its column.
+  const tilt = columns.some((c) => c.label.length * 6.2 > slot0)
+  const pad = { l: 44, r: 12, t: 22, b: tilt ? 96 : 34 }
+  // The slanted names take their room below; the plot keeps its height.
+  const H = height + (tilt ? 62 : 0)
   const x0 = pad.l
   const x1 = W - pad.r
   const y0 = pad.t
@@ -715,9 +719,16 @@ export function StackedColumnChart({ columns, legend, height = 240, unit = '' }:
                   {unit}
                 </text>
               )}
-              <text x={xAt(i)} y={y1 + 15} textAnchor="middle" fontSize="11" fontWeight={600} className="fill-slate-600 dark:fill-slate-300">
-                {c.label.length > 22 ? `${c.label.slice(0, 21)}…` : c.label}
-              </text>
+              {tilt ? (
+                <text x={xAt(i)} y={y1 + 12} textAnchor="end" fontSize="11" fontWeight={600} transform={`rotate(-35 ${xAt(i)} ${y1 + 12})`} className="fill-slate-600 dark:fill-slate-300">
+                  <title>{c.label}</title>
+                  {c.label.length > 26 ? `${c.label.slice(0, 25)}…` : c.label}
+                </text>
+              ) : (
+                <text x={xAt(i)} y={y1 + 15} textAnchor="middle" fontSize="11" fontWeight={600} className="fill-slate-600 dark:fill-slate-300">
+                  {c.label}
+                </text>
+              )}
             </g>
           )
         })}
@@ -839,6 +850,12 @@ export function LineChart({ labels, series, unit = '%', height = 220, connectGap
 
 /** Up to six lines that stay apart in both themes. */
 export const LINE_CLASSES = ['stroke-brand-500', 'stroke-rose-500', 'stroke-emerald-500', 'stroke-amber-500', 'stroke-violet-500', 'stroke-sky-500']
+
+/** Sixteen lines that stay apart, for comparing every machine of a group at once; the last is the catch-all. */
+export const SERIES_STROKES = [
+  'stroke-brand-500', 'stroke-rose-500', 'stroke-emerald-500', 'stroke-amber-500', 'stroke-violet-500', 'stroke-sky-500', 'stroke-pink-500', 'stroke-teal-500',
+  'stroke-orange-500', 'stroke-lime-600', 'stroke-cyan-600', 'stroke-fuchsia-500', 'stroke-indigo-400', 'stroke-yellow-500', 'stroke-red-700', 'stroke-slate-400',
+]
 
 /** The pie's colours as strokes, in the same order, so a line and its slice share a colour. */
 export const PIE_STROKES = ['stroke-brand-500', 'stroke-rose-500', 'stroke-emerald-500', 'stroke-amber-500', 'stroke-violet-500', 'stroke-sky-500', 'stroke-pink-500', 'stroke-teal-500', 'stroke-orange-500', 'stroke-slate-400']

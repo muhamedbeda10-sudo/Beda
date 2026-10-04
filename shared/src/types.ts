@@ -68,6 +68,12 @@ export interface Machine {
    * from the previous one's rows. Defaults to on.
    */
   usesItemDimensions: boolean
+  /**
+   * Whether the dashboard counts this machine. Off for machines inspected but
+   * not weighed with production (manual welding): their sessions and History
+   * stay, every dashboard figure leaves them out. Defaults to on.
+   */
+  onDashboard: boolean
   deletedAt?: ISODate | null
 }
 

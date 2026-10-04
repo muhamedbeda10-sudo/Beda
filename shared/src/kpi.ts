@@ -1293,10 +1293,12 @@ export interface KpiThicknessRow extends KpiMaterialRow {
   galvanized: KpiComparePoint
 }
 
-/** One supplier, thickness and kind of steel together: a row of the raw material table. */
+/** One supplier, thickness and grade together (black or galvanized read off the grade): a row of the raw material table. */
 export interface KpiMaterialDetail extends KpiComparePoint {
   supplier: string
   thickness: number | null
+  /** The coil's grade as recorded; '' when none was. */
+  grade: string
   material: MaterialKind
 }
 
@@ -1312,7 +1314,9 @@ export interface KpiMaterials {
   thicknesses: KpiThicknessRow[]
   /** The thicknesses seen in the period, for the trend's filter. */
   thicknessOptions: number[]
-  /** Every supplier, thickness and kind seen, most made first. */
+  /** The grades seen in the period, for the trend's filter. */
+  gradeOptions: string[]
+  /** Every supplier, thickness and grade seen, most made first. */
   details: KpiMaterialDetail[]
   trend: {
     /** null: every thickness. */
@@ -1320,6 +1324,8 @@ export interface KpiMaterials {
     material: MaterialKind | 'all'
     /** null: every supplier; '' is the coils with none recorded. */
     supplier: string | null
+    /** null: every grade. */
+    grade: string | null
     grain: KpiGrain
     buckets: KpiCompareBucket[]
     points: KpiComparePoint[]

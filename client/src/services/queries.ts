@@ -526,13 +526,15 @@ export interface MaterialsQuery {
   material: MaterialKind | 'all'
   /** One supplier for the trend; '' is the coils with none recorded; null is every one. */
   supplier: string | null
+  /** One coil grade for the trend; null is every one. */
+  grade: string | null
   grain: KpiGrainChoice
 }
 
 /** §15 — Comparisons: roll forming's reject rate by coil supplier, by thickness, and one thickness and material over the period. */
 export function useKpiMaterials(q: MaterialsQuery | null) {
   return useQuery({
-    queryKey: keys.kpiMaterials(q ?? { from: '', to: '', workCenterCodes: [], thickness: null, material: 'all', supplier: null, grain: 'auto' }),
+    queryKey: keys.kpiMaterials(q ?? { from: '', to: '', workCenterCodes: [], thickness: null, material: 'all', supplier: null, grade: null, grain: 'auto' }),
     queryFn: () =>
       api<KpiMaterials>(
         `/kpi/materials${qs({
@@ -543,6 +545,7 @@ export function useKpiMaterials(q: MaterialsQuery | null) {
           material: q?.material,
           supplier: q?.supplier || undefined,
           noSupplier: q?.supplier === '' ? '1' : undefined,
+          grade: q?.grade || undefined,
           grain: q?.grain,
         })}`,
       ),
