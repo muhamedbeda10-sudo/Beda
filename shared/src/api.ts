@@ -1008,3 +1008,112 @@ export interface OrderListOptionsResponse {
   /** Every item on the sheet: one row per code and name, since two items may share a code. */
   items: { itemCode: string; item: string }[]
 }
+
+// ---- §7.7 Order sync from the factory's Access database ----------------------
+
+/** How often the agent syncs on its own; an administrator can ask for one sooner. */
+export const ORDER_SYNC_INTERVAL_MINUTES = 15
+/** Rows the agent sends in one request. */
+export const ORDER_SYNC_BATCH_MAX = 500
+/** A run that has not finished after this long is given up, so the next can start. */
+export const ORDER_SYNC_STALE_MINUTES = 30
+/** A run that would retire more than this share of the live lines retires none: an empty or partial table is a mistake, not news. */
+export const ORDER_SYNC_RETIRE_MAX_SHARE = 0.5
+
+export type OrderSyncStatus = 'running' | 'success' | 'warning' | 'failed'
+
+export interface OrderSyncRowError {
+  /** The row's place in the run, from 1. */
+  row: number
+  lineKey?: string
+  message: string
+}
+
+export interface OrderSyncRun {
+  id: string
+  keyName: string
+  source: string
+  status: OrderSyncStatus
+  startedAt: string
+  finishedAt?: string
+  rowsReceived: number
+  rowsExpected?: number
+  inserted: number
+  updated: number
+  invalid: number
+  retired: number
+  /** Columns of the Access table no field reads. */
+  unknownColumns: string[]
+  /** The first rows that could not be read. */
+  errors: OrderSyncRowError[]
+  message?: string
+}
+
+export interface IntegrationKeyInfo {
+  id: string
+  name: string
+  /** The key's first characters, to tell keys apart. */
+  prefix: string
+  createdByName: string
+  createdAt: string
+  lastUsedAt?: string
+  revokedAt?: string
+}
+
+export interface OrderSyncStatusResponse {
+  intervalMinutes: number
+  /** Newest first. */
+  runs: OrderSyncRun[]
+  pendingRequest: { requestedAt: string; requestedByName: string } | null
+  keys: IntegrationKeyInfo[]
+}
+
+export interface CreateIntegrationKeyRequest {
+  name: string
+}
+
+export interface CreateIntegrationKeyResponse {
+  key: IntegrationKeyInfo
+  /** The key itself: shown this once, never stored. */
+  secret: string
+}
+
+// The agent's side, authenticated with an integration key.
+
+export interface OrderSyncDueResponse {
+  due: boolean
+  reason: 'requested' | 'interval' | 'first' | 'running' | 'not-yet'
+  intervalMinutes: number
+}
+
+export interface OrderSyncStartRequest {
+  /** The PC and the table read, for the record. */
+  source: string
+}
+
+export interface OrderSyncStartResponse {
+  runId: string
+  batchMax: number
+}
+
+export interface OrderSyncRowsRequest {
+  /** Rows as the Access table gives them: a column name → its value. */
+  rows: Record<string, unknown>[]
+}
+
+export interface OrderSyncRowsResponse {
+  received: number
+  inserted: number
+  updated: number
+  invalid: number
+  unknownColumns: string[]
+}
+
+export interface OrderSyncFinishRequest {
+  /** How many rows the agent read from the table: the run is whole only if every one arrived. */
+  total: number
+}
+
+export interface OrderSyncFailRequest {
+  message: string
+}

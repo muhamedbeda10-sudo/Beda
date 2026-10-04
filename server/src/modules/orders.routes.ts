@@ -46,7 +46,7 @@ export const ORDER_SELECT = `
 /** The same columns qualified with the table alias `o`, for a query that joins. */
 const ORDER_SELECT_O = ORDER_SELECT.replace(/(^|,)(\s*)(?=[a-z_]+)/g, '$1$2o.')
 
-const importRow = z.object({
+export const importRow = z.object({
   lineKey: z.string().trim().min(1).max(120),
   orderNumber: z.string().trim().min(1).max(120).optional(),
   item: z.string().trim().max(300).optional(),
@@ -71,6 +71,8 @@ const importRow = z.object({
     .refine((d) => d === undefined || !Number.isNaN(d.getTime()), 'date is not a valid date'),
 })
 
+export type OrderImportRow = z.infer<typeof importRow>
+
 const importSchema = z.object({ rows: z.array(importRow).min(1).max(1000) })
 const existingKeysSchema = z.object({ keys: z.array(z.string().trim().min(1)).max(EXISTING_KEYS_MAX) })
 
@@ -86,6 +88,97 @@ export async function fetchOrdersByIds(q: Queryable, ids: string[]): Promise<Pro
   if (ids.length === 0) return []
   const { rows } = await q.query<ProductionOrder>(`SELECT ${ORDER_SELECT} FROM production_orders WHERE id = ANY($1::uuid[])`, [ids])
   return rows.map(dropNulls)
+}
+
+/**
+ * §7.7 — idempotent bulk upsert on the line key, the ERP's Order ID (matched
+ * without regard to case; the stored spelling is kept). A field the rows do
+ * not carry leaves the stored value alone; a line that had been marked
+ * deleted comes back, because the ERP says it is current. A line seen for the
+ * first time must name its order number. A sync run stamps the lines it saw.
+ */
+export async function upsertOrderLines(tx: Queryable, rows: OrderImportRow[], syncRunId: string | null = null): Promise<{ inserted: number; updated: number }> {
+  // Last occurrence of a key wins, so a file that repeats a line key is
+  // applied in its own order rather than colliding inside one statement.
+  const byKey = new Map<string, z.infer<typeof importRow>>()
+  for (const row of rows) byKey.set(normaliseKey(row.lineKey), row)
+  const unique = Array.from(byKey.values())
+
+  const known = new Set(
+    (
+      await tx.query<{ key: string }>(`SELECT lower(line_key) AS key FROM production_orders WHERE lower(line_key) = ANY($1::text[])`, [
+        unique.map((o) => normaliseKey(o.lineKey)),
+      ])
+    ).rows.map((x) => x.key),
+  )
+  const orphan = unique.find((o) => !known.has(normaliseKey(o.lineKey)) && !o.orderNumber)
+  if (orphan) throw badRequest(`Order ID "${orphan.lineKey}" is new, so its row must carry the order number.`)
+
+  const payload = JSON.stringify(
+    unique.map((o) => ({
+      line_key: o.lineKey,
+      order_number: o.orderNumber ?? null,
+      item: o.item ?? null,
+      item_code: o.itemCode ?? null,
+      work_center_code: o.workCenterCode ?? null,
+      required_qty: o.requiredQty ?? null,
+      finished_qty: o.finishedQty ?? null,
+      drawing: o.drawing ?? null,
+      drawing_alt: o.drawingAlt ?? null,
+      issue: o.issue ?? null,
+      material: o.material ?? null,
+      expected_grade: o.expectedGrade ?? null,
+      customer: o.customer ?? null,
+      type: o.type ?? null,
+      colour: o.colour ?? null,
+      erp_status: o.erpStatus ?? null,
+      order_date: o.date ? o.date.toISOString() : null,
+    })),
+  )
+  const recordset = `jsonb_to_recordset($1::jsonb) AS i(
+    line_key text, order_number text, item text, item_code text, work_center_code text, required_qty numeric,
+    finished_qty numeric, drawing text, drawing_alt text, issue text, material text,
+    expected_grade text, customer text, type text, colour text, erp_status text, order_date timestamptz)`
+
+  const updated = await tx.query<{ id: string }>(
+    `UPDATE production_orders p SET
+        order_number = COALESCE(i.order_number, p.order_number),
+        item = COALESCE(i.item, p.item),
+        item_code = COALESCE(i.item_code, p.item_code),
+        work_center_code = COALESCE(i.work_center_code, p.work_center_code),
+        required_qty = COALESCE(i.required_qty, p.required_qty),
+        finished_qty = COALESCE(i.finished_qty, p.finished_qty),
+        drawing = COALESCE(i.drawing, p.drawing),
+        drawing_alt = COALESCE(i.drawing_alt, p.drawing_alt),
+        issue = COALESCE(i.issue, p.issue),
+        material = COALESCE(i.material, p.material),
+        expected_grade = COALESCE(i.expected_grade, p.expected_grade),
+        customer = COALESCE(i.customer, p.customer),
+        type = COALESCE(i.type, p.type),
+        colour = COALESCE(i.colour, p.colour),
+        erp_status = COALESCE(i.erp_status, p.erp_status),
+        order_date = COALESCE(i.order_date, p.order_date),
+        deleted_at = NULL, deleted_by_id = NULL,
+        last_sync_run_id = COALESCE($2::uuid, p.last_sync_run_id)
+      FROM ${recordset}
+     WHERE lower(p.line_key) = lower(i.line_key)
+     RETURNING p.id`,
+    [payload, syncRunId],
+  )
+  const inserted = await tx.query<{ id: string }>(
+    `INSERT INTO production_orders
+        (line_key, order_number, item, item_code, work_center_code, required_qty, finished_qty, drawing, drawing_alt,
+         issue, material, expected_grade, customer, type, colour, erp_status, order_date, last_sync_run_id)
+     SELECT i.line_key, i.order_number, COALESCE(i.item, ''), COALESCE(i.item_code, ''), COALESCE(i.work_center_code, ''),
+            COALESCE(i.required_qty, 0), COALESCE(i.finished_qty, 0), COALESCE(i.drawing, ''), i.drawing_alt,
+            i.issue, COALESCE(i.material, ''), COALESCE(i.expected_grade, ''), COALESCE(i.customer, ''),
+            COALESCE(i.type, ''), COALESCE(i.colour, ''), COALESCE(i.erp_status, ''), COALESCE(i.order_date, now()), $2::uuid
+       FROM ${recordset}
+      WHERE NOT EXISTS (SELECT 1 FROM production_orders p WHERE lower(p.line_key) = lower(i.line_key))
+     RETURNING id`,
+    [payload, syncRunId],
+  )
+  return { inserted: inserted.rowCount ?? 0, updated: updated.rowCount ?? 0 }
 }
 
 export function ordersRoutes(ctx: AppContext): Router {
@@ -441,86 +534,8 @@ export function ordersRoutes(ctx: AppContext): Router {
   r.post('/import', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
     const { rows } = parse(importSchema, req.body)
-    // Last occurrence of a key wins, so a file that repeats a line key is
-    // applied in its own order rather than colliding inside one statement.
-    const byKey = new Map<string, z.infer<typeof importRow>>()
-    for (const row of rows) byKey.set(normaliseKey(row.lineKey), row)
-    const unique = Array.from(byKey.values())
-
     const result = await withTransaction(ctx.db, async (tx) => {
-      const known = new Set(
-        (
-          await tx.query<{ key: string }>(`SELECT lower(line_key) AS key FROM production_orders WHERE lower(line_key) = ANY($1::text[])`, [
-            unique.map((o) => normaliseKey(o.lineKey)),
-          ])
-        ).rows.map((x) => x.key),
-      )
-      const orphan = unique.find((o) => !known.has(normaliseKey(o.lineKey)) && !o.orderNumber)
-      if (orphan) throw badRequest(`Order ID "${orphan.lineKey}" is new, so its row must carry the order number.`)
-
-      const payload = JSON.stringify(
-        unique.map((o) => ({
-          line_key: o.lineKey,
-          order_number: o.orderNumber ?? null,
-          item: o.item ?? null,
-          item_code: o.itemCode ?? null,
-          work_center_code: o.workCenterCode ?? null,
-          required_qty: o.requiredQty ?? null,
-          finished_qty: o.finishedQty ?? null,
-          drawing: o.drawing ?? null,
-          drawing_alt: o.drawingAlt ?? null,
-          issue: o.issue ?? null,
-          material: o.material ?? null,
-          expected_grade: o.expectedGrade ?? null,
-          customer: o.customer ?? null,
-          type: o.type ?? null,
-          colour: o.colour ?? null,
-          erp_status: o.erpStatus ?? null,
-          order_date: o.date ? o.date.toISOString() : null,
-        })),
-      )
-      const recordset = `jsonb_to_recordset($1::jsonb) AS i(
-        line_key text, order_number text, item text, item_code text, work_center_code text, required_qty numeric,
-        finished_qty numeric, drawing text, drawing_alt text, issue text, material text,
-        expected_grade text, customer text, type text, colour text, erp_status text, order_date timestamptz)`
-
-      const updated = await tx.query<{ id: string }>(
-        `UPDATE production_orders p SET
-            order_number = COALESCE(i.order_number, p.order_number),
-            item = COALESCE(i.item, p.item),
-            item_code = COALESCE(i.item_code, p.item_code),
-            work_center_code = COALESCE(i.work_center_code, p.work_center_code),
-            required_qty = COALESCE(i.required_qty, p.required_qty),
-            finished_qty = COALESCE(i.finished_qty, p.finished_qty),
-            drawing = COALESCE(i.drawing, p.drawing),
-            drawing_alt = COALESCE(i.drawing_alt, p.drawing_alt),
-            issue = COALESCE(i.issue, p.issue),
-            material = COALESCE(i.material, p.material),
-            expected_grade = COALESCE(i.expected_grade, p.expected_grade),
-            customer = COALESCE(i.customer, p.customer),
-            type = COALESCE(i.type, p.type),
-            colour = COALESCE(i.colour, p.colour),
-            erp_status = COALESCE(i.erp_status, p.erp_status),
-            order_date = COALESCE(i.order_date, p.order_date),
-            deleted_at = NULL, deleted_by_id = NULL
-          FROM ${recordset}
-         WHERE lower(p.line_key) = lower(i.line_key)
-         RETURNING p.id`,
-        [payload],
-      )
-      const inserted = await tx.query<{ id: string }>(
-        `INSERT INTO production_orders
-            (line_key, order_number, item, item_code, work_center_code, required_qty, finished_qty, drawing, drawing_alt,
-             issue, material, expected_grade, customer, type, colour, erp_status, order_date)
-         SELECT i.line_key, i.order_number, COALESCE(i.item, ''), COALESCE(i.item_code, ''), COALESCE(i.work_center_code, ''),
-                COALESCE(i.required_qty, 0), COALESCE(i.finished_qty, 0), COALESCE(i.drawing, ''), i.drawing_alt,
-                i.issue, COALESCE(i.material, ''), COALESCE(i.expected_grade, ''), COALESCE(i.customer, ''),
-                COALESCE(i.type, ''), COALESCE(i.colour, ''), COALESCE(i.erp_status, ''), COALESCE(i.order_date, now())
-           FROM ${recordset}
-          WHERE NOT EXISTS (SELECT 1 FROM production_orders p WHERE lower(p.line_key) = lower(i.line_key))
-         RETURNING id`,
-        [payload],
-      )
+      const { inserted, updated } = await upsertOrderLines(tx, rows)
       const at = new Date().toISOString()
       await writeAudit(tx, [
         {
@@ -531,10 +546,10 @@ export function ordersRoutes(ctx: AppContext): Router {
           entity: 'ProductionOrder',
           entityId: 'bulk-import',
           field: 'import',
-          newValue: `${inserted.rowCount ?? 0} inserted, ${updated.rowCount ?? 0} updated`,
+          newValue: `${inserted} inserted, ${updated} updated`,
         },
       ])
-      const body: ImportResult = { inserted: inserted.rowCount ?? 0, updated: updated.rowCount ?? 0 }
+      const body: ImportResult = { inserted, updated }
       return body
     })
     res.json(result)

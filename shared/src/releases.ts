@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-04.1',
+    date: '2026-10-04',
+    title: 'Orders straight from Access',
+    items: [
+      { text: 'The order sheet can now come straight from the factory\'s Access database: a small agent on a factory PC reads the orders table every 15 minutes and sends it here. The Access file is only read.' },
+      { text: 'Under Administration > Data import > Access sync: the last runs (new, updated, retired, unreadable rows and why), Sync now, the agent\'s keys, and the agent to download with its steps in English and Arabic.' },
+      { text: 'A line that left the Access table is retired only when the whole table arrived and read cleanly, and never more than half the lines at once; its sessions and history stay.' },
+    ],
+  },
+  {
     id: '2026-10-03.5',
     date: '2026-10-03',
     title: 'Comparisons, rearranged',

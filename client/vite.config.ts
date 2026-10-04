@@ -40,8 +40,8 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2}'],
         navigateFallback: '/index.html',
-        // API calls and image bytes are never answered from the cache.
-        navigateFallbackDenylist: [/^\/api\//],
+        // API calls and image bytes are never answered from the cache, nor the Access sync agent's files, downloaded as they are.
+        navigateFallbackDenylist: [/^\/api\//, /^\/agent\//],
         cleanupOutdatedCaches: true,
         clientsClaim: true,
         skipWaiting: true,

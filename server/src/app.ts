@@ -17,6 +17,7 @@ import { authenticate } from './auth/middleware'
 import { authRoutes } from './modules/auth.routes'
 import { usersRoutes } from './modules/users.routes'
 import { masterRoutes } from './modules/master.routes'
+import { integrationsRoutes, orderSyncAgentRoutes } from './modules/integrations.routes'
 import { ordersRoutes } from './modules/orders.routes'
 import { coilsRoutes } from './modules/coils.routes'
 import { sessionsRoutes } from './modules/sessions.routes'
@@ -76,6 +77,9 @@ export function createApp(ctx: AppContext): Express {
   const guard = authenticate(db, config.JWT_SECRET)
   app.use('/api/users', guard, usersRoutes(ctx))
   app.use('/api/master', guard, masterRoutes(ctx))
+  app.use('/api/integrations', guard, integrationsRoutes(ctx))
+  // The Access sync agent signs in with an integration key, not a person's session.
+  app.use('/api/agent/order-sync', orderSyncAgentRoutes(ctx))
   app.use('/api/orders', guard, ordersRoutes(ctx))
   app.use('/api/coils', guard, coilsRoutes(ctx))
   app.use('/api/sessions', guard, sessionsRoutes(ctx))

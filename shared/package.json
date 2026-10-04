@@ -11,7 +11,8 @@
     "./audit": "./src/audit.ts",
     "./api": "./src/api.ts",
     "./kpi": "./src/kpi.ts",
-    "./releases": "./src/releases.ts"
+    "./releases": "./src/releases.ts",
+    "./orderImport": "./src/orderImport.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",

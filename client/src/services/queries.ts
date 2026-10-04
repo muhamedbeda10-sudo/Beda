@@ -49,7 +49,7 @@ import type {
   ChatUnreadResponse,
 } from '@qc/shared/api'
 import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiGrainChoice, KpiMaterials, MaterialKind, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
-import type { DashboardLayoutResponse, HiddenInsightsResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
+import type { DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
@@ -707,4 +707,9 @@ export function useLinesOfMachines(codes: string[], enabled = true) {
     enabled: enabled && key.length > 0,
     staleTime: 60_000,
   })
+}
+
+/** §7.7 — the Access order sync: its runs, a waiting "Sync now", the keys. Refreshed while it is on screen, so a run shows as it finishes. */
+export function useOrderSync() {
+  return useQuery({ queryKey: ['integrations', 'order-sync'] as const, queryFn: () => api<OrderSyncStatusResponse>('/integrations/order-sync'), refetchInterval: 15_000 })
 }
