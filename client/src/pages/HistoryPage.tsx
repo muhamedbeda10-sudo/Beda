@@ -36,7 +36,7 @@ import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantiti
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { SessionPhotos } from '@/components/inspection/SessionPhotos'
 import { PdiList } from '@/components/pdi/PdiList'
-import { StageBadge } from '@/components/inspection/StagePicker'
+import { StageBadge } from '@/components/inspection/UniversalChoice'
 import { historySheets } from '@/components/history/exportHistory'
 import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
@@ -227,7 +227,7 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
         <td key={key} className="px-4 py-3">
           <span className="inline-flex flex-wrap items-center gap-1.5">
             <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
-            <StageBadge stage={s.stage} />
+            <StageBadge kind={s.universalKind} stages={s.stages} />
             <SessionToneBadge session={s} />
           </span>
         </td>
@@ -822,7 +822,7 @@ export function HistoryPage() {
                   <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
                   {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{s.order?.orderNumber ?? '—'}</span>}
                   <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status.toUpperCase()}</Badge>
-                  <StageBadge stage={s.stage} />
+                  <StageBadge kind={s.universalKind} stages={s.stages} />
                   <SessionToneBadge session={s} />
                 </div>
                 <p className="mt-1 truncate text-sm font-medium text-brand-600 dark:text-brand-400">{s.order?.item ?? 'Unknown item'}</p>
@@ -1011,6 +1011,9 @@ export function HistoryPage() {
                     <Attr label="Rejected qty before release" value={openSession.startQtyConfirmed?.qty} />
                   )}
                   <Attr label="Final qty" value={openSession.finalQty} />
+                  {/* §4 — on a universal machine: a final product, or the stages the session covered and each one's quantity. */}
+                  {openSession.universalKind === 'final' && <Attr label="On this machine" value="Final product, no stages" />}
+                  {openSession.stages?.length ? <Attr label="Stages · quantity" value={openSession.stages.map((x) => `Stage ${x.stage}: ${x.qty}`).join(' · ')} /> : null}
                   <Attr label="Closed" value={openSession.closedAt ? formatDateTime(openSession.closedAt) : '—'} />
                   <Attr label="Closed by" value={openSession.closedByName ?? (openSession.closedAt ? 'Unknown' : '—')} />
                   {processForMachine(machines.find((m) => m.code === openSession.workCenterCode) ?? null, openSession.workCenterCode) === 'welding' && (

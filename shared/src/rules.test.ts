@@ -17,6 +17,8 @@ import {
   resolveDimensions,
   sessionTone,
   can,
+  stagesProblem,
+  topStageQty,
   ptRequiredFor,
   stockProductionOf, isStockMachine, normaliseMachineCode,
 } from './rules'
@@ -586,5 +588,27 @@ describe('roles', () => {
       expect(can(role, 'read-notices')).toBe(true)
     }
     expect(can(undefined, 'view-all-sessions')).toBe(false)
+  })
+})
+
+describe('§4 — the stages of an item on a universal machine', () => {
+  it('takes stages from 1 with no gap, each once, each with a quantity', () => {
+    expect(stagesProblem([], [{ stage: 1, qty: 300 }])).toBeNull()
+    // Two presses at once: stages 1 and 2 in one session.
+    expect(stagesProblem([], [{ stage: 1, qty: 300 }, { stage: 2, qty: 300 }])).toBeNull()
+    expect(stagesProblem([1], [{ stage: 2, qty: 280 }, { stage: 3, qty: 280 }])).toBeNull()
+    expect(stagesProblem([1, 2], [{ stage: 1, qty: 50 }])).toBeNull()
+    expect(stagesProblem([], [])).toMatch(/Choose/)
+    expect(stagesProblem([], [{ stage: 2, qty: 10 }])).toMatch(/Stage 1 comes before stage 2/)
+    expect(stagesProblem([1], [{ stage: 3, qty: 10 }])).toMatch(/Stage 2/)
+    expect(stagesProblem([], [{ stage: 1, qty: 1 }, { stage: 1, qty: 2 }])).toMatch(/twice/)
+    expect(stagesProblem([], [{ stage: 0, qty: 1 }])).toMatch(/whole number/)
+    expect(stagesProblem([], [{ stage: 1, qty: -1 }])).toMatch(/quantity of stage 1/)
+  })
+
+  it("reads a staged session's quantity off its highest stage", () => {
+    expect(topStageQty([{ stage: 1, qty: 300 }, { stage: 2, qty: 290 }])).toBe(290)
+    expect(topStageQty([{ stage: 3, qty: 12 }])).toBe(12)
+    expect(topStageQty([])).toBe(0)
   })
 })

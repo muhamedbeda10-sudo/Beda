@@ -19,6 +19,9 @@ export interface GroupSpec {
   query: HistoryGroupQuery
 }
 
+/** A session's stages in a chip's title: " · stages 1 + 2"; nothing for a lone stage 1 or another machine. */
+const stageWords = (stages: number[]) => (stages.length > 1 ? ` · stages ${stages.join(' + ')}` : stages[0] > 1 ? ` · stage ${stages[0]}` : '')
+
 const num = (n: number) => (Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 2 }))
 
 interface LineRow {
@@ -119,7 +122,7 @@ export function SessionGroupModal({ spec, onClose, onOpenSession, footer }: { sp
                               key={s.sessionId}
                               type="button"
                               onClick={() => onOpenSession(s.sessionId)}
-                              title={`${formatDateTime(s.startedAt)} · ${s.inspectorName} · ${num(s.piecesInspected)} inspected, ${num(s.defectPieces)} defect pcs${s.stage && s.stage > 1 ? ` · stage ${s.stage}` : ''}`}
+                              title={`${formatDateTime(s.startedAt)} · ${s.inspectorName} · ${num(s.piecesInspected)} inspected, ${num(s.defectPieces)} defect pcs${stageWords(s.stages)}`}
                               className={cn(
                                 'rounded-md px-1.5 py-0.5 text-xs font-semibold',
                                 s.status === 'Open'
@@ -128,7 +131,7 @@ export function SessionGroupModal({ spec, onClose, onOpenSession, footer }: { sp
                               )}
                             >
                               #{s.seq}
-                              {s.stage && s.stage > 1 ? ` · S${s.stage}` : ''}
+                              {s.stages.length > 1 || (s.stages[0] ?? 1) > 1 ? ` · S${s.stages.join('+')}` : ''}
                             </button>
                           ))}
                         </span>
@@ -138,7 +141,7 @@ export function SessionGroupModal({ spec, onClose, onOpenSession, footer }: { sp
                 </tbody>
               </table>
             </div>
-            <p className="text-xs text-slate-400">Green: still open. S2, S3…: a later stage on a universal machine.</p>
+            <p className="text-xs text-slate-400">Green: still open. S2, S1+2…: the stages a session covered on a universal machine.</p>
           </>
         )}
       </div>

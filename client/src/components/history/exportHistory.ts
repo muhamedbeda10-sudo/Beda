@@ -29,7 +29,7 @@ export function historySheets(data: HistoryExportResponse): SheetSpec[] {
   return [
     {
       name: 'Sessions',
-      header: [...head, 'Item code', 'Customer', 'Factory', 'Process', 'Stage', 'Inspector', 'Started', 'Closed', 'Closed by', 'Status', 'Rejected before release', 'Final qty', 'Produced (stock)', 'Samples', 'Pieces inspected', 'Defect pieces', 'On hold pieces'],
+      header: [...head, 'Item code', 'Customer', 'Factory', 'Process', 'Final product or stages', 'Inspector', 'Started', 'Closed', 'Closed by', 'Status', 'Rejected before release', 'Final qty', 'Produced (stock)', 'Samples', 'Pieces inspected', 'Defect pieces', 'On hold pieces'],
       rows: data.sessions.map((s) => [
         ref(s.ref),
         `#${s.seq}`,
@@ -40,7 +40,7 @@ export function historySheets(data: HistoryExportResponse): SheetSpec[] {
         s.customer,
         s.factory,
         s.process ? (PROCESS_LABEL[s.process as Process] ?? s.process) : '',
-        s.stage,
+        s.universalKind === 'final' ? 'Final product' : s.stages.map((x) => `Stage ${x.stage}: ${x.qty}`).join(' · '),
         s.inspectorName,
         stamp(s.startedAt),
         stamp(s.closedAt),

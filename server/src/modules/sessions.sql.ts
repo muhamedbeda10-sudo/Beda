@@ -5,7 +5,11 @@
 // ============================================================================
 
 import type { OrderSummary, SampleSummary, SessionWithOrder } from '@qc/shared/api'
-import type { InspectionSample, InspectionSession } from '@qc/shared/types'
+import type { InspectionSample, InspectionSession, StageQuantity, UniversalKind } from '@qc/shared/types'
+
+/** A session's live stage quantities, lowest stage first, as JSON. Requires the alias `s`. */
+export const SESSION_STAGES_SELECT = `(SELECT COALESCE(jsonb_agg(jsonb_build_object('stage', q.stage, 'qty', q.qty::float8) ORDER BY q.stage), '[]'::jsonb)
+     FROM session_stage_quantities q WHERE q.session_id = s.id AND q.deleted_at IS NULL)`
 
 /**
  * Requires the alias `s` for inspection_sessions. Besides the row, three
@@ -17,7 +21,7 @@ export const SESSION_SELECT = `
   s.id, s.seq, s.order_id AS "orderId", s.work_center_code AS "workCenterCode",
   s.inspector_id AS "inspectorId", s.inspector_name AS "inspectorName", s.started_at AS "startedAt", s.status,
   s.start_qty AS "startQty", s.start_qty_by_id AS "startQtyById", s.start_qty_by_name AS "startQtyByName",
-  s.start_qty_at AS "startQtyAt", s.final_qty AS "finalQty", s.produced_qty AS "producedQty", s.stage, s.closed_at AS "closedAt",
+  s.start_qty_at AS "startQtyAt", s.final_qty AS "finalQty", s.produced_qty AS "producedQty", s.universal_kind AS "universalKind", s.closed_at AS "closedAt",
   s.closed_by_id AS "closedById", (SELECT u.name FROM users u WHERE u.id = s.closed_by_id) AS "closedByName",
   s.version, s.deleted_at AS "deletedAt",
   (SELECT count(*)::int FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "sampleCount",
@@ -28,6 +32,7 @@ export const SESSION_SELECT = `
   (SELECT count(*)::int FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
     WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL AND d.disposition = 'Hold') AS "holdCount",
   (SELECT count(*)::int FROM session_notes n WHERE n.session_id = s.id AND n.deleted_at IS NULL) AS "noteCount",
+  ${SESSION_STAGES_SELECT} AS stages,
   (SELECT COALESCE(sum(x.sample_qty), 0)::float8 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "piecesInspected",
   (SELECT count(*)::int FROM dimension_results r JOIN inspection_samples x ON x.id = r.sample_id
     WHERE x.session_id = s.id AND x.deleted_at IS NULL AND r.deleted_at IS NULL AND r.status = 'Fail') AS "dimensionFailCount",
@@ -86,7 +91,8 @@ export interface SessionRow {
   startQtyAt: string | null
   finalQty: number | null
   producedQty: number | null
-  stage: number | null
+  universalKind: UniversalKind | null
+  stages: StageQuantity[]
   closedAt: string | null
   closedById: string | null
   closedByName: string | null
@@ -141,7 +147,8 @@ export function toSession(r: SessionRow): InspectionSession {
   }
   if (r.finalQty !== null) out.finalQty = r.finalQty
   if (r.producedQty !== null) out.producedQty = r.producedQty
-  if (r.stage !== null && r.stage !== undefined) out.stage = r.stage
+  if (r.universalKind) out.universalKind = r.universalKind
+  if (r.stages?.length) out.stages = r.stages
   if (r.closedAt) out.closedAt = r.closedAt
   if (r.closedById) out.closedById = r.closedById
   if (r.closedByName) out.closedByName = r.closedByName
