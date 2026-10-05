@@ -160,6 +160,24 @@ const LayoutBody = z.object({ layouts: z.object({ general: z.array(layoutItem).m
 
 const grainChoice = z.enum(['auto', 'day', 'week', 'month']).default('auto')
 
+/** A list sent as one JSON array in the address, so a value may hold a comma; absent is the empty list. */
+function jsonList<T extends z.ZodTypeAny>(item: T) {
+  return z
+    .string()
+    .max(4000)
+    .optional()
+    .transform((v, ctx) => {
+      if (v === undefined || v === '') return []
+      try {
+        return JSON.parse(v) as unknown
+      } catch {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Not a JSON list.' })
+        return z.NEVER
+      }
+    })
+    .pipe(z.array(item).max(100))
+}
+
 const CompareQuery = z.object({ from: day, to: day, process: z.enum(PROCESSES as unknown as [Process, ...Process[]]), grain: grainChoice })
 
 const MaterialsQuery = z.object({
@@ -172,14 +190,13 @@ const MaterialsQuery = z.object({
     .max(2000)
     .optional()
     .transform((v) => (v ? Array.from(new Set(v.split(',').map((c) => c.trim()).filter(Boolean))) : [])),
-  thickness: z.coerce.number().positive().max(1000).optional(),
+  /** The trend's thicknesses, a JSON array; none is every thickness. */
+  thicknesses: jsonList(z.number().positive().max(1000)),
   material: z.enum(['all', 'black', 'galvanized']).default('all'),
-  /** One supplier for the trend. */
-  supplier: z.string().trim().min(1).max(200).optional(),
-  /** The trend reads the coils with no supplier recorded. */
-  noSupplier: z.enum(['1']).optional(),
-  /** One coil grade for the trend. */
-  grade: z.string().trim().min(1).max(60).optional(),
+  /** The trend's suppliers, a JSON array (a name may hold a comma); '' is the coils with none recorded; none is every supplier. */
+  suppliers: jsonList(z.string().trim().max(200)),
+  /** The trend's coil grades, a JSON array; none is every grade. */
+  grades: jsonList(z.string().trim().min(1).max(60)),
   grain: grainChoice,
 })
 
@@ -408,6 +425,7 @@ export function kpiRoutes(ctx: AppContext): Router {
   })
 
   r.get('/overview', async (req, res) => {
+    const user = requireUser(req)
     const q = parse(OverviewQuery, req.query)
     checkRange(q.from, q.to, 'Period')
     checkRange(q.prevFrom, q.prevTo, 'Comparison period')
@@ -547,7 +565,9 @@ export function kpiRoutes(ctx: AppContext): Router {
       paintByItem: paintByItem.rows,
       holds: holds.rows,
       discipline,
-      inspectorRanking,
+      // The scores are an administrator's; a viewer has the names, for the filter.
+      inspectorRanking: can(user.role, 'view-inspector-ranking') ? inspectorRanking : null,
+      inspectors: [...inspectorRanking.overall.ranked, ...inspectorRanking.overall.unranked].map((r) => ({ inspectorId: r.inspectorId, name: r.name })),
     }
     const body: KpiOverview = { ...draft, insights: buildInsights(draft, thresholds) }
     res.json(body)
@@ -611,7 +631,7 @@ export function kpiRoutes(ctx: AppContext): Router {
       ctx.db,
       { tz, from: q.from, to: q.to, processes: ['forming'], workCenterCodes: codes.length ? codes : undefined },
       grain,
-      { thickness: q.thickness ?? null, material: q.material, supplier: q.noSupplier ? '' : (q.supplier ?? null), grade: q.grade ?? null },
+      { thicknesses: q.thicknesses, material: q.material, suppliers: q.suppliers, grades: q.grades },
     )
     const out: KpiMaterials = { generatedAt: new Date().toISOString(), workCenterCodes: q.workCenterCode, ...body }
     res.json(out)

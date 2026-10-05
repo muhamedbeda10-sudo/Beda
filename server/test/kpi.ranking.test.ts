@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto'
 import type { KpiThresholdsResponse, SaveSampleRequest, SessionWithOrder } from '@qc/shared/api'
 import type { ProductionOrder } from '@qc/shared/types'
 import type { KpiOverview } from '@qc/shared/kpi'
-import { TestApp, type Session } from './harness'
+import { TestApp, type Session, factoryDay } from './harness'
 
 const app = new TestApp()
 let admin: Session
@@ -27,9 +27,7 @@ const SAMPLES = 12
  *  is what the administrator sets, and the test sets it. */
 const MIN_TO_RANK = 10
 const today = (offset = 0) => {
-  const d = new Date()
-  d.setUTCDate(d.getUTCDate() + offset)
-  return d.toISOString().slice(0, 10)
+  return factoryDay(offset)
 }
 const period = () => `from=${today(-1)}&to=${today(1)}&prevFrom=${today(-31)}&prevTo=${today(-2)}`
 
@@ -106,7 +104,7 @@ afterAll(() => app.stop())
 
 describe('§16 — the ranking comes from the records as written', () => {
   it('counts each inspector’s own work', () => {
-    const rows = overview.inspectorRanking.overall.ranked
+    const rows = overview.inspectorRanking!.overall.ranked
     const one = rows.find((r) => r.inspectorId === careful.user.id)!
     expect(one.samples).toBe(SAMPLES)
     expect(one.pieces).toBe(SAMPLES * 100)
@@ -118,7 +116,7 @@ describe('§16 — the ranking comes from the records as written', () => {
   })
 
   it('places the complete record above the blank one', () => {
-    const rows = overview.inspectorRanking.overall.ranked
+    const rows = overview.inspectorRanking!.overall.ranked
     expect(rows[0].inspectorId).toBe(careful.user.id)
     expect(rows[0].rank).toBe(1)
     expect(rows[0].dimensionCompletionPct).toBe(100)
@@ -128,7 +126,7 @@ describe('§16 — the ranking comes from the records as written', () => {
   })
 
   it('does not punish the inspector who found the defects', () => {
-    const rows = overview.inspectorRanking.overall.ranked
+    const rows = overview.inspectorRanking!.overall.ranked
     const found = rows.find((r) => r.inspectorId === careful.user.id)!
     const foundNothing = rows.find((r) => r.inspectorId === hasty.user.id)!
     expect(found.defectRecords).toBe(SAMPLES)
@@ -138,26 +136,36 @@ describe('§16 — the ranking comes from the records as written', () => {
   })
 
   it('lists the newcomer without placing them', () => {
-    const { ranked, unranked } = overview.inspectorRanking.overall
+    const { ranked, unranked } = overview.inspectorRanking!.overall
     expect(ranked.map((r) => r.inspectorId)).not.toContain(newcomer.user.id)
     expect(unranked.map((r) => r.inspectorId)).toContain(newcomer.user.id)
-    expect(overview.inspectorRanking.minSamples).toBe(MIN_TO_RANK)
+    expect(overview.inspectorRanking!.minSamples).toBe(MIN_TO_RANK)
   })
 
   it('ranks each factory on its own as well as overall', () => {
-    expect(overview.inspectorRanking.byFactory.map((g) => g.factory)).toEqual(['Factory 1'])
-    const f = overview.inspectorRanking.byFactory[0]
-    expect(f.ranked.map((r) => r.inspectorId)).toEqual(overview.inspectorRanking.overall.ranked.map((r) => r.inspectorId))
+    expect(overview.inspectorRanking!.byFactory.map((g) => g.factory)).toEqual(['Factory 1'])
+    const f = overview.inspectorRanking!.byFactory[0]
+    expect(f.ranked.map((r) => r.inspectorId)).toEqual(overview.inspectorRanking!.overall.ranked.map((r) => r.inspectorId))
   })
 
   it('follows the dashboard filters', async () => {
     const only = (
       await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}&inspectorId=${careful.user.id}`, { token: admin.token })
-    ).body.inspectorRanking
+    ).body.inspectorRanking!
     expect(only.overall.ranked.concat(only.overall.unranked).map((r) => r.inspectorId)).toEqual([careful.user.id])
   })
 
   it('keeps the ranking out of reach of an inspector', async () => {
     expect((await app.api('GET', `/api/kpi/overview?${period()}`, { token: careful.token })).status).toBe(403)
+  })
+
+  it('gives a viewer the dashboard without the scores, and the names for the filter', async () => {
+    await app.api('POST', '/api/users', { token: admin.token, body: { username: 'watcher', password: 'Password#1', name: 'Plant Manager', role: 'viewer' } })
+    const viewer = await app.login('watcher')
+    const res = await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}`, { token: viewer.token })
+    expect(res.status).toBe(200)
+    expect(res.body.inspectorRanking).toBeNull()
+    expect(res.body.inspectors.map((r) => r.inspectorId).sort()).toEqual([careful.user.id, hasty.user.id, newcomer.user.id].sort())
+    expect(overview.inspectors).toHaveLength(3)
   })
 })

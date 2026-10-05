@@ -1,7 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import type { ApiErrorBody, MatchNoticesResponse, NoticeInboxResponse, SessionWithOrder } from '@qc/shared/api'
 import type { Notice, NoticeAcknowledgement, NoticeAdminRow, NoticeFile, ProductionOrder } from '@qc/shared/types'
-import { TestApp, type Session } from './harness'
+import { TestApp, type Session, factoryDay } from './harness'
 
 const app = new TestApp()
 let admin: Session
@@ -12,7 +12,7 @@ let paintOrder: ProductionOrder
 let weldSession: SessionWithOrder
 let notice: Notice
 
-const today = new Date().toISOString().slice(0, 10)
+const today = factoryDay()
 
 beforeAll(async () => {
   await app.start()

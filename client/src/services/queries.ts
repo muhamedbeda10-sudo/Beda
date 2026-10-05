@@ -522,30 +522,31 @@ export interface MaterialsQuery {
   from: string
   to: string
   workCenterCodes: string[]
-  thickness: number | null
+  /** The trend's thicknesses; empty is every one. */
+  thicknesses: number[]
   material: MaterialKind | 'all'
-  /** One supplier for the trend; '' is the coils with none recorded; null is every one. */
-  supplier: string | null
-  /** One coil grade for the trend; null is every one. */
-  grade: string | null
+  /** The trend's suppliers; '' is the coils with none recorded; empty is every one. */
+  suppliers: string[]
+  /** The trend's coil grades; empty is every one. */
+  grades: string[]
   grain: KpiGrainChoice
 }
 
 /** §15 — Comparisons: roll forming's reject rate by coil supplier, by thickness, and one thickness and material over the period. */
 export function useKpiMaterials(q: MaterialsQuery | null) {
   return useQuery({
-    queryKey: keys.kpiMaterials(q ?? { from: '', to: '', workCenterCodes: [], thickness: null, material: 'all', supplier: null, grade: null, grain: 'auto' }),
+    queryKey: keys.kpiMaterials(q ?? { from: '', to: '', workCenterCodes: [], thicknesses: [], material: 'all', suppliers: [], grades: [], grain: 'auto' }),
     queryFn: () =>
       api<KpiMaterials>(
         `/kpi/materials${qs({
           from: q?.from,
           to: q?.to,
           workCenterCode: q?.workCenterCodes.join(',') || undefined,
-          thickness: q?.thickness ?? undefined,
+          // Lists go as JSON arrays: a supplier's name may hold a comma.
+          thicknesses: q?.thicknesses.length ? JSON.stringify(q.thicknesses) : undefined,
           material: q?.material,
-          supplier: q?.supplier || undefined,
-          noSupplier: q?.supplier === '' ? '1' : undefined,
-          grade: q?.grade || undefined,
+          suppliers: q?.suppliers.length ? JSON.stringify(q.suppliers) : undefined,
+          grades: q?.grades.length ? JSON.stringify(q.grades) : undefined,
           grain: q?.grain,
         })}`,
       ),

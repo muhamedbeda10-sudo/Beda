@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-05.1',
+    date: '2026-10-05',
+    title: 'A session opens to read; viewers without the ranking or the export',
+    items: [
+      { text: 'A session tapped from a dashboard figure, a hold, a grouped view or a chat mention opens its record in History — samples, photos and notes — instead of the screen that records a new sample. New sample is still there for an open session, for whoever records.' },
+      { text: 'Roll forming raw material: the trend\'s Supplier, Thickness and Grade filters take several values at once — tick every spelling of the same supplier to read them together.' },
+      { text: 'A viewer no longer sees the dashboard\'s Inspectors tab (the ranking) and can no longer export History or the PDIs to Excel. The API holds the same limits.' },
+    ],
+  },
+  {
     id: '2026-10-04.2',
     date: '2026-10-04',
     title: 'Machines left out of the dashboard; Comparisons tidied',

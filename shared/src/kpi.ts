@@ -678,8 +678,10 @@ export interface KpiOverview {
   counts: KpiListCounts
   /** Present when defect types were left off the Pareto chart. */
   paretoOthers?: KpiParetoOthers
-  /** §16 — how the inspectors placed, overall and per factory. */
-  inspectorRanking: KpiInspectorRanking
+  /** §16 — how the inspectors placed, overall and per factory; null for a reader without the ranking (a viewer). */
+  inspectorRanking: KpiInspectorRanking | null
+  /** Everyone the period's record names, for the inspector filter: names only, whoever reads. */
+  inspectors: { inspectorId: string; name: string }[]
   current: KpiTotals
   previous: KpiTotals
   daily: KpiDailyPoint[]
@@ -1319,13 +1321,13 @@ export interface KpiMaterials {
   /** Every supplier, thickness and grade seen, most made first. */
   details: KpiMaterialDetail[]
   trend: {
-    /** null: every thickness. */
-    thickness: number | null
+    /** Empty: every thickness. */
+    thicknesses: number[]
     material: MaterialKind | 'all'
-    /** null: every supplier; '' is the coils with none recorded. */
-    supplier: string | null
-    /** null: every grade. */
-    grade: string | null
+    /** Empty: every supplier; '' is the coils with none recorded. */
+    suppliers: string[]
+    /** Empty: every grade. */
+    grades: string[]
     grain: KpiGrain
     buckets: KpiCompareBucket[]
     points: KpiComparePoint[]

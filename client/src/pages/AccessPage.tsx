@@ -16,6 +16,7 @@ import { loadMoreOrders, useDebounced, useMaster, useOrderList, useOrderListOpti
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useApp } from '@/store/AppContext'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
+import { sessionDetailPath } from '@/lib/links'
 
 const ACCESS_COLUMNS: ColumnDef[] = [
   { key: 'orderNumber', label: 'Order', width: 150, min: 90 },
@@ -495,7 +496,7 @@ export function AccessPage() {
       <SessionGroupModal
         spec={groupSpec}
         onClose={() => setGroupSpec(null)}
-        onOpenSession={(id) => navigate(`/history?session=${encodeURIComponent(id)}`)}
+        onOpenSession={(id) => navigate(sessionDetailPath(id))}
         footer={
           groupOrder !== null ? (
             <Button onClick={() => navigate(`/history?q=${encodeURIComponent(groupOrder)}`)}>

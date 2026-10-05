@@ -65,6 +65,7 @@ import { hideInsight, resetDashboardLayout, restoreInsight, saveDashboardLayout 
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { ApiError } from '@/lib/api'
+import { sessionDetailPath } from '@/lib/links'
 
 // ---- Formatting ------------------------------------------------------------
 
@@ -966,6 +967,11 @@ const thicknessText = (t: number): string => String(Number(t.toFixed(3)))
 
 /** The supplier filter's value for the coils with no supplier recorded. */
 const NO_SUPPLIER = '__none__'
+/** A few values named, more counted: "1.5 mm + 2 mm", "4 suppliers"; none is the fallback. */
+function listWords(values: string[], none: string, noun: string): string {
+  if (values.length === 0) return none
+  return values.length <= 2 ? values.join(' + ') : `${values.length} ${noun}`
+}
 
 /**
  * §15 — Comparisons, roll forming's raw material: the reject rate and PPM by
@@ -979,17 +985,19 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
   const { data: allMachines = [] } = useMaster('machines')
   const rollForming = useMemo(() => allMachines.filter((m) => m.process === 'forming' && m.onDashboard !== false).sort((a, b) => byName(a.displayName || a.code, b.displayName || b.code)), [allMachines])
   const [machineCodes, setMachineCodes] = usePersistedState<string[]>('qc-dash:rf-machines', [])
-  const [thickness, setThickness] = usePersistedState<string>('qc-dash:rf-thickness', '')
+  // The trend's filters each take several values — the same supplier is often typed more than one way. None ticked is every one.
+  /** Thicknesses as written (thicknessText). */
+  const [thicknesses, setThicknesses] = usePersistedState<string[]>('qc-dash:rf-thicknesses', [])
   const [material, setMaterial] = usePersistedState<MaterialKind | 'all'>('qc-dash:rf-material', 'all')
-  /** '' every supplier; NO_SUPPLIER the coils with none recorded; else the supplier's name. */
-  const [supplier, setSupplier] = usePersistedState<string>('qc-dash:rf-supplier', '')
+  /** Suppliers' names; NO_SUPPLIER is the coils with none recorded. */
+  const [suppliers, setSuppliers] = usePersistedState<string[]>('qc-dash:rf-suppliers', [])
   const [grain, setGrain] = usePersistedState<KpiGrainChoice>('qc-dash:rf-grain', 'auto')
-  /** '' every grade; else the coil grade as recorded. */
-  const [grade, setGrade] = usePersistedState<string>('qc-dash:rf-grade', '')
+  /** Coil grades as recorded. */
+  const [grades, setGrades] = usePersistedState<string[]>('qc-dash:rf-grades', [])
   const chosen = machineCodes.filter((c) => rollForming.some((m) => m.code.toLowerCase() === c.toLowerCase()))
-  const picked = thickness === '' ? null : Number(thickness)
-  const supplierPick = supplier === '' ? null : supplier === NO_SUPPLIER ? '' : supplier
-  const { data, isFetching } = useKpiMaterials({ from, to, workCenterCodes: chosen, thickness: picked !== null && Number.isFinite(picked) ? picked : null, material, supplier: supplierPick, grade: grade || null, grain })
+  const pickedThicknesses = thicknesses.map(Number).filter((v) => Number.isFinite(v) && v > 0)
+  const supplierPicks = suppliers.map((v) => (v === NO_SUPPLIER ? '' : v))
+  const { data, isFetching } = useKpiMaterials({ from, to, workCenterCodes: chosen, thicknesses: pickedThicknesses, material, suppliers: supplierPicks, grades, grain })
   const periodWords = describeRange({ from, to })
   const scope = chosen.length === 0 ? 'every roll forming machine' : chosen.length === 1 ? (rollForming.find((m) => m.code.toLowerCase() === chosen[0].toLowerCase())?.displayName ?? chosen[0]) : `${chosen.length} roll forming machines`
   const rateTone = (v: number | null) => toneLowIsGood(v, t.defectRateGreen, t.defectRateAmber)
@@ -1000,8 +1008,10 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
     tone: rateTone(r.defectRatePct),
     text: r.defectRatePct === null ? '—' : `${pctStr(r.defectRatePct)} · ${ppmStr(r.defectRatePct)} PPM`,
   })
-  const supplierWords = supplierPick === null ? 'every supplier' : supplierPick === '' ? 'no supplier recorded' : supplierPick
-  const trendWhat = `${picked === null ? 'Every thickness' : `${thicknessText(picked)} mm`} · ${grade || (material === 'all' ? 'black and galvanized' : MATERIAL_KIND_LABEL[material].toLowerCase())} · ${supplierWords}`
+  const supplierWords = listWords(supplierPicks.map((v) => v || 'no supplier recorded'), 'every supplier', 'suppliers')
+  const thicknessWords = listWords(pickedThicknesses.map((v) => `${thicknessText(v)} mm`), 'Every thickness', 'thicknesses')
+  const gradeWords = grades.length ? listWords(grades, '', 'grades') : material === 'all' ? 'black and galvanized' : MATERIAL_KIND_LABEL[material].toLowerCase()
+  const trendWhat = `${thicknessWords} · ${gradeWords}${grades.length && material !== 'all' ? ` (${MATERIAL_KIND_LABEL[material].toLowerCase()})` : ''} · ${supplierWords}`
   const selectClass = '!w-auto min-h-[36px] rounded-lg py-1 text-xs font-semibold'
   const details = data?.details ?? []
   const filters = useColumnFilters(details, [
@@ -1010,19 +1020,26 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
     { key: 'grade', value: (d) => d.grade || '—' },
     { key: 'material', value: (d) => MATERIAL_KIND_LABEL[d.material] },
   ])
+  // A row is followed when the trend reads exactly it: its one supplier, thickness and grade.
   const rowPicked = (d: KpiMaterialDetail) =>
-    supplierPick !== null && supplierPick.toLowerCase() === d.supplier.toLowerCase() && picked !== null && d.thickness !== null && thicknessText(d.thickness) === thicknessText(picked) && grade.toUpperCase() === d.grade.toUpperCase()
+    supplierPicks.length === 1 &&
+    supplierPicks[0].toLowerCase() === d.supplier.toLowerCase() &&
+    d.thickness !== null &&
+    pickedThicknesses.length === 1 &&
+    thicknessText(pickedThicknesses[0]) === thicknessText(d.thickness) &&
+    grades.length === (d.grade ? 1 : 0) &&
+    (grades[0] ?? '').toUpperCase() === d.grade.toUpperCase()
   const pickRow = (d: KpiMaterialDetail) => {
     if (rowPicked(d)) {
-      setSupplier('')
-      setThickness('')
-      setGrade('')
+      setSuppliers([])
+      setThicknesses([])
+      setGrades([])
       setMaterial('all')
       return
     }
-    setSupplier(d.supplier === '' ? NO_SUPPLIER : d.supplier)
-    setThickness(d.thickness === null ? '' : thicknessText(d.thickness))
-    setGrade(d.grade)
+    setSuppliers([d.supplier === '' ? NO_SUPPLIER : d.supplier])
+    setThicknesses(d.thickness === null ? [] : [thicknessText(d.thickness)])
+    setGrades(d.grade ? [d.grade] : [])
     setMaterial('all')
   }
 
@@ -1070,33 +1087,30 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
               action={
                 <span className="flex flex-wrap items-center justify-end gap-2">
                   <GrainPicker value={grain} onChange={setGrain} />
-                  <Select value={supplier} onChange={(e) => setSupplier(e.target.value)} className={selectClass} aria-label="Supplier">
-                    <option value="">All suppliers</option>
-                    {(data?.suppliers ?? []).map((r) => (
-                      <option key={r.key || NO_SUPPLIER} value={r.key || NO_SUPPLIER}>
-                        {r.label}
-                      </option>
-                    ))}
-                    {supplier !== '' && supplier !== NO_SUPPLIER && !(data?.suppliers ?? []).some((r) => r.key === supplier) && <option value={supplier}>{supplier}</option>}
-                  </Select>
-                  <Select value={thickness} onChange={(e) => setThickness(e.target.value)} className={selectClass} aria-label="Thickness">
-                    <option value="">All thicknesses</option>
-                    {(data?.thicknessOptions ?? []).map((v) => (
-                      <option key={v} value={thicknessText(v)}>
-                        {thicknessText(v)} mm
-                      </option>
-                    ))}
-                    {picked !== null && !(data?.thicknessOptions ?? []).some((v) => thicknessText(v) === thickness) && <option value={thickness}>{thickness} mm</option>}
-                  </Select>
-                  <Select value={grade} onChange={(e) => setGrade(e.target.value)} className={selectClass} aria-label="Grade">
-                    <option value="">All grades</option>
-                    {(data?.gradeOptions ?? []).map((g) => (
-                      <option key={g} value={g}>
-                        {g}
-                      </option>
-                    ))}
-                    {grade !== '' && !(data?.gradeOptions ?? []).some((g) => g.toUpperCase() === grade.toUpperCase()) && <option value={grade}>{grade}</option>}
-                  </Select>
+                  <MultiSelectMenu
+                    options={(data?.suppliers ?? []).map((r) => ({ value: r.key || NO_SUPPLIER, label: r.label }))}
+                    selected={suppliers}
+                    onChange={setSuppliers}
+                    allLabel="All suppliers"
+                    noun="suppliers"
+                    ariaLabel="Suppliers"
+                  />
+                  <MultiSelectMenu
+                    options={(data?.thicknessOptions ?? []).map((v) => ({ value: thicknessText(v), label: `${thicknessText(v)} mm` }))}
+                    selected={thicknesses}
+                    onChange={setThicknesses}
+                    allLabel="All thicknesses"
+                    noun="thicknesses"
+                    ariaLabel="Thicknesses"
+                  />
+                  <MultiSelectMenu
+                    options={(data?.gradeOptions ?? []).map((g) => ({ value: g, label: g }))}
+                    selected={grades}
+                    onChange={setGrades}
+                    allLabel="All grades"
+                    noun="grades"
+                    ariaLabel="Grades"
+                  />
                   <Select value={material} onChange={(e) => setMaterial(e.target.value as MaterialKind | 'all')} className={selectClass} aria-label="Material">
                     <option value="all">Black and galvanized</option>
                     <option value="black">Black</option>
@@ -1494,7 +1508,7 @@ function FirstPartParts({ rows, navigate }: { rows: PartRow[]; navigate: (to: st
                     <td className="px-2 py-1.5 text-right">
                       <span className="inline-flex flex-wrap justify-end gap-1">
                         {o.sessionIds.map((id, i) => (
-                          <button key={id} type="button" onClick={() => navigate(`/wizard/${id}`)} className="rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300">
+                          <button key={id} type="button" onClick={() => navigate(sessionDetailPath(id))} className="rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300">
                             {o.sessionIds.length === 1 ? 'Session' : `Session ${i + 1}`}
                           </button>
                         ))}
@@ -1863,7 +1877,10 @@ export function DashboardPage() {
   }
   /** Which half of the dashboard is on screen. Printing renders both, so the
    *  PDF is the whole dashboard whichever tab is open. */
-  const [view, setView] = usePersistedState<'general' | 'inspectors'>('qc-dash:tab', 'general')
+  const [chosenView, setView] = usePersistedState<'general' | 'inspectors'>('qc-dash:tab', 'general')
+  // The Inspectors tab is an administrator's: a viewer has the general one only, whatever this device last showed.
+  const canRank = can(role, 'view-inspector-ranking')
+  const view = canRank ? chosenView : 'general'
   /** Which angle the general page is read from; Details is the full analysis behind the filters. */
   const [pick, setPick] = usePersistedState<GeneralPick>('qc-dash:pick', 'factory')
   const [picks, setPicks] = usePersistedState<ScopePicks>('qc-dash:picks', NO_PICKS)
@@ -1921,8 +1938,7 @@ export function DashboardPage() {
     })
 
   const inspectorChoices = useMemo(() => {
-    const ranking = data ? [...data.inspectorRanking.overall.ranked, ...data.inspectorRanking.overall.unranked] : []
-    const recorded = new Map(ranking.map((r) => [r.inspectorId, r.name]))
+    const recorded = new Map((data?.inspectors ?? []).map((r) => [r.inspectorId, r.name]))
     const byName = (a: { id: string; name: string }, b: { id: string; name: string }) => a.name.localeCompare(b.name)
     const withRecord = Array.from(recorded, ([id, name]) => ({ id, name: users.find((u) => u.id === id)?.name ?? name })).sort(byName)
     const without = users
@@ -1945,7 +1961,7 @@ export function DashboardPage() {
     if (link.kind === 'history-hold') navigate('/history?disposition=Hold')
     else if (link.kind === 'machine') patch({ workCenterCode: link.value })
     else if (link.kind === 'item') patch({ itemCode: link.value })
-    else if (link.kind === 'session') navigate(`/wizard/${link.value}`)
+    else if (link.kind === 'session') navigate(sessionDetailPath(link.value))
   }
 
   const exportExcel = () => {
@@ -2011,7 +2027,7 @@ export function DashboardPage() {
             {(
               [
                 ['general', 'General', Factory],
-                ['inspectors', 'Inspectors', Trophy],
+                ...(canRank ? ([['inspectors', 'Inspectors', Trophy]] as const) : []),
               ] as const
             ).map(([key, label, Icon]) => (
               <button
@@ -2580,7 +2596,7 @@ export function DashboardPage() {
                     value: h.ageDays,
                     tone: h.ageDays >= t.holdAgeRedDays ? 'red' : h.ageDays >= t.holdAgeAmberDays ? 'amber' : 'neutral',
                     text: `${num(h.ageDays)} d · ${num(h.qty)} pcs`,
-                    onClick: () => navigate(`/wizard/${h.sessionId}`),
+                    onClick: () => navigate(sessionDetailPath(h.sessionId)),
                   }))}
               />
             </Section>
@@ -2652,7 +2668,7 @@ export function DashboardPage() {
                   { key: 'm', label: 'Machine', render: (h) => h.workCenterCode },
                   { key: 'd', label: 'Defect', render: (h) => h.defectName },
                   { key: 'q', label: 'Qty', className: 'text-right tabular-nums', render: (h) => num(h.qty) },
-                  { key: 'go', label: '', className: 'print-hidden text-right', render: (h) => (<button type="button" onClick={() => navigate(`/wizard/${h.sessionId}`)} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">Session</button>) },
+                  { key: 'go', label: '', className: 'print-hidden text-right', render: (h) => (<button type="button" onClick={() => navigate(sessionDetailPath(h.sessionId))} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">Session</button>) },
                 ]}
               />
             </Section>
@@ -2685,14 +2701,16 @@ export function DashboardPage() {
 
           {/* §16 — who inspected, and how well. Its own tab, and its own page
               in the PDF. Administrator-only, like the dashboard itself. */}
-          <Section
-            title="Inspector ranking"
-            hint="Scored on the inspection: how much was covered, how completely it was recorded, how rarely it needed correcting, and what was found against peers on the same machine."
-            icon={<Trophy className="h-4 w-4" />}
-            className={cn('print-break', view !== 'inspectors' && '[@media_screen]:hidden')}
-          >
-            <InspectorRanking data={data.inspectorRanking} onPick={(id) => patch({ inspectorId: id })} />
-          </Section>
+          {data.inspectorRanking && (
+            <Section
+              title="Inspector ranking"
+              hint="Scored on the inspection: how much was covered, how completely it was recorded, how rarely it needed correcting, and what was found against peers on the same machine."
+              icon={<Trophy className="h-4 w-4" />}
+              className={cn('print-break', view !== 'inspectors' && '[@media_screen]:hidden')}
+            >
+              <InspectorRanking data={data.inspectorRanking} onPick={(id) => patch({ inspectorId: id })} />
+            </Section>
+          )}
 
           <p className="text-xs text-slate-400">
             Generated {formatDateTime(data.generatedAt)} · targets: defect rate ≤ {t.defectRateGreen}% / {t.defectRateAmber}%, FPY ≥ {t.fpyGreen}% / {t.fpyAmber}%, Cpk ≥ {t.cpkGreen} / {t.cpkAmber}. An administrator changes them in Configuration → KPI targets.
