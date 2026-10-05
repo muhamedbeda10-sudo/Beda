@@ -12,16 +12,14 @@ import { randomUUID } from 'node:crypto'
 import type { SaveSampleRequest, SessionWithOrder } from '@qc/shared/api'
 import type { ProductionOrder } from '@qc/shared/types'
 import type { KpiOverview } from '@qc/shared/kpi'
-import { TestApp, type Session } from './harness'
+import { TestApp, type Session, factoryDay } from './harness'
 
 const app = new TestApp()
 let admin: Session
 let inspector: Session
 
 const today = (offset = 0) => {
-  const d = new Date()
-  d.setUTCDate(d.getUTCDate() + offset)
-  return d.toISOString().slice(0, 10)
+  return factoryDay(offset)
 }
 const period = () => `from=${today(-1)}&to=${today(1)}&prevFrom=${today(-31)}&prevTo=${today(-2)}`
 

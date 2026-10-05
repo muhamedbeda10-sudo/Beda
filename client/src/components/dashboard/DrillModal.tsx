@@ -12,6 +12,7 @@ import { KPI_DRILL_LIMIT } from '@qc/shared/kpi'
 import { Modal } from '@/components/ui'
 import { useFirstPartDrill, useKpiDrill } from '@/services/queries'
 import { formatDateTime } from '@/lib/utils'
+import { sessionDetailPath } from '@/lib/links'
 
 export type DrillSpec = { title: string; subtitle?: string } & ({ query: KpiDrillQuery; firstPart?: undefined } | { firstPart: KpiFirstPartDrillQuery; query?: undefined })
 
@@ -112,7 +113,7 @@ export function DrillModal({ spec, onClose }: { spec: DrillSpec | null; onClose:
                             <button
                               key={s.sessionId}
                               type="button"
-                              onClick={() => navigate(`/wizard/${s.sessionId}`)}
+                              onClick={() => navigate(sessionDetailPath(s.sessionId))}
                               title={`${formatDateTime(s.at)} · ${s.inspectorName} · ${num(s.pieces)} pcs`}
                               className="rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
                             >

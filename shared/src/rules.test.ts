@@ -572,6 +572,13 @@ describe('roles', () => {
       expect(can('viewer', cap)).toBe(false)
     }
   })
+  it("keeps History's Excel export and the inspectors' ranking from a viewer", () => {
+    expect(can('viewer', 'export-records')).toBe(false)
+    expect(can('supervisor', 'export-records')).toBe(true)
+    expect(can('admin', 'export-records')).toBe(true)
+    expect(can('viewer', 'view-inspector-ranking')).toBe(false)
+    expect(can('admin', 'view-inspector-ranking')).toBe(true)
+  })
   it('everyone who records is in the chat and receives notices', () => {
     for (const role of ['inspector', 'supervisor', 'admin'] as const) {
       expect(can(role, 'record-inspection')).toBe(true)

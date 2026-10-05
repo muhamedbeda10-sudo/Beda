@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto'
 import type { KpiBreakdown, KpiGeneral } from '@qc/shared/kpi'
 import type { SaveSampleRequest, SessionStagesResponse, SessionWithOrder } from '@qc/shared/api'
 import type { Machine, ProductionOrder } from '@qc/shared/types'
-import { TestApp, type Session } from './harness'
+import { TestApp, type Session, factoryDay } from './harness'
 
 const app = new TestApp()
 let admin: Session
@@ -22,9 +22,7 @@ const line = (key: string) => lines.find((o) => o.lineKey === key)!
 const ids: Record<string, string> = {}
 
 function day(offset = 0): string {
-  const d = new Date()
-  d.setUTCDate(d.getUTCDate() + offset)
-  return d.toISOString().slice(0, 10)
+  return factoryDay(offset)
 }
 
 function defect(qty: number): SaveSampleRequest['defects'] {

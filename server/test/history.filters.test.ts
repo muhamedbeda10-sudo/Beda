@@ -10,7 +10,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import type { HistoryOptionsResponse, HistoryResponse } from '@qc/shared/api'
 import type { ProductionOrder } from '@qc/shared/types'
-import { TestApp, type Session } from './harness'
+import { TestApp, type Session, factoryDay } from './harness'
 
 const app = new TestApp()
 let admin: Session
@@ -211,9 +211,7 @@ describe('§6 — a filter reaches past the first page', () => {
 
   it('finds the sessions of one day, or of a range of days', async () => {
     const day = (offset: number) => {
-      const d = new Date()
-      d.setUTCDate(d.getUTCDate() + offset)
-      return d.toISOString().slice(0, 10)
+      return factoryDay(offset)
     }
     // Everything here was started today (some an hour ago), so today alone holds the whole record...
     const today = await get(`from=${day(0)}&to=${day(0)}`, one.token)

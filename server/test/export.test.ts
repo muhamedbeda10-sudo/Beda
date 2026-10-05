@@ -1,7 +1,7 @@
 // ============================================================================
 // §6 — History to Excel: the sessions the History filters match, with their
 // samples, measurements and defects; and the PDIs the PDI filters match.
-// Supervisors, administrators and viewers; never an inspector.
+// Supervisors and administrators; never an inspector or a viewer.
 // ============================================================================
 
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
@@ -56,9 +56,10 @@ beforeAll(async () => {
 afterAll(() => app.stop())
 
 describe('§6 — History to Excel', () => {
-  it('is for supervisors, administrators and viewers', async () => {
+  it('is for supervisors and administrators, not inspectors or viewers', async () => {
     expect((await app.api('GET', '/api/sessions/history/export', { token: inspector.token })).status).toBe(403)
-    expect((await app.api('GET', '/api/sessions/history/export', { token: viewer.token })).status).toBe(200)
+    expect((await app.api('GET', '/api/sessions/history/export', { token: viewer.token })).status).toBe(403)
+    expect((await app.api('GET', '/api/sessions/history/export', { token: admin.token })).status).toBe(200)
   })
 
   it('holds every session the filters match, with its samples, measurements and defects', async () => {
@@ -79,10 +80,11 @@ describe('§6 — History to Excel', () => {
 describe('§4 — PDIs to Excel', () => {
   it('holds every PDI the filters match, with its items, for the same people', async () => {
     expect((await app.api('GET', '/api/pdi/export', { token: inspector.token })).status).toBe(403)
-    const res = await app.api<PDIWithOrder[]>('GET', '/api/pdi/export?q=40001', { token: viewer.token })
+    expect((await app.api('GET', '/api/pdi/export', { token: viewer.token })).status).toBe(403)
+    const res = await app.api<PDIWithOrder[]>('GET', '/api/pdi/export?q=40001', { token: admin.token })
     expect(res.status).toBe(200)
     expect(res.body.map((d) => [d.orderNumber, d.notes, d.items.map((i) => i.itemCode)])).toEqual([['40001-A', 'Loaded', ['UP8060']]])
-    expect((await app.api<PDIWithOrder[]>('GET', '/api/pdi/export?q=nothing-like-it', { token: viewer.token })).body).toEqual([])
+    expect((await app.api<PDIWithOrder[]>('GET', '/api/pdi/export?q=nothing-like-it', { token: admin.token })).body).toEqual([])
   })
 })
 

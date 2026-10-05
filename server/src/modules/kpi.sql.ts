@@ -1506,13 +1506,14 @@ export async function loadCompareBlock(q: Queryable, f: PeriodFilters, grain: Kp
 // ---- Raw material on roll forming ----------------------------------------------
 
 /** Black, galvanized or every kind; a thickness or every one; a supplier or every one. */
+/** What the raw material trend follows; an empty list is every value. */
 export interface MaterialPick {
-  thickness: number | null
+  thicknesses: number[]
   material: MaterialKind | 'all'
-  /** '' picks the coils with no supplier recorded. */
-  supplier: string | null
-  /** One grade, as recorded (case and spaces aside). */
-  grade: string | null
+  /** '' picks the coils with no supplier recorded; case and spaces aside. */
+  suppliers: string[]
+  /** As recorded, case and spaces aside. */
+  grades: string[]
 }
 
 /** A thickness as a key: millimetres to the thousandth, or none. */
@@ -1563,6 +1564,9 @@ export async function loadMaterials(q: Queryable, f: PeriodFilters, grain: KpiGr
     a.rejected += r.rejected
     m.set(key, a)
   }
+  const thicknessKeys = new Set(pick.thicknesses.map((t) => thicknessKey(t)))
+  const supplierKeys = new Set(pick.suppliers.map((v) => v.trim().toLowerCase()))
+  const gradeKeys = new Set(pick.grades.map((g) => g.trim().toUpperCase()))
   const suppliers = new Map<string, Acc>()
   const thick = new Map<string, { all: Acc; black: Acc; galvanized: Acc; thickness: number | null }>()
   const trend = new Map<string, Acc>()
@@ -1590,9 +1594,9 @@ export async function loadMaterials(q: Queryable, f: PeriodFilters, grain: KpiGr
     }
     thick.set(tk, t)
     if (r.thickness !== null) seen.add(r.thickness)
-    const thicknessMatches = pick.thickness === null || (r.thickness !== null && thicknessKey(r.thickness) === thicknessKey(pick.thickness))
-    const supplierMatches = pick.supplier === null || (r.supplier ?? '').toLowerCase() === pick.supplier.toLowerCase()
-    const gradeMatches = pick.grade === null || gradeKey === pick.grade.trim().toUpperCase()
+    const thicknessMatches = thicknessKeys.size === 0 || (r.thickness !== null && thicknessKeys.has(thicknessKey(r.thickness)))
+    const supplierMatches = supplierKeys.size === 0 || supplierKeys.has((r.supplier ?? '').trim().toLowerCase())
+    const gradeMatches = gradeKeys.size === 0 || gradeKeys.has(gradeKey)
     if (thicknessMatches && supplierMatches && gradeMatches && (pick.material === 'all' || pick.material === kind)) add(trend, r.bucket, r)
   }
   const supplierRows: KpiMaterialRow[] = Array.from(suppliers, ([key, a]) => ({ key, label: key || 'No supplier recorded', ...point(a.produced, a.rejected) }))
@@ -1622,10 +1626,10 @@ export async function loadMaterials(q: Queryable, f: PeriodFilters, grain: KpiGr
       .filter((d) => d.made > 0)
       .sort((a, b) => b.made - a.made || a.supplier.localeCompare(b.supplier)),
     trend: {
-      thickness: pick.thickness,
+      thicknesses: pick.thicknesses,
       material: pick.material,
-      supplier: pick.supplier,
-      grade: pick.grade,
+      suppliers: pick.suppliers,
+      grades: pick.grades,
       grain,
       buckets,
       points: buckets.map((b) => {

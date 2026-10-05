@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { ApiErrorBody, AuditListResponse, KpiThresholdsResponse, SaveSampleRequest, SessionWithOrder } from '@qc/shared/api'
 import type { ProductionOrder } from '@qc/shared/types'
 import { DEFAULT_KPI_THRESHOLDS, type KpiOverview } from '@qc/shared/kpi'
-import { TestApp, type Session } from './harness'
+import { TestApp, type Session, factoryDay } from './harness'
 
 const app = new TestApp()
 let admin: Session
@@ -35,9 +35,7 @@ function sample(overrides: Partial<SaveSampleRequest> = {}): SaveSampleRequest {
 }
 
 function today(offsetDays = 0): string {
-  const d = new Date()
-  d.setUTCDate(d.getUTCDate() + offsetDays)
-  return d.toISOString().slice(0, 10)
+  return factoryDay(offsetDays)
 }
 
 const period = () => `from=${today(-1)}&to=${today(1)}&prevFrom=${today(-31)}&prevTo=${today(-2)}`

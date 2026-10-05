@@ -10,16 +10,14 @@ import { randomUUID } from 'node:crypto'
 import type { SessionWithOrder } from '@qc/shared/api'
 import type { ProductionOrder } from '@qc/shared/types'
 import type { KpiMaterials } from '@qc/shared/kpi'
-import { TestApp, type Session } from './harness'
+import { TestApp, type Session, factoryDay } from './harness'
 
 const app = new TestApp()
 let admin: Session
 let inspector: Session
 
 function today(offsetDays = 0): string {
-  const d = new Date()
-  d.setUTCDate(d.getUTCDate() + offsetDays)
-  return d.toISOString().slice(0, 10)
+  return factoryDay(offsetDays)
 }
 
 /** One sample: the coils it ran and the pieces it rejected. */
@@ -50,6 +48,8 @@ async function run(order: ProductionOrder, samples: SampleSpec[], finalQty: numb
   if (closed.status !== 200) throw new Error(`close ${closed.status} ${JSON.stringify(closed.body)}`)
 }
 
+/** A list as the trend's filters take it: one JSON array in the address. */
+const list = (values: (string | number)[]) => encodeURIComponent(JSON.stringify(values))
 const materials = (query = '') => app.api<KpiMaterials>('GET', `/api/kpi/materials?from=${today(-1)}&to=${today(1)}${query}`, { token: admin.token })
 
 beforeAll(async () => {
@@ -113,16 +113,16 @@ describe('§15 — roll forming raw material', () => {
   })
 
   it('follows one thickness and material over the period', async () => {
-    const galv = (await materials('&thickness=2&material=galvanized')).body.trend
+    const galv = (await materials(`&thicknesses=${list([2])}&material=galvanized`)).body.trend
     expect(galv.grain).toBe('day')
     expect(galv.total).toMatchObject({ made: 130, productionDefectPieces: 5 })
     expect(galv.points.map((p) => p.made)).toEqual([0, 130, 0])
-    expect((await materials('&thickness=2&material=black')).body.trend.total.made).toBe(0)
+    expect((await materials(`&thicknesses=${list([2])}&material=black`)).body.trend.total.made).toBe(0)
     expect((await materials('&material=black')).body.trend.total).toMatchObject({ made: 230, productionDefectPieces: 5 })
     expect((await materials()).body.trend.total).toMatchObject({ made: 401, productionDefectPieces: 11 })
     // One supplier, or the coils with none recorded.
-    expect((await materials('&supplier=Suez%20Steel')).body.trend.total).toMatchObject({ made: 130, productionDefectPieces: 5 })
-    expect((await materials('&noSupplier=1')).body.trend.total).toMatchObject({ made: 41, productionDefectPieces: 1 })
+    expect((await materials(`&suppliers=${list(['Suez Steel'])}`)).body.trend.total).toMatchObject({ made: 130, productionDefectPieces: 5 })
+    expect((await materials(`&suppliers=${list([''])}`)).body.trend.total).toMatchObject({ made: 41, productionDefectPieces: 1 })
     expect((await materials('&grain=week')).body.trend.grain).toBe('week')
   })
 
@@ -136,11 +136,20 @@ describe('§15 — roll forming raw material', () => {
     expect(gradeOptions).toEqual(['DX51D+Z275', 'S355JR'])
   })
 
+  it('follows several suppliers, thicknesses or grades at once — the same supplier typed two ways', async () => {
+    const both = (await materials(`&suppliers=${list(['suez steel', 'EZZ STEEL'])}`)).body.trend
+    expect(both.suppliers).toEqual(['suez steel', 'EZZ STEEL'])
+    expect(both.total).toMatchObject({ made: 360, productionDefectPieces: 10 })
+    expect((await materials(`&suppliers=${list(['Ezz Steel', ''])}`)).body.trend.total).toMatchObject({ made: 271, productionDefectPieces: 6 })
+    expect((await materials(`&thicknesses=${list([1.5, 2])}`)).body.trend.total).toMatchObject({ made: 360, productionDefectPieces: 10 })
+    expect((await materials(`&grades=${list(['S355JR', 'DX51D+Z275'])}&material=galvanized`)).body.trend.total.made).toBe(130)
+  })
+
   it('follows one grade over the period', async () => {
-    const g = (await materials('&grade=dx51d%2Bz275')).body.trend
-    expect(g.grade).toBe('dx51d+z275')
+    const g = (await materials(`&grades=${list(['dx51d+z275'])}`)).body.trend
+    expect(g.grades).toEqual(['dx51d+z275'])
     expect(g.total).toMatchObject({ made: 130, productionDefectPieces: 5 })
-    expect((await materials('&grade=S355JR&thickness=2')).body.trend.total.made).toBe(0)
+    expect((await materials(`&grades=${list(['S355JR'])}&thicknesses=${list([2])}`)).body.trend.total.made).toBe(0)
   })
 
   it('narrows to the roll forming machines picked', async () => {
@@ -156,7 +165,8 @@ describe('§15 — roll forming raw material', () => {
 
   it('refuses a bad material or thickness, and a reader without the dashboard', async () => {
     expect((await materials('&material=steel')).status).toBe(400)
-    expect((await materials('&thickness=-1')).status).toBe(400)
+    expect((await materials(`&thicknesses=${list([-1])}`)).status).toBe(400)
+    expect((await materials('&suppliers=not-json')).status).toBe(400)
     expect((await app.api('GET', `/api/kpi/materials?from=${today(-1)}&to=${today(1)}`, { token: inspector.token })).status).toBe(403)
   })
 })

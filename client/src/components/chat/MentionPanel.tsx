@@ -12,6 +12,7 @@ import { remainingQty } from '@qc/shared/types'
 import { Badge, Button, Drawer } from '@/components/ui'
 import { useOrder, useOrderHistory, useOrderSearch } from '@/services/queries'
 import { formatDateTime } from '@/lib/utils'
+import { sessionDetailPath } from '@/lib/links'
 
 function OrderLine({ orderId, onClose }: { orderId: string; onClose: () => void }) {
   const navigate = useNavigate()
@@ -48,7 +49,7 @@ function OrderLine({ orderId, onClose }: { orderId: string; onClose: () => void 
           <ul className="mt-1 space-y-1">
             {sessions.slice(0, 8).map((s) => (
               <li key={s.id}>
-                <button type="button" onClick={() => { onClose(); navigate(`/wizard/${s.id}`) }} className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">
+                <button type="button" onClick={() => { onClose(); navigate(sessionDetailPath(s.id)) }} className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">
                   <span>
                     Session #{s.seq} · {s.inspectorName}
                     <span className="block text-xs text-slate-400">{formatDateTime(s.startedAt)}</span>
@@ -101,7 +102,7 @@ export function useMentionPanel(onOpenDirect: (userId: string) => void) {
         // The board simply opens unfiltered.
       }
       navigate('/')
-    } else if (m.kind === 'session') navigate(`/wizard/${m.value}`)
+    } else if (m.kind === 'session') navigate(sessionDetailPath(m.value))
     else setOpen(m)
   }
   const panel = open ? (

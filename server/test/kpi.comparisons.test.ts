@@ -10,16 +10,14 @@ import { randomUUID } from 'node:crypto'
 import type { DashboardLayoutResponse, SaveSampleRequest, SessionWithOrder } from '@qc/shared/api'
 import type { ProductionOrder } from '@qc/shared/types'
 import { defaultDashboardLayouts, type KpiComparisons } from '@qc/shared/kpi'
-import { TestApp, type Session } from './harness'
+import { TestApp, type Session, factoryDay } from './harness'
 
 const app = new TestApp()
 let admin: Session
 let inspector: Session
 
 function today(offsetDays = 0): string {
-  const d = new Date()
-  d.setUTCDate(d.getUTCDate() + offsetDays)
-  return d.toISOString().slice(0, 10)
+  return factoryDay(offsetDays)
 }
 
 const defect = (qty: number): SaveSampleRequest['defects'] => [{ defectName: 'Scratch', qty, disposition: 'Repair', notes: '', imageIds: [] }]
