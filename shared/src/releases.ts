@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-05.2',
+    date: '2026-10-05',
+    title: 'Universal machines: a final product, or stages with their quantities',
+    items: [
+      { text: 'Closing the first session of an item on a universal machine asks what it is: a Final product — every later session is one more inspection of a new quantity, and the quantities add up — or Stages.' },
+      { text: 'A staged session ticks every stage it covered, each with its quantity: stages 1 and 2 together when the item runs on two presses at once. The quantity of a second stage starts as the first one\'s.' },
+      { text: 'The dashboard counts a staged item at the quantity of its highest stage in the period, and a final product\'s sessions added up. Items closed before this change are counted as they were, on the order sheet\'s quantity.' },
+      { text: 'Supervisors and administrators correct a closed session\'s choice, its stages and their quantities from Correct quantities, either way round; every change is in the audit log.' },
+    ],
+  },
+  {
     id: '2026-10-05.1',
     date: '2026-10-05',
     title: 'A session opens to read; viewers without the ranking or the export',

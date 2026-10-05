@@ -84,26 +84,33 @@ function params(f: PeriodFilters): unknown[] {
  * carries the defect pieces of all its samples — the defects of the batch —
  * so the rate is defect pieces per 100 produced.
  *
- * On a universal machine one line (an item of an order on the machine) passes
- * through several stages, a session each, and every close types the same
- * pieces again. There the line's quantity is the order sheet's finished
- * quantity — else the largest final quantity typed on it — counted once in
- * whatever span is read: `produced` once in the whole span, `produced_m` once
- * in each month, `produced_d` once in each day, each on the line's first
- * session there. Its defects are every stage's. A make-to-stock line is not
- * an order line and keeps its sessions' own quantities.
+ * On a universal machine one line (an item of an order on the machine) is a
+ * final product or passes through stages (§4):
+ *   • a final product's sessions each made a new quantity: they add up;
+ *   • a staged line made, in any span, the quantity of the highest stage
+ *     recorded in it — summed over the sessions that recorded that stage;
+ *   • a line closed before the choice existed is counted as it was: the order
+ *     sheet's finished quantity, else the largest final quantity typed on it.
+ * A staged or older line is counted once in whatever span is read:
+ * `produced` once in the whole span, `produced_m` once in each month,
+ * `produced_d` once in each day, each on the line's first session there. Its
+ * defects are every session's. A make-to-stock line is not an order line and
+ * keeps its sessions' own quantities.
  */
 // Every query here finds a session's machine with a LATERAL join and keeps
 // only the machines the dashboard counts (machines.on_dashboard); a session
 // on a code the register does not know is counted.
-const PRODUCED = `
+const PRODUCED_RAW = `
 produced_raw AS (
   SELECT s.id AS session_id, s.work_center_code AS wc, COALESCE(m.factory, '') AS factory,
          COALESCE(m.display_name, 'Machine ' || s.work_center_code) AS machine_label,
          COALESCE(m.process, 'universal') AS process,
          o.item_code, o.item, o.order_number, s.order_id, s.closed_at, s.final_qty::float8 AS final_qty,
-         COALESCE(m.process = 'universal', false) AND upper(btrim(o.order_number)) <> 'STOCK' AS by_line,
+         s.universal_kind AS kind,
+         -- Counted once per line: a universal order line that is not a final product.
+         COALESCE(m.process = 'universal', false) AND upper(btrim(o.order_number)) <> 'STOCK' AND s.universal_kind IS DISTINCT FROM 'final' AS lined,
          COALESCE(o.finished_qty, 0)::float8 AS sheet_qty,
+         (SELECT max(q.stage) FROM session_stage_quantities q WHERE q.session_id = s.id AND q.deleted_at IS NULL)::int AS top_stage,
          COALESCE((SELECT sum(d.qty) FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
                     WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL), 0)::float8 AS defect_pieces
     FROM inspection_sessions s
@@ -120,22 +127,62 @@ produced_raw AS (
      AND ($6::text IS NULL OR lower(o.item_code) = lower($6))
      AND $7::uuid IS NULL AND $8::text IS NULL
      AND ($9::text[] IS NULL OR COALESCE(m.process, 'universal') = ANY($9::text[]))
-),
-produced_ranked AS (
+)`
+
+/** A span a line's production is read once in: `part` groups the sessions (an SQL expression over r), null for the whole span. */
+interface LineSpan {
+  suffix: string
+  part: string | null
+}
+
+/**
+ * CTEs that give each session of `produced_raw` its share of its line's
+ * production once in each span (`produced<suffix>`), as PRODUCED describes:
+ * the line's first session in the span carries it, the others carry nothing.
+ * Off a counted line a session carries its own final quantity.
+ */
+function lineShares(name: string, spans: readonly LineSpan[]): string {
+  const by = (part: string | null) => `PARTITION BY r.order_id, r.lined${part ? `, ${part}` : ''}`
+  const windows = spans
+    .map(
+      ({ suffix, part }) => `bool_or(r.kind = 'staged') OVER (${by(part)}) AS line_staged${suffix},
+         max(r.top_stage) OVER (${by(part)}) AS line_top${suffix},
+         row_number() OVER (${by(part)} ORDER BY r.closed_at, r.session_id) AS line_first${suffix}`,
+    )
+    .join(',\n         ')
+  const atTop = spans
+    .map(({ suffix }) => `COALESCE((SELECT q.qty FROM session_stage_quantities q WHERE q.session_id = r.session_id AND q.stage = r.line_top${suffix} AND q.deleted_at IS NULL), 0)::float8 AS at_top${suffix}`)
+    .join(',\n         ')
+  const shares = spans
+    .map(
+      ({ suffix, part }) => `CASE WHEN NOT r.lined THEN r.final_qty WHEN r.line_first${suffix} <> 1 THEN 0
+              WHEN r.line_staged${suffix} THEN sum(r.at_top${suffix}) OVER (${by(part)}) ELSE r.line_qty END AS produced${suffix}`,
+    )
+    .join(',\n         ')
+  return `
+${name}_windows AS (
   SELECT r.*,
-         CASE WHEN r.sheet_qty > 0 THEN r.sheet_qty ELSE max(r.final_qty) OVER (PARTITION BY r.order_id) END AS line_qty,
-         row_number() OVER (PARTITION BY r.order_id ORDER BY r.closed_at, r.session_id) AS first_in_span,
-         row_number() OVER (PARTITION BY r.order_id, to_char(r.closed_at AT TIME ZONE $1, 'YYYY-MM') ORDER BY r.closed_at, r.session_id) AS first_in_month,
-         row_number() OVER (PARTITION BY r.order_id, (r.closed_at AT TIME ZONE $1)::date ORDER BY r.closed_at, r.session_id) AS first_in_day
+         CASE WHEN r.sheet_qty > 0 THEN r.sheet_qty ELSE max(r.final_qty) OVER (PARTITION BY r.order_id, r.lined) END AS line_qty,
+         ${windows}
     FROM produced_raw r
 ),
-produced AS (
-  SELECT p.*,
-         CASE WHEN NOT p.by_line THEN p.final_qty WHEN p.first_in_span = 1 THEN p.line_qty ELSE 0 END AS produced,
-         CASE WHEN NOT p.by_line THEN p.final_qty WHEN p.first_in_month = 1 THEN p.line_qty ELSE 0 END AS produced_m,
-         CASE WHEN NOT p.by_line THEN p.final_qty WHEN p.first_in_day = 1 THEN p.line_qty ELSE 0 END AS produced_d
-    FROM produced_ranked p
+${name}_tops AS (
+  SELECT r.*,
+         ${atTop}
+    FROM ${name}_windows r
+),
+${name} AS (
+  SELECT r.*,
+         ${shares}
+    FROM ${name}_tops r
 )`
+}
+
+const PRODUCED = `${PRODUCED_RAW},${lineShares('produced', [
+  { suffix: '', part: null },
+  { suffix: '_m', part: `to_char(r.closed_at AT TIME ZONE $1, 'YYYY-MM')` },
+  { suffix: '_d', part: `(r.closed_at AT TIME ZONE $1)::date` },
+])}`
 
 /** The samples of the period that pass the filters, with what each one recorded. */
 const BASE = `
@@ -1462,16 +1509,14 @@ export async function loadCompareBlock(q: Queryable, f: PeriodFilters, grain: Kp
   const bucket = BUCKET_SQL[grain]
   const key = by === 'process' ? 'process' : 'lower(wc)'
   const { rows } = await q.query<{ key: string; code: string; label: string; factory: string; bucket: string; produced: number; producedSpan: number; defectPieces: number }>(
-    `WITH ${PRODUCED},
-     bucketed AS (
-       SELECT r.*, ${bucket} AS bucket,
-              CASE WHEN r.sheet_qty > 0 THEN r.sheet_qty ELSE max(r.final_qty) OVER (PARTITION BY r.order_id) END AS line_qty,
-              row_number() OVER (PARTITION BY r.order_id, ${bucket} ORDER BY r.closed_at, r.session_id) AS first_in_bucket,
-              row_number() OVER (PARTITION BY r.order_id ORDER BY r.closed_at, r.session_id) AS first_in_span
-         FROM produced_raw r)
+    `WITH ${PRODUCED_RAW},${lineShares('shares', [
+      { suffix: '_bucket', part: bucket },
+      { suffix: '_span', part: null },
+    ])},
+     bucketed AS (SELECT r.*, ${bucket} AS bucket FROM shares r)
      SELECT ${key} AS key, max(wc) AS code, max(machine_label) AS label, max(factory) AS factory, bucket,
-            COALESCE(sum(CASE WHEN NOT by_line THEN final_qty WHEN first_in_bucket = 1 THEN line_qty ELSE 0 END), 0)::float8 AS produced,
-            COALESCE(sum(CASE WHEN NOT by_line THEN final_qty WHEN first_in_span = 1 THEN line_qty ELSE 0 END), 0)::float8 AS "producedSpan",
+            COALESCE(sum(produced_bucket), 0)::float8 AS produced,
+            COALESCE(sum(produced_span), 0)::float8 AS "producedSpan",
             COALESCE(sum(defect_pieces), 0)::float8 AS "defectPieces"
        FROM bucketed GROUP BY ${key}, bucket`,
     params(f),

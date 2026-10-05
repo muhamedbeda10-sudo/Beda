@@ -3,7 +3,8 @@
 // before release, the quantity produced (make-to-stock), and the final
 // quantity typed at close. Each is as mis-keyed as any other figure; the
 // change goes through the version-checked correction endpoint, which writes
-// the audit entry.
+// the audit entry. On a universal machine a closed session's final product or
+// stages, and their quantities, are corrected here too, either way round.
 // ============================================================================
 
 import { useState } from 'react'
@@ -14,7 +15,7 @@ import { isStockOrder } from '@qc/shared/rules'
 import { Button, Field, Input, Modal } from '@/components/ui'
 import { updateSessionQuantities } from '@/services/mutations'
 import { useSessionStages } from '@/services/queries'
-import { StagePicker } from './StagePicker'
+import { UniversalChoice, readUniversalDraft, universalDraft, type UniversalDraft } from './UniversalChoice'
 import { useApp } from '@/store/AppContext'
 
 /** A quantity field: empty reads as zero, anything else must be a non-negative number. */
@@ -32,23 +33,31 @@ export function SessionQuantitiesDialog({ session, onClose }: { session: Session
   const [start, setStart] = useState(String(session.startQtyConfirmed?.qty ?? 0))
   const [produced, setProduced] = useState(String(session.producedQty ?? 0))
   const [final, setFinal] = useState(String(session.finalQty ?? 0))
-  // A closed session on a universal machine carries its stage, corrected here like a quantity.
-  const hasStage = closed && session.stage !== undefined
-  const { data: stageOptions } = useSessionStages(session.id, hasStage)
-  const [stage, setStage] = useState<number | null>(session.stage ?? null)
+  // A closed session on a universal machine: final product or stages, with their quantities, corrected here like a quantity.
+  const { data: options } = useSessionStages(session.id, closed && !stock)
+  const universal = closed && options?.universal === true
+  const [draft, setDraft] = useState<UniversalDraft>(() => universalDraft(null, session))
+  const read = universal && options ? readUniversalDraft(draft, options.stages.map((s) => s.stage)) : null
   const [saving, setSaving] = useState(false)
 
   const startQty = parseQty(start)
   const producedQty = parseQty(produced)
   const finalQty = parseQty(final)
-  const valid = (stock ? producedQty !== null : startQty !== null) && (!closed || finalQty !== null)
+  const valid = (stock ? producedQty !== null : startQty !== null) && (universal ? read !== null && !('problem' in read) : !closed || finalQty !== null)
 
   // Only what changed is sent, so the audit log records exactly that.
+  const sameUniversal =
+    read !== null &&
+    !('problem' in read) &&
+    read.choice.kind === (session.universalKind ?? (session.stages?.length ? 'staged' : undefined)) &&
+    (read.choice.kind === 'final'
+      ? read.finalQty === session.finalQty
+      : JSON.stringify(read.choice.stages) === JSON.stringify((session.stages ?? []).map((s) => ({ stage: s.stage, qty: s.qty }))))
   const changes = {
     ...(!stock && startQty !== null && startQty !== (session.startQtyConfirmed?.qty ?? 0) ? { startQty } : {}),
     ...(stock && producedQty !== null && producedQty !== (session.producedQty ?? 0) ? { producedQty } : {}),
-    ...(closed && finalQty !== null && finalQty !== (session.finalQty ?? 0) ? { finalQty } : {}),
-    ...(hasStage && stage !== null && stage !== session.stage ? { stage } : {}),
+    ...(!universal && closed && finalQty !== null && finalQty !== (session.finalQty ?? 0) ? { finalQty } : {}),
+    ...(universal && read && !('problem' in read) && !sameUniversal ? { universal: read.choice, ...(read.finalQty !== undefined ? { finalQty: read.finalQty } : {}) } : {}),
   }
   const dirty = Object.keys(changes).length > 0
 
@@ -113,18 +122,17 @@ export function SessionQuantitiesDialog({ session, onClose }: { session: Session
             )}
           </Field>
         )}
-        {closed ? (
+        {universal && options ? (
+          <>
+            <UniversalChoice options={options} draft={draft} onChange={setDraft} kindLocked={false} />
+            {read && 'problem' in read && <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{read.problem}</p>}
+          </>
+        ) : closed ? (
           <Field label="Final quantity (at close)">{qtyInput(final, setFinal)}</Field>
         ) : (
           <p className="text-xs text-slate-400">The final quantity is typed when the session closes, and can be corrected here after that.</p>
         )}
-        {hasStage && stageOptions && (
-          <div>
-            <span className="label">Stage of this item</span>
-            <StagePicker options={stageOptions} value={stage} onChange={setStage} />
-          </div>
-        )}
-        {!valid && <p className="text-sm font-semibold text-rose-600 dark:text-rose-400">Enter zero or a positive quantity.</p>}
+        {!valid && !universal && <p className="text-sm font-semibold text-rose-600 dark:text-rose-400">Enter zero or a positive quantity.</p>}
       </div>
     </Modal>
   )

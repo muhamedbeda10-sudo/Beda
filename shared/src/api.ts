@@ -38,6 +38,8 @@ import type {
   PTRecord,
   PTVerdict,
   Role,
+  StageQuantity,
+  UniversalKind,
   SampleCoil,
   SessionStatus,
   UserProfile,
@@ -291,23 +293,30 @@ export interface StartWithSampleResponse {
   joined: boolean
 }
 
+/**
+ * On a universal machine, what a closing session was: a final product (its
+ * quantity is `finalQty`), or the stages it covered with each one's quantity.
+ */
+export type UniversalCloseChoice = { kind: 'final' } | { kind: 'staged'; stages: StageQuantity[] }
+
 export interface CloseSessionRequest {
-  finalQty: number
-  /**
-   * On a universal machine, when the line already has a session: the stage
-   * this one was, one of the line's stages or the next one. The first session
-   * on a line is stage 1 without asking.
-   */
+  /** The quantity made. On a universal machine's staged session it is the highest stage's, and may be left out. */
+  finalQty?: number
+  /** On a universal machine (not make-to-stock): final product or stages. The line's first close chooses; later ones follow it. */
+  universal?: UniversalCloseChoice
+  /** An older client's one stage, read as that stage at `finalQty`. */
   stage?: number
   /** Version the client loaded — the close is rejected if it moved. */
   version: number
 }
 
-/** The stages a session on a universal machine may be given when it closes. */
+/** What the close asks of a session on a universal machine. */
 export interface SessionStagesResponse {
-  /** True when the session's stage must be chosen: a universal machine, and the line already has a session. */
-  asks: boolean
-  /** The stages the line's other sessions were given, with how many sessions each. */
+  /** True on a universal machine (not make-to-stock): the close asks final product or stages. */
+  universal: boolean
+  /** What the line's first closed session made it; null while no other session on it is closed. */
+  lineKind: UniversalKind | null
+  /** The stages the line's other sessions covered, with how many sessions each. */
   stages: { stage: number; sessions: number }[]
   /** The stage a new one would be: one past the highest. */
   next: number
@@ -498,8 +507,8 @@ export interface UpdateSessionQuantitiesRequest {
   startQty?: number
   producedQty?: number
   finalQty?: number
-  /** A closed session on a universal machine: its stage, corrected. */
-  stage?: number
+  /** A closed session on a universal machine: final product or its stages and their quantities, corrected. */
+  universal?: UniversalCloseChoice
   /** Version the client loaded — the change is rejected if it moved. */
   version: number
 }
@@ -633,7 +642,9 @@ export interface HistoryExportResponse {
     machine: string
     factory: string
     process: string
-    stage: number | null
+    /** On a universal machine: final, staged, or null (another machine, or closed before the choice existed). */
+    universalKind: UniversalKind | null
+    stages: StageQuantity[]
     inspectorName: string
     startedAt: string
     closedAt: string | null
@@ -679,7 +690,8 @@ export interface HistoryGroupSession {
   machine: string
   factory: string
   status: SessionStatus
-  stage: number | null
+  /** The stages of the item the session covered; empty on any other machine. */
+  stages: number[]
   startedAt: string
   closedAt: string | null
   inspectorName: string

@@ -21,6 +21,8 @@ import {
   type PTConsumableProduct,
   type Process,
   type ProductionOrder,
+  type StageQuantity,
+  type UniversalKind,
   type WorkCenterDefect,
 } from '@qc/shared/types'
 import {
@@ -35,6 +37,9 @@ import {
   stockLineKey,
   normaliseMachineCode,
   STOCK_ORDER_NUMBER,
+  MAX_STAGE,
+  stagesProblem,
+  topStageQty,
 } from '@qc/shared/rules'
 import { instructionsInForce } from './workInstructions.routes'
 import type {
@@ -49,6 +54,7 @@ import type {
   SaveSampleResponse,
   SessionNotesResponse,
   SessionStagesResponse,
+  UniversalCloseChoice,
   HistoryExportResponse,
   HistoryGroupResponse,
   HistoryGroupSession,
@@ -79,6 +85,7 @@ import {
   ORDER_SUMMARY_SELECT,
   SAMPLE_SUMMARY_SELECT,
   SESSION_SELECT,
+  SESSION_STAGES_SELECT,
   toSession,
   toSessionWithOrder,
   type OrderSummaryRow,
@@ -115,8 +122,19 @@ const startSchema = z.union([
   z.object({ workCenterCode: z.string().trim().min(1).max(40), producedQty: z.coerce.number().min(0) }),
 ])
 /** A stage of an item on a universal machine. */
-const stageSchema = z.coerce.number().int().min(1).max(50)
-const closeSchema = z.object({ finalQty: z.coerce.number().min(0), stage: stageSchema.optional(), version: z.coerce.number().int().min(0) })
+const stageSchema = z.coerce.number().int().min(1).max(MAX_STAGE)
+/** On a universal machine: a final product, or the stages a session covered with each one's quantity. */
+const universalSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('final') }),
+  z.object({ kind: z.literal('staged'), stages: z.array(z.object({ stage: stageSchema, qty: z.coerce.number().min(0) })).min(1).max(MAX_STAGE) }),
+])
+const closeSchema = z.object({
+  finalQty: z.coerce.number().min(0).optional(),
+  universal: universalSchema.optional(),
+  /** An older client's one stage. */
+  stage: stageSchema.optional(),
+  version: z.coerce.number().int().min(0),
+})
 
 /** A defect quantity counts defective pieces of the batch (§15): the final quantity is the batch, so it cannot be below them. */
 const reopenSchema = z.object({ version: z.coerce.number().int().min(0) })
@@ -125,10 +143,10 @@ const quantitiesSchema = z
     startQty: z.coerce.number().min(0).optional(),
     producedQty: z.coerce.number().min(0).optional(),
     finalQty: z.coerce.number().min(0).optional(),
-    stage: stageSchema.optional(),
+    universal: universalSchema.optional(),
     version: z.coerce.number().int().min(0),
   })
-  .refine((b) => b.startQty !== undefined || b.producedQty !== undefined || b.finalQty !== undefined || b.stage !== undefined, { message: 'Nothing to change.' })
+  .refine((b) => b.startQty !== undefined || b.producedQty !== undefined || b.finalQty !== undefined || b.universal !== undefined, { message: 'Nothing to change.' })
 
 const optText = (max: number) => z.string().trim().max(max).optional().transform((v) => (v ? v : undefined))
 const nullableNum = z.union([z.number().finite(), z.null()])
@@ -432,7 +450,9 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const { rows } = await db.query<HistoryGroupSession & { total: number }>(
       `SELECT s.id AS "sessionId", s.seq, s.order_id AS "orderId", COALESCE(o.order_number, '') AS "orderNumber", COALESCE(o.item, '') AS item,
               COALESCE(o.item_code, '') AS "itemCode", s.work_center_code AS "workCenterCode", COALESCE(m.display_name, s.work_center_code) AS machine,
-              COALESCE(m.factory, '') AS factory, s.status, s.stage, s.started_at AS "startedAt", s.closed_at AS "closedAt", s.inspector_name AS "inspectorName",
+              COALESCE(m.factory, '') AS factory, s.status,
+              (SELECT COALESCE(array_agg(q.stage::int ORDER BY q.stage), '{}') FROM session_stage_quantities q WHERE q.session_id = s.id AND q.deleted_at IS NULL) AS stages,
+              s.started_at AS "startedAt", s.closed_at AS "closedAt", s.inspector_name AS "inspectorName",
               (SELECT count(*)::int FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS samples,
               (SELECT COALESCE(sum(x.sample_qty), 0)::float8 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "piecesInspected",
               (SELECT COALESCE(sum(d.qty), 0)::float8 FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
@@ -482,7 +502,8 @@ export function sessionsRoutes(ctx: AppContext): Router {
       `SELECT s.id AS ref, s.seq, COALESCE(o.order_number, '') AS "orderNumber", COALESCE(o.item, '') AS item, COALESCE(o.item_code, '') AS "itemCode",
               COALESCE(o.customer, '') AS customer, s.work_center_code AS "workCenterCode",
               COALESCE(m.display_name, s.work_center_code) AS machine, COALESCE(m.factory, '') AS factory, COALESCE(m.process, '') AS process,
-              s.stage, s.inspector_name AS "inspectorName", s.started_at AS "startedAt", s.closed_at AS "closedAt",
+              s.universal_kind AS "universalKind", ${SESSION_STAGES_SELECT} AS stages,
+              s.inspector_name AS "inspectorName", s.started_at AS "startedAt", s.closed_at AS "closedAt",
               (SELECT u.name FROM users u WHERE u.id = s.closed_by_id) AS "closedByName", s.status,
               s.start_qty::float8 AS "rejectedBeforeRelease", s.final_qty::float8 AS "finalQty", s.produced_qty::float8 AS "producedQty",
               (SELECT count(*)::int FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS samples,
@@ -895,14 +916,13 @@ export function sessionsRoutes(ctx: AppContext): Router {
     res.json(rows)
   })
 
-  /** §4 — what the close asks of a session on a universal machine: its stage, when the line already has a session. */
+  /** §4 — what the close asks of a session on a universal machine: final product or stages, and the line's stages so far. */
   r.get('/:id/stages', async (req, res) => {
     requireUser(req)
     const id = parse(uuid, req.params.id)
     const session = await loadSessionWithOrder(db, id)
     if (!session) throw notFound('That session')
-    const { universal: _universal, ...body } = await stageOptions(db, session)
-    res.json(body satisfies SessionStagesResponse)
+    res.json(await universalOptions(db, session))
   })
 
   /** §8.6 — close with the confirmed final quantity. Rejected if the session moved. */
@@ -920,27 +940,43 @@ export function sessionsRoutes(ctx: AppContext): Router {
       if ((before.sampleCount ?? 0) === 0) throw badRequest('No sample has been recorded in this session. Record one before closing, or discard the session.')
       // The defect quantities are the defective pieces of the batch, so the batch cannot be smaller than them.
       // The final quantity is the good production; the rejected pieces were made on top of it, so no floor applies.
-      // On a universal machine the session is a stage of its line: the first is stage 1, a later one says which.
-      const options = await stageOptions(tx, before)
-      let stage: number | null = null
-      if (options.universal) {
-        if (!options.asks) stage = 1
-        else {
-          if (body.stage === undefined) throw badRequest('This item already has a session on this machine: choose the stage this one was.')
-          if (body.stage > options.next) throw badRequest(`The stage can be at most ${options.next}: one of the item's stages, or the next one.`)
-          stage = body.stage
+      // On a universal machine the line's first close says what it is — a final product or stages — and the later ones follow it.
+      const options = await universalOptions(tx, before)
+      let kind: UniversalKind | null = null
+      let stages: StageQuantity[] = []
+      let finalQty = body.finalQty
+      if (!options.universal) {
+        if (body.universal) throw badRequest('Only a session on a universal machine is a final product or stages.')
+      } else {
+        const choice = closeChoice(options, body)
+        if (options.lineKind !== null && choice.kind !== options.lineKind) {
+          throw badRequest(
+            options.lineKind === 'final'
+              ? 'This item was closed as a final product: this session is one more inspection of a new quantity.'
+              : 'This item passes through stages: give the stages this session covered.',
+          )
+        }
+        kind = choice.kind
+        if (choice.kind === 'staged') {
+          const problem = stagesProblem(options.stages.map((x) => x.stage), choice.stages)
+          if (problem) throw badRequest(problem)
+          stages = [...choice.stages].sort((a, b) => a.stage - b.stage)
+          finalQty = topStageQty(stages)
         }
       }
+      if (finalQty === undefined) throw badRequest('Enter the final quantity.')
       await tx.query(
-        `UPDATE inspection_sessions SET status = 'Closed', final_qty = $2, stage = $4, closed_at = now(), closed_by_id = $3, version = version + 1 WHERE id = $1`,
-        [id, body.finalQty, user.id, stage],
+        `UPDATE inspection_sessions SET status = 'Closed', final_qty = $2, universal_kind = $4, closed_at = now(), closed_by_id = $3, version = version + 1 WHERE id = $1`,
+        [id, finalQty, user.id, kind],
       )
+      // A reopened session closes afresh: its stages are the ones given now.
+      await recordStages(tx, id, user.id, stages)
       const after = (await loadSessionWithOrder(tx, id))!
       await auditChanges(
         tx,
         auditCtxFor(user, before, 'InspectionSession', id),
-        { status: before.status, finalQty: before.finalQty, stage: before.stage ?? null, closedAt: before.closedAt, closedById: before.closedById },
-        { status: after.status, finalQty: after.finalQty, stage: after.stage ?? null, closedAt: after.closedAt, closedById: after.closedById },
+        { status: before.status, finalQty: before.finalQty, universalKind: before.universalKind ?? null, stages: stagesText(before.stages), closedAt: before.closedAt, closedById: before.closedById },
+        { status: after.status, finalQty: after.finalQty, universalKind: after.universalKind ?? null, stages: stagesText(after.stages), closedAt: after.closedAt, closedById: after.closedById },
       )
       return after
     })
@@ -1224,27 +1260,42 @@ export function sessionsRoutes(ctx: AppContext): Router {
       if (body.startQty !== undefined && stock) throw badRequest('A make-to-stock session has no rejected quantity before release.')
       if (body.producedQty !== undefined && !stock) throw badRequest('Only a make-to-stock session has a quantity produced.')
       if (body.finalQty !== undefined && before.status !== 'Closed') throw badRequest('The final quantity is recorded when the session closes.')
-      if (body.stage !== undefined) {
-        if (before.status !== 'Closed') throw badRequest('The stage is given when the session closes.')
-        const options = await stageOptions(tx, before)
-        if (!options.universal) throw badRequest('Only a session on a universal machine has a stage.')
-        if (body.stage > options.next) throw badRequest(`The stage can be at most ${options.next}: one of the item's stages, or the next one.`)
+      // §4 — a universal session's kind, stages and their quantities. The kind may be corrected either way: whoever corrects closed records puts a wrong choice right.
+      let finalQty = body.finalQty
+      let restaged: StageQuantity[] | null = null
+      if (body.universal !== undefined) {
+        if (before.status !== 'Closed') throw badRequest('A final product or its stages are given when the session closes.')
+        const options = await universalOptions(tx, before)
+        if (!options.universal) throw badRequest('Only a session on a universal machine is a final product or stages.')
+        if (body.universal.kind === 'staged') {
+          const problem = stagesProblem(options.stages.map((x) => x.stage), body.universal.stages)
+          if (problem) throw badRequest(problem)
+          if (body.finalQty !== undefined) throw badRequest("A staged session's quantity is its highest stage's: correct the stages' quantities.")
+          restaged = [...body.universal.stages].sort((a, b) => a.stage - b.stage)
+          finalQty = topStageQty(restaged)
+        } else {
+          restaged = []
+          if (finalQty === undefined && before.finalQty === undefined) throw badRequest('Enter the final quantity.')
+        }
+      } else if (body.finalQty !== undefined && before.universalKind === 'staged') {
+        throw badRequest("A staged session's quantity is its highest stage's: correct the stages' quantities.")
       }
       const sets: string[] = ['version = version + 1']
       const params: unknown[] = [id]
       const p = (v: unknown) => `$${params.push(v)}`
       if (body.startQty !== undefined) sets.push(`start_qty = ${p(body.startQty)}, start_qty_by_id = ${p(user.id)}, start_qty_by_name = ${p(user.name)}, start_qty_at = now()`)
       if (body.producedQty !== undefined) sets.push(`produced_qty = ${p(body.producedQty)}`)
-      if (body.finalQty !== undefined) sets.push(`final_qty = ${p(body.finalQty)}`)
-      if (body.stage !== undefined) sets.push(`stage = ${p(body.stage)}`)
+      if (finalQty !== undefined) sets.push(`final_qty = ${p(finalQty)}`)
+      if (body.universal !== undefined) sets.push(`universal_kind = ${p(body.universal.kind)}`)
       await tx.query(`UPDATE inspection_sessions SET ${sets.join(', ')} WHERE id = $1`, params)
+      if (restaged !== null) await recordStages(tx, id, user.id, restaged)
 
       const after = (await loadSessionWithOrder(tx, id))!
       await auditChanges(
         tx,
         auditCtxFor(user, before, 'InspectionSession', id),
-        { startQty: before.startQtyConfirmed?.qty ?? null, producedQty: before.producedQty ?? null, finalQty: before.finalQty ?? null, stage: before.stage ?? null },
-        { startQty: after.startQtyConfirmed?.qty ?? null, producedQty: after.producedQty ?? null, finalQty: after.finalQty ?? null, stage: after.stage ?? null },
+        { startQty: before.startQtyConfirmed?.qty ?? null, producedQty: before.producedQty ?? null, finalQty: before.finalQty ?? null, universalKind: before.universalKind ?? null, stages: stagesText(before.stages) },
+        { startQty: after.startQtyConfirmed?.qty ?? null, producedQty: after.producedQty ?? null, finalQty: after.finalQty ?? null, universalKind: after.universalKind ?? null, stages: stagesText(after.stages) },
       )
       return after
     })
@@ -1255,28 +1306,64 @@ export function sessionsRoutes(ctx: AppContext): Router {
 }
 
 /**
- * §4 — the stages a session on a universal machine may be given. One line (an
- * item of an order on the machine) passes through several stages, a session
- * each: the first session on the line is stage 1 without asking; a later one
- * is given one of the line's stages or the next one when it closes. A
- * make-to-stock line has no stages. A sibling recorded before stages existed
- * counts as stage 1.
+ * §4 — what a session on a universal machine is asked when it closes. One line
+ * (an item of an order on the machine) is a final product or passes through
+ * stages; the line's first closed session decided which (one closed before the
+ * choice existed had stages). A make-to-stock line is neither.
  */
-async function stageOptions(tx: Queryable, session: SessionWithOrder): Promise<SessionStagesResponse & { universal: boolean }> {
-  const none = { universal: false, asks: false, stages: [], next: 1 }
+async function universalOptions(tx: Queryable, session: SessionWithOrder): Promise<SessionStagesResponse> {
+  const none: SessionStagesResponse = { universal: false, lineKind: null, stages: [], next: 1 }
   if (isStockOrder(session.order)) return none
   const machine = (await tx.query<{ process: string }>(
     `SELECT process FROM machines WHERE lower(code) = lower($1) AND deleted_at IS NULL ORDER BY created_at LIMIT 1`,
     [session.workCenterCode],
   )).rows[0]
   if (machine?.process !== 'universal') return none
-  const { rows } = await tx.query<{ stage: number; n: number }>(
-    `SELECT COALESCE(stage, 1)::int AS stage, count(*)::int AS n FROM inspection_sessions
-      WHERE order_id = $1 AND id <> $2 AND deleted_at IS NULL GROUP BY 1 ORDER BY 1`,
-    [session.orderId, session.id],
-  )
-  const stages = rows.map((r) => ({ stage: r.stage, sessions: r.n }))
-  return { universal: true, asks: stages.length > 0, stages, next: Math.max(0, ...stages.map((x) => x.stage)) + 1 }
+  const [covered, first] = await Promise.all([
+    tx.query<{ stage: number; n: number }>(
+      `SELECT q.stage::int AS stage, count(DISTINCT q.session_id)::int AS n
+         FROM session_stage_quantities q JOIN inspection_sessions o ON o.id = q.session_id
+        WHERE o.order_id = $1 AND o.id <> $2 AND o.deleted_at IS NULL AND q.deleted_at IS NULL
+        GROUP BY 1 ORDER BY 1`,
+      [session.orderId, session.id],
+    ),
+    tx.query<{ kind: UniversalKind | null }>(
+      `SELECT universal_kind AS kind FROM inspection_sessions
+        WHERE order_id = $1 AND id <> $2 AND deleted_at IS NULL AND status = 'Closed'
+        ORDER BY closed_at, seq LIMIT 1`,
+      [session.orderId, session.id],
+    ),
+  ])
+  const stages = covered.rows.map((r) => ({ stage: r.stage, sessions: r.n }))
+  const lineKind: UniversalKind | null = first.rows.length === 0 ? null : first.rows[0].kind === 'final' ? 'final' : 'staged'
+  return { universal: true, lineKind, stages, next: Math.max(0, ...stages.map((x) => x.stage)) + 1 }
+}
+
+/**
+ * The close's choice on a universal machine. A client that sends none is an
+ * older one: its single stage is that stage at the final quantity, and with no
+ * stage the line's first session is stage 1, as it was before the choice.
+ */
+function closeChoice(options: SessionStagesResponse, body: { finalQty?: number; universal?: UniversalCloseChoice; stage?: number }): UniversalCloseChoice {
+  if (body.universal) return body.universal
+  if (options.lineKind === 'final') return { kind: 'final' }
+  if (body.finalQty === undefined) throw badRequest('Enter the final quantity.')
+  if (body.stage !== undefined) return { kind: 'staged', stages: [{ stage: body.stage, qty: body.finalQty }] }
+  if (options.lineKind === null) return { kind: 'staged', stages: [{ stage: 1, qty: body.finalQty }] }
+  throw badRequest('This item already has a session on this machine: choose the stage this one was.')
+}
+
+/** A session's stages become these: the live ones are marked deleted (never erased) and the new ones written. */
+async function recordStages(tx: Queryable, sessionId: string, userId: string, stages: readonly StageQuantity[]): Promise<void> {
+  await tx.query(`UPDATE session_stage_quantities SET deleted_at = now(), deleted_by_id = $2 WHERE session_id = $1 AND deleted_at IS NULL`, [sessionId, userId])
+  for (const x of stages) {
+    await tx.query(`INSERT INTO session_stage_quantities (session_id, stage, qty, created_by_id) VALUES ($1, $2, $3, $4)`, [sessionId, x.stage, x.qty, userId])
+  }
+}
+
+/** Stages as the audit log reads them: "1: 300 · 2: 300", or null. */
+function stagesText(stages: readonly StageQuantity[] | undefined): string | null {
+  return stages?.length ? stages.map((x) => `${x.stage}: ${x.qty}`).join(' · ') : null
 }
 
 /** §6 — what History narrows by. The export reads the same filters. */

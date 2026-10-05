@@ -594,6 +594,38 @@ export function isStockOrder(o: { orderNumber?: string | null } | null | undefin
   return (o?.orderNumber ?? '').trim().toUpperCase() === STOCK_ORDER_NUMBER
 }
 
+/** The highest stage an item on a universal machine may be given. */
+export const MAX_STAGE = 50
+
+/**
+ * What is wrong with the stages a session on a universal machine says it
+ * covered, or null. `existing` are the stages the line's other sessions
+ * covered. The stages are whole numbers from 1 to MAX_STAGE, each once, each
+ * with a quantity of zero or more; and with the line's own they leave no gap —
+ * stage 3 comes after a 2, and the first session of a line starts at 1.
+ */
+export function stagesProblem(existing: readonly number[], picked: readonly { stage: number; qty: number }[]): string | null {
+  if (picked.length === 0) return 'Choose the stage, or stages, this session covered.'
+  const seen = new Set<number>()
+  for (const p of picked) {
+    if (!Number.isInteger(p.stage) || p.stage < 1 || p.stage > MAX_STAGE) return `A stage is a whole number from 1 to ${MAX_STAGE}.`
+    if (seen.has(p.stage)) return `Stage ${p.stage} is given twice.`
+    seen.add(p.stage)
+    if (!Number.isFinite(p.qty) || p.qty < 0) return `Enter the quantity of stage ${p.stage}.`
+  }
+  const all = new Set<number>([...existing, ...seen])
+  const top = Math.max(...all)
+  for (let k = 1; k <= top; k++) {
+    if (!all.has(k)) return `Stage ${k} comes before stage ${top}: give it too, or a lower stage.`
+  }
+  return null
+}
+
+/** The quantity a staged session made: its highest stage's. */
+export function topStageQty(stages: readonly { stage: number; qty: number }[]): number {
+  return stages.reduce((best, s) => (s.stage > best.stage ? s : best), { stage: 0, qty: 0 }).qty
+}
+
 export type Capability =
   | 'record-inspection'
   /** See every inspector's sessions on the board and in History, not only one's own. */

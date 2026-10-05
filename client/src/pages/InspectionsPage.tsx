@@ -31,14 +31,14 @@ import { HoldDecisionDialog } from '@/components/inspection/HoldDecisionDialog'
 import { OrderDetailsPanel } from '@/components/inspection/OrderDetailsPanel'
 import { InstallBanner } from '@/components/layout/InstallBanner'
 import { useMaster, useOpenBoard, useSampleDetail, useSessionStages } from '@/services/queries'
-import { StagePicker } from '@/components/inspection/StagePicker'
+import { UniversalChoice, readUniversalDraft, universalDraft, type UniversalDraft } from '@/components/inspection/UniversalChoice'
 import { closeSession, correctDefect, correctDimension, discardSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, isStockOrder, processForMachine, sessionTone, shiftName, type Process, type SessionTone } from '@/domain'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import { usePersistedState } from '@/lib/usePersistedState'
-import type { SampleSummary, SessionWithOrder } from '@qc/shared/api'
+import type { CloseSessionRequest, SampleSummary, SessionWithOrder } from '@qc/shared/api'
 import type { DefectResult, DimensionResult, Disposition, Machine } from '@qc/shared/types'
 
 const COLLAPSE_AFTER = 3
@@ -769,9 +769,9 @@ export function InspectionsPage() {
           process={processForMachine(machines.find((m) => m.code === closing.workCenterCode) ?? null, closing.workCenterCode)}
           session={closing}
           onClose={() => setClosing(null)}
-          onConfirm={async (qty, stage) => {
+          onConfirm={async (body) => {
             try {
-              await closeSession(queryClient, closing.id, { finalQty: qty, version: closing.version, ...(stage !== null ? { stage } : {}) })
+              await closeSession(queryClient, closing.id, { ...body, version: closing.version })
               toast('Session closed.', 'success')
             } catch (e) {
               toast(e instanceof Error ? e.message : 'Could not close the session.', 'error')
@@ -858,18 +858,26 @@ function CloseSessionDialog({
   /** The machine's process: a welding session shows its PT coverage against the quantity typed. */
   process: Process
   onClose: () => void
-  onConfirm: (qty: number, stage: number | null) => void
+  onConfirm: (body: Omit<CloseSessionRequest, 'version'>) => void
   onDiscard: () => void
 }) {
   // A stock session confirms the quantity that came out; an order session its starting count.
   const stock = isStockOrder(session.order)
   const [qty, setQty] = useState(String(stock ? (session.producedQty ?? '') : (session.startQtyConfirmed?.qty ?? '')))
   const parsed = Number(qty)
-  // §4 — on a universal machine, a line that already has a session asks which stage this one was.
-  const { data: stages, isLoading: stagesLoading } = useSessionStages(session.id, process === 'universal' && !stock && (session.sampleCount ?? 0) > 0)
-  const [stage, setStage] = useState<number | null>(null)
-  const asksStage = stages?.asks === true
-  const valid = qty.trim() !== '' && !Number.isNaN(parsed) && parsed >= 0 && (!asksStage || stage !== null) && !(process === 'universal' && !stock && stagesLoading)
+  // §4 — on a universal machine the close says what the item is: a final product, or the stages this session covered.
+  const asksUniversal = process === 'universal' && !stock && (session.sampleCount ?? 0) > 0
+  const { data: stages, isLoading: stagesLoading } = useSessionStages(session.id, asksUniversal)
+  const universal = stages?.universal === true
+  const [draft, setDraft] = useState<UniversalDraft | null>(null)
+  const current = draft ?? (stages ? universalDraft(stages.lineKind) : null)
+  const read = universal && current ? readUniversalDraft(current, stages.stages.map((s) => s.stage)) : null
+  const qtyValid = qty.trim() !== '' && !Number.isNaN(parsed) && parsed >= 0
+  const valid = asksUniversal && stagesLoading ? false : universal ? read !== null && !('problem' in read) : qtyValid
+  const confirm = () => {
+    if (universal && read && !('problem' in read)) onConfirm({ universal: read.choice, ...(read.finalQty !== undefined ? { finalQty: read.finalQty } : {}) })
+    else if (!universal) onConfirm({ finalQty: parsed })
+  }
 
   // With no sample there is nothing to close as a record: the session is discarded instead.
   if ((session.sampleCount ?? 0) === 0) {
@@ -911,22 +919,24 @@ function CloseSessionDialog({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={!valid} onClick={() => onConfirm(parsed, asksStage ? stage : null)}>
+          <Button variant="primary" disabled={!valid} onClick={confirm}>
             <Lock className="h-4 w-4" /> Close session
           </Button>
         </>
       }
     >
       <div className="space-y-3">
-        <Field label={stock ? 'Final quantity produced (pairs)' : 'Final produced quantity'} hint="Recorded against this session and audited.">
-          <Input autoFocus type="number" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} className="min-h-[48px] text-lg" />
-        </Field>
-        {asksStage && stages && (
-          <div>
-            <span className="label">Which stage of this item was this session?</span>
-            <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">This item of this order already has a session on this machine. The dashboard counts the order sheet's quantity once for all the stages.</p>
-            <StagePicker options={stages} value={stage} onChange={setStage} />
-          </div>
+        {universal && stages && current ? (
+          <>
+            <UniversalChoice options={stages} draft={current} onChange={setDraft} kindLocked={stages.lineKind !== null} />
+            {read && 'problem' in read && <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{read.problem}</p>}
+          </>
+        ) : asksUniversal && stagesLoading ? (
+          <div className="skeleton h-24" />
+        ) : (
+          <Field label={stock ? 'Final quantity produced (pairs)' : 'Final produced quantity'} hint="Recorded against this session and audited.">
+            <Input autoFocus type="number" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} className="min-h-[48px] text-lg" />
+          </Field>
         )}
         {process === 'welding' && (
           // §5.6 — the PT requirement follows the quantity as it is typed: 5% of it, rounded up, against what was tested.

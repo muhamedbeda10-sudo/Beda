@@ -167,11 +167,15 @@ export interface InspectionSession {
   /** Final produced quantity captured when closing. */
   finalQty?: number
   /**
-   * On a universal machine: the stage of the item this session inspected.
-   * The first session on a line is stage 1; a later one is given its stage
-   * when it closes. Empty on every other machine and while open.
+   * On a universal machine, given when the session closes: 'final' — the item
+   * is a finished product with no stages, and the final quantity is a new
+   * quantity of it; 'staged' — the stages the session covered, in `stages`.
+   * Absent while open, on any other machine, and on a session closed before
+   * the choice existed (its stage is in `stages` all the same).
    */
-  stage?: number
+  universalKind?: UniversalKind
+  /** The stages of the item this session covered, each with its quantity; lowest first. */
+  stages?: StageQuantity[]
   /** On a make-to-stock machine: how many pieces (pairs, for a right/left
    *  item) came out, entered when the session is started. */
   producedQty?: number
@@ -580,6 +584,15 @@ export interface AuditEntry {
 }
 
 // ---- Users -----------------------------------------------------------------
+
+/** What a line on a universal machine is: a finished product, or an item that passes through stages. */
+export type UniversalKind = 'final' | 'staged'
+
+/** One stage of an item a session covered, and the quantity it made of it. */
+export interface StageQuantity {
+  stage: number
+  qty: number
+}
 
 /** A viewer reads the board, History and the dashboard and changes nothing; the rest record. */
 export type Role = 'viewer' | 'inspector' | 'supervisor' | 'admin'
