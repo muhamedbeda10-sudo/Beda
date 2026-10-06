@@ -45,6 +45,7 @@ import {
   type HiddenInsightsResponse,
   type DashboardLayoutResponse,
   type AvatarResponse,
+  type SetAvatarRequest,
 } from '@qc/shared/api'
 import type { DashboardLayouts, KpiThresholds } from '@qc/shared/kpi'
 import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
@@ -454,14 +455,16 @@ export async function markReleaseSeen(qc: QueryClient, releaseId: string): Promi
   qc.setQueryData(['releases', 'state'], res)
 }
 
-/** Set the signed-in person's own profile photo (a square JPEG data URL); the circle shows it at once. */
-export async function setMyAvatar(qc: QueryClient, dataUrl: string): Promise<void> {
-  const saved = await api<AvatarResponse>('/auth/me/avatar', { method: 'PUT', body: { dataUrl } })
+/** Set the signed-in person's own profile photo (a square JPEG and its small copy); their circles show it at once. */
+export async function setMyAvatar(qc: QueryClient, myId: string, photo: SetAvatarRequest): Promise<void> {
+  const saved = await api<AvatarResponse>('/auth/me/avatar', { method: 'PUT', body: photo })
   qc.setQueryData(keys.myAvatar, saved)
+  qc.setQueryData(keys.userAvatar(myId), photo.thumbDataUrl ?? photo.dataUrl)
 }
 
-/** Remove it: the circle shows the initials again. */
-export async function removeMyAvatar(qc: QueryClient): Promise<void> {
+/** Remove it: the circles show the initials again. */
+export async function removeMyAvatar(qc: QueryClient, myId: string): Promise<void> {
   await api<void>('/auth/me/avatar', { method: 'DELETE' })
   qc.setQueryData<AvatarResponse>(keys.myAvatar, { dataUrl: null })
+  qc.setQueryData(keys.userAvatar(myId), null)
 }

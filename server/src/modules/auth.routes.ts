@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
-import { AVATAR_MAX_CHARS, type AuthConfigResponse, type AuthResponse, type AvatarResponse } from '@qc/shared/api'
+import { AVATARS_MAX_IDS, AVATAR_MAX_CHARS, AVATAR_THUMB_MAX_CHARS, type AuthConfigResponse, type AuthResponse, type AvatarResponse, type AvatarsResponse } from '@qc/shared/api'
 import type { Role, UserProfile } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
@@ -25,12 +25,24 @@ const passwordSchema = z
   .min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
   .max(200)
 
+const JPEG_DATA_URL = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/
+const JPEG_PREFIX = 'data:image/jpeg;base64,'
 const avatarSchema = z.object({
-  dataUrl: z
-    .string()
-    .max(AVATAR_MAX_CHARS, 'The photo is too large.')
-    .regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/, 'The photo must be a JPEG.'),
+  dataUrl: z.string().max(AVATAR_MAX_CHARS, 'The photo is too large.').regex(JPEG_DATA_URL, 'The photo must be a JPEG.'),
+  thumbDataUrl: z.string().max(AVATAR_THUMB_MAX_CHARS, 'The small copy of the photo is too large.').regex(JPEG_DATA_URL, 'The photo must be a JPEG.').optional(),
 })
+const avatarsQuery = z.object({
+  ids: z
+    .string()
+    .transform((v) => Array.from(new Set(v.split(',').map((x) => x.trim()).filter(Boolean))))
+    .pipe(z.array(z.string().uuid()).min(1).max(AVATARS_MAX_IDS)),
+})
+
+/** Whether a data URL's bytes really are a JPEG, whatever its text says. */
+function isJpegDataUrl(dataUrl: string): boolean {
+  const bytes = Buffer.from(dataUrl.slice(JPEG_PREFIX.length), 'base64')
+  return bytes.length > 0 && sniffImageMime(bytes.subarray(0, 16)) === 'image/jpeg'
+}
 
 const loginSchema = z.object({ username: usernameSchema, password: z.string().min(1).max(200) })
 const registerSchema = z.object({
@@ -226,16 +238,29 @@ export function authRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
+  // Colleagues' small photos, for the chat's circles: anyone signed in may see them.
+  r.get('/avatars', authenticate(db, config.JWT_SECRET), async (req, res) => {
+    requireUser(req)
+    const { ids } = parse(avatarsQuery, req.query)
+    const { rows } = await db.query<{ userId: string; dataUrl: string }>(
+      `SELECT a.user_id AS "userId", coalesce(a.thumb_data_url, a.data_url) AS "dataUrl"
+         FROM user_avatars a JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
+        WHERE a.user_id = ANY($1::uuid[])`,
+      [ids],
+    )
+    const body: AvatarsResponse = { avatars: Object.fromEntries(rows.map((r) => [r.userId, r.dataUrl])) }
+    res.json(body)
+  })
+
   r.put('/me/avatar', authenticate(db, config.JWT_SECRET), async (req, res) => {
     const user = requireUser(req)
-    const { dataUrl } = parse(avatarSchema, req.body)
+    const { dataUrl, thumbDataUrl } = parse(avatarSchema, req.body)
     // The text says JPEG; the bytes must too.
-    const bytes = Buffer.from(dataUrl.slice('data:image/jpeg;base64,'.length), 'base64')
-    if (bytes.length === 0 || sniffImageMime(bytes.subarray(0, 16)) !== 'image/jpeg') throw badRequest('The photo must be a JPEG.')
+    if (!isJpegDataUrl(dataUrl) || (thumbDataUrl !== undefined && !isJpegDataUrl(thumbDataUrl))) throw badRequest('The photo must be a JPEG.')
     await db.query(
-      `INSERT INTO user_avatars (user_id, data_url) VALUES ($1, $2)
-       ON CONFLICT (user_id) DO UPDATE SET data_url = EXCLUDED.data_url, updated_at = now()`,
-      [user.id, dataUrl],
+      `INSERT INTO user_avatars (user_id, data_url, thumb_data_url) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id) DO UPDATE SET data_url = EXCLUDED.data_url, thumb_data_url = EXCLUDED.thumb_data_url, updated_at = now()`,
+      [user.id, dataUrl, thumbDataUrl ?? null],
     )
     const body: AvatarResponse = { dataUrl }
     res.json(body)

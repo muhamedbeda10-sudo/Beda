@@ -14,33 +14,7 @@ import { avatarFromFile } from '@/lib/avatarImage'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { cn } from '@/lib/utils'
-
-/** "Mohamed Beda" → "MB". */
-export function initialsOf(name: string | null | undefined): string {
-  return (
-    (name ?? '')
-      .trim()
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((w) => w[0]?.toUpperCase() ?? '')
-      .join('') || '?'
-  )
-}
-
-/** The circle itself: the photo when there is one, else the initials. */
-export function Avatar({ name, dataUrl, size = 36, className }: { name: string; dataUrl: string | null | undefined; size?: number; className?: string }) {
-  return dataUrl ? (
-    <img src={dataUrl} alt="" width={size} height={size} style={{ width: size, height: size }} className={cn('shrink-0 rounded-full object-cover shadow-card ring-1 ring-black/5 dark:ring-white/10', className)} />
-  ) : (
-    <span
-      aria-hidden
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}
-      className={cn('grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 font-bold text-white shadow-card', className)}
-    >
-      {initialsOf(name)}
-    </span>
-  )
-}
+import { Avatar } from '@/components/ui/UserAvatar'
 
 /** Add, change or remove one's own photo; used in the panel and in the phone's menu. */
 export function AvatarEditor({ name, size = 64 }: { name: string; size?: number }) {
@@ -56,7 +30,7 @@ export function AvatarEditor({ name, size = 64 }: { name: string; size?: number 
     if (!file) return
     setBusy('upload')
     try {
-      await setMyAvatar(qc, await avatarFromFile(file))
+      await setMyAvatar(qc, profile?.id ?? '', await avatarFromFile(file))
       toast('Your photo is set.', 'success')
     } catch (e) {
       toast(e instanceof Error ? e.message : 'The photo could not be saved.', 'error')
@@ -69,7 +43,7 @@ export function AvatarEditor({ name, size = 64 }: { name: string; size?: number 
   async function remove() {
     setBusy('remove')
     try {
-      await removeMyAvatar(qc)
+      await removeMyAvatar(qc, profile?.id ?? '')
       toast('Your photo is removed; your initials show instead.', 'success')
     } catch (e) {
       toast(e instanceof Error ? e.message : 'The photo could not be removed.', 'error')

@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-06.9',
+    date: '2026-10-06',
+    title: 'Photos in the chat',
+    items: [
+      { text: 'The chat shows each person\'s photo where it showed their initials: a direct chat in the list and at its top, the people to start a chat with, and a conversation\'s members. Someone without a photo keeps their initials.' },
+      { text: 'In a group or the General channel, the sender\'s photo heads each run of their messages, beside their name.' },
+    ],
+  },
+  {
     id: '2026-10-06.8',
     date: '2026-10-06',
     title: 'Your own photo in the account circle',

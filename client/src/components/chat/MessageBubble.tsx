@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, CheckCheck, CornerUpLeft, Copy, MoreHorizontal, Pencil, SmilePlus, Trash2 } from 'lucide-react'
 import { CHAT_EDIT_WINDOW_MS, type ChatMention, type ChatMessage } from '@qc/shared/types'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
@@ -27,6 +27,7 @@ export function MessageBubble({
   canModerate,
   actions,
   highlighted,
+  lead,
 }: {
   message: ChatMessage
   mine: boolean
@@ -35,6 +36,8 @@ export function MessageBubble({
   canModerate: boolean
   actions: BubbleActions
   highlighted?: boolean
+  /** Before someone else's bubble: their circle, or the space it takes. */
+  lead?: ReactNode
 }) {
   const [menu, setMenu] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -52,7 +55,8 @@ export function MessageBubble({
   const someRead = m.readBy > 0
 
   return (
-    <div id={`msg-${m.id}`} className={cn('group flex w-full', mine ? 'justify-end' : 'justify-start')}>
+    <div id={`msg-${m.id}`} className={cn('group flex w-full', mine ? 'justify-end' : 'justify-start', !!lead && 'items-start gap-2')}>
+      {!mine && lead}
       <div ref={ref} className={cn('relative max-w-[85%] sm:max-w-[70%]', highlighted && 'animate-pulse')}>
         <div
           className={cn(

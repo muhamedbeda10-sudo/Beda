@@ -3,6 +3,7 @@ import { AtSign, Hash, MessageSquarePlus, Search, Users } from 'lucide-react'
 import type { ChatConversation } from '@qc/shared/types'
 import { Input } from '@/components/ui'
 import { cn, formatDate, formatTime } from '@/lib/utils'
+import { UserAvatar } from '@/components/ui/UserAvatar'
 
 const when = (iso: string | null) => {
   if (!iso) return ''
@@ -12,19 +13,13 @@ const when = (iso: string | null) => {
   return sameDay ? formatTime(iso) : formatDate(iso)
 }
 
-export function initialsOf(name: string): string {
-  return name
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? '')
-    .join('')
-}
-
-export function Avatar({ conversation: c, size = 'md' }: { conversation: Pick<ChatConversation, 'kind' | 'title'>; size?: 'sm' | 'md' }) {
+/** A conversation's circle: the other person's photo or initials in a direct chat, a mark for a group or the general channel. */
+export function Avatar({ conversation: c, myId, size = 'md' }: { conversation: Pick<ChatConversation, 'kind' | 'title' | 'members'>; myId: string; size?: 'sm' | 'md' }) {
   const cls = cn('grid shrink-0 place-items-center rounded-full font-bold text-white shadow-card', size === 'md' ? 'h-11 w-11 text-sm' : 'h-8 w-8 text-xs')
   if (c.kind === 'general') return <span className={cn(cls, 'bg-gradient-to-br from-accent-500 to-accent-700')}><Hash className="h-5 w-5" /></span>
   if (c.kind === 'group') return <span className={cn(cls, 'bg-gradient-to-br from-violet-500 to-violet-700')}><Users className="h-5 w-5" /></span>
-  return <span className={cn(cls, 'bg-gradient-to-br from-brand-600 to-brand-800')}>{initialsOf(c.title) || '?'}</span>
+  const other = c.members.find((m) => m.id !== myId) ?? c.members[0]
+  return <UserAvatar userId={other?.id ?? ''} name={other?.name ?? c.title} size={size === 'md' ? 44 : 32} />
 }
 
 export function ConversationList({ conversations, activeId, onPick, onNew, myId }: { conversations: ChatConversation[]; activeId: string | null; onPick: (c: ChatConversation) => void; onNew: () => void; myId: string }) {
@@ -55,7 +50,7 @@ export function ConversationList({ conversations, activeId, onPick, onNew, myId 
                 onClick={() => onPick(c)}
                 className={cn('flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition-colors', active ? 'bg-brand-50 ring-1 ring-brand-200 dark:bg-brand-500/15 dark:ring-brand-500/30' : 'hover:bg-slate-100 dark:hover:bg-slate-800')}
               >
-                <Avatar conversation={c} />
+                <Avatar conversation={c} myId={myId} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline justify-between gap-2">
                     <span className={cn('truncate text-sm', c.unreadCount > 0 ? 'font-bold' : 'font-semibold')}>{c.title}</span>

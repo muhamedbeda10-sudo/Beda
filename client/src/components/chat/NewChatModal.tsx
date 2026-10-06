@@ -8,7 +8,7 @@ import { createConversation } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
-import { initialsOf } from './ConversationList'
+import { UserAvatar } from '@/components/ui/UserAvatar'
 
 export function NewChatModal({ onClose, onCreated }: { onClose: () => void; onCreated: (c: ChatConversation) => void }) {
   const qc = useQueryClient()
@@ -40,7 +40,7 @@ export function NewChatModal({ onClose, onCreated }: { onClose: () => void; onCr
   const Row = ({ u, selected, onClick }: { u: ChatUser; selected?: boolean; onClick: () => void }) => (
     <li>
       <button type="button" onClick={onClick} disabled={busy} className={cn('flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800', selected && 'bg-brand-50 dark:bg-brand-500/15')}>
-        <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-xs font-bold text-white">{initialsOf(u.name)}</span>
+        <UserAvatar userId={u.id} name={u.name} size={36} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold">{u.name}</span>
           <span className="block truncate text-xs capitalize text-muted">{u.username} · {u.role}</span>
