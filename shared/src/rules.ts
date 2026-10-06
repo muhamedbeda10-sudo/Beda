@@ -598,6 +598,20 @@ export function isStockOrder(o: { orderNumber?: string | null } | null | undefin
 export const MAX_STAGE = 50
 
 /**
+ * What is wrong with an order line as the order sheet gave it, one sentence
+ * a problem; empty when nothing is. Such a line is kept and shown — Access
+ * marks it so someone corrects the sheet; nothing is hidden or refused.
+ *   • an order number of only zeros ("0", "000"): no real order is numbered so
+ *   • neither an item name nor an item code: nobody can tell what is made
+ */
+export function orderLineProblems(line: { orderNumber: string; item: string; itemCode: string }): string[] {
+  const out: string[] = []
+  if (/^0+$/.test(line.orderNumber.trim())) out.push(`The order number is "${line.orderNumber.trim()}".`)
+  if (line.item.trim() === '' && line.itemCode.trim() === '') out.push('The line has neither an item name nor an item code.')
+  return out
+}
+
+/**
  * What is wrong with the stages a session on a universal machine says it
  * covered, or null. `existing` are the stages the line's other sessions
  * covered. The stages are whole numbers from 1 to MAX_STAGE, each once, each
