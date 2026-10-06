@@ -38,7 +38,20 @@ export const StatDot = () => (
 )
 
 /** A two-or-three-way switch the height of the header row. */
-export function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: { value: T; label: string; icon?: ReactNode }[]; onChange: (v: T) => void; label: string }) {
+export function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+  iconsWhenTight = false,
+}: {
+  value: T
+  options: { value: T; label: string; icon?: ReactNode }[]
+  onChange: (v: T) => void
+  label: string
+  /** From a tablet to a wide screen only the icons show, the words in their tooltips; a phone and a wide screen show the words. */
+  iconsWhenTight?: boolean
+}) {
   return (
     <div role="tablist" aria-label={label} className="inline-flex h-9 items-center rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800 touch:h-11">
       {options.map((o) => (
@@ -48,13 +61,16 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
           role="tab"
           aria-selected={value === o.value}
           onClick={() => onChange(o.value)}
+          aria-label={iconsWhenTight ? o.label : undefined}
+          data-tip={iconsWhenTight ? o.label : undefined}
           className={cn(
             'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-13 font-semibold transition-colors touch:h-10',
+            iconsWhenTight && 'md:max-2xl:px-2.5',
             value === o.value ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-muted hover:text-slate-700 dark:hover:text-slate-200',
           )}
         >
           {o.icon}
-          {o.label}
+          {iconsWhenTight ? <span className="md:max-2xl:sr-only">{o.label}</span> : o.label}
         </button>
       ))}
     </div>
@@ -174,8 +190,10 @@ export function FilterBar({
   trailing,
   leading,
   actions,
+  singleRow = false,
 }: {
-  search: { value: string; onChange: (v: string) => void; placeholder: string; label: string }
+  /** The search box; a page without one leaves it out. */
+  search?: { value: string; onChange: (v: string) => void; placeholder: string; label: string }
   /** The two or three filters used most, in the row. */
   filters?: ReactNode
   /** The rest, in the More filters panel. */
@@ -190,28 +208,32 @@ export function FilterBar({
   leading?: ReactNode
   /** The page's own actions, at the row's right end; on a phone they head the bar. */
   actions?: ReactNode
+  /** From a tablet up the row never wraps: a filter that runs long scrolls inside itself instead. */
+  singleRow?: boolean
 }) {
   const anchor = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   return (
     <div className="z-30 -mx-4 space-y-1.5 bg-slate-100/90 px-4 py-1 backdrop-blur sm:-mx-6 sm:px-6 md:sticky md:top-16 lg:-mx-8 lg:px-8 dark:bg-slate-950/90">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className={cn('flex flex-wrap items-center gap-2', singleRow && 'md:flex-nowrap')}>
         {leading}
-        <div className="relative w-full md:w-auto md:min-w-[11rem] md:flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-          <input
-            value={search.value}
-            onChange={(e) => search.onChange(e.target.value)}
-            placeholder={search.placeholder}
-            aria-label={search.label}
-            className="input h-10 py-0 pl-9 pr-9 text-sm touch:h-11"
-          />
-          {search.value && (
-            <button type="button" onClick={() => search.onChange('')} aria-label="Clear the search" data-tip="Clear the search" className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
+        {search && (
+          <div className="relative w-full md:w-auto md:min-w-[11rem] md:flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <input
+              value={search.value}
+              onChange={(e) => search.onChange(e.target.value)}
+              placeholder={search.placeholder}
+              aria-label={search.label}
+              className="input h-10 py-0 pl-9 pr-9 text-sm touch:h-11"
+            />
+            {search.value && (
+              <button type="button" onClick={() => search.onChange('')} aria-label="Clear the search" data-tip="Clear the search" className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        )}
         {filters}
         {more && (
           <>
@@ -236,7 +258,7 @@ export function FilterBar({
           <RotateCcw className="h-4 w-4" />
         </button>
         {trailing}
-        {actions && <div className="flex flex-wrap items-center gap-2 max-md:order-first max-md:w-full md:ml-auto">{actions}</div>}
+        {actions && <div className="flex shrink-0 flex-wrap items-center gap-2 max-md:order-first max-md:w-full md:ml-auto">{actions}</div>}
       </div>
       {chips.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5" aria-label="Filters in force">

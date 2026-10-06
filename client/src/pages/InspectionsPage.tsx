@@ -21,7 +21,7 @@ import {
   Table2,
 } from 'lucide-react'
 import { Badge, Button, Card, Field, Input, Modal } from '@/components/ui'
-import { FilterBar, FilterSelect, Segmented, type FilterChip } from '@/components/ui/PageShell'
+import { FilterBar, FilterSelect, Segmented } from '@/components/ui/PageShell'
 import { RecentlyClosed } from '@/components/inspection/RecentlyClosed'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
 import { PtCoverageBadge, SessionToneBadge, ptCoverageText, sessionToneClass } from '@/components/inspection/SessionTone'
@@ -88,10 +88,10 @@ export function InspectionsPage() {
   const [density, setDensity] = usePersistedState<'cards' | 'compact' | 'table'>('qc-board:density', 'cards')
 
   // ---- Who sees what (§14) ------------------------------------------------
-  // The board is everyone's: every open session, with a search and an
-  // inspector filter so a technician can narrow it to their own name.
+  // The board is everyone's: every open session, with an inspector filter so
+  // a technician can narrow it to their own name. The board has no search: a
+  // shift's open sessions are found by factory and machine at a glance.
   const seesAll = true
-  const [term, setTerm] = usePersistedState('qc-board:term', '')
   const [inspectorFilter, setInspectorFilter] = usePersistedState('qc-board:inspector', 'all')
 
   const machineOf = useMemo(() => new Map(machines.map((m) => [m.code, m])), [machines])
@@ -110,21 +110,8 @@ export function InspectionsPage() {
     return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
   }, [openSessions])
 
-  /** Sessions after the supervisor's search and inspector filter; the tabs count these. */
-  const base = useMemo(() => {
-    if (!seesAll) return openSessions
-    const t = term.trim().toLowerCase()
-    return openSessions.filter((s) => {
-      if (inspectorFilter !== 'all' && s.inspectorId !== inspectorFilter) return false
-      if (!t) return true
-      return (
-        (s.order?.orderNumber ?? '').toLowerCase().includes(t) ||
-        (s.order?.item ?? '').toLowerCase().includes(t) ||
-        (s.order?.itemCode ?? '').toLowerCase().includes(t) ||
-        (s.order?.customer ?? '').toLowerCase().includes(t)
-      )
-    })
-  }, [seesAll, openSessions, term, inspectorFilter])
+  /** Sessions after the inspector filter; the factory tabs count these. */
+  const base = useMemo(() => (!seesAll || inspectorFilter === 'all' ? openSessions : openSessions.filter((s) => s.inspectorId === inspectorFilter)), [seesAll, openSessions, inspectorFilter])
 
   /** Every factory in the register, with how many open sessions it holds now. */
   const factoryTabs = useMemo(() => {
@@ -217,8 +204,7 @@ export function InspectionsPage() {
     return out
   }, [groups, favourite, factoryTabs])
 
-  const shown = groups.reduce((n, g) => n + g.sessions.length, 0)
-  const narrowed = seesAll && (term.trim() !== '' || inspectorFilter !== 'all')
+  const narrowed = seesAll && inspectorFilter !== 'all'
   const filtering = narrowed || activeFactory !== 'all' || activeMachine !== 'all'
 
   const [closing, setClosing] = useState<SessionWithOrder | null>(null)
@@ -572,29 +558,24 @@ export function InspectionsPage() {
     </div>
   )
 
-  const factoryLabel = (key: string) => (key === NO_FACTORY ? 'No factory' : key)
   function resetFilters() {
-    setTerm('')
     setInspectorFilter('all')
     setFactoryTab('all')
     setMachinePick('all')
   }
-  const chips: FilterChip[] = [
-    ...(activeFactory !== 'all'
-      ? [
-          {
-            key: 'factory',
-            label: `Factory: ${factoryLabel(activeFactory)}`,
-            onRemove: () => {
-              setFactoryTab('all')
-              setMachinePick('all')
-            },
-          },
-        ]
-      : []),
-    ...(activeMachine !== 'all' ? [{ key: 'machine', label: `Machine: ${machineLabel(activeMachine)}`, onRemove: () => setMachinePick('all') }] : []),
-    ...(inspectorFilter !== 'all' ? [{ key: 'inspector', label: `Inspector: ${inspectorOptions.find((i) => i.id === inspectorFilter)?.name ?? 'one inspector'}`, onRemove: () => setInspectorFilter('all') }] : []),
-  ]
+
+  /** A machine chip wears the worst signal on the machine: amber for a Hold, red for defects. */
+  const chipTone = (tone: SessionTone, active: boolean) =>
+    cn(
+      'inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-13 font-semibold ring-1 transition-colors touch:h-11',
+      active
+        ? 'bg-brand-600 text-white ring-brand-600'
+        : tone === 'hold'
+          ? 'bg-amber-50 text-amber-800 ring-amber-300 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/40'
+          : tone === 'defect'
+            ? 'bg-rose-50 text-rose-800 ring-rose-300 hover:bg-rose-100 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-500/40'
+            : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700 dark:hover:bg-slate-800',
+    )
 
   return (
     <div className="space-y-4">
@@ -609,15 +590,16 @@ export function InspectionsPage() {
                 <button type="button" onClick={() => setNewOpen(true)} className="btn-primary col-span-2 h-11 min-h-0 px-4 py-0 text-sm sm:order-last sm:h-10 touch:h-11">
                   <Plus className="h-4 w-4" /> New Inspection
                 </button>
-                <button type="button" onClick={() => navigate('/coils')} className="btn-secondary h-11 min-h-0 px-3 py-0 text-13 sm:h-10 touch:h-11">
-                  <Search className="h-4 w-4" /> Coil Search
+                <button type="button" onClick={() => navigate('/coils')} aria-label="Coil Search" data-tip="Coil Search" className="btn-secondary h-11 min-h-0 px-3 py-0 text-13 sm:h-10 md:max-2xl:px-2.5 touch:h-11">
+                  <Search className="h-4 w-4" /> <span className="md:max-2xl:sr-only">Coil Search</span>
                 </button>
-                <button type="button" onClick={() => navigate('/pdi')} className="btn-secondary h-11 min-h-0 px-3 py-0 text-13 sm:h-10 touch:h-11">
-                  <FileText className="h-4 w-4" /> PDI Documents
+                <button type="button" onClick={() => navigate('/pdi')} aria-label="PDI Documents" data-tip="PDI Documents" className="btn-secondary h-11 min-h-0 px-3 py-0 text-13 sm:h-10 md:max-2xl:px-2.5 touch:h-11">
+                  <FileText className="h-4 w-4" /> <span className="md:max-2xl:sr-only">PDI Documents</span>
                 </button>
               </div>
             )}
             <Segmented
+              iconsWhenTight
               label="Board view"
               value={density}
               onChange={setDensity}
@@ -629,12 +611,12 @@ export function InspectionsPage() {
             />
           </>
         }
-        search={{ value: term, onChange: setTerm, placeholder: 'Order number, item or customer…', label: 'Search open sessions' }}
+        singleRow
         filters={
           seesAll && openSessions.length > 0 ? (
           <>
             {factoryTabs.length > 0 && (
-              <div role="tablist" aria-label="Factory" className="flex h-10 max-w-full items-center gap-0.5 overflow-x-auto rounded-lg bg-slate-200/70 p-0.5 max-md:w-full dark:bg-slate-800 touch:h-11">
+              <div role="tablist" aria-label="Factory" className="flex h-10 min-w-0 max-w-full shrink items-center gap-0.5 overflow-x-auto rounded-lg bg-slate-200/70 p-0.5 max-md:w-full dark:bg-slate-800 touch:h-11">
                 {[{ key: 'all', label: 'All', count: base.length }, ...factoryTabs].map((t) => {
                   const active = activeFactory === t.key
                   return (
@@ -671,18 +653,6 @@ export function InspectionsPage() {
                 })}
               </div>
             )}
-            {groupsInFactory.length > 1 && (
-              <FilterSelect label="Machine" value={activeMachine} onChange={setMachinePick}>
-                <option value="all">All machines · {groupsInFactory.length}</option>
-                {groupsInFactory.map((g) => (
-                  <option key={g.code} value={g.code}>
-                    {g.code === favourite ? '★ ' : ''}
-                    {g.label} · {g.sessions.length}
-                    {g.tone === 'hold' ? ' · on Hold' : g.tone === 'defect' ? ' · defects' : ''}
-                  </option>
-                ))}
-              </FilterSelect>
-            )}
             <FilterSelect label="Inspector" value={inspectorFilter} onChange={setInspectorFilter}>
               <option value="all">All inspectors</option>
               {inspectorOptions.map((i) => (
@@ -694,10 +664,27 @@ export function InspectionsPage() {
           </>
           ) : undefined
         }
-        chips={chips}
+        chips={[]}
         onReset={resetFilters}
         canReset={filtering}
       />
+
+      {/* The machines with something open, spread out, each coloured by the worst signal on it; tap one to see it alone. */}
+      {seesAll && groupsInFactory.length > 1 && (
+        <div role="tablist" aria-label="Machine" className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0">
+          <button type="button" role="tab" aria-selected={activeMachine === 'all'} onClick={() => setMachinePick('all')} className={chipTone(null, activeMachine === 'all')}>
+            All machines
+            <span className={cn('rounded-full px-1.5 text-xs tabular-nums', activeMachine === 'all' ? 'bg-white/20' : 'bg-black/5 dark:bg-white/10')}>{groupsInFactory.length}</span>
+          </button>
+          {groupsInFactory.map((g) => (
+            <button key={g.code} type="button" role="tab" aria-selected={activeMachine === g.code} onClick={() => setMachinePick(activeMachine === g.code ? 'all' : g.code)} className={chipTone(g.tone, activeMachine === g.code)}>
+              {g.code === favourite && <Star className="h-3.5 w-3.5 fill-current" />}
+              {g.label}
+              <span className={cn('rounded-full px-1.5 text-xs tabular-nums', activeMachine === g.code ? 'bg-white/20' : 'bg-black/5 dark:bg-white/10')}>{g.sessions.length}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="card px-4 py-3 text-13 text-muted">Loading the open sessions…</div>
@@ -707,7 +694,7 @@ export function InspectionsPage() {
           <ClipboardCheck className="h-6 w-6 shrink-0 text-muted" />
           <div className="min-w-0 flex-1">
             <p className="font-semibold">{filtering ? 'No open session here' : 'Nothing is open right now'}</p>
-            <p className="text-13 text-muted">{filtering ? 'Pick another factory or machine, or clear the search.' : 'Start a new inspection to begin recording samples.'}</p>
+            <p className="text-13 text-muted">{filtering ? 'Pick another factory, machine or inspector.' : 'Start a new inspection to begin recording samples.'}</p>
           </div>
           {filtering ? (
             <Button className="min-h-[40px] touch:min-h-[44px]" onClick={resetFilters}>
