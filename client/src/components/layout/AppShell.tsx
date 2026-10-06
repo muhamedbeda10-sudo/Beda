@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { AlertCircle, AlertTriangle, BellRing, CheckCircle2, ChevronRight, ClipboardCheck, History, Info, LayoutDashboard, LogOut, Menu, MessagesSquare, Moon, Rows3, Rows4, ScrollText, Settings, SlidersHorizontal, Sparkles, Sun, Table2, UploadCloud, Users, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, BellRing, CheckCircle2, ChevronRight, ClipboardCheck, History, Info, LayoutDashboard, LogOut, Menu, MessagesSquare, Moon, ScrollText, Settings, SlidersHorizontal, Sparkles, Sun, Table2, UploadCloud, Users, X } from 'lucide-react'
 import { WhatsNewPrompt } from '@/components/releases/WhatsNew'
 import { NoticeBell } from '@/components/notices/NoticeBell'
 import { useChatUnread } from '@/services/queries'
@@ -9,7 +9,6 @@ import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
 import { can, type Capability } from '@qc/shared/rules'
-import { useDensity } from '@/lib/density'
 
 interface NavItem {
   to: string
@@ -176,7 +175,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
-  const [density, setDensity] = useDensity()
 
   const nav = NAV.filter((n) => !n.needs || can(role, n.needs))
   const admin = ADMIN_NAV.filter((n) => !n.needs || can(role, n.needs))
@@ -226,15 +224,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="ml-auto flex shrink-0 items-center gap-1 lg:ml-0 lg:justify-self-end">
             {can(role, 'use-chat') && <ChatButton />}
             {can(role, 'read-notices') && <NoticeBell />}
-            <button
-              onClick={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
-              className="icon-btn hidden md:grid"
-              aria-label={density === 'compact' ? 'Rows: compact. Switch to comfortable' : 'Rows: comfortable. Switch to compact'}
-              aria-pressed={density === 'compact'}
-              data-tip={density === 'compact' ? 'Compact rows — switch to comfortable' : 'Comfortable rows — switch to compact'}
-            >
-              {density === 'compact' ? <Rows4 className="h-5 w-5" /> : <Rows3 className="h-5 w-5" />}
-            </button>
             <button onClick={toggleTheme} className="icon-btn" aria-label="Toggle light or dark theme" data-tip={theme === 'dark' ? 'Light theme' : 'Dark theme'}>
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>

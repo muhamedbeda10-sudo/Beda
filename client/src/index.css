@@ -9,16 +9,19 @@
   color-scheme: light;
   /* Secondary text (`text-muted`): AA (≥ 4.5:1) on white, slate-50/100 and the tinted rows. */
   --c-muted: 91 107 128;
-  /* Table row height for the density setting (Comfortable / Compact). */
-  --row-h: 44px;
+  /* Table row height: compact, so a list shows as much as it can. */
+  --row-h: 34px;
 }
 :root.dark {
   color-scheme: dark;
   /* slate-400: AA on slate-800, -900 and -950. */
   --c-muted: 148 163 184;
 }
-:root[data-density='compact'] {
-  --row-h: 34px;
+/* A finger needs a 44 px target: on a touch screen the rows grow to it. */
+@media (pointer: coarse) {
+  :root {
+    --row-h: 44px;
+  }
 }
 
 html,

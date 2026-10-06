@@ -11,7 +11,7 @@ import { ChevronRight, Table2 } from 'lucide-react'
 import type { OrderListFilters, OrderListRow } from '@qc/shared/api'
 import { Badge, Button, Card, EmptyState, Field, Input, Select } from '@/components/ui'
 import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
-import { FilterBar, FilterSelect, HeaderStat, PageHeader, type FilterChip } from '@/components/ui/PageShell'
+import { FilterBar, FilterSelect, type FilterChip } from '@/components/ui/PageShell'
 import { ColumnPicker, GridFrame, GridHead, SkeletonRows, TableFooter, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { loadMoreOrders, useDebounced, useMaster, useOrderList, useOrderListOptions } from '@/services/queries'
 import { usePersistedState } from '@/lib/usePersistedState'
@@ -316,26 +316,13 @@ export function AccessPage() {
 
   return (
     <div className="space-y-3">
-      <PageHeader
-        title="Access"
-        stats={
-          data ? (
-            <>
-              <HeaderStat value={data.total} label={data.total === 1 ? 'line' : 'lines'} />
-              <span>{filtering ? (data.total === 1 ? 'matches the filters' : 'match the filters') : 'on the sheet'}</span>
-            </>
-          ) : (
-            <span>Loading…</span>
-          )
-        }
+      {/* No title row: the tab names the page; the count is under the list. */}
+      <FilterBar
         actions={
           <span className="hidden md:inline-flex">
             <ColumnPicker grid={grid} />
           </span>
         }
-      />
-
-      <FilterBar
         search={{ value: term, onChange: setTerm, placeholder: 'Order, line key, item, item code, customer, drawing or machine…', label: 'Search orders' }}
         filters={
           <>
@@ -485,6 +472,7 @@ export function AccessPage() {
             onMore={() => void showMore()}
             pageSize={pageSize}
             onPageSize={setPageSize}
+            extra={<span>{filtering ? (data?.total === 1 ? 'matches the filters' : 'match the filters') : 'on the sheet'}</span>}
           />
         </>
       )}

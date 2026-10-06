@@ -344,15 +344,18 @@ export function ColumnPicker({ grid, className }: { grid: ResizableColumns; clas
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className={cn('btn-secondary h-9 min-h-0 px-3 py-0 text-xs', (open || grid.customised) && 'text-brand-700 dark:text-brand-200')}
+        aria-label="Columns"
+        data-tip="Choose the columns"
+        className={cn('btn-secondary h-10 min-h-0 gap-1.5 px-2.5 py-0 text-xs', (open || grid.customised) && 'text-brand-700 dark:text-brand-200')}
       >
-        <Columns3 className="h-4 w-4" /> Columns
+        {/* The word only where the row has room for it; the icon and the count say it everywhere. */}
+        <Columns3 className="h-4 w-4" /> <span className="hidden 2xl:inline">Columns</span>
         <span className="rounded-full bg-slate-200 px-1.5 text-[10px] font-bold leading-[16px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">
           {shownCount}/{hideable.length}
         </span>
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 top-full z-30 mt-2 w-60 rounded-2xl bg-white p-1.5 shadow-lift ring-1 ring-slate-200 animate-drop-in dark:bg-slate-900 dark:ring-slate-800">
+        <div role="menu" className="absolute right-0 top-full z-50 mt-2 w-60 rounded-2xl bg-white p-1.5 shadow-lift ring-1 ring-slate-200 animate-drop-in dark:bg-slate-900 dark:ring-slate-800">
           <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Show columns</p>
           <ul className="max-h-80 overflow-y-auto">
             {hideable.map((c) => {
@@ -464,6 +467,7 @@ export function TableFooter({
   onMore,
   pageSize,
   onPageSize,
+  extra,
 }: {
   shown: number
   total: number | null
@@ -473,6 +477,8 @@ export function TableFooter({
   onMore: () => void
   pageSize: number
   onPageSize: (n: number) => void
+  /** More figures beside the count ("· 2 open · 24 closed"). */
+  extra?: ReactNode
 }) {
   const of = total ?? shown
   return (
@@ -487,6 +493,7 @@ export function TableFooter({
           </>
         )}
       </span>
+      {extra && <span className="flex flex-wrap items-center gap-x-1.5">{extra}</span>}
       {hasMore && (
         <button type="button" onClick={onMore} disabled={loadingMore} className="btn-secondary h-8 min-h-0 px-3 py-0 text-13">
           {loadingMore ? 'Loading…' : `Show the next ${Math.min(pageSize, Math.max(0, of - shown) || pageSize).toLocaleString()}`}

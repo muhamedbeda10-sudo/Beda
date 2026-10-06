@@ -21,7 +21,7 @@ import {
   Table2,
 } from 'lucide-react'
 import { Badge, Button, Card, Field, Input, Modal } from '@/components/ui'
-import { FilterBar, FilterSelect, HeaderStat, PageHeader, Segmented, StatDot, type FilterChip } from '@/components/ui/PageShell'
+import { FilterBar, FilterSelect, Segmented, type FilterChip } from '@/components/ui/PageShell'
 import { RecentlyClosed } from '@/components/inspection/RecentlyClosed'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
 import { PtCoverageBadge, SessionToneBadge, ptCoverageText, sessionToneClass } from '@/components/inspection/SessionTone'
@@ -600,24 +600,8 @@ export function InspectionsPage() {
     <div className="space-y-4">
       <InstallBanner />
 
-      {/* One header row: the page, how much is open, and its actions — New Inspection first among them. */}
-      <PageHeader
-        title="Inspections"
-        stats={
-          isLoading ? undefined : (
-            <>
-              <HeaderStat value={openSessions.length} label={openSessions.length === 1 ? 'open session' : 'open sessions'} />
-              {filtering && (
-                <>
-                  <StatDot />
-                  <span>
-                    <span className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{shown}</span> shown
-                  </span>
-                </>
-              )}
-            </>
-          )
-        }
+      {/* No title row: the tab names the page. New Inspection and the other actions sit at the right end; on a phone they head it. */}
+      <FilterBar
         actions={
           <>
             {canRecord && (
@@ -645,79 +629,75 @@ export function InspectionsPage() {
             />
           </>
         }
-      />
-
-      {/* One filter row: the search, the factories with what each holds now (an empty one stays, muted), the machine and the inspector. */}
-      {seesAll && openSessions.length > 0 && (
-        <FilterBar
-          search={{ value: term, onChange: setTerm, placeholder: 'Order number, item or customer…', label: 'Search open sessions' }}
-          filters={
-            <>
-              {factoryTabs.length > 0 && (
-                <div role="tablist" aria-label="Factory" className="flex h-10 max-w-full items-center gap-0.5 overflow-x-auto rounded-lg bg-slate-200/70 p-0.5 max-md:w-full dark:bg-slate-800 touch:h-11">
-                  {[{ key: 'all', label: 'All', count: base.length }, ...factoryTabs].map((t) => {
-                    const active = activeFactory === t.key
-                    return (
-                      <button
-                        key={t.key}
-                        type="button"
-                        role="tab"
-                        aria-selected={active}
-                        aria-label={`${t.key === 'all' ? 'All factories' : t.label}, ${t.count} open`}
-                        onClick={() => {
-                          setFactoryTab(t.key)
-                          setMachinePick('all')
-                        }}
+        search={{ value: term, onChange: setTerm, placeholder: 'Order number, item or customer…', label: 'Search open sessions' }}
+        filters={
+          seesAll && openSessions.length > 0 ? (
+          <>
+            {factoryTabs.length > 0 && (
+              <div role="tablist" aria-label="Factory" className="flex h-10 max-w-full items-center gap-0.5 overflow-x-auto rounded-lg bg-slate-200/70 p-0.5 max-md:w-full dark:bg-slate-800 touch:h-11">
+                {[{ key: 'all', label: 'All', count: base.length }, ...factoryTabs].map((t) => {
+                  const active = activeFactory === t.key
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      aria-label={`${t.key === 'all' ? 'All factories' : t.label}, ${t.count} open`}
+                      onClick={() => {
+                        setFactoryTab(t.key)
+                        setMachinePick('all')
+                      }}
+                      className={cn(
+                        'inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-13 font-semibold transition-colors touch:h-10',
+                        active
+                          ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300'
+                          : t.count === 0
+                            ? 'text-muted hover:text-slate-700 dark:hover:text-slate-200'
+                            : 'text-slate-700 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white',
+                      )}
+                    >
+                      {t.label}
+                      <span
                         className={cn(
-                          'inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-13 font-semibold transition-colors touch:h-10',
-                          active
-                            ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300'
-                            : t.count === 0
-                              ? 'text-muted hover:text-slate-700 dark:hover:text-slate-200'
-                              : 'text-slate-700 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white',
+                          'rounded px-1.5 text-[11px] font-bold tabular-nums leading-[18px]',
+                          t.count === 0 ? 'font-semibold text-muted' : active ? 'bg-brand-600 text-white' : 'bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-100',
                         )}
                       >
-                        {t.label}
-                        <span
-                          className={cn(
-                            'rounded px-1.5 text-[11px] font-bold tabular-nums leading-[18px]',
-                            t.count === 0 ? 'font-semibold text-muted' : active ? 'bg-brand-600 text-white' : 'bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-100',
-                          )}
-                        >
-                          {t.count}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-              {groupsInFactory.length > 1 && (
-                <FilterSelect label="Machine" value={activeMachine} onChange={setMachinePick}>
-                  <option value="all">All machines · {groupsInFactory.length}</option>
-                  {groupsInFactory.map((g) => (
-                    <option key={g.code} value={g.code}>
-                      {g.code === favourite ? '★ ' : ''}
-                      {g.label} · {g.sessions.length}
-                      {g.tone === 'hold' ? ' · on Hold' : g.tone === 'defect' ? ' · defects' : ''}
-                    </option>
-                  ))}
-                </FilterSelect>
-              )}
-              <FilterSelect label="Inspector" value={inspectorFilter} onChange={setInspectorFilter}>
-                <option value="all">All inspectors</option>
-                {inspectorOptions.map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.name}
+                        {t.count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {groupsInFactory.length > 1 && (
+              <FilterSelect label="Machine" value={activeMachine} onChange={setMachinePick}>
+                <option value="all">All machines · {groupsInFactory.length}</option>
+                {groupsInFactory.map((g) => (
+                  <option key={g.code} value={g.code}>
+                    {g.code === favourite ? '★ ' : ''}
+                    {g.label} · {g.sessions.length}
+                    {g.tone === 'hold' ? ' · on Hold' : g.tone === 'defect' ? ' · defects' : ''}
                   </option>
                 ))}
               </FilterSelect>
-            </>
-          }
-          chips={chips}
-          onReset={resetFilters}
-          canReset={filtering}
-        />
-      )}
+            )}
+            <FilterSelect label="Inspector" value={inspectorFilter} onChange={setInspectorFilter}>
+              <option value="all">All inspectors</option>
+              {inspectorOptions.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.name}
+                </option>
+              ))}
+            </FilterSelect>
+          </>
+          ) : undefined
+        }
+        chips={chips}
+        onReset={resetFilters}
+        canReset={filtering}
+      />
 
       {isLoading ? (
         <div className="card px-4 py-3 text-13 text-muted">Loading the open sessions…</div>
