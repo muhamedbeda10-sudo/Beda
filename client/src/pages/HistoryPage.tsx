@@ -2,12 +2,10 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
-  AlertTriangle,
   ArrowLeft,
   ChevronRight,
   ClipboardList,
   Droplets,
-  Download,
   FileText,
   History as HistoryIcon,
   Info,
@@ -20,17 +18,14 @@ import {
   Trash2,
   Package2,
   Ruler,
-  Search,
   ShieldCheck,
   SprayCan,
-  X,
   Camera,
-  RotateCcw,
 } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { PtCoverageBadge, SessionToneBadge, ptCoverage, sessionToneClass } from '@/components/inspection/SessionTone'
-import { Attr, SampleDetail, Section, SectionEmpty, dispositionToneOf, num, statusToneOf } from '@/components/inspection/SampleDetail'
+import { Attr, SampleDetail, Section, SectionEmpty, num, statusToneOf } from '@/components/inspection/SampleDetail'
 import { DefectEditDialog, DimensionEditDialog, type DefectCorrection } from '@/components/inspection/CorrectionDialogs'
 import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
 import { OrderNoteList } from '@/components/inspection/OrderNotes'
@@ -43,11 +38,12 @@ import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { loadHistoryExport, loadOlderSessions, useSession, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
-import { ColumnPicker, FitColumnsButton, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
+import { ExportMenu, FilterBar, FilterSelect, HeaderStat, PageHeader, Segmented, StatDot, type FilterChip } from '@/components/ui/PageShell'
+import { ColumnPicker, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, isStockOrder, processForMachine, shiftName } from '@/domain'
-import { cn, daysAgoISO, formatDateTime } from '@/lib/utils'
+import { cn, daysAgoISO, formatDate, formatDateTime } from '@/lib/utils'
 import {
   DISPOSITIONS,
   type DefectResult,
@@ -640,184 +636,144 @@ export function HistoryPage() {
   }
 
   const kindToggle = (
-    <div role="tablist" aria-label="What History lists" className="inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
-      {(['sessions', 'pdi'] as const).map((k) => (
-        <button
-          key={k}
-          type="button"
-          role="tab"
-          aria-selected={kind === k}
-          onClick={() => setKind(k)}
-          className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-lg px-4 text-sm font-semibold transition-colors', kind === k ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-muted hover:text-slate-700 dark:hover:text-slate-200')}
-        >
-          {k === 'sessions' ? <HistoryIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
-          {k === 'sessions' ? 'Sessions' : 'PDI'}
-        </button>
-      ))}
-    </div>
+    <Segmented
+      label="What History lists"
+      value={kind}
+      onChange={setKind}
+      options={[
+        { value: 'sessions', label: 'Sessions', icon: <HistoryIcon className="h-4 w-4" /> },
+        { value: 'pdi', label: 'PDI', icon: <FileText className="h-4 w-4" /> },
+      ]}
+    />
   )
 
   if (kind === 'pdi') {
     return (
-      <div className="space-y-5">
-        {kindToggle}
+      <div className="space-y-4">
+        <PageHeader title="History" lead={kindToggle} />
         <PdiList />
       </div>
     )
   }
 
+  // §6 — the filters in force, each on a chip that removes it. The search shows in its own box.
+  const machineLabel = (code: string) => workCenterName(code)
+  const chips: FilterChip[] = [
+    ...(dispositionFilter ? [{ key: 'disposition', label: `Disposition: ${dispositionFilter}`, onRemove: clearDisposition }] : []),
+    ...(status !== 'All' ? [{ key: 'status', label: `Status: ${status === 'Hold' ? 'On Hold' : status}`, onRemove: () => setStatus('All') }] : []),
+    ...(range !== 'all'
+      ? [{ key: 'range', label: range === 'custom' ? (fromDay && fromDay === toDay ? `Day: ${formatDate(fromDay)}` : `Days: ${fromDay ? formatDate(fromDay) : '…'} – ${toDay ? formatDate(toDay) : '…'}`) : RANGE_LABEL[range], onRemove: () => setRange('all') }]
+      : []),
+    ...(workCenter !== 'all' ? [{ key: 'machine', label: `Machine: ${machineLabel(workCenter)}`, onRemove: () => setWorkCenter('all') }] : []),
+    ...(itemFilter !== '' ? [{ key: 'item', label: `Item: ${itemFilter}`, onRemove: () => setItemFilter('') }] : []),
+    ...(inspectorFilter !== 'all' ? [{ key: 'inspector', label: `Inspector: ${inspectorOptions.find((i) => i.id === inspectorFilter)?.name ?? 'one inspector'}`, onRemove: () => setInspectorFilter('all') }] : []),
+    ...(factoryFilter !== 'all' ? [{ key: 'factory', label: `Factory: ${factoryFilter}`, onRemove: () => setFactoryFilter('all') }] : []),
+  ]
+  const moreCount = [itemFilter !== '', seesAll && inspectorFilter !== 'all', seesAll && factoryFilter !== 'all'].filter(Boolean).length
+
   return (
-    <div className="space-y-4">
-      {/* One row at the top: what History lists, its counters the toggle's height, and the page's tools. No page heading: the tab says where you are. */}
-      <div className="flex flex-wrap items-center gap-2">
-        {kindToggle}
-        {/* The three counters stay together; on a phone they drop their labels and keep icon and number. */}
-        <span className="flex gap-2">
-          <CounterChip
-            label="Sessions"
-            value={totals.sessions}
-            sub={totals.sessions > filtered.length ? `${filtered.length} on screen` : undefined}
-            icon={<HistoryIcon className="h-4 w-4" />}
-            onClick={() => openCounter()}
-            disabled={totals.sessions === 0}
-            ariaLabel="Sessions: grouped by order line"
-          />
-          <CounterChip
-            label="Open"
-            value={totals.open}
-            icon={<ClipboardList className="h-4 w-4" />}
-            tone={totals.open > 0 ? 'green' : 'neutral'}
-            onClick={() => openCounter('Open')}
-            disabled={totals.open === 0}
-            ariaLabel="Open sessions: grouped by order line"
-          />
-          <CounterChip
-            label="Closed"
-            value={totals.closed}
-            icon={<Lock className="h-4 w-4" />}
-            onClick={() => openCounter('Closed')}
-            disabled={totals.closed === 0}
-            ariaLabel="Closed sessions: grouped by order line"
-          />
-        </span>
-        {isFetching && !loading && <span className="text-xs text-muted">Searching the whole record…</span>}
-        <span className="ml-auto flex flex-wrap items-center gap-2">
-          {canExport && (
-            <Button className="min-h-[40px]" onClick={() => void exportExcel()} disabled={exporting || totals.sessions === 0} aria-label="Export the sessions to Excel">
-              <Download className="h-4 w-4" /> {exporting ? 'Building…' : 'Export Excel'}
-            </Button>
-          )}
-          <Button className="min-h-[40px]" onClick={resetFilters} disabled={!filtersSet} aria-label="Reset all filters">
-            <RotateCcw className="h-4 w-4" /> Reset all
-          </Button>
-        </span>
-      </div>
+    <div className="space-y-3">
+      {/* One header row: the title, what History lists, its figures (each opens its sessions grouped by order line), and the page's actions. */}
+      <PageHeader
+        title="History"
+        lead={kindToggle}
+        stats={
+          <>
+            <HeaderStat value={totals.sessions} label={totals.sessions === 1 ? 'session' : 'sessions'} onClick={() => openCounter()} tip="Grouped by order line" />
+            <StatDot />
+            <HeaderStat value={totals.open} label="open" tone="success" onClick={() => openCounter('Open')} tip="Grouped by order line" />
+            <StatDot />
+            <HeaderStat value={totals.closed} label="closed" onClick={() => openCounter('Closed')} tip="Grouped by order line" />
+            {isFetching && !loading && <span className="ml-2 text-xs">Searching the whole record…</span>}
+          </>
+        }
+        actions={
+          <>
+            <span className="hidden md:inline-flex">
+              <ColumnPicker grid={grid} />
+            </span>
+            {canExport && <ExportMenu busy={exporting} items={[{ label: 'Export Excel', onClick: () => void exportExcel(), disabled: totals.sessions === 0 }]} />}
+          </>
+        }
+      />
 
-
-      {dispositionFilter && (
-        <Card className="flex flex-wrap items-center gap-3 border-l-4 border-l-amber-400 p-4">
-          <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
-          <p className="min-w-0 flex-1 text-sm font-semibold">
-            Showing only sessions with a defect dispositioned <Badge tone={dispositionToneOf(dispositionFilter)}>{dispositionFilter}</Badge>
-          </p>
-          <Button className="min-h-[48px]" onClick={clearDisposition}>
-            <X className="h-4 w-4" /> Clear filter
-          </Button>
-        </Card>
-      )}
-
-      <Card className="space-y-3 p-4">
-        {/* The table's own tools sit beside the search, in the room its row leaves. */}
-        <div className="flex items-center gap-2">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-            <Input
-              value={term}
-              onChange={(e) => setTerm(e.target.value)}
-              placeholder="Order, item, code, customer, inspector, machine or #session…"
-              className="min-h-[52px] pl-9 text-base"
-              aria-label="Search history"
-            />
-          </div>
-          <span className="hidden shrink-0 items-center gap-2 md:flex">
-            <FitColumnsButton grid={grid} />
-            <ColumnPicker grid={grid} />
-          </span>
-        </div>
-        <div className={cn('grid grid-cols-2 gap-3 sm:grid-cols-3', seesAll && 'lg:grid-cols-6')}>
-          <Field label="Status">
-            <Select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} className="min-h-[48px]">
-              <option value="All">All</option>
+      <FilterBar
+        search={{ value: term, onChange: setTerm, placeholder: 'Order, item, code, customer, inspector, machine or #session…', label: 'Search history' }}
+        filters={
+          <>
+            <FilterSelect label="Status" value={status} onChange={(v) => setStatus(v as StatusFilter)}>
+              <option value="All">All statuses</option>
               <option value="Open">Open</option>
               <option value="Closed">Closed</option>
               <option value="Hold">On Hold</option>
-            </Select>
-          </Field>
-          <Field label="Date range">
-            <Select value={range} onChange={(e) => setRange(e.target.value as RangeFilter)} className="min-h-[48px]">
+            </FilterSelect>
+            <FilterSelect label="Date range" value={range} onChange={(v) => setRange(v as RangeFilter)}>
               {(Object.keys(RANGE_LABEL) as RangeFilter[]).map((r) => (
                 <option key={r} value={r}>
                   {RANGE_LABEL[r]}
                 </option>
               ))}
-            </Select>
-          </Field>
-          <Field label="Item">
-            <Input list="history-items" value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} placeholder="Any part of a code or name" className="min-h-[48px]" aria-label="Item" />
-            <datalist id="history-items">
-              {itemOptions.map((i) => (
-                <option key={`${i.itemCode}|${i.item}`} value={`${i.itemCode} — ${i.item}`} />
+            </FilterSelect>
+            {range === 'custom' && (
+              <>
+                <input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} className="input h-10 !w-[9rem] py-0 text-sm" aria-label="From day" data-tip="From day" />
+                <input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} className="input h-10 !w-[9rem] py-0 text-sm" aria-label="To day" data-tip="To day" />
+              </>
+            )}
+            <FilterSelect label="Machine" value={workCenter} onChange={setWorkCenter}>
+              <option value="all">All machines</option>
+              {workCenterOptions.map((code) => (
+                <option key={code} value={code}>
+                  {workCenterName(code)}
+                </option>
               ))}
-            </datalist>
-          </Field>
-          {range === 'custom' && (
-            <>
-              <Field label="From day">
-                <Input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} className="min-h-[48px]" aria-label="From day" />
-              </Field>
-              <Field label="To day">
-                <Input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} className="min-h-[48px]" aria-label="To day" />
-              </Field>
-            </>
-          )}
-          <div className={cn(!seesAll && 'col-span-2 sm:col-span-1')}>
-            <Field label="Machine">
-              <Select value={workCenter} onChange={(e) => setWorkCenter(e.target.value)} className="min-h-[48px]">
-                <option value="all">All machines</option>
-                {workCenterOptions.map((code) => (
-                  <option key={code} value={code}>
-                    {workCenterName(code)}
-                  </option>
+            </FilterSelect>
+          </>
+        }
+        more={
+          <>
+            <Field label="Item">
+              <Input list="history-items" value={itemFilter} onChange={(e) => setItemFilter(e.target.value)} placeholder="Any part of a code or name" className="h-10 py-0 text-sm" aria-label="Item" />
+              <datalist id="history-items">
+                {itemOptions.map((i) => (
+                  <option key={`${i.itemCode}|${i.item}`} value={`${i.itemCode} — ${i.item}`} />
                 ))}
-              </Select>
+              </datalist>
             </Field>
-          </div>
-          {seesAll && (
-            <>
-              <Field label="Inspector">
-                <Select value={inspectorFilter} onChange={(e) => setInspectorFilter(e.target.value)} className="min-h-[48px]">
-                  <option value="all">All inspectors</option>
-                  {inspectorOptions.map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Factory">
-                <Select value={factoryFilter} onChange={(e) => setFactoryFilter(e.target.value)} className="min-h-[48px]">
-                  <option value="all">All factories</option>
-                  {factoryOptions.map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </>
-          )}
-        </div>
-      </Card>
+            {seesAll && (
+              <>
+                <Field label="Inspector">
+                  <Select value={inspectorFilter} onChange={(e) => setInspectorFilter(e.target.value)} className="h-10 py-0 text-sm">
+                    <option value="all">All inspectors</option>
+                    {inspectorOptions.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {i.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Factory">
+                  <Select value={factoryFilter} onChange={(e) => setFactoryFilter(e.target.value)} className="h-10 py-0 text-sm">
+                    <option value="all">All factories</option>
+                    {factoryOptions.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </>
+            )}
+          </>
+        }
+        moreCount={moreCount}
+        chips={chips}
+        onReset={() => {
+          resetFilters()
+          if (dispositionFilter) clearDisposition()
+        }}
+        canReset={filtersSet || !!dispositionFilter}
+      />
 
       {loading ? (
         <Card className="p-10 text-center text-sm text-muted">Loading…</Card>
@@ -1169,42 +1125,3 @@ export function HistoryPage() {
 // ---- Sample detail ---------------------------------------------------------
 
 // ---- Correction dialogs ----------------------------------------------------
-
-/** A History counter the toggle's height: icon, label and number on one line. Tapping it opens its sessions grouped by order line. */
-function CounterChip({
-  label,
-  value,
-  sub,
-  icon,
-  tone = 'neutral',
-  onClick,
-  disabled,
-  ariaLabel,
-}: {
-  label: string
-  value: number
-  sub?: string
-  icon: ReactNode
-  tone?: 'green' | 'neutral'
-  onClick: () => void
-  disabled: boolean
-  ariaLabel: string
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={ariaLabel}
-      data-tip={label}
-      className="inline-flex h-12 items-center gap-2 rounded-xl bg-white px-3 ring-1 ring-slate-200 transition-colors hover:bg-slate-50 disabled:cursor-default disabled:hover:bg-white dark:bg-slate-900 dark:ring-slate-800 dark:hover:bg-slate-800 dark:disabled:hover:bg-slate-900"
-    >
-      <span className={cn('grid h-7 w-7 place-items-center rounded-lg', tone === 'green' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-slate-100 text-muted dark:bg-slate-800 dark:text-slate-300')}>
-        {icon}
-      </span>
-      <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-muted sm:inline">{label}</span>
-      <span className="text-lg font-extrabold tabular-nums">{value.toLocaleString()}</span>
-      {sub && <span className="hidden text-xs text-muted lg:inline">{sub}</span>}
-    </button>
-  )
-}

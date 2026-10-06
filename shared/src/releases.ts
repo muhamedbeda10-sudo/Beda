@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-06.3',
+    date: '2026-10-06',
+    title: 'History and Access: one header row, one filter row',
+    items: [
+      { text: 'History and Access open on one header row — the title, the figures ("26 sessions · 2 open · 24 closed", each opening its sessions), Columns and Export — and one filter row: the search, the filters used most, More filters for the rest, and Reset.' },
+      { text: 'The filters in force show as chips under the row; tap a chip to drop that filter, or Clear all. Nothing is shown when no filter is set, so the list starts higher on the page.' },
+      { text: 'Fit columns moved into the Columns menu. The Hold link from Inspections shows as a Disposition chip.' },
+    ],
+  },
+  {
     id: '2026-10-06.2',
     date: '2026-10-06',
     title: 'A calmer, clearer look: tooltips, dates, badges, row density',

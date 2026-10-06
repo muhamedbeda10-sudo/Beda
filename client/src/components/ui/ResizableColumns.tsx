@@ -340,7 +340,7 @@ export function ColumnPicker({ grid, className }: { grid: ResizableColumns; clas
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className={cn('btn-secondary min-h-[40px] px-3 text-xs', (open || grid.customised) && 'text-brand-700 dark:text-brand-200')}
+        className={cn('btn-secondary h-9 min-h-0 px-3 py-0 text-xs', (open || grid.customised) && 'text-brand-700 dark:text-brand-200')}
       >
         <Columns3 className="h-4 w-4" /> Columns
         <span className="rounded-full bg-slate-200 px-1.5 text-[10px] font-bold leading-[16px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">

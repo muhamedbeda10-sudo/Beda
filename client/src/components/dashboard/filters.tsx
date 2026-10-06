@@ -22,7 +22,7 @@ const matches = (text: string, query: string): boolean => text.toLowerCase().inc
  * the page body so a widget's own scroll box never clips it. Closes on a
  * click outside it or on Escape.
  */
-function FloatingPanel({ anchor, open, onClose, width = 260, label, children }: { anchor: RefObject<HTMLElement>; open: boolean; onClose: () => void; width?: number; label: string; children: ReactNode }) {
+export function FloatingPanel({ anchor, open, onClose, width = 260, label, children }: { anchor: RefObject<HTMLElement>; open: boolean; onClose: () => void; width?: number; label: string; children: ReactNode }) {
   const panel = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   useLayoutEffect(() => {
