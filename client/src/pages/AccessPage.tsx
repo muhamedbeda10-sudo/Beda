@@ -7,11 +7,12 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, RotateCcw, Search, Table2, X } from 'lucide-react'
+import { ChevronRight, Table2 } from 'lucide-react'
 import type { OrderListFilters, OrderListRow } from '@qc/shared/api'
 import { Badge, Button, Card, EmptyState, Field, Input, Select } from '@/components/ui'
 import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
-import { ColumnPicker, FitColumnsButton, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
+import { FilterBar, FilterSelect, HeaderStat, PageHeader, type FilterChip } from '@/components/ui/PageShell'
+import { ColumnPicker, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { loadMoreOrders, useDebounced, useMaster, useOrderList, useOrderListOptions } from '@/services/queries'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useApp } from '@/store/AppContext'
@@ -299,115 +300,100 @@ export function AccessPage() {
     if (o.sessions > 0) opens.order(o)
   }
 
+  const machineLabel = (code: string) => machineName(code) || code
+  const chips: FilterChip[] = [
+    ...(machine !== 'all' ? [{ key: 'machine', label: `Machine: ${machineLabel(machine)}`, onRemove: () => setMachine('all') }] : []),
+    ...(erpStatus !== 'all' ? [{ key: 'status', label: `ERP status: ${erpStatus}`, onRemove: () => setErpStatus('all') }] : []),
+    ...(remaining !== 'all' ? [{ key: 'remaining', label: remaining === 'open' ? 'Still to produce' : 'Finished', onRemove: () => setRemaining('all') }] : []),
+    ...(factory !== 'all' ? [{ key: 'factory', label: `Factory: ${factory}`, onRemove: () => setFactory('all') }] : []),
+    ...(item.trim() ? [{ key: 'item', label: `Item: ${item.trim()}`, onRemove: () => setItem('') }] : []),
+    ...(inspected !== 'all' ? [{ key: 'inspected', label: inspected === 'yes' ? 'Inspected' : 'Not inspected yet', onRemove: () => setInspected('all') }] : []),
+  ]
+  const moreCount = [factory !== 'all', item.trim() !== '', inspected !== 'all'].filter(Boolean).length
+
   return (
-    <div className="space-y-5">
-      <Card className="space-y-3 p-4">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-          <Input
-            value={term}
-            onChange={(e) => setTerm(e.target.value)}
-            placeholder="Order, line key, item, item code, customer, drawing or machine…"
-            className="min-h-[52px] pl-9 pr-10 text-base"
-            aria-label="Search orders"
-          />
-          {term && (
-            <button type="button" onClick={() => setTerm('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-muted hover:text-slate-600">
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <Field label="Machine">
-            <Select value={machine} onChange={(e) => setMachine(e.target.value)} className="min-h-[48px]">
+    <div className="space-y-3">
+      <PageHeader
+        title="Access"
+        stats={
+          data ? (
+            <>
+              <HeaderStat value={data.total} label={data.total === 1 ? 'line' : 'lines'} />
+              <span>{filtering ? (data.total === 1 ? 'matches the filters' : 'match the filters') : 'on the sheet'}</span>
+            </>
+          ) : (
+            <span>Loading…</span>
+          )
+        }
+        actions={
+          <span className="hidden md:inline-flex">
+            <ColumnPicker grid={grid} />
+          </span>
+        }
+      />
+
+      <FilterBar
+        search={{ value: term, onChange: setTerm, placeholder: 'Order, line key, item, item code, customer, drawing or machine…', label: 'Search orders' }}
+        filters={
+          <>
+            <FilterSelect label="Machine" value={machine} onChange={setMachine}>
               <option value="all">All machines</option>
               {(options?.workCenterCodes ?? []).map((code) => (
                 <option key={code} value={code}>
                   {machineName(code)}
                 </option>
               ))}
-            </Select>
-          </Field>
-          <Field label="Factory">
-            <Select value={factory} onChange={(e) => setFactory(e.target.value)} className="min-h-[48px]">
-              <option value="all">All factories</option>
-              {(options?.factories ?? []).map((f) => (
-                <option key={f} value={f}>
-                  {f}
+            </FilterSelect>
+            <FilterSelect label="ERP status" value={erpStatus} onChange={setErpStatus}>
+              <option value="all">All ERP statuses</option>
+              {(options?.erpStatuses ?? []).map((st) => (
+                <option key={st} value={st}>
+                  {st}
                 </option>
               ))}
-            </Select>
-          </Field>
-          <Field label="ERP status">
-            <Select value={erpStatus} onChange={(e) => setErpStatus(e.target.value)} className="min-h-[48px]">
-              <option value="all">All statuses</option>
-              {(options?.erpStatuses ?? []).map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Item">
-            {/* Any part of a code or a name narrows as it is typed; the list offers the sheet's items for completion. */}
-            <Input
-              list="access-items"
-              value={item}
-              onChange={(e) => setItem(e.target.value)}
-              placeholder="Any part of a code or name"
-              className="min-h-[48px]"
-              aria-label="Item"
-            />
-            <datalist id="access-items">
-              {(options?.items ?? []).map((i) => (
-                <option key={`${i.itemCode}|${i.item}`} value={`${i.itemCode} — ${i.item}`} />
-              ))}
-            </datalist>
-          </Field>
-          <Field label="Remaining">
-            <Select value={remaining} onChange={(e) => setRemaining(e.target.value as 'all' | 'open' | 'done')} className="min-h-[48px]">
+            </FilterSelect>
+            <FilterSelect label="Remaining" value={remaining} onChange={(v) => setRemaining(v as 'all' | 'open' | 'done')}>
               <option value="all">All lines</option>
               <option value="open">Still to produce</option>
               <option value="done">Finished</option>
-            </Select>
-          </Field>
-          <Field label="Inspected">
-            <Select value={inspected} onChange={(e) => setInspected(e.target.value as 'all' | 'yes' | 'no')} className="min-h-[48px]">
-              <option value="all">All lines</option>
-              <option value="yes">Inspected</option>
-              <option value="no">Not inspected yet</option>
-            </Select>
-          </Field>
-        </div>
-        <div className="flex justify-end">
-          <Button className="min-h-[40px]" onClick={resetFilters} disabled={!filtersSet} aria-label="Reset all filters">
-            <RotateCcw className="h-4 w-4" /> Reset all
-          </Button>
-        </div>
-      </Card>
-
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted">
-          {data ? (
-            <>
-              <span className="font-semibold text-slate-700 dark:text-slate-200">{rows.length.toLocaleString()}</span> of{' '}
-              <span className="font-semibold text-slate-700 dark:text-slate-200">{data.total.toLocaleString()}</span> line{data.total === 1 ? '' : 's'}
-              {filtering ? (data.total === 1 ? ' matches the filters' : ' match the filters') : ' on the sheet'}
-            </>
-          ) : (
-            'Loading…'
-          )}
-          {filtering && (
-            <button type="button" onClick={clear} className="ml-2 font-semibold text-brand-700 hover:underline dark:text-brand-300">
-              Clear filters
-            </button>
-          )}
-        </p>
-        <div className="hidden gap-2 md:flex">
-          <FitColumnsButton grid={grid} />
-          <ColumnPicker grid={grid} />
-        </div>
-      </div>
+            </FilterSelect>
+          </>
+        }
+        more={
+          <>
+            <Field label="Factory">
+              <Select value={factory} onChange={(e) => setFactory(e.target.value)} className="h-10 py-0 text-sm">
+                <option value="all">All factories</option>
+                {(options?.factories ?? []).map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Item">
+              {/* Any part of a code or a name narrows as it is typed; the list offers the sheet's items for completion. */}
+              <Input list="access-items" value={item} onChange={(e) => setItem(e.target.value)} placeholder="Any part of a code or name" className="h-10 py-0 text-sm" aria-label="Item" />
+              <datalist id="access-items">
+                {(options?.items ?? []).map((i) => (
+                  <option key={`${i.itemCode}|${i.item}`} value={`${i.itemCode} — ${i.item}`} />
+                ))}
+              </datalist>
+            </Field>
+            <Field label="Inspected">
+              <Select value={inspected} onChange={(e) => setInspected(e.target.value as 'all' | 'yes' | 'no')} className="h-10 py-0 text-sm">
+                <option value="all">All lines</option>
+                <option value="yes">Inspected</option>
+                <option value="no">Not inspected yet</option>
+              </Select>
+            </Field>
+          </>
+        }
+        moreCount={moreCount}
+        chips={chips}
+        onReset={resetFilters}
+        canReset={filtersSet}
+      />
 
       {isError ? (
         <Card className="p-6">
