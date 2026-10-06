@@ -4,7 +4,7 @@
 // manager would say about them. Administrators only.
 // ============================================================================
 
-import { Fragment, useContext, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, createContext, useContext, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -56,7 +56,7 @@ import { Board, BoardContext, ChartGallery, WidgetLabelContext, type BoardState,
 import { DrillModal, type DrillSpec } from '@/components/dashboard/DrillModal'
 import { FilterNote, FilterTh, MultiSelectMenu, byName, useColumnFilters } from '@/components/dashboard/filters'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
-import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
+import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, shortRange, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn } from '@/lib/utils'
@@ -67,6 +67,7 @@ import { useApp } from '@/store/AppContext'
 import { ApiError } from '@/lib/api'
 import { sessionDetailPath } from '@/lib/links'
 import { When } from '@/components/ui/Tooltip'
+import { ExportMenu, InfoTip, Segmented } from '@/components/ui/PageShell'
 
 // ---- Formatting ------------------------------------------------------------
 
@@ -107,12 +108,18 @@ function KpiTile({
   tone = 'neutral',
   sub,
   icon,
+  vs,
+  period: ownPeriod,
 }: {
   label: string
   value: string
   unit?: string
   current: number | null
   previous: number | null
+  /** The period it is compared with, for the change: "Sep 1 – Sep 30". */
+  vs?: string
+  /** What the figure covers when it is not the page's period ("now"); null for nothing. */
+  period?: string | null
   /** Which direction of change is good: a falling defect rate, a rising yield. */
   goodWhen: 'down' | 'up' | 'none'
   tone?: KpiTone
@@ -123,10 +130,20 @@ function KpiTile({
   const up = delta !== null && delta > 0
   const flat = delta !== null && Math.abs(delta) < 0.005
   const good = goodWhen === 'none' || flat ? null : goodWhen === 'up' ? up : !up
+  const pagePeriod = useContext(PeriodBadgeContext)
+  const period = ownPeriod === undefined ? pagePeriod : ownPeriod
+  const fmtValue = (v: number) => (unit === '%' ? pctStr(v) : num(v, 1))
+  const deltaTip =
+    delta === null || current === null || previous === null
+      ? undefined
+      : `Relative change: ${fmtValue(current)} now against ${fmtValue(previous)}${vs ? ` in ${vs}` : ''} (${delta > 0 ? '+' : delta < 0 ? '−' : ''}${Math.abs(delta).toFixed(2)}% relative${unit === '%' ? `, ${current - previous >= 0 ? '+' : '−'}${Math.abs(current - previous).toFixed(2)} pp` : ''})`
   return (
     <Card className={cn('p-4 ring-1 transition-shadow hover:shadow-hover', TONE_RING[tone])}>
       <div className="flex items-start justify-between gap-2">
-        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
+        <div className="min-w-0">
+          <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
+          {period && <p className="truncate text-[11px] text-muted">{period}</p>}
+        </div>
         <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', tone === 'neutral' ? 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300' : tone === 'green' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : tone === 'amber' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400')}>
           {icon}
         </span>
@@ -141,9 +158,10 @@ function KpiTile({
             <Minus className="h-3 w-3" /> no comparison
           </span>
         ) : (
-          <span className={cn('inline-flex items-center gap-0.5 font-semibold tabular-nums', good === null ? 'text-muted' : good ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
+          <span data-tip={deltaTip} className={cn('inline-flex items-center gap-0.5 font-semibold tabular-nums', good === null ? 'text-muted' : good ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
             {flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
             {flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
+            {vs && <span className="ml-0.5 font-medium text-muted">vs {vs}</span>}
           </span>
         )}
         {previous !== null && <span className="text-muted">prev {typeof previous === 'number' ? (unit === '%' ? pctStr(previous) : num(previous, 1)) : '—'}</span>}
@@ -321,23 +339,37 @@ function groupColumns(t: KpiThresholds, first: Column<KpiGroupRow>): Column<KpiG
   ]
 }
 
-function Section({ title: ownTitle, hint: ownHint, icon, children, className, action }: { title: string; hint?: string; icon?: ReactNode; children: ReactNode; className?: string; action?: ReactNode }) {
+/** The period every chart on the page covers, unless the chart says its own (a month window, all time). */
+const PeriodBadgeContext = createContext<string | null>(null)
+
+function Section({ title: ownTitle, hint: ownHint, icon, children, className, action, period }: { title: string; hint?: string; icon?: ReactNode; children: ReactNode; className?: string; action?: ReactNode; period?: string | null }) {
   // On a board an administrator may have named and described the widget; that wins over the code's words.
   const label = useContext(WidgetLabelContext)
+  const pagePeriod = useContext(PeriodBadgeContext)
   const title = label.title || ownTitle
   const hint = label.title || label.hint ? label.hint || undefined : ownHint
+  const badge = period === undefined ? pagePeriod : period
   return (
     <Card className={cn('flex h-full min-h-0 flex-col p-4 sm:p-5', className)}>
-      <div className="mb-3 flex shrink-0 flex-wrap items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
+      <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           {icon && <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{icon}</span>}
-          <div className="min-w-0">
-            <h2 className="text-base font-bold leading-tight">{title}</h2>
-            {hint && <p className="text-xs text-muted">{hint}</p>}
-          </div>
+          <h2 className="min-w-0 text-base font-bold leading-tight">{title}</h2>
+          {hint && <InfoTip text={hint} label={`About ${title}`} />}
         </div>
-        {action}
+        {(badge || action) && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {badge && (
+              <Badge tone="neutral" tip="The period this chart covers">
+                {badge}
+              </Badge>
+            )}
+            {action}
+          </div>
+        )}
       </div>
+      {/* On paper there is no tooltip: the explanation is printed under the title. */}
+      {hint && <p className="mb-2 hidden text-xs text-muted print:block">{hint}</p>}
       <div className="min-h-0 flex-1 overflow-auto">{children}</div>
     </Card>
   )
@@ -346,6 +378,7 @@ function Section({ title: ownTitle, hint: ownHint, icon, children, className, ac
 // ---- The general page and the analysis blocks --------------------------------
 
 function PlainTile({ label, value, sub, icon, tone = 'neutral', control, onOpen }: { label: string; value: string; sub?: ReactNode; icon: ReactNode; tone?: KpiTone; control?: ReactNode; onOpen?: () => void }) {
+  const period = useContext(PeriodBadgeContext)
   const opens = onOpen
     ? { role: 'button' as const, tabIndex: 0, onClick: onOpen, onKeyDown: (e: { key: string; preventDefault: () => void }) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onOpen()), 'aria-label': `${label}: open the sessions behind it` }
     : {}
@@ -354,6 +387,7 @@ function PlainTile({ label, value, sub, icon, tone = 'neutral', control, onOpen 
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
+          {period && <p className="truncate text-[11px] text-muted">{period}</p>}
           {control && <div className="print-hidden mt-1">{control}</div>}
         </div>
         <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', tone === 'neutral' ? 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300' : tone === 'green' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : tone === 'amber' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400')}>
@@ -368,26 +402,43 @@ function PlainTile({ label, value, sub, icon, tone = 'neutral', control, onOpen 
 
 type GeneralPick = 'factory' | 'process' | 'details'
 
-/** The change of a monthly rate against the month before it: the last two months that have one. */
-function monthTrend(months: { defectRatePct: number | null }[]): { delta: number | null; last: number | null } {
-  const known = months.map((m) => m.defectRatePct).filter((v): v is number => v !== null)
-  if (known.length === 0) return { delta: null, last: null }
-  const last = known[known.length - 1]
+/** The change of a monthly rate against the month before it: the last two months that have one, named. */
+interface MonthTrend {
+  /** Relative change, in percent of the earlier rate. */
+  delta: number | null
+  last: number | null
+  before: number | null
+  lastLabel: string | null
+  beforeLabel: string | null
+}
+function monthTrend(rates: (number | null)[], labels: string[]): MonthTrend {
+  const known = rates.flatMap((v, i) => (v === null ? [] : [{ v, label: labels[i] ?? null }]))
+  const last = known.length ? known[known.length - 1] : null
   const before = known.length > 1 ? known[known.length - 2] : null
-  return { delta: deltaPct(last, before), last }
+  return { delta: deltaPct(last?.v ?? null, before?.v ?? null), last: last?.v ?? null, before: before?.v ?? null, lastLabel: last?.label ?? null, beforeLabel: before?.label ?? null }
 }
 
-/** An arrow and a figure for a trend where a fall is good. */
-function TrendMark({ delta, title }: { delta: number | null; title?: string }) {
+/**
+ * An arrow and a figure for a trend where a fall is good, saying what it is
+ * against: "▼ 13.53% vs Sep". The figure is the relative change; the
+ * tooltip gives both rates and the change in percentage points.
+ */
+function TrendMark({ trend }: { trend: MonthTrend }) {
+  const { delta } = trend
   const up = delta !== null && delta > 0
   const flat = delta !== null && Math.abs(delta) < 0.005
+  const tip =
+    delta === null || trend.last === null || trend.before === null
+      ? 'No earlier month to compare with'
+      : `Relative change of the reject rate: ${pctStr(trend.last)} in ${trend.lastLabel} against ${pctStr(trend.before)} in ${trend.beforeLabel} (${delta > 0 ? '+' : delta < 0 ? '−' : ''}${Math.abs(delta).toFixed(2)}% relative, ${trend.last - trend.before >= 0 ? '+' : '−'}${Math.abs(trend.last - trend.before).toFixed(2)} pp)`
   return (
     <span
-      className={cn('inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold tabular-nums', delta === null ? 'text-muted' : flat ? 'text-muted' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}
-      data-tip={title ?? (delta === null ? 'No month to compare with' : 'Against the month before')}
+      className={cn('inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-xs font-semibold tabular-nums', delta === null ? 'text-muted' : flat ? 'text-muted' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}
+      data-tip={tip}
     >
       {delta === null || flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
       {delta === null ? '—' : flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
+      {delta !== null && trend.beforeLabel && <span className="ml-0.5 font-medium text-muted">vs {trend.beforeLabel}</span>}
     </span>
   )
 }
@@ -423,6 +474,14 @@ function windowWords(g: KpiGeneral): string {
   return a === b ? monthLabel(a) : `${monthLabel(a)} – ${monthLabel(b)}`
 }
 
+/** A window of months for a chart's badge: "Oct 2026", or "Sep – Oct 2026" within a year. */
+function monthSpan(fromDay: string, toDay: string): string {
+  const a = fromDay.slice(0, 7)
+  const b = toDay.slice(0, 7)
+  if (a === b) return monthLabel(a)
+  return a.slice(0, 4) === b.slice(0, 4) ? `${monthLabel(a, false)} – ${monthLabel(b)}` : `${monthLabel(a)} – ${monthLabel(b)}`
+}
+
 /** How the trend window reads in a sentence: "this month" or "the last 3 months". */
 function windowLength(g: KpiGeneral): string {
   return g.monthsBack <= 1 ? 'this month' : `the last ${g.monthsBack} months`
@@ -455,41 +514,64 @@ function GeneralOverview({ data, loading, error, leftOut }: { data: KpiGeneral |
   }
   const t = data.thresholds
   const trendSpan = windowWords(data)
+  const period = shortRange({ from: data.from, to: data.to })
+  const about = `Reject rate and PPM over ${describeRange({ from: data.from, to: data.to })}; the trend line is ${windowLength(data)}, ${trendSpan}${data.monthsBack > 1 ? ', against the month before' : ''}; it starts on the first month with production.`
+  const scopeWords = leftOut.length === 0 ? 'Every figure counts every machine of the register.' : `Every figure counts only the machines on the dashboard. Left out: ${leftOut.map((m) => m.displayName || m.code).join(', ')} — set under Configuration › Machines.`
   const cards = [
     { key: '__plant', label: 'Whole plant', sub: `${num(data.totals.factories)} factories · ${num(data.totals.machines)} machines`, rate: data.totals.defectRatePct, months: data.months },
     ...[...data.factories].sort((a, b) => byName(a.factory, b.factory)).map((f) => ({ key: f.factory, label: f.factory, sub: Array.from(new Set(data.machines.filter((m) => m.factory === f.factory).map((m) => PROCESS_LABEL[m.process]))).join(' · ') || 'no process', rate: f.defectRatePct, months: f.months })),
   ]
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      {/* As many cards a row as fit at 16 rem or more, the row filled edge to edge. */}
+      <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 sm:grid-cols-[repeat(auto-fit,minmax(16rem,1fr))]">
         {cards.map((c) => {
           const tone = toneLowIsGood(c.rate, t.defectRateGreen, t.defectRateAmber)
-          const trend = monthTrend(c.months)
+          const trend = monthTrend(
+            c.months.map((m) => m.defectRatePct),
+            c.months.map((m) => monthLabel(m.month, false)),
+          )
           return (
             <Card key={c.key} className={cn('p-4 ring-1', TONE_RING[tone], c.key === '__plant' && 'bg-slate-50 dark:bg-slate-800/40')}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{c.label}</p>
-                  <p className="truncate text-[11px] text-muted">{c.sub}</p>
+                  <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                    <span className="truncate">{c.label}</span>
+                    {c.key === '__plant' && <InfoTip text={`${about}\n\n${scopeWords}`} label="How these figures are counted" />}
+                  </p>
+                  <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted">
+                    <span>{c.sub}</span>
+                    {c.key === '__plant' && leftOut.length > 0 && (
+                      <Badge tone="amber" tip={scopeWords} className="h-[18px] px-1.5 text-[10px]">
+                        {leftOut.length} left out
+                      </Badge>
+                    )}
+                  </p>
                 </div>
-                <TrendMark delta={trend.delta} />
               </div>
-              <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
-                {pctStr(c.rate)}
-                <span className="ml-1 text-[11px] font-semibold uppercase text-muted">reject</span>
-              </p>
+              <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-2">
+                <p className={cn('text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
+                  {pctStr(c.rate)}
+                  <span className="ml-1 text-[11px] font-semibold uppercase text-muted">reject</span>
+                </p>
+                <TrendMark trend={trend} />
+              </div>
               <div className="mt-1 flex items-end justify-between gap-2">
                 <p className="text-xs text-muted">
                   <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{ppmStr(c.rate)}</span> PPM
+                  <span className="block text-[11px]">{period}</span>
                 </p>
-                <Sparkline values={c.months.map((m) => m.defectRatePct)} className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
+                <Sparkline width={120} height={36} values={c.months.map((m) => m.defectRatePct)} className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
               </div>
             </Card>
           )
         })}
       </div>
-      <p className="text-xs text-muted">Reject rate and PPM over {describeRange({ from: data.from, to: data.to })}; the trend line is {windowLength(data)}, {trendSpan}{data.monthsBack > 1 ? ', against the month before' : ''}; it starts on the first month with production.</p>
-      <ScopeNote leftOut={leftOut} />
+      {/* On paper the explanation is printed; on screen it is behind the (i) on the first card. */}
+      <p className="hidden text-xs text-muted print:block">{about}</p>
+      <div className="hidden print:block">
+        <ScopeNote leftOut={leftOut} />
+      </div>
     </div>
   )
 }
@@ -572,7 +654,7 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
   // The plant trend runs over the trend window to today, whole plant, a line per factory: neither the period strip nor the picks narrow it.
   const windowLabels = general.months.map((m) => monthLabel(m.month, false))
   const factoryLines = [...general.factories].sort((a, b) => byName(a.factory, b.factory)).slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.factory, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
-  const windowSpan = windowWords(general)
+  const windowSpan = monthSpan(general.window.from, general.window.to)
   // The month charts of the pick: the period's months, the pick's factories, and its machines with the highest reject rate.
   const pickLabels = (breakdown?.months ?? []).map((m) => monthLabel(m.month, false))
   const pickFactoryLines = (breakdown?.series.factories ?? []).slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.label, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
@@ -614,7 +696,7 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
         className={cn('transition-opacity', isFetching && 'opacity-70')}
         widgets={[
           { id: 'g.trend', title: 'Plant trend, last months', node: (
-        <Section title="Plant: trend" hint={`Pieces made each month, ${windowSpan} (produced + rejected), from the first month with production and at most the last ${GENERAL_MONTHS}, with the plant's reject rate over them and a line for each factory. Neither the period strip nor the picks narrow this chart.`} icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
+        <Section title="Plant: trend" period={windowSpan} hint={`Pieces made each month, ${windowSpan} (produced + rejected), from the first month with production and at most the last ${GENERAL_MONTHS}, with the plant's reject rate over them and a line for each factory. Neither the period strip nor the picks narrow this chart.`} icon={<Activity className="h-4 w-4" />} className="xl:col-span-3">
           {general.months.some((m) => m.piecesProduced + m.productionDefectPieces > 0) ? (
             <TrendChart points={general.months.map((m) => ({ label: monthLabel(m.month, false), bar: m.piecesProduced + m.productionDefectPieces, line: m.defectRatePct }))} barLabel="Pieces made" lineLabel="Reject rate · plant" lines={factoryLines} />
           ) : (
@@ -651,7 +733,7 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
                         </span>
                         <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><span className={cn('block h-full rounded-full', tone === 'red' ? 'bg-rose-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-slate-300')} style={{ width: `${Math.min(100, ((m.defectRatePct ?? 0) / maxRate) * 100)}%` }} /></span>
                       </span>
-                      <Sparkline values={m.months.map((x) => x.defectRatePct)} width={56} height={20} />
+                      <Sparkline values={m.months.map((x) => x.defectRatePct)} width={72} height={24} />
                     </button>
                   </li>
                 )
@@ -686,7 +768,7 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
         </Section>
           ) },
           { id: 'g.pieScopeTotal', title: 'Rejected by factory or process, all time', node: (
-        <Section title={kind === 'factory' ? 'Rejected by factory, all time' : 'Rejected by process, all time'} hint={`Each ${kind}'s share of every rejected piece since ${describeRange({ from: general.allTime.from, to: general.allTime.to })}. Neither the period nor the picks narrow it.`} icon={kind === 'factory' ? <Factory className="h-4 w-4" /> : <Layers className="h-4 w-4" />}>
+        <Section title={kind === 'factory' ? 'Rejected by factory, all time' : 'Rejected by process, all time'} period="All time" hint={`Each ${kind}'s share of every rejected piece since ${describeRange({ from: general.allTime.from, to: general.allTime.to })}. Neither the period nor the picks narrow it.`} icon={kind === 'factory' ? <Factory className="h-4 w-4" /> : <Layers className="h-4 w-4" />}>
           <PieChart centerLabel="rejected" slices={slicesOf((kind === 'factory' ? general.allTime.factories : general.allTime.processes).map((x) => ({ label: kind === 'process' ? (PROCESS_LABEL[x.key as Process] ?? x.key) : x.key, value: x.productionDefectPieces })))} />
         </Section>
           ) },
@@ -764,6 +846,8 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
   const processName = PROCESS_LABEL[picked]
   const periodWords = describeRange({ from: general.from, to: general.to })
   const windowWordsText = data ? describeRange({ from: data.window.from, to: data.window.to }) : ''
+  /** The month window on a chart's badge: "Sep – Oct 2026". */
+  const windowBadge = data ? monthSpan(data.window.from, data.window.to) : null
 
   // A group keeps its colour on every chart and pie of the tab.
   const processLines = (block: KpiCompareBlock) =>
@@ -839,7 +923,12 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
                         <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{PROCESS_LABEL[p]}</p>
                         <p className="truncate text-[11px] text-muted">{num(inPeriod?.productionDefectPieces ?? 0)} rejected of {num(inPeriod?.made ?? 0)} made</p>
                       </div>
-                      <TrendMark delta={monthTrend(months).delta} />
+                      <TrendMark
+                        trend={monthTrend(
+                          months.map((m) => m.defectRatePct),
+                          data.window.buckets.map((b) => (data.window.grain === 'month' ? monthLabel(b.key, false) : bucketLabel(b, data.window.grain))),
+                        )}
+                      />
                     </div>
                     <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
                       {pctStr(rate)}
@@ -848,8 +937,9 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
                     <div className="mt-1 flex items-end justify-between gap-2">
                       <p className="text-xs text-muted">
                         <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{ppmStr(rate)}</span> PPM
+                        <span className="block text-[11px]">{shortRange({ from: data.period.from, to: data.period.to })}</span>
                       </p>
-                      <Sparkline values={months.map((m) => m.defectRatePct)} className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
+                      <Sparkline width={120} height={36} values={months.map((m) => m.defectRatePct)} className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
                     </div>
                   </Card>
                 )
@@ -857,12 +947,12 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
             </div>
           ) : <div className="skeleton h-full min-h-[7rem]" /> },
           { id: 'c.processMonths', title: 'Groups by month', node: (
-            <Section title="Groups by month" hint={`Each group's reject rate month by month, ${windowWordsText}: from the first month with production and at most the last ${GENERAL_MONTHS}. Neither the period nor the group picked moves it.`} icon={<Activity className="h-4 w-4" />}>
+            <Section title="Groups by month" period={windowBadge} hint={`Each group's reject rate month by month, ${windowWordsText}: from the first month with production and at most the last ${GENERAL_MONTHS}. Neither the period nor the group picked moves it.`} icon={<Activity className="h-4 w-4" />}>
               {!data ? <div className="skeleton h-48" /> : data.window.series.some((x) => x.made > 0) ? <LineChart labels={data.window.buckets.map((b) => bucketLabel(b, 'month'))} series={processLines(data.window)} /> : empty('in these months')}
             </Section>
           ) },
           { id: 'c.processMonthsPie', title: 'Rejected by group, by month', node: (
-            <Section title="Rejected by group" hint={`Each group's share of the rejected pieces, ${windowWordsText}. Tap a slice for the sessions behind it.`} icon={<Layers className="h-4 w-4" />}>
+            <Section title="Rejected by group" period={windowBadge} hint={`Each group's share of the rejected pieces, ${windowWordsText}. Tap a slice for the sessions behind it.`} icon={<Layers className="h-4 w-4" />}>
               {data ? <PieChart centerLabel="rejected" slices={processSlices(data.window)} onPick={openProcess(data.window, windowWordsText)} /> : <div className="skeleton h-44" />}
             </Section>
           ) },
@@ -906,7 +996,7 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
             </Section>
           ) },
           { id: 'c.machinesMonths', title: 'Machines of the group by month', node: (
-            <Section title={`${processName}: machines by month`} hint={`Each machine's reject rate month by month, ${windowWordsText}. The period does not move it; the machines are the ones drawn beside.`} icon={<Activity className="h-4 w-4" />}>
+            <Section title={`${processName}: machines by month`} period={windowBadge} hint={`Each machine's reject rate month by month, ${windowWordsText}. The period does not move it; the machines are the ones drawn beside.`} icon={<Activity className="h-4 w-4" />}>
               {!data ? <div className="skeleton h-56" /> : monthMachines.length ? <LineChart labels={data.machinesWindow.buckets.map((b) => bucketLabel(b, 'month'))} series={linesOf(data.machinesWindow.series)} height={260} /> : empty(`on ${processName.toLowerCase()} in these months`)}
             </Section>
           ) },
@@ -1765,6 +1855,8 @@ export function DashboardPage() {
     return presetRange(f.preset, new Date(), custom)
   }, [f.preset, f.customFrom, f.customTo])
   const prev = useMemo(() => compareRange(range, f.compare, isMonthAligned(range)), [range, f.compare])
+  /** The comparison period on a KPI card: "▲ 2.10% vs Sep 1 – Sep 30". */
+  const prevShort = shortRange(prev)
 
   const filters: KpiFilters = useMemo(
     () => ({
@@ -1994,9 +2086,15 @@ export function DashboardPage() {
   const prevT = data?.previous
   const holdPieces = data?.holds.reduce((n, h) => n + h.qty, 0) ?? 0
   const attention = visibleInsights.filter((i) => i.severity === 'critical' || i.severity === 'warning').length
+  // What the page reads, said once behind the (i) and printed on paper.
+  const about =
+    view === 'general' && pick !== 'details'
+      ? `${describeRange(range)} · reject rate = rejected ÷ (produced + rejected) · trend over ${general ? windowLength(general) : 'the last months'}`
+      : `${describeRange(range)} compared with ${describeRange(prev)}${activeFilters.length > 0 ? ` · ${activeFilters.join(' · ')}` : ''}`
 
   return (
     <BoardContext.Provider value={boardState}>
+    <PeriodBadgeContext.Provider value={shortRange(range)}>
       {canArrange && editingLayout && <ChartGallery open={galleryOpen} onClose={() => setGalleryOpen(false)} />}
       <DrillModal spec={detailDrill} onClose={() => setDetailDrill(null)} />
     <div className="mx-auto max-w-[110rem] space-y-5">
@@ -2005,134 +2103,116 @@ export function DashboardPage() {
           Arranging your own dashboard: drag a chart by its blue bar, pull its bottom-right corner to size it. Save keeps it for you only; everyone else keeps the default. Default puts the default back on yours.
         </div>
       )}
-      {/* Heading */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted">Quality</p>
-          <h1 className="mt-1 text-2xl font-extrabold tracking-tight">Dashboard</h1>
-          {view === 'general' && pick !== 'details' ? (
-            <p className="mt-1 text-sm text-muted">
-              <span className="font-semibold text-slate-700 dark:text-slate-200">{describeRange(range)}</span> · reject rate = rejected ÷ (produced + rejected) · trend over {general ? windowLength(general) : 'the last months'}
-              {general && <span className="hidden print:inline"> · generated <When iso={general.generatedAt} time /></span>}
-            </p>
-          ) : (
-            <p className="mt-1 text-sm text-muted">
-              <span className="font-semibold text-slate-700 dark:text-slate-200">{describeRange(range)}</span> compared with {describeRange(prev)}
-              {activeFilters.length > 0 && <span> · {activeFilters.join(' · ')}</span>}
-              {data && <span className="hidden print:inline"> · generated <When iso={data.generatedAt} time /></span>}
-            </p>
-          )}
-        </div>
-        <div className="print-hidden flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-xl p-0.5 ring-1 ring-slate-200 dark:ring-slate-700">
-            {(
-              [
-                ['general', 'General', Factory],
-                ...(canRank ? ([['inspectors', 'Inspectors', Trophy]] as const) : []),
-              ] as const
-            ).map(([key, label, Icon]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setView(key)}
-                aria-pressed={view === key}
-                className={cn(
-                  'inline-flex min-h-[40px] items-center gap-1.5 rounded-[10px] px-3 text-sm font-semibold transition-colors',
-                  view === key ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800',
-                )}
-              >
-                <Icon className="h-4 w-4" /> {label}
-              </button>
-            ))}
-          </div>
-          {data && (
-            <button
-              type="button"
-              onClick={() => setInsightsOpen(true)}
-              className={cn(
-                'relative grid h-11 w-11 place-items-center rounded-xl ring-1 transition-colors',
-                attention > 0 ? 'bg-amber-50 text-amber-700 ring-amber-200 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30' : 'bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30',
-              )}
-              aria-label={`Insights, ${visibleInsights.length} ${visibleInsights.length === 1 ? 'note' : 'notes'}${hiddenInsights.length ? `, ${hiddenInsights.length} hidden` : ''}`}
-            >
-              <Lightbulb className="h-5 w-5" />
-              <span className={cn('absolute -right-1.5 -top-1.5 grid min-w-[20px] place-items-center rounded-full px-1 text-[10px] font-bold leading-[20px] text-white ring-2 ring-white dark:ring-slate-900', attention > 0 ? 'bg-rose-600' : 'bg-emerald-600')}>
-                {attention > 0 ? attention : '✓'}
-              </span>
-            </button>
-          )}
-          {canArrange && view === 'general' && !editingLayout && (
-            <Button className="min-h-[44px]" onClick={startArranging} aria-label="Arrange the charts">
-              <LayoutDashboard className="h-4 w-4" /> Arrange
-            </Button>
-          )}
-          {canArrange && view === 'general' && editingLayout && (
-            <>
-              <Button className="min-h-[44px]" onClick={() => setGalleryOpen(true)} aria-label="Choose the charts shown">
-                <LayoutGrid className="h-4 w-4" /> Charts
-              </Button>
-              <Button variant="primary" className="min-h-[44px]" onClick={() => void saveArrangement()} aria-label="Save the layout for you">
-                <Save className="h-4 w-4" /> Save layout
-              </Button>
-              <Button className="min-h-[44px]" onClick={() => void resetArrangement()} aria-label="Back to the default layout">
-                <Undo2 className="h-4 w-4" /> Default
-              </Button>
-              <Button className="min-h-[44px]" onClick={stopArranging} aria-label="Stop arranging without saving">
-                <X className="h-4 w-4" /> Cancel
-              </Button>
-            </>
-          )}
-          <Button className="min-h-[44px]" onClick={() => void refetch()} disabled={isFetching} aria-label="Refresh">
-            <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} /> Refresh
-          </Button>
-          <Button className="min-h-[44px]" onClick={exportExcel} disabled={!data}>
-            <FileSpreadsheet className="h-4 w-4" /> Excel
-          </Button>
-          <Button variant="primary" className="min-h-[44px]" onClick={() => window.print()} disabled={!data}>
-            <Printer className="h-4 w-4" /> PDF
-          </Button>
-        </div>
+      {/* One row: the view, the period with its presets, and the page's actions as icons. What the page reads is behind the (i). */}
+      <div className="hidden print:block">
+        <h1 className="text-2xl font-extrabold tracking-tight">Quality dashboard</h1>
+        <p className="mt-1 text-sm text-muted">{about}</p>
+        {general && view === 'general' && pick !== 'details' && (
+          <p className="text-sm text-muted">
+            Generated <When iso={general.generatedAt} time />
+          </p>
+        )}
+        {data && !(view === 'general' && pick !== 'details') && (
+          <p className="text-sm text-muted">
+            Generated <When iso={data.generatedAt} time />
+          </p>
+        )}
       </div>
-
-      {/* §15 — the period is a timeline strip: two handles to drag, presets to jump. It rules every page. */}
-      <Card className="print-hidden p-4">
+      <div className="print-hidden">
         <PeriodSlicer
           value={range}
           preset={f.preset}
           firstDay={span?.firstDay ?? null}
           onChange={(next, preset) => patch({ preset, customFrom: next.from, customTo: next.to })}
+          leading={
+            <>
+              {canRank && (
+                <Segmented
+                  label="Dashboard view"
+                  value={view}
+                  onChange={setView}
+                  options={[
+                    { value: 'general', label: 'General', icon: <Factory className="h-4 w-4" /> },
+                    { value: 'inspectors', label: 'Inspectors', icon: <Trophy className="h-4 w-4" /> },
+                  ]}
+                />
+              )}
+              <InfoTip text={about} label="What this page reads" />
+            </>
+          }
+          trailing={
+            <>
+              {data && (
+                <button
+                  type="button"
+                  onClick={() => setInsightsOpen(true)}
+                  className={cn(
+                    'relative grid h-9 w-9 place-items-center rounded-lg ring-1 transition-colors touch:h-11 touch:w-11',
+                    attention > 0 ? 'bg-amber-50 text-amber-700 ring-amber-200 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30' : 'bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30',
+                  )}
+                  aria-label={`Insights, ${visibleInsights.length} ${visibleInsights.length === 1 ? 'note' : 'notes'}${hiddenInsights.length ? `, ${hiddenInsights.length} hidden` : ''}`}
+                  data-tip="Insights: what the numbers say"
+                >
+                  <Lightbulb className="h-4 w-4" />
+                  <span className={cn('absolute -right-1.5 -top-1.5 grid min-w-[18px] place-items-center rounded-full px-1 text-[10px] font-bold leading-[18px] text-white ring-2 ring-white dark:ring-slate-900', attention > 0 ? 'bg-rose-600' : 'bg-emerald-600')}>
+                    {attention > 0 ? attention : '✓'}
+                  </span>
+                </button>
+              )}
+              {canArrange && view === 'general' && !editingLayout && (
+                <button type="button" onClick={startArranging} aria-label="Arrange the charts" data-tip="Arrange the charts" className="grid h-9 w-9 place-items-center rounded-lg text-muted ring-1 ring-slate-200 transition-colors hover:bg-white hover:text-slate-700 dark:ring-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
+                  <LayoutDashboard className="h-4 w-4" />
+                </button>
+              )}
+              <button type="button" onClick={() => void refetch()} disabled={isFetching} aria-label="Refresh" data-tip="Refresh the figures" className="grid h-9 w-9 place-items-center rounded-lg text-muted ring-1 ring-slate-200 transition-colors hover:bg-white hover:text-slate-700 disabled:opacity-60 dark:ring-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
+                <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
+              </button>
+              <ExportMenu
+                items={[
+                  { label: 'Excel workbook', onClick: exportExcel, disabled: !data, icon: <FileSpreadsheet className="h-4 w-4" /> },
+                  { label: 'PDF (print)', onClick: () => window.print(), disabled: !data, icon: <Printer className="h-4 w-4" /> },
+                ]}
+              />
+            </>
+          }
         />
-      </Card>
+      </div>
+      {canArrange && view === 'general' && editingLayout && (
+        <div className="print-hidden flex flex-wrap items-center gap-2">
+          <Button className="min-h-[40px]" onClick={() => setGalleryOpen(true)} aria-label="Choose the charts shown">
+            <LayoutGrid className="h-4 w-4" /> Charts
+          </Button>
+          <Button variant="primary" className="min-h-[40px]" onClick={() => void saveArrangement()} aria-label="Save the layout for you">
+            <Save className="h-4 w-4" /> Save layout
+          </Button>
+          <Button className="min-h-[40px]" onClick={() => void resetArrangement()} aria-label="Back to the default layout">
+            <Undo2 className="h-4 w-4" /> Default
+          </Button>
+          <Button className="min-h-[40px]" onClick={stopArranging} aria-label="Stop arranging without saving">
+            <X className="h-4 w-4" /> Cancel
+          </Button>
+        </div>
+      )}
 
       {/* §15 — the general page: the plant and its factories on three figures, then one angle to read it from. */}
       {view === 'general' && (
         <>
           <GeneralOverview data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} leftOut={leftOut} />
           <div className="print-hidden flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted">Read it</span>
-            <div className="inline-flex rounded-xl p-0.5 ring-1 ring-slate-200 dark:ring-slate-700">
-              {(
-                [
-                  ['factory', 'By factory', Factory],
-                  ['process', 'Comparisons', Layers],
-                  ['details', 'Details', LayoutGrid],
-                ] as const
-              ).map(([key, label, Icon]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setPick(key)}
-                  aria-pressed={pick === key}
-                  className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-[10px] px-3 text-sm font-semibold transition-colors', pick === key ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800')}
-                >
-                  <Icon className="h-4 w-4" /> {label}
-                </button>
-              ))}
-            </div>
-            {pick === 'details' && <span className="text-xs text-muted">The full analysis: the filters below narrow it.</span>}
-            <Button className="ml-auto min-h-[40px]" onClick={resetAll} disabled={!anythingSet} aria-label="Reset all filters and picks">
-              <RotateCcw className="h-4 w-4" /> Reset all
-            </Button>
+            <Segmented
+              label="Read it"
+              value={pick}
+              onChange={setPick}
+              options={[
+                { value: 'factory', label: 'By factory', icon: <Factory className="h-4 w-4" /> },
+                { value: 'process', label: 'Comparisons', icon: <Layers className="h-4 w-4" /> },
+                { value: 'details', label: 'Details', icon: <LayoutGrid className="h-4 w-4" /> },
+              ]}
+            />
+            {pick === 'details' && <InfoTip text="The full analysis: the filters below narrow it." label="About the details" />}
+            <button type="button" onClick={resetAll} disabled={!anythingSet} aria-label="Reset all filters and picks" data-tip="Reset all filters and picks" className="ml-auto grid h-9 w-9 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-200/70 hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
+              <RotateCcw className="h-4 w-4" />
+            </button>
           </div>
           {general && pick === 'factory' && <ScopeView kind="factory" general={general} factories={factories} t={general.thresholds} picks={picks} setPicks={setPicks} />}
           {/* The pick keeps its stored key, 'process', so a device that read By process opens on Comparisons. */}
@@ -2255,7 +2335,7 @@ export function DashboardPage() {
       {data && t && cur && prevT && (
         <div className={cn('space-y-5 transition-opacity', isFetching && 'opacity-70')}>
           <div className={cn('space-y-5', !(view === 'general' && pick === 'details') && '[@media_screen]:hidden')}>
-          <Section title="Insights" hint="What the numbers say, by rule, not by guess. Most serious first." icon={<Sparkles className="h-4 w-4" />} className="hidden print:block">
+          <Section title="Insights" period={null} hint="What the numbers say, by rule, not by guess. Most serious first." icon={<Sparkles className="h-4 w-4" />} className="hidden print:block">
             <InsightList insights={visibleInsights} onLink={onLink} />
           </Section>
           {insightsOpen && (
@@ -2295,7 +2375,7 @@ export function DashboardPage() {
 <div className="h-full overflow-auto">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             {/* Defect pieces per 100 produced, over the sessions closed in the period with a final quantity. */}
-            <KpiTile
+            <KpiTile vs={prevShort}
               label="Defect rate"
               value={pctStr(cur.defectRatePct)}
               current={cur.defectRatePct}
@@ -2311,11 +2391,11 @@ export function DashboardPage() {
               }
               icon={<AlertTriangle className="h-4 w-4" />}
             />
-            <KpiTile label="First-pass yield" value={pctStr(cur.fpyPct)} current={cur.fpyPct} previous={prevT.fpyPct} goodWhen="up" tone={toneHighIsGood(cur.fpyPct, t.fpyGreen, t.fpyAmber)} sub={`samples with no defect · ${num(cur.samples)} samples · target ≥ ${t.fpyGreen}%`} icon={<Target className="h-4 w-4" />} />
-            <KpiTile label="Dimensions out of tolerance" value={pctStr(cur.dimFailPct)} current={cur.dimFailPct} previous={prevT.dimFailPct} goodWhen="down" tone={toneLowIsGood(cur.dimFailPct, t.dimFailGreen, t.dimFailAmber)} sub={`${num(cur.dimensionsFail)} fail · ${num(cur.dimensionsWarning)} warning of ${num(cur.dimensionsMeasured)} measured`} icon={<Ruler className="h-4 w-4" />} />
-            <KpiTile label="Pieces inspected" value={num(cur.pieces)} current={cur.pieces} previous={prevT.pieces} goodWhen="up" sub={`${num(cur.samples)} samples · ${num(cur.samplesPerSession, 1)} per session · ${pctStr(cur.inspectedDefectPct)} defective of inspected`} icon={<ClipboardList className="h-4 w-4" />} />
-            <KpiTile label="Sessions" value={num(cur.sessions)} current={cur.sessions} previous={prevT.sessions} goodWhen="none" sub={`${num(cur.sessionsClosed)} closed · ${num(cur.machinesInspected)} machines · ${num(cur.activeInspectors)} inspectors`} icon={<Users className="h-4 w-4" />} />
-            <KpiTile label="On Hold now" value={num(data.holds.length)} current={null} previous={null} goodWhen="down" tone={data.holds.some((h) => h.ageDays >= t.holdAgeRedDays) ? 'red' : data.holds.some((h) => h.ageDays >= t.holdAgeAmberDays) ? 'amber' : data.holds.length ? 'neutral' : 'green'} sub={`${num(holdPieces)} pieces waiting for a disposition`} icon={<PauseCircle className="h-4 w-4" />} />
+            <KpiTile vs={prevShort} label="First-pass yield" value={pctStr(cur.fpyPct)} current={cur.fpyPct} previous={prevT.fpyPct} goodWhen="up" tone={toneHighIsGood(cur.fpyPct, t.fpyGreen, t.fpyAmber)} sub={`samples with no defect · ${num(cur.samples)} samples · target ≥ ${t.fpyGreen}%`} icon={<Target className="h-4 w-4" />} />
+            <KpiTile vs={prevShort} label="Dimensions out of tolerance" value={pctStr(cur.dimFailPct)} current={cur.dimFailPct} previous={prevT.dimFailPct} goodWhen="down" tone={toneLowIsGood(cur.dimFailPct, t.dimFailGreen, t.dimFailAmber)} sub={`${num(cur.dimensionsFail)} fail · ${num(cur.dimensionsWarning)} warning of ${num(cur.dimensionsMeasured)} measured`} icon={<Ruler className="h-4 w-4" />} />
+            <KpiTile vs={prevShort} label="Pieces inspected" value={num(cur.pieces)} current={cur.pieces} previous={prevT.pieces} goodWhen="up" sub={`${num(cur.samples)} samples · ${num(cur.samplesPerSession, 1)} per session · ${pctStr(cur.inspectedDefectPct)} defective of inspected`} icon={<ClipboardList className="h-4 w-4" />} />
+            <KpiTile vs={prevShort} label="Sessions" value={num(cur.sessions)} current={cur.sessions} previous={prevT.sessions} goodWhen="none" sub={`${num(cur.sessionsClosed)} closed · ${num(cur.machinesInspected)} machines · ${num(cur.activeInspectors)} inspectors`} icon={<Users className="h-4 w-4" />} />
+            <KpiTile period="Now" label="On Hold now" value={num(data.holds.length)} current={null} previous={null} goodWhen="down" tone={data.holds.some((h) => h.ageDays >= t.holdAgeRedDays) ? 'red' : data.holds.some((h) => h.ageDays >= t.holdAgeAmberDays) ? 'amber' : data.holds.length ? 'neutral' : 'green'} sub={`${num(holdPieces)} pieces waiting for a disposition`} icon={<PauseCircle className="h-4 w-4" />} />
           </div>
 </div>
               ) },
@@ -2725,6 +2805,7 @@ export function DashboardPage() {
         </div>
       )}
     </div>
+    </PeriodBadgeContext.Provider>
     </BoardContext.Provider>
   )
 }

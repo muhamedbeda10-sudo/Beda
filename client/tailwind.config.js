@@ -1,4 +1,5 @@
 import colors from 'tailwindcss/colors'
+import plugin from 'tailwindcss/plugin'
 
 // ============================================================================
 // Design tokens. Spacing is Tailwind's 4 px scale. Type runs 12/13/14/16/20/24
@@ -121,5 +122,8 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // `touch:` — a finger on a tablet or phone: controls grow to a 44 px target there and stay compact under a mouse.
+    plugin(({ addVariant }) => addVariant('touch', '@media (pointer: coarse)')),
+  ],
 }

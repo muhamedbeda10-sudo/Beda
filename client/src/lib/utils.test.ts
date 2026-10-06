@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chunk, formatDate, formatDateTime, formatFullTimestamp, formatTime } from './utils'
+import { chunk, dayInTimeZone, formatDate, formatDateTime, formatFullTimestamp, formatTime } from './utils'
 
 describe('chunk', () => {
   it('slices a list into consecutive pieces of at most the given size', () => {
@@ -32,5 +32,13 @@ describe('one date format everywhere', () => {
     expect(formatDateTime(undefined)).toBe('—')
     expect(formatDate('not a date')).toBe('—')
     expect(formatFullTimestamp(null)).toBe('')
+  })
+})
+
+describe('the factory day', () => {
+  it('is the day in the factory zone, not the device or UTC', () => {
+    // 22:30 UTC on Oct 5 is already Oct 6 in Cairo (UTC+3 in summer time).
+    expect(dayInTimeZone(new Date('2026-10-05T22:30:00Z'), 'Africa/Cairo')).toBe('2026-10-06')
+    expect(dayInTimeZone(new Date('2026-10-05T22:30:00Z'), 'UTC')).toBe('2026-10-05')
   })
 })

@@ -21,6 +21,10 @@ function useChartFrame(): { figure: string; svg: string } {
   return fill ? { figure: 'relative flex h-full min-h-0 flex-col', svg: 'min-h-0 w-full flex-1' } : { figure: 'relative', svg: 'h-auto w-full' }
 }
 import { cn } from '@/lib/utils'
+import { spreadLabels } from './labels'
+
+/** A figure on a chart is outlined in the card's own colour so it reads over a line beneath it. */
+const LABEL_HALO = 'stroke-white dark:stroke-slate-900'
 
 /** A slice that lumps several together cannot be opened on its own. */
 const isOthers = (label: string) => /^Others\b/.test(label)
@@ -143,7 +147,15 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
             <rect x={xAt(i) - slot / 2} y={y0} width={slot} height={y1 - y0} fill="transparent" />
             <rect x={xAt(i) - bw / 2} y={yBar(p.bar)} width={bw} height={Math.max(0, y1 - yBar(p.bar))} rx={3} className={cn('fill-brand-300 transition-opacity dark:fill-brand-600', hover !== null && hover !== i && 'opacity-50')} />
             {labelled && p.bar > 0 && (
-              <text x={xAt(i)} y={Math.max(y0 + 9, yBar(p.bar) - 4)} textAnchor="middle" fontSize="10" fontWeight={700} className="fill-slate-600 dark:fill-slate-300">
+              // Inside the foot of a bar tall enough to hold it, clear of the rate lines' points; above a short one.
+              <text
+                x={xAt(i)}
+                y={y1 - yBar(p.bar) >= 22 ? y1 - 6 : Math.max(y0 + 9, yBar(p.bar) - 4)}
+                textAnchor="middle"
+                fontSize="10"
+                fontWeight={700}
+                className={y1 - yBar(p.bar) >= 22 && bw >= 22 ? 'fill-brand-900 dark:fill-white' : 'fill-slate-600 dark:fill-slate-300'}
+              >
                 {fmt(p.bar)}
               </text>
             )}
@@ -158,11 +170,6 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
           <polyline key={i} points={d} fill="none" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" className="stroke-rose-500" />
         ))}
         {points.map((p, i) => p.line !== null && <circle key={p.label} cx={xAt(i)} cy={yLine(p.line)} r={hover === i ? 5 : 3} className="fill-white stroke-rose-500 dark:fill-slate-900" strokeWidth={2} />)}
-        {labelled && points.map((p, i) => p.line !== null && (
-          <text key={`v-${p.label}`} x={xAt(i) + bw / 2 + 4} y={yLine(p.line) - 6} fontSize="10" fontWeight={700} className="fill-rose-600 dark:fill-rose-400">
-            {fmt(p.line)}{lineUnit}
-          </text>
-        ))}
         {lines.map((l) => {
           const segs: string[] = []
           let cur: string[] = []
@@ -177,14 +184,25 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
             <g key={l.label}>
               {segs.map((d, i) => <polyline key={i} points={d} fill="none" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" className={l.className} />)}
               {l.values.map((v, i) => v !== null && <circle key={i} cx={xAt(i)} cy={yLine(v)} r={hover === i ? 4 : 2.5} className={cn('fill-white dark:fill-slate-900', l.className)} strokeWidth={2} />)}
-              {labelled && lines.length <= 3 && l.values.map((v, i) => v !== null && (
-                <text key={`t-${i}`} x={xAt(i) + bw / 2 + 4} y={yLine(v) + 10} fontSize="9" fontWeight={600} className="fill-muted">
-                  {fmt(v)}{lineUnit}
-                </text>
-              ))}
             </g>
           )
         })}
+        {/* The figures last, over every line, so no line crosses one. */}
+        {labelled &&
+          points.map((p, i) => {
+            // Every rate figure at this point — the main line's and each extra line's — spread so none covers another.
+            const marks = [
+              ...(p.line !== null ? [{ key: 'main', v: p.line, cls: 'fill-rose-600 dark:fill-rose-400', size: 10, weight: 700 }] : []),
+              ...(lines.length <= 3 ? lines.flatMap((l) => (l.values[i] !== null && l.values[i] !== undefined ? [{ key: l.label, v: l.values[i]!, cls: 'fill-muted', size: 9, weight: 600 }] : [])) : []),
+            ]
+            const ys = spreadLabels(marks.map((m) => yLine(m.v) + 3), 13, y0 + 8, y1 - 2)
+            return marks.map((m, k) => (
+              <text key={`v-${p.label}-${m.key}`} x={xAt(i) + bw / 2 + 4} y={ys[k]} fontSize={m.size} fontWeight={m.weight} className={cn(m.cls, LABEL_HALO)} strokeWidth={3} style={{ paintOrder: 'stroke' }}>
+                {fmt(m.v)}
+                {lineUnit}
+              </text>
+            ))
+          })}
         {h && (
           <line x1={xAt(hover!)} x2={xAt(hover!)} y1={y0} y2={y1} className="stroke-slate-400" strokeDasharray="3 3" />
         )}
@@ -340,9 +358,9 @@ export function DonutChart({ slices, centerLabel, size = 160, onPick }: { slices
       </svg>
       <ul className="min-w-[10rem] flex-1 space-y-1.5 text-sm">
         {slices.map((s) => (
-          <li key={s.label} className={cn('flex items-center gap-2', onPick && s.value > 0 && 'rounded-md hover:bg-slate-50 dark:hover:bg-slate-800')} {...(s.value > 0 ? pickable(onPick && (() => onPick(s.label)), s.label) : {})}>
-            <i className={cn('inline-block h-2.5 w-2.5 rounded-full', s.className.replace(/stroke-/g, 'bg-'))} />
-            <span className="flex-1 text-slate-600 dark:text-slate-300">{s.label}</span>
+          <li key={s.label} className={cn('flex items-start gap-2 py-0.5', onPick && s.value > 0 && 'rounded-md hover:bg-slate-50 dark:hover:bg-slate-800')} {...(s.value > 0 ? pickable(onPick && (() => onPick(s.label)), s.label) : {})}>
+            <i className={cn('mt-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full', s.className.replace(/stroke-/g, 'bg-'))} />
+            <span className="min-w-0 flex-1 break-words leading-snug text-slate-600 dark:text-slate-300">{s.label}</span>
             <span className="font-semibold tabular-nums">{fmt(s.value)}</span>
             <span className="w-12 text-right text-xs tabular-nums text-muted">{total > 0 ? `${Math.round((s.value / total) * 100)}%` : '—'}</span>
           </li>
@@ -434,9 +452,9 @@ export function PieChart({ slices, centerLabel, unit = '', onPick }: { slices: P
       </svg>
       <ul className={cn('min-w-0 space-y-1 text-sm', fill ? 'max-h-full shrink-0 overflow-auto sm:w-[46%]' : 'min-w-[10rem] flex-1')}>
         {drawn.map((s) => (
-          <li key={s.label} className={cn('flex items-center gap-2', onPick && !isOthers(s.label) && 'rounded-md hover:bg-slate-50 dark:hover:bg-slate-800')} {...pickable(onPick && (() => onPick(s)), s.label)}>
-            <i className={cn('inline-block h-2.5 w-2.5 shrink-0 rounded-full', s.className.replace(/fill-/g, 'bg-'))} />
-            <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300" data-tip={s.sub ? `${s.label} · ${s.sub}` : s.label}>
+          <li key={s.label} className={cn('flex items-start gap-2 py-0.5', onPick && !isOthers(s.label) && 'rounded-md hover:bg-slate-50 dark:hover:bg-slate-800')} {...pickable(onPick && (() => onPick(s)), s.label)}>
+            <i className={cn('mt-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full', s.className.replace(/fill-/g, 'bg-'))} />
+            <span className="line-clamp-2 min-w-0 flex-1 break-words leading-snug text-slate-600 dark:text-slate-300" data-tip={s.sub ? `${s.label} · ${s.sub}` : s.label}>
               {s.label}
               {s.sub && <span className="ml-1 text-xs text-muted">{s.sub}</span>}
             </span>
@@ -820,13 +838,19 @@ export function LineChart({ labels, series, unit = '%', height = 220, connectGap
         {series.map((s) =>
           s.values.map((v, i) => v !== null && <circle key={`${s.label}-${i}`} cx={xAt(i)} cy={yAt(v)} r={hover === i ? 5 : 3} className={cn('fill-white dark:fill-slate-900', s.className)} strokeWidth={2} />),
         )}
-        {n <= 8 && series.length <= 6 && series.map((s) =>
-          s.values.map((v, i) => v !== null && (
-            <text key={`${s.label}-t-${i}`} x={xAt(i)} y={yAt(v) - 7} textAnchor="middle" fontSize="9" fontWeight={700} className="fill-slate-600 dark:fill-slate-300">
-              {fmt(v)}{unit}
-            </text>
-          )),
-        )}
+        {n <= 8 &&
+          series.length <= 6 &&
+          labels.map((_, i) => {
+            // The figures at one point, spread so none covers another; to the right of the point, clear of its marker.
+            const marks = series.flatMap((s) => (s.values[i] !== null && s.values[i] !== undefined ? [{ key: s.label, v: s.values[i]! }] : []))
+            const ys = spreadLabels(marks.map((m) => yAt(m.v) + 3), 12, y0 + 8, y1 - 2)
+            return marks.map((m, k) => (
+              <text key={`${m.key}-t-${i}`} x={xAt(i) + 8} y={ys[k]} fontSize="9" fontWeight={700} className={cn('fill-slate-600 dark:fill-slate-300', LABEL_HALO)} strokeWidth={3} style={{ paintOrder: 'stroke' }}>
+                {fmt(m.v)}
+                {unit}
+              </text>
+            ))
+          })}
         {hover !== null && <line x1={xAt(hover)} x2={xAt(hover)} y1={y0} y2={y1} className="stroke-slate-400" strokeDasharray="3 3" />}
       </svg>
       <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">

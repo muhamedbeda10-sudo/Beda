@@ -96,16 +96,20 @@ export function sessionToneClass(session: Signals, kind: 'block' | 'row', fallba
 }
 
 /** The badge that says why a session is coloured; nothing when it is not. */
-export function SessionToneBadge({ session, className, onHold }: { session: Signals; className?: string; onHold?: () => void }) {
+/**
+ * `compact` is the table's form: one short badge ("Hold ×2", "3"), the whole
+ * sentence in its tooltip, so the status column stays on one line.
+ */
+export function SessionToneBadge({ session, className, onHold, compact = false }: { session: Signals; className?: string; onHold?: () => void; compact?: boolean }) {
   const tone = sessionTone(session)
   if (!tone) return null
   const defects = session.defectCount ?? 0
   const holds = session.holdCount ?? 0
   if (tone === 'hold') {
+    const full = `Hold ${holds > 1 ? `×${holds}` : ''}${defects > holds ? ` · ${defects} defect${defects === 1 ? '' : 's'}` : ''}`
     const badge = (
-      <Badge tone="amber" className={cn(className, onHold && 'ring-1 ring-amber-400/60')} icon={<PauseCircle className="h-3 w-3" />}>
-        Hold {holds > 1 ? `×${holds}` : ''}
-        {defects > holds ? ` · ${defects} defect${defects === 1 ? '' : 's'}` : ''}
+      <Badge tone="amber" className={cn(className, onHold && 'ring-1 ring-amber-400/60')} icon={<PauseCircle className="h-3 w-3" />} tip={compact && !onHold ? `On ${full.trim()}` : undefined}>
+        {compact ? `Hold${holds > 1 ? ` ×${holds}` : ''}` : full}
       </Badge>
     )
     // Where a decision may be made from here, the badge is the way in.
@@ -130,10 +134,10 @@ export function SessionToneBadge({ session, className, onHold }: { session: Sign
     // "2 defects · 200 pcs": the records, and the pieces they cover — the
     // figure the dashboard adds up, so the two can be matched by eye.
     const pieces = session.defectPieces ?? 0
+    const full = `${defects} defect${defects === 1 ? '' : 's'}${pieces > 0 && pieces !== defects ? ` · ${formatQty(pieces)} pcs` : ''}`
     return (
-      <Badge tone="red" className={className} icon={<AlertOctagon className="h-3 w-3" />}>
-        {defects} defect{defects === 1 ? '' : 's'}
-        {pieces > 0 && pieces !== defects ? ` · ${formatQty(pieces)} pcs` : ''}
+      <Badge tone="red" className={className} icon={<AlertOctagon className="h-3 w-3" />} tip={compact ? full : undefined}>
+        {compact ? defects : full}
       </Badge>
     )
   }

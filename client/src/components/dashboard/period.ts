@@ -110,23 +110,30 @@ export function isMonthAligned(range: KpiRange): boolean {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
+/** A period in the application's one date format: "Sep 1 – Sep 8, 2026", "Dec 20, 2025 – Jan 5, 2026", "Sep 8, 2026". */
 export function describeRange(r: KpiRange): string {
   const f = fromDay(r.from)
   const t = fromDay(r.to)
-  const day = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]}`
-  if (r.from === r.to) return `${day(f)} ${f.getFullYear()}`
-  if (f.getFullYear() === t.getFullYear()) return `${day(f)} – ${day(t)} ${t.getFullYear()}`
-  return `${day(f)} ${f.getFullYear()} – ${day(t)} ${t.getFullYear()}`
+  const day = (d: Date) => `${MONTHS[d.getMonth()]} ${d.getDate()}`
+  if (r.from === r.to) return `${day(f)}, ${f.getFullYear()}`
+  if (f.getFullYear() === t.getFullYear()) return `${day(f)} – ${day(t)}, ${t.getFullYear()}`
+  return `${day(f)}, ${f.getFullYear()} – ${day(t)}, ${t.getFullYear()}`
 }
 
+/** A period without its year, for a badge on a chart: "Oct 1 – Oct 6", "Oct 6". */
+export function shortRange(r: KpiRange): string {
+  return r.from === r.to ? shortDay(r.from) : `${shortDay(r.from)} – ${shortDay(r.to)}`
+}
+
+/** "Sep 8". */
 export function shortDay(s: string): string {
   const d = fromDay(s)
-  return `${d.getDate()} ${MONTHS[d.getMonth()]}`
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}`
 }
 
 /** "Sep 2026" for a YYYY-MM. */
 export function monthLabel(month: string, withYear = true): string {
   const [y, m] = month.split('-').map(Number)
-  const name = new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' })
+  const name = MONTHS[m - 1]
   return withYear ? `${name} ${y}` : name
 }
