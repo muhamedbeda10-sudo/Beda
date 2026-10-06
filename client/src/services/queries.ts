@@ -49,6 +49,7 @@ import type {
   ChatUnreadResponse,
 } from '@qc/shared/api'
 import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiGrainChoice, KpiMaterials, MaterialKind, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
+import { loadAvatar } from '@/lib/avatarLoader'
 import type { AvatarResponse, DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
@@ -58,6 +59,7 @@ export const keys = {
   history: (filters: HistoryFilters) => ['sessions', 'history', filters] as const,
   historyOptions: ['sessions', 'history', 'options'] as const,
   myAvatar: ['auth', 'avatar'] as const,
+  userAvatar: (userId: string) => ['auth', 'avatars', userId] as const,
   session: (id: string) => ['sessions', id] as const,
   wizard: (id: string) => ['sessions', id, 'wizard'] as const,
   wizardPreview: (key: string) => ['sessions', 'preview', key] as const,
@@ -122,6 +124,11 @@ export function useOpenBoard() {
 
 /** §6 — a first page of the sessions the filters match. The filters go to the
  *  API, not to the page in hand, so nothing matching is left behind. */
+/** A colleague's small photo for the chat's circles, or null (their initials show). Fetched with the other circles on screen. */
+export function useUserAvatar(userId: string) {
+  return useQuery({ queryKey: keys.userAvatar(userId), queryFn: () => loadAvatar(userId), enabled: userId !== '', staleTime: 10 * 60_000 })
+}
+
 /** The signed-in person's own profile photo, for the circle at the top right. */
 export function useMyAvatar(enabled: boolean) {
   return useQuery({ queryKey: keys.myAvatar, queryFn: () => api<AvatarResponse>('/auth/me/avatar'), enabled, staleTime: Infinity })

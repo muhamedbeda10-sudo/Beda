@@ -775,6 +775,21 @@ export interface AvatarResponse {
 
 /** The most characters a profile photo's data URL may hold (a 192 px square JPEG is far under it). */
 export const AVATAR_MAX_CHARS = 64 * 1024
+/** The most characters the small copy may hold (a 64 px square JPEG is far under it). */
+export const AVATAR_THUMB_MAX_CHARS = 12 * 1024
+/** The most people one avatars request may name. */
+export const AVATARS_MAX_IDS = 200
+
+/** Setting one's photo: the photo, and its small copy for the chat's circles. */
+export interface SetAvatarRequest {
+  dataUrl: string
+  thumbDataUrl?: string
+}
+
+/** The small photos of the people asked for, by user id; someone without a photo is left out (their initials show). */
+export interface AvatarsResponse {
+  avatars: Record<string, string>
+}
 
 export interface CreatePDIRequest {
   orderIds: string[]

@@ -14,6 +14,7 @@ import { deleteChatMessage, editChatMessage, loadOlderMessages, markConversation
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn, formatDate } from '@/lib/utils'
+import { UserAvatar } from '@/components/ui/UserAvatar'
 import { Avatar } from './ConversationList'
 import { Composer } from './Composer'
 import { ConversationInfoModal } from './ConversationInfoModal'
@@ -179,7 +180,7 @@ export function ChatThread({
           </button>
         )}
         <button type="button" onClick={() => setInfo('members')} className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-1 py-1 text-left hover:bg-slate-50 dark:hover:bg-slate-800">
-          <Avatar conversation={c} size="sm" />
+          <Avatar conversation={c} myId={myId} size="sm" />
           <span className="min-w-0">
             <span className="block truncate text-sm font-bold">{c.title}</span>
             <span className={cn('block truncate text-xs text-muted', c.kind === 'direct' && 'capitalize')}>{subtitle}</span>
@@ -227,6 +228,8 @@ export function ChatThread({
                 <MessageBubble
                   message={m}
                   mine={m.senderId === myId}
+                  // In a group or the channel, the sender's circle heads each run of their messages; the rest keep its place.
+                  lead={c.kind !== 'direct' && m.senderId !== myId ? (grouped ? <span className="w-7 shrink-0" aria-hidden /> : <UserAvatar userId={m.senderId} name={m.senderName} size={28} className="mt-0.5" />) : undefined}
                   showSender={c.kind !== 'direct' && !grouped}
                   canModerate={canModerate}
                   highlighted={highlight === m.id}

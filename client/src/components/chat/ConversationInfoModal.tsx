@@ -7,7 +7,7 @@ import { useChatUsers } from '@/services/queries'
 import { deleteGroup, updateGroup } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
-import { initialsOf } from './ConversationList'
+import { UserAvatar } from '@/components/ui/UserAvatar'
 
 /** Who is in the conversation; an administrator renames a group, changes its members, or deletes it. */
 export function ConversationInfoModal({
@@ -116,7 +116,7 @@ export function ConversationInfoModal({
       <ul className="mt-1 max-h-72 space-y-0.5 overflow-y-auto">
         {c.members.map((m) => (
           <li key={m.id} className="flex items-center gap-3 rounded-xl px-2 py-1.5">
-            <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-xs font-bold text-white">{initialsOf(m.name)}</span>
+            <UserAvatar userId={m.id} name={m.name} size={36} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-semibold">
                 {m.name} {m.id === profile?.id && <span className="text-xs font-normal text-muted">(you)</span>}

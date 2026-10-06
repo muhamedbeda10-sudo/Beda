@@ -1,5 +1,5 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
-import type { AvatarResponse } from '@qc/shared/api'
+import type { AvatarResponse, AvatarsResponse } from '@qc/shared/api'
 import { TestApp, tinyJpeg, type Session } from './harness'
 
 const app = new TestApp()
@@ -45,5 +45,20 @@ describe('the profile photo', () => {
     }
     expect((await app.api('GET', '/api/auth/me/avatar')).status).toBe(401)
     expect((await app.api('PUT', '/api/auth/me/avatar', { body: { dataUrl: jpegUrl(3) } })).status).toBe(401)
+  })
+
+  it('gives the chat the small copies of colleagues who have a photo, and nothing for the rest', async () => {
+    await app.api('PUT', '/api/auth/me/avatar', { token: admin.token, body: { dataUrl: jpegUrl(4), thumbDataUrl: jpegUrl(5) } })
+    const res = await app.api<AvatarsResponse>('GET', `/api/auth/avatars?ids=${admin.user.id},${viewer.user.id}`, { token: viewer.token })
+    expect(res.status).toBe(200)
+    expect(res.body.avatars).toEqual({ [admin.user.id]: jpegUrl(5) })
+    // A photo set without a small copy is sent whole.
+    await app.api('PUT', '/api/auth/me/avatar', { token: viewer.token, body: { dataUrl: jpegUrl(6) } })
+    const both = await app.api<AvatarsResponse>('GET', `/api/auth/avatars?ids=${admin.user.id},${viewer.user.id}`, { token: admin.token })
+    expect(both.body.avatars[viewer.user.id]).toBe(jpegUrl(6))
+    expect((await app.api('GET', '/api/auth/avatars?ids=nope', { token: admin.token })).status).toBe(400)
+    expect((await app.api('GET', `/api/auth/avatars?ids=${admin.user.id}`)).status).toBe(401)
+    const fake = `data:image/jpeg;base64,${Buffer.from('not a picture at all').toString('base64')}`
+    expect((await app.api('PUT', '/api/auth/me/avatar', { token: admin.token, body: { dataUrl: jpegUrl(1), thumbDataUrl: fake } })).status).toBe(400)
   })
 })
