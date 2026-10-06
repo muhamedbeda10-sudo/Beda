@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-06.4',
+    date: '2026-10-06',
+    title: 'Tables: headers in full, the order kept in view, a clear footer',
+    items: [
+      { text: 'History and Access: a column title runs to two lines instead of being cut, and the item takes the width the other columns leave, so there are no gaps between columns.' },
+      { text: 'The first column stays in view while a wide table scrolls sideways.' },
+      { text: 'Under each list: "1–100 of 1,224 lines", Show the next 100, and Rows per page (50, 100 or 200), kept on this device.' },
+      { text: 'Zeros are muted so the other figures stand out; the open session\'s row stays marked; a list that is loading shows grey rows, and one that fails says so with Try again. The row tooltip on Access is gone.' },
+    ],
+  },
+  {
     id: '2026-10-06.3',
     date: '2026-10-06',
     title: 'History and Access: one header row, one filter row',

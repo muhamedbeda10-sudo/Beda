@@ -26,6 +26,8 @@ export interface ColumnDef {
   hideable?: boolean
   /** Off until the person ticks it: there for the full picture, not for every day. */
   defaultHidden?: boolean
+  /** The flexible text column (the item): it takes the width the others leave, so the table has no gaps between columns. */
+  flex?: boolean
 }
 
 interface Stored {
@@ -232,16 +234,17 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
     return { tableLayout: 'fixed', width: '100%', minWidth: total }
   }, [widths, fitting])
 
+  // The flexible column has no set width unless the person dragged it: a fixed table gives it the room the others leave.
   const colgroup = useMemo(
     () =>
       widths ? (
         <colgroup>
           {visible.map((c) => (
-            <col key={c.key} style={{ width: widths[c.key] }} />
+            <col key={c.key} style={c.flex && stored.widths[c.key] === undefined ? undefined : { width: widths[c.key] }} />
           ))}
         </colgroup>
       ) : null,
-    [widths, visible],
+    [widths, visible, stored.widths],
   )
 
   const handle = useCallback(
@@ -287,7 +290,8 @@ export function FitColumnsButton({ grid, className }: { grid: ResizableColumns; 
  * scrollbars are on screen however many columns are shown, rather than
  * under the end of the page.
  */
-export function GridFrame({ children, className }: { children: ReactNode; className?: string }) {
+/** `reserve` keeps room under the frame for what follows it on screen (the list's footer). */
+export function GridFrame({ children, className, reserve = 0 }: { children: ReactNode; className?: string; reserve?: number }) {
   const ref = useRef<HTMLDivElement>(null)
   const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined)
   useLayoutEffect(() => {
@@ -296,7 +300,7 @@ export function GridFrame({ children, className }: { children: ReactNode; classN
     const measure = () => {
       // Where the frame starts when the page is at its top, whatever the page is scrolled to now.
       const top = el.getBoundingClientRect().top + window.scrollY
-      setMaxHeight(Math.max(256, Math.round(window.innerHeight - top - 24)))
+      setMaxHeight(Math.max(256, Math.round(window.innerHeight - top - 24 - reserve)))
     }
     measure()
     window.addEventListener('resize', measure)
@@ -306,7 +310,7 @@ export function GridFrame({ children, className }: { children: ReactNode; classN
       window.removeEventListener('resize', measure)
       ro?.disconnect()
     }
-  }, [])
+  }, [reserve])
   return (
     <div ref={ref} className={cn('grid-scroll', className)} style={{ maxHeight }}>
       {children}
@@ -403,3 +407,104 @@ export function ColumnPicker({ grid, className }: { grid: ResizableColumns; clas
     </div>
   )
 }
+
+/**
+ * The header row of a resizable table. A label runs to two lines rather than
+ * being cut; its full text is the tooltip. Numbers are right-aligned under a
+ * right-aligned label.
+ */
+export function GridHead({ grid }: { grid: ResizableColumns }) {
+  return (
+    <thead>
+      <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-muted dark:border-slate-800">
+        {grid.visible.map((c) => (
+          // The cell stays overflow-visible so the grab zone can straddle its edge.
+          <th
+            key={c.key}
+            data-col={c.key}
+            className={cn('px-3 py-2 align-bottom', c.align === 'right' && 'text-right', grid.dragging === c.key && '!bg-brand-50 dark:!bg-brand-950')}
+            data-tip={c.label || undefined}
+          >
+            <span className="line-clamp-2 whitespace-normal break-words leading-tight">{c.label}</span>
+            {c.hideable !== false && grid.handle(c.key)}
+          </th>
+        ))}
+      </tr>
+    </thead>
+  )
+}
+
+/** Rows of grey bars where a list is still loading, one cell per visible column. */
+export function SkeletonRows({ grid, rows = 8 }: { grid: ResizableColumns; rows?: number }) {
+  return (
+    <tbody aria-hidden>
+      {Array.from({ length: rows }, (_, i) => (
+        <tr key={i} className="data-row border-b border-slate-100 dark:border-slate-800">
+          {grid.visible.map((c) => (
+            <td key={c.key} className="px-3">
+              <span className={cn('skeleton block h-3', c.align === 'right' ? 'ml-auto w-10' : c.flex ? 'w-3/4' : 'w-2/3')} />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </tbody>
+  )
+}
+
+/**
+ * Under a list: which rows are on screen of how many ("1–100 of 1,351"), the
+ * next page, and how many rows a page brings.
+ */
+export function TableFooter({
+  shown,
+  total,
+  noun,
+  hasMore,
+  loadingMore,
+  onMore,
+  pageSize,
+  onPageSize,
+}: {
+  shown: number
+  total: number | null
+  noun: string
+  hasMore: boolean
+  loadingMore: boolean
+  onMore: () => void
+  pageSize: number
+  onPageSize: (n: number) => void
+}) {
+  const of = total ?? shown
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2 text-13 text-muted">
+      <span>
+        {shown === 0 ? (
+          <>No {noun}</>
+        ) : (
+          <>
+            <span className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">1–{shown.toLocaleString()}</span> of{' '}
+            <span className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{of.toLocaleString()}</span> {noun}
+          </>
+        )}
+      </span>
+      {hasMore && (
+        <button type="button" onClick={onMore} disabled={loadingMore} className="btn-secondary h-8 min-h-0 px-3 py-0 text-13">
+          {loadingMore ? 'Loading…' : `Show the next ${Math.min(pageSize, Math.max(0, of - shown) || pageSize).toLocaleString()}`}
+        </button>
+      )}
+      <label className="ml-auto inline-flex items-center gap-2">
+        Rows per page
+        <select value={pageSize} onChange={(e) => onPageSize(Number(e.target.value))} className="input h-8 !w-auto py-0 pl-2 pr-7 text-13" aria-label="Rows per page">
+          {PAGE_SIZES.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  )
+}
+
+/** The page sizes a list offers; the API returns at most 500 a page. */
+export const PAGE_SIZES = [50, 100, 200] as const

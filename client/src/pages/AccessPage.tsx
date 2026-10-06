@@ -12,7 +12,7 @@ import type { OrderListFilters, OrderListRow } from '@qc/shared/api'
 import { Badge, Button, Card, EmptyState, Field, Input, Select } from '@/components/ui'
 import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
 import { FilterBar, FilterSelect, HeaderStat, PageHeader, type FilterChip } from '@/components/ui/PageShell'
-import { ColumnPicker, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
+import { ColumnPicker, GridFrame, GridHead, SkeletonRows, TableFooter, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { loadMoreOrders, useDebounced, useMaster, useOrderList, useOrderListOptions } from '@/services/queries'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useApp } from '@/store/AppContext'
@@ -22,7 +22,7 @@ import { sessionDetailPath } from '@/lib/links'
 const ACCESS_COLUMNS: ColumnDef[] = [
   { key: 'orderNumber', label: 'Order', width: 150, min: 90 },
   { key: 'lineKey', label: 'Line key', width: 110, min: 70, defaultHidden: true },
-  { key: 'item', label: 'Item', width: 240, min: 100 },
+  { key: 'item', label: 'Item', width: 220, min: 100, flex: true },
   { key: 'itemCode', label: 'Item code', width: 130, min: 80 },
   { key: 'machine', label: 'Machine', width: 160, min: 80 },
   { key: 'factory', label: 'Factory', width: 110, min: 80, defaultHidden: true },
@@ -90,19 +90,20 @@ function Opener({ onOpen, title, children }: { onOpen: () => void; title: string
 function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: string) => string, opens: Opens): ReactNode {
   const clip = fixed ? 'truncate' : ''
   const text = (value: string, extra = '') => (
-    <td key={key} className={cn('px-4 py-3', extra, clip)} data-tip={value || undefined}>
+    <td key={key} className={cn('px-3 py-3', extra, clip)} data-tip={value || undefined}>
       {value || '—'}
     </td>
   )
+  // A zero is there to be read past: muted, so the figures that are not zero stand out.
   const number = (value: number | null | undefined, extra = '') => (
-    <td key={key} className={cn('px-4 py-3 text-right tabular-nums', extra)}>
+    <td key={key} className={cn('px-3 py-3 text-right tabular-nums', extra, value === 0 && 'text-muted')}>
       {num(value)}
     </td>
   )
   switch (key) {
     case 'orderNumber':
       return (
-        <td key={key} className={cn('px-4 py-3 font-bold', clip)} data-tip={o.orderNumber}>
+        <td key={key} className={cn('px-3 py-3 font-bold', clip)} data-tip={o.orderNumber}>
           <Opener title="Every session of this order" onOpen={() => opens.order(o)}>{o.orderNumber}</Opener>
         </td>
       )
@@ -110,13 +111,13 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
       return text(o.lineKey, 'font-mono text-xs')
     case 'item':
       return (
-        <td key={key} className={cn('px-4 py-3', fixed ? 'truncate' : 'max-w-[240px] truncate')} data-tip={o.item}>
+        <td key={key} className={cn('px-3 py-3', fixed ? 'truncate' : 'max-w-[240px] truncate')} data-tip={o.item}>
           {o.item ? <Opener title="Every session of this item" onOpen={() => opens.item(o)}>{o.item}</Opener> : '—'}
         </td>
       )
     case 'itemCode':
       return o.itemCode ? (
-        <td key={key} className={cn('px-4 py-3 font-mono text-xs', clip)} data-tip={o.itemCode}>
+        <td key={key} className={cn('px-3 py-3 font-mono text-xs', clip)} data-tip={o.itemCode}>
           <Opener title="Every session of this item" onOpen={() => opens.item(o)}>{o.itemCode}</Opener>
         </td>
       ) : (
@@ -124,7 +125,7 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
       )
     case 'machine':
       return o.workCenterCode ? (
-        <td key={key} className={cn('px-4 py-3', clip)} data-tip={machineName(o.workCenterCode)}>
+        <td key={key} className={cn('px-3 py-3', clip)} data-tip={machineName(o.workCenterCode)}>
           <Opener title="The latest sessions on this machine" onOpen={() => opens.machine(o)}>{machineName(o.workCenterCode)}</Opener>
         </td>
       ) : (
@@ -134,7 +135,7 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
       return text(o.factory)
     case 'erpStatus':
       return (
-        <td key={key} className="px-4 py-3">
+        <td key={key} className="px-3 py-3">
           {o.erpStatus ? <Badge tone={statusTone(o.erpStatus)}>{o.erpStatus}</Badge> : '—'}
         </td>
       )
@@ -164,7 +165,7 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
       return text(o.date ? formatDate(o.date) : '', 'tabular-nums')
     case 'sessions':
       return o.sessions > 0 ? (
-        <td key={key} className="px-4 py-3 text-right font-semibold tabular-nums">
+        <td key={key} className="px-3 py-3 text-right font-semibold tabular-nums">
           <Opener title="This line's sessions" onOpen={() => opens.line(o)}>{num(o.sessions)}</Opener>
         </td>
       ) : (
@@ -174,7 +175,7 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
       return number(o.samples, o.samples > 0 ? '' : 'text-muted')
     case 'defectPieces':
       return o.defectPieces > 0 ? (
-        <td key={key} className="px-4 py-3 text-right font-bold tabular-nums text-rose-600 dark:text-rose-400">
+        <td key={key} className="px-3 py-3 text-right font-bold tabular-nums text-rose-600 dark:text-rose-400">
           <Opener title="This line's sessions" onOpen={() => opens.line(o)}>{num(o.defectPieces)}</Opener>
         </td>
       ) : (
@@ -184,8 +185,8 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
       return text(o.lastInspectedAt ? formatDateTime(o.lastInspectedAt) : '', 'tabular-nums')
     case 'open':
       return (
-        <td key={key} className="px-4 py-3 text-right">
-          {o.sessions > 0 && <ChevronRight className="ml-auto h-4 w-4 text-muted" />}
+        <td key={key} className="px-3 py-3 text-right">
+          {o.sessions > 0 && <ChevronRight className="ml-auto h-4 w-4 text-muted opacity-0 transition-opacity group-hover:opacity-100" />}
         </td>
       )
     default:
@@ -230,7 +231,9 @@ export function AccessPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [debounced, machine, factory, erpStatus, settledItem, remaining, inspected],
   )
-  const { data, isLoading, isError } = useOrderList(filters)
+  /** Rows a page brings; kept on this device. */
+  const [pageSize, setPageSize] = usePersistedState<number>('qc-access:page-size', 100)
+  const { data, isLoading, isError, refetch } = useOrderList(filters, pageSize)
   const { data: options } = useOrderListOptions()
   const { data: machines = [] } = useMaster('machines')
   const machineName = (code: string) => machines.find((m) => m.code === code)?.displayName ?? (code ? `Machine ${code}` : '')
@@ -254,7 +257,7 @@ export function AccessPage() {
   const showMore = async () => {
     setLoadingMore(true)
     try {
-      const page = await loadMoreOrders(filters, rows.length)
+      const page = await loadMoreOrders(filters, rows.length, pageSize)
       setMore((m) => [...m, ...page.orders])
       setMoreHasMore(page.hasMore)
     } catch {
@@ -395,11 +398,21 @@ export function AccessPage() {
         canReset={filtersSet}
       />
 
-      {isError ? (
+      {isError && !data ? (
         <Card className="p-6">
-          <EmptyState icon={<Table2 className="h-10 w-10" />} title="The sheet could not be loaded" hint="Check the connection and try again." />
+          <EmptyState icon={<Table2 className="h-10 w-10" />} title="The sheet could not be loaded" hint="Check the connection and try again." action={<Button onClick={() => void refetch()}>Try again</Button>} />
         </Card>
-      ) : !isLoading && rows.length === 0 ? (
+      ) : isLoading && rows.length === 0 ? (
+        <Card className="overflow-hidden">
+          <GridFrame>
+            <table className="sticky-first w-full text-sm" style={grid.tableStyle}>
+              {grid.colgroup}
+              <GridHead grid={grid} />
+              <SkeletonRows grid={grid} />
+            </table>
+          </GridFrame>
+        </Card>
+      ) : rows.length === 0 ? (
         <Card className="p-6">
           <EmptyState
             icon={<Table2 className="h-10 w-10" />}
@@ -439,27 +452,21 @@ export function AccessPage() {
 
           {/* md+ — the sheet as a table; the columns are the reader's to choose and, on a desktop, to size. */}
           <Card className="hidden overflow-hidden md:block">
-            <GridFrame>
-              <table ref={grid.tableRef} className={cn('w-full text-sm', !grid.enabled && 'min-w-[900px]')} style={grid.tableStyle}>
+            <GridFrame reserve={44}>
+              <table ref={grid.tableRef} className={cn('sticky-first w-full text-sm', !grid.enabled && 'min-w-[900px]')} style={grid.tableStyle}>
                 {grid.colgroup}
-                <thead>
-                  <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-muted dark:border-slate-800">
-                    {grid.visible.map((c) => (
-                      // The cell stays overflow-visible so the grab zone can straddle its edge; only the label is clipped.
-                      <th key={c.key} data-col={c.key} className={cn('px-4 py-3', c.align === 'right' && 'text-right', grid.dragging === c.key && '!bg-brand-50 dark:!bg-brand-950')} data-tip={grid.enabled && c.label ? c.label : undefined}>
-                        <span className={cn(grid.enabled && 'block truncate')}>{c.label}</span>
-                        {c.hideable !== false && grid.handle(c.key)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
+                <GridHead grid={grid} />
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {rows.map((o) => (
                     <tr
                       key={o.id}
                       onClick={() => open(o)}
-                      className={cn('data-row transition-colors', o.sessions > 0 ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50' : '', o.erpStatus.trim().toLowerCase() === 'cancel' && 'text-muted')}
-                      data-tip={o.sessions > 0 ? "Every session of this line's order" : undefined}
+                      // A line that was inspected opens its order's sessions; a cancelled line reads muted, its figures as they are.
+                      className={cn(
+                        'data-row group bg-white transition-colors dark:bg-slate-900',
+                        o.sessions > 0 && 'cursor-pointer hover:bg-slate-50 dark:hover:bg-[#17202f]',
+                        ['cancel', 'cancelled'].includes(o.erpStatus.trim().toLowerCase()) && 'text-muted',
+                      )}
                     >
                       {grid.visible.map((c) => cell(c.key, o, grid.enabled, machineName, opens))}
                     </tr>
@@ -469,13 +476,16 @@ export function AccessPage() {
             </GridFrame>
           </Card>
 
-          {hasMore && (
-            <div className="flex justify-center pt-1">
-              <Button className="min-h-[48px]" onClick={() => void showMore()} disabled={loadingMore}>
-                {loadingMore ? 'Loading…' : 'Show more lines'}
-              </Button>
-            </div>
-          )}
+          <TableFooter
+            shown={rows.length}
+            total={data?.total ?? null}
+            noun={data?.total === 1 ? 'line' : 'lines'}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
+            onMore={() => void showMore()}
+            pageSize={pageSize}
+            onPageSize={setPageSize}
+          />
         </>
       )}
 

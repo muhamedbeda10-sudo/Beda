@@ -123,7 +123,7 @@ export function useOpenBoard() {
  *  API, not to the page in hand, so nothing matching is left behind. */
 export function useHistory(filters: HistoryFilters, limit = 100, enabled = true) {
   return useQuery({
-    queryKey: keys.history(filters),
+    queryKey: [...keys.history(filters), limit],
     queryFn: () => api<HistoryResponse>(`/sessions/history${qs({ limit, ...filters })}`),
     enabled,
     // The list stays put while a new search settles, instead of blinking empty.
@@ -666,7 +666,7 @@ export function useReleaseState(enabled: boolean) {
 /** §19 — Access: the imported lines, filtered in SQL, first page. */
 export function useOrderList(filters: OrderListFilters, limit = 100) {
   return useQuery({
-    queryKey: keys.orderList(filters),
+    queryKey: [...keys.orderList(filters), limit],
     queryFn: () => api<OrderListResponse>(`/orders/list${qs({ limit, ...filters })}`),
     placeholderData: keepPreviousData,
   })

@@ -39,7 +39,7 @@ import { loadHistoryExport, loadOlderSessions, useSession, useDebounced, useHist
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { ExportMenu, FilterBar, FilterSelect, HeaderStat, PageHeader, Segmented, StatDot, type FilterChip } from '@/components/ui/PageShell'
-import { ColumnPicker, GridFrame, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
+import { ColumnPicker, GridFrame, GridHead, SkeletonRows, TableFooter, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, isStockOrder, processForMachine, shiftName } from '@/domain'
@@ -79,7 +79,6 @@ type RangeFilter = 'all' | '7' | '30' | '90' | 'custom'
 
 /** How many sessions one page holds. The filters are answered over the whole
  *  record, so this bounds what is fetched, never what can be found. */
-const SESSION_PAGE = 100
 
 const RANGE_LABEL: Record<RangeFilter, string> = {
   all: 'All time',
@@ -99,12 +98,12 @@ const todayISO = () => new Date().toISOString().slice(0, 10)
  */
 const HISTORY_COLUMNS: ColumnDef[] = [
   { key: 'seq', label: 'Seq', width: 72, min: 56 },
-  { key: 'order', label: 'Order', width: 120, min: 80 },
-  { key: 'item', label: 'Item', width: 240, min: 100 },
+  { key: 'order', label: 'Order', width: 150, min: 80 },
+  { key: 'item', label: 'Item', width: 220, min: 100, flex: true },
   { key: 'itemCode', label: 'Item code', width: 120, min: 80, defaultHidden: true },
   { key: 'customer', label: 'Customer', width: 160, min: 90, defaultHidden: true },
   { key: 'factory', label: 'Factory', width: 110, min: 80, defaultHidden: true },
-  { key: 'machine', label: 'Machine', width: 150, min: 80 },
+  { key: 'machine', label: 'Machine', width: 170, min: 80 },
   { key: 'inspector', label: 'Inspector', width: 150, min: 80 },
   { key: 'date', label: 'Started', width: 130, min: 90 },
   { key: 'closed', label: 'Closed', width: 150, min: 90, defaultHidden: true },
@@ -162,12 +161,13 @@ const pctText = (part: number, whole: number) => (whole > 0 ? `${Math.round((par
 function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext): ReactNode {
   const clip = ctx.fixed ? 'truncate' : ''
   const text = (value: string, extra = '') => (
-    <td key={key} className={cn('px-4 py-3', extra, clip)} data-tip={value || undefined}>
+    <td key={key} className={cn('px-3 py-3', extra, clip)} data-tip={value || undefined}>
       {value || '—'}
     </td>
   )
+  // A zero is there to be read past: muted, so the figures that are not zero stand out.
   const number = (value: number | null | undefined, extra = '') => (
-    <td key={key} className={cn('px-4 py-3 text-right tabular-nums', extra)}>
+    <td key={key} className={cn('px-3 py-3 text-right tabular-nums', extra, value === 0 && 'text-muted')}>
       {num(value)}
     </td>
   )
@@ -176,22 +176,22 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
   const pieces = s.piecesInspected ?? 0
   switch (key) {
     case 'seq':
-      return <td key={key} className="px-4 py-3 tabular-nums text-muted">#{s.seq}</td>
+      return <td key={key} className="px-3 py-3 tabular-nums text-muted">#{s.seq}</td>
     case 'order':
       return (
-        <td key={key} className={cn('px-4 py-3 font-bold', clip)} data-tip={s.order?.orderNumber ?? undefined}>
+        <td key={key} className={cn('px-3 py-3 font-bold', clip)} data-tip={s.order?.orderNumber ?? undefined}>
           {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : s.order?.orderNumber ? <GroupLink title="Every session of this order" onOpen={() => ctx.openOrder(s)}>{s.order.orderNumber}</GroupLink> : '—'}
         </td>
       )
     case 'item':
       return (
-        <td key={key} className={cn('px-4 py-3', ctx.fixed ? 'truncate' : 'max-w-[220px] truncate')} data-tip={s.order?.item ?? undefined}>
+        <td key={key} className={cn('px-3 py-3', ctx.fixed ? 'truncate' : 'max-w-[220px] truncate')} data-tip={s.order?.item ?? undefined}>
           {s.order?.item ? <GroupLink title="This item's sessions, within the filters" onOpen={() => ctx.openItem(s)}>{s.order.item}</GroupLink> : '—'}
         </td>
       )
     case 'itemCode':
       return s.order?.itemCode ? (
-        <td key={key} className={cn('px-4 py-3 font-mono text-xs', clip)} data-tip={s.order.itemCode}>
+        <td key={key} className={cn('px-3 py-3 font-mono text-xs', clip)} data-tip={s.order.itemCode}>
           <GroupLink title="This item's sessions, within the filters" onOpen={() => ctx.openItem(s)}>{s.order.itemCode}</GroupLink>
         </td>
       ) : (
@@ -203,7 +203,7 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
       return text(ctx.factoryOf(s.workCenterCode))
     case 'machine':
       return (
-        <td key={key} className={cn('px-4 py-3', clip)} data-tip={ctx.workCenterName(s.workCenterCode)}>
+        <td key={key} className={cn('px-3 py-3', clip)} data-tip={ctx.workCenterName(s.workCenterCode)}>
           <GroupLink title="This machine's sessions, within the filters" onOpen={() => ctx.openMachine(s)}>{ctx.workCenterName(s.workCenterCode)}</GroupLink>
         </td>
       )
@@ -211,7 +211,7 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
       return text(s.inspectorName)
     case 'date':
       return (
-        <td key={key} className={cn('px-4 py-3 tabular-nums', clip)} data-tip={formatDateTime(s.startedAt)}>
+        <td key={key} className={cn('px-3 py-3 tabular-nums', clip)} data-tip={formatDateTime(s.startedAt)}>
           <When iso={s.startedAt} />
         </td>
       )
@@ -221,7 +221,7 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
       return text(s.closedAt ? (s.closedByName ?? 'Unknown') : '')
     case 'status':
       return (
-        <td key={key} className="px-4 py-3">
+        <td key={key} className="px-3 py-3">
           <span className="inline-flex flex-wrap items-center gap-1.5">
             <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
             <StageBadge kind={s.universalKind} stages={s.stages} />
@@ -244,7 +244,7 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
       return (
         <td
           key={key}
-          className={cn('px-4 py-3 text-right tabular-nums', produced !== null && defectPieces > 0 && 'font-bold text-rose-600 dark:text-rose-400')}
+          className={cn('px-3 py-3 text-right tabular-nums', produced !== null && defectPieces > 0 && 'font-bold text-rose-600 dark:text-rose-400')}
           data-tip={produced === null ? 'Known once the session is closed with a final quantity' : `${defectPieces} defect pieces of ${produced} produced`}
         >
           {produced === null ? '—' : pctText(defectPieces, produced)}
@@ -253,7 +253,7 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
     }
     case 'inspectedRate':
       return (
-        <td key={key} className={cn('px-4 py-3 text-right tabular-nums', defectPieces > 0 && 'font-bold text-rose-600 dark:text-rose-400')} data-tip="Defect pieces over pieces inspected">
+        <td key={key} className={cn('px-3 py-3 text-right tabular-nums', defectPieces > 0 && 'font-bold text-rose-600 dark:text-rose-400')} data-tip="Defect pieces over pieces inspected">
           {pctText(defectPieces, pieces)}
         </td>
       )
@@ -261,10 +261,10 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
       return number(s.dimensionFailCount ?? 0, (s.dimensionFailCount ?? 0) > 0 ? 'font-bold text-rose-600 dark:text-rose-400' : '')
     case 'pt': {
       // Welding only; the requirement is 5% of the final quantity once the session is closed.
-      if (ctx.processOf(s.workCenterCode) !== 'welding') return <td key={key} className="px-4 py-3 text-right text-muted">—</td>
+      if (ctx.processOf(s.workCenterCode) !== 'welding') return <td key={key} className="px-3 py-3 text-right text-muted">—</td>
       const c = ptCoverage(s, s.status === 'Closed' ? s.finalQty : null)
       return (
-        <td key={key} className={cn('px-4 py-3 text-right tabular-nums', c.required !== null && (c.met ? 'font-semibold text-emerald-700 dark:text-emerald-400' : 'font-bold text-amber-700 dark:text-amber-400'))} data-tip={c.required === null ? 'Required is known once the session is closed' : c.short > 0 ? `Short by ${c.short}` : 'Met'}>
+        <td key={key} className={cn('px-3 py-3 text-right tabular-nums', c.required !== null && (c.met ? 'font-semibold text-emerald-700 dark:text-emerald-400' : 'font-bold text-amber-700 dark:text-amber-400'))} data-tip={c.required === null ? 'Required is known once the session is closed' : c.short > 0 ? `Short by ${c.short}` : 'Met'}>
           {c.tested} / {c.required ?? '—'}
         </td>
       )
@@ -283,8 +283,8 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
       return text(s.order?.expectedGrade ?? '')
     case 'open':
       return (
-        <td key={key} className="px-4 py-3 text-right">
-          <ChevronRight className="ml-auto h-4 w-4 text-muted" />
+        <td key={key} className="px-3 py-3 text-right">
+          <ChevronRight className="ml-auto h-4 w-4 text-muted opacity-0 transition-opacity group-hover:opacity-100" />
         </td>
       )
     default:
@@ -435,7 +435,9 @@ export function HistoryPage() {
     return f
   }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, settledItem, range, fromDay, toDay, dispositionFilter])
 
-  const { data: history, isLoading: loading, isFetching } = useHistory(filters, SESSION_PAGE, kind === 'sessions')
+  /** Rows a page brings; kept on this device. */
+  const [pageSize, setPageSize] = usePersistedState<number>('qc-history:page-size', 100)
+  const { data: history, isLoading: loading, isFetching, isError: loadFailed, refetch } = useHistory(filters, pageSize, kind === 'sessions')
   // A link to the sessions with a disposition lands on the sessions, whatever was last shown.
   useEffect(() => {
     if (dispositionFilter) setKind('sessions')
@@ -462,7 +464,7 @@ export function HistoryPage() {
     if (!last || loadingOlder) return
     setLoadingOlder(true)
     try {
-      const page = await loadOlderSessions(filters, last.startedAt, SESSION_PAGE)
+      const page = await loadOlderSessions(filters, last.startedAt, pageSize)
       setOlder((prev) => [...prev, ...page.sessions])
       setOlderHasMore(page.hasMore)
     } catch (e) {
@@ -775,8 +777,20 @@ export function HistoryPage() {
         canReset={filtersSet || !!dispositionFilter}
       />
 
-      {loading ? (
-        <Card className="p-10 text-center text-sm text-muted">Loading…</Card>
+      {loadFailed && !history ? (
+        <Card className="p-6">
+          <EmptyState icon={<HistoryIcon className="h-10 w-10" />} title="History could not be loaded" hint="Check the connection and try again." action={<Button onClick={() => void refetch()}>Try again</Button>} />
+        </Card>
+      ) : loading ? (
+        <Card className="overflow-hidden">
+          <GridFrame>
+            <table className="sticky-first w-full text-sm" style={grid.tableStyle}>
+              {grid.colgroup}
+              <GridHead grid={grid} />
+              <SkeletonRows grid={grid} />
+            </table>
+          </GridFrame>
+        </Card>
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={<HistoryIcon className="h-10 w-10" />}
@@ -822,26 +836,20 @@ export function HistoryPage() {
 
           {/* md+ — the same rows as a table; the columns are the person's to size and choose, from the tools at the top. */}
           <Card className="hidden overflow-hidden md:block">
-            <GridFrame>
-              <table ref={grid.tableRef} className={cn('w-full text-sm', !grid.enabled && 'min-w-[720px]')} style={grid.tableStyle}>
+            <GridFrame reserve={44}>
+              <table ref={grid.tableRef} className={cn('sticky-first w-full text-sm', !grid.enabled && 'min-w-[720px]')} style={grid.tableStyle}>
                 {grid.colgroup}
-                <thead>
-                  <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-muted dark:border-slate-800">
-                    {grid.visible.map((c) => (
-                      // The cell stays overflow-visible so the grab zone can straddle its edge; only the label is clipped.
-                      <th key={c.key} data-col={c.key} className={cn('px-4 py-3', c.align === 'right' && 'text-right', grid.dragging === c.key && '!bg-brand-50 dark:!bg-brand-950')} data-tip={grid.enabled && c.label ? c.label : undefined}>
-                        <span className={cn(grid.enabled && 'block truncate')}>{c.label}</span>
-                        {c.hideable !== false && grid.handle(c.key)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
+                <GridHead grid={grid} />
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {filtered.map((s) => (
                     <tr
                       key={s.id}
                       onClick={() => setOpenSessionId(s.id)}
-                      className={cn('data-row cursor-pointer transition-colors', sessionToneClass(s, 'row', 'hover:bg-slate-50 dark:hover:bg-slate-800/50'))}
+                      aria-selected={openSessionId === s.id}
+                      className={cn(
+                        'data-row group cursor-pointer transition-colors',
+                        openSessionId === s.id ? 'bg-info-50 dark:bg-[#16233f]' : sessionToneClass(s, 'row', 'bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-[#17202f]'),
+                      )}
                     >
                       {grid.visible.map((c) => historyCell(c.key, s, cellContext))}
                     </tr>
@@ -851,13 +859,16 @@ export function HistoryPage() {
             </GridFrame>
           </Card>
 
-          {hasMore && (
-            <div className="flex justify-center pt-1">
-              <Button className="min-h-[48px]" onClick={() => void showOlder()} disabled={loadingOlder}>
-                {loadingOlder ? 'Loading…' : 'Show older sessions'}
-              </Button>
-            </div>
-          )}
+          <TableFooter
+            shown={filtered.length}
+            total={totals.sessions}
+            noun={totals.sessions === 1 ? 'session' : 'sessions'}
+            hasMore={hasMore}
+            loadingMore={loadingOlder}
+            onMore={() => void showOlder()}
+            pageSize={pageSize}
+            onPageSize={setPageSize}
+          />
         </>
       )}
 
