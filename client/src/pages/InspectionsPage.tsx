@@ -36,10 +36,11 @@ import { closeSession, correctDefect, correctDimension, discardSession } from '@
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, isStockOrder, processForMachine, sessionTone, shiftName, type Process, type SessionTone } from '@/domain'
-import { cn, formatDate, formatDateTime } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { usePersistedState } from '@/lib/usePersistedState'
 import type { CloseSessionRequest, SampleSummary, SessionWithOrder } from '@qc/shared/api'
 import type { DefectResult, DimensionResult, Disposition, Machine } from '@qc/shared/types'
+import { When } from '@/components/ui/Tooltip'
 
 const COLLAPSE_AFTER = 3
 /** Sessions on a machine without a factory gather under this tab. */
@@ -281,7 +282,7 @@ export function InspectionsPage() {
     <Card className="overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[60rem] text-sm">
-          <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:bg-slate-800/60">
+          <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-muted dark:bg-slate-800/60">
             <tr>
               <th className="px-4 py-3">Machine</th>
               <th className="px-4 py-3">Order</th>
@@ -306,18 +307,18 @@ export function InspectionsPage() {
                         {g.code === favourite && <Star className="h-3.5 w-3.5 fill-current text-amber-500" />}
                         {g.label}
                       </span>
-                      {showFactory && g.factory !== NO_FACTORY && <span className="block text-xs text-slate-400">{g.factory}</span>}
+                      {showFactory && g.factory !== NO_FACTORY && <span className="block text-xs text-muted">{g.factory}</span>}
                     </td>
                     <td className="px-4 py-2.5 font-bold">
                       {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : (order?.orderNumber ?? '—')}
-                      <span className="ml-1.5 text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
+                      <span className="ml-1.5 text-xs font-bold tabular-nums text-muted">#{s.seq}</span>
                     </td>
                     <td className="max-w-[220px] truncate px-4 py-2.5">
                       <span className="block truncate">{order?.item ?? '—'}</span>
-                      <span className="block truncate font-mono text-xs text-slate-400">{order?.itemCode ?? ''}</span>
+                      <span className="block truncate font-mono text-xs text-muted">{order?.itemCode ?? ''}</span>
                     </td>
                     <td className="px-4 py-2.5">{s.inspectorName}</td>
-                    <td className="px-4 py-2.5 tabular-nums text-slate-500 dark:text-slate-400">{formatDateTime(s.startedAt)}</td>
+                    <td className="px-4 py-2.5 tabular-nums text-muted"><When iso={s.startedAt} time /></td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{count}</td>
                     <td className={cn('px-4 py-2.5 text-right tabular-nums', (s.defectCount ?? 0) > 0 && 'font-bold text-rose-600 dark:text-rose-400')}>{s.defectCount ?? 0}</td>
                     <td className="px-4 py-2.5">
@@ -383,24 +384,24 @@ export function InspectionsPage() {
                 </span>
                 <span className="min-w-0 flex-1">
                   {/* The full machine name, on two lines if it must; the counts sit under it so a narrow column never clips it. */}
-                  <span className="line-clamp-2 text-base font-extrabold leading-tight" title={g.label}>
+                  <span className="line-clamp-2 text-base font-extrabold leading-tight" data-tip={g.label}>
                     {g.label}
                   </span>
-                  <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400">
+                  <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
                     {showFactory && g.factory !== NO_FACTORY && <span>{g.factory}</span>}
                     <span className="tabular-nums">
                       {g.sessions.length} session{g.sessions.length === 1 ? '' : 's'} · {g.sampleCount} sample{g.sampleCount === 1 ? '' : 's'}
                     </span>
                   </span>
                 </span>
-                {isCollapsed ? <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" /> : <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" />}
+                {isCollapsed ? <ChevronDown className="h-4 w-4 shrink-0 text-muted" /> : <ChevronUp className="h-4 w-4 shrink-0 text-muted" />}
               </button>
               <button
                 type="button"
                 onClick={() => setFavourite(isFavourite ? null : g.code)}
                 aria-pressed={isFavourite}
                 aria-label={isFavourite ? `Stop pinning ${g.label}` : `Pin ${g.label} as my machine`}
-                title={isFavourite ? 'My machine — pinned first on this device' : 'Pin as my machine on this device'}
+                data-tip={isFavourite ? 'My machine — pinned first on this device' : 'Pin as my machine on this device'}
                 className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl transition-colors', isFavourite ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-500/10' : 'text-slate-300 hover:bg-slate-100 hover:text-amber-500 dark:text-slate-600 dark:hover:bg-slate-800')}
               >
                 <Star className={cn('h-5 w-5', isFavourite && 'fill-current')} />
@@ -417,11 +418,11 @@ export function InspectionsPage() {
                       <button type="button" onClick={() => setDetails(s)} className="min-w-0 flex-1 text-left" aria-label={`Order details for ${order?.orderNumber ?? 'this session'}`}>
                         <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                           {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{order?.orderNumber ?? '—'}</span>}
-                          <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
+                          <span className="text-xs font-bold tabular-nums text-muted">#{s.seq}</span>
                           <span className="truncate text-sm text-brand-600 dark:text-brand-400">{order?.item ?? '—'}</span>
                         </span>
-                        <span className="block truncate text-xs text-slate-400">
-                          {s.inspectorName} · {formatDate(s.startedAt)} · {count} sample{count === 1 ? '' : 's'}
+                        <span className="block truncate text-xs text-muted">
+                          {s.inspectorName} · <When iso={s.startedAt} /> · {count} sample{count === 1 ? '' : 's'}
                           {s.startQtyConfirmed ? ` · rejected before release ${s.startQtyConfirmed.qty}` : ''}
                           {s.producedQty !== undefined ? ` · produced ${s.producedQty} pairs` : ''}
                         </span>
@@ -468,7 +469,7 @@ export function InspectionsPage() {
                       ) : (
                         <span className="font-bold">{order?.orderNumber ?? '—'}</span>
                       )}
-                      <span className="text-xs font-bold tabular-nums text-slate-400">#{s.seq}</span>
+                      <span className="text-xs font-bold tabular-nums text-muted">#{s.seq}</span>
                       {s.status === 'Open' ? <Badge tone="green">OPEN</Badge> : <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>CLOSED · stays while on Hold</Badge>}
                       <SessionToneBadge session={s} onHold={mayDecide(s) ? () => setHoldFor(s) : undefined} />
                       <Badge tone="neutral">
@@ -493,9 +494,9 @@ export function InspectionsPage() {
                     <p className="mt-1 truncate text-sm font-medium text-brand-600 dark:text-brand-400">
                       {order?.item} · {order?.itemCode}
                     </p>
-                    <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-400">
+                    <p className="mt-0.5 flex items-center gap-1 text-xs text-muted">
                       <span>
-                        {formatDate(s.startedAt)} · {s.inspectorName}
+                        <When iso={s.startedAt} /> · {s.inspectorName}
                       </span>
                       <span className="ml-auto inline-flex items-center gap-0.5 font-semibold text-brand-600 opacity-70 transition-[opacity,transform] group-hover:translate-x-0.5 group-hover:opacity-100 dark:text-brand-400">
                         Order details <ChevronRight className="h-3.5 w-3.5" />
@@ -518,7 +519,7 @@ export function InspectionsPage() {
 
                     {sessionSamples.length > 0 && (
                       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
-                        <span className="flex items-center gap-1 text-xs font-bold uppercase text-slate-400">
+                        <span className="flex items-center gap-1 text-xs font-bold uppercase text-muted">
                           <Boxes className="h-3.5 w-3.5" /> Samples
                         </span>
                         {[...sessionSamples]
@@ -538,7 +539,7 @@ export function InspectionsPage() {
                                     : 'bg-brand-50 text-brand-700 ring-brand-200 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20 dark:hover:bg-brand-500/20',
                               )}
                               aria-label={`Open sample ${sm.index}${(sm.holdCount ?? 0) > 0 ? ', on Hold' : ''}`}
-                              title={(sm.holdCount ?? 0) > 0 ? 'A defect in this sample is on Hold' : undefined}
+                              data-tip={(sm.holdCount ?? 0) > 0 ? 'A defect in this sample is on Hold' : undefined}
                             >
                               {s.seq}-{sm.index}
                             </button>
@@ -580,14 +581,14 @@ export function InspectionsPage() {
           </div>
         )}
         <div className="flex items-center gap-2 lg:hidden">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
+          <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Open sessions</h2>
           <Badge tone="blue">{filtering ? `${shown} of ${openSessions.length}` : openSessions.length}</Badge>
         </div>
         {seesAll && openSessions.length > 0 && (
           // Search and the inspector filter: their own row on a phone, the right end of the toolbar on a wide screen.
           <div className="order-last grid w-full grid-cols-1 gap-2 sm:grid-cols-[1fr_auto] lg:order-none lg:ml-auto lg:flex lg:w-auto">
             <div className="relative lg:w-72">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               <Input
                 value={term}
                 onChange={(e) => setTerm(e.target.value)}
@@ -596,7 +597,7 @@ export function InspectionsPage() {
                 aria-label="Search open sessions"
               />
               {term && (
-                <button type="button" onClick={() => setTerm('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:text-slate-600">
+                <button type="button" onClick={() => setTerm('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-muted hover:text-slate-600">
                   <X className="h-4 w-4" />
                 </button>
               )}
@@ -625,10 +626,10 @@ export function InspectionsPage() {
               onClick={() => setDensity(v.key)}
               aria-pressed={density === v.key}
               aria-label={`${v.label} view`}
-              title={`${v.label} view`}
+              data-tip={`${v.label} view`}
               className={cn(
                 'inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold transition-colors',
-                density === v.key ? 'bg-white text-brand-700 shadow-card dark:bg-slate-900 dark:text-brand-300' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200',
+                density === v.key ? 'bg-white text-brand-700 shadow-card dark:bg-slate-900 dark:text-brand-300' : 'text-muted hover:text-slate-700 dark:hover:text-slate-200',
               )}
             >
               {v.icon} <span className="hidden sm:inline">{v.label}</span>
@@ -642,12 +643,12 @@ export function InspectionsPage() {
           phone each row scrolls sideways; on a wide screen the chips wrap. */}
       <div className="flex flex-col gap-3">
       <div className="hidden items-center gap-2 lg:flex">
-        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open sessions</h2>
+        <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Open sessions</h2>
         <Badge tone="blue">{filtering ? `${shown} of ${openSessions.length}` : openSessions.length}</Badge>
       </div>
       {factoryTabs.length > 0 && (
         <fieldset className="min-w-0 max-w-full rounded-2xl border border-slate-200 px-3 pb-2.5 pt-1 dark:border-slate-700">
-        <legend className="px-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Factories</legend>
+        <legend className="px-1.5 text-[11px] font-bold uppercase tracking-wide text-muted">Factories</legend>
         <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0" role="tablist" aria-label="Factory">
           {[{ key: 'all', label: 'All factories', count: base.length }, ...factoryTabs].map((t) => {
             const active = activeFactory === t.key
@@ -667,7 +668,7 @@ export function InspectionsPage() {
               >
                 <Factory className="h-4 w-4" />
                 {t.label}
-                <span className={cn('rounded-full px-2 py-0.5 text-xs tabular-nums', active ? 'bg-white/20' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')}>{t.count}</span>
+                <span className={cn('rounded-full px-2 py-0.5 text-xs tabular-nums', active ? 'bg-white/20' : 'bg-slate-100 text-muted dark:bg-slate-800')}>{t.count}</span>
               </button>
             )
           })}
@@ -678,7 +679,7 @@ export function InspectionsPage() {
       {/* Machine chips: only the machines with something open, coloured by the worst signal on them. */}
       {groupsInFactory.length > 1 && (
         <fieldset className="min-w-0 max-w-full rounded-2xl border border-slate-200 px-3 pb-2.5 pt-1 dark:border-slate-700">
-        <legend className="px-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Machines</legend>
+        <legend className="px-1.5 text-[11px] font-bold uppercase tracking-wide text-muted">Machines</legend>
         <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0" role="tablist" aria-label="Machine">
           <button role="tab" aria-selected={activeMachine === 'all'} onClick={() => setMachinePick('all')} className={chipTone(null, activeMachine === 'all')}>
             All machines
@@ -696,7 +697,7 @@ export function InspectionsPage() {
       </div>
 
       {isLoading ? (
-        <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
+        <Card className="p-10 text-center text-sm text-muted">Loading…</Card>
       ) : groups.length === 0 ? (
         <EmptyState
           icon={<ClipboardCheck className="h-10 w-10" />}
@@ -731,10 +732,10 @@ export function InspectionsPage() {
               key={sec.key}
               className={cn('min-w-0 max-w-full rounded-2xl border px-3 pb-3 pt-1 sm:px-4 sm:pb-4', sec.pinned ? 'border-amber-300 dark:border-amber-500/40' : 'border-slate-200 dark:border-slate-700')}
             >
-              <legend className="flex items-center gap-2 px-1.5 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              <legend className="flex items-center gap-2 px-1.5 text-xs font-bold uppercase tracking-wide text-muted">
                 {sec.pinned ? <Star className="h-3.5 w-3.5 fill-current text-amber-500" /> : <Factory className="h-3.5 w-3.5" />}
                 {sec.label}
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] tabular-nums text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] tabular-nums text-muted dark:bg-slate-800">
                   {sec.groups.length} machine{sec.groups.length === 1 ? '' : 's'} · {sec.groups.reduce((n, g) => n + g.sessions.length, 0)} session
                   {sec.groups.reduce((n, g) => n + g.sessions.length, 0) === 1 ? '' : 's'}
                 </span>
@@ -799,9 +800,9 @@ export function InspectionsPage() {
           viewing ? (
             <span className="flex flex-wrap items-center gap-2">
               {viewing.session.order?.orderNumber ?? '—'}
-              <span className="text-sm font-semibold text-slate-400">Sample {viewing.session.seq}-{viewing.sample.index}</span>
+              <span className="text-sm font-semibold text-muted">Sample {viewing.session.seq}-{viewing.sample.index}</span>
               <Badge tone="neutral">
-                {shiftName(viewing.sample.shift)} shift · {formatDateTime(viewing.sample.createdAt)}
+                {shiftName(viewing.sample.shift)} shift · <When iso={viewing.sample.createdAt} time />
               </Badge>
             </span>
           ) : (
@@ -837,7 +838,7 @@ export function InspectionsPage() {
             onEditDefect={setEditingDefect}
           />
         ) : (
-          <p className="py-10 text-center text-sm text-slate-400">Loading the sample…</p>
+          <p className="py-10 text-center text-sm text-muted">Loading the sample…</p>
         )}
       </Modal>
 
@@ -929,7 +930,7 @@ function CloseSessionDialog({
         {universal && stages && current ? (
           <>
             <UniversalChoice options={stages} draft={current} onChange={setDraft} kindLocked={stages.lineKind !== null} />
-            {read && 'problem' in read && <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{read.problem}</p>}
+            {read && 'problem' in read && <p className="text-xs font-semibold text-muted">{read.problem}</p>}
           </>
         ) : asksUniversal && stagesLoading ? (
           <div className="skeleton h-24" />
@@ -956,7 +957,7 @@ function CloseSessionDialog({
             <p className="mt-1">{ptCoverageText(session, valid ? parsed : null)}</p>
           </div>
         )}
-        <p className="text-sm text-slate-500 dark:text-slate-400">
+        <p className="text-sm text-muted">
           A closed session becomes read-only for inspectors. A supervisor can still correct it, and any correction is audited.
         </p>
       </div>
@@ -978,7 +979,7 @@ function QuickAction({ icon, title, subtitle, onClick }: { icon: ReactNodeLike; 
           {title}
           <span className="hidden lg:inline"> {subtitle}</span>
         </p>
-        <p className="text-sm text-slate-500 dark:text-slate-400 lg:hidden">{subtitle}</p>
+        <p className="text-sm text-muted lg:hidden">{subtitle}</p>
       </div>
     </button>
   )

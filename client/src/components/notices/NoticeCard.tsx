@@ -73,11 +73,11 @@ export function NoticeFileRow({ file, path, compact = false }: { file: NoticeFil
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold">{file.originalFilename}</span>
-          <span className="block text-xs text-slate-400">
+          <span className="block text-xs text-muted">
             {fileSize(file.byteSize)} · {pdf ? 'Open' : 'Download'}
           </span>
         </span>
-        {busy ? <Loader2 className="h-4 w-4 animate-spin text-slate-400" /> : <Download className="h-4 w-4 text-slate-400" />}
+        {busy ? <Loader2 className="h-4 w-4 animate-spin text-muted" /> : <Download className="h-4 w-4 text-muted" />}
       </button>
       {open && <PdfViewer path={src} title={file.originalFilename} subtitle={fileSize(file.byteSize)} onClose={() => setOpen(false)} />}
     </>
@@ -91,13 +91,13 @@ export function TargetChips({ notice, className }: { notice: Pick<Notice, 'targe
     <div className={cn('flex flex-wrap items-center gap-1.5', className)}>
       {/* The combining rule only matters once there is more than one thing to combine. */}
       {notice.targets.length > 1 && (
-        <span title={notice.matchMode === 'any' ? 'One of these is enough' : kinds > 1 ? 'All kinds at once; any value of a kind' : 'Any of these'}>
+        <span data-tip={notice.matchMode === 'any' ? 'One of these is enough' : kinds > 1 ? 'All kinds at once; any value of a kind' : 'Any of these'}>
           <Badge tone={notice.matchMode === 'any' ? 'amber' : 'blue'}>{notice.matchMode === 'any' ? 'ANY of' : kinds > 1 ? 'ALL of' : 'ANY of'}</Badge>
         </span>
       )}
       {notice.targets.map((t) => (
         <Badge key={`${t.kind}:${t.value}`} tone="neutral">
-          <span className="font-normal text-slate-400">{NOTICE_TARGET_LABEL[t.kind]}</span> {t.label || t.value}
+          <span className="font-normal text-muted">{NOTICE_TARGET_LABEL[t.kind]}</span> {t.label || t.value}
         </Badge>
       ))}
     </div>
@@ -119,7 +119,7 @@ export function NoticeCard({ notice, actions, showTargets = true, hideHeader = f
             {notice.requiresAck && <Badge tone="violet">Acknowledgement required</Badge>}
           </div>
           <h3 className="mt-1.5 text-base font-bold leading-snug">{notice.title}</h3>
-          <p className="mt-0.5 text-xs text-slate-400">
+          <p className="mt-0.5 text-xs text-muted">
             {notice.createdByName} · {validityText(notice)}
             {notice.withdrawnAt ? ' · withdrawn' : ''}
           </p>

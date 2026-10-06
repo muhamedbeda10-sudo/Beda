@@ -13,30 +13,45 @@ import type { DimensionStatus, Disposition, SessionStatus } from '@qc/shared/typ
 
 // ---- Badge -----------------------------------------------------------------
 export type BadgeTone = 'neutral' | 'green' | 'blue' | 'amber' | 'red' | 'violet'
+/** Each tone by meaning: neutral, success (green), info (blue), warning (amber), danger (red), and violet for stages. AA in both themes. */
 const badgeTones: Record<BadgeTone, string> = {
-  neutral: 'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700',
-  green: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20',
-  blue: 'bg-brand-50 text-brand-700 ring-brand-200 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/20',
-  amber: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20',
-  red: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-500/20',
-  violet: 'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/20',
+  neutral: 'bg-neutral-100 text-neutral-700 ring-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:ring-neutral-700',
+  green: 'bg-success-50 text-success-700 ring-success-200 dark:bg-success-500/10 dark:text-success-400 dark:ring-success-500/25',
+  blue: 'bg-info-50 text-info-700 ring-info-200 dark:bg-info-500/10 dark:text-info-300 dark:ring-info-500/25',
+  amber: 'bg-warning-50 text-warning-800 ring-warning-200 dark:bg-warning-500/10 dark:text-warning-400 dark:ring-warning-500/25',
+  red: 'bg-danger-50 text-danger-700 ring-danger-200 dark:bg-danger-500/10 dark:text-danger-400 dark:ring-danger-500/25',
+  violet: 'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/25',
 }
+
+/** The tone of each status a record can be in, the same on every page. */
+export const STATUS_TONE = {
+  Open: 'green',
+  Closed: 'neutral',
+  Active: 'blue',
+  Cancel: 'red',
+  Defects: 'red',
+} as const satisfies Record<string, BadgeTone>
 
 export function Badge({
   children,
   tone = 'neutral',
   className,
   icon,
+  tip,
 }: {
   children: ReactNode
   tone?: BadgeTone
   className?: string
   icon?: ReactNode
+  /** Said in the tooltip: what the badge stands for, in full. */
+  tip?: string
 }) {
+  // One line, 22 px high, whatever the column's width: a badge never wraps.
   return (
     <span
+      data-tip={tip}
       className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset',
+        'inline-flex h-[22px] shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 text-xs font-semibold leading-none ring-1 ring-inset',
         badgeTones[tone],
         className,
       )}
@@ -108,7 +123,7 @@ export function Field({ label, children, hint }: { label: string; children: Reac
     <label className="block">
       <span className="label">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-xs text-slate-400">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-muted">{hint}</span>}
     </label>
   )
 }
@@ -174,7 +189,7 @@ export function Modal({
             <h2 className="flex-1 text-lg font-bold">{title}</h2>
             <button
               onClick={onClose}
-              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
+              className="rounded-lg p-1.5 text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
               aria-label="Close"
             >
               <X className="h-5 w-5" />
@@ -240,11 +255,11 @@ export function Drawer({
           {icon && <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-brand-600 text-white shadow-glow">{icon}</span>}
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-xl font-extrabold leading-tight">{title}</h2>
-            {subtitle && <div className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{subtitle}</div>}
+            {subtitle && <div className="mt-0.5 text-sm text-muted">{subtitle}</div>}
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
+            className="rounded-lg p-1.5 text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
@@ -279,7 +294,7 @@ export function EmptyState({
       {icon && <div className="text-slate-300 dark:text-slate-600">{icon}</div>}
       <div>
         <p className="font-semibold text-slate-700 dark:text-slate-200">{title}</p>
-        {hint && <p className="mt-1 text-sm text-slate-400">{hint}</p>}
+        {hint && <p className="mt-1 text-sm text-muted">{hint}</p>}
       </div>
       {action}
     </div>
@@ -315,9 +330,9 @@ export function Stat({
     <Card className={compact ? 'p-3 sm:p-4' : 'p-4'}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400 sm:text-xs">{label}</p>
+          <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted sm:text-xs">{label}</p>
           <p className={cn('mt-1 font-bold tabular-nums', compact ? 'text-xl sm:text-2xl' : 'text-2xl')}>{value}</p>
-          {sub && <p className={cn('mt-0.5 text-xs text-slate-400', compact && 'hidden sm:block')}>{sub}</p>}
+          {sub && <p className={cn('mt-0.5 text-xs text-muted', compact && 'hidden sm:block')}>{sub}</p>}
         </div>
         {icon && <div className={cn('shrink-0 place-items-center rounded-xl', bg[tone], compact ? 'hidden h-10 w-10 sm:grid' : 'grid h-10 w-10')}>{icon}</div>}
       </div>

@@ -109,7 +109,7 @@ export function ConversationInfoModal({
           </Button>
         </div>
       )}
-      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted">
         {c.members.length} member{c.members.length === 1 ? '' : 's'}
         {c.kind === 'general' && ' · everyone'}
       </p>
@@ -119,9 +119,9 @@ export function ConversationInfoModal({
             <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-xs font-bold text-white">{initialsOf(m.name)}</span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-semibold">
-                {m.name} {m.id === profile?.id && <span className="text-xs font-normal text-slate-400">(you)</span>}
+                {m.name} {m.id === profile?.id && <span className="text-xs font-normal text-muted">(you)</span>}
               </span>
-              <span className="block text-xs capitalize text-slate-400">{m.role}</span>
+              <span className="block text-xs capitalize text-muted">{m.role}</span>
             </span>
             {m.id !== profile?.id && c.kind !== 'direct' && (
               <button type="button" onClick={() => onOpenDirect(m.id)} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
@@ -146,7 +146,7 @@ export function ConversationInfoModal({
             // Tick several, add them at once.
             <div className="space-y-2">
               <ul className="max-h-48 space-y-0.5 overflow-y-auto rounded-xl border border-slate-200 p-1 dark:border-slate-800">
-                {candidates.length === 0 && <li className="px-2 py-2 text-sm text-slate-400">Everyone is already in this group.</li>}
+                {candidates.length === 0 && <li className="px-2 py-2 text-sm text-muted">Everyone is already in this group.</li>}
                 {candidates.map((u) => {
                   const on = picked.has(u.id)
                   return (

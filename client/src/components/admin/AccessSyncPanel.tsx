@@ -12,7 +12,8 @@ import { Badge, Button, Card, Field, Input, Modal, type BadgeTone } from '@/comp
 import { useOrderSync } from '@/services/queries'
 import { createIntegrationKey, requestOrderSync, revokeIntegrationKey } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
-import { cn, downloadText, formatDateTime, timeAgo } from '@/lib/utils'
+import { cn, downloadText, timeAgo } from '@/lib/utils'
+import { When } from '@/components/ui/Tooltip'
 
 const STATUS: Record<OrderSyncStatus, { label: string; tone: BadgeTone; icon: typeof CheckCircle2 }> = {
   running: { label: 'Running', tone: 'blue', icon: Loader2 },
@@ -109,7 +110,7 @@ export function AccessSyncPanel() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <h2 className="text-lg font-extrabold tracking-tight">Orders from Access</h2>
-            <p className="max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+            <p className="max-w-3xl text-sm text-muted">
               An agent on a factory PC reads the Access orders table every {data?.intervalMinutes ?? 15} minutes and sends it here; the Access file is only read. A line that left the table is retired only when the whole table arrived and read cleanly, and never more than half the lines at once.
             </p>
           </div>
@@ -125,12 +126,12 @@ export function AccessSyncPanel() {
           <div className="space-y-1 text-sm">
             <p className="flex flex-wrap items-center gap-2">
               <StatusBadge status={last.status} /> <span className="font-semibold">{timeAgo(last.finishedAt ?? last.startedAt)}</span>
-              <span className="text-slate-500">{counts(last)}</span>
+              <span className="text-muted">{counts(last)}</span>
             </p>
-            {last.message && <p className="text-slate-500 dark:text-slate-400">{last.message}</p>}
+            {last.message && <p className="text-muted">{last.message}</p>}
           </div>
         ) : (
-          <p className="text-sm text-slate-500">No sync yet. Make a key below, then set up the agent on the PC that can open the Access file.</p>
+          <p className="text-sm text-muted">No sync yet. Make a key below, then set up the agent on the PC that can open the Access file.</p>
         )}
         {data?.pendingRequest && (
           <p className="rounded-xl bg-brand-50 px-3 py-2 text-sm text-brand-800 dark:bg-brand-500/10 dark:text-brand-100">
@@ -142,11 +143,11 @@ export function AccessSyncPanel() {
       <Card className="p-5">
         <h3 className="mb-2 font-bold">Recent runs</h3>
         {runs.length === 0 ? (
-          <p className="py-4 text-sm text-slate-400">No run yet.</p>
+          <p className="py-4 text-sm text-muted">No run yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+              <thead className="text-left text-[11px] uppercase tracking-wide text-muted">
                 <tr>
                   <th className="px-2 py-1.5 font-semibold">Started</th>
                   <th className="px-2 py-1.5 font-semibold">Status</th>
@@ -165,20 +166,20 @@ export function AccessSyncPanel() {
                   return (
                     <Fragment key={r.id}>
                       <tr className={cn(more && 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50')} onClick={() => more && setOpenRun(open ? null : r.id)} aria-expanded={more ? open : undefined}>
-                        <td className="whitespace-nowrap px-2 py-1.5">{formatDateTime(r.startedAt)}</td>
+                        <td className="whitespace-nowrap px-2 py-1.5"><When iso={r.startedAt} time /></td>
                         <td className="px-2 py-1.5"><StatusBadge status={r.status} /></td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{r.rowsReceived}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{r.inserted}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{r.updated}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{r.retired}</td>
                         <td className={cn('px-2 py-1.5 text-right tabular-nums', r.invalid > 0 && 'font-semibold text-amber-700 dark:text-amber-300')}>{r.invalid}</td>
-                        <td className="px-2 py-1.5 text-slate-500">{r.source || r.keyName}</td>
+                        <td className="px-2 py-1.5 text-muted">{r.source || r.keyName}</td>
                       </tr>
                       {open && (
                         <tr>
                           <td colSpan={8} className="space-y-2 bg-slate-50 px-3 py-2 text-xs dark:bg-slate-800/40">
                             {r.message && <p className="font-semibold">{r.message}</p>}
-                            {r.unknownColumns.length > 0 && <p className="text-slate-500">Columns no field reads (ignored): {r.unknownColumns.join(', ')}</p>}
+                            {r.unknownColumns.length > 0 && <p className="text-muted">Columns no field reads (ignored): {r.unknownColumns.join(', ')}</p>}
                             {r.errors.length > 0 && (
                               <ul className="space-y-0.5">
                                 {r.errors.map((e, i) => (
@@ -186,7 +187,7 @@ export function AccessSyncPanel() {
                                     Row {e.row}{e.lineKey ? ` (Order ID ${e.lineKey})` : ''}: {e.message}
                                   </li>
                                 ))}
-                                {r.invalid > r.errors.length && <li className="text-slate-400">…and {r.invalid - r.errors.length} more.</li>}
+                                {r.invalid > r.errors.length && <li className="text-muted">…and {r.invalid - r.errors.length} more.</li>}
                               </ul>
                             )}
                           </td>
@@ -209,15 +210,15 @@ export function AccessSyncPanel() {
           </Button>
         </div>
         {(data?.keys ?? []).length === 0 ? (
-          <p className="text-sm text-slate-400">No key yet. A key lets one agent send orders, and nothing else.</p>
+          <p className="text-sm text-muted">No key yet. A key lets one agent send orders, and nothing else.</p>
         ) : (
           <ul className="divide-y divide-slate-100 dark:divide-slate-800">
             {(data?.keys ?? []).map((k) => (
-              <li key={k.id} className={cn('flex flex-wrap items-center gap-3 py-2 text-sm', k.revokedAt && 'text-slate-400')}>
+              <li key={k.id} className={cn('flex flex-wrap items-center gap-3 py-2 text-sm', k.revokedAt && 'text-muted')}>
                 <KeyRound className="h-4 w-4 shrink-0" />
                 <span className="font-semibold">{k.name}</span>
                 <code className="text-xs">{k.prefix}…</code>
-                <span className="text-xs text-slate-500">made by {k.createdByName} {timeAgo(k.createdAt)} · {k.lastUsedAt ? `last used ${timeAgo(k.lastUsedAt)}` : 'never used'}</span>
+                <span className="text-xs text-muted">made by {k.createdByName} {timeAgo(k.createdAt)} · {k.lastUsedAt ? `last used ${timeAgo(k.lastUsedAt)}` : 'never used'}</span>
                 {k.revokedAt ? (
                   <Badge tone="neutral" className="ml-auto">Revoked {timeAgo(k.revokedAt)}</Badge>
                 ) : (
@@ -236,7 +237,7 @@ export function AccessSyncPanel() {
               <Download className="h-3.5 w-3.5" /> {f}
             </a>
           ))}
-          <span className="text-xs text-slate-400">README.txt has the steps, in English and Arabic.</span>
+          <span className="text-xs text-muted">README.txt has the steps, in English and Arabic.</span>
         </div>
       </Card>
 
@@ -289,7 +290,7 @@ export function AccessSyncPanel() {
                 <Copy className="h-4 w-4" /> Copy the key
               </Button>
             </div>
-            <p className="text-xs text-slate-500">In config.json set databasePath to the Access file and table to the orders table; see README.txt.</p>
+            <p className="text-xs text-muted">In config.json set databasePath to the Access file and table to the orders table; see README.txt.</p>
           </div>
         )}
       </Modal>

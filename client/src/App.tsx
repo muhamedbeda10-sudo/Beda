@@ -32,7 +32,7 @@ function Splash() {
     <div className="grid min-h-screen place-items-center bg-slate-100 dark:bg-slate-950">
       <div className="flex flex-col items-center gap-4 animate-scale-in">
         <Brand size="lg" />
-        <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+        <Loader2 className="h-5 w-5 animate-spin text-muted" />
       </div>
     </div>
   )

@@ -28,6 +28,18 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-06.2',
+    date: '2026-10-06',
+    title: 'A calmer, clearer look: tooltips, dates, badges, row density',
+    items: [
+      { text: 'Every date reads the same way on every device: this year with the time on a 24-hour clock ("Oct 5, 15:05"), another year with the year ("Oct 5, 2025"). Hover a date for the full timestamp.' },
+      { text: 'One tooltip everywhere, in the theme\'s colours, after a short pause — the browser\'s slow grey tooltips are gone.' },
+      { text: 'Badges are one line and one height and never wrap; "Defects before" is a small mark beside the status, explained on hover.' },
+      { text: 'Rows: the new button beside the theme switches History and Access between Comfortable and Compact rows, kept on this device.' },
+      { text: 'Secondary text is darker in the light theme so it reads clearly on every background, and the Inter font ships with the app, so a tablet without internet shows it too. Table cells lose the dotted underline: a link underlines when you point at it.' },
+    ],
+  },
+  {
     id: '2026-10-06.1',
     date: '2026-10-06',
     title: 'History: more of the list on screen',

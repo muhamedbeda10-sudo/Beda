@@ -27,7 +27,7 @@ export function WorkInstructionLinks({ instructions, step }: { instructions: Wor
           >
             <FileText className="h-4 w-4 shrink-0 text-brand-600 dark:text-brand-300" />
             <span className="truncate">{w.title}</span>
-            <span className="shrink-0 text-xs font-medium text-slate-400">{w.code}</span>
+            <span className="shrink-0 text-xs font-medium text-muted">{w.code}</span>
           </button>
         ))}
       </div>

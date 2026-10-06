@@ -58,7 +58,7 @@ function niceMax(v: number): number {
 function Grid({ x0, x1, y0, y1, max, unit = '' }: { x0: number; x1: number; y0: number; y1: number; max: number; unit?: string }) {
   const steps = 4
   return (
-    <g className="text-slate-400 dark:text-slate-500" fontSize="10">
+    <g className="text-muted" fontSize="10">
       {Array.from({ length: steps + 1 }, (_, i) => {
         const v = (max / steps) * i
         const y = y1 - ((y1 - y0) * i) / steps
@@ -127,7 +127,7 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
           {barLabel} and {lineLabel} by day
         </title>
         <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={barMax} />
-        <g className="text-slate-400 dark:text-slate-500" fontSize="10">
+        <g className="text-muted" fontSize="10">
           {Array.from({ length: 5 }, (_, i) => {
             const v = (lineMax / 4) * i
             return (
@@ -148,7 +148,7 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
               </text>
             )}
             {i % every === 0 && (
-              <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-slate-500 dark:fill-slate-400">
+              <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-muted">
                 {p.label}
               </text>
             )}
@@ -178,7 +178,7 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
               {segs.map((d, i) => <polyline key={i} points={d} fill="none" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" className={l.className} />)}
               {l.values.map((v, i) => v !== null && <circle key={i} cx={xAt(i)} cy={yLine(v)} r={hover === i ? 4 : 2.5} className={cn('fill-white dark:fill-slate-900', l.className)} strokeWidth={2} />)}
               {labelled && lines.length <= 3 && l.values.map((v, i) => v !== null && (
-                <text key={`t-${i}`} x={xAt(i) + bw / 2 + 4} y={yLine(v) + 10} fontSize="9" fontWeight={600} className="fill-slate-500 dark:fill-slate-400">
+                <text key={`t-${i}`} x={xAt(i) + bw / 2 + 4} y={yLine(v) + 10} fontSize="9" fontWeight={600} className="fill-muted">
                   {fmt(v)}{lineUnit}
                 </text>
               ))}
@@ -189,7 +189,7 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
           <line x1={xAt(hover!)} x2={xAt(hover!)} y1={y0} y2={y1} className="stroke-slate-400" strokeDasharray="3 3" />
         )}
       </svg>
-      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
         <span className="inline-flex items-center gap-1.5">
           <i className="inline-block h-2.5 w-2.5 rounded-sm bg-brand-300 dark:bg-brand-600" /> {barLabel}
         </span>
@@ -246,7 +246,7 @@ export function ParetoChart({ bars, height = 240, onPick }: { bars: ParetoBar[];
       <svg viewBox={`0 0 ${W} ${H}`} className={frame.svg} role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
         <title id={`${id}-t`}>Pareto of defects</title>
         <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} />
-        <g className="text-slate-400 dark:text-slate-500" fontSize="10">
+        <g className="text-muted" fontSize="10">
           {[0, 25, 50, 75, 100].map((v) => (
             <text key={v} x={x1 + 6} y={yPct(v) + 3} fill="currentColor">
               {v}%
@@ -264,7 +264,7 @@ export function ParetoChart({ bars, height = 240, onPick }: { bars: ParetoBar[];
               <text x={xAt(i)} y={yBar(b.value) - 4} textAnchor="middle" fontSize="10" className="fill-slate-600 dark:fill-slate-300">
                 {fmt(b.value)}
               </text>
-              <text transform={`translate(${xAt(i)} ${y1 + 8}) rotate(-28)`} textAnchor="end" fontSize="10" className="fill-slate-500 dark:fill-slate-400">
+              <text transform={`translate(${xAt(i)} ${y1 + 8}) rotate(-28)`} textAnchor="end" fontSize="10" className="fill-muted">
                 {label}
               </text>
             </g>
@@ -275,14 +275,14 @@ export function ParetoChart({ bars, height = 240, onPick }: { bars: ParetoBar[];
           <circle key={b.label} cx={xAt(i)} cy={yPct(b.cumulativePct)} r={3} className="fill-white stroke-brand-600 dark:fill-slate-900 dark:stroke-brand-300" strokeWidth={2} />
         ))}
       </svg>
-      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
         <span className="inline-flex items-center gap-1.5">
           <i className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" /> Vital few (to 80%)
         </span>
         <span className="inline-flex items-center gap-1.5">
           <i className="inline-block h-0.5 w-4 rounded bg-brand-600 dark:bg-brand-300" /> Cumulative share
         </span>
-        {onPick && hover === null && <span className="print-hidden ml-auto text-slate-400">Tap a bar for its sessions</span>}
+        {onPick && hover === null && <span className="print-hidden ml-auto text-muted">Tap a bar for its sessions</span>}
         {hover !== null && (
           <span className="ml-auto font-semibold tabular-nums text-slate-700 dark:text-slate-200">
             {bars[hover].label}: {fmt(bars[hover].value)} pieces · {fmt(bars[hover].cumulativePct)}% cumulative
@@ -334,7 +334,7 @@ export function DonutChart({ slices, centerLabel, size = 160, onPick }: { slices
         <text x="60" y="57" textAnchor="middle" fontSize="20" fontWeight="700" className="fill-slate-800 dark:fill-white">
           {fmt(total)}
         </text>
-        <text x="60" y="73" textAnchor="middle" fontSize="9" className="fill-slate-500 dark:fill-slate-400">
+        <text x="60" y="73" textAnchor="middle" fontSize="9" className="fill-muted">
           {centerLabel}
         </text>
       </svg>
@@ -344,7 +344,7 @@ export function DonutChart({ slices, centerLabel, size = 160, onPick }: { slices
             <i className={cn('inline-block h-2.5 w-2.5 rounded-full', s.className.replace(/stroke-/g, 'bg-'))} />
             <span className="flex-1 text-slate-600 dark:text-slate-300">{s.label}</span>
             <span className="font-semibold tabular-nums">{fmt(s.value)}</span>
-            <span className="w-12 text-right text-xs tabular-nums text-slate-400">{total > 0 ? `${Math.round((s.value / total) * 100)}%` : '—'}</span>
+            <span className="w-12 text-right text-xs tabular-nums text-muted">{total > 0 ? `${Math.round((s.value / total) * 100)}%` : '—'}</span>
           </li>
         ))}
       </ul>
@@ -353,7 +353,7 @@ export function DonutChart({ slices, centerLabel, size = 160, onPick }: { slices
 }
 
 /** Fill classes for the slices of a pie, in the order the slices come; the last one is for "Others". */
-export const PIE_CLASSES = ['fill-brand-500', 'fill-rose-500', 'fill-emerald-500', 'fill-amber-500', 'fill-violet-500', 'fill-sky-500', 'fill-pink-500', 'fill-teal-500', 'fill-orange-500', 'fill-slate-400']
+export const PIE_CLASSES = ['fill-brand-500', 'fill-rose-500', 'fill-emerald-500', 'fill-amber-500', 'fill-violet-500', 'fill-sky-500', 'fill-pink-500', 'fill-teal-500', 'fill-orange-500', 'fill-muted']
 
 export interface PieSlice {
   /** What the slice stands for, when its label is not enough to find it again: a machine code, a factory. */
@@ -428,7 +428,7 @@ export function PieChart({ slices, centerLabel, unit = '', onPick }: { slices: P
         <text x={cx} y={cy - 4} textAnchor="middle" fontSize="16" fontWeight="700" className="fill-slate-800 dark:fill-white">
           {fmt(total)}{unit}
         </text>
-        <text x={cx} y={cy + 10} textAnchor="middle" fontSize="8" className="fill-slate-500 dark:fill-slate-400">
+        <text x={cx} y={cy + 10} textAnchor="middle" fontSize="8" className="fill-muted">
           {centerLabel}
         </text>
       </svg>
@@ -436,12 +436,12 @@ export function PieChart({ slices, centerLabel, unit = '', onPick }: { slices: P
         {drawn.map((s) => (
           <li key={s.label} className={cn('flex items-center gap-2', onPick && !isOthers(s.label) && 'rounded-md hover:bg-slate-50 dark:hover:bg-slate-800')} {...pickable(onPick && (() => onPick(s)), s.label)}>
             <i className={cn('inline-block h-2.5 w-2.5 shrink-0 rounded-full', s.className.replace(/fill-/g, 'bg-'))} />
-            <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300" title={s.sub ? `${s.label} · ${s.sub}` : s.label}>
+            <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300" data-tip={s.sub ? `${s.label} · ${s.sub}` : s.label}>
               {s.label}
-              {s.sub && <span className="ml-1 text-xs text-slate-400">{s.sub}</span>}
+              {s.sub && <span className="ml-1 text-xs text-muted">{s.sub}</span>}
             </span>
             <span className="font-semibold tabular-nums">{fmt(s.value)}</span>
-            <span className="w-14 text-right text-xs tabular-nums text-slate-400">{`${Math.round(s.share * 10000) / 100}%`}</span>
+            <span className="w-14 text-right text-xs tabular-nums text-muted">{`${Math.round(s.share * 10000) / 100}%`}</span>
           </li>
         ))}
       </ul>
@@ -479,9 +479,9 @@ export function HorizontalBars({ rows, max, unit = '' }: { rows: HBar[]; max?: n
             <div className="flex items-baseline justify-between gap-2 text-sm">
               <span className="truncate font-medium text-slate-700 dark:text-slate-200">
                 {r.label}
-                {r.sub && <span className="ml-1.5 text-xs font-normal text-slate-400">{r.sub}</span>}
+                {r.sub && <span className="ml-1.5 text-xs font-normal text-muted">{r.sub}</span>}
               </span>
-              <span className="shrink-0 text-xs tabular-nums text-slate-500 dark:text-slate-400">{r.text}</span>
+              <span className="shrink-0 text-xs tabular-nums text-muted">{r.text}</span>
             </div>
             <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
               <div className={cn('h-full rounded-full transition-[width] duration-500', TONE_BAR[r.tone])} style={{ width: `${w}%` }} aria-hidden />
@@ -509,7 +509,7 @@ export function HorizontalBars({ rows, max, unit = '' }: { rows: HBar[]; max?: n
 
 export function ChartEmpty({ height = 160, children = 'Nothing in this period.' }: { height?: number; children?: ReactNode }) {
   return (
-    <div className="grid place-items-center rounded-xl border border-dashed border-slate-200 text-sm text-slate-400 dark:border-slate-700" style={{ minHeight: height }}>
+    <div className="grid place-items-center rounded-xl border border-dashed border-slate-200 text-sm text-muted dark:border-slate-700" style={{ minHeight: height }}>
       {children}
     </div>
   )
@@ -577,14 +577,14 @@ export function PairedBarChart({ points, totalLabel, partLabel, height = 220 }: 
             {label(xAt(i) - bw / 2 - 1, p.total, 'fill-brand-700 dark:fill-brand-200')}
             {label(xAt(i) + bw / 2 + 1, p.part, 'fill-rose-600 dark:fill-rose-300')}
             {i % every === 0 && (
-              <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-slate-500 dark:fill-slate-400">
+              <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-muted">
                 {p.label}
               </text>
             )}
           </g>
         ))}
       </svg>
-      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
         <span className="inline-flex items-center gap-1.5">
           <i className="inline-block h-2.5 w-2.5 rounded-sm bg-brand-300 dark:bg-brand-600" /> {totalLabel}
         </span>
@@ -651,7 +651,7 @@ export function ColumnChart({ columns, height = 200, unit = '', onPick }: { colu
               {c.label}
             </text>
             {c.sub && (
-              <text x={xAt(i)} y={y1 + 29} textAnchor="middle" fontSize="9.5" className="fill-slate-400">
+              <text x={xAt(i)} y={y1 + 29} textAnchor="middle" fontSize="9.5" className="fill-muted">
                 {c.sub}
               </text>
             )}
@@ -720,8 +720,7 @@ export function StackedColumnChart({ columns, legend, height = 240, unit = '' }:
                 </text>
               )}
               {tilt ? (
-                <text x={xAt(i)} y={y1 + 12} textAnchor="end" fontSize="11" fontWeight={600} transform={`rotate(-35 ${xAt(i)} ${y1 + 12})`} className="fill-slate-600 dark:fill-slate-300">
-                  <title>{c.label}</title>
+                <text x={xAt(i)} y={y1 + 12} textAnchor="end" fontSize="11" fontWeight={600} transform={`rotate(-35 ${xAt(i)} ${y1 + 12})`} className="fill-slate-600 dark:fill-slate-300" data-tip={c.label}>
                   {c.label.length > 26 ? `${c.label.slice(0, 25)}…` : c.label}
                 </text>
               ) : (
@@ -733,7 +732,7 @@ export function StackedColumnChart({ columns, legend, height = 240, unit = '' }:
           )
         })}
       </svg>
-      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
         {hover === null
           ? legend.map((l) => (
               <span key={l.label} className="inline-flex items-center gap-1.5" dir="auto">
@@ -809,7 +808,7 @@ export function LineChart({ labels, series, unit = '%', height = 220, connectGap
           <g key={l} onMouseEnter={() => setHover(i)}>
             <rect x={xAt(i) - slot / 2} y={y0} width={slot} height={y1 - y0} fill="transparent" />
             {i % every === 0 && (
-              <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-slate-500 dark:fill-slate-400">
+              <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-muted">
                 {l}
               </text>
             )}
@@ -830,7 +829,7 @@ export function LineChart({ labels, series, unit = '%', height = 220, connectGap
         )}
         {hover !== null && <line x1={xAt(hover)} x2={xAt(hover)} y1={y0} y2={y1} className="stroke-slate-400" strokeDasharray="3 3" />}
       </svg>
-      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
         {series.map((s) => (
           <span key={s.label} className="inline-flex items-center gap-1.5">
             <svg width="16" height="6" aria-hidden><line x1="0" y1="3" x2="16" y2="3" strokeWidth={3} className={s.className} /></svg>

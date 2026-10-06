@@ -10,6 +10,7 @@ import type { NoticeForUser } from '@qc/shared/types'
 import { useApp } from '@/store/AppContext'
 import { processForMachine, stockProductionOf } from '@qc/shared/rules'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
+import { When } from '@/components/ui/Tooltip'
 
 /**
  * §4 — New Inspection.
@@ -272,18 +273,18 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
           )}
 
           <div>
-            <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-slate-400">
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-muted">
               <Boxes className="h-3.5 w-3.5" /> Previous samples on this item
             </p>
             {previousSamples.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-slate-400 dark:border-slate-700">
+              <p className="rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-muted dark:border-slate-700">
                 No samples recorded yet.
               </p>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {previousSamples.slice(0, 12).map((s) => (
                   <span key={s.id} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                    #{s.index} · shift {s.shift} · {new Date(s.createdAt).toLocaleDateString()}
+                    #{s.index} · shift {s.shift} · <When iso={s.createdAt} />
                   </span>
                 ))}
               </div>
@@ -324,7 +325,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
     >
       {gateEl}
       <div className="space-y-3">
-        <ol className="flex flex-wrap items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
+        <ol className="flex flex-wrap items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
           <Crumb n={1} label="Machine" active={stage === 'machine'} done={stage !== 'machine'} />
           <ChevronRight className="h-3.5 w-3.5" />
           {stage === 'stock' ? (
@@ -361,7 +362,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
           </Select>
         </Field>
         {machines.length === 0 && (
-          <p className="rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-slate-400 dark:border-slate-700">
+          <p className="rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-muted dark:border-slate-700">
             No machines are registered yet. Load the machine sheet in Admin → Bulk import.
           </p>
         )}
@@ -384,7 +385,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
                   </li>
                 ))}
               </ul>
-              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+              <p className="mt-2 text-sm text-muted">
                 Made together, so one quantity covers both. The inspection then runs as usual: setup with the coils, samples, dimensions and defects.
               </p>
             </div>
@@ -404,7 +405,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
               />
             </Field>
             {producedValid && Number(producedQty) > 0 && (
-              <p className="text-sm text-slate-500 dark:text-slate-400">
+              <p className="text-sm text-muted">
                 = <b className="tabular-nums">{Number(producedQty)}</b> right + <b className="tabular-nums">{Number(producedQty)}</b> left
               </p>
             )}
@@ -414,7 +415,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
         {stage === 'order' && (
           <>
             <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               <Input
                 autoFocus
                 value={orderTerm}
@@ -425,7 +426,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             </div>
             <div className="max-h-[42vh] space-y-2 overflow-y-auto pr-1">
               {orders.length === 0 && (
-                <p className="py-8 text-center text-sm text-slate-400">
+                <p className="py-8 text-center text-sm text-muted">
                   {ordersLoading ? 'Searching…' : orderTerm ? 'No orders on this machine match that number.' : 'No orders have lines on this machine.'}
                 </p>
               )}
@@ -440,7 +441,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="font-bold">{o.orderNumber}</p>
-                    <p className="truncate text-sm text-slate-500 dark:text-slate-400">{o.customer || '—'}</p>
+                    <p className="truncate text-sm text-muted">{o.customer || '—'}</p>
                   </div>
                   <Badge tone="neutral">
                     {o.lineCount} {o.lineCount === 1 ? 'item' : 'items'}
@@ -455,7 +456,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
           <>
             <div className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800/50">
               <p className="text-sm">
-                <span className="text-slate-500 dark:text-slate-400">Order</span> <span className="font-bold">{orderNumber}</span>
+                <span className="text-muted">Order</span> <span className="font-bold">{orderNumber}</span>
               </p>
               <Button
                 variant="ghost"
@@ -470,7 +471,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             </div>
             {lines.length > 8 && (
               <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
                 <Input
                   autoFocus
                   value={itemTerm}
@@ -482,7 +483,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             )}
             <div className="max-h-[42vh] space-y-2 overflow-y-auto pr-1">
               {visibleLines.length === 0 && (
-                <p className="py-8 text-center text-sm text-slate-400">
+                <p className="py-8 text-center text-sm text-muted">
                   {linesLoading ? 'Loading…' : itemTerm ? 'No item on this machine matches that.' : 'This order has no items on this machine.'}
                 </p>
               )}
@@ -501,15 +502,15 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="flex flex-wrap items-center gap-2 font-bold">
-                      {o.itemCode || <span className="text-slate-400">no item code</span>}
+                      {o.itemCode || <span className="text-muted">no item code</span>}
                       {statusBadge(o.erpStatus)}
                     </p>
-                    <p className="truncate text-sm text-slate-500 dark:text-slate-400">
+                    <p className="truncate text-sm text-muted">
                       {o.item || '—'} · Order ID {o.lineKey}
                       {o.expectedGrade ? ` · ${o.expectedGrade}` : ''}
                     </p>
                   </div>
-                  <span className="text-right text-xs tabular-nums text-slate-500 dark:text-slate-400">
+                  <span className="text-right text-xs tabular-nums text-muted">
                     <span className="block font-bold text-brand-600 dark:text-brand-400">{remainingQty(o)}</span>
                     remaining
                   </span>
@@ -550,7 +551,7 @@ function Crumb({ n, label, active, done }: { n: number; label: string; active: b
 function Metric({ label, value, tone }: { label: string; value: number; tone?: 'green' | 'blue' }) {
   return (
     <div>
-      <p className="text-xs font-semibold uppercase text-slate-400">{label}</p>
+      <p className="text-xs font-semibold uppercase text-muted">{label}</p>
       <p className={tone === 'green' ? 'text-xl font-bold tabular-nums text-emerald-500' : tone === 'blue' ? 'text-xl font-bold tabular-nums text-brand-500' : 'text-xl font-bold tabular-nums'}>
         {value}
       </p>
@@ -561,7 +562,7 @@ function Metric({ label, value, tone }: { label: string; value: number; tone?: '
 function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-xs font-semibold uppercase text-slate-400">{label}</dt>
+      <dt className="text-xs font-semibold uppercase text-muted">{label}</dt>
       <dd className="truncate font-semibold text-slate-800 dark:text-slate-100">{value || '—'}</dd>
     </div>
   )

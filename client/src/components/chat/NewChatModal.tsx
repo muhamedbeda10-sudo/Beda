@@ -43,7 +43,7 @@ export function NewChatModal({ onClose, onCreated }: { onClose: () => void; onCr
         <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-xs font-bold text-white">{initialsOf(u.name)}</span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold">{u.name}</span>
-          <span className="block truncate text-xs capitalize text-slate-400">{u.username} · {u.role}</span>
+          <span className="block truncate text-xs capitalize text-muted">{u.username} · {u.role}</span>
         </span>
         {selected && <Check className="h-4 w-4 text-brand-600" />}
       </button>
@@ -71,7 +71,7 @@ export function NewChatModal({ onClose, onCreated }: { onClose: () => void; onCr
       {role === 'admin' && (
         <div className="mb-3 flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
           {(['direct', 'group'] as const).map((t) => (
-            <button key={t} type="button" onClick={() => setTab(t)} className={cn('flex-1 rounded-lg py-1.5 text-sm font-semibold', tab === t ? 'bg-white shadow-card dark:bg-slate-900' : 'text-slate-500')}>
+            <button key={t} type="button" onClick={() => setTab(t)} className={cn('flex-1 rounded-lg py-1.5 text-sm font-semibold', tab === t ? 'bg-white shadow-card dark:bg-slate-900' : 'text-muted')}>
               {t === 'direct' ? 'Direct message' : 'Group'}
             </button>
           ))}
@@ -83,7 +83,7 @@ export function NewChatModal({ onClose, onCreated }: { onClose: () => void; onCr
         </Field>
       )}
       <div className="relative mt-3">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
         <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Find a person" className="pl-9" autoFocus={tab === 'direct'} />
       </div>
       <ul className="mt-2 max-h-72 space-y-0.5 overflow-y-auto">
@@ -94,9 +94,9 @@ export function NewChatModal({ onClose, onCreated }: { onClose: () => void; onCr
             <Row key={u.id} u={u} selected={picked.has(u.id)} onClick={() => setPicked((s) => { const n = new Set(s); if (n.has(u.id)) n.delete(u.id); else n.add(u.id); return n })} />
           ),
         )}
-        {others.length === 0 && <li className="py-6 text-center text-sm text-slate-400">Nobody matches.</li>}
+        {others.length === 0 && <li className="py-6 text-center text-sm text-muted">Nobody matches.</li>}
       </ul>
-      {tab === 'group' && picked.size > 0 && <p className="mt-2 text-xs text-slate-500">{picked.size} selected, plus you.</p>}
+      {tab === 'group' && picked.size > 0 && <p className="mt-2 text-xs text-muted">{picked.size} selected, plus you.</p>}
     </Modal>
   )
 }

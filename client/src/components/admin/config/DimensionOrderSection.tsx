@@ -51,7 +51,7 @@ export function DimensionOrderSection() {
         {
           key: 'machine',
           label: 'Machine',
-          render: (r) => (r.workCenterCode ? <Badge tone="blue">{r.workCenterCode}</Badge> : <span className="text-slate-400">every machine</span>),
+          render: (r) => (r.workCenterCode ? <Badge tone="blue">{r.workCenterCode}</Badge> : <span className="text-muted">every machine</span>),
         },
         { key: 'name', label: 'Dimension', render: (r) => <span dir="auto">{r.dimensionName}</span> },
         {

@@ -65,7 +65,7 @@ export function ConfigurationPage() {
                   'group inline-flex min-h-[44px] shrink-0 items-center gap-2 rounded-xl px-3.5 text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
                   isActive
                     ? 'bg-white text-brand-800 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:text-white dark:ring-slate-700'
-                    : 'text-slate-500 hover:bg-white/70 hover:text-brand-700 dark:text-slate-400 dark:hover:bg-slate-800/70',
+                    : 'text-muted hover:bg-white/70 hover:text-brand-700 dark:hover:bg-slate-800/70',
                 )
               }
             >
@@ -85,7 +85,7 @@ export function ConfigurationPage() {
                   </span>
                   <div className="min-w-0">
                     <h3 className="text-base font-bold">{fileMode ? `Load ${current.label.toLowerCase()} from a file` : `Paste ${current.label.toLowerCase()} from Excel`}</h3>
-                    <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{current.importer.fields.map((f) => f.label).join(' · ')}</p>
+                    <p className="mt-0.5 text-sm text-muted">{current.importer.fields.map((f) => f.label).join(' · ')}</p>
                   </div>
                 </div>
                 <Button className="min-h-[44px]" onClick={() => setFileMode((m) => !m)}>

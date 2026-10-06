@@ -115,7 +115,7 @@ export function SessionToneBadge({ session, className, onHold }: { session: Sign
           e.stopPropagation()
           onHold()
         }}
-        title="Decide the Hold"
+        data-tip="Decide the Hold"
         aria-label="Decide the Hold"
         className="inline-flex min-h-[32px] items-center rounded-full transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-amber-400"
       >
@@ -136,11 +136,15 @@ export function SessionToneBadge({ session, className, onHold }: { session: Sign
       </Badge>
     )
   }
+  // A secondary signal: a small mark beside the status, explained in its tooltip — never a second badge.
   return (
-    <span title="This item of this order showed defects on another machine or in an earlier session." className={cn('inline-flex', className)}>
-      <Badge tone="neutral" icon={<History className="h-3 w-3" />}>
-        Defects before
-      </Badge>
+    <span
+      data-tip="Defects before: this item of this order showed defects on another machine or in an earlier session."
+      aria-label="Defects before"
+      role="img"
+      className={cn('inline-grid h-[22px] w-[22px] shrink-0 place-items-center rounded-md text-muted ring-1 ring-inset ring-neutral-200 dark:ring-neutral-700', className)}
+    >
+      <History className="h-3.5 w-3.5" />
     </span>
   )
 }

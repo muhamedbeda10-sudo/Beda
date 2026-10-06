@@ -155,7 +155,7 @@ export function ConfigurationExport({ onClose }: { onClose: () => void }) {
     >
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-sm text-slate-500 dark:text-slate-400">Pick what to take out. Each becomes a sheet in one workbook.</p>
+          <p className="text-sm text-muted">Pick what to take out. Each becomes a sheet in one workbook.</p>
           <button
             type="button"
             onClick={() => setPicked(all ? new Set() : new Set(EXPORTABLES.map((e) => e.key)))}
@@ -189,7 +189,7 @@ export function ConfigurationExport({ onClose }: { onClose: () => void }) {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-semibold">{e.label}</span>
-                    <span className="block text-xs text-slate-500 dark:text-slate-400">{e.hint}</span>
+                    <span className="block text-xs text-muted">{e.hint}</span>
                   </span>
                 </button>
               </li>
@@ -197,7 +197,7 @@ export function ConfigurationExport({ onClose }: { onClose: () => void }) {
           })}
         </ul>
 
-        <p className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+        <p className="flex flex-wrap items-center gap-2 text-xs text-muted">
           <Badge tone="neutral">.xlsx</Badge>
           The columns match the import sheets, so an exported list can be edited and loaded back.
         </p>

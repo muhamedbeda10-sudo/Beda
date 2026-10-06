@@ -15,14 +15,15 @@ import { useReleaseState } from '@/services/queries'
 import { markReleaseSeen } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { can } from '@qc/shared/rules'
-import { cn, formatDate } from '@/lib/utils'
+import { cn } from '@/lib/utils'
+import { When } from '@/components/ui/Tooltip'
 
 export function ReleaseCard({ release, fresh = false }: { release: Release; fresh?: boolean }) {
   return (
     <article className={cn('rounded-2xl p-4 ring-1', fresh ? 'bg-brand-50/60 ring-brand-200 dark:bg-brand-500/10 dark:ring-brand-500/30' : 'ring-slate-200 dark:ring-slate-800')}>
       <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h3 className="text-base font-bold">{release.title}</h3>
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{formatDate(release.date)}</span>
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted"><When iso={release.date} /></span>
       </header>
       <ul className="mt-2 space-y-1.5">
         {release.items.map((item, i) => (
@@ -97,7 +98,7 @@ export function WhatsNewPrompt() {
         </Button>
       }
     >
-      <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">The application was updated since you last looked. Here is what changed; the full list stays under the gear menu → What's new.</p>
+      <p className="mb-3 text-sm text-muted">The application was updated since you last looked. Here is what changed; the full list stays under the gear menu → What's new.</p>
       <div className="space-y-3">
         {unseen.map((r) => (
           <ReleaseCard key={r.id} release={r} fresh />

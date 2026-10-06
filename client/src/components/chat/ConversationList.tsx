@@ -2,14 +2,14 @@ import { useMemo, useState } from 'react'
 import { AtSign, Hash, MessageSquarePlus, Search, Users } from 'lucide-react'
 import type { ChatConversation } from '@qc/shared/types'
 import { Input } from '@/components/ui'
-import { cn } from '@/lib/utils'
+import { cn, formatDate, formatTime } from '@/lib/utils'
 
 const when = (iso: string | null) => {
   if (!iso) return ''
   const d = new Date(iso)
   const today = new Date()
   const sameDay = d.toDateString() === today.toDateString()
-  return sameDay ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+  return sameDay ? formatTime(iso) : formatDate(iso)
 }
 
 export function initialsOf(name: string): string {
@@ -37,7 +37,7 @@ export function ConversationList({ conversations, activeId, onPick, onNew, myId 
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 px-3 pb-2 pt-3">
         <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search" className="rounded-full pl-9" aria-label="Search conversations" />
         </div>
         <button type="button" onClick={onNew} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-card hover:bg-brand-700" aria-label="New chat">
@@ -59,10 +59,10 @@ export function ConversationList({ conversations, activeId, onPick, onNew, myId 
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline justify-between gap-2">
                     <span className={cn('truncate text-sm', c.unreadCount > 0 ? 'font-bold' : 'font-semibold')}>{c.title}</span>
-                    <span className={cn('shrink-0 text-[11px] tabular-nums', c.unreadCount > 0 ? 'font-bold text-brand-700 dark:text-brand-300' : 'text-slate-400')}>{when(last?.createdAt ?? c.lastMessageAt)}</span>
+                    <span className={cn('shrink-0 text-[11px] tabular-nums', c.unreadCount > 0 ? 'font-bold text-brand-700 dark:text-brand-300' : 'text-muted')}>{when(last?.createdAt ?? c.lastMessageAt)}</span>
                   </span>
                   <span className="flex items-center justify-between gap-2">
-                    <span className={cn('truncate text-xs', c.unreadCount > 0 ? 'text-slate-700 dark:text-slate-200' : 'text-slate-500 dark:text-slate-400')}>
+                    <span className={cn('truncate text-xs', c.unreadCount > 0 ? 'text-slate-700 dark:text-slate-200' : 'text-muted')}>
                       {last ? `${last.senderId === myId ? 'You' : c.kind === 'direct' ? '' : last.senderName}${last.senderId === myId || c.kind !== 'direct' ? ': ' : ''}${last.text}` : c.kind === 'group' ? `${c.members.length} members` : 'No messages yet'}
                     </span>
                     {c.unreadCount > 0 && (
@@ -77,7 +77,7 @@ export function ConversationList({ conversations, activeId, onPick, onNew, myId 
             </li>
           )
         })}
-        {list.length === 0 && <li className="px-3 py-8 text-center text-sm text-slate-400">No conversation matches.</li>}
+        {list.length === 0 && <li className="px-3 py-8 text-center text-sm text-muted">No conversation matches.</li>}
       </ul>
     </div>
   )

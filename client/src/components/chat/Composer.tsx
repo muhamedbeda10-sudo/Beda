@@ -220,7 +220,7 @@ export function Composer({
         <div className="mb-2 flex items-start gap-2 rounded-xl border-l-4 border-brand-500 bg-slate-50 px-3 py-1.5 text-xs dark:bg-slate-800">
           {editing ? <Pencil className="mt-0.5 h-3.5 w-3.5 text-brand-600" /> : <span className="mt-0.5 font-bold text-brand-700 dark:text-brand-300">{replyTo?.senderName}</span>}
           <span className="line-clamp-2 flex-1 text-slate-600 dark:text-slate-300">{editing ? 'Editing your message' : plainText(replyTo?.body ?? '') || (replyTo?.imageIds.length ? '📷 Photo' : '📎 File')}</span>
-          <button type="button" onClick={editing ? onCancelEdit : onCancelReply} className="rounded-md p-0.5 text-slate-400 hover:text-slate-700" aria-label="Cancel">
+          <button type="button" onClick={editing ? onCancelEdit : onCancelReply} className="rounded-md p-0.5 text-muted hover:text-slate-700" aria-label="Cancel">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -238,13 +238,13 @@ export function Composer({
           {files.map((f) => (
             <span key={f.id} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2 py-1 text-xs font-medium dark:bg-slate-800">
               <Paperclip className="h-3.5 w-3.5" /> {f.originalFilename}
-              <button type="button" onClick={() => setFiles((fs) => fs.filter((x) => x.id !== f.id))} className="text-slate-400 hover:text-rose-600" aria-label="Remove file">
+              <button type="button" onClick={() => setFiles((fs) => fs.filter((x) => x.id !== f.id))} className="text-muted hover:text-rose-600" aria-label="Remove file">
                 <X className="h-3.5 w-3.5" />
               </button>
             </span>
           ))}
           {uploading > 0 && (
-            <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+            <span className="inline-flex items-center gap-1 text-xs text-muted">
               <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading…
             </span>
           )}
@@ -260,7 +260,7 @@ export function Composer({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-semibold">{s.label}</span>
-                  {s.sub && <span className="block truncate text-xs text-slate-400">{s.sub}</span>}
+                  {s.sub && <span className="block truncate text-xs text-muted">{s.sub}</span>}
                 </span>
               </button>
             </li>

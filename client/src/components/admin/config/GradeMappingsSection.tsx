@@ -36,7 +36,7 @@ export function GradeMappingsSection() {
       minTableWidth="min-w-[26rem]"
       columns={[
         { key: 'a', label: 'Grade A', render: (r) => <span className="font-semibold">{r.gradeA}</span> },
-        { key: 'eq', label: '', className: 'w-8 text-center text-slate-400', render: () => '≡' },
+        { key: 'eq', label: '', className: 'w-8 text-center text-muted', render: () => '≡' },
         { key: 'b', label: 'Grade B', render: (r) => <span className="font-semibold">{r.gradeB}</span> },
       ]}
       describe={(r) => `${r.gradeA} ≡ ${r.gradeB}`}

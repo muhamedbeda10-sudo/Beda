@@ -1,8 +1,8 @@
 import { MessageSquareText, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
-import { formatDateTime } from '@/lib/utils'
 import type { SessionNote } from '@qc/shared/types'
+import { When } from '@/components/ui/Tooltip'
 
 /**
  * Notes about an order, newest first: who wrote each one, when, on which
@@ -26,16 +26,16 @@ export function OrderNoteList({
   deleting?: boolean
 }) {
   if (notes.length === 0) {
-    return <p className="rounded-2xl border border-dashed border-slate-200 px-4 py-4 text-sm text-slate-400 dark:border-slate-700">{emptyMessage}</p>
+    return <p className="rounded-2xl border border-dashed border-slate-200 px-4 py-4 text-sm text-muted dark:border-slate-700">{emptyMessage}</p>
   }
   return (
     <ul className="space-y-2">
       {notes.map((n) => (
         <li key={n.id} className="rounded-2xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70 dark:bg-slate-800/50 dark:ring-slate-700">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-            <MessageSquareText className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+            <MessageSquareText className="h-3.5 w-3.5 shrink-0 text-muted" />
             <span className="font-bold text-slate-700 dark:text-slate-200">{n.authorName}</span>
-            <span>· {formatDateTime(n.createdAt)}</span>
+            <span>· <When iso={n.createdAt} time /></span>
             <span>
               · {machineLabel ? machineLabel(n.workCenterCode) : n.workCenterCode} · session #{n.sessionSeq}
               {n.sampleIndex ? ` · sample ${n.sessionSeq}-${n.sampleIndex}` : ''}

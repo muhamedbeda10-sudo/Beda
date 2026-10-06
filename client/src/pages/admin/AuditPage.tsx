@@ -9,9 +9,10 @@ import { usePersistedState } from '@/lib/usePersistedState'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
-import { cn, downloadText, formatDateTime } from '@/lib/utils'
+import { cn, downloadText } from '@/lib/utils'
 import { AUDIT_ACTIONS, type AuditAction, type AuditEntry } from '@qc/shared/types'
 import type { AuditFilters } from '@qc/shared/api'
+import { When } from '@/components/ui/Tooltip'
 
 const ACTION_META: Record<AuditAction, { icon: typeof Plus; tone: string; label: string }> = {
   create: { icon: Plus, tone: 'text-emerald-500 bg-emerald-100 dark:bg-emerald-500/15', label: 'Create' },
@@ -177,7 +178,7 @@ export function AuditPage() {
 
       <Card className="space-y-2 p-3">
         <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search order, item, field or value…" className="min-h-[48px] pl-9" />
         </div>
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -213,7 +214,7 @@ export function AuditPage() {
             ))}
           </Select>
         </div>
-        <p className="px-1 text-xs text-slate-400">
+        <p className="px-1 text-xs text-muted">
           {matched === totalEvents
             ? `All ${totalEvents} events. ${rows.length} on screen.`
             : `${matched} of ${totalEvents} events match. ${rows.length} on screen.`}
@@ -228,7 +229,7 @@ export function AuditPage() {
       </Card>
 
       {isLoading ? (
-        <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
+        <Card className="p-10 text-center text-sm text-muted">Loading…</Card>
       ) : rows.length === 0 ? (
         <EmptyState icon={<ScrollText className="h-10 w-10" />} title="No matching activity" hint="Nothing in the whole log matches these filters." />
       ) : (
@@ -258,7 +259,7 @@ export function AuditPage() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold">
-                    {meta.label} · <span className="text-slate-500 dark:text-slate-400">{e.entity}</span>
+                    {meta.label} · <span className="text-muted">{e.entity}</span>
                     {e.field && <span className="text-brand-600 dark:text-brand-400"> · {e.field}</span>}
                   </p>
                   {(e.oldValue || e.newValue) && (
@@ -268,14 +269,14 @@ export function AuditPage() {
                       <span className="font-semibold text-emerald-600 dark:text-emerald-400">{e.newValue || '(empty)'}</span>
                     </p>
                   )}
-                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-400">
-                    <span className="font-medium text-slate-500 dark:text-slate-400">{e.userName}</span>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                    <span className="font-medium text-muted">{e.userName}</span>
                     {e.orderNumber && <Badge tone="neutral">{e.orderNumber}</Badge>}
                     {e.item && <span>{e.item}</span>}
                     {e.workCenterCode && <span>Machine {e.workCenterCode}</span>}
                   </div>
                 </div>
-                <span className="shrink-0 whitespace-nowrap text-xs text-slate-400">{formatDateTime(e.at)}</span>
+                <span className="shrink-0 whitespace-nowrap text-xs text-muted"><When iso={e.at} time /></span>
               </div>
             )
           })}

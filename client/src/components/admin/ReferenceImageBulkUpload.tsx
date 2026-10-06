@@ -120,7 +120,7 @@ export function ReferenceImageBulkUpload({ open, onClose }: { open: boolean; onC
             dragging ? 'border-brand-400 bg-brand-50/60 dark:bg-brand-500/10' : 'border-slate-200 dark:border-slate-700',
           )}
         >
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <p className="text-sm text-muted">
             Drop the photos here, or{' '}
             <button type="button" className="font-semibold text-brand-600 underline-offset-2 hover:underline" onClick={() => fileRef.current?.click()}>
               choose files
@@ -134,7 +134,7 @@ export function ReferenceImageBulkUpload({ open, onClose }: { open: boolean; onC
         {rows.length > 0 && (
           <div className="max-h-[46vh] overflow-y-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
                 <tr>
                   <th className="px-3 py-2 font-bold">File</th>
                   <th className="px-3 py-2 font-bold">Item code</th>
@@ -144,7 +144,7 @@ export function ReferenceImageBulkUpload({ open, onClose }: { open: boolean; onC
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {rows.map((r) => (
                   <tr key={r.key}>
-                    <td className="max-w-[14rem] truncate px-3 py-2 align-middle" title={r.file.name}>
+                    <td className="max-w-[14rem] truncate px-3 py-2 align-middle" data-tip={r.file.name}>
                       {r.file.name}
                     </td>
                     <td className="px-3 py-2 align-middle">
@@ -163,7 +163,7 @@ export function ReferenceImageBulkUpload({ open, onClose }: { open: boolean; onC
                         {r.status === 'uploading' && <Loader2 className="h-4 w-4 animate-spin text-brand-500" />}
                         {r.status === 'done' && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
                         {r.status === 'failed' && (
-                          <span className="inline-flex items-center gap-1 text-xs text-rose-600" title={r.error}>
+                          <span className="inline-flex items-center gap-1 text-xs text-rose-600" data-tip={r.error}>
                             <AlertCircle className="h-4 w-4" /> {r.error ?? 'failed'}
                           </span>
                         )}

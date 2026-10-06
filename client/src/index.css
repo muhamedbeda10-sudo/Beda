@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -8,15 +7,36 @@
      a class on <html>, so a dark phone showing the light app still gets light
      inputs, and the numbers in them stay readable. */
   color-scheme: light;
+  /* Secondary text (`text-muted`): AA (≥ 4.5:1) on white, slate-50/100 and the tinted rows. */
+  --c-muted: 91 107 128;
+  /* Table row height for the density setting (Comfortable / Compact). */
+  --row-h: 44px;
 }
 :root.dark {
   color-scheme: dark;
+  /* slate-400: AA on slate-800, -900 and -950. */
+  --c-muted: 148 163 184;
+}
+:root[data-density='compact'] {
+  --row-h: 34px;
 }
 
 html,
 body,
 #root {
   height: 100%;
+}
+
+/* Every figure in a table lines up: digits of one width. */
+table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A list's rows follow the density setting (lib/density.ts): 44 px or 34 px. */
+.data-row > td {
+  height: var(--row-h);
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
 }
 
 body {
@@ -82,14 +102,14 @@ body {
     transform: scale(1.1);
   }
   .input {
-    @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-inset transition-[border-color,box-shadow] duration-150 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25 dark:border-brand-500/40 dark:bg-brand-950 dark:text-white dark:placeholder:text-brand-200/50 dark:focus:border-brand-400;
+    @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-inset transition-[border-color,box-shadow] duration-150 placeholder:text-muted focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25 dark:border-brand-500/40 dark:bg-brand-950 dark:text-white dark:placeholder:text-brand-200/70 dark:focus:border-brand-400;
   }
   /* A measurement cell in the dimension table: the same colours as .input, sized by the caller. */
   .input-cell {
-    @apply rounded-lg border border-slate-300 bg-white text-slate-900 tabular-nums placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25 dark:border-brand-500/40 dark:bg-brand-950 dark:text-white dark:placeholder:text-brand-200/50 dark:focus:border-brand-400;
+    @apply rounded-lg border border-slate-300 bg-white text-slate-900 tabular-nums placeholder:text-muted focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25 dark:border-brand-500/40 dark:bg-brand-950 dark:text-white dark:placeholder:text-brand-200/70 dark:focus:border-brand-400;
   }
   .label {
-    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400;
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted;
   }
   /* Loading placeholder that moves, so a wait reads as activity rather than a hang. */
   .skeleton {

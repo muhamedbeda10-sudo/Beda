@@ -145,10 +145,10 @@ export function PeriodSlicer({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Period</span>
+        <span className="text-[11px] font-bold uppercase tracking-wide text-muted">Period</span>
         <span className="text-sm font-bold tabular-nums">
           {pretty(fromDate)} – {pretty(toDate)}
-          <span className="ml-2 text-xs font-semibold text-slate-400">{days} day{days === 1 ? '' : 's'}</span>
+          <span className="ml-2 text-xs font-semibold text-muted">{days} day{days === 1 ? '' : 's'}</span>
         </span>
         <span className="ml-auto flex flex-wrap items-center gap-1">
           {PERIOD_PRESETS.filter((p) => p.key !== 'custom').map((p) => (
@@ -178,7 +178,7 @@ export function PeriodSlicer({
           {/* Months */}
           {months.map((m) => (
             <div key={m.label + m.x} className="absolute top-0 h-full border-l border-slate-200 dark:border-slate-700" style={{ left: m.x, width: m.width }}>
-              <span className="absolute left-1.5 top-1 whitespace-nowrap text-[10px] font-semibold text-slate-500 dark:text-slate-400">{m.label}</span>
+              <span className="absolute left-1.5 top-1 whitespace-nowrap text-[10px] font-semibold text-muted">{m.label}</span>
             </div>
           ))}
           {/* Weeks, as ticks along the bottom */}
@@ -225,7 +225,7 @@ export function PeriodSlicer({
           ))}
         </div>
       </div>
-      <p className="text-[11px] text-slate-400">Drag a handle to move one end, drag the band to move the whole period, scroll the strip to go further back. Up to {MAX_DAYS} days.</p>
+      <p className="text-[11px] text-muted">Drag a handle to move one end, drag the band to move the whole period, scroll the strip to go further back. Up to {MAX_DAYS} days.</p>
     </div>
   )
 }

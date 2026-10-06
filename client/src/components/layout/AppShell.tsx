@@ -1,29 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import {
-  ClipboardCheck,
-  History,
-  LayoutDashboard,
-  Settings,
-  Sun,
-  Moon,
-  Menu,
-  X,
-  CheckCircle2,
-  AlertCircle,
-  Info,
-  AlertTriangle,
-  LogOut,
-  SlidersHorizontal,
-  UploadCloud,
-  Users,
-  ScrollText,
-  ChevronRight,
-  BellRing,
-  MessagesSquare,
-  Sparkles,
-  Table2,
-} from 'lucide-react'
+import { AlertCircle, AlertTriangle, BellRing, CheckCircle2, ChevronRight, ClipboardCheck, History, Info, LayoutDashboard, LogOut, Menu, MessagesSquare, Moon, Rows3, Rows4, ScrollText, Settings, SlidersHorizontal, Sparkles, Sun, Table2, UploadCloud, Users, X } from 'lucide-react'
 import { WhatsNewPrompt } from '@/components/releases/WhatsNew'
 import { NoticeBell } from '@/components/notices/NoticeBell'
 import { useChatUnread } from '@/services/queries'
@@ -32,6 +9,7 @@ import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
 import { can, type Capability } from '@qc/shared/rules'
+import { useDensity } from '@/lib/density'
 
 interface NavItem {
   to: string
@@ -163,7 +141,7 @@ function AdminMenu({ items }: { items: NavItem[] }) {
           role="menu"
           className="absolute right-0 top-full z-50 mt-2 w-80 origin-top-right overflow-hidden rounded-2xl bg-white p-1.5 shadow-lift ring-1 ring-slate-200 animate-drop-in dark:bg-slate-900 dark:ring-slate-800"
         >
-          <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Administration</p>
+          <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Administration</p>
           {items.map((n) => (
             <NavLink
               key={n.to}
@@ -181,7 +159,7 @@ function AdminMenu({ items }: { items: NavItem[] }) {
               </span>
               <span className="min-w-0 flex-1 leading-tight">
                 <span className="block text-sm font-semibold">{n.label}</span>
-                {n.hint && <span className="block truncate text-xs text-slate-400">{n.hint}</span>}
+                {n.hint && <span className="block truncate text-xs text-muted">{n.hint}</span>}
               </span>
               <ChevronRight className="h-4 w-4 text-slate-300 transition-transform duration-200 group-hover/item:translate-x-0.5 group-hover/item:text-brand-500" />
             </NavLink>
@@ -198,6 +176,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
+  const [density, setDensity] = useDensity()
 
   const nav = NAV.filter((n) => !n.needs || can(role, n.needs))
   const admin = ADMIN_NAV.filter((n) => !n.needs || can(role, n.needs))
@@ -247,7 +226,16 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="ml-auto flex shrink-0 items-center gap-1 lg:ml-0 lg:justify-self-end">
             {can(role, 'use-chat') && <ChatButton />}
             {can(role, 'read-notices') && <NoticeBell />}
-            <button onClick={toggleTheme} className="icon-btn" aria-label="Toggle light or dark theme">
+            <button
+              onClick={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
+              className="icon-btn hidden md:grid"
+              aria-label={density === 'compact' ? 'Rows: compact. Switch to comfortable' : 'Rows: comfortable. Switch to compact'}
+              aria-pressed={density === 'compact'}
+              data-tip={density === 'compact' ? 'Compact rows — switch to comfortable' : 'Comfortable rows — switch to compact'}
+            >
+              {density === 'compact' ? <Rows4 className="h-5 w-5" /> : <Rows3 className="h-5 w-5" />}
+            </button>
+            <button onClick={toggleTheme} className="icon-btn" aria-label="Toggle light or dark theme" data-tip={theme === 'dark' ? 'Light theme' : 'Dark theme'}>
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
             {admin.length > 0 && (
@@ -257,7 +245,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             )}
             <div className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 lg:block" />
             <div className="hidden items-center gap-2 lg:flex">
-              <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-xs font-bold text-white shadow-card" title={displayName}>
+              <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-xs font-bold text-white shadow-card" data-tip={displayName}>
                 {initials || '?'}
               </span>
               <span className="hidden max-w-[10rem] truncate text-sm font-semibold xl:block">{displayName}</span>
@@ -288,7 +276,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               ))}
               {admin.length > 0 && (
                 <>
-                  <p className="px-4 pb-1 pt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Administration</p>
+                  <p className="px-4 pb-1 pt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Administration</p>
                   {admin.map((n) => (
                     <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
                   ))}
@@ -296,10 +284,10 @@ export function AppShell({ children }: { children: ReactNode }) {
               )}
             </nav>
             <div className="mt-2 border-t border-slate-100 px-5 py-4 dark:border-slate-800">
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-muted">
                 Signed in as <span className="font-semibold text-slate-700 dark:text-slate-200">{displayName}</span>
               </p>
-              <p className="mt-0.5 text-xs capitalize text-slate-400">Role: {role}</p>
+              <p className="mt-0.5 text-xs capitalize text-muted">Role: {role}</p>
               <button
                 onClick={() => {
                   setMenuOpen(false)

@@ -54,7 +54,7 @@ export function ReferenceImagesSection() {
         {
           key: 'machine',
           label: 'Machine',
-          render: (r) => (r.workCenterCode ? <Badge tone="blue">{r.workCenterCode}</Badge> : <span className="text-slate-400">every machine</span>),
+          render: (r) => (r.workCenterCode ? <Badge tone="blue">{r.workCenterCode}</Badge> : <span className="text-muted">every machine</span>),
         },
         { key: 'caption', label: 'Caption', render: (r) => <span dir="auto">{r.caption || '—'}</span> },
         {
@@ -100,7 +100,7 @@ export function ReferenceImagesSection() {
               imageIds={d.imageId ? [d.imageId] : []}
               onChange={(ids) => patch({ imageId: ids[0] ?? '' } as Partial<RefImageDraft>)}
             />
-            <p className="mt-1 text-xs text-slate-400">
+            <p className="mt-1 text-xs text-muted">
               One image per entry — adding another replaces the current reference.
             </p>
           </div>

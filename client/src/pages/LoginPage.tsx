@@ -43,7 +43,7 @@ export function LoginPage() {
         <div className="w-full max-w-md">
           <div className="mb-6 flex flex-col items-center text-center animate-scale-in">
             <Brand size="lg" />
-            <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Inspection Recorder</p>
+            <p className="mt-3 text-sm text-muted">Inspection Recorder</p>
           </div>
 
           <div className="card p-6 shadow-hover">
@@ -55,7 +55,7 @@ export function LoginPage() {
                     type="button"
                     onClick={() => setMode(m)}
                     className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
-                      mode === m ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-white' : 'text-slate-500'
+                      mode === m ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-white' : 'text-muted'
                     }`}
                   >
                     {m === 'in' ? 'Sign in' : 'Create account'}
@@ -68,14 +68,14 @@ export function LoginPage() {
               {mode === 'up' && (
                 <Field label="Full name">
                   <div className="relative">
-                    <UserIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <UserIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
                     <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Mohamed Abdelrahman" className="pl-9" />
                   </div>
                 </Field>
               )}
               <Field label="Username" hint={mode === 'up' ? 'Letters, digits, dots, dashes or underscores.' : undefined}>
                 <div className="relative">
-                  <AtSign className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <AtSign className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
                   <Input
                     type="text"
                     autoComplete="username"
@@ -84,7 +84,7 @@ export function LoginPage() {
                     spellCheck={false}
                     required
                     pattern={USERNAME_PATTERN}
-                    title="2–40 letters, digits, dots, dashes or underscores"
+                    data-tip="2–40 letters, digits, dots, dashes or underscores"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     placeholder="m.abdelrahman"
@@ -94,7 +94,7 @@ export function LoginPage() {
               </Field>
               <Field label="Password" hint={mode === 'up' ? `At least ${MIN_PASSWORD_LENGTH} characters.` : undefined}>
                 <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
                   <Input
                     type="password"
                     autoComplete={mode === 'in' ? 'current-password' : 'new-password'}
@@ -127,7 +127,7 @@ export function LoginPage() {
             </form>
           </div>
 
-          <p className="mt-5 text-center text-xs text-slate-400">
+          <p className="mt-5 text-center text-xs text-muted">
             {selfRegistrationOpen
               ? 'The first account created becomes the administrator · roles are managed in Admin → Users'
               : 'Accounts are created by your quality administrator'}

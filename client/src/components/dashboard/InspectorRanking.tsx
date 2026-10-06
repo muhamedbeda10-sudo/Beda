@@ -38,11 +38,11 @@ function PartBars({ row }: { row: KpiInspectorRank }) {
     <div className="mt-2 space-y-1">
       {PARTS.map((p) => (
         <div key={p.key} className="flex items-center gap-2">
-          <span className="w-[86px] shrink-0 text-[11px] text-slate-500 dark:text-slate-400">{p.label}</span>
+          <span className="w-[86px] shrink-0 text-[11px] text-muted">{p.label}</span>
           <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
             <span className={cn('block h-full rounded-full', p.bar)} style={{ width: `${Math.max(0, Math.min(100, row[p.key] as number))}%` }} />
           </span>
-          <span className="w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums text-slate-500 dark:text-slate-400">
+          <span className="w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums text-muted">
             {num(row[p.key] as number)}
           </span>
         </div>
@@ -70,7 +70,7 @@ function Podium({ rows, onPick }: { rows: KpiInspectorRank[]; onPick: (id: strin
               <span className="ml-auto text-2xl font-extrabold tabular-nums">{num(r.score, 1)}</span>
             </div>
             <p dir="auto" className="mt-1 truncate text-sm font-bold">{r.name}</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-xs text-muted">
               {num(r.samples)} samples · {num(r.samplesPerActiveDay, 1)}/day · {num(r.pieces)} pcs
             </p>
             <PartBars row={r} />
@@ -86,7 +86,7 @@ function RankTable({ rows, onPick }: { rows: KpiInspectorRank[]; onPick: (id: st
     <div className="overflow-x-auto">
       <table className="w-full min-w-[760px] text-sm">
         <thead>
-          <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+          <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
             <th className="px-2 py-1.5 font-semibold">#</th>
             <th className="px-2 py-1.5 font-semibold">Inspector</th>
             <th className="px-2 py-1.5 text-right font-semibold">Score</th>
@@ -109,11 +109,11 @@ function RankTable({ rows, onPick }: { rows: KpiInspectorRank[]; onPick: (id: st
               onClick={() => onPick(r.inspectorId)}
               className="cursor-pointer transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40"
             >
-              <td className="px-2 py-1.5 tabular-nums text-slate-400">{r.rank}</td>
+              <td className="px-2 py-1.5 tabular-nums text-muted">{r.rank}</td>
               <td dir="auto" className="px-2 py-1.5 font-semibold">{r.name}</td>
               <td className="px-2 py-1.5 text-right font-bold tabular-nums">{num(r.score, 1)}</td>
               {PARTS.map((p) => (
-                <td key={p.key} className="px-2 py-1.5 text-right tabular-nums text-slate-500 dark:text-slate-400">
+                <td key={p.key} className="px-2 py-1.5 text-right tabular-nums text-muted">
                   {num(r[p.key] as number)}
                 </td>
               ))}
@@ -122,7 +122,7 @@ function RankTable({ rows, onPick }: { rows: KpiInspectorRank[]; onPick: (id: st
               <td className="px-2 py-1.5 text-right tabular-nums">{r.dimensionCompletionPct === null ? '—' : `${num(r.dimensionCompletionPct, 1)}%`}</td>
               <td className="px-2 py-1.5 text-right tabular-nums">{num(r.correctionsPer100Samples, 1)}</td>
               <td className="print-hidden px-2 py-1.5 text-right">
-                <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
+                <ChevronRight className="ml-auto h-4 w-4 text-muted" />
               </td>
             </tr>
           ))}
@@ -191,7 +191,7 @@ export function InspectorRanking({ data, onPick }: { data: KpiInspectorRanking; 
               peers scores 50; twice their rate scores 100.
             </li>
           </ul>
-          <p className="text-slate-500 dark:text-slate-400">
+          <p className="text-muted">
             The defect rate of the work inspected is deliberately not part of the score: ranking on it would reward the inspector who finds least. An inspector
             needs {data.minSamples} samples in the period to be placed at all.
           </p>
@@ -199,7 +199,7 @@ export function InspectorRanking({ data, onPick }: { data: KpiInspectorRanking; 
       )}
 
       {ranked.length === 0 ? (
-        <p className="py-6 text-center text-sm text-slate-400">
+        <p className="py-6 text-center text-sm text-muted">
           No inspector reached {data.minSamples} samples in this period.
         </p>
       ) : (
@@ -211,7 +211,7 @@ export function InspectorRanking({ data, onPick }: { data: KpiInspectorRanking; 
 
       {unranked.length > 0 && (
         <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
-          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+          <p className="text-xs font-semibold text-muted">
             Not placed — under {data.minSamples} samples in this period
           </p>
           <div className="mt-1.5 flex flex-wrap gap-1.5">

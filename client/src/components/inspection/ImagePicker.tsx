@@ -105,7 +105,7 @@ export function ImagePicker({
 
         {busy > 0 && (
           <div className="grid h-20 w-20 place-items-center rounded-xl bg-slate-100 dark:bg-slate-800">
-            <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+            <Loader2 className="h-5 w-5 animate-spin text-muted" />
           </div>
         )}
 
@@ -114,7 +114,7 @@ export function ImagePicker({
             <button
               type="button"
               onClick={() => camRef.current?.click()}
-              className="grid h-20 w-20 place-items-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-slate-400 transition-colors hover:border-brand-400 hover:text-brand-500 dark:border-slate-700"
+              className="grid h-20 w-20 place-items-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-muted transition-colors hover:border-brand-400 hover:text-brand-500 dark:border-slate-700"
               aria-label="Take a photo"
             >
               <Camera className="h-6 w-6" />
@@ -122,7 +122,7 @@ export function ImagePicker({
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              className="grid h-20 w-20 place-items-center rounded-xl border-2 border-dashed border-slate-300 text-slate-400 transition-colors hover:border-brand-400 hover:text-brand-500 dark:border-slate-700"
+              className="grid h-20 w-20 place-items-center rounded-xl border-2 border-dashed border-slate-300 text-muted transition-colors hover:border-brand-400 hover:text-brand-500 dark:border-slate-700"
               aria-label="Upload from gallery"
             >
               <ImagePlus className="h-6 w-6" />
@@ -132,7 +132,7 @@ export function ImagePicker({
       </div>
 
       {readOnly && assets.length === 0 && (
-        <p className="flex items-center gap-2 rounded-xl border border-dashed border-slate-200 px-3 py-3 text-sm text-slate-400 dark:border-slate-700">
+        <p className="flex items-center gap-2 rounded-xl border border-dashed border-slate-200 px-3 py-3 text-sm text-muted dark:border-slate-700">
           <AlertCircle className="h-4 w-4" /> No photos attached.
         </p>
       )}

@@ -309,7 +309,7 @@ export function WizardPage() {
     })
   }, [draft])
 
-  if (sessionsLoading || (editingSampleId && editingLoading)) return <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
+  if (sessionsLoading || (editingSampleId && editingLoading)) return <Card className="p-10 text-center text-sm text-muted">Loading…</Card>
   if (!order || (!session && !pending) || loadError) {
     return (
       <EmptyState
@@ -323,7 +323,7 @@ export function WizardPage() {
       />
     )
   }
-  if (!draft) return <Card className="p-10 text-center text-sm text-slate-400">Preparing…</Card>
+  if (!draft) return <Card className="p-10 text-center text-sm text-muted">Preparing…</Card>
 
   const current = (draft.step as WizardStep) ?? 'setup'
   const stepIndex = Math.max(0, steps.indexOf(current))
@@ -501,7 +501,7 @@ export function WizardPage() {
           else if (priorSamples.length === 0) setLeaving(true)
           else navigate('/')
         }}
-        className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400"
+        className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-semibold text-muted hover:text-brand-600"
       >
         <ArrowLeft className="h-4 w-4" /> {draft.editingSampleId ? 'History' : 'Inspections'}
       </button>
@@ -581,7 +581,7 @@ export function WizardPage() {
             </Badge>
           )}
         </div>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        <p className="mt-1 text-sm text-muted">
           {order.itemCode}
           {order.item ? ` · ${order.item}` : ''} · Order ID {order.lineKey}
         </p>
@@ -730,7 +730,7 @@ export function WizardPage() {
                 </li>
               ))}
             </ul>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
+            <p className="text-sm text-muted">
               If you continue, your name, the time and these coils are recorded with the sample — an audit will
               ask about this decision later.
             </p>
@@ -847,7 +847,7 @@ function SetupStep({
         <div className="rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
           <Field label="Welding wire batch number" hint="Remembered from the previous sample of this session; change it when a new spool goes on.">
             <div className="relative">
-              <Cable className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Cable className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               <Input
                 value={draft.pt?.weldingWireBatch ?? ''}
                 onChange={(e) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), weldingWireBatch: e.target.value } }))}
@@ -869,7 +869,7 @@ function SetupStep({
           </Button>
         </div>
         {draft.coils.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-sm text-slate-400 dark:border-slate-700">
+          <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-sm text-muted dark:border-slate-700">
             No coils added. Optional on this machine.
           </p>
         ) : (
@@ -961,7 +961,7 @@ function SetupStep({
 function CoilFact({ label, value, unit }: { label: string; value?: string; unit?: string }) {
   return (
     <div>
-      <dt className="text-xs font-semibold uppercase text-slate-400">{label}</dt>
+      <dt className="text-xs font-semibold uppercase text-muted">{label}</dt>
       <dd className="font-semibold tabular-nums">{value ? `${value}${unit ? ` ${unit}` : ''}` : '—'}</dd>
     </div>
   )
@@ -976,14 +976,14 @@ function SetupSummary({ draft, onEdit }: { draft: SampleDraft; onEdit: () => voi
   const coils = draft.coils.map((c) => c.coilNumber).filter(Boolean)
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl bg-slate-50 px-3 py-2 text-sm dark:bg-slate-800/50">
-      <span className="text-xs font-bold uppercase tracking-wide text-slate-400">Setup</span>
+      <span className="text-xs font-bold uppercase tracking-wide text-muted">Setup</span>
       {draft.drawing && (
         <span>
-          <span className="text-slate-500 dark:text-slate-400">Drawing</span> <span className="font-semibold">{draft.drawing}</span>
+          <span className="text-muted">Drawing</span> <span className="font-semibold">{draft.drawing}</span>
         </span>
       )}
       <span className="flex flex-wrap items-center gap-1.5">
-        <span className="text-slate-500 dark:text-slate-400">Coils</span>
+        <span className="text-muted">Coils</span>
         {coils.length === 0 ? (
           <span className="font-semibold text-amber-600 dark:text-amber-400">none yet</span>
         ) : (
@@ -1099,7 +1099,7 @@ function DimensionsStep({
                   />
                 </label>
                 {d.source === 'item-order' ? (
-                  <span className="pb-3 text-xs tabular-nums text-slate-400">
+                  <span className="pb-3 text-xs tabular-nums text-muted">
                     +{d.tolPlus}/-{d.tolMinus}
                   </span>
                 ) : (
@@ -1130,7 +1130,7 @@ function DimensionsStep({
       </div>
       <div className="hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[560px] text-sm">
-          <thead className="text-xs uppercase text-slate-400">
+          <thead className="text-xs uppercase text-muted">
             <tr>
               <th className="px-2 py-2 text-left font-semibold">Dimension</th>
               <th className="px-2 py-2 text-right font-semibold">Nominal</th>
@@ -1165,7 +1165,7 @@ function DimensionsStep({
                       className="input-cell w-20 px-2 py-2 text-right"
                     />
                   </td>
-                  <td className="whitespace-nowrap px-2 py-2 text-center text-xs text-slate-400">
+                  <td className="whitespace-nowrap px-2 py-2 text-center text-xs text-muted">
                     {d.source === 'item-order' ? (
                       <>
                         +{d.tolPlus}/-{d.tolMinus}
@@ -1299,7 +1299,7 @@ function AddDimensionButton({ update, label = 'Add a dimension not in the config
           <Plus className="h-4 w-4" /> Add
         </Button>
       </div>
-      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Entered once: the next sample of this item on this machine keeps the nominal and tolerance, and asks only for the actual.</p>
+      <p className="mt-2 text-xs text-muted">Entered once: the next sample of this item on this machine keeps the nominal and tolerance, and asks only for the actual.</p>
     </div>
   )
 }
@@ -1337,7 +1337,7 @@ function DefectsStep({
       <div>
         <span className="label">Add a defect</span>
         <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -1346,7 +1346,7 @@ function DefectsStep({
           />
         </div>
         {options.length === 0 && (
-          <p className="mt-2 rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-slate-400 dark:border-slate-700">
+          <p className="mt-2 rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-muted dark:border-slate-700">
             No defects are configured for machine {draft.workCenterCode} yet — type the defect's name above and add it.
           </p>
         )}
@@ -1645,7 +1645,7 @@ function PaintThicknessStep({ draft, update }: { draft: SampleDraft; update: Upd
                   <span className="flex items-center gap-1">
                     {filled ? <Badge tone="green">Recorded</Badge> : required ? <Badge tone="neutral">Required</Badge> : <Badge tone="neutral">Optional</Badge>}
                     {!required && (
-                      <button type="button" onClick={(e) => { e.preventDefault(); removeFrom(i) }} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10" aria-label={`Remove reading ${n + 1}`}>
+                      <button type="button" onClick={(e) => { e.preventDefault(); removeFrom(i) }} className="grid h-7 w-7 place-items-center rounded-lg text-muted hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10" aria-label={`Remove reading ${n + 1}`}>
                         <Trash2 className="h-4 w-4" />
                       </button>
                     )}
@@ -1668,7 +1668,7 @@ function PaintThicknessStep({ draft, update }: { draft: SampleDraft; update: Upd
           <Button type="button" onClick={addThree} className="min-h-[44px]" disabled={readings.length >= 30}>
             <Plus className="h-4 w-4" /> Add {PAINT_THICKNESS_READINGS} more readings
           </Button>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
+          <span className="text-xs text-muted">
             {readings.filter(({ d }) => d.actual.trim() !== '').length} of {readings.length} recorded · the first {PAINT_THICKNESS_READINGS} are required, an empty extra one is not saved.
           </span>
         </div>
@@ -1748,7 +1748,7 @@ function PTStep({
           </Button>
         </div>
         {pt.testedLengths.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-sm text-slate-400 dark:border-slate-700">
+          <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-sm text-muted dark:border-slate-700">
             Add each weld length you tested and give it a verdict.
           </p>
         ) : (
@@ -1770,7 +1770,7 @@ function PTStep({
                         placeholder="Length"
                         className={cn('input min-h-[48px] pr-12 text-lg font-bold tabular-nums', bad && 'border-rose-400')}
                       />
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">mm</span>
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted">mm</span>
                     </div>
                   </label>
                   <div className="col-span-3 flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:col-span-1">
@@ -1804,7 +1804,7 @@ function PTStep({
               )
             })}
             <p className="flex items-center gap-2 text-sm">
-              <span className="font-semibold text-slate-500">PT verdict:</span>
+              <span className="font-semibold text-muted">PT verdict:</span>
               {overall ? <Badge tone={overall === 'Accept' ? 'green' : 'red'}>{overall}</Badge> : <Badge tone="neutral">pending</Badge>}
             </p>
           </div>
@@ -1896,7 +1896,7 @@ function ReviewStep({
                 <span className="font-semibold">{c.coilNumber || '(no id)'}</span>
                 <span className="flex items-center gap-2">
                   {!c.coilId && <Badge tone="amber">typed</Badge>}
-                  <span className="text-slate-500">{c.grade || '—'}</span>
+                  <span className="text-muted">{c.grade || '—'}</span>
                 </span>
               </li>
             ))}
@@ -1912,9 +1912,9 @@ function ReviewStep({
           <ul className="grid grid-cols-3 gap-2 text-sm">
             {measured.map((d, i) => (
               <li key={i} className="rounded-lg bg-slate-50 px-3 py-2 text-center dark:bg-slate-800/50">
-                <span className="block text-xs font-semibold uppercase text-slate-400">Reading {d.sequence}</span>
+                <span className="block text-xs font-semibold uppercase text-muted">Reading {d.sequence}</span>
                 <span className="text-lg font-bold tabular-nums">
-                  {d.actual} <span className="text-xs font-normal text-slate-400">{d.unit}</span>
+                  {d.actual} <span className="text-xs font-normal text-muted">{d.unit}</span>
                 </span>
               </li>
             ))}
@@ -1933,7 +1933,7 @@ function ReviewStep({
                   return (
                     <tr key={i}>
                       <td className="py-2 font-semibold">{d.name}</td>
-                      <td className="py-2 text-right tabular-nums text-slate-500">
+                      <td className="py-2 text-right tabular-nums text-muted">
                         {d.nominal.trim() === '' ? '— (no nominal)' : `${d.nominal} +${d.tolPlus || 0}/-${d.tolMinus || 0}`}
                       </td>
                       <td className="py-2 text-right font-bold tabular-nums">{d.actual}</td>
@@ -1958,7 +1958,7 @@ function ReviewStep({
               <li key={d.key} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/50">
                 <span dir="auto" className="min-w-0 font-semibold">
                   {d.defectName}
-                  {isOtherDefect(d.defectName) && d.notes && <span className="block truncate text-xs font-normal text-slate-500">{d.notes}</span>}
+                  {isOtherDefect(d.defectName) && d.notes && <span className="block truncate text-xs font-normal text-muted">{d.notes}</span>}
                 </span>
                 <span className="flex items-center gap-2">
                   <Badge tone="neutral">Qty {d.qty}</Badge>
@@ -2016,7 +2016,7 @@ function ReviewStep({
           </Field>
         </div>
         <div className="mt-3">
-          <p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          <p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted">
             <MessageSquareText className="h-3.5 w-3.5" /> Earlier notes on this item here
             {orderNotes.length > 0 && <Badge tone="neutral">{orderNotes.length}</Badge>}
           </p>
@@ -2024,7 +2024,7 @@ function ReviewStep({
         </div>
       </Section>
 
-      <p className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-3 text-sm text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
+      <p className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-3 text-sm text-muted dark:bg-slate-800/50">
         <Layers className="mt-0.5 h-4 w-4 shrink-0" />
         Saving writes the sample, its measurements, defects, coils, attachments and your note as one unit. If anything
         fails, nothing is written and your entries stay on this screen.
@@ -2036,7 +2036,7 @@ function ReviewStep({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{title}</h3>
+      <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted">{title}</h3>
       {children}
     </div>
   )
@@ -2044,14 +2044,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-xs font-semibold uppercase text-slate-400">{label}</dt>
+      <dt className="text-xs font-semibold uppercase text-muted">{label}</dt>
       <dd className="truncate font-semibold">{value}</dd>
     </div>
   )
 }
 function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <p className="rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-slate-400 dark:border-slate-700">
+    <p className="rounded-xl border border-dashed border-slate-200 py-3 text-center text-sm text-muted dark:border-slate-700">
       {children}
     </p>
   )

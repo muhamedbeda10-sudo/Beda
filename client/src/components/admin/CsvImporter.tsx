@@ -360,7 +360,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-base font-bold">{importer.title}</h3>
-            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{importer.description}</p>
+            <p className="mt-0.5 text-sm text-muted">{importer.description}</p>
           </div>
           <Button className="min-h-[48px]" onClick={downloadTemplate}>
             <FileDown className="h-4 w-4" /> Download CSV template
@@ -387,7 +387,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
         >
           <FileSpreadsheet className="mx-auto h-8 w-8 text-slate-300 dark:text-slate-600" />
           <p className="mt-2 text-sm font-semibold">{fileName ?? 'Drop a .csv or .xlsx file here'}</p>
-          <p className="mt-0.5 text-xs text-slate-400">
+          <p className="mt-0.5 text-xs text-muted">
             {fileName
               ? [
                   sheets.length > 0 ? `Sheet "${sheets[sheetIndex]?.name ?? ''}"` : null,
@@ -444,7 +444,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
         <Card className="space-y-4 p-4 sm:p-5">
           <div>
             <h3 className="text-base font-bold">Match your columns</h3>
-            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+            <p className="mt-0.5 text-sm text-muted">
               Columns whose names matched are already selected. The sample under each one comes from the first data row, so you can confirm
               the mapping is right before importing. Anything you don't need can be skipped — a skipped column leaves the stored value alone.
             </p>
@@ -501,7 +501,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
             <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-brand-600 dark:text-brand-400" />
             <div className="min-w-0">
               <h3 className="text-base font-bold">Checking which records already exist</h3>
-              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+              <p className="mt-0.5 text-sm text-muted">
                 Only the {lookupKeys.length} {lookupKeys.length === 1 ? 'key' : 'keys'} in this file are looked up — the rest of the table is
                 never read.
               </p>
@@ -527,7 +527,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
         <Card className="space-y-4 p-4 sm:p-5">
           <div>
             <h3 className="text-base font-bold">Preview — nothing has been written yet</h3>
-            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">This is exactly what pressing Import would do.</p>
+            <p className="mt-0.5 text-sm text-muted">This is exactly what pressing Import would do.</p>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -544,12 +544,12 @@ export function CsvImporter({ importer }: { importer: Importer }) {
 
           {plan.valid.length > 0 && (
             <div>
-              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">
                 First {Math.min(5, plan.valid.length)} of {plan.valid.length} mapped rows
               </p>
               <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
                 <table className="w-full min-w-[40rem] text-sm">
-                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
                     <tr>
                       <th className="px-3 py-2.5 font-bold">Row</th>
                       <th className="px-3 py-2.5 font-bold">Action</th>
@@ -563,7 +563,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {plan.valid.slice(0, 5).map((p) => (
                       <tr key={p.rowNumber}>
-                        <td className="px-3 py-2.5 tabular-nums text-slate-400">{p.rowNumber}</td>
+                        <td className="px-3 py-2.5 tabular-nums text-muted">{p.rowNumber}</td>
                         <td className="px-3 py-2.5">
                           <Badge tone={p.mode === 'new' ? 'green' : 'blue'}>{p.mode === 'new' ? 'New' : 'Update'}</Badge>
                         </td>
@@ -582,7 +582,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
 
           {plan.errors.length > 0 && (
             <div>
-              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Rows that will be skipped</p>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Rows that will be skipped</p>
               <ul className="max-h-60 space-y-1 overflow-y-auto rounded-2xl bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-500/10 dark:text-rose-300">
                 {plan.errors.slice(0, 25).map((e) => (
                   <li key={e.rowNumber} className="flex items-start gap-2">
@@ -600,7 +600,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
           <div className="space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
             {status !== 'idle' && (
               <div>
-                <div className="mb-1.5 flex items-center justify-between gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                <div className="mb-1.5 flex items-center justify-between gap-2 text-xs font-semibold text-muted">
                   <span>
                     {status === 'done' ? 'Import complete' : status === 'paused' ? 'Paused — rows already written will not be written again' : 'Importing…'}
                   </span>
@@ -654,7 +654,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
                   >
                     <Pause className="h-4 w-4" /> Pause
                   </Button>
-                  <span className="inline-flex items-center gap-2 text-sm text-slate-400">
+                  <span className="inline-flex items-center gap-2 text-sm text-muted">
                     <Loader2 className="h-4 w-4 animate-spin" /> Sending in batches of {BATCH_SIZE}…
                   </span>
                 </>
@@ -683,7 +683,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
 
       {hasFile && !plan && missingKeys.length > 0 && (
         <Card className="p-5">
-          <p className="flex items-start gap-2 text-sm text-slate-500 dark:text-slate-400">
+          <p className="flex items-start gap-2 text-sm text-muted">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             Map {missingKeys.join(' and ')} above to see what this file would change.
           </p>

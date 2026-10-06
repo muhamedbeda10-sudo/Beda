@@ -133,7 +133,7 @@ export function UsersPanel() {
             </span>
             <div className="min-w-0">
               <h2 className="text-lg font-bold">Users</h2>
-              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">Who can sign in, and what each person may do.</p>
+              <p className="mt-0.5 text-sm text-muted">Who can sign in, and what each person may do.</p>
             </div>
           </div>
           <Button variant="primary" className="min-h-[48px]" onClick={() => setCreating({ username: '', name: '', role: 'inspector', password: '' })}>
@@ -142,13 +142,13 @@ export function UsersPanel() {
         </div>
 
         {isLoading ? (
-          <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-400">
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : (
           <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
             <table className="w-full min-w-[40rem] text-sm">
-              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
                 <tr>
                   <th className="px-3 py-2.5 font-bold">Name</th>
                   <th className="px-3 py-2.5 font-bold">Username</th>
@@ -162,7 +162,7 @@ export function UsersPanel() {
                   <tr key={u.id} className={cn('hover:bg-slate-50/70 dark:hover:bg-slate-800/40', !u.isActive && 'opacity-60')}>
                     <td className="px-3 py-2.5 font-semibold">
                       {u.name}
-                      {u.id === profile?.id && <span className="ml-2 text-xs font-normal text-slate-400">(you)</span>}
+                      {u.id === profile?.id && <span className="ml-2 text-xs font-normal text-muted">(you)</span>}
                     </td>
                     <td className="px-3 py-2.5 font-mono text-[13px]">{u.username}</td>
                     <td className="px-3 py-2.5">
@@ -180,7 +180,7 @@ export function UsersPanel() {
                             setEditDraft({ username: u.username, name: u.name, role: u.role, password: '' })
                           }}
                           aria-label={`Edit ${u.name}`}
-                          className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
+                          className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
                         >
                           <Pencil className="h-4 w-4" />
                         </button>
@@ -190,7 +190,7 @@ export function UsersPanel() {
                             disabled={busy}
                             onClick={() => void toggleActive(u)}
                             aria-label={u.isActive ? `Deactivate ${u.name}` : `Reactivate ${u.name}`}
-                            className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
+                            className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
                           >
                             {u.isActive ? <ShieldAlert className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
                           </button>
@@ -201,7 +201,7 @@ export function UsersPanel() {
                             disabled={busy}
                             onClick={() => setRemoving(u)}
                             aria-label={`Remove ${u.name}`}
-                            className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
+                            className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -317,7 +317,7 @@ export function UsersPanel() {
             </Field>
             <Field label="Reset password" hint="Leave empty to keep the current password. Setting one signs the person out everywhere.">
               <div className="relative">
-                <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
                 <Input type="text" autoComplete="off" className="pl-9" value={editDraft.password} onChange={(e) => setEditDraft({ ...editDraft, password: e.target.value })} />
               </div>
             </Field>

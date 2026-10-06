@@ -1,25 +1,52 @@
+import colors from 'tailwindcss/colors'
+
+// ============================================================================
+// Design tokens. Spacing is Tailwind's 4 px scale. Type runs 12/13/14/16/20/24
+// (xs, 13, sm, base, xl, 2xl). Radius runs 6/8/12 (md, lg, xl; 2xl and 3xl
+// are folded into 12 so every card and dialog shares one corner). Colour is
+// named by meaning — success, warning, danger, info, neutral — and secondary
+// text is `muted`, which keeps WCAG AA contrast in both themes.
+// ============================================================================
+
+// The LinkMisr blue of the logo: the brand, and the colour of information.
+const brand = {
+  50: '#eef3fc',
+  100: '#d9e4f9',
+  200: '#b4c8f2',
+  300: '#85a4e8',
+  400: '#5479d8',
+  500: '#3357c2',
+  600: '#1e46a8',
+  700: '#193a8a',
+  800: '#162f6d',
+  900: '#12275a',
+  950: '#0b1839',
+}
+
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: 'class',
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      fontSize: {
+        13: ['13px', { lineHeight: '18px' }],
+      },
+      borderRadius: {
+        '2xl': '12px',
+        '3xl': '12px',
+      },
       colors: {
+        // Secondary text: slate-500 on light surfaces, slate-400 on dark ones (index.css).
+        muted: 'rgb(var(--c-muted) / <alpha-value>)',
+        success: colors.emerald,
+        warning: colors.amber,
+        danger: colors.rose,
+        info: brand,
+        neutral: colors.slate,
         // Brand palette, taken from the LinkMisr logo: the royal blue of
         // "LINK" and the red of "MISR". Every tone is defined here once.
-        brand: {
-          50: '#eef3fc',
-          100: '#d9e4f9',
-          200: '#b4c8f2',
-          300: '#85a4e8',
-          400: '#5479d8',
-          500: '#3357c2',
-          600: '#1e46a8',
-          700: '#193a8a',
-          800: '#162f6d',
-          900: '#12275a',
-          950: '#0b1839',
-        },
+        brand,
         accent: {
           50: '#fdecec',
           100: '#fbd5d6',
