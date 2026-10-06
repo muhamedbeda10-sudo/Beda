@@ -27,7 +27,7 @@ import {
   Camera,
   RotateCcw,
 } from 'lucide-react'
-import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Stat } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { PtCoverageBadge, SessionToneBadge, ptCoverage, sessionToneClass } from '@/components/inspection/SessionTone'
 import { Attr, SampleDetail, Section, SectionEmpty, dispositionToneOf, num, statusToneOf } from '@/components/inspection/SampleDetail'
@@ -666,25 +666,50 @@ export function HistoryPage() {
   }
 
   return (
-    <div className="space-y-5">
-      {kindToggle}
-      {/* No page heading: the tab says where you are, and the counters take the top of the page. */}
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">
-        <button type="button" className="text-left" onClick={() => openCounter()} disabled={totals.sessions === 0} aria-label="Sessions: grouped by order line">
-          <Stat
-            compact
+    <div className="space-y-4">
+      {/* One row at the top: what History lists, its counters the toggle's height, and the page's tools. No page heading: the tab says where you are. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {kindToggle}
+        {/* The three counters stay together; on a phone they drop their labels and keep icon and number. */}
+        <span className="flex gap-2">
+          <CounterChip
             label="Sessions"
             value={totals.sessions}
-            sub={totals.sessions > filtered.length ? `${filtered.length} on screen, the rest below` : 'All of them on screen'}
-            icon={<HistoryIcon className="h-5 w-5" />}
+            sub={totals.sessions > filtered.length ? `${filtered.length} on screen` : undefined}
+            icon={<HistoryIcon className="h-4 w-4" />}
+            onClick={() => openCounter()}
+            disabled={totals.sessions === 0}
+            ariaLabel="Sessions: grouped by order line"
           />
-        </button>
-        <button type="button" className="text-left" onClick={() => openCounter('Open')} disabled={totals.open === 0} aria-label="Open sessions: grouped by order line">
-          <Stat compact label="Open" value={totals.open} tone={totals.open > 0 ? 'green' : 'neutral'} icon={<ClipboardList className="h-5 w-5" />} />
-        </button>
-        <button type="button" className="text-left" onClick={() => openCounter('Closed')} disabled={totals.closed === 0} aria-label="Closed sessions: grouped by order line">
-          <Stat compact label="Closed" value={totals.closed} tone="neutral" icon={<Lock className="h-5 w-5" />} />
-        </button>
+          <CounterChip
+            label="Open"
+            value={totals.open}
+            icon={<ClipboardList className="h-4 w-4" />}
+            tone={totals.open > 0 ? 'green' : 'neutral'}
+            onClick={() => openCounter('Open')}
+            disabled={totals.open === 0}
+            ariaLabel="Open sessions: grouped by order line"
+          />
+          <CounterChip
+            label="Closed"
+            value={totals.closed}
+            icon={<Lock className="h-4 w-4" />}
+            onClick={() => openCounter('Closed')}
+            disabled={totals.closed === 0}
+            ariaLabel="Closed sessions: grouped by order line"
+          />
+        </span>
+        {isFetching && !loading && <span className="text-xs text-slate-400">Searching the whole record…</span>}
+        <span className="ml-auto flex flex-wrap items-center gap-2">
+          {canExport && (
+            <Button className="min-h-[40px]" onClick={() => void exportExcel()} disabled={exporting || totals.sessions === 0} aria-label="Export the sessions to Excel">
+              <Download className="h-4 w-4" /> {exporting ? 'Building…' : 'Export Excel'}
+            </Button>
+          )}
+          <Button className="min-h-[40px]" onClick={resetFilters} disabled={!filtersSet} aria-label="Reset all filters">
+            <RotateCcw className="h-4 w-4" /> Reset all
+          </Button>
+        </span>
       </div>
 
 
@@ -701,15 +726,22 @@ export function HistoryPage() {
       )}
 
       <Card className="space-y-3 p-4">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <Input
-            value={term}
-            onChange={(e) => setTerm(e.target.value)}
-            placeholder="Order, item, code, customer, inspector, machine or #session…"
-            className="min-h-[52px] pl-9 text-base"
-            aria-label="Search history"
-          />
+        {/* The table's own tools sit beside the search, in the room its row leaves. */}
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder="Order, item, code, customer, inspector, machine or #session…"
+              className="min-h-[52px] pl-9 text-base"
+              aria-label="Search history"
+            />
+          </div>
+          <span className="hidden shrink-0 items-center gap-2 md:flex">
+            <FitColumnsButton grid={grid} />
+            <ColumnPicker grid={grid} />
+          </span>
         </div>
         <div className={cn('grid grid-cols-2 gap-3 sm:grid-cols-3', seesAll && 'lg:grid-cols-6')}>
           <Field label="Status">
@@ -784,19 +816,6 @@ export function HistoryPage() {
             </>
           )}
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {isFetching && !loading ? <p className="text-xs text-slate-400">Searching the whole record…</p> : <span />}
-          <span className="flex flex-wrap gap-2">
-            {canExport && (
-              <Button className="min-h-[40px]" onClick={() => void exportExcel()} disabled={exporting || totals.sessions === 0} aria-label="Export the sessions to Excel">
-                <Download className="h-4 w-4" /> {exporting ? 'Building…' : 'Export Excel'}
-              </Button>
-            )}
-            <Button className="min-h-[40px]" onClick={resetFilters} disabled={!filtersSet} aria-label="Reset all filters">
-              <RotateCcw className="h-4 w-4" /> Reset all
-            </Button>
-          </span>
-        </div>
       </Card>
 
       {loading ? (
@@ -844,11 +863,7 @@ export function HistoryPage() {
             ))}
           </div>
 
-          {/* md+ — the same rows as a table; the columns are the person's to size and choose. */}
-          <div className="hidden justify-end gap-2 md:flex">
-            <FitColumnsButton grid={grid} />
-            <ColumnPicker grid={grid} />
-          </div>
+          {/* md+ — the same rows as a table; the columns are the person's to size and choose, from the tools at the top. */}
           <Card className="hidden overflow-hidden md:block">
             <GridFrame>
               <table ref={grid.tableRef} className={cn('w-full text-sm', !grid.enabled && 'min-w-[720px]')} style={grid.tableStyle}>
@@ -1153,3 +1168,42 @@ export function HistoryPage() {
 // ---- Sample detail ---------------------------------------------------------
 
 // ---- Correction dialogs ----------------------------------------------------
+
+/** A History counter the toggle's height: icon, label and number on one line. Tapping it opens its sessions grouped by order line. */
+function CounterChip({
+  label,
+  value,
+  sub,
+  icon,
+  tone = 'neutral',
+  onClick,
+  disabled,
+  ariaLabel,
+}: {
+  label: string
+  value: number
+  sub?: string
+  icon: ReactNode
+  tone?: 'green' | 'neutral'
+  onClick: () => void
+  disabled: boolean
+  ariaLabel: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      title={label}
+      className="inline-flex h-12 items-center gap-2 rounded-xl bg-white px-3 ring-1 ring-slate-200 transition-colors hover:bg-slate-50 disabled:cursor-default disabled:hover:bg-white dark:bg-slate-900 dark:ring-slate-800 dark:hover:bg-slate-800 dark:disabled:hover:bg-slate-900"
+    >
+      <span className={cn('grid h-7 w-7 place-items-center rounded-lg', tone === 'green' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300')}>
+        {icon}
+      </span>
+      <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-slate-400 sm:inline">{label}</span>
+      <span className="text-lg font-extrabold tabular-nums">{value.toLocaleString()}</span>
+      {sub && <span className="hidden text-xs text-slate-400 lg:inline">{sub}</span>}
+    </button>
+  )
+}
