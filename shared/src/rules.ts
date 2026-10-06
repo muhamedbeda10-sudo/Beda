@@ -134,6 +134,19 @@ export function processForMachine(machine: { process?: Process | null } | null |
 }
 
 /**
+ * Whether a machine's wizard loads the item's configured dimensions. A
+ * universal machine never does: the same item is pressed or cut differently
+ * from one job to the next, so the inspector types what the part needs, and
+ * the next sample of that item on that machine starts from the last one —
+ * empty when it was never measured there. Every other machine follows its
+ * Configuration switch (on unless turned off).
+ */
+export function takesConfiguredDimensions(process: Process, machine: { usesItemDimensions?: boolean } | null | undefined): boolean {
+  if (process === 'universal') return false
+  return machine?.usesItemDimensions !== false
+}
+
+/**
  * The steps a process gets. An inspector must never see a step that does
  * not apply, nor be able to skip one that does.
  *   forming / universal — setup (drawing, coils), dimensions, defects

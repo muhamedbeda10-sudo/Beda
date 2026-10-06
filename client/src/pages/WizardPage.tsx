@@ -68,6 +68,7 @@ import {
   PAINT_THICKNESS_READINGS,
   PAINT_THICKNESS_UNIT,
   PT_MIN_TEST_FREQUENCY_PCT,
+  takesConfiguredDimensions,
   type WizardStep,
 } from '@qc/shared/rules'
 
@@ -627,7 +628,7 @@ export function WizardPage() {
         {current === 'dimensions' && (
           <>
             <WorkInstructionLinks instructions={instructions} step="dimensions" />
-            <DimensionsStep draft={draft} update={update} order={order} refImages={refImages} typedByInspector={machine?.usesItemDimensions === false} />
+            <DimensionsStep draft={draft} update={update} order={order} refImages={refImages} typedByInspector={!takesConfiguredDimensions(process, machine)} />
           </>
         )}
         {current === 'defects' && (

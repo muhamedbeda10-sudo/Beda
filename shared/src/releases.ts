@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-06.92',
+    date: '2026-10-06',
+    title: 'Universal machines: dimensions from the inspector only',
+    items: [
+      { text: 'On a universal machine the wizard never loads dimensions from the item setup. It starts from the dimensions typed on the last sample of the same item on the same machine, and empty the first time, so the inspector adds what the part needs.' },
+      { text: 'Configuration › Machines shows a universal machine\'s dimensions as "Typed by inspector", and the switch is locked for it.' },
+    ],
+  },
+  {
     id: '2026-10-06.91',
     date: '2026-10-06',
     title: 'Access marks the lines the order sheet got wrong',

@@ -40,6 +40,7 @@ import {
   MAX_STAGE,
   stagesProblem,
   topStageQty,
+  takesConfiguredDimensions,
 } from '@qc/shared/rules'
 import { instructionsInForce } from './workInstructions.routes'
 import type {
@@ -807,9 +808,10 @@ export function sessionsRoutes(ctx: AppContext): Router {
       order.id ? loadOrderNotes(q, order.id) : Promise.resolve([]),
     ])
     const plain = session ? (({ order: _summary, ...rest }) => rest)(session) : null
-    // A machine switched off in Configuration takes no configured dimensions:
-    // the inspector types them, and the previous sample's rows carry forward.
-    const loadsDimensions = machine?.usesItemDimensions !== false
+    // A universal machine, or one switched off in Configuration, takes no
+    // configured dimensions: the inspector types them, and the last sample of
+    // this item on this machine carries forward — nothing when there is none.
+    const loadsDimensions = takesConfiguredDimensions(process, machine)
     const body: WizardContext = {
       session: plain,
       order,
