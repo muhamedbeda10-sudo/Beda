@@ -28,6 +28,14 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-06.93',
+    date: '2026-10-06',
+    title: 'Universal machines: up to three stages at once',
+    items: [
+      { text: 'Closing a session on a universal machine offers the next three stages, so a session that ran the item on three presses at the same time can tick stages 1, 2 and 3 together, each with its quantity.' },
+    ],
+  },
+  {
     id: '2026-10-06.92',
     date: '2026-10-06',
     title: 'Universal machines: dimensions from the inspector only',
