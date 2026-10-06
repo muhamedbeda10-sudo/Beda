@@ -13,20 +13,21 @@ import type { InspectionSession } from '@qc/shared/types'
  *           on another machine or in an earlier session
  * The rule itself lives in the shared domain (sessionTone); this is its paint.
  */
+// Rows are opaque (the tint laid over the card's white or slate-900) so a sticky first cell can take the row's colour.
 const STYLE: Record<NonNullable<SessionTone>, { block: string; row: string; badge: 'amber' | 'red' | 'neutral' }> = {
   hold: {
     block: 'border-l-4 border-l-amber-400 bg-amber-50/70 dark:border-l-amber-500 dark:bg-amber-500/10',
-    row: 'bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/10 dark:hover:bg-amber-500/15',
+    row: 'bg-[#fffcf6] hover:bg-[#fef7d8] dark:bg-[#262527] dark:hover:bg-[#312b25]',
     badge: 'amber',
   },
   defect: {
     block: 'border-l-4 border-l-rose-500 bg-rose-50/70 dark:border-l-rose-500 dark:bg-rose-500/10',
-    row: 'bg-rose-50/70 hover:bg-rose-100/70 dark:bg-rose-500/10 dark:hover:bg-rose-500/15',
+    row: 'bg-[#fff5f6] hover:bg-[#ffecee] dark:bg-[#261b2f] dark:hover:bg-[#311d32]',
     badge: 'red',
   },
   prior: {
     block: 'border-l-4 border-l-slate-400 bg-slate-100/80 dark:border-l-slate-500 dark:bg-slate-800/60',
-    row: 'bg-slate-100/80 hover:bg-slate-200/70 dark:bg-slate-800/60 dark:hover:bg-slate-800',
+    row: 'bg-[#f4f7fa] hover:bg-[#ebeff5] dark:bg-[#18222f] dark:hover:bg-[#1e293b]',
     badge: 'neutral',
   },
 }

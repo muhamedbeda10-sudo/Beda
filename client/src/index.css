@@ -157,6 +157,24 @@ body {
 .grid-scroll thead th {
   @apply sticky top-0 z-20 bg-white dark:bg-slate-900;
 }
+/* The first column (the order) stays in view while a wide table scrolls sideways; its cells take their row's colour. */
+.grid-scroll .sticky-first tr > :first-child {
+  position: sticky;
+  left: 0;
+  z-index: 10;
+  background-color: inherit;
+  box-shadow: inset -1px 0 0 rgb(226 232 240);
+}
+.dark .grid-scroll .sticky-first tr > :first-child {
+  box-shadow: inset -1px 0 0 rgb(30 41 59);
+}
+.grid-scroll .sticky-first thead tr > :first-child {
+  z-index: 30;
+  background-color: white;
+}
+.dark .grid-scroll .sticky-first thead tr > :first-child {
+  background-color: rgb(15 23 42);
+}
 
 /* Hide number input spinners */
 input[type='number']::-webkit-inner-spin-button,
