@@ -19,6 +19,7 @@ import {
   can,
   stagesProblem,
   orderLineProblems,
+  takesConfiguredDimensions,
   topStageQty,
   ptRequiredFor,
   stockProductionOf, isStockMachine, normaliseMachineCode,
@@ -623,5 +624,17 @@ describe('order lines the sheet got wrong', () => {
     expect(orderLineProblems({ orderNumber: '20480-Ph3.4-SMA', item: 'Shuttle Beam', itemCode: 'LB406015' })).toEqual([])
     expect(orderLineProblems({ orderNumber: '20480', item: '', itemCode: 'LB406015' })).toEqual([])
     expect(orderLineProblems({ orderNumber: '100', item: 'Beam', itemCode: '' })).toEqual([])
+  })
+})
+
+describe('where the wizard takes its dimensions from', () => {
+  it('never from the configuration on a universal machine, whatever its switch says', () => {
+    expect(takesConfiguredDimensions('universal', { usesItemDimensions: true })).toBe(false)
+    expect(takesConfiguredDimensions('universal', null)).toBe(false)
+  })
+  it('from the configuration on the other machines unless switched off', () => {
+    expect(takesConfiguredDimensions('forming', { usesItemDimensions: true })).toBe(true)
+    expect(takesConfiguredDimensions('welding', null)).toBe(true)
+    expect(takesConfiguredDimensions('forming', { usesItemDimensions: false })).toBe(false)
   })
 })

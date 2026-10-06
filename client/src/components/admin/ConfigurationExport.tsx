@@ -11,6 +11,7 @@ import { Check, Download, FileSpreadsheet, Loader2 } from 'lucide-react'
 import type { MasterKind } from '@qc/shared/api'
 import type { Machine, GradeMapping, ItemDimensionOrder, ItemReferenceImage, PTConsumableProduct, WorkCenterDefect, WorkInstruction } from '@qc/shared/types'
 import { PROCESS_LABEL } from '@qc/shared/types'
+import { takesConfiguredDimensions } from '@qc/shared/rules'
 import { Badge, Button, Modal } from '@/components/ui'
 import { api } from '@/lib/api'
 import { downloadWorkbook, type SheetSpec } from '@/lib/xlsxWrite'
@@ -40,7 +41,7 @@ export const EXPORTABLES: Exportable[] = [
     sheet: 'Machines',
     header: ['Code', 'Name', 'Line', 'Display name', 'Factory', 'Process', 'Loads item dimensions', 'On the dashboard'],
     load: master('machines'),
-    row: (m: Machine) => [m.code, m.name, m.line, m.displayName, text(m.factory), PROCESS_LABEL[m.process] ?? m.process, m.usesItemDimensions ? 'Yes' : 'No', m.onDashboard === false ? 'No' : 'Yes'],
+    row: (m: Machine) => [m.code, m.name, m.line, m.displayName, text(m.factory), PROCESS_LABEL[m.process] ?? m.process, takesConfiguredDimensions(m.process ?? 'forming', m) ? 'Yes' : 'No', m.onDashboard === false ? 'No' : 'Yes'],
   },
   {
     key: 'item-dimension-order',

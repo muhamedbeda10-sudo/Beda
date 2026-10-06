@@ -208,3 +208,49 @@ describe('§15 — what a universal line made', () => {
     expect(b.series.machines.find((m) => m.key === '90')).toMatchObject({ made: 235, productionDefectPieces: 10 })
   })
 })
+
+describe('§8.3 — a universal machine takes no configured dimensions', () => {
+  type Ctx = { dimensionOrder: unknown[]; previousDimensions: { name: string; nominal: number | null }[] }
+  const preview = async (order: ProductionOrder) => {
+    const r = await app.api<Ctx>('GET', `/api/sessions/preview?orderId=${order.id}&startQty=0`, { token: inspector.token })
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    return r.body
+  }
+
+  it('opens empty the first time, whatever the item setup says, and then from the last sample on that machine', async () => {
+    // Configured dimensions for the item on every machine, and for the forming item.
+    for (const body of [
+      { itemCode: 'CL-3', item: 'Clip', dimensionName: 'Width', sequence: 1, nominal: 30, tolPlus: 0.5, tolMinus: 0.5, unit: 'mm' },
+      { itemCode: 'UP-1', item: 'Upright', dimensionName: 'Depth', sequence: 1, nominal: 80, tolPlus: 0.5, tolMinus: 0.5, unit: 'mm' },
+    ]) {
+      expect((await app.api('POST', '/api/master/item-dimension-order', { token: admin.token, body })).status).toBe(201)
+    }
+    const first = await preview(line('U-3'))
+    expect(first.dimensionOrder).toEqual([])
+    expect(first.previousDimensions).toEqual([])
+
+    // The inspector types what the part needs on the first sample…
+    const opened = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: line('U-3').id, startQty: 0 } })
+    expect(opened.status).toBe(201)
+    const saved = await app.api('POST', `/api/sessions/${opened.body.id}/samples`, {
+      token: inspector.token,
+      body: {
+        submissionId: randomUUID(),
+        drawing: 'D-1',
+        sampleQty: 5,
+        dimensions: [{ name: 'Hole pitch', sequence: 1, nominal: 40, tolPlus: 0.5, tolMinus: 0.5, actual: 40.1, unit: 'mm', source: 'manual' }],
+        defects: [],
+        coils: [],
+      },
+    })
+    expect(saved.status).toBe(201)
+
+    // …and the next one starts from it — still nothing from the item setup.
+    const next = (await app.api<Ctx>('GET', `/api/sessions/${opened.body.id}/wizard`, { token: inspector.token })).body
+    expect(next.dimensionOrder).toEqual([])
+    expect(next.previousDimensions.map((d) => [d.name, d.nominal])).toEqual([['Hole pitch', 40]])
+
+    // A forming machine still loads the item's configured rows.
+    expect((await preview(line('F-1'))).dimensionOrder).toHaveLength(1)
+  })
+})

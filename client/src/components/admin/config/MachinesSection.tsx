@@ -9,6 +9,7 @@ import { useMaster } from '@/services/queries'
 import { can } from '@/domain'
 import { MasterDataPanel, MachineSelect, numberOrNull, requireNumber, requireText } from '@/components/admin/MasterDataPanel'
 import { PROCESSES, PROCESS_LABEL, type Machine, type Process } from '@qc/shared/types'
+import { takesConfiguredDimensions } from '@qc/shared/rules'
 
 interface MachineDraft {
   code: string
@@ -55,7 +56,8 @@ export function MachinesSection() {
         {
           key: 'dimensions',
           label: 'Dimensions',
-          render: (r) => (r.usesItemDimensions === false ? <Badge tone="amber">Typed by inspector</Badge> : <Badge tone="neutral">From item setup</Badge>),
+          // What the wizard does, not only the switch: a universal machine is always typed by the inspector.
+          render: (r) => (takesConfiguredDimensions(r.process ?? 'forming', r) ? <Badge tone="neutral">From item setup</Badge> : <Badge tone="amber">Typed by inspector</Badge>),
         },
         {
           key: 'dashboard',
@@ -116,7 +118,14 @@ export function MachinesSection() {
               ))}
             </Select>
           </Field>
-          {d.process !== 'paint' && (
+          {d.process === 'universal' && (
+            <Field label="Dimensions" hint="A universal machine always takes them from the inspector: the next sample of an item on this machine starts from the last one, empty the first time. Nothing is loaded from the item setup.">
+              <Select value="inspector" disabled className="min-h-[48px]" aria-label="Dimensions">
+                <option value="inspector">Typed by inspector</option>
+              </Select>
+            </Field>
+          )}
+          {d.process !== 'paint' && d.process !== 'universal' && (
             <Field
               label="Dimensions"
               hint="From item setup: the item's configured dimensions pre-fill the wizard. Typed by inspector: nothing is loaded; the inspector adds what the part needs, and the next sample starts from the previous one."
