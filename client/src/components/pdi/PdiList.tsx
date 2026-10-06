@@ -12,9 +12,9 @@ import { loadOlderPdi, loadPdiExport, useDebounced, usePdiList, usePdiOptions } 
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { pdiSheets } from '@/components/history/exportHistory'
 import { usePersistedState } from '@/lib/usePersistedState'
-import { formatDateTime } from '@/lib/utils'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
+import { When } from '@/components/ui/Tooltip'
 
 const PAGE = 50
 
@@ -42,10 +42,10 @@ function ItemsCell({ doc, max = 3 }: { doc: PDIWithOrder; max?: number }) {
       {shown.map((i) => (
         <li key={i.itemCode || i.item} className="text-sm" dir="auto">
           <span className="font-medium">{i.item}</span>
-          {i.drawings.length > 0 && <span className="ml-1.5 text-xs text-slate-500">· {i.drawings.join(', ')}</span>}
+          {i.drawings.length > 0 && <span className="ml-1.5 text-xs text-muted">· {i.drawings.join(', ')}</span>}
         </li>
       ))}
-      {doc.items.length > max && <li className="text-xs text-slate-400">+{doc.items.length - max} more</li>}
+      {doc.items.length > max && <li className="text-xs text-muted">+{doc.items.length - max} more</li>}
     </ul>
   )
 }
@@ -54,9 +54,9 @@ export function PdiDetail({ doc, onClose }: { doc: PDIWithOrder; onClose: () => 
   return (
     <Modal open onClose={onClose} title={`PDI · ${doc.orderNumber}`} icon={<FileText className="h-5 w-5" />} size="lg">
       <div className="space-y-4">
-        <p className="text-sm text-slate-500 dark:text-slate-400">
+        <p className="text-sm text-muted">
           {doc.customer && <span className="font-semibold text-slate-700 dark:text-slate-200">{doc.customer} · </span>}
-          {formatDateTime(doc.createdAt)} · {doc.createdByName}
+          <When iso={doc.createdAt} time /> · {doc.createdByName}
         </p>
         <div>
           <span className="label">
@@ -64,7 +64,7 @@ export function PdiDetail({ doc, onClose }: { doc: PDIWithOrder; onClose: () => 
           </span>
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                 <th className="px-2 py-1.5 font-semibold">Item</th>
                 <th className="px-2 py-1.5 font-semibold">Code</th>
                 <th className="px-2 py-1.5 font-semibold">Drawing</th>
@@ -74,7 +74,7 @@ export function PdiDetail({ doc, onClose }: { doc: PDIWithOrder; onClose: () => 
               {doc.items.map((i) => (
                 <tr key={i.itemCode || i.item}>
                   <td className="px-2 py-1.5 font-semibold" dir="auto">{i.item}</td>
-                  <td className="px-2 py-1.5 text-slate-500">{i.itemCode || '—'}</td>
+                  <td className="px-2 py-1.5 text-muted">{i.itemCode || '—'}</td>
                   <td className="px-2 py-1.5">{i.drawings.length ? i.drawings.join(' · ') : '—'}</td>
                 </tr>
               ))}
@@ -89,7 +89,7 @@ export function PdiDetail({ doc, onClose }: { doc: PDIWithOrder; onClose: () => 
         )}
         <div>
           <span className="label">Photos</span>
-          {doc.imageIds.length ? <ImagePicker imageIds={doc.imageIds} onChange={() => {}} readOnly /> : <p className="text-sm text-slate-400">No photo.</p>}
+          {doc.imageIds.length ? <ImagePicker imageIds={doc.imageIds} onChange={() => {}} readOnly /> : <p className="text-sm text-muted">No photo.</p>}
         </div>
       </div>
     </Modal>
@@ -196,7 +196,7 @@ export function PdiList() {
 
       <Card className="space-y-3 p-4">
         <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Order, customer, item, drawing, note or who…" className="min-h-[52px] pl-9 text-base" aria-label="Search PDI" />
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
@@ -234,7 +234,7 @@ export function PdiList() {
           </Field>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {isFetching && !isLoading ? <p className="text-xs text-slate-400">Searching the whole record…</p> : <span />}
+          {isFetching && !isLoading ? <p className="text-xs text-muted">Searching the whole record…</p> : <span />}
           <span className="flex flex-wrap gap-2">
             {canExport && (
               <Button className="min-h-[40px]" onClick={() => void exportExcel()} disabled={exporting || total === 0} aria-label="Export the PDIs to Excel">
@@ -249,7 +249,7 @@ export function PdiList() {
       </Card>
 
       {isLoading ? (
-        <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
+        <Card className="p-10 text-center text-sm text-muted">Loading…</Card>
       ) : docs.length === 0 ? (
         <EmptyState
           icon={<FileText className="h-10 w-10" />}
@@ -267,11 +267,11 @@ export function PdiList() {
                   <Badge tone="neutral">
                     {d.imageIds.length} photo{d.imageIds.length === 1 ? '' : 's'}
                   </Badge>
-                  <ChevronRight className="ml-auto h-5 w-5 shrink-0 text-slate-400" />
+                  <ChevronRight className="ml-auto h-5 w-5 shrink-0 text-muted" />
                 </div>
-                <p className="mt-0.5 text-xs text-slate-400">
+                <p className="mt-0.5 text-xs text-muted">
                   {d.customer && `${d.customer} · `}
-                  {formatDateTime(d.createdAt)} · {d.createdByName}
+                  <When iso={d.createdAt} time /> · {d.createdByName}
                 </p>
                 <div className="mt-2">
                   <ItemsCell doc={d} />
@@ -284,7 +284,7 @@ export function PdiList() {
           <Card className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 dark:bg-slate-800/60">
-                <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                   <th className="px-3 py-2 font-semibold">Date</th>
                   <th className="px-3 py-2 font-semibold">Order</th>
                   <th className="px-3 py-2 font-semibold">Customer</th>
@@ -297,7 +297,7 @@ export function PdiList() {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {docs.map((d) => (
                   <tr key={d.id} onClick={() => setOpen(d)} className="cursor-pointer align-top hover:bg-slate-50 dark:hover:bg-slate-800/60">
-                    <td className="whitespace-nowrap px-3 py-2 text-slate-500">{formatDateTime(d.createdAt)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-muted"><When iso={d.createdAt} time /></td>
                     <td className="whitespace-nowrap px-3 py-2 font-semibold">{d.orderNumber || '—'}</td>
                     <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{d.customer || '—'}</td>
                     <td className="px-3 py-2">
@@ -305,7 +305,7 @@ export function PdiList() {
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">{d.createdByName}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{d.imageIds.length}</td>
-                    <td className="max-w-[16rem] px-3 py-2 text-slate-500">
+                    <td className="max-w-[16rem] px-3 py-2 text-muted">
                       <span className="line-clamp-2" dir="auto">{d.notes ?? ''}</span>
                     </td>
                   </tr>

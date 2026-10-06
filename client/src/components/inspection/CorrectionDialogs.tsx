@@ -58,7 +58,7 @@ export function DimensionEditDialog({
         <Field label={`Actual${dimension.unit ? ` (${dimension.unit})` : ''}`} hint="Leave empty to clear the measurement. The change is written to the audit log.">
           <Input autoFocus type="number" step="any" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} className="min-h-[48px] text-lg tabular-nums" />
         </Field>
-        <p className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+        <p className="flex items-center gap-2 text-sm text-muted">
           New status: <Badge tone={statusToneOf(preview)}>{preview}</Badge>
         </p>
       </div>
@@ -175,7 +175,7 @@ export function DefectEditDialog({
             <Input dir="auto" value={notes} onChange={(e) => setNotes(e.target.value)} className="min-h-[48px]" />
           </Field>
         )}
-        <p className="text-xs text-slate-400">The change is written to the audit log.</p>
+        <p className="text-xs text-muted">The change is written to the audit log.</p>
       </div>
     </Modal>
   )

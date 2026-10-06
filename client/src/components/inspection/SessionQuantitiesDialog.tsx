@@ -106,7 +106,7 @@ export function SessionQuantitiesDialog({ session, onClose }: { session: Session
         </>
       }
     >
-      <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+      <p className="mb-3 text-sm text-muted">
         {stock ? 'For stock' : session.order?.orderNumber} · session #{session.seq} · {session.status}
       </p>
       <div className="space-y-3">
@@ -116,7 +116,7 @@ export function SessionQuantitiesDialog({ session, onClose }: { session: Session
           <Field label="Rejected before release">
             {qtyInput(start, setStart)}
             {session.startQtyConfirmed && (
-              <span className="mt-1 block text-xs text-slate-400">
+              <span className="mt-1 block text-xs text-muted">
                 Recorded as {session.startQtyConfirmed.qty} by {session.startQtyConfirmed.byName}
               </span>
             )}
@@ -125,12 +125,12 @@ export function SessionQuantitiesDialog({ session, onClose }: { session: Session
         {universal && options ? (
           <>
             <UniversalChoice options={options} draft={draft} onChange={setDraft} kindLocked={false} />
-            {read && 'problem' in read && <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{read.problem}</p>}
+            {read && 'problem' in read && <p className="text-xs font-semibold text-muted">{read.problem}</p>}
           </>
         ) : closed ? (
           <Field label="Final quantity (at close)">{qtyInput(final, setFinal)}</Field>
         ) : (
-          <p className="text-xs text-slate-400">The final quantity is typed when the session closes, and can be corrected here after that.</p>
+          <p className="text-xs text-muted">The final quantity is typed when the session closes, and can be corrected here after that.</p>
         )}
         {!valid && !universal && <p className="text-sm font-semibold text-rose-600 dark:text-rose-400">Enter zero or a positive quantity.</p>}
       </div>

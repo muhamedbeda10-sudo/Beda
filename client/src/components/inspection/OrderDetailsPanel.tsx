@@ -36,6 +36,7 @@ import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
 import { isStockOrder, processForMachine } from '@qc/shared/rules'
 import type { SampleSummary, SessionWithOrder } from '@qc/shared/api'
+import { When } from '@/components/ui/Tooltip'
 
 export function OrderDetailsPanel({
   session,
@@ -80,7 +81,7 @@ export function OrderDetailsPanel({
             <span dir="auto" className="font-semibold text-slate-700 dark:text-slate-200">
               {session.order?.item ?? '—'}
             </span>
-            <span className="text-slate-400">·</span>
+            <span className="text-muted">·</span>
             <span className="font-mono text-xs">{session.order?.itemCode ?? '—'}</span>
           </span>
         )
@@ -167,7 +168,7 @@ export function OrderDetailsPanel({
                 <Attr label="Closed by" value={session.closedByName ?? (session.closedAt ? 'Unknown' : '')} />
                 {processForMachine(machines.find((m) => m.code === session.workCenterCode) ?? null, session.workCenterCode) === 'welding' && (
                   <div>
-                    <dt className="text-xs font-semibold uppercase text-slate-400">PT coverage (5% of final qty)</dt>
+                    <dt className="text-xs font-semibold uppercase text-muted">PT coverage (5% of final qty)</dt>
                     <dd className="mt-0.5">
                       <PtCoverageBadge session={session} finalQty={session.status === 'Closed' ? session.finalQty : null} />
                     </dd>
@@ -191,7 +192,7 @@ export function OrderDetailsPanel({
               </div>
               {samples.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="flex items-center gap-1 text-xs font-bold uppercase text-slate-400">
+                  <span className="flex items-center gap-1 text-xs font-bold uppercase text-muted">
                     <Boxes className="h-3.5 w-3.5" /> Open a sample
                   </span>
                   {[...samples]
@@ -203,7 +204,7 @@ export function OrderDetailsPanel({
                         type="button"
                         onClick={() => onOpenSample(session, sm)}
                         className={cn('min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors', sampleChipClass(sm))}
-                        title={sampleChipTitle(sm) || undefined}
+                        data-tip={sampleChipTitle(sm) || undefined}
                         aria-label={`Open sample ${session.seq}-${sm.index}${sampleChipTitle(sm) ? `, ${sampleChipTitle(sm)}` : ''}`}
                       >
                         {session.seq}-{sm.index}
@@ -242,21 +243,21 @@ export function OrderDetailsPanel({
                         >
                           <span className="font-bold tabular-nums">#{s.seq}</span>
                           <span className="text-slate-600 dark:text-slate-300">{s.inspectorName}</span>
-                          <span className="text-xs text-slate-400">{formatDateTime(s.startedAt)}</span>
+                          <span className="text-xs text-muted"><When iso={s.startedAt} time /></span>
                           <span className="ml-auto flex items-center gap-1.5">
                             {current && <Badge tone="blue">this one</Badge>}
                             <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
                             <Badge tone="neutral">{s.sampleCount ?? 0} samples</Badge>
                             {(s.defectCount ?? 0) > 0 && <Badge tone="red">{s.defectCount} defects</Badge>}
                             {(s.holdCount ?? 0) > 0 && <Badge tone="amber">{s.holdCount} on Hold</Badge>}
-                            {!current && (expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />)}
+                            {!current && (expanded ? <ChevronUp className="h-4 w-4 text-muted" /> : <ChevronDown className="h-4 w-4 text-muted" />)}
                           </span>
                         </button>
                         {/* Any earlier session opens its samples here, read-only: the line's whole record is one tap away. */}
                         {expanded && !current && (
                           <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-200/70 pt-2 dark:border-slate-700">
                             {theirs.length === 0 ? (
-                              <span className="text-xs text-slate-400">No sample in this session.</span>
+                              <span className="text-xs text-muted">No sample in this session.</span>
                             ) : (
                               theirs.map((sm) => (
                                 <button
@@ -264,10 +265,10 @@ export function OrderDetailsPanel({
                                   type="button"
                                   onClick={() => onOpenSample({ ...s, order: session.order }, sm)}
                                   className={cn('min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors', sampleChipClass(sm, true))}
-                                  title={sampleChipTitle(sm) || undefined}
+                                  data-tip={sampleChipTitle(sm) || undefined}
                                 >
                                   {s.seq}-{sm.index}
-                                  <span className="ml-1 font-normal text-slate-400">{sm.inspectorName.split(' ')[0]}</span>
+                                  <span className="ml-1 font-normal text-muted">{sm.inspectorName.split(' ')[0]}</span>
                                 </button>
                               ))
                             )}
@@ -349,8 +350,8 @@ function Section({ icon, title, count, children }: { icon: ReactNode; title: str
   return (
     <section>
       <div className="mb-2 flex items-center gap-2">
-        <span className="text-slate-400">{icon}</span>
-        <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{title}</h3>
+        <span className="text-muted">{icon}</span>
+        <h3 className="text-sm font-bold uppercase tracking-wide text-muted">{title}</h3>
         {count !== undefined && count > 0 && <Badge tone="neutral">{count}</Badge>}
       </div>
       {children}
@@ -362,11 +363,11 @@ function Attr({ icon, label, value, mono }: { icon?: ReactNode; label: string; v
   const empty = value === undefined || value === null || value.trim() === ''
   return (
     <div className="min-w-0">
-      <dt className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+      <dt className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
         {icon}
         {label}
       </dt>
-      <dd dir="auto" className={cn('truncate font-semibold', mono && 'font-mono text-sm', empty && 'text-slate-300 dark:text-slate-600')}>
+      <dd dir="auto" className={cn('truncate font-semibold', mono && 'font-mono text-sm', empty && 'text-muted')}>
         {empty ? '—' : value}
       </dd>
     </div>
@@ -391,7 +392,7 @@ function Chip({ tone, label, value }: { tone: BadgeTone; label: string; value: n
 }
 
 function Empty({ children }: { children: ReactNode }) {
-  return <p className="rounded-xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-400 dark:border-slate-700">{children}</p>
+  return <p className="rounded-xl border border-dashed border-slate-200 px-4 py-3 text-sm text-muted dark:border-slate-700">{children}</p>
 }
 
 function Skeleton({ rows }: { rows: number }) {

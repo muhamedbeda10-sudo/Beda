@@ -34,19 +34,19 @@ function InboxRow({ notice, open, onToggle }: { notice: NoticeForUser; open: boo
   return (
     <li className={cn('rounded-2xl ring-1 transition-shadow', notice.pending ? m.ring : 'ring-slate-200/70 dark:ring-slate-800', open && 'shadow-card')}>
       <button type="button" onClick={onToggle} className="flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-left hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
-        <span className={cn('mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl', notice.pending ? m.iconBg : 'bg-slate-100 text-slate-400 dark:bg-slate-800')}>
+        <span className={cn('mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl', notice.pending ? m.iconBg : 'bg-slate-100 text-muted dark:bg-slate-800')}>
           <m.icon className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1">
           <span className={cn('block truncate text-sm', notice.pending ? 'font-bold' : 'font-semibold text-slate-600 dark:text-slate-300')}>{notice.title}</span>
-          <span className="mt-0.5 block text-xs text-slate-400">
+          <span className="mt-0.5 block text-xs text-muted">
             {timeAgo(notice.createdAt)} · {validityText(notice)}
             {!notice.active ? ' · expired' : ''}
             {notice.acknowledgedAt ? ' · acknowledged' : notice.seenAt ? ' · read' : ''}
           </span>
         </span>
         {notice.pending && <Badge tone={notice.requiresAck ? 'violet' : 'blue'}>{notice.requiresAck ? 'Acknowledge' : 'New'}</Badge>}
-        {open ? <ChevronUp className="mt-1 h-4 w-4 shrink-0 text-slate-400" /> : <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-slate-400" />}
+        {open ? <ChevronUp className="mt-1 h-4 w-4 shrink-0 text-muted" /> : <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-muted" />}
       </button>
       {open && (
         <div className="px-3 pb-3 animate-page-in">
@@ -97,14 +97,14 @@ export function NoticeBell({ className }: { className?: string }) {
       </button>
       <Drawer open={open} onClose={() => setOpen(false)} title="Notices" subtitle={pending > 0 ? `${pending} to read` : 'Nothing waiting for you'} icon={<Bell className="h-5 w-5" />}>
         {isLoading && (
-          <p className="flex items-center gap-2 py-8 text-sm text-slate-400">
+          <p className="flex items-center gap-2 py-8 text-sm text-muted">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </p>
         )}
         {!isLoading && notices.length === 0 && <EmptyState icon={<Bell className="h-10 w-10" />} title="No notices" hint="Notices from the quality office will show here." />}
         {attention.length > 0 && (
           <section className="space-y-2">
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Needs your attention</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Needs your attention</p>
             <ul className="space-y-2">
               {attention.map((n) => (
                 <InboxRow key={n.id} notice={n} open={expanded === n.id} onToggle={() => toggle(n)} />
@@ -114,7 +114,7 @@ export function NoticeBell({ className }: { className?: string }) {
         )}
         {earlier.length > 0 && (
           <section className={cn('space-y-2', attention.length > 0 && 'mt-5')}>
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Earlier</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Earlier</p>
             <ul className="space-y-2">
               {earlier.map((n) => (
                 <InboxRow key={n.id} notice={n} open={expanded === n.id} onToggle={() => toggle(n)} />

@@ -58,7 +58,7 @@ export function NoticeGate({
       title={
         <span>
           Read before you continue
-          {notices.length > 1 && <span className="ml-2 text-sm font-semibold text-slate-400">{index + 1} of {notices.length}</span>}
+          {notices.length > 1 && <span className="ml-2 text-sm font-semibold text-muted">{index + 1} of {notices.length}</span>}
         </span>
       }
       footer={

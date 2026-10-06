@@ -27,10 +27,11 @@ import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { NoticeCard, NoticeFileRow, SeverityBadge, TargetChips, validityText } from '@/components/notices/NoticeCard'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { ApiError } from '@/lib/api'
-import { cn, formatDateTime } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { deleteNotice, saveNotice, uploadNoticeFile, withdrawNotice } from '@/services/mutations'
 import { useAdminNotices, useLinesOfMachines, useLinesOfOrders, useMaster, useNoticeAcknowledgements, useOrderSearch, useUsers } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
+import { When } from '@/components/ui/Tooltip'
 
 const today = () => {
   const d = new Date()
@@ -118,8 +119,8 @@ function PickList({
         </Button>
       </div>
       <ul className="max-h-56 space-y-0.5 overflow-y-auto rounded-xl border border-slate-200 p-1 dark:border-slate-800">
-        {searching && shown.length === 0 && <li className="px-3 py-2 text-sm text-slate-400">Searching…</li>}
-        {!searching && shown.length === 0 && <li className="px-3 py-2 text-sm text-slate-400">{emptyText}</li>}
+        {searching && shown.length === 0 && <li className="px-3 py-2 text-sm text-muted">Searching…</li>}
+        {!searching && shown.length === 0 && <li className="px-3 py-2 text-sm text-muted">{emptyText}</li>}
         {shown.map((c) => {
           const locked = taken.has(c.value.toLowerCase())
           const on = locked || picked.has(c.value)
@@ -129,9 +130,9 @@ function PickList({
                 <input type="checkbox" checked={on} disabled={locked} onChange={() => toggle(c.value)} className="h-4 w-4 accent-brand-600" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{c.label}</span>
-                  {c.sub && <span className="block truncate text-xs text-slate-400">{c.sub}</span>}
+                  {c.sub && <span className="block truncate text-xs text-muted">{c.sub}</span>}
                 </span>
-                {locked && <span className="text-[11px] font-semibold uppercase text-slate-400">added</span>}
+                {locked && <span className="text-[11px] font-semibold uppercase text-muted">added</span>}
               </label>
             </li>
           )
@@ -274,19 +275,19 @@ function TargetBuilder({
     <div className="space-y-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800">
       {/* How the targets combine. Only worth deciding once there is more than one. */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-        <span className="font-semibold text-slate-500">Reach:</span>
+        <span className="font-semibold text-muted">Reach:</span>
         {(
           [
             ['all', 'ALL of them (AND)', 'Each kind must hold; several values of one kind are alternatives. This machine AND this order.'],
             ['any', 'ANY of them (OR)', 'One target of any kind is enough. This machine OR this order OR this person.'],
           ] as const
         ).map(([mode, label, hint]) => (
-          <label key={mode} className="inline-flex items-center gap-1.5" title={hint}>
+          <label key={mode} className="inline-flex items-center gap-1.5" data-tip={hint}>
             <input type="radio" name="notice-match" checked={matchMode === mode} onChange={() => onMatchMode(mode)} className="h-4 w-4 accent-brand-600" />
             <span className={cn('font-semibold', matchMode === mode ? 'text-brand-700 dark:text-brand-300' : 'text-slate-600 dark:text-slate-300')}>{label}</span>
           </label>
         ))}
-        <span className="basis-full text-slate-500 dark:text-slate-400">
+        <span className="basis-full text-muted">
           No target means everyone, everywhere. {matchMode === 'any' ? 'Any one of the targets below reaches the reader.' : 'Every kind below must hold at once; within a kind, any value.'}
           {narrowedBy.length > 0 && <> The lists below are narrowed by what is already targeted: {narrowedBy.join(', ')}.</>}
         </span>
@@ -348,13 +349,13 @@ function TargetBuilder({
             </span>
           ))}
           {targets.length > 1 && (
-            <button type="button" onClick={() => onChange([])} className="inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
+            <button type="button" onClick={() => onChange([])} className="inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold text-muted hover:text-rose-600">
               Clear all
             </button>
           )}
         </div>
       ) : (
-        <p className="text-xs font-semibold text-slate-500">Everyone, everywhere.</p>
+        <p className="text-xs font-semibold text-muted">Everyone, everywhere.</p>
       )}
     </div>
   )
@@ -482,7 +483,7 @@ function NoticeForm({ initial, id, onClose }: { initial: Draft; id: string | nul
             <Button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || d.files.length >= 10} className="min-h-[44px]">
               {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />} Attach a PDF or Excel file
             </Button>
-            <p className="text-xs text-slate-400">Up to 25 MB each. A PDF opens in the app; a workbook is downloaded.</p>
+            <p className="text-xs text-muted">Up to 25 MB each. A PDF opens in the app; a workbook is downloaded.</p>
           </div>
         </div>
       </div>
@@ -501,13 +502,13 @@ function AcksModal({ notice, onClose }: { notice: NoticeAdminRow; onClose: () =>
           <p className="font-bold">{notice.title}</p>
           <TargetChips notice={notice} className="mt-1.5" />
         </div>
-        {isLoading && <p className="text-sm text-slate-400">Loading…</p>}
-        {!isLoading && data.length === 0 && <p className="text-sm text-slate-400">Nobody has opened it yet.</p>}
+        {isLoading && <p className="text-sm text-muted">Loading…</p>}
+        {!isLoading && data.length === 0 && <p className="text-sm text-muted">Nobody has opened it yet.</p>}
         {data.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                   <th className="px-2 py-1.5">Reader</th>
                   <th className="px-2 py-1.5">Read</th>
                   <th className="px-2 py-1.5">Acknowledged</th>
@@ -518,9 +519,9 @@ function AcksModal({ notice, onClose }: { notice: NoticeAdminRow; onClose: () =>
                 {data.map((a) => (
                   <tr key={a.userId}>
                     <td className="px-2 py-1.5 font-semibold">{a.userName}</td>
-                    <td className="px-2 py-1.5 text-slate-500">{formatDateTime(a.seenAt)}</td>
-                    <td className="px-2 py-1.5">{a.acknowledgedAt ? <Badge tone="green" icon={<Check className="h-3 w-3" />}>{formatDateTime(a.acknowledgedAt)}</Badge> : <span className="text-slate-400">—</span>}</td>
-                    <td className="px-2 py-1.5 text-xs text-slate-500">
+                    <td className="px-2 py-1.5 text-muted"><When iso={a.seenAt} time /></td>
+                    <td className="px-2 py-1.5">{a.acknowledgedAt ? <Badge tone="green" icon={<Check className="h-3 w-3" />}><When iso={a.acknowledgedAt} time /></Badge> : <span className="text-muted">—</span>}</td>
+                    <td className="px-2 py-1.5 text-xs text-muted">
                       {a.context?.workCenterCode ? `Machine ${a.context.workCenterCode}` : ''}
                       {a.context?.orderNumber ? ` · ${a.context.orderNumber}` : ''}
                       {a.context?.itemCode ? ` · ${a.context.itemCode}` : ''}
@@ -584,7 +585,7 @@ export function NoticesPage() {
             {n.withdrawnAt ? <Badge tone="neutral">Withdrawn</Badge> : !n.active ? <Badge tone="neutral">{n.validFrom > today() ? 'Scheduled' : 'Expired'}</Badge> : <Badge tone="green">Live</Badge>}
           </div>
           <h3 className="mt-1.5 text-base font-bold leading-snug">{n.title}</h3>
-          <p className="mt-0.5 text-xs text-slate-400">
+          <p className="mt-0.5 text-xs text-muted">
             {n.createdByName} · {validityText(n)} · {n.imageIds.length} photo{n.imageIds.length === 1 ? '' : 's'} · {n.files.length} file{n.files.length === 1 ? '' : 's'}
           </p>
           <TargetChips notice={n} className="mt-2" />
@@ -615,22 +616,22 @@ export function NoticesPage() {
       }
     >
       <div className="space-y-4">
-        <p className="text-sm text-slate-500 dark:text-slate-400">
+        <p className="text-sm text-muted">
           A notice reaches the people it is aimed at through the bell, and comes up before they start a session where it applies. Each reader sees it once; when it must be acknowledged, their name and the time are kept.
         </p>
-        {isLoading && <p className="text-sm text-slate-400">Loading…</p>}
+        {isLoading && <p className="text-sm text-muted">Loading…</p>}
         {!isLoading && notices.length === 0 && (
           <EmptyState icon={<ClipboardList className="h-10 w-10" />} title="No notices yet" hint="Write the first one for a machine, an order, a customer or a shift." action={<Button variant="primary" onClick={() => setForm({ id: null, draft: { ...EMPTY, validFrom: today() } })}><BellPlus className="h-4 w-4" /> New notice</Button>} />
         )}
         {active.length > 0 && (
           <section className="space-y-2">
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Live ({active.length})</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Live ({active.length})</p>
             {active.map((n) => <Row key={n.id} n={n} />)}
           </section>
         )}
         {archive.length > 0 && (
           <section className="space-y-2">
-            <button type="button" onClick={() => setShowArchive((s) => !s)} className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400 hover:text-brand-700">
+            <button type="button" onClick={() => setShowArchive((s) => !s)} className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted hover:text-brand-700">
               {showArchive ? 'Hide' : 'Show'} scheduled, expired and withdrawn ({archive.length})
             </button>
             {showArchive && archive.map((n) => <Row key={n.id} n={n} />)}

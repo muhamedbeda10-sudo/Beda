@@ -14,7 +14,6 @@ import { deleteWorkInstruction, updateWorkInstruction, uploadWorkInstruction } f
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
-import { formatDate } from '@/lib/utils'
 import {
   PROCESSES,
   PROCESS_LABEL,
@@ -24,6 +23,7 @@ import {
   type WorkInstructionScope,
   type WorkInstructionStep,
 } from '@qc/shared/types'
+import { When } from '@/components/ui/Tooltip'
 
 interface UploadDraft {
   code: string
@@ -150,7 +150,7 @@ export function WorkInstructionsSection() {
         </div>
 
         {isLoading ? (
-          <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-400">
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : sorted.length === 0 ? (
@@ -158,7 +158,7 @@ export function WorkInstructionsSection() {
         ) : (
           <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
             <table className="w-full min-w-[60rem] text-sm">
-              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
                 <tr>
                   <th className="px-3 py-2.5 font-bold">Code</th>
                   <th className="px-3 py-2.5 font-bold">Title</th>
@@ -176,25 +176,25 @@ export function WorkInstructionsSection() {
                     <tr key={w.id} className={superseded ? 'opacity-60' : 'hover:bg-slate-50/70 dark:hover:bg-slate-800/40'}>
                       <td className="px-3 py-2.5 font-mono text-[13px] font-semibold">{w.code}</td>
                       <td className="max-w-[24rem] px-3 py-2.5">
-                        <span className="block truncate font-semibold" title={w.title}>
+                        <span className="block truncate font-semibold" data-tip={w.title}>
                           {w.title}
                         </span>
-                        {superseded && <Badge tone="neutral">Superseded {formatDate(w.supersededAt ?? undefined)}</Badge>}
+                        {superseded && <Badge tone="neutral">Superseded <When iso={w.supersededAt ?? undefined} /></Badge>}
                       </td>
                       <td className="px-3 py-2.5 tabular-nums">
                         {w.issueNo || '—'}
-                        {w.issueDate && <span className="block text-xs text-slate-400">{w.issueDate.slice(0, 10)}</span>}
+                        {w.issueDate && <span className="block text-xs text-muted">{w.issueDate.slice(0, 10)}</span>}
                       </td>
                       <td className="px-3 py-2.5">
                         <Badge tone={w.process === 'all' ? 'neutral' : w.process === 'welding' ? 'amber' : w.process === 'paint' ? 'violet' : 'blue'}>{SCOPE_LABEL[w.process]}</Badge>
                       </td>
                       <td className="px-3 py-2.5">{WORK_INSTRUCTION_STEP_LABEL[w.step]}</td>
-                      <td className="px-3 py-2.5 text-xs text-slate-500 dark:text-slate-400">
-                        {sizeLabel(w.byteSize)} · {w.uploadedByName} · {formatDate(w.uploadedAt)}
+                      <td className="px-3 py-2.5 text-xs text-muted">
+                        {sizeLabel(w.byteSize)} · {w.uploadedByName} · <When iso={w.uploadedAt} />
                       </td>
                       <td className="px-3 py-2 text-right">
                         <div className="inline-flex gap-1">
-                          <button type="button" onClick={() => setViewing(w)} aria-label={`Open ${w.code}`} className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800">
+                          <button type="button" onClick={() => setViewing(w)} aria-label={`Open ${w.code}`} className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800">
                             <Eye className="h-4 w-4" />
                           </button>
                           {canManage && !superseded && (
@@ -206,7 +206,7 @@ export function WorkInstructionsSection() {
                                   setEditDraft({ title: w.title, issueNo: w.issueNo, issueDate: w.issueDate?.slice(0, 10) ?? '', process: w.process, step: w.step })
                                 }}
                                 aria-label={`Edit ${w.code}`}
-                                className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
+                                className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
                               >
                                 <Pencil className="h-4 w-4" />
                               </button>
@@ -214,11 +214,11 @@ export function WorkInstructionsSection() {
                                 type="button"
                                 onClick={() => setUpload({ ...emptyDraft(), code: w.code, title: w.title, process: w.process, step: w.step })}
                                 aria-label={`Upload a new issue of ${w.code}`}
-                                className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
+                                className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
                               >
                                 <UploadCloud className="h-4 w-4" />
                               </button>
-                              <button type="button" disabled={busy} onClick={() => setRemoving(w)} aria-label={`Remove ${w.code}`} className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10">
+                              <button type="button" disabled={busy} onClick={() => setRemoving(w)} aria-label={`Remove ${w.code}`} className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10">
                                 <Trash2 className="h-4 w-4" />
                               </button>
                             </>
@@ -267,10 +267,10 @@ export function WorkInstructionsSection() {
                 {upload.file ? (
                   <span className="min-w-0">
                     <span className="block truncate font-semibold">{upload.file.name}</span>
-                    <span className="text-xs text-slate-400">{sizeLabel(upload.file.size)}</span>
+                    <span className="text-xs text-muted">{sizeLabel(upload.file.size)}</span>
                   </span>
                 ) : (
-                  <span className="text-slate-500">Choose the PDF…</span>
+                  <span className="text-muted">Choose the PDF…</span>
                 )}
               </button>
             </div>
@@ -366,7 +366,7 @@ export function WorkInstructionsSection() {
                 </Select>
               </Field>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">To replace the PDF itself, upload a new issue under the same code.</p>
+            <p className="text-xs text-muted">To replace the PDF itself, upload a new issue under the same code.</p>
           </div>
         )}
       </Modal>

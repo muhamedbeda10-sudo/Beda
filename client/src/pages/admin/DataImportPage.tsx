@@ -68,7 +68,7 @@ export function DataImportPage() {
                   'group inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
                   active
                     ? 'bg-white text-brand-800 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:text-white dark:ring-slate-700'
-                    : 'text-slate-500 hover:text-brand-700 dark:text-slate-400',
+                    : 'text-muted hover:text-brand-700',
                 )}
               >
                 <s.icon className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />

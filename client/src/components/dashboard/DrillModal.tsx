@@ -66,23 +66,23 @@ export function DrillModal({ spec, onClose }: { spec: DrillSpec | null; onClose:
   return (
     <Modal open onClose={onClose} title={spec.title} icon={<Search className="h-5 w-5" />} size="xl">
       <div className="space-y-3">
-        {spec.subtitle && <p className="text-xs text-slate-400">{spec.subtitle}</p>}
+        {spec.subtitle && <p className="text-xs text-muted">{spec.subtitle}</p>}
         {isLoading ? (
           <div className="skeleton h-40" />
         ) : error ? (
           <p className="text-sm text-rose-600 dark:text-rose-400">{error instanceof Error ? error.message : 'Could not load the sessions.'}</p>
         ) : !data || data.totalSessions === 0 ? (
-          <p className="py-6 text-center text-sm text-slate-400">No session behind this number.</p>
+          <p className="py-6 text-center text-sm text-muted">No session behind this number.</p>
         ) : (
           <>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
+            <p className="text-sm text-muted">
               {num(data.totalPieces)} pieces {what} in {num(data.totalSessions)} {data.totalSessions === 1 ? 'session' : 'sessions'} on {rows.length} order {rows.length === 1 ? 'line' : 'lines'}
               {data.truncated ? `; the ${KPI_DRILL_LIMIT} sessions with the most are listed` : ''}. The orders behind them:
             </p>
             <div className="max-h-[60vh] overflow-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
-                  <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                     <th className="px-2 py-1.5 font-semibold">Order</th>
                     <th className="px-2 py-1.5 font-semibold">Item</th>
                     <th className="px-2 py-1.5 font-semibold">Machine</th>
@@ -97,11 +97,11 @@ export function DrillModal({ spec, onClose }: { spec: DrillSpec | null; onClose:
                       <td className="whitespace-nowrap px-2 py-1.5 font-semibold">{r.orderNumber}</td>
                       <td className="px-2 py-1.5" dir="auto">
                         {r.item}
-                        {r.itemCode && <span className="ml-1 text-xs text-slate-400">{r.itemCode}</span>}
+                        {r.itemCode && <span className="ml-1 text-xs text-muted">{r.itemCode}</span>}
                       </td>
                       <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">{r.machine}</td>
                       {showDefects && (
-                        <td className="px-2 py-1.5 text-xs text-slate-500" dir="auto">
+                        <td className="px-2 py-1.5 text-xs text-muted" dir="auto">
                           {r.defects.slice(0, 3).map((d) => `${d.defectName} ${num(d.pieces)}`).join(' · ')}
                           {r.defects.length > 3 && ` · +${r.defects.length - 3}`}
                         </td>
@@ -114,7 +114,7 @@ export function DrillModal({ spec, onClose }: { spec: DrillSpec | null; onClose:
                               key={s.sessionId}
                               type="button"
                               onClick={() => navigate(sessionDetailPath(s.sessionId))}
-                              title={`${formatDateTime(s.at)} · ${s.inspectorName} · ${num(s.pieces)} pcs`}
+                              data-tip={`${formatDateTime(s.at)} · ${s.inspectorName} · ${num(s.pieces)} pcs`}
                               className="rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
                             >
                               Session #{s.seq}

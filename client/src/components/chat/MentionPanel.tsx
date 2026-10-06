@@ -11,15 +11,15 @@ import type { ChatMention, ProductionOrder } from '@qc/shared/types'
 import { remainingQty } from '@qc/shared/types'
 import { Badge, Button, Drawer } from '@/components/ui'
 import { useOrder, useOrderHistory, useOrderSearch } from '@/services/queries'
-import { formatDateTime } from '@/lib/utils'
 import { sessionDetailPath } from '@/lib/links'
+import { When } from '@/components/ui/Tooltip'
 
 function OrderLine({ orderId, onClose }: { orderId: string; onClose: () => void }) {
   const navigate = useNavigate()
   const { data: o, isLoading } = useOrder(orderId)
   const { data: history } = useOrderHistory(orderId)
-  if (isLoading) return <p className="text-sm text-slate-400">Loading…</p>
-  if (!o) return <p className="text-sm text-slate-400">This order line is no longer in the catalogue.</p>
+  if (isLoading) return <p className="text-sm text-muted">Loading…</p>
+  if (!o) return <p className="text-sm text-muted">This order line is no longer in the catalogue.</p>
   const rows: [string, string][] = [
     ['Order', o.orderNumber],
     ['Item', `${o.item} · ${o.itemCode}`],
@@ -36,15 +36,15 @@ function OrderLine({ orderId, onClose }: { orderId: string; onClose: () => void 
       <dl className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
         {rows.map(([k, v]) => (
           <div key={k}>
-            <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{k}</dt>
+            <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted">{k}</dt>
             <dd className="text-sm font-semibold">{v}</dd>
           </div>
         ))}
       </dl>
       <div>
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Inspections on this line</p>
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Inspections on this line</p>
         {sessions.length === 0 ? (
-          <p className="mt-1 text-sm text-slate-400">None yet.</p>
+          <p className="mt-1 text-sm text-muted">None yet.</p>
         ) : (
           <ul className="mt-1 space-y-1">
             {sessions.slice(0, 8).map((s) => (
@@ -52,7 +52,7 @@ function OrderLine({ orderId, onClose }: { orderId: string; onClose: () => void 
                 <button type="button" onClick={() => { onClose(); navigate(sessionDetailPath(s.id)) }} className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">
                   <span>
                     Session #{s.seq} · {s.inspectorName}
-                    <span className="block text-xs text-slate-400">{formatDateTime(s.startedAt)}</span>
+                    <span className="block text-xs text-muted"><When iso={s.startedAt} time /></span>
                   </span>
                   <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
                 </button>
@@ -69,8 +69,8 @@ function OrderLine({ orderId, onClose }: { orderId: string; onClose: () => void 
 function ItemLines({ itemCode, onPick }: { itemCode: string; onPick: (o: ProductionOrder) => void }) {
   const { data: lines = [], isFetching } = useOrderSearch(itemCode, 40)
   const mine = lines.filter((o) => o.itemCode.toLowerCase() === itemCode.toLowerCase())
-  if (isFetching && mine.length === 0) return <p className="text-sm text-slate-400">Searching…</p>
-  if (mine.length === 0) return <p className="text-sm text-slate-400">No open order line carries this item.</p>
+  if (isFetching && mine.length === 0) return <p className="text-sm text-muted">Searching…</p>
+  if (mine.length === 0) return <p className="text-sm text-muted">No open order line carries this item.</p>
   return (
     <ul className="space-y-1">
       {mine.map((o) => (
@@ -78,9 +78,9 @@ function ItemLines({ itemCode, onPick }: { itemCode: string; onPick: (o: Product
           <button type="button" onClick={() => onPick(o)} className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">
             <span>
               <span className="font-semibold">{o.orderNumber}</span> · machine {o.workCenterCode}
-              <span className="block text-xs text-slate-400">{o.customer} · {remainingQty(o)} remaining</span>
+              <span className="block text-xs text-muted">{o.customer} · {remainingQty(o)} remaining</span>
             </span>
-            <Package className="h-4 w-4 text-slate-400" />
+            <Package className="h-4 w-4 text-muted" />
           </button>
         </li>
       ))}

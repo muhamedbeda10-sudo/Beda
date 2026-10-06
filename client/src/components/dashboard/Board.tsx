@@ -60,7 +60,7 @@ export function Board({ page, widgets, className }: { page: DashboardPage; widge
 
   if (layout.length === 0 && hiddenCount > 0) {
     return (
-      <div ref={ref} className={cn('rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400 dark:border-slate-700', className)}>
+      <div ref={ref} className={cn('rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-muted dark:border-slate-700', className)}>
         Every chart here is hidden. {editing ? 'Open Charts to show some again.' : 'An administrator shows them again from Arrange → Charts.'}
       </div>
     )
@@ -168,7 +168,7 @@ function LabelDialog({ item, fallback, onClose, onSave }: { item: DashboardLayou
   return (
     <Modal open onClose={onClose} title="Name this chart" icon={<Pencil className="h-5 w-5" />}>
       <div className="space-y-3">
-        <p className="text-sm text-slate-500 dark:text-slate-400">The name and the description show on your dashboard once you save the layout; nobody else's changes. Leave a field empty to keep the chart's own.</p>
+        <p className="text-sm text-muted">The name and the description show on your dashboard once you save the layout; nobody else's changes. Leave a field empty to keep the chart's own.</p>
         <Field label="Name" hint={`Its own name: ${fallback}`}>
           <Input value={title} onChange={(e) => setTitle(e.target.value.slice(0, DASHBOARD_TITLE_MAX))} placeholder={fallback} className="min-h-[48px]" dir="auto" />
         </Field>
@@ -209,7 +209,7 @@ export function ChartGallery({ open, onClose }: { open: boolean; onClose: () => 
   return (
     <Modal open={open} onClose={onClose} title="Charts on the dashboard" icon={<LayoutGrid className="h-5 w-5" />} size="xl" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
       <div className="space-y-5">
-        <p className="text-sm text-slate-500 dark:text-slate-400">Tick the charts you see. A chart you untick is hidden on your dashboard once you save the layout, and nobody else's changes; tick it again and it comes back at the bottom of its page.</p>
+        <p className="text-sm text-muted">Tick the charts you see. A chart you untick is hidden on your dashboard once you save the layout, and nobody else's changes; tick it again and it comes back at the bottom of its page.</p>
         {pages.map((page) => {
           const items = normaliseDashboardLayout(page, layouts[page])
           const byId = new Map(items.map((it) => [it.i, it]))
@@ -218,13 +218,13 @@ export function ChartGallery({ open, onClose }: { open: boolean; onClose: () => 
             <section key={page}>
               <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
                 <h3 className="text-sm font-bold">
-                  {PAGE_NAME[page]} <span className="font-normal text-slate-400">· {shown} of {items.length} shown</span>
+                  {PAGE_NAME[page]} <span className="font-normal text-muted">· {shown} of {items.length} shown</span>
                 </h3>
                 <span className="flex gap-3 text-xs font-semibold">
                   <button type="button" className="text-brand-700 hover:underline disabled:opacity-40 dark:text-brand-300" disabled={shown === items.length} onClick={() => items.forEach((it) => it.hidden && setHidden(page, it.i, false))}>
                     Show all
                   </button>
-                  <button type="button" className="text-slate-500 hover:underline disabled:opacity-40" disabled={shown === 0} onClick={() => items.forEach((it) => !it.hidden && setHidden(page, it.i, true))}>
+                  <button type="button" className="text-muted hover:underline disabled:opacity-40" disabled={shown === 0} onClick={() => items.forEach((it) => !it.hidden && setHidden(page, it.i, true))}>
                     Hide all
                   </button>
                 </span>
@@ -246,14 +246,14 @@ export function ChartGallery({ open, onClose }: { open: boolean; onClose: () => 
                         className={cn('flex h-full w-full flex-col gap-2 rounded-xl p-3 text-left ring-1 transition-colors', on ? 'bg-brand-50 ring-brand-300 dark:bg-brand-500/10 dark:ring-brand-500/40' : 'bg-white opacity-70 ring-slate-200 hover:opacity-100 dark:bg-slate-900 dark:ring-slate-700')}
                       >
                         <span className="flex items-start justify-between gap-2">
-                          <span className={cn('grid h-9 w-9 place-items-center rounded-lg', on ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-400 dark:bg-slate-800')}>
+                          <span className={cn('grid h-9 w-9 place-items-center rounded-lg', on ? 'bg-brand-600 text-white' : 'bg-slate-100 text-muted dark:bg-slate-800')}>
                             <Icon className="h-5 w-5" />
                           </span>
-                          {on ? <Eye className="h-4 w-4 text-brand-600 dark:text-brand-300" /> : <EyeOff className="h-4 w-4 text-slate-400" />}
+                          {on ? <Eye className="h-4 w-4 text-brand-600 dark:text-brand-300" /> : <EyeOff className="h-4 w-4 text-muted" />}
                         </span>
                         <span className="text-sm font-semibold leading-tight" dir="auto">{name}</span>
-                        {it?.title && <span className="text-[11px] text-slate-400">{spec.title}</span>}
-                        <span className={cn('mt-auto text-[11px] font-semibold uppercase tracking-wide', on ? 'text-brand-700 dark:text-brand-300' : 'text-slate-400')}>{on ? 'Shown' : 'Hidden'}</span>
+                        {it?.title && <span className="text-[11px] text-muted">{spec.title}</span>}
+                        <span className={cn('mt-auto text-[11px] font-semibold uppercase tracking-wide', on ? 'text-brand-700 dark:text-brand-300' : 'text-muted')}>{on ? 'Shown' : 'Hidden'}</span>
                       </button>
                     </li>
                   )

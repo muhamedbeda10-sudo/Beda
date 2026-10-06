@@ -73,16 +73,16 @@ export function SessionGroupModal({ spec, onClose, onOpenSession, footer }: { sp
   return (
     <Modal open onClose={onClose} title={spec.title} icon={<Layers className="h-5 w-5" />} size="xl" footer={footer}>
       <div className="space-y-3">
-        {spec.subtitle && <p className="text-xs text-slate-400">{spec.subtitle}</p>}
+        {spec.subtitle && <p className="text-xs text-muted">{spec.subtitle}</p>}
         {isLoading ? (
           <div className="skeleton h-40" />
         ) : error ? (
           <p className="text-sm text-rose-600 dark:text-rose-400">{error instanceof Error ? error.message : 'Could not load the sessions.'}</p>
         ) : !data || data.total === 0 ? (
-          <p className="py-6 text-center text-sm text-slate-400">No session here.</p>
+          <p className="py-6 text-center text-sm text-muted">No session here.</p>
         ) : (
           <>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
+            <p className="text-sm text-muted">
               {num(data.total)} {data.total === 1 ? 'session' : 'sessions'}
               {open > 0 && `, ${num(open)} open`}, on {rows.length} order {rows.length === 1 ? 'line' : 'lines'}: {num(inspected)} pieces inspected, {num(defectPieces)} defect pieces
               {data.truncated ? `; the newest ${HISTORY_GROUP_LIMIT} are listed` : ''}. Tap a session to open it.
@@ -90,7 +90,7 @@ export function SessionGroupModal({ spec, onClose, onOpenSession, footer }: { sp
             <div className="max-h-[60vh] overflow-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
-                  <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                     <th className="px-2 py-1.5 font-semibold">Order</th>
                     <th className="px-2 py-1.5 font-semibold">Item</th>
                     <th className="px-2 py-1.5 font-semibold">Machine</th>
@@ -106,12 +106,12 @@ export function SessionGroupModal({ spec, onClose, onOpenSession, footer }: { sp
                       <td className="whitespace-nowrap px-2 py-1.5 font-semibold">{r.orderNumber}</td>
                       <td className="px-2 py-1.5" dir="auto">
                         {r.item}
-                        {r.itemCode && <span className="ml-1 text-xs text-slate-400">{r.itemCode}</span>}
+                        {r.itemCode && <span className="ml-1 text-xs text-muted">{r.itemCode}</span>}
                       </td>
                       <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">{r.machine}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums">{num(r.inspected)}</td>
                       <td className={cn('px-2 py-1.5 text-right font-semibold tabular-nums', r.defectPieces > 0 && 'text-rose-600 dark:text-rose-400')}>{num(r.defectPieces)}</td>
-                      <td className="px-2 py-1.5 text-xs text-slate-500" dir="auto">
+                      <td className="px-2 py-1.5 text-xs text-muted" dir="auto">
                         {r.defects.length ? r.defects.slice(0, 3).map((d) => `${d.defectName} ${num(d.pieces)}`).join(' · ') : '—'}
                         {r.defects.length > 3 && ` · +${r.defects.length - 3}`}
                       </td>
@@ -122,7 +122,7 @@ export function SessionGroupModal({ spec, onClose, onOpenSession, footer }: { sp
                               key={s.sessionId}
                               type="button"
                               onClick={() => onOpenSession(s.sessionId)}
-                              title={`${formatDateTime(s.startedAt)} · ${s.inspectorName} · ${num(s.piecesInspected)} inspected, ${num(s.defectPieces)} defect pcs${stageWords(s.stages)}`}
+                              data-tip={`${formatDateTime(s.startedAt)} · ${s.inspectorName} · ${num(s.piecesInspected)} inspected, ${num(s.defectPieces)} defect pcs${stageWords(s.stages)}`}
                               className={cn(
                                 'rounded-md px-1.5 py-0.5 text-xs font-semibold',
                                 s.status === 'Open'
@@ -141,7 +141,7 @@ export function SessionGroupModal({ spec, onClose, onOpenSession, footer }: { sp
                 </tbody>
               </table>
             </div>
-            <p className="text-xs text-slate-400">Green: still open. S2, S1+2…: the stages a session covered on a universal machine.</p>
+            <p className="text-xs text-muted">Green: still open. S2, S1+2…: the stages a session covered on a universal machine.</p>
           </>
         )}
       </div>

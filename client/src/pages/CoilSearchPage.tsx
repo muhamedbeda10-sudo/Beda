@@ -38,7 +38,7 @@ export function CoilSearchPage() {
     <div className="space-y-4">
       <button
         onClick={() => navigate('/')}
-        className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400"
+        className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-semibold text-muted hover:text-brand-600"
       >
         <ArrowLeft className="h-4 w-4" /> Inspections
       </button>
@@ -48,7 +48,7 @@ export function CoilSearchPage() {
       </div>
 
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
         <Input
           autoFocus
           value={term}
@@ -59,7 +59,7 @@ export function CoilSearchPage() {
       </div>
 
       {isLoading ? (
-        <Card className="p-10 text-center text-sm text-slate-400">Loading…</Card>
+        <Card className="p-10 text-center text-sm text-muted">Loading…</Card>
       ) : results.length === 0 ? (
         <EmptyState
           icon={<Package2 className="h-10 w-10" />}
@@ -83,12 +83,12 @@ export function CoilSearchPage() {
                   <Attr label="Width" value={c.width} />
                   <Attr label="Yield" value={c.yield} />
                 </dl>
-                {c.notes && <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{c.notes}</p>}
+                {c.notes && <p className="mt-2 text-sm text-muted">{c.notes}</p>}
 
                 <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-800">
-                  <p className="mb-1.5 text-xs font-bold uppercase text-slate-400">Used in</p>
+                  <p className="mb-1.5 text-xs font-bold uppercase text-muted">Used in</p>
                   {used.length === 0 ? (
-                    <p className="text-sm text-slate-400">Not recorded against any sample yet.</p>
+                    <p className="text-sm text-muted">Not recorded against any sample yet.</p>
                   ) : (
                     <div className="flex flex-wrap gap-2">
                       {used.map((u, i) => (
@@ -111,7 +111,7 @@ export function CoilSearchPage() {
 function Attr({ label, value }: { label: string; value?: string | number }) {
   return (
     <div>
-      <dt className="text-xs font-semibold uppercase text-slate-400">{label}</dt>
+      <dt className="text-xs font-semibold uppercase text-muted">{label}</dt>
       <dd className="font-semibold">{value ?? '—'}</dd>
     </div>
   )

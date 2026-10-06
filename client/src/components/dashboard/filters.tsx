@@ -84,7 +84,7 @@ function CheckRow({ on, onClick, children, count }: { on: boolean; onClick: () =
     <button type="button" role="menuitemcheckbox" aria-checked={on} onClick={onClick} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800">
       <span className={cn('grid h-4 w-4 shrink-0 place-items-center rounded border', on ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 dark:border-slate-600')}>{on && <Check className="h-3 w-3" />}</span>
       <span className="min-w-0 flex-1 truncate" dir="auto">{children}</span>
-      {count !== undefined && <span className="shrink-0 text-xs tabular-nums text-slate-400">{count}</span>}
+      {count !== undefined && <span className="shrink-0 text-xs tabular-nums text-muted">{count}</span>}
     </button>
   )
 }
@@ -92,7 +92,7 @@ function CheckRow({ on, onClick, children, count }: { on: boolean; onClick: () =
 function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
   return (
     <label className="mb-1 flex items-center gap-1.5 rounded-lg bg-slate-50 px-2 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
-      <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+      <Search className="h-3.5 w-3.5 shrink-0 text-muted" />
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder} className="min-h-[34px] w-full bg-transparent text-sm outline-none" dir="auto" autoFocus />
     </label>
   )
@@ -131,7 +131,7 @@ export function MultiSelectMenu({ options, selected, onChange, allLabel, noun, a
         className={cn('print-hidden inline-flex min-h-[36px] max-w-[16rem] items-center gap-1.5 rounded-lg bg-white px-2.5 text-xs font-semibold ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:ring-slate-700 dark:hover:bg-slate-800', selected.length > 0 && 'text-brand-700 ring-brand-300 dark:text-brand-300 dark:ring-brand-500/50', className)}
       >
         <span className="truncate">{text}</span>
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" />
       </button>
       <FloatingPanel anchor={anchor} open={open} onClose={() => setOpen(false)} label={ariaLabel}>
         {all.length > 6 && <SearchBox value={query} onChange={setQuery} placeholder={`Search ${noun}`} />}
@@ -141,10 +141,10 @@ export function MultiSelectMenu({ options, selected, onChange, allLabel, noun, a
           {shown.map((o) => (
             <CheckRow key={o.value} on={isOn(o.value)} onClick={() => toggle(o.value)}>
               {o.label}
-              {o.sub && <span className="ml-1 text-xs text-slate-400">{o.sub}</span>}
+              {o.sub && <span className="ml-1 text-xs text-muted">{o.sub}</span>}
             </CheckRow>
           ))}
-          {shown.length === 0 && <p className="px-2 py-3 text-center text-xs text-slate-400">Nothing matches.</p>}
+          {shown.length === 0 && <p className="px-2 py-3 text-center text-xs text-muted">Nothing matches.</p>}
         </div>
       </FloatingPanel>
     </>
@@ -196,11 +196,11 @@ export function SearchSelect({
         onClick={() => setOpen((o) => !o)}
         className={cn('input flex min-h-[44px] w-full items-center gap-2 text-left', className)}
       >
-        <span className={cn('min-w-0 flex-1 truncate', !value && 'text-slate-400')} dir="auto">
+        <span className={cn('min-w-0 flex-1 truncate', !value && 'text-muted')} dir="auto">
           {value ? value.label : placeholder}
-          {value?.sub && <span className="ml-1.5 text-xs text-slate-400">{value.sub}</span>}
+          {value?.sub && <span className="ml-1.5 text-xs text-muted">{value.sub}</span>}
         </span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+        <ChevronDown className="h-4 w-4 shrink-0 text-muted" />
       </button>
       <FloatingPanel anchor={anchor} open={open} onClose={() => setOpen(false)} label={ariaLabel} width={340}>
         <SearchBox value={search} onChange={onSearch} placeholder="Search…" />
@@ -215,13 +215,13 @@ export function SearchSelect({
               <button key={o.value} type="button" role="option" aria-selected={on} onClick={() => pick(o)} className={cn('flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800', on && 'bg-brand-50 dark:bg-brand-500/10')}>
                 <span className="min-w-0 flex-1" dir="auto">
                   <span className="block font-medium">{o.label}</span>
-                  {o.sub && <span className="block text-xs text-slate-400">{o.sub}</span>}
+                  {o.sub && <span className="block text-xs text-muted">{o.sub}</span>}
                 </span>
                 {on && <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />}
               </button>
             )
           })}
-          {options.length === 0 && <p className="px-2 py-3 text-center text-xs text-slate-400">{loading ? 'Searching…' : 'Nothing matches.'}</p>}
+          {options.length === 0 && <p className="px-2 py-3 text-center text-xs text-muted">{loading ? 'Searching…' : 'Nothing matches.'}</p>}
         </div>
       </FloatingPanel>
     </>
@@ -305,7 +305,7 @@ function ColumnFilterButton({ label, values, picked, onChange }: { label: string
           setOpen((o) => !o)
         }}
         className={cn('print-hidden inline-grid h-5 w-5 place-items-center rounded hover:bg-slate-100 dark:hover:bg-slate-800', picked !== undefined ? 'bg-brand-100 text-brand-700 dark:bg-brand-500/20 dark:text-brand-300' : 'text-slate-300 dark:text-slate-600')}
-        title={picked !== undefined ? `${label}: ${picked.length} of ${values.length} shown` : `Filter ${label}`}
+        data-tip={picked !== undefined ? `${label}: ${picked.length} of ${values.length} shown` : `Filter ${label}`}
       >
         <Filter className="h-3 w-3" />
       </button>
@@ -321,10 +321,10 @@ function ColumnFilterButton({ label, values, picked, onChange }: { label: string
         <div className="max-h-64 overflow-auto">
           {shown.map((v) => (
             <CheckRow key={v.value} on={on(v.value)} onClick={() => toggle(v.value)} count={v.count}>
-              {v.value || <span className="text-slate-400">(blank)</span>}
+              {v.value || <span className="text-muted">(blank)</span>}
             </CheckRow>
           ))}
-          {shown.length === 0 && <p className="px-2 py-3 text-center text-xs text-slate-400">Nothing matches.</p>}
+          {shown.length === 0 && <p className="px-2 py-3 text-center text-xs text-muted">Nothing matches.</p>}
         </div>
       </FloatingPanel>
     </>
@@ -347,7 +347,7 @@ export function FilterTh<T>({ filters, column, label, className }: { filters: Co
 export function FilterNote<T>({ filters, total }: { filters: ColumnFilters<T>; total: number }) {
   if (filters.active === 0) return null
   return (
-    <p className="print-hidden mt-2 flex items-center justify-between gap-2 px-2 text-xs text-slate-400">
+    <p className="print-hidden mt-2 flex items-center justify-between gap-2 px-2 text-xs text-muted">
       <span>
         {filters.rows.length} of {total} rows · {filters.active} {filters.active === 1 ? 'column' : 'columns'} filtered
       </span>

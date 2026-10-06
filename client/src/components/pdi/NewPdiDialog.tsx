@@ -95,7 +95,7 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
           <div className="space-y-3">
             <Field label="Production order" hint="Type any words of the order number, in any order: 20542 ph4.">
               <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
                 <Input autoFocus value={orderTerm} onChange={(e) => setOrderTerm(e.target.value)} placeholder="Order number…" className="min-h-[48px] pl-9" aria-label="Order number" />
               </div>
             </Field>
@@ -142,12 +142,12 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
                   <li key={n.orderNumber}>
                     <button type="button" onClick={() => pickOrder(n.orderNumber)} className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800">
                       <span className="font-semibold">{n.orderNumber}</span>
-                      <span className="min-w-0 flex-1 truncate text-sm text-slate-500">{n.customer}</span>
-                      <span className="shrink-0 text-xs text-slate-400">{n.lineCount} {n.lineCount === 1 ? 'line' : 'lines'}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-muted">{n.customer}</span>
+                      <span className="shrink-0 text-xs text-muted">{n.lineCount} {n.lineCount === 1 ? 'line' : 'lines'}</span>
                     </button>
                   </li>
                 ))}
-                {numbers.length === 0 && <li className="px-3 py-4 text-center text-sm text-slate-400">{searching ? 'Searching…' : 'No open order matches.'}</li>}
+                {numbers.length === 0 && <li className="px-3 py-4 text-center text-sm text-muted">{searching ? 'Searching…' : 'No open order matches.'}</li>}
                 {found?.more && <li className="px-3 py-2.5 text-center text-xs font-semibold text-amber-700 dark:text-amber-300">More orders match than are listed: type more of the number, or narrow by factory, machine or item.</li>}
               </ul>
             )}
@@ -155,7 +155,7 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
         ) : (
           <div className="flex flex-wrap items-center gap-2 rounded-xl bg-brand-50 px-3 py-2.5 ring-1 ring-brand-200 dark:bg-brand-500/10 dark:ring-brand-500/30">
             <span className="font-bold">{orderNumber}</span>
-            {customer && <span className="text-sm text-slate-500">{customer}</span>}
+            {customer && <span className="text-sm text-muted">{customer}</span>}
             <button type="button" onClick={() => pickOrder('')} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
               <X className="h-3.5 w-3.5" /> Change order
             </button>
@@ -172,19 +172,19 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
                 <button type="button" className="text-brand-700 hover:underline disabled:opacity-40 dark:text-brand-300" disabled={unticked.size === 0} onClick={() => setUnticked(new Set())}>
                   Tick all
                 </button>
-                <button type="button" className="text-slate-500 hover:underline disabled:opacity-40" disabled={ticked.length === 0} onClick={() => setUnticked(new Set(items.map((i) => i.key)))}>
+                <button type="button" className="text-muted hover:underline disabled:opacity-40" disabled={ticked.length === 0} onClick={() => setUnticked(new Set(items.map((i) => i.key)))}>
                   Untick all
                 </button>
               </span>
             </div>
             {items.length > 8 && (
               <div className="relative mb-2">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
                 <Input value={itemTerm} onChange={(e) => setItemTerm(e.target.value)} placeholder="Find an item, code or drawing…" className="min-h-[44px] pl-9" aria-label="Find an item" />
               </div>
             )}
             <ul className="max-h-[45vh] min-h-[12rem] divide-y divide-slate-100 overflow-auto rounded-xl ring-1 ring-slate-200 dark:divide-slate-800 dark:ring-slate-700" aria-label="Items of the order">
-              {linesLoading && <li className="px-3 py-4 text-center text-sm text-slate-400">Loading the items…</li>}
+              {linesLoading && <li className="px-3 py-4 text-center text-sm text-muted">Loading the items…</li>}
               {shownItems.map((i) => {
                 const on = !unticked.has(i.key)
                 return (
@@ -194,9 +194,9 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
                       <span className="min-w-0 flex-1">
                         <span className="block font-semibold" dir="auto">
                           {i.item}
-                          {i.itemCode && <span className="ml-1.5 text-xs font-normal text-slate-400">{i.itemCode}</span>}
+                          {i.itemCode && <span className="ml-1.5 text-xs font-normal text-muted">{i.itemCode}</span>}
                         </span>
-                        <span className="block text-xs text-slate-500">
+                        <span className="block text-xs text-muted">
                           Drawing: <span className="font-semibold text-slate-700 dark:text-slate-200">{i.drawings.length ? i.drawings.join(' · ') : '—'}</span>
                         </span>
                       </span>
@@ -204,8 +204,8 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
                   </li>
                 )
               })}
-              {!linesLoading && items.length === 0 && <li className="px-3 py-4 text-center text-sm text-slate-400">This order has no open lines.</li>}
-              {items.length > 0 && shownItems.length === 0 && <li className="px-3 py-4 text-center text-sm text-slate-400">No item matches.</li>}
+              {!linesLoading && items.length === 0 && <li className="px-3 py-4 text-center text-sm text-muted">This order has no open lines.</li>}
+              {items.length > 0 && shownItems.length === 0 && <li className="px-3 py-4 text-center text-sm text-muted">No item matches.</li>}
             </ul>
           </div>
         )}

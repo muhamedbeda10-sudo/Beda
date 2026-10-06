@@ -18,23 +18,47 @@ export function nowISO(): string {
   return new Date().toISOString()
 }
 
-export function formatDate(iso?: string, opts?: Intl.DateTimeFormatOptions): string {
-  if (!iso) return '—'
+// ---- Dates and times ---------------------------------------------------------
+// One format everywhere, whatever the device's language: this year's dates
+// carry the time ("Oct 5, 15:05"), other years' the year ("Oct 5, 2025"), on a
+// 24-hour clock. The full timestamp is the date's tooltip (see <When>).
+
+const DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
+const DAY_YEAR = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+const TIME = new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+const FULL = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
+
+function parse(iso?: string | null): Date | null {
+  if (!iso) return null
   const d = new Date(iso)
-  if (isNaN(d.getTime())) return '—'
-  return d.toLocaleDateString(undefined, opts ?? { month: 'short', day: 'numeric' })
+  return isNaN(d.getTime()) ? null : d
+}
+const thisYear = (d: Date) => d.getFullYear() === new Date().getFullYear()
+
+/** A day: "Oct 5" this year, "Oct 5, 2025" another. */
+export function formatDate(iso?: string | null): string {
+  const d = parse(iso)
+  if (!d) return '—'
+  return (thisYear(d) ? DAY : DAY_YEAR).format(d)
 }
 
-export function formatDateTime(iso?: string): string {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return '—'
-  return d.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+/** A moment: "Oct 5, 15:05" this year, "Oct 5, 2025" another. */
+export function formatDateTime(iso?: string | null): string {
+  const d = parse(iso)
+  if (!d) return '—'
+  return thisYear(d) ? `${DAY.format(d)}, ${TIME.format(d)}` : DAY_YEAR.format(d)
+}
+
+/** The time of day alone, on a 24-hour clock: "15:05". */
+export function formatTime(iso?: string | null): string {
+  const d = parse(iso)
+  return d ? TIME.format(d) : '—'
+}
+
+/** The whole timestamp, for a tooltip: "Mon, Oct 5, 2026, 15:05:22". */
+export function formatFullTimestamp(iso?: string | null): string {
+  const d = parse(iso)
+  return d ? FULL.format(d) : ''
 }
 
 export function timeAgo(iso?: string): string {

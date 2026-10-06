@@ -59,13 +59,14 @@ import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { usePersistedState } from '@/lib/usePersistedState'
-import { cn, formatDateTime } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { useDashboardLayout, useHiddenInsights, useKpiBreakdown, useKpiComparisons, useKpiGeneral, useKpiMaterials, useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
 import { hideInsight, resetDashboardLayout, restoreInsight, saveDashboardLayout } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { ApiError } from '@/lib/api'
 import { sessionDetailPath } from '@/lib/links'
+import { When } from '@/components/ui/Tooltip'
 
 // ---- Formatting ------------------------------------------------------------
 
@@ -125,28 +126,28 @@ function KpiTile({
   return (
     <Card className={cn('p-4 ring-1 transition-shadow hover:shadow-hover', TONE_RING[tone])}>
       <div className="flex items-start justify-between gap-2">
-        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
         <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', tone === 'neutral' ? 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300' : tone === 'green' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : tone === 'amber' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400')}>
           {icon}
         </span>
       </div>
       <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
         {value}
-        {unit && value !== '—' && <span className="ml-0.5 text-base font-semibold text-slate-400">{unit}</span>}
+        {unit && value !== '—' && <span className="ml-0.5 text-base font-semibold text-muted">{unit}</span>}
       </p>
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
         {delta === null ? (
-          <span className="inline-flex items-center gap-1 text-slate-400">
+          <span className="inline-flex items-center gap-1 text-muted">
             <Minus className="h-3 w-3" /> no comparison
           </span>
         ) : (
-          <span className={cn('inline-flex items-center gap-0.5 font-semibold tabular-nums', good === null ? 'text-slate-500' : good ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
+          <span className={cn('inline-flex items-center gap-0.5 font-semibold tabular-nums', good === null ? 'text-muted' : good ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
             {flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
             {flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
           </span>
         )}
-        {previous !== null && <span className="text-slate-400">prev {typeof previous === 'number' ? (unit === '%' ? pctStr(previous) : num(previous, 1)) : '—'}</span>}
-        {sub && <span className="basis-full text-slate-400">{sub}</span>}
+        {previous !== null && <span className="text-muted">prev {typeof previous === 'number' ? (unit === '%' ? pctStr(previous) : num(previous, 1)) : '—'}</span>}
+        {sub && <span className="basis-full text-muted">{sub}</span>}
       </div>
     </Card>
   )
@@ -194,7 +195,7 @@ function InsightList({
                 <p className="mt-0.5 text-sm opacity-90">{i.detail}</p>
                 {i.action && <p className="mt-1.5 text-sm font-medium">→ {i.action}</p>}
                 {i.link && (
-                  <button type="button" onClick={() => onLink(i.link!)} className="print-hidden mt-1.5 text-xs font-semibold underline decoration-dotted underline-offset-2 hover:opacity-80">
+                  <button type="button" onClick={() => onLink(i.link!)} className="print-hidden mt-1.5 text-xs font-semibold underline-offset-2 hover:underline">
                     {i.link.kind === 'history-hold' ? 'Open the Hold list' : i.link.kind === 'machine' ? `Filter to machine ${i.link.value}` : i.link.kind === 'item' ? `Filter to item ${i.link.value}` : 'Open'}
                   </button>
                 )}
@@ -205,7 +206,7 @@ function InsightList({
                   onClick={() => onHide(key)}
                   className="print-hidden -mr-1 -mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-lg opacity-60 transition-opacity hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
                   aria-label={`Hide: ${i.title}`}
-                  title="Hide this insight until you show it again"
+                  data-tip="Hide this insight until you show it again"
                 >
                   <EyeOff className="h-4 w-4" />
                 </button>
@@ -214,7 +215,7 @@ function InsightList({
                 <button
                   type="button"
                   onClick={() => onRestore(key)}
-                  className="print-hidden inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold underline decoration-dotted underline-offset-2 hover:bg-black/5 dark:hover:bg-white/10"
+                  className="print-hidden inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold underline-offset-2 hover:bg-black/5 hover:underline dark:hover:bg-white/10"
                   aria-label={`Show again: ${i.title}`}
                 >
                   <Eye className="h-4 w-4" /> Show again
@@ -257,13 +258,13 @@ function Table<T>({
   total?: number
 }) {
   const [showAll, setShowAll] = useState(false)
-  if (rows.length === 0) return <p className="py-6 text-center text-sm text-slate-400">{empty}</p>
+  if (rows.length === 0) return <p className="py-6 text-center text-sm text-muted">{empty}</p>
   const visible = maxRows && !showAll ? rows.slice(0, maxRows) : rows
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
-          <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+          <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
             {columns.map((c) => (
               <th key={c.key} className={cn('whitespace-nowrap px-2 py-1.5 font-semibold', c.className)}>
                 {c.label}
@@ -292,7 +293,7 @@ function Table<T>({
         {/* The table holds the largest few; saying so is the difference between
             a ranking and a claim that this is everything. */}
         {total !== undefined && total > rows.length && (
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-muted">
             The largest {rows.length} of {total} — narrow the filters for the rest.
           </span>
         )}
@@ -312,7 +313,7 @@ function groupColumns(t: KpiThresholds, first: Column<KpiGroupRow>): Column<KpiG
     { key: 'samples', label: 'Samples', className: 'text-right tabular-nums', render: (r) => num(r.samples) },
     { key: 'pieces', label: 'Inspected', className: 'text-right tabular-nums', render: (r) => num(r.pieces) },
     { key: 'defects', label: 'Defect pcs', className: 'text-right tabular-nums', render: (r) => num(r.defectPieces) },
-    { key: 'produced', label: 'Produced', className: 'text-right tabular-nums', render: (r) => (r.piecesProduced === null ? <span className="text-slate-400">—</span> : num(r.piecesProduced)) },
+    { key: 'produced', label: 'Produced', className: 'text-right tabular-nums', render: (r) => (r.piecesProduced === null ? <span className="text-muted">—</span> : num(r.piecesProduced)) },
     { key: 'rate', label: 'Defect rate', className: 'text-right', render: (r) => <ToneCell value={r.defectRatePct} tone={toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /> },
     { key: 'inspectedRate', label: 'Of inspected', className: 'text-right', render: (r) => <ToneCell value={r.inspectedDefectPct} tone="neutral" /> },
     { key: 'fpy', label: 'FPY', className: 'text-right', render: (r) => <ToneCell value={r.fpyPct} tone={toneHighIsGood(r.fpyPct, t.fpyGreen, t.fpyAmber)} /> },
@@ -332,7 +333,7 @@ function Section({ title: ownTitle, hint: ownHint, icon, children, className, ac
           {icon && <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{icon}</span>}
           <div className="min-w-0">
             <h2 className="text-base font-bold leading-tight">{title}</h2>
-            {hint && <p className="text-xs text-slate-500 dark:text-slate-400">{hint}</p>}
+            {hint && <p className="text-xs text-muted">{hint}</p>}
           </div>
         </div>
         {action}
@@ -352,7 +353,7 @@ function PlainTile({ label, value, sub, icon, tone = 'neutral', control, onOpen 
     <Card className={cn('p-4 ring-1', TONE_RING[tone], onOpen && 'cursor-pointer transition-shadow hover:shadow-hover')} {...opens}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+          <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
           {control && <div className="print-hidden mt-1">{control}</div>}
         </div>
         <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', tone === 'neutral' ? 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300' : tone === 'green' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : tone === 'amber' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400')}>
@@ -360,7 +361,7 @@ function PlainTile({ label, value, sub, icon, tone = 'neutral', control, onOpen 
         </span>
       </div>
       <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>{value}</p>
-      {sub && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{sub}</p>}
+      {sub && <p className="mt-1 text-xs text-muted">{sub}</p>}
     </Card>
   )
 }
@@ -382,8 +383,8 @@ function TrendMark({ delta, title }: { delta: number | null; title?: string }) {
   const flat = delta !== null && Math.abs(delta) < 0.005
   return (
     <span
-      className={cn('inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold tabular-nums', delta === null ? 'text-slate-400' : flat ? 'text-slate-500' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}
-      title={title ?? (delta === null ? 'No month to compare with' : 'Against the month before')}
+      className={cn('inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold tabular-nums', delta === null ? 'text-muted' : flat ? 'text-muted' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}
+      data-tip={title ?? (delta === null ? 'No month to compare with' : 'Against the month before')}
     >
       {delta === null || flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
       {delta === null ? '—' : flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
@@ -430,7 +431,7 @@ function windowLength(g: KpiGeneral): string {
 /** The machines the dashboard leaves out (Configuration → Machines), named under its figures so nobody wonders why a machine is missing. */
 function ScopeNote({ leftOut }: { leftOut: { code: string; displayName: string }[] }) {
   return (
-    <p className="flex items-start gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+    <p className="flex items-start gap-1.5 text-xs text-muted">
       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <span>
         {leftOut.length === 0
@@ -468,17 +469,17 @@ function GeneralOverview({ data, loading, error, leftOut }: { data: KpiGeneral |
             <Card key={c.key} className={cn('p-4 ring-1', TONE_RING[tone], c.key === '__plant' && 'bg-slate-50 dark:bg-slate-800/40')}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{c.label}</p>
-                  <p className="truncate text-[11px] text-slate-400">{c.sub}</p>
+                  <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{c.label}</p>
+                  <p className="truncate text-[11px] text-muted">{c.sub}</p>
                 </div>
                 <TrendMark delta={trend.delta} />
               </div>
               <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
                 {pctStr(c.rate)}
-                <span className="ml-1 text-[11px] font-semibold uppercase text-slate-400">reject</span>
+                <span className="ml-1 text-[11px] font-semibold uppercase text-muted">reject</span>
               </p>
               <div className="mt-1 flex items-end justify-between gap-2">
-                <p className="text-xs text-slate-500 dark:text-slate-400">
+                <p className="text-xs text-muted">
                   <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{ppmStr(c.rate)}</span> PPM
                 </p>
                 <Sparkline values={c.months.map((m) => m.defectRatePct)} className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
@@ -487,7 +488,7 @@ function GeneralOverview({ data, loading, error, leftOut }: { data: KpiGeneral |
           )
         })}
       </div>
-      <p className="text-xs text-slate-400">Reject rate and PPM over {describeRange({ from: data.from, to: data.to })}; the trend line is {windowLength(data)}, {trendSpan}{data.monthsBack > 1 ? ', against the month before' : ''}; it starts on the first month with production.</p>
+      <p className="text-xs text-muted">Reject rate and PPM over {describeRange({ from: data.from, to: data.to })}; the trend line is {windowLength(data)}, {trendSpan}{data.monthsBack > 1 ? ', against the month before' : ''}; it starts on the first month with production.</p>
       <ScopeNote leftOut={leftOut} />
     </div>
   )
@@ -604,8 +605,8 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
             </button>
           )
         })}
-        <span className="text-xs text-slate-400">Tap several to see them together.</span>
-        {options.length === 0 && <p className="text-sm text-slate-400">No {kind === 'factory' ? 'factory' : 'process'} in the machine register yet.</p>}
+        <span className="text-xs text-muted">Tap several to see them together.</span>
+        {options.length === 0 && <p className="text-sm text-muted">No {kind === 'factory' ? 'factory' : 'process'} in the machine register yet.</p>}
       </div>
 
       <Board
@@ -617,20 +618,20 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
           {general.months.some((m) => m.piecesProduced + m.productionDefectPieces > 0) ? (
             <TrendChart points={general.months.map((m) => ({ label: monthLabel(m.month, false), bar: m.piecesProduced + m.productionDefectPieces, line: m.defectRatePct }))} barLabel="Pieces made" lineLabel="Reject rate · plant" lines={factoryLines} />
           ) : (
-            <p className="py-10 text-center text-sm text-slate-400">No session closed with a final quantity in these months.</p>
+            <p className="py-10 text-center text-sm text-muted">No session closed with a final quantity in these months.</p>
           )}
         </Section>
           ) },
           { id: 'g.machines', title: 'Machines of the pick', node: (
-        <Section title={`${scopeLabel}: machines`} hint={kind === 'process' ? 'Reject rate of each machine over the period, under its process, worst first in each, with its trend. Tick machines to compare them; the breakdown below follows the ticks.' : 'Reject rate of each machine over the period, worst first, with its trend. Tick machines to compare them; the breakdown below follows the ticks.'} icon={<Layers className="h-4 w-4" />} className="xl:col-span-2" action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-slate-500 hover:text-rose-600">Clear {picked.length} ticked</button>}>
+        <Section title={`${scopeLabel}: machines`} hint={kind === 'process' ? 'Reject rate of each machine over the period, under its process, worst first in each, with its trend. Tick machines to compare them; the breakdown below follows the ticks.' : 'Reject rate of each machine over the period, worst first, with its trend. Tick machines to compare them; the breakdown below follows the ticks.'} icon={<Layers className="h-4 w-4" />} className="xl:col-span-2" action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-muted hover:text-rose-600">Clear {picked.length} ticked</button>}>
           {machines.length === 0 ? (
-            <p className="py-6 text-center text-sm text-slate-400">No production closed in this period.</p>
+            <p className="py-6 text-center text-sm text-muted">No production closed in this period.</p>
           ) : (
             <div className="space-y-3 pr-1">
               {machineGroups.map((g) => (
                 <div key={g.key}>
                   {g.label !== null && (
-                    <p className="mb-1 flex items-baseline justify-between px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    <p className="mb-1 flex items-baseline justify-between px-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
                       <span>{g.label}</span>
                       <span className="tabular-nums">{g.machines.length}</span>
                     </p>
@@ -645,8 +646,8 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
                       <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded border', on ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 dark:border-slate-600')}>{on && <Check className="h-3.5 w-3.5" />}</span>
                       <span className="min-w-0 flex-1">
                         <span className="flex items-baseline justify-between gap-2 text-sm">
-                          <span className="truncate font-medium text-slate-700 dark:text-slate-200">{m.label}<span className="ml-1.5 text-xs font-normal text-slate-400">{kind === 'process' ? m.factory : PROCESS_LABEL[m.process]}</span></span>
-                          <span className="shrink-0 text-xs tabular-nums text-slate-500 dark:text-slate-400"><span className={cn('font-semibold', TONE_TEXT[tone])}>{pctStr(m.defectRatePct)}</span> · {ppmStr(m.defectRatePct)} PPM</span>
+                          <span className="truncate font-medium text-slate-700 dark:text-slate-200">{m.label}<span className="ml-1.5 text-xs font-normal text-muted">{kind === 'process' ? m.factory : PROCESS_LABEL[m.process]}</span></span>
+                          <span className="shrink-0 text-xs tabular-nums text-muted"><span className={cn('font-semibold', TONE_TEXT[tone])}>{pctStr(m.defectRatePct)}</span> · {ppmStr(m.defectRatePct)} PPM</span>
                         </span>
                         <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><span className={cn('block h-full rounded-full', tone === 'red' ? 'bg-rose-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-slate-300')} style={{ width: `${Math.min(100, ((m.defectRatePct ?? 0) / maxRate) * 100)}%` }} /></span>
                       </span>
@@ -815,7 +816,7 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
   const defectLegend = [...topDefects.map((d, k) => ({ label: d.defectName, className: PIE_CLASSES[k] })), ...(restDefects.length ? [{ label: `Others (${restDefects.length})`, className: PIE_CLASSES[PIE_CLASSES.length - 1] }] : [])]
   const defectTotal = (defects?.rows ?? []).reduce((n, d) => n + d.pieces, 0)
 
-  const empty = (words: string) => <p className="py-10 text-center text-sm text-slate-400">Nothing was closed with a final quantity {words}.</p>
+  const empty = (words: string) => <p className="py-10 text-center text-sm text-muted">Nothing was closed with a final quantity {words}.</p>
   const pickQuery: KpiDrillQuery = { from: general.from, to: general.to, processes: [picked] }
 
   return (
@@ -835,17 +836,17 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
                   <Card key={p} className={cn('p-4 ring-1', TONE_RING[tone])}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{PROCESS_LABEL[p]}</p>
-                        <p className="truncate text-[11px] text-slate-400">{num(inPeriod?.productionDefectPieces ?? 0)} rejected of {num(inPeriod?.made ?? 0)} made</p>
+                        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{PROCESS_LABEL[p]}</p>
+                        <p className="truncate text-[11px] text-muted">{num(inPeriod?.productionDefectPieces ?? 0)} rejected of {num(inPeriod?.made ?? 0)} made</p>
                       </div>
                       <TrendMark delta={monthTrend(months).delta} />
                     </div>
                     <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
                       {pctStr(rate)}
-                      <span className="ml-1 text-[11px] font-semibold uppercase text-slate-400">reject</span>
+                      <span className="ml-1 text-[11px] font-semibold uppercase text-muted">reject</span>
                     </p>
                     <div className="mt-1 flex items-end justify-between gap-2">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                      <p className="text-xs text-muted">
                         <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{ppmStr(rate)}</span> PPM
                       </p>
                       <Sparkline values={months.map((m) => m.defectRatePct)} className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
@@ -911,7 +912,7 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
           ) },
           { id: 'c.machineDefects', title: 'Defects on each machine of the group', node: (
             <Section title={`${processName}: defects on each machine`} hint={`The rejected pieces of each machine over ${periodWords}, stacked by defect: the ${STACKED_DEFECTS} largest in their own colour, the rest as Others. Hover a machine for its defects.`} icon={<AlertTriangle className="h-4 w-4" />}>
-              {!data ? <div className="skeleton h-56" /> : defectTotal > 0 ? <StackedColumnChart columns={defectColumns} legend={defectLegend} height={260} /> : <p className="py-10 text-center text-sm text-slate-400">No rejected piece on {processName.toLowerCase()} in this period.</p>}
+              {!data ? <div className="skeleton h-56" /> : defectTotal > 0 ? <StackedColumnChart columns={defectColumns} legend={defectLegend} height={260} /> : <p className="py-10 text-center text-sm text-muted">No rejected piece on {processName.toLowerCase()} in this period.</p>}
             </Section>
           ) },
           { id: 'c.machineDefectsTable', title: 'Defects of the group, most first', node: (
@@ -919,15 +920,15 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
               {!defects ? (
                 <div className="skeleton h-48" />
               ) : defects.rows.length === 0 ? (
-                <p className="py-10 text-center text-sm text-slate-400">No rejected piece on {processName.toLowerCase()} in this period.</p>
+                <p className="py-10 text-center text-sm text-muted">No rejected piece on {processName.toLowerCase()} in this period.</p>
               ) : (
                 <div>
                   <table className="w-full text-sm">
-                    <thead className="sticky top-0 z-10 bg-white text-left text-[11px] uppercase tracking-wide text-slate-400 shadow-[0_1px_0_0_rgb(226_232_240)] dark:bg-slate-900 dark:shadow-[0_1px_0_0_rgb(30_41_59)]">
+                    <thead className="sticky top-0 z-10 bg-white text-left text-[11px] uppercase tracking-wide text-muted shadow-[0_1px_0_0_rgb(226_232_240)] dark:bg-slate-900 dark:shadow-[0_1px_0_0_rgb(30_41_59)]">
                       <tr>
                         <th className="px-2 py-1.5 font-semibold">Defect</th>
                         {defects.machines.map((m) => (
-                          <th key={m.key} className="whitespace-nowrap px-2 py-1.5 text-right font-semibold" title={m.label}>
+                          <th key={m.key} className="whitespace-nowrap px-2 py-1.5 text-right font-semibold" data-tip={m.label}>
                             {m.label.length > 14 ? `${m.label.slice(0, 13)}…` : m.label}
                           </th>
                         ))}
@@ -940,12 +941,12 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
                         <tr key={d.defectName} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setDrill({ title: `${d.defectName}: rejected pieces`, subtitle: `${processName} · ${periodWords}`, query: { ...pickQuery, defect: d.defectName } })}>
                           <td className="whitespace-nowrap px-2 py-1.5 font-medium" dir="auto">{d.defectName}</td>
                           {d.byMachine.map((v, i) => (
-                            <td key={defects.machines[i].key} className={cn('px-2 py-1.5 text-right tabular-nums', v === 0 && 'text-slate-300 dark:text-slate-600')}>
+                            <td key={defects.machines[i].key} className={cn('px-2 py-1.5 text-right tabular-nums', v === 0 && 'text-muted')}>
                               {num(v)}
                             </td>
                           ))}
                           <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{num(d.pieces)}</td>
-                          <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{pctStr(pct(d.pieces, defectTotal))}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums text-muted">{pctStr(pct(d.pieces, defectTotal))}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1055,7 +1056,7 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
           noun="machines"
           ariaLabel="Roll forming machines"
         />
-        <span className="text-xs text-slate-400">The reject rate of what the machines made from each coil, {periodWords}. The group picked above does not move it.</span>
+        <span className="text-xs text-muted">The reject rate of what the machines made from each coil, {periodWords}. The group picked above does not move it.</span>
       </div>
       <Board
         page="comparisons"
@@ -1123,13 +1124,13 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
                 <div className="skeleton h-56" />
               ) : data.trend.total.made > 0 ? (
                 <>
-                  <p className="mb-2 text-sm text-slate-500 dark:text-slate-400">
+                  <p className="mb-2 text-sm text-muted">
                     Over the period: <span className={cn('font-bold', TONE_TEXT[rateTone(data.trend.total.defectRatePct)])}>{pctStr(data.trend.total.defectRatePct)}</span> · {ppmStr(data.trend.total.defectRatePct)} PPM · {num(data.trend.total.productionDefectPieces)} rejected of {num(data.trend.total.made)} made
                   </p>
                   <TrendChart points={data.trend.buckets.map((b, i) => ({ label: bucketLabel(b, data.trend.grain), bar: data.trend.points[i].made, line: data.trend.points[i].defectRatePct }))} barLabel="Pieces made" lineLabel="Reject rate" connectGaps />
                 </>
               ) : (
-                <p className="py-10 text-center text-sm text-slate-400">Nothing of {trendWhat.toLowerCase()} was made on {scope} in this period.</p>
+                <p className="py-10 text-center text-sm text-muted">Nothing of {trendWhat.toLowerCase()} was made on {scope} in this period.</p>
               )}
             </Section>
           ) },
@@ -1138,11 +1139,11 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
               {!data ? (
                 <div className="skeleton h-48" />
               ) : details.length === 0 ? (
-                <p className="py-10 text-center text-sm text-slate-400">Nothing was made on {scope} in this period.</p>
+                <p className="py-10 text-center text-sm text-muted">Nothing was made on {scope} in this period.</p>
               ) : (
                 <div>
                   <table className="w-full text-sm">
-                    <thead className="sticky top-0 z-10 bg-white text-left text-[11px] uppercase tracking-wide text-slate-400 shadow-[0_1px_0_0_rgb(226_232_240)] dark:bg-slate-900 dark:shadow-[0_1px_0_0_rgb(30_41_59)]">
+                    <thead className="sticky top-0 z-10 bg-white text-left text-[11px] uppercase tracking-wide text-muted shadow-[0_1px_0_0_rgb(226_232_240)] dark:bg-slate-900 dark:shadow-[0_1px_0_0_rgb(30_41_59)]">
                       <tr>
                         <FilterTh filters={filters} column="supplier" label="Supplier" />
                         <FilterTh filters={filters} column="thickness" label="Thickness" />
@@ -1218,7 +1219,7 @@ function PickTiles({
     <div className="h-full space-y-3 overflow-auto">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <h2 className="text-lg font-extrabold tracking-tight">{title}</h2>
-        <p className="text-xs text-slate-400">{describeRange({ from: data.filters.from, to: data.filters.to })}</p>
+        <p className="text-xs text-muted">{describeRange({ from: data.filters.from, to: data.filters.to })}</p>
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <PlainTile label="Reject rate" value={pctStr(rate)} sub={`${num(rejected)} rejected of ${num(made)} made`} icon={<Target className="h-4 w-4" />} tone={toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)} onOpen={rejected > 0 ? () => openRejects('Rejected pieces') : undefined} />
@@ -1332,19 +1333,19 @@ function scopeDetailWidgets({
                 className={cn('rounded-xl p-3 ring-1', TONE_RING[x.tone], x.open && 'cursor-pointer hover:shadow-hover')}
                 {...(x.open ? { role: 'button', tabIndex: 0, onClick: x.open, onKeyDown: (e: { key: string }) => e.key === 'Enter' && x.open!() } : {})}
               >
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{x.k}</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{x.k}</p>
                 <p className={cn('mt-1 text-xl font-extrabold tabular-nums', TONE_TEXT[x.tone])}>{x.v}</p>
-                <p className="text-xs text-slate-400">{x.s}</p>
+                <p className="text-xs text-muted">{x.s}</p>
               </div>
             ))}
           </div>
           <div>
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">By month</p>
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">By month</p>
             <ul className="flex flex-wrap gap-2 text-xs">
               {fp.months.map((m) => (
                 <li key={m.month} className="rounded-lg bg-slate-50 px-2 py-1 dark:bg-slate-800/60">
                   <span className="font-semibold">{monthLabel(m.month, false)}</span>{' '}
-                  {m.sessions > 0 ? <><span className={cn('font-semibold', TONE_TEXT[releasedTone(m.pct)])}>{pctStr(m.pct)}</span> <span className="text-slate-400">{num(m.clean)} ÷ {num(m.sessions)}</span></> : <span className="text-slate-300">—</span>}
+                  {m.sessions > 0 ? <><span className={cn('font-semibold', TONE_TEXT[releasedTone(m.pct)])}>{pctStr(m.pct)}</span> <span className="text-muted">{num(m.clean)} ÷ {num(m.sessions)}</span></> : <span className="text-slate-300">—</span>}
                 </li>
               ))}
             </ul>
@@ -1360,7 +1361,7 @@ function scopeDetailWidgets({
     { id: 'g.firstPartQty', title: 'First part: sessions by pieces rejected', node: (
       <Section title="Sessions by pieces rejected before release" hint="Of the sessions not clean: how many had 1 piece rejected before release, how many 2, and so on. Tap a column for those sessions." icon={<PackageCheck className="h-4 w-4" />} action={fpFilter}>
         {fp.byQty.length === 0 ? (
-          <p className="py-6 text-center text-sm text-slate-400">Every session started clean.</p>
+          <p className="py-6 text-center text-sm text-muted">Every session started clean.</p>
         ) : (
           <ColumnChart
             columns={qtyColumns(fp.byQty)}
@@ -1447,13 +1448,13 @@ function FirstPartParts({ rows, navigate }: { rows: PartRow[]; navigate: (to: st
     { key: 'notClean', value: (r) => String(r.notClean), numeric: true },
     { key: 'pieces', value: (r) => String(r.rejectedPieces), numeric: true },
   ])
-  if (rows.length === 0) return <p className="py-6 text-center text-sm text-slate-400">Every session started clean.</p>
+  if (rows.length === 0) return <p className="py-6 text-center text-sm text-muted">Every session started clean.</p>
   return (
     <>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
-            <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+            <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
               <FilterTh filters={filters} column="machine" label="Machine" />
               <FilterTh filters={filters} column="part" label="Part" />
               <FilterTh filters={filters} column="code" label="Code" />
@@ -1465,10 +1466,10 @@ function FirstPartParts({ rows, navigate }: { rows: PartRow[]; navigate: (to: st
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {filters.rows.map((r) => (
               <tr key={`${r.workCenterCode}|${r.itemCode}`} onClick={() => setOpen(r)} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60">
-                <td className="px-2 py-1.5">{r.machineLabel}{r.factory && <span className="ml-1 text-xs text-slate-400">{r.factory}</span>}</td>
+                <td className="px-2 py-1.5">{r.machineLabel}{r.factory && <span className="ml-1 text-xs text-muted">{r.factory}</span>}</td>
                 <td className="px-2 py-1.5 font-semibold" dir="auto">{r.item}</td>
-                <td className="px-2 py-1.5 text-xs text-slate-500">{r.itemCode}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums"><span className="font-semibold">{num(r.notClean)}</span> <span className="text-xs text-slate-400">of {num(r.sessions)}</span></td>
+                <td className="px-2 py-1.5 text-xs text-muted">{r.itemCode}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums"><span className="font-semibold">{num(r.notClean)}</span> <span className="text-xs text-muted">of {num(r.sessions)}</span></td>
                 <td className="px-2 py-1.5 text-right"><Badge tone="red">{num(r.rejectedPieces)} pcs</Badge></td>
                 <td className="print-hidden px-2 py-1.5 text-right">
                   <button type="button" onClick={(e) => { e.stopPropagation(); setOpen(r) }} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
@@ -1478,7 +1479,7 @@ function FirstPartParts({ rows, navigate }: { rows: PartRow[]; navigate: (to: st
               </tr>
             ))}
             {filters.rows.length === 0 && (
-              <tr><td colSpan={6} className="py-6 text-center text-sm text-slate-400">No row matches the filters.</td></tr>
+              <tr><td colSpan={6} className="py-6 text-center text-sm text-muted">No row matches the filters.</td></tr>
             )}
           </tbody>
         </table>
@@ -1487,12 +1488,12 @@ function FirstPartParts({ rows, navigate }: { rows: PartRow[]; navigate: (to: st
       <Modal open={open !== null} onClose={() => setOpen(null)} title={open ? `${open.item} on ${open.machineLabel}` : ''} icon={<PackageCheck className="h-5 w-5" />} size="lg">
         {open && (
           <div className="space-y-3">
-            <p className="text-sm text-slate-500 dark:text-slate-400">
+            <p className="text-sm text-muted">
               {num(open.notClean)} of {num(open.sessions)} sessions started with pieces already rejected, {num(open.rejectedPieces)} pieces in all. The orders behind them:
             </p>
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                   <th className="px-2 py-1.5 font-semibold">Order</th>
                   <th className="px-2 py-1.5 text-right font-semibold">Sessions not clean</th>
                   <th className="px-2 py-1.5 text-right font-semibold">Rejected before</th>
@@ -1556,7 +1557,7 @@ function BreakdownTable({
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
-          <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+          <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
             <FilterTh filters={filters} column="label" label={what === 'order' ? 'Order' : 'Item'} />
             <FilterTh filters={filters} column="sub" label={what === 'order' ? 'Item' : 'Code'} />
             <FilterTh filters={filters} column="pieces" label="Rejected" className="text-right" />
@@ -1570,21 +1571,21 @@ function BreakdownTable({
               <tr className={cn('bg-slate-50 dark:bg-slate-800/60', onOpenMonth && 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800')} onClick={onOpenMonth && (() => onOpenMonth(g.month.month))}>
                 <td className="px-2 py-1.5 font-bold" colSpan={3}>{monthLabel(g.month.month)}</td>
                 <td className="px-2 py-1.5 text-right"><ToneCell value={g.month.defectRatePct} tone={toneLowIsGood(g.month.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /></td>
-                <td className="px-2 py-1.5 text-right text-xs text-slate-400">{num(g.month.productionDefectPieces)} of {num(g.month.made)}</td>
+                <td className="px-2 py-1.5 text-right text-xs text-muted">{num(g.month.productionDefectPieces)} of {num(g.month.made)}</td>
               </tr>
               {g.rows.map((r) => (
                 <tr key={`${r.month}|${r.key}`} onClick={onOpen && (() => onOpen(r))} className={cn(onOpen && 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60')}>
                   <td className="px-2 py-1.5 font-semibold" dir="auto">{r.label}</td>
-                  <td className="px-2 py-1.5 text-xs text-slate-500" dir="auto">{what === 'order' ? r.sub : r.key}</td>
+                  <td className="px-2 py-1.5 text-xs text-muted" dir="auto">{what === 'order' ? r.sub : r.key}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{num(r.pieces)}</td>
-                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums" title={`${num(r.pieces)} rejected of ${num(r.made)} made by this ${what} in the month`}>{pctStr(r.pctOfMade, 3)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{pctStr(r.shareOfPeriodPct)}</td>
+                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums" data-tip={`${num(r.pieces)} rejected of ${num(r.made)} made by this ${what} in the month`}>{pctStr(r.pctOfMade, 3)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-muted">{pctStr(r.shareOfPeriodPct)}</td>
                 </tr>
               ))}
             </Fragment>
           ))}
           {groups.length === 0 && (
-            <tr><td colSpan={5} className="py-6 text-center text-sm text-slate-400">{rows.length === 0 ? 'No rejected piece in these months.' : 'No row matches the filters.'}</td></tr>
+            <tr><td colSpan={5} className="py-6 text-center text-sm text-muted">{rows.length === 0 ? 'No rejected piece in these months.' : 'No row matches the filters.'}</td></tr>
           )}
         </tbody>
       </table>
@@ -1602,13 +1603,13 @@ function DefectsByMonthTable({ data, rejected, rate, onOpen }: { data: KpiBreakd
     { key: 'defect', value: (d) => d.defectName },
     { key: 'total', value: (d) => String(d.pieces), numeric: true },
   ])
-  if (data.defects.length === 0) return <p className="py-6 text-center text-sm text-slate-400">No rejected piece in these months.</p>
+  if (data.defects.length === 0) return <p className="py-6 text-center text-sm text-muted">No rejected piece in these months.</p>
   const shown = filters.active > 0 ? filters.rows : filters.rows.slice(0, 15)
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
-          <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+          <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
             <FilterTh filters={filters} column="defect" label="Defect" />
             {data.months.map((m) => <th key={m.month} className="px-2 py-1.5 text-right font-semibold">{monthLabel(m.month, false)}</th>)}
             <FilterTh filters={filters} column="total" label="Total" className="text-right" />
@@ -1619,9 +1620,9 @@ function DefectsByMonthTable({ data, rejected, rate, onOpen }: { data: KpiBreakd
             <td className="px-2 py-1.5">All rejected · rate</td>
             {data.months.map((m) => {
               const o = opens(null, m.month, m.productionDefectPieces)
-              return <td key={m.month} onClick={o.onClick} className={cn('px-2 py-1.5 text-right tabular-nums', o.className)}>{m.made > 0 ? <>{num(m.productionDefectPieces)} <span className="text-xs text-slate-400">{pctStr(m.defectRatePct)}</span></> : <span className="text-slate-300">—</span>}</td>
+              return <td key={m.month} onClick={o.onClick} className={cn('px-2 py-1.5 text-right tabular-nums', o.className)}>{m.made > 0 ? <>{num(m.productionDefectPieces)} <span className="text-xs text-muted">{pctStr(m.defectRatePct)}</span></> : <span className="text-slate-300">—</span>}</td>
             })}
-            <td onClick={opens(null, null, rejected).onClick} className={cn('px-2 py-1.5 text-right tabular-nums', opens(null, null, rejected).className)}>{num(rejected)} <span className="text-xs text-slate-400">{pctStr(rate)}</span></td>
+            <td onClick={opens(null, null, rejected).onClick} className={cn('px-2 py-1.5 text-right tabular-nums', opens(null, null, rejected).className)}>{num(rejected)} <span className="text-xs text-muted">{pctStr(rate)}</span></td>
           </tr>
           {shown.map((d) => (
             <tr key={d.defectName}>
@@ -1629,13 +1630,13 @@ function DefectsByMonthTable({ data, rejected, rate, onOpen }: { data: KpiBreakd
               {d.months.map((m) => {
                 const monthRejected = data.months.find((x) => x.month === m.month)?.productionDefectPieces ?? 0
                 const o = opens(d.defectName, m.month, m.pieces)
-                return <td key={m.month} onClick={o.onClick} className={cn('px-2 py-1.5 text-right tabular-nums', o.className)}>{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-slate-400">{pctStr(pct(m.pieces, monthRejected))}</span></> : <span className="text-slate-300">—</span>}</td>
+                return <td key={m.month} onClick={o.onClick} className={cn('px-2 py-1.5 text-right tabular-nums', o.className)}>{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-muted">{pctStr(pct(m.pieces, monthRejected))}</span></> : <span className="text-slate-300">—</span>}</td>
               })}
-              <td onClick={opens(d.defectName, null, d.pieces).onClick} className={cn('px-2 py-1.5 text-right font-semibold tabular-nums', opens(d.defectName, null, d.pieces).className)}>{num(d.pieces)} <span className="text-xs font-normal text-slate-400">{pctStr(d.sharePct)}</span></td>
+              <td onClick={opens(d.defectName, null, d.pieces).onClick} className={cn('px-2 py-1.5 text-right font-semibold tabular-nums', opens(d.defectName, null, d.pieces).className)}>{num(d.pieces)} <span className="text-xs font-normal text-muted">{pctStr(d.sharePct)}</span></td>
             </tr>
           ))}
           {shown.length === 0 && (
-            <tr><td colSpan={data.months.length + 2} className="py-6 text-center text-sm text-slate-400">No row matches the filters.</td></tr>
+            <tr><td colSpan={data.months.length + 2} className="py-6 text-center text-sm text-muted">No row matches the filters.</td></tr>
           )}
         </tbody>
       </table>
@@ -1646,7 +1647,7 @@ function DefectsByMonthTable({ data, rejected, rate, onOpen }: { data: KpiBreakd
 
 /** One card per machine of the selection: the rate, its trend, and the pieces behind it. */
 function MachineCards({ rows, previous, t, onPick }: { rows: KpiGroupRow[]; previous: KpiGroupRow[]; t: KpiThresholds; onPick: (code: string) => void }) {
-  if (rows.length === 0) return <p className="py-6 text-center text-sm text-slate-400">No machine inspected in this period.</p>
+  if (rows.length === 0) return <p className="py-6 text-center text-sm text-muted">No machine inspected in this period.</p>
   const before = new Map(previous.map((r) => [r.key.toLowerCase(), r]))
   const sorted = [...rows].sort((a, b) => (b.defectRatePct ?? -1) - (a.defectRatePct ?? -1) || b.defectPieces - a.defectPieces)
   return (
@@ -1665,23 +1666,23 @@ function MachineCards({ rows, previous, t, onPick }: { rows: KpiGroupRow[]; prev
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate font-bold">{m.label}</p>
-                  {m.sub && <p className="truncate text-xs text-slate-400">{m.sub}</p>}
+                  {m.sub && <p className="truncate text-xs text-muted">{m.sub}</p>}
                 </div>
-                <span className={cn('inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold tabular-nums', delta === null ? 'text-slate-400' : flat ? 'text-slate-500' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')} title={prev ? `Was ${pctStr(prev.defectRatePct)} in the comparison period` : 'Nothing in the comparison period'}>
+                <span className={cn('inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold tabular-nums', delta === null ? 'text-muted' : flat ? 'text-muted' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')} data-tip={prev ? `Was ${pctStr(prev.defectRatePct)} in the comparison period` : 'Nothing in the comparison period'}>
                   {delta === null ? <Minus className="h-3 w-3" /> : flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
                   {delta === null ? 'new' : flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
                 </span>
               </div>
               <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
                 {pctStr(m.defectRatePct)}
-                <span className="ml-1 text-xs font-semibold text-slate-400">defect rate</span>
+                <span className="ml-1 text-xs font-semibold text-muted">defect rate</span>
               </p>
               <dl className="mt-2 grid grid-cols-3 gap-2 text-xs">
-                <div><dt className="text-slate-400">Produced</dt><dd className="font-semibold tabular-nums">{m.piecesProduced === null ? '—' : num(produced)}</dd></div>
-                <div><dt className="text-slate-400">Released</dt><dd className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">{m.piecesProduced === null ? '—' : num(Math.max(0, produced - defective))}</dd></div>
-                <div><dt className="text-slate-400">Defective</dt><dd className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">{m.piecesProduced === null ? num(m.defectPieces) : num(defective)}</dd></div>
+                <div><dt className="text-muted">Produced</dt><dd className="font-semibold tabular-nums">{m.piecesProduced === null ? '—' : num(produced)}</dd></div>
+                <div><dt className="text-muted">Released</dt><dd className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">{m.piecesProduced === null ? '—' : num(Math.max(0, produced - defective))}</dd></div>
+                <div><dt className="text-muted">Defective</dt><dd className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">{m.piecesProduced === null ? num(m.defectPieces) : num(defective)}</dd></div>
               </dl>
-              <p className="mt-1.5 text-[11px] text-slate-400">{num(m.pieces)} inspected in {num(m.samples)} samples · {pctStr(m.inspectedDefectPct)} of inspected</p>
+              <p className="mt-1.5 text-[11px] text-muted">{num(m.pieces)} inspected in {num(m.samples)} samples · {pctStr(m.inspectedDefectPct)} of inspected</p>
             </button>
           </li>
         )
@@ -2007,18 +2008,18 @@ export function DashboardPage() {
       {/* Heading */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Quality</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted">Quality</p>
           <h1 className="mt-1 text-2xl font-extrabold tracking-tight">Dashboard</h1>
           {view === 'general' && pick !== 'details' ? (
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            <p className="mt-1 text-sm text-muted">
               <span className="font-semibold text-slate-700 dark:text-slate-200">{describeRange(range)}</span> · reject rate = rejected ÷ (produced + rejected) · trend over {general ? windowLength(general) : 'the last months'}
-              {general && <span className="hidden print:inline"> · generated {formatDateTime(general.generatedAt)}</span>}
+              {general && <span className="hidden print:inline"> · generated <When iso={general.generatedAt} time /></span>}
             </p>
           ) : (
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            <p className="mt-1 text-sm text-muted">
               <span className="font-semibold text-slate-700 dark:text-slate-200">{describeRange(range)}</span> compared with {describeRange(prev)}
               {activeFilters.length > 0 && <span> · {activeFilters.join(' · ')}</span>}
-              {data && <span className="hidden print:inline"> · generated {formatDateTime(data.generatedAt)}</span>}
+              {data && <span className="hidden print:inline"> · generated <When iso={data.generatedAt} time /></span>}
             </p>
           )}
         </div>
@@ -2108,7 +2109,7 @@ export function DashboardPage() {
         <>
           <GeneralOverview data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} leftOut={leftOut} />
           <div className="print-hidden flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Read it</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted">Read it</span>
             <div className="inline-flex rounded-xl p-0.5 ring-1 ring-slate-200 dark:ring-slate-700">
               {(
                 [
@@ -2128,7 +2129,7 @@ export function DashboardPage() {
                 </button>
               ))}
             </div>
-            {pick === 'details' && <span className="text-xs text-slate-400">The full analysis: the filters below narrow it.</span>}
+            {pick === 'details' && <span className="text-xs text-muted">The full analysis: the filters below narrow it.</span>}
             <Button className="ml-auto min-h-[40px]" onClick={resetAll} disabled={!anythingSet} aria-label="Reset all filters and picks">
               <RotateCcw className="h-4 w-4" /> Reset all
             </Button>
@@ -2227,10 +2228,10 @@ export function DashboardPage() {
                 {a}
               </Badge>
             ))}
-            <button type="button" onClick={() => patch({ factory: '', process: '', workCenterCode: '', itemCode: '', inspectorId: '', shift: '' })} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
+            <button type="button" onClick={() => patch({ factory: '', process: '', workCenterCode: '', itemCode: '', inspectorId: '', shift: '' })} className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-rose-600">
               <X className="h-3.5 w-3.5" /> Clear filters
             </button>
-            <button type="button" onClick={resetAll} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600">
+            <button type="button" onClick={resetAll} className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-rose-600">
               <RotateCcw className="h-3.5 w-3.5" /> Reset all
             </button>
           </div>
@@ -2258,12 +2259,12 @@ export function DashboardPage() {
             <InsightList insights={visibleInsights} onLink={onLink} />
           </Section>
           {insightsOpen && (
-            <Modal open onClose={() => setInsightsOpen(false)} size="xl" icon={<Lightbulb className="h-5 w-5" />} title={<span>Insights <span className="ml-2 text-sm font-semibold text-slate-400">{describeRange(range)}</span></span>}>
-              <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">What the numbers say, by rule, not by guess. Most serious first. Read one? Hide it and it stays hidden for you, on every device, until you show it again.</p>
+            <Modal open onClose={() => setInsightsOpen(false)} size="xl" icon={<Lightbulb className="h-5 w-5" />} title={<span>Insights <span className="ml-2 text-sm font-semibold text-muted">{describeRange(range)}</span></span>}>
+              <p className="mb-3 text-sm text-muted">What the numbers say, by rule, not by guess. Most serious first. Read one? Hide it and it stays hidden for you, on every device, until you show it again.</p>
               {visibleInsights.length > 0 ? (
                 <InsightList insights={visibleInsights} onLink={(l) => { setInsightsOpen(false); onLink(l) }} onHide={(k) => void onHide(k)} />
               ) : (
-                <p className="rounded-xl border border-dashed border-slate-200 py-6 text-center text-sm text-slate-400 dark:border-slate-700">
+                <p className="rounded-xl border border-dashed border-slate-200 py-6 text-center text-sm text-muted dark:border-slate-700">
                   {hiddenInsights.length > 0 ? 'Every insight for this period is hidden.' : 'Nothing to say about this period.'}
                 </p>
               )}
@@ -2526,7 +2527,7 @@ export function DashboardPage() {
                 maxRows={10}
                 empty="No paint thickness readings in this period."
                 columns={[
-                  { key: 'item', label: 'Item', render: (r) => (<span className="font-semibold">{r.itemCode}<span className="ml-1 text-xs font-normal text-slate-400">{r.item}</span></span>) },
+                  { key: 'item', label: 'Item', render: (r) => (<span className="font-semibold">{r.itemCode}<span className="ml-1 text-xs font-normal text-muted">{r.item}</span></span>) },
                   { key: 'n', label: 'Readings', className: 'text-right tabular-nums', render: (r) => num(r.readings) },
                   { key: 'mean', label: 'Average µm', className: 'text-right tabular-nums font-semibold', render: (r) => num(r.meanMicrons, 1) },
                   { key: 'min', label: 'Min µm', className: 'text-right tabular-nums', render: (r) => num(r.minMicrons, 1) },
@@ -2543,7 +2544,7 @@ export function DashboardPage() {
               maxRows={15}
               empty="No defects recorded in this period."
               columns={[
-                { key: 'item', label: 'Item', render: (r) => (<span className="font-semibold">{r.itemCode}<span className="ml-1 text-xs font-normal text-slate-400">{r.item}</span></span>) },
+                { key: 'item', label: 'Item', render: (r) => (<span className="font-semibold">{r.itemCode}<span className="ml-1 text-xs font-normal text-muted">{r.item}</span></span>) },
                 { key: 'defect', label: 'Defect', render: (r) => <span dir="auto">{r.defectName}</span> },
                 { key: 'mc', label: 'Machine', render: (r) => r.machineLabel },
                 { key: 'pcs', label: 'Pieces', className: 'text-right tabular-nums', render: (r) => num(r.pieces) },
@@ -2603,7 +2604,7 @@ export function DashboardPage() {
               ) },
               { id: 'd.tableMachine', title: 'By machine (table)', node: (
             <Section title="By machine" icon={<Activity className="h-4 w-4" />}>
-              <Table rows={data.byMachine} total={data.counts.machines} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Machine', render: (r) => (<span className="font-semibold">{r.label}{r.sub && <span className="ml-1 text-xs font-normal text-slate-400">{r.sub}</span>}</span>) })} />
+              <Table rows={data.byMachine} total={data.counts.machines} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Machine', render: (r) => (<span className="font-semibold">{r.label}{r.sub && <span className="ml-1 text-xs font-normal text-muted">{r.sub}</span>}</span>) })} />
             </Section>
               ) },
               { id: 'd.tableInspector', title: 'By inspector (table)', node: (
@@ -2613,12 +2614,12 @@ export function DashboardPage() {
               ) },
               { id: 'd.tableShift', title: 'By shift (table)', node: (
             <Section title="By shift" icon={<Users className="h-4 w-4" />}>
-              <Table rows={data.byShift} rowKey={(r) => r.key} columns={groupColumns(t, { key: 'k', label: 'Shift', render: (r) => (<span className="font-semibold">{r.label} <span className="text-xs font-normal text-slate-400">{shiftName(r.key as ShiftLetter)}</span></span>) })} />
+              <Table rows={data.byShift} rowKey={(r) => r.key} columns={groupColumns(t, { key: 'k', label: 'Shift', render: (r) => (<span className="font-semibold">{r.label} <span className="text-xs font-normal text-muted">{shiftName(r.key as ShiftLetter)}</span></span>) })} />
             </Section>
               ) },
               { id: 'd.tableItem', title: 'By item (table)', node: (
             <Section title="By item" icon={<ClipboardList className="h-4 w-4" />}>
-              <Table rows={data.byItem} total={data.counts.items} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Item', render: (r) => (<span className="font-semibold">{r.label}<span className="ml-1 text-xs font-normal text-slate-400">{r.key}</span></span>) })} />
+              <Table rows={data.byItem} total={data.counts.items} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Item', render: (r) => (<span className="font-semibold">{r.label}<span className="ml-1 text-xs font-normal text-muted">{r.key}</span></span>) })} />
             </Section>
               ) },
               { id: 'd.coilSuppliers', title: 'Coil suppliers', node: (
@@ -2687,9 +2688,9 @@ export function DashboardPage() {
                 { k: 'Notes written', v: num(data.discipline.notes), s: 'on order lines' },
               ].map((x) => (
                 <div key={x.k} className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
-                  <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{x.k}</dt>
+                  <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted">{x.k}</dt>
                   <dd className="mt-1 text-xl font-bold tabular-nums">{x.v}</dd>
-                  <dd className="text-xs text-slate-400">{x.s}</dd>
+                  <dd className="text-xs text-muted">{x.s}</dd>
                 </div>
               ))}
             </dl>
@@ -2712,8 +2713,8 @@ export function DashboardPage() {
             </Section>
           )}
 
-          <p className="text-xs text-slate-400">
-            Generated {formatDateTime(data.generatedAt)} · targets: defect rate ≤ {t.defectRateGreen}% / {t.defectRateAmber}%, FPY ≥ {t.fpyGreen}% / {t.fpyAmber}%, Cpk ≥ {t.cpkGreen} / {t.cpkAmber}. An administrator changes them in Configuration → KPI targets.
+          <p className="text-xs text-muted">
+            Generated <When iso={data.generatedAt} time /> · targets: defect rate ≤ {t.defectRateGreen}% / {t.defectRateAmber}%, FPY ≥ {t.fpyGreen}% / {t.fpyAmber}%, Cpk ≥ {t.cpkGreen} / {t.cpkAmber}. An administrator changes them in Configuration → KPI targets.
           </p>
         </div>
       )}

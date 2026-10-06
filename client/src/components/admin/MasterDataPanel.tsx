@@ -189,7 +189,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
   const table = (visible: T[]) => (
     <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
       <table className={cn('w-full text-sm', props.minTableWidth ?? 'min-w-[40rem]')}>
-        <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+        <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
           <tr>
             <th className="w-12 px-1 py-1">
               {checkbox(
@@ -228,7 +228,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
                     type="button"
                     onClick={() => setEditing({ id: row.id, draft: props.toDraft(row) })}
                     aria-label={`Edit ${props.describe(row)}`}
-                    className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
+                    className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
                   >
                     <Pencil className="h-4 w-4" />
                   </button>
@@ -236,7 +236,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
                     type="button"
                     onClick={() => setConfirming(row)}
                     aria-label={`Delete ${props.describe(row)}`}
-                    className="grid h-12 w-12 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
+                    className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -277,7 +277,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
         {!props.loading && rows.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative min-w-[16rem] flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               <Input
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
@@ -286,7 +286,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
                 aria-label={`Filter ${props.title}`}
               />
               {filter && (
-                <button type="button" onClick={() => setFilter('')} aria-label="Clear filter" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:text-slate-600">
+                <button type="button" onClick={() => setFilter('')} aria-label="Clear filter" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-muted hover:text-slate-600">
                   <X className="h-4 w-4" />
                 </button>
               )}
@@ -312,7 +312,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
         )}
 
         {props.loading ? (
-          <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-400">
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : rows.length > 0 && sorted.length === 0 ? (
@@ -337,7 +337,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
               <div key={group}>
                 <div className="mb-2 flex items-center gap-2">
                   <Badge tone="blue">{props.groupLabel ? props.groupLabel(group) : group}</Badge>
-                  <span className="text-xs text-slate-400">
+                  <span className="text-xs text-muted">
                     {groupRows.length} {groupRows.length === 1 ? 'entry' : 'entries'}
                   </span>
                 </div>
@@ -350,7 +350,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
         )}
 
         {!props.loading && sorted.length > 0 && (
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-muted">
             {sorted.length} {sorted.length === 1 ? 'record' : 'records'}
             {filter && sorted.length !== rows.length ? ` shown of ${rows.length}` : ''}
           </p>
@@ -400,7 +400,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
         }
       >
         <p className="text-sm">They will stop appearing to inspectors.</p>
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+        <p className="mt-2 text-sm text-muted">
           Nothing is erased — each record is marked deleted and kept, together with who deleted it, so past inspections stay explainable.
         </p>
       </Modal>
@@ -429,7 +429,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
           <span className="font-semibold">{confirming ? props.describe(confirming) : ''}</span> will
           stop appearing to inspectors.
         </p>
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+        <p className="mt-2 text-sm text-muted">
           Nothing is erased — the record is marked deleted and kept, together with who deleted it,
           so past inspections stay explainable.
         </p>

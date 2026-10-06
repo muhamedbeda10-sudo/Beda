@@ -56,8 +56,8 @@ export function SessionPhotos({
     }
   }, [viewer, byId, fullUrls])
 
-  if (isLoading) return <p className={cn('text-sm text-slate-400', className)}>Loading the photos…</p>
-  if (groups.length === 0) return <p className={cn('text-sm text-slate-400', className)}>No photo was taken in this session.</p>
+  if (isLoading) return <p className={cn('text-sm text-muted', className)}>Loading the photos…</p>
+  if (groups.length === 0) return <p className={cn('text-sm text-muted', className)}>No photo was taken in this session.</p>
 
   const sampleLabel = (item: SessionImageItem) => (item.sampleIndex === null ? 'Session' : `${sessionSeq}-${item.sampleIndex}`)
 
@@ -67,9 +67,9 @@ export function SessionPhotos({
         const meta = KIND[g.kind]
         return (
           <section key={g.kind}>
-            <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+            <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-muted">
               <meta.icon className={cn('h-3.5 w-3.5', meta.tone)} /> {meta.title}
-              <span className="rounded-full bg-slate-100 px-1.5 text-[10px] tabular-nums text-slate-500 dark:bg-slate-800 dark:text-slate-400">{g.items.length}</span>
+              <span className="rounded-full bg-slate-100 px-1.5 text-[10px] tabular-nums text-muted dark:bg-slate-800">{g.items.length}</span>
             </p>
             <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
               {g.items.map((item, i) => {
@@ -87,13 +87,13 @@ export function SessionPhotos({
                     </button>
                     <div className="flex items-center gap-1 px-1.5 py-1">
                       {item.sampleId && onOpenSample ? (
-                        <button type="button" onClick={() => onOpenSample(item.sampleId!)} className="shrink-0 rounded-md bg-brand-50 px-1.5 text-[11px] font-bold tabular-nums text-brand-700 hover:bg-brand-100 dark:bg-brand-500/15 dark:text-brand-300" title="Open this sample">
+                        <button type="button" onClick={() => onOpenSample(item.sampleId!)} className="shrink-0 rounded-md bg-brand-50 px-1.5 text-[11px] font-bold tabular-nums text-brand-700 hover:bg-brand-100 dark:bg-brand-500/15 dark:text-brand-300" data-tip="Open this sample">
                           {sampleLabel(item)}
                         </button>
                       ) : (
                         <span className="shrink-0 rounded-md bg-slate-200 px-1.5 text-[11px] font-bold tabular-nums text-slate-600 dark:bg-slate-700 dark:text-slate-300">{sampleLabel(item)}</span>
                       )}
-                      <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500 dark:text-slate-400" title={item.label}>
+                      <span className="min-w-0 flex-1 truncate text-[11px] text-muted" data-tip={item.label}>
                         {item.label}
                       </span>
                     </div>

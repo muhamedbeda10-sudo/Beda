@@ -17,7 +17,7 @@ export function WhatsNewPage() {
         </span>
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">What's new</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Every update that reached the application, newest first. A highlighted one is still to be read.</p>
+          <p className="text-sm text-muted">Every update that reached the application, newest first. A highlighted one is still to be read.</p>
         </div>
       </div>
       <Card className="p-4 sm:p-5">

@@ -50,7 +50,7 @@ export function ChatPage() {
       <Card className="grid h-full min-h-0 grid-cols-1 overflow-hidden rounded-none lg:grid-cols-[22rem_1fr] lg:rounded-2xl">
         <aside className={cn('min-h-0 border-r border-slate-200 dark:border-slate-800', conversationId ? 'hidden lg:block' : 'block')}>
           {isLoading ? (
-            <p className="p-6 text-sm text-slate-400">Loading…</p>
+            <p className="p-6 text-sm text-muted">Loading…</p>
           ) : (
             <ConversationList conversations={conversations} activeId={active?.id ?? null} onPick={open} onNew={() => setCreating(true)} myId={profile?.id ?? ''} />
           )}

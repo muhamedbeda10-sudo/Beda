@@ -137,7 +137,7 @@ export function PasteImporter({ importer }: { importer: Importer }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+        <p className="flex items-center gap-2 text-sm text-muted">
           <ClipboardPaste className="h-4 w-4 text-brand-600" />
           Copy the cells in Excel, click a cell below, and paste. A pasted header row is recognised and skipped.
         </p>
@@ -153,9 +153,9 @@ export function PasteImporter({ importer }: { importer: Importer }) {
 
       <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800" onPaste={onPaste}>
         <table ref={gridRef} className="w-full min-w-[40rem] border-collapse text-sm">
-          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
             <tr>
-              <th className="w-10 px-2 py-2 text-center font-bold text-slate-400">#</th>
+              <th className="w-10 px-2 py-2 text-center font-bold text-muted">#</th>
               {fields.map((f) => (
                 <th key={f.key} className="px-2 py-2 font-bold">
                   {f.label}
@@ -171,7 +171,7 @@ export function PasteImporter({ importer }: { importer: Importer }) {
               const isGhost = r >= rows.length
               return (
                 <tr key={r} className={cn(problems && 'bg-rose-50/60 dark:bg-rose-500/5', isGhost && 'opacity-70')}>
-                  <td className="px-2 py-1 text-center text-xs tabular-nums text-slate-400">{isGhost ? '+' : r + 1}</td>
+                  <td className="px-2 py-1 text-center text-xs tabular-nums text-muted">{isGhost ? '+' : r + 1}</td>
                   {fields.map((f, c) => (
                     <td key={f.key} className="p-0.5">
                       <input
@@ -237,7 +237,7 @@ export function PasteImporter({ importer }: { importer: Importer }) {
             <Badge tone="blue">{updateCount} update</Badge>
           </span>
         )}
-        {plan.valid.length > 0 && !resolved && !lookupError && <span className="text-sm text-slate-400">Checking which rows already exist…</span>}
+        {plan.valid.length > 0 && !resolved && !lookupError && <span className="text-sm text-muted">Checking which rows already exist…</span>}
         {status === 'done' && (
           <span className="flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="h-4 w-4" /> {result.inserted} inserted, {result.updated} updated.

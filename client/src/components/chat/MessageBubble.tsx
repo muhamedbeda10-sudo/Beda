@@ -3,12 +3,12 @@ import { Check, CheckCheck, CornerUpLeft, Copy, MoreHorizontal, Pencil, SmilePlu
 import { CHAT_EDIT_WINDOW_MS, type ChatMention, type ChatMessage } from '@qc/shared/types'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { NoticeFileRow } from '@/components/notices/NoticeCard'
-import { cn } from '@/lib/utils'
+import { cn, formatTime } from '@/lib/utils'
 import { QUICK_REACTIONS } from './emoji'
 import { MessageBody } from './MessageBody'
 import { plainText } from './mentions'
 
-const timeOf = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+const timeOf = (iso: string) => formatTime(iso)
 
 export interface BubbleActions {
   onReply: (m: ChatMessage) => void
@@ -84,7 +84,7 @@ export function MessageBubble({
                 </div>
               )}
               {m.files.length > 0 && (
-                <div className={cn('mb-1.5 space-y-1', mine && '[&_button]:border-white/30 [&_button]:text-white [&_button:hover]:bg-white/10 [&_span.text-slate-400]:text-white/70')}>
+                <div className={cn('mb-1.5 space-y-1', mine && '[&_button]:border-white/30 [&_button]:text-white [&_button:hover]:bg-white/10 [&_span.text-muted]:text-white/70')}>
                   {m.files.map((f) => (
                     <NoticeFileRow key={f.id} file={f} path={`/chat/files/${f.id}/content`} compact />
                   ))}
@@ -93,7 +93,7 @@ export function MessageBubble({
               {m.body && <MessageBody body={m.body} mine={mine} onMention={actions.onMention} />}
             </>
           )}
-          <span className={cn('mt-1 flex items-center justify-end gap-1 text-[10px] tabular-nums', mine ? 'text-white/70' : 'text-slate-400')}>
+          <span className={cn('mt-1 flex items-center justify-end gap-1 text-[10px] tabular-nums', mine ? 'text-white/70' : 'text-muted')}>
             {m.editedAt && !m.deleted && <span>edited ·</span>}
             {timeOf(m.createdAt)}
             {mine && !m.deleted && (allRead ? <CheckCheck className="h-3.5 w-3.5 text-sky-200" /> : someRead ? <CheckCheck className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />)}
@@ -107,7 +107,7 @@ export function MessageBubble({
                 key={r.emoji}
                 type="button"
                 onClick={() => actions.onReact(m, r.emoji)}
-                title={r.names.join(', ')}
+                data-tip={r.names.join(', ')}
                 className={cn('inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs shadow-sm', r.mine ? 'border-brand-400 bg-brand-50 dark:border-brand-500/60 dark:bg-brand-500/20' : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800')}
               >
                 <span>{r.emoji}</span>
@@ -123,7 +123,7 @@ export function MessageBubble({
             onClick={() => setMenu((v) => !v)}
             aria-label="Message actions"
             className={cn(
-              'absolute top-1 grid h-7 w-7 place-items-center rounded-full bg-white/90 text-slate-500 shadow ring-1 ring-slate-200 transition-opacity dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-600',
+              'absolute top-1 grid h-7 w-7 place-items-center rounded-full bg-white/90 text-muted shadow ring-1 ring-slate-200 transition-opacity dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-600',
               mine ? '-left-8' : '-right-8',
               menu ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-60',
             )}

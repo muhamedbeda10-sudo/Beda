@@ -61,7 +61,7 @@ export function CoilPicker({
     <Modal open={open} onClose={close} title="Add coil" icon={<Package className="h-5 w-5" />} size="lg">
       <div className="space-y-3">
         <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <Input
             autoFocus
             value={term}
@@ -70,17 +70,17 @@ export function CoilPicker({
             className="min-h-[48px] pl-9"
             autoCapitalize="characters"
           />
-          {isFetching && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-slate-400" />}
+          {isFetching && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted" />}
         </div>
         {alreadyChosen.length > 0 && (
-          <p className="text-xs text-slate-500 dark:text-slate-400">
+          <p className="text-xs text-muted">
             {alreadyChosen.length === 1 ? 'One coil is' : `${alreadyChosen.length} coils are`} already on this sample, carried from the previous one. Pick another to add it alongside, or Remove one from the list to replace it.
           </p>
         )}
 
         <div className="max-h-[46vh] space-y-2 overflow-y-auto pr-1">
           {results.length === 0 && (
-            <p className="py-6 text-center text-sm text-slate-400">
+            <p className="py-6 text-center text-sm text-muted">
               {typed ? 'No coil in the register starts with that number.' : 'Type the number stamped on the coil.'}
             </p>
           )}
@@ -101,7 +101,7 @@ export function CoilPicker({
               >
                 <div className="min-w-0 flex-1">
                   <p className="font-bold">{c.coilNumber}</p>
-                  <p className="truncate text-sm text-slate-500 dark:text-slate-400">
+                  <p className="truncate text-sm text-muted">
                     {[c.supplier, c.thickness !== undefined ? `${c.thickness} mm` : null, c.width !== undefined ? `${c.width} wide` : null]
                       .filter(Boolean)
                       .join(' · ') || '—'}
@@ -147,7 +147,7 @@ export function CoilPicker({
               onTyped(typed)
               close()
             }}
-            className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-brand-700 dark:hover:bg-slate-800"
+            className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold text-muted hover:bg-slate-100 hover:text-brand-700 dark:hover:bg-slate-800"
           >
             <PenLine className="h-4 w-4" /> None of these — add "{typed}" by hand
           </button>

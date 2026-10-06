@@ -32,7 +32,7 @@ export function AdminLayout({
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">Administration</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted">Administration</p>
           <h1 className="mt-1 text-2xl font-extrabold tracking-tight">{title}</h1>
         </div>
         {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
@@ -69,7 +69,7 @@ export function AdminLayout({
               </span>
               <div>
                 <p className="text-lg font-bold">You don't have access to {title}</p>
-                <p className="mx-auto mt-1 max-w-md text-sm text-slate-500 dark:text-slate-400">
+                <p className="mx-auto mt-1 max-w-md text-sm text-muted">
                   A change here affects every inspection that follows, so it is limited to administrators. Ask one if you need something added or
                   corrected.
                 </p>

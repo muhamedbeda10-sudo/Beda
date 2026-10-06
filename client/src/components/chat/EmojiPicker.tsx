@@ -27,7 +27,7 @@ export function EmojiPicker({ onPick, onClose, className }: { onPick: (emoji: st
       </div>
       {EMOJI_GROUPS.map((g) => (
         <div key={g.label}>
-          <p className="px-1 pt-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{g.label}</p>
+          <p className="px-1 pt-1 text-[10px] font-bold uppercase tracking-wide text-muted">{g.label}</p>
           <div className="flex flex-wrap gap-0.5">
             {g.emojis.map((e) => (
               <button key={e} type="button" onClick={() => onPick(e)} className="rounded-lg p-1 text-xl hover:bg-slate-100 dark:hover:bg-slate-800">

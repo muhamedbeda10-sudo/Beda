@@ -251,7 +251,7 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize column"
-          title="Drag to resize; double-click to reset"
+          data-tip="Drag to resize; double-click to reset"
           onPointerDown={(e) => start(key, e)}
           onDoubleClick={(e) => {
             e.stopPropagation()
@@ -275,7 +275,7 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
 export function FitColumnsButton({ grid, className }: { grid: ResizableColumns; className?: string }) {
   if (!grid.enabled) return null
   return (
-    <button type="button" onClick={grid.autoFit} className={cn('btn-secondary min-h-[40px] px-3 text-xs', className)} title="Size every column to what is in it">
+    <button type="button" onClick={grid.autoFit} className={cn('btn-secondary min-h-[40px] px-3 text-xs', className)} data-tip="Size every column to what is in it">
       <Scaling className="h-4 w-4" /> Fit columns
     </button>
   )
@@ -349,7 +349,7 @@ export function ColumnPicker({ grid, className }: { grid: ResizableColumns; clas
       </button>
       {open && (
         <div role="menu" className="absolute right-0 top-full z-30 mt-2 w-60 rounded-2xl bg-white p-1.5 shadow-lift ring-1 ring-slate-200 animate-drop-in dark:bg-slate-900 dark:ring-slate-800">
-          <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Show columns</p>
+          <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Show columns</p>
           <ul className="max-h-80 overflow-y-auto">
             {hideable.map((c) => {
               const on = grid.isVisible(c.key)

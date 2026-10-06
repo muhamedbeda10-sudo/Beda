@@ -160,7 +160,7 @@ export function KpiTargetsSection() {
           </span>
           <div className="min-w-0">
             <h3 className="text-base font-bold">KPI targets</h3>
-            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+            <p className="mt-0.5 text-sm text-muted">
               Where the dashboard turns green, amber and red.
               {data?.updatedAt ? ` Last changed ${formatDateTime(data.updatedAt)}${data.updatedByName ? ` by ${data.updatedByName}` : ''}.` : ' Using the defaults.'}
             </p>
@@ -182,7 +182,7 @@ export function KpiTargetsSection() {
         {GROUPS.map((g) => (
           <div key={g.title} className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
             <p className="font-semibold">{g.title}</p>
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{g.note}</p>
+            <p className="mt-0.5 text-xs text-muted">{g.note}</p>
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               {g.fields.map((f) => (
                 <Field key={f.key} label={f.label} hint={f.hint}>

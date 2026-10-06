@@ -23,6 +23,7 @@ import type {
   SampleCoil,
 } from '@qc/shared/types'
 import type { SessionWithOrder } from '@qc/shared/api'
+import { When } from '@/components/ui/Tooltip'
 
 export function statusToneOf(s: DimensionStatus) {
   return s === 'Pass' ? 'green' : s === 'Fail' ? 'red' : s === 'Warning' ? 'amber' : 'neutral'
@@ -93,7 +94,7 @@ export function SampleDetail({
         <p className="flex items-start gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/20">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
-            Grade mismatch acknowledged by {sample.gradeAcknowledgement.byName} on {formatDateTime(sample.gradeAcknowledgement.at)} — expected{' '}
+            Grade mismatch acknowledged by {sample.gradeAcknowledgement.byName} on <When iso={sample.gradeAcknowledgement.at} time /> — expected{' '}
             {sample.gradeAcknowledgement.expectedGrade}, found {sample.gradeAcknowledgement.foundGrades.join(', ') || '—'}.
           </span>
         </p>
@@ -109,9 +110,9 @@ export function SampleDetail({
           <ul className="grid grid-cols-3 gap-2">
             {dimensions.map((d) => (
               <li key={d.id} className="rounded-xl bg-slate-50 px-3 py-2 text-center dark:bg-slate-800/60">
-                <span className="block text-xs font-semibold uppercase text-slate-400">Reading {d.sequence}</span>
+                <span className="block text-xs font-semibold uppercase text-muted">Reading {d.sequence}</span>
                 <span className="flex items-center justify-center gap-1 text-lg font-bold tabular-nums">
-                  {num(d.actual)} <span className="text-xs font-normal text-slate-400">{d.unit}</span>
+                  {num(d.actual)} <span className="text-xs font-normal text-muted">{d.unit}</span>
                   {editable && (
                     <button type="button" onClick={() => onEditDimension(d)} className="ml-1 rounded p-1 text-slate-300 hover:text-brand-600" aria-label={`Correct reading ${d.sequence}`}>
                       <Pencil className="h-3.5 w-3.5" />
@@ -125,7 +126,7 @@ export function SampleDetail({
           <div className="overflow-x-auto">
             <table className="w-full min-w-[560px] text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
+                <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-muted dark:border-slate-800">
                   <th className="py-2 pr-3">Dimension</th>
                   <th className="py-2 pr-3 text-right">Nominal</th>
                   <th className="py-2 pr-3 text-right">Tolerance ±</th>
@@ -139,10 +140,10 @@ export function SampleDetail({
                   <tr key={d.id}>
                     <td className="py-2.5 pr-3 font-semibold" dir="auto">
                       {d.name}
-                      {d.unit && <span className="ml-1 text-xs font-normal text-slate-400">({d.unit})</span>}
+                      {d.unit && <span className="ml-1 text-xs font-normal text-muted">({d.unit})</span>}
                     </td>
                     <td className="py-2.5 pr-3 text-right tabular-nums">{num(d.nominal)}</td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums text-slate-500 dark:text-slate-400">
+                    <td className="py-2.5 pr-3 text-right tabular-nums text-muted">
                       +{num(d.tolPlus)} / -{num(d.tolMinus)}
                     </td>
                     <td className="py-2.5 pr-3 text-right font-bold tabular-nums">{num(d.actual)}</td>
@@ -153,7 +154,7 @@ export function SampleDetail({
                       <td className="py-2.5 text-right">
                         <button
                           onClick={() => onEditDimension(d)}
-                          className="inline-grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
+                          className="inline-grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
                           aria-label={`Correct ${d.name}`}
                         >
                           <Pencil className="h-4 w-4" />
@@ -186,7 +187,7 @@ export function SampleDetail({
                   {editable && (
                     <button
                       onClick={() => onEditDefect(d)}
-                      className="ml-auto inline-grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
+                      className="ml-auto inline-grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
                       aria-label={`Correct ${d.defectName}`}
                     >
                       <Pencil className="h-4 w-4" />
@@ -216,7 +217,7 @@ export function SampleDetail({
           <div className="overflow-x-auto">
             <table className="w-full min-w-[560px] text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
+                <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-muted dark:border-slate-800">
                   <th className="py-2 pr-3">Coil</th>
                   <th className="py-2 pr-3">Grade</th>
                   <th className="py-2 pr-3">SM type</th>
@@ -235,7 +236,7 @@ export function SampleDetail({
                     own !== undefined && own !== '' ? (
                       <span>{typeof own === 'number' ? num(own) : own}</span>
                     ) : fromRegister !== undefined && fromRegister !== '' ? (
-                      <span className="text-slate-500 dark:text-slate-400" title="From the coil register today, not recorded with the sample">
+                      <span className="text-muted" data-tip="From the coil register today, not recorded with the sample">
                         {typeof fromRegister === 'number' ? num(fromRegister) : fromRegister}
                       </span>
                     ) : (
@@ -295,9 +296,9 @@ export function SampleDetail({
                 {pt.testFrequencyPct !== null && pt.testFrequencyPct !== undefined && <Attr label="Test frequency (typed)" value={`${pt.testFrequencyPct}%`} />}
                 <Attr label="Welding wire batch" value={pt.weldingWireBatch} />
                 <div>
-                  <dt className="text-xs font-semibold uppercase text-slate-400">PT verdict</dt>
+                  <dt className="text-xs font-semibold uppercase text-muted">PT verdict</dt>
                   <dd className="mt-0.5">
-                    {pt.acceptOrRepair ? <Badge tone={pt.acceptOrRepair === 'Accept' ? 'green' : 'red'}>{pt.acceptOrRepair}</Badge> : <span className="text-slate-400">—</span>}
+                    {pt.acceptOrRepair ? <Badge tone={pt.acceptOrRepair === 'Accept' ? 'green' : 'red'}>{pt.acceptOrRepair}</Badge> : <span className="text-muted">—</span>}
                   </dd>
                 </div>
                 {/* Older records carry the free-text fields the form used to have. */}
@@ -309,11 +310,11 @@ export function SampleDetail({
               </dl>
               {(pt.testedLengths ?? []).length > 0 && (
                 <div>
-                  <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Tested weld lengths</p>
+                  <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Tested weld lengths</p>
                   <ul className="flex flex-wrap gap-2">
                     {pt.testedLengths.map((l) => (
                       <li key={l.id ?? l.seq} className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm dark:bg-slate-800/60">
-                        <span className="text-slate-400">#{l.seq}</span>
+                        <span className="text-muted">#{l.seq}</span>
                         <span className="font-bold tabular-nums">{l.lengthMm} mm</span>
                         <Badge tone={l.verdict === 'Accept' ? 'green' : 'red'}>{l.verdict}</Badge>
                       </li>
@@ -327,7 +328,7 @@ export function SampleDetail({
                 </p>
               )}
               <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Attachments</p>
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Attachments</p>
                 <ImagePicker imageIds={pt.imageIds} onChange={() => {}} readOnly />
               </div>
             </div>
@@ -345,8 +346,8 @@ export function Section({ icon, title, count, children }: { icon: ReactNode; tit
   return (
     <section>
       <div className="mb-2 flex items-center gap-2">
-        <span className="text-slate-400">{icon}</span>
-        <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{title}</h3>
+        <span className="text-muted">{icon}</span>
+        <h3 className="text-sm font-bold uppercase tracking-wide text-muted">{title}</h3>
         {count !== undefined && count > 0 && <Badge tone="neutral">{count}</Badge>}
       </div>
       {children}
@@ -355,13 +356,13 @@ export function Section({ icon, title, count, children }: { icon: ReactNode; tit
 }
 
 export function SectionEmpty({ message }: { message: string }) {
-  return <p className="rounded-2xl border border-dashed border-slate-200 px-4 py-4 text-sm text-slate-400 dark:border-slate-700">{message}</p>
+  return <p className="rounded-2xl border border-dashed border-slate-200 px-4 py-4 text-sm text-muted dark:border-slate-700">{message}</p>
 }
 
 export function Attr({ label, value }: { label: string; value?: string | number | null }) {
   return (
     <div className="min-w-0">
-      <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</dt>
+      <dt className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</dt>
       <dd className="truncate font-semibold tabular-nums" dir="auto">
         {value === undefined || value === null || value === '' ? '—' : value}
       </dd>

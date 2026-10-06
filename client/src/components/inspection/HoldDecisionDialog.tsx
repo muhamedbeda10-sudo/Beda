@@ -70,21 +70,21 @@ export function HoldDecisionDialog({ session, onClose }: { session: SessionWithO
     >
       <div className="mb-4 rounded-xl bg-slate-50 px-3 py-2 text-sm dark:bg-slate-800/60">
         <span className="font-bold">{session.order?.orderNumber ?? 'For stock'}</span>
-        <span className="text-slate-400"> · session #{session.seq}</span>
+        <span className="text-muted"> · session #{session.seq}</span>
         {session.order?.item && (
-          <span className="block truncate text-xs text-slate-500 dark:text-slate-400" dir="auto">
+          <span className="block truncate text-xs text-muted" dir="auto">
             {session.order.item}
           </span>
         )}
       </div>
 
       {isLoading ? (
-        <p className="py-8 text-center text-sm text-slate-400">Loading…</p>
+        <p className="py-8 text-center text-sm text-muted">Loading…</p>
       ) : holds.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-8 text-center">
           <CheckCircle2 className="h-8 w-8 text-emerald-500" />
           <p className="text-sm font-semibold">Nothing on Hold in this session.</p>
-          <p className="text-xs text-slate-400">Every defect here has its decision.</p>
+          <p className="text-xs text-muted">Every defect here has its decision.</p>
         </div>
       ) : (
         <ul className="space-y-3">

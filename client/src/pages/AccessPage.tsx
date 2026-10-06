@@ -74,12 +74,12 @@ function Opener({ onOpen, title, children }: { onOpen: () => void; title: string
   return (
     <button
       type="button"
-      title={title}
+      data-tip={title}
       onClick={(e) => {
         e.stopPropagation()
         onOpen()
       }}
-      className="max-w-full truncate text-left underline decoration-slate-300 decoration-dotted underline-offset-4 hover:text-brand-700 hover:decoration-brand-500 dark:decoration-slate-600 dark:hover:text-brand-300"
+      className="max-w-full truncate text-left decoration-brand-500 underline-offset-4 hover:text-brand-700 hover:underline dark:hover:text-brand-300"
     >
       {children}
     </button>
@@ -89,7 +89,7 @@ function Opener({ onOpen, title, children }: { onOpen: () => void; title: string
 function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: string) => string, opens: Opens): ReactNode {
   const clip = fixed ? 'truncate' : ''
   const text = (value: string, extra = '') => (
-    <td key={key} className={cn('px-4 py-3', extra, clip)} title={value || undefined}>
+    <td key={key} className={cn('px-4 py-3', extra, clip)} data-tip={value || undefined}>
       {value || '—'}
     </td>
   )
@@ -101,7 +101,7 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
   switch (key) {
     case 'orderNumber':
       return (
-        <td key={key} className={cn('px-4 py-3 font-bold', clip)} title={o.orderNumber}>
+        <td key={key} className={cn('px-4 py-3 font-bold', clip)} data-tip={o.orderNumber}>
           <Opener title="Every session of this order" onOpen={() => opens.order(o)}>{o.orderNumber}</Opener>
         </td>
       )
@@ -109,13 +109,13 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
       return text(o.lineKey, 'font-mono text-xs')
     case 'item':
       return (
-        <td key={key} className={cn('px-4 py-3', fixed ? 'truncate' : 'max-w-[240px] truncate')} title={o.item}>
+        <td key={key} className={cn('px-4 py-3', fixed ? 'truncate' : 'max-w-[240px] truncate')} data-tip={o.item}>
           {o.item ? <Opener title="Every session of this item" onOpen={() => opens.item(o)}>{o.item}</Opener> : '—'}
         </td>
       )
     case 'itemCode':
       return o.itemCode ? (
-        <td key={key} className={cn('px-4 py-3 font-mono text-xs', clip)} title={o.itemCode}>
+        <td key={key} className={cn('px-4 py-3 font-mono text-xs', clip)} data-tip={o.itemCode}>
           <Opener title="Every session of this item" onOpen={() => opens.item(o)}>{o.itemCode}</Opener>
         </td>
       ) : (
@@ -123,7 +123,7 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
       )
     case 'machine':
       return o.workCenterCode ? (
-        <td key={key} className={cn('px-4 py-3', clip)} title={machineName(o.workCenterCode)}>
+        <td key={key} className={cn('px-4 py-3', clip)} data-tip={machineName(o.workCenterCode)}>
           <Opener title="The latest sessions on this machine" onOpen={() => opens.machine(o)}>{machineName(o.workCenterCode)}</Opener>
         </td>
       ) : (
@@ -142,7 +142,7 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
     case 'finishedQty':
       return number(o.finishedQty)
     case 'remainingQty':
-      return number(o.remainingQty, o.remainingQty > 0 ? 'font-semibold text-brand-700 dark:text-brand-300' : 'text-slate-400')
+      return number(o.remainingQty, o.remainingQty > 0 ? 'font-semibold text-brand-700 dark:text-brand-300' : 'text-muted')
     case 'customer':
       return text(o.customer)
     case 'expectedGrade':
@@ -167,24 +167,24 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
           <Opener title="This line's sessions" onOpen={() => opens.line(o)}>{num(o.sessions)}</Opener>
         </td>
       ) : (
-        number(o.sessions, 'text-slate-400')
+        number(o.sessions, 'text-muted')
       )
     case 'samples':
-      return number(o.samples, o.samples > 0 ? '' : 'text-slate-400')
+      return number(o.samples, o.samples > 0 ? '' : 'text-muted')
     case 'defectPieces':
       return o.defectPieces > 0 ? (
         <td key={key} className="px-4 py-3 text-right font-bold tabular-nums text-rose-600 dark:text-rose-400">
           <Opener title="This line's sessions" onOpen={() => opens.line(o)}>{num(o.defectPieces)}</Opener>
         </td>
       ) : (
-        number(o.defectPieces, 'text-slate-400')
+        number(o.defectPieces, 'text-muted')
       )
     case 'lastInspected':
       return text(o.lastInspectedAt ? formatDateTime(o.lastInspectedAt) : '', 'tabular-nums')
     case 'open':
       return (
         <td key={key} className="px-4 py-3 text-right">
-          {o.sessions > 0 && <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />}
+          {o.sessions > 0 && <ChevronRight className="ml-auto h-4 w-4 text-muted" />}
         </td>
       )
     default:
@@ -303,7 +303,7 @@ export function AccessPage() {
     <div className="space-y-5">
       <Card className="space-y-3 p-4">
         <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <Input
             value={term}
             onChange={(e) => setTerm(e.target.value)}
@@ -312,7 +312,7 @@ export function AccessPage() {
             aria-label="Search orders"
           />
           {term && (
-            <button type="button" onClick={() => setTerm('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:text-slate-600">
+            <button type="button" onClick={() => setTerm('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-muted hover:text-slate-600">
               <X className="h-4 w-4" />
             </button>
           )}
@@ -387,7 +387,7 @@ export function AccessPage() {
       </Card>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-slate-500 dark:text-slate-400">
+        <p className="text-sm text-muted">
           {data ? (
             <>
               <span className="font-semibold text-slate-700 dark:text-slate-200">{rows.length.toLocaleString()}</span> of{' '}
@@ -440,10 +440,10 @@ export function AccessPage() {
                   </span>
                   {o.erpStatus && <Badge tone={statusTone(o.erpStatus)}>{o.erpStatus}</Badge>}
                 </div>
-                <p className="mt-1 truncate text-xs text-slate-500">
+                <p className="mt-1 truncate text-xs text-muted">
                   {o.itemCode || '—'} · {machineName(o.workCenterCode) || '—'} · {o.customer || '—'}
                 </p>
-                <p className="mt-2 text-xs tabular-nums text-slate-500">
+                <p className="mt-2 text-xs tabular-nums text-muted">
                   Required {num(o.requiredQty)} · Finished {num(o.finishedQty)} · <span className={cn(o.remainingQty > 0 && 'font-semibold text-brand-700 dark:text-brand-300')}>Remaining {num(o.remainingQty)}</span>
                   {o.sessions > 0 ? ` · ${o.sessions} inspection${o.sessions === 1 ? '' : 's'}` : ''}
                 </p>
@@ -457,10 +457,10 @@ export function AccessPage() {
               <table ref={grid.tableRef} className={cn('w-full text-sm', !grid.enabled && 'min-w-[900px]')} style={grid.tableStyle}>
                 {grid.colgroup}
                 <thead>
-                  <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800">
+                  <tr className="border-b border-slate-100 text-left text-xs font-bold uppercase tracking-wide text-muted dark:border-slate-800">
                     {grid.visible.map((c) => (
                       // The cell stays overflow-visible so the grab zone can straddle its edge; only the label is clipped.
-                      <th key={c.key} data-col={c.key} className={cn('px-4 py-3', c.align === 'right' && 'text-right', grid.dragging === c.key && '!bg-brand-50 dark:!bg-brand-950')} title={grid.enabled && c.label ? c.label : undefined}>
+                      <th key={c.key} data-col={c.key} className={cn('px-4 py-3', c.align === 'right' && 'text-right', grid.dragging === c.key && '!bg-brand-50 dark:!bg-brand-950')} data-tip={grid.enabled && c.label ? c.label : undefined}>
                         <span className={cn(grid.enabled && 'block truncate')}>{c.label}</span>
                         {c.hideable !== false && grid.handle(c.key)}
                       </th>
@@ -472,8 +472,8 @@ export function AccessPage() {
                     <tr
                       key={o.id}
                       onClick={() => open(o)}
-                      className={cn('transition-colors', o.sessions > 0 ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50' : '', o.erpStatus.trim().toLowerCase() === 'cancel' && 'text-slate-400')}
-                      title={o.sessions > 0 ? "Every session of this line's order" : undefined}
+                      className={cn('data-row transition-colors', o.sessions > 0 ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50' : '', o.erpStatus.trim().toLowerCase() === 'cancel' && 'text-muted')}
+                      data-tip={o.sessions > 0 ? "Every session of this line's order" : undefined}
                     >
                       {grid.visible.map((c) => cell(c.key, o, grid.enabled, machineName, opens))}
                     </tr>

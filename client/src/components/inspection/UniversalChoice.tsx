@@ -112,7 +112,7 @@ export function UniversalChoice({
                   )}
                 >
                   <span className="font-bold">{k.label}</span>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">{k.sub}</span>
+                  <span className="text-xs text-muted">{k.sub}</span>
                 </button>
               )
             })}
@@ -129,7 +129,7 @@ export function UniversalChoice({
       {draft.kind === 'staged' && (
         <div>
           <span className="label">Stages this session covered, and the quantity of each</span>
-          <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">Tick more than one when the item ran on more than one machine at the same time. The dashboard counts the quantity of the highest stage.</p>
+          <p className="mb-2 text-xs text-muted">Tick more than one when the item ran on more than one machine at the same time. The dashboard counts the quantity of the highest stage.</p>
           <div className="space-y-2">
             {choices.map((stage) => {
               const on = ticked(stage)
@@ -138,7 +138,7 @@ export function UniversalChoice({
                 <div key={stage} className={cn('flex flex-wrap items-center gap-3 rounded-xl px-3 py-2 ring-1', on ? 'bg-brand-50 ring-2 ring-brand-500 dark:bg-brand-500/10' : 'ring-slate-200 dark:ring-slate-700')}>
                   <button type="button" role="checkbox" aria-checked={!!on} onClick={() => toggle(stage)} className="flex min-h-[44px] flex-1 flex-col items-start justify-center text-left">
                     <span className="font-bold">Stage {stage}</span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">{before ? `${before} ${before === 1 ? 'session' : 'sessions'} so far` : 'A new stage of this item'}</span>
+                    <span className="text-xs text-muted">{before ? `${before} ${before === 1 ? 'session' : 'sessions'} so far` : 'A new stage of this item'}</span>
                   </button>
                   {on && (
                     <Input
