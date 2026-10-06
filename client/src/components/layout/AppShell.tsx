@@ -9,6 +9,7 @@ import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
 import { can, type Capability } from '@qc/shared/rules'
+import { AccountMenu, AvatarEditor } from '@/components/layout/AccountMenu'
 
 interface NavItem {
   to: string
@@ -179,11 +180,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const nav = NAV.filter((n) => !n.needs || can(role, n.needs))
   const admin = ADMIN_NAV.filter((n) => !n.needs || can(role, n.needs))
   const displayName = profile?.name || user
-  const initials = (displayName ?? '?')
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? '')
-    .join('')
 
   const isActive = (n: NavItem) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to))
 
@@ -234,10 +230,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             )}
             <div className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 lg:block" />
             <div className="hidden items-center gap-2 lg:flex">
-              <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-xs font-bold text-white shadow-card" data-tip={displayName}>
-                {initials || '?'}
-              </span>
-              <span className="hidden max-w-[10rem] truncate text-sm font-semibold xl:block">{displayName}</span>
+              {/* Only the circle: the photo or the initials; the name is in its tooltip and its panel. */}
+              <AccountMenu name={displayName ?? ''} role={role ?? ''} username={profile?.username} />
               <button onClick={() => signOutUser()} className="icon-btn hover:text-rose-600" aria-label="Sign out">
                 <LogOut className="h-5 w-5" />
               </button>
@@ -277,6 +271,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                 Signed in as <span className="font-semibold text-slate-700 dark:text-slate-200">{displayName}</span>
               </p>
               <p className="mt-0.5 text-xs capitalize text-muted">Role: {role}</p>
+              <div className="mt-3">
+                <AvatarEditor name={displayName ?? ''} size={56} />
+              </div>
               <button
                 onClick={() => {
                   setMenuOpen(false)

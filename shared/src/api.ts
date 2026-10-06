@@ -768,6 +768,14 @@ export interface PDIWithOrder extends PDIDocument {
  * A PDI names the order lines it covers: the lines of the items ticked. They
  * must all belong to one order number.
  */
+/** A person's own profile photo: a small square JPEG as a data URL, or none (the circle shows their initials). */
+export interface AvatarResponse {
+  dataUrl: string | null
+}
+
+/** The most characters a profile photo's data URL may hold (a 192 px square JPEG is far under it). */
+export const AVATAR_MAX_CHARS = 64 * 1024
+
 export interface CreatePDIRequest {
   orderIds: string[]
   notes?: string

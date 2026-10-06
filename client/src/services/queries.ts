@@ -49,7 +49,7 @@ import type {
   ChatUnreadResponse,
 } from '@qc/shared/api'
 import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiGrainChoice, KpiMaterials, MaterialKind, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
-import type { DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
+import type { AvatarResponse, DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
@@ -57,6 +57,7 @@ export const keys = {
   openBoard: ['sessions', 'open'] as const,
   history: (filters: HistoryFilters) => ['sessions', 'history', filters] as const,
   historyOptions: ['sessions', 'history', 'options'] as const,
+  myAvatar: ['auth', 'avatar'] as const,
   session: (id: string) => ['sessions', id] as const,
   wizard: (id: string) => ['sessions', id, 'wizard'] as const,
   wizardPreview: (key: string) => ['sessions', 'preview', key] as const,
@@ -121,6 +122,11 @@ export function useOpenBoard() {
 
 /** §6 — a first page of the sessions the filters match. The filters go to the
  *  API, not to the page in hand, so nothing matching is left behind. */
+/** The signed-in person's own profile photo, for the circle at the top right. */
+export function useMyAvatar(enabled: boolean) {
+  return useQuery({ queryKey: keys.myAvatar, queryFn: () => api<AvatarResponse>('/auth/me/avatar'), enabled, staleTime: Infinity })
+}
+
 export function useHistory(filters: HistoryFilters, limit = 100, enabled = true) {
   return useQuery({
     queryKey: [...keys.history(filters), limit],
