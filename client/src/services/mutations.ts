@@ -44,10 +44,12 @@ import {
   type ReleaseStateResponse,
   type HiddenInsightsResponse,
   type DashboardLayoutResponse,
+  type AvatarResponse,
 } from '@qc/shared/api'
 import type { DashboardLayouts, KpiThresholds } from '@qc/shared/kpi'
 import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
 import { api } from '@/lib/api'
+import { keys } from '@/services/queries'
 import { chunk } from '@/lib/utils'
 
 /**
@@ -450,4 +452,16 @@ export async function restoreInsight(qc: QueryClient, key: string): Promise<void
 export async function markReleaseSeen(qc: QueryClient, releaseId: string): Promise<void> {
   const res = await api<ReleaseStateResponse>('/releases/seen', { method: 'POST', body: { releaseId } })
   qc.setQueryData(['releases', 'state'], res)
+}
+
+/** Set the signed-in person's own profile photo (a square JPEG data URL); the circle shows it at once. */
+export async function setMyAvatar(qc: QueryClient, dataUrl: string): Promise<void> {
+  const saved = await api<AvatarResponse>('/auth/me/avatar', { method: 'PUT', body: { dataUrl } })
+  qc.setQueryData(keys.myAvatar, saved)
+}
+
+/** Remove it: the circle shows the initials again. */
+export async function removeMyAvatar(qc: QueryClient): Promise<void> {
+  await api<void>('/auth/me/avatar', { method: 'DELETE' })
+  qc.setQueryData<AvatarResponse>(keys.myAvatar, { dataUrl: null })
 }

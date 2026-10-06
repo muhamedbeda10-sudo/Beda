@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
-import type { AuthConfigResponse, AuthResponse } from '@qc/shared/api'
+import { AVATAR_MAX_CHARS, type AuthConfigResponse, type AuthResponse, type AvatarResponse } from '@qc/shared/api'
 import type { Role, UserProfile } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
@@ -10,6 +10,7 @@ import { hashPassword, verifyPassword, MIN_PASSWORD_LENGTH } from '../auth/passw
 import { REFRESH_COOKIE, SESSION_MARKER_COOKIE, hashRefreshToken, newRefreshToken, signAccessToken } from '../auth/tokens'
 import { authenticate, requireUser } from '../auth/middleware'
 import { seedDemoDataIfEmpty } from '../db/seed'
+import { sniffImageMime } from '../images/storage'
 
 /** The login name: letters, digits, dot, dash, underscore; case does not matter. */
 export const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{1,39}$/
@@ -23,6 +24,13 @@ const passwordSchema = z
   .string()
   .min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
   .max(200)
+
+const avatarSchema = z.object({
+  dataUrl: z
+    .string()
+    .max(AVATAR_MAX_CHARS, 'The photo is too large.')
+    .regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/, 'The photo must be a JPEG.'),
+})
 
 const loginSchema = z.object({ username: usernameSchema, password: z.string().min(1).max(200) })
 const registerSchema = z.object({
@@ -206,6 +214,37 @@ export function authRoutes(ctx: AppContext): Router {
     const { rows } = await db.query<UserProfile>(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1 AND deleted_at IS NULL`, [user.id])
     if (!rows[0]) throw unauthenticated()
     res.json(rows[0])
+  })
+
+  // ---- The person's own profile photo -----------------------------------------
+  // Anyone signed in sets, reads and removes their own, and only their own.
+
+  r.get('/me/avatar', authenticate(db, config.JWT_SECRET), async (req, res) => {
+    const user = requireUser(req)
+    const { rows } = await db.query<{ dataUrl: string }>('SELECT data_url AS "dataUrl" FROM user_avatars WHERE user_id = $1', [user.id])
+    const body: AvatarResponse = { dataUrl: rows[0]?.dataUrl ?? null }
+    res.json(body)
+  })
+
+  r.put('/me/avatar', authenticate(db, config.JWT_SECRET), async (req, res) => {
+    const user = requireUser(req)
+    const { dataUrl } = parse(avatarSchema, req.body)
+    // The text says JPEG; the bytes must too.
+    const bytes = Buffer.from(dataUrl.slice('data:image/jpeg;base64,'.length), 'base64')
+    if (bytes.length === 0 || sniffImageMime(bytes.subarray(0, 16)) !== 'image/jpeg') throw badRequest('The photo must be a JPEG.')
+    await db.query(
+      `INSERT INTO user_avatars (user_id, data_url) VALUES ($1, $2)
+       ON CONFLICT (user_id) DO UPDATE SET data_url = EXCLUDED.data_url, updated_at = now()`,
+      [user.id, dataUrl],
+    )
+    const body: AvatarResponse = { dataUrl }
+    res.json(body)
+  })
+
+  r.delete('/me/avatar', authenticate(db, config.JWT_SECRET), async (req, res) => {
+    const user = requireUser(req)
+    await db.query('DELETE FROM user_avatars WHERE user_id = $1', [user.id])
+    res.status(204).end()
   })
 
   r.post('/change-password', authenticate(db, config.JWT_SECRET), async (req, res) => {

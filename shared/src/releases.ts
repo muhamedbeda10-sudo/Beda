@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-06.8',
+    date: '2026-10-06',
+    title: 'Your own photo in the account circle',
+    items: [
+      { text: 'The top bar shows only the round account circle, no longer your name beside it. Tap the circle for your name and role, and to add, change or remove your photo; without one, your initials show as before.' },
+      { text: 'The picture is cropped to a square and made small on your device before it is sent. On a phone, the same is in the menu under Signed in as.' },
+    ],
+  },
+  {
     id: '2026-10-06.6',
     date: '2026-10-06',
     title: 'More room for the lists: no title rows, compact rows by default',
