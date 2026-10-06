@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-06.10',
+    date: '2026-10-06',
+    title: 'Access marks the lines the order sheet got wrong',
+    items: [
+      { text: 'A line with an order number of 0, or with neither an item name nor an item code, shows an amber mark and a light amber row; the mark\'s tooltip says what to correct on the order sheet. The line is not hidden and nothing about it changes.' },
+      { text: 'Under the table: how many of the lines on screen need checking.' },
+    ],
+  },
+  {
     id: '2026-10-06.9',
     date: '2026-10-06',
     title: 'Photos in the chat',

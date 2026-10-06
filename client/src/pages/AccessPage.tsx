@@ -7,7 +7,8 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Table2 } from 'lucide-react'
+import { AlertTriangle, ChevronRight, Table2 } from 'lucide-react'
+import { orderLineProblems } from '@qc/shared/rules'
 import type { OrderListFilters, OrderListRow } from '@qc/shared/api'
 import { Badge, Button, Card, EmptyState, Field, Input, Select } from '@/components/ui'
 import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
@@ -87,6 +88,16 @@ function Opener({ onOpen, title, children }: { onOpen: () => void; title: string
   )
 }
 
+/** The mark on a line the order sheet got wrong; its tooltip says what. */
+function ProblemMark({ problems }: { problems: string[] }) {
+  const text = `Check this line on the order sheet:\n${problems.join('\n')}`
+  return (
+    <span role="img" aria-label={text} data-tip={text} className="inline-grid h-5 w-5 shrink-0 place-items-center rounded text-amber-600 dark:text-amber-400">
+      <AlertTriangle className="h-4 w-4" />
+    </span>
+  )
+}
+
 function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: string) => string, opens: Opens): ReactNode {
   const clip = fixed ? 'truncate' : ''
   const text = (value: string, extra = '') => (
@@ -101,12 +112,18 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
     </td>
   )
   switch (key) {
-    case 'orderNumber':
+    case 'orderNumber': {
+      // A line the sheet got wrong is marked, never hidden: the mark says what to correct on the sheet.
+      const problems = orderLineProblems(o)
       return (
-        <td key={key} className={cn('px-3 py-3 font-bold', clip)} data-tip={o.orderNumber}>
-          <Opener title="Every session of this order" onOpen={() => opens.order(o)}>{o.orderNumber}</Opener>
+        <td key={key} className={cn('px-3 py-3 font-bold', clip)} data-tip={problems.length ? undefined : o.orderNumber}>
+          <span className="flex min-w-0 items-center gap-1.5">
+            {problems.length > 0 && <ProblemMark problems={problems} />}
+            <Opener title="Every session of this order" onOpen={() => opens.order(o)}>{o.orderNumber}</Opener>
+          </span>
         </td>
       )
+    }
     case 'lineKey':
       return text(o.lineKey, 'font-mono text-xs')
     case 'item':
@@ -253,6 +270,8 @@ export function AccessPage() {
     return [...first, ...more.filter((o) => !seen.has(o.id))]
   }, [data, more])
   const hasMore = more.length > 0 ? moreHasMore : (data?.hasMore ?? false)
+  /** Lines on screen the order sheet got wrong, marked in the table. */
+  const toCheck = useMemo(() => rows.filter((o) => orderLineProblems(o).length > 0).length, [rows])
 
   const showMore = async () => {
     setLoadingMore(true)
@@ -421,7 +440,10 @@ export function AccessPage() {
               >
                 <div className="flex items-start justify-between gap-2">
                   <span className="min-w-0">
-                    <span className="block truncate font-bold">{o.orderNumber}</span>
+                    <span className="flex items-center gap-1.5 truncate font-bold">
+                      {orderLineProblems(o).length > 0 && <ProblemMark problems={orderLineProblems(o)} />}
+                      {o.orderNumber}
+                    </span>
                     <span className="block truncate text-sm text-brand-600 dark:text-brand-400">{o.item || '—'}</span>
                   </span>
                   {o.erpStatus && <Badge tone={statusTone(o.erpStatus)}>{o.erpStatus}</Badge>}
@@ -433,6 +455,7 @@ export function AccessPage() {
                   Required {num(o.requiredQty)} · Finished {num(o.finishedQty)} · <span className={cn(o.remainingQty > 0 && 'font-semibold text-brand-700 dark:text-brand-300')}>Remaining {num(o.remainingQty)}</span>
                   {o.sessions > 0 ? ` · ${o.sessions} inspection${o.sessions === 1 ? '' : 's'}` : ''}
                 </p>
+                {orderLineProblems(o).length > 0 && <p className="mt-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400">{orderLineProblems(o).join(' ')} Check it on the order sheet.</p>}
               </button>
             ))}
           </div>
@@ -450,8 +473,10 @@ export function AccessPage() {
                       onClick={() => open(o)}
                       // A line that was inspected opens its order's sessions; a cancelled line reads muted, its figures as they are.
                       className={cn(
-                        'data-row group bg-white transition-colors dark:bg-slate-900',
-                        o.sessions > 0 && 'cursor-pointer hover:bg-slate-50 dark:hover:bg-[#17202f]',
+                        'data-row group transition-colors',
+                        // Opaque tints, so the sticky first cell takes the row's colour.
+                        orderLineProblems(o).length > 0 ? 'bg-[#fffcf6] dark:bg-[#262527]' : 'bg-white dark:bg-slate-900',
+                        o.sessions > 0 && (orderLineProblems(o).length > 0 ? 'cursor-pointer hover:bg-[#fef7d8] dark:hover:bg-[#312b25]' : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-[#17202f]'),
                         ['cancel', 'cancelled'].includes(o.erpStatus.trim().toLowerCase()) && 'text-muted',
                       )}
                     >
@@ -472,7 +497,16 @@ export function AccessPage() {
             onMore={() => void showMore()}
             pageSize={pageSize}
             onPageSize={setPageSize}
-            extra={<span>{filtering ? (data?.total === 1 ? 'matches the filters' : 'match the filters') : 'on the sheet'}</span>}
+            extra={
+              <>
+                <span>{filtering ? (data?.total === 1 ? 'matches the filters' : 'match the filters') : 'on the sheet'}</span>
+                {toCheck > 0 && (
+                  <span className="inline-flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-400" data-tip="Lines the order sheet got wrong: an order numbered 0, or no item name or code. They are marked in the table; correct them on the sheet.">
+                    · <AlertTriangle className="h-3.5 w-3.5" /> {toCheck} on screen to check on the sheet
+                  </span>
+                )}
+              </>
+            }
           />
         </>
       )}

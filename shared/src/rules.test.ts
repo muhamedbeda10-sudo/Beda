@@ -18,6 +18,7 @@ import {
   sessionTone,
   can,
   stagesProblem,
+  orderLineProblems,
   topStageQty,
   ptRequiredFor,
   stockProductionOf, isStockMachine, normaliseMachineCode,
@@ -610,5 +611,17 @@ describe('§4 — the stages of an item on a universal machine', () => {
     expect(topStageQty([{ stage: 1, qty: 300 }, { stage: 2, qty: 290 }])).toBe(290)
     expect(topStageQty([{ stage: 3, qty: 12 }])).toBe(12)
     expect(topStageQty([])).toBe(0)
+  })
+})
+
+describe('order lines the sheet got wrong', () => {
+  it('names an order numbered 0 and a line with no item at all', () => {
+    expect(orderLineProblems({ orderNumber: '0', item: '', itemCode: '' })).toEqual(['The order number is "0".', 'The line has neither an item name nor an item code.'])
+    expect(orderLineProblems({ orderNumber: ' 000 ', item: 'Beam', itemCode: '' })).toEqual(['The order number is "000".'])
+  })
+  it('leaves a sound line alone, and a line with a code but no name', () => {
+    expect(orderLineProblems({ orderNumber: '20480-Ph3.4-SMA', item: 'Shuttle Beam', itemCode: 'LB406015' })).toEqual([])
+    expect(orderLineProblems({ orderNumber: '20480', item: '', itemCode: 'LB406015' })).toEqual([])
+    expect(orderLineProblems({ orderNumber: '100', item: 'Beam', itemCode: '' })).toEqual([])
   })
 })
