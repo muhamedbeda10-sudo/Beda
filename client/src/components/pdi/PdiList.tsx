@@ -2,11 +2,12 @@
 // walked back page by page, in History's PDI view. The filters are kept on
 // this device; Export takes every PDI they match.
 
-import { useEffect, useMemo, useState } from 'react'
-import { ChevronRight, Download, FileText, RotateCcw, Search } from 'lucide-react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { ChevronRight, FileText } from 'lucide-react'
 import type { PDIListFilters, PDIWithOrder } from '@qc/shared/api'
 import { can } from '@qc/shared/rules'
-import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Stat } from '@/components/ui'
+import { Badge, Card, EmptyState, Modal } from '@/components/ui'
+import { ExportMenu, FilterBar, FilterSelect, type FilterChip } from '@/components/ui/PageShell'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { loadOlderPdi, loadPdiExport, useDebounced, usePdiList, usePdiOptions } from '@/services/queries'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
@@ -15,6 +16,7 @@ import { usePersistedState } from '@/lib/usePersistedState'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { When } from '@/components/ui/Tooltip'
+import { formatDate } from '@/lib/utils'
 
 const PAGE = 50
 
@@ -47,6 +49,20 @@ function ItemsCell({ doc, max = 3 }: { doc: PDIWithOrder; max?: number }) {
       ))}
       {doc.items.length > max && <li className="text-xs text-muted">+{doc.items.length - max} more</li>}
     </ul>
+  )
+}
+
+/** The items of a PDI on one line, for a table row: the first item and its drawings, then how many more; the whole list in the tooltip. */
+function ItemsLine({ doc }: { doc: PDIWithOrder }) {
+  const [first] = doc.items
+  if (!first) return <span className="text-muted">—</span>
+  const all = doc.items.map((i) => (i.drawings.length ? `${i.item} · ${i.drawings.join(', ')}` : i.item)).join('\n')
+  return (
+    <span className="flex min-w-0 items-baseline gap-1.5" data-tip={all} dir="auto">
+      <span className="truncate font-medium">{first.item}</span>
+      {first.drawings.length > 0 && <span className="shrink truncate text-xs text-muted">· {first.drawings.join(', ')}</span>}
+      {doc.items.length > 1 && <span className="shrink-0 text-xs font-semibold text-muted">+{doc.items.length - 1}</span>}
+    </span>
   )
 }
 
@@ -96,7 +112,8 @@ export function PdiDetail({ doc, onClose }: { doc: PDIWithOrder; onClose: () => 
   )
 }
 
-export function PdiList() {
+/** `leading` is the page's view switch (Sessions / PDI), at the head of the filter row. */
+export function PdiList({ leading }: { leading?: ReactNode }) {
   const { toast } = useApp()
   const { role } = useAuth()
   const [term, setTerm] = usePersistedState('qc-pdi:term', '')
@@ -123,6 +140,7 @@ export function PdiList() {
     return f
   }, [settledTerm, settledItem, by, range, fromDay, toDay])
   const filtersSet = term !== '' || item !== '' || by !== 'all' || range !== 'all'
+  const byName = (id: string) => options?.createdBy.find((c) => c.id === id)?.name ?? 'one person'
   const resetFilters = () => {
     setTerm('')
     setItem('')
@@ -185,68 +203,58 @@ export function PdiList() {
   }
 
 
+  const chips: FilterChip[] = [
+    ...(range !== 'all'
+      ? [{ key: 'range', label: range === 'custom' ? (fromDay && fromDay === toDay ? `Day: ${formatDate(fromDay)}` : `Days: ${fromDay ? formatDate(fromDay) : '…'} – ${toDay ? formatDate(toDay) : '…'}`) : RANGE_LABEL[range], onRemove: () => setRange('all') }]
+      : []),
+    ...(item !== '' ? [{ key: 'item', label: `Item or drawing: ${item}`, onRemove: () => setItem('') }] : []),
+    ...(by !== 'all' ? [{ key: 'by', label: `Recorded by: ${byName(by)}`, onRemove: () => setBy('all') }] : []),
+  ]
+
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-stretch gap-3">
-        <div className="min-w-[12rem] flex-1">
-          <Stat compact label="PDI documents" value={total} sub={total > docs.length ? `${docs.length} on screen, the rest below` : 'All of them on screen'} icon={<FileText className="h-5 w-5" />} />
-        </div>
-
-      </div>
-
-      <Card className="space-y-3 p-4">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-          <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Order, customer, item, drawing, note or who…" className="min-h-[52px] pl-9 text-base" aria-label="Search PDI" />
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <Field label="Date range">
-            <Select value={range} onChange={(e) => setRange(e.target.value as RangeFilter)} className="min-h-[48px]" aria-label="PDI date range">
+    <div className="space-y-3">
+      {/* One filter row, like the sessions: the switch, the search, the filters, and Export at the right end. The count is under the list. */}
+      <FilterBar
+        leading={leading}
+        search={{ value: term, onChange: setTerm, placeholder: 'Order, customer, item, drawing, note or who…', label: 'Search PDI' }}
+        filters={
+          <>
+            <FilterSelect label="Date range" value={range} onChange={(v) => setRange(v as RangeFilter)}>
               {(Object.keys(RANGE_LABEL) as RangeFilter[]).map((r) => (
                 <option key={r} value={r}>
                   {RANGE_LABEL[r]}
                 </option>
               ))}
-            </Select>
-          </Field>
-          {range === 'custom' && (
-            <>
-              <Field label="From day">
-                <Input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} className="min-h-[48px]" aria-label="PDI from day" />
-              </Field>
-              <Field label="To day">
-                <Input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} className="min-h-[48px]" aria-label="PDI to day" />
-              </Field>
-            </>
-          )}
-          <Field label="Item or drawing">
-            <Input value={item} onChange={(e) => setItem(e.target.value)} placeholder="Any part of it" className="min-h-[48px]" aria-label="PDI item" />
-          </Field>
-          <Field label="Recorded by">
-            <Select value={by} onChange={(e) => setBy(e.target.value)} className="min-h-[48px]" aria-label="PDI recorded by">
+            </FilterSelect>
+            {range === 'custom' && (
+              <>
+                <input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} className="input h-10 !w-[9rem] py-0 text-sm touch:h-11" aria-label="From day" data-tip="From day" />
+                <input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} className="input h-10 !w-[9rem] py-0 text-sm touch:h-11" aria-label="To day" data-tip="To day" />
+              </>
+            )}
+            <input
+              value={item}
+              onChange={(e) => setItem(e.target.value)}
+              placeholder="Item or drawing"
+              aria-label="Item or drawing"
+              data-tip="Item or drawing: any part of it"
+              className="input h-10 py-0 text-sm max-md:!w-[calc(50%-4px)] md:!w-[11rem] touch:h-11"
+            />
+            <FilterSelect label="Recorded by" value={by} onChange={setBy}>
               <option value="all">Everyone</option>
               {(options?.createdBy ?? []).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
               ))}
-            </Select>
-          </Field>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {isFetching && !isLoading ? <p className="text-xs text-muted">Searching the whole record…</p> : <span />}
-          <span className="flex flex-wrap gap-2">
-            {canExport && (
-              <Button className="min-h-[40px]" onClick={() => void exportExcel()} disabled={exporting || total === 0} aria-label="Export the PDIs to Excel">
-                <Download className="h-4 w-4" /> {exporting ? 'Building…' : 'Export Excel'}
-              </Button>
-            )}
-            <Button className="min-h-[40px]" onClick={resetFilters} disabled={!filtersSet} aria-label="Reset all PDI filters">
-              <RotateCcw className="h-4 w-4" /> Reset all
-            </Button>
-          </span>
-        </div>
-      </Card>
+            </FilterSelect>
+          </>
+        }
+        actions={canExport ? <ExportMenu busy={exporting} items={[{ label: 'Export Excel', onClick: () => void exportExcel(), disabled: total === 0 }]} /> : undefined}
+        chips={chips}
+        onReset={resetFilters}
+        canReset={filtersSet}
+      />
 
       {isLoading ? (
         <Card className="p-10 text-center text-sm text-muted">Loading…</Card>
@@ -280,9 +288,18 @@ export function PdiList() {
             ))}
           </div>
 
-          {/* md+: the same PDIs as a table. */}
+          {/* md+: the same PDIs as a table, one line each; what does not fit is in the tooltips. */}
           <Card className="hidden overflow-x-auto md:block">
-            <table className="w-full text-sm">
+            <table className="w-full table-fixed text-sm">
+              <colgroup>
+                <col className="w-[9rem]" />
+                <col className="w-[11rem]" />
+                <col className="w-[16%]" />
+                <col />
+                <col className="w-[9rem]" />
+                <col className="w-[5rem]" />
+                <col className="w-[18%]" />
+              </colgroup>
               <thead className="bg-slate-50 dark:bg-slate-800/60">
                 <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                   <th className="px-3 py-2 font-semibold">Date</th>
@@ -296,17 +313,25 @@ export function PdiList() {
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {docs.map((d) => (
-                  <tr key={d.id} onClick={() => setOpen(d)} className="cursor-pointer align-top hover:bg-slate-50 dark:hover:bg-slate-800/60">
-                    <td className="whitespace-nowrap px-3 py-2 text-muted"><When iso={d.createdAt} time /></td>
-                    <td className="whitespace-nowrap px-3 py-2 font-semibold">{d.orderNumber || '—'}</td>
-                    <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{d.customer || '—'}</td>
-                    <td className="px-3 py-2">
-                      <ItemsCell doc={d} />
+                  <tr key={d.id} onClick={() => setOpen(d)} className="data-row cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                    <td className="whitespace-nowrap px-3 tabular-nums text-muted">
+                      <When iso={d.createdAt} time />
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2">{d.createdByName}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{d.imageIds.length}</td>
-                    <td className="max-w-[16rem] px-3 py-2 text-muted">
-                      <span className="line-clamp-2" dir="auto">{d.notes ?? ''}</span>
+                    <td className="truncate px-3 font-semibold" data-tip={d.orderNumber || undefined}>
+                      {d.orderNumber || '—'}
+                    </td>
+                    <td className="truncate px-3 text-slate-600 dark:text-slate-300" data-tip={d.customer || undefined}>
+                      {d.customer || '—'}
+                    </td>
+                    <td className="px-3">
+                      <ItemsLine doc={d} />
+                    </td>
+                    <td className="truncate px-3" data-tip={d.createdByName}>
+                      {d.createdByName}
+                    </td>
+                    <td className={`px-3 text-right tabular-nums ${d.imageIds.length === 0 ? 'text-muted' : ''}`}>{d.imageIds.length}</td>
+                    <td className="truncate px-3 text-muted" dir="auto" data-tip={d.notes || undefined}>
+                      {d.notes ?? ''}
                     </td>
                   </tr>
                 ))}
@@ -314,13 +339,18 @@ export function PdiList() {
             </table>
           </Card>
 
-          {hasMore && (
-            <div className="flex justify-center">
-              <Button className="min-h-[44px]" onClick={() => void showOlder()} disabled={loadingOlder}>
-                {loadingOlder ? 'Loading…' : 'Show older PDIs'}
-              </Button>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 text-13 text-muted">
+            <span>
+              <span className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">1–{docs.length.toLocaleString()}</span> of{' '}
+              <span className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{total.toLocaleString()}</span> {total === 1 ? 'PDI' : 'PDIs'}
+            </span>
+            {hasMore && (
+              <button type="button" onClick={() => void showOlder()} disabled={loadingOlder} className="btn-secondary h-8 min-h-0 px-3 py-0 text-13 touch:h-11">
+                {loadingOlder ? 'Loading…' : `Show the next ${Math.min(PAGE, Math.max(0, total - docs.length) || PAGE)}`}
+              </button>
+            )}
+            {isFetching && !isLoading && <span className="text-xs">Searching the whole record…</span>}
+          </div>
         </>
       )}
 

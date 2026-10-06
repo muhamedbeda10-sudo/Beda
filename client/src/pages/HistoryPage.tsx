@@ -656,10 +656,8 @@ export function HistoryPage() {
 
   if (kind === 'pdi') {
     return (
-      <div className="space-y-4">
-        {kindToggle}
-        <PdiList />
-      </div>
+      // The PDI list shares the page's filter row: the switch heads it.
+      <PdiList leading={kindToggle} />
     )
   }
 
