@@ -28,7 +28,7 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-10-06.10',
+    id: '2026-10-06.91',
     date: '2026-10-06',
     title: 'Access marks the lines the order sheet got wrong',
     items: [
