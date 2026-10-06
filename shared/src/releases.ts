@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-06.1',
+    date: '2026-10-06',
+    title: 'History: more of the list on screen',
+    items: [
+      { text: 'History\'s Sessions, Open and Closed counters are small chips beside the Sessions / PDI toggle, with Export Excel and Reset all at the end of the same row; on a phone the chips keep their icon and number.' },
+      { text: 'Fit columns and Columns sit beside the search box. The list starts much higher on the page.' },
+    ],
+  },
+  {
     id: '2026-10-05.2',
     date: '2026-10-05',
     title: 'Universal machines: a final product, or stages with their quantities',
