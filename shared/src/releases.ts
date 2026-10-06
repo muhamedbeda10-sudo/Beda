@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-06.6',
+    date: '2026-10-06',
+    title: 'More room for the lists: no title rows, compact rows by default',
+    items: [
+      { text: 'Access, Inspections and History lose their title row: the tab already names the page. Columns, Export, New Inspection, Coil Search and PDI Documents sit at the right end of the filter row; on a phone they head it.' },
+      { text: 'The figures moved under the list, beside the count: "1–26 of 26 sessions · 2 open · 24 closed · By order line" on History (each still opens its sessions grouped by order line), "1–100 of 36,192 lines on the sheet" on Access.' },
+      { text: 'Rows are compact everywhere, and the rows button is gone from the top bar. On a touch screen the rows stay finger-sized.' },
+      { text: 'The Columns list now opens above the filter row instead of under it.' },
+    ],
+  },
+  {
     id: '2026-10-06.5',
     date: '2026-10-06',
     title: 'History on one line a session, a calmer Inspections board, a tidier dashboard',

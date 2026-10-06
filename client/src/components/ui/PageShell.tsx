@@ -1,11 +1,11 @@
 // ============================================================================
-// The shell every list page shares. One header row (≤ 56 px): the page's
-// title, its figures inline ("1,351 sessions · 2 open"), and its actions on
-// the right, the exports gathered in one Export control. Under it one filter
-// row (≤ 48 px): the search, the two or three filters used most, "More
-// filters" holding the rest, and Reset. A row of removable chips names the
-// filters in force, and only while any is. The filter row stays in view as
-// the page scrolls.
+// The shell every list page shares: no title row — the tab names the page —
+// but one filter row (≤ 48 px) at the top: the page's view switch, the
+// search, the two or three filters used most, "More filters" holding the
+// rest, Reset, and the page's actions at the right end, the exports gathered
+// in one Export control. A row of removable chips names the filters in
+// force, and only while any is. The row stays in view as the page scrolls;
+// the page's figures sit under its list, beside the count.
 // ============================================================================
 
 import { useRef, useState, type ReactNode } from 'react'
@@ -13,18 +13,7 @@ import { ChevronDown, Download, Info, RotateCcw, Search, SlidersHorizontal, X } 
 import { FloatingPanel } from '@/components/dashboard/filters'
 import { cn } from '@/lib/utils'
 
-// ---- Header ------------------------------------------------------------------
-
-export function PageHeader({ title, lead, stats, actions }: { title: string; lead?: ReactNode; stats?: ReactNode; actions?: ReactNode }) {
-  return (
-    <div className="flex min-h-[40px] flex-wrap items-center gap-x-4 gap-y-2">
-      <h1 className="text-xl font-bold tracking-tight">{title}</h1>
-      {lead}
-      {stats && <div className="flex flex-wrap items-center gap-x-1.5 text-13 text-muted">{stats}</div>}
-      {actions && <div className="ml-auto flex flex-wrap items-center gap-2">{actions}</div>}
-    </div>
-  )
-}
+// ---- Figures ------------------------------------------------------------------
 
 /** One figure in the header's line: the number bold, its noun muted; a button when it opens what it counts. */
 export function HeaderStat({ value, label, onClick, tip, tone }: { value: number; label: string; onClick?: () => void; tip?: string; tone?: 'success' }) {
@@ -87,14 +76,15 @@ export function ExportMenu({ items, busy }: { items: ExportItem[]; busy?: boolea
   if (items.length === 1) {
     const [only] = items
     return (
-      <button type="button" onClick={only.onClick} disabled={only.disabled || busy} className="btn-secondary h-9 min-h-0 px-3 py-0 text-13">
-        <Download className="h-4 w-4" /> {busy ? 'Building…' : only.label}
+      <button type="button" onClick={only.onClick} disabled={only.disabled || busy} aria-label={only.label} data-tip={only.label} className="btn-secondary h-10 min-h-0 gap-1.5 px-2.5 py-0 text-13">
+        <Download className="h-4 w-4" /> <span className="hidden 2xl:inline">{busy ? 'Building…' : only.label}</span>
+        {busy && <span className="2xl:hidden">…</span>}
       </button>
     )
   }
   return (
     <>
-      <button ref={anchor} type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} disabled={busy} className="btn-secondary h-9 min-h-0 px-3 py-0 text-13">
+      <button ref={anchor} type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} disabled={busy} className="btn-secondary h-9 min-h-0 px-3 py-0 text-13 touch:h-11">
         <Download className="h-4 w-4" /> {busy ? 'Building…' : 'Export'}
         <ChevronDown className="h-3.5 w-3.5" />
       </button>
@@ -182,6 +172,8 @@ export function FilterBar({
   onReset,
   canReset,
   trailing,
+  leading,
+  actions,
 }: {
   search: { value: string; onChange: (v: string) => void; placeholder: string; label: string }
   /** The two or three filters used most, in the row. */
@@ -194,13 +186,18 @@ export function FilterBar({
   onReset: () => void
   canReset: boolean
   trailing?: ReactNode
+  /** Before the search: the page's view switch (Sessions / PDI). */
+  leading?: ReactNode
+  /** The page's own actions, at the row's right end; on a phone they head the bar. */
+  actions?: ReactNode
 }) {
   const anchor = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   return (
     <div className="z-30 -mx-4 space-y-1.5 bg-slate-100/90 px-4 py-1 backdrop-blur sm:-mx-6 sm:px-6 md:sticky md:top-16 lg:-mx-8 lg:px-8 dark:bg-slate-950/90">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full md:w-auto md:min-w-[12rem] md:flex-1">
+        {leading}
+        <div className="relative w-full md:w-auto md:min-w-[11rem] md:flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <input
             value={search.value}
@@ -227,10 +224,19 @@ export function FilterBar({
             </FloatingPanel>
           </>
         )}
-        <button type="button" onClick={onReset} disabled={!canReset} aria-label="Reset all filters" data-tip="Reset all filters" className="grid h-10 w-10 place-items-center rounded-lg text-muted touch:h-11 touch:w-11 transition-colors hover:bg-slate-200/70 hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-800 dark:hover:text-slate-200">
+        <button
+          type="button"
+          onClick={onReset}
+          disabled={!canReset}
+          aria-label="Reset all filters"
+          data-tip="Reset all filters"
+          // On a phone a reset with nothing to reset would take a row of its own: it shows once a filter is set.
+          className={cn('grid h-10 w-10 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-200/70 hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11', !canReset && 'max-md:hidden')}
+        >
           <RotateCcw className="h-4 w-4" />
         </button>
         {trailing}
+        {actions && <div className="flex flex-wrap items-center gap-2 max-md:order-first max-md:w-full md:ml-auto">{actions}</div>}
       </div>
       {chips.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5" aria-label="Filters in force">

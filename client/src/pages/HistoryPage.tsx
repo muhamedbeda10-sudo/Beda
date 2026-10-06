@@ -38,7 +38,7 @@ import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { loadHistoryExport, loadOlderSessions, useSession, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
-import { ExportMenu, FilterBar, FilterSelect, HeaderStat, PageHeader, Segmented, StatDot, type FilterChip } from '@/components/ui/PageShell'
+import { ExportMenu, FilterBar, FilterSelect, HeaderStat, Segmented, StatDot, type FilterChip } from '@/components/ui/PageShell'
 import { ColumnPicker, GridFrame, GridHead, SkeletonRows, TableFooter, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
@@ -657,7 +657,7 @@ export function HistoryPage() {
   if (kind === 'pdi') {
     return (
       <div className="space-y-4">
-        <PageHeader title="History" lead={kindToggle} />
+        {kindToggle}
         <PdiList />
       </div>
     )
@@ -680,20 +680,9 @@ export function HistoryPage() {
 
   return (
     <div className="space-y-3">
-      {/* One header row: the title, what History lists, its figures (each opens its sessions grouped by order line), and the page's actions. */}
-      <PageHeader
-        title="History"
-        lead={kindToggle}
-        stats={
-          <>
-            <HeaderStat value={totals.sessions} label={totals.sessions === 1 ? 'session' : 'sessions'} onClick={() => openCounter()} tip="Grouped by order line" />
-            <StatDot />
-            <HeaderStat value={totals.open} label="open" tone="success" onClick={() => openCounter('Open')} tip="Grouped by order line" />
-            <StatDot />
-            <HeaderStat value={totals.closed} label="closed" onClick={() => openCounter('Closed')} tip="Grouped by order line" />
-            {isFetching && !loading && <span className="ml-2 text-xs">Searching the whole record…</span>}
-          </>
-        }
+      {/* No title row: the tab names the page. The view switch, the filters and the actions share one row. */}
+      <FilterBar
+        leading={kindToggle}
         actions={
           <>
             <span className="hidden md:inline-flex">
@@ -702,9 +691,6 @@ export function HistoryPage() {
             {canExport && <ExportMenu busy={exporting} items={[{ label: 'Export Excel', onClick: () => void exportExcel(), disabled: totals.sessions === 0 }]} />}
           </>
         }
-      />
-
-      <FilterBar
         search={{ value: term, onChange: setTerm, placeholder: 'Order, item, code, customer, inspector, machine or #session…', label: 'Search history' }}
         filters={
           <>
@@ -873,6 +859,24 @@ export function HistoryPage() {
             onMore={() => void showOlder()}
             pageSize={pageSize}
             onPageSize={setPageSize}
+            extra={
+              <>
+                {/* Each figure opens its sessions grouped by order line. */}
+                <StatDot />
+                <HeaderStat value={totals.open} label="open" tone="success" onClick={() => openCounter('Open')} tip="Grouped by order line" />
+                <StatDot />
+                <HeaderStat value={totals.closed} label="closed" onClick={() => openCounter('Closed')} tip="Grouped by order line" />
+                {totals.sessions > 0 && (
+                  <>
+                    <StatDot />
+                    <button type="button" onClick={() => openCounter()} className="rounded font-semibold text-brand-600 underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-brand-400">
+                      By order line
+                    </button>
+                  </>
+                )}
+                {isFetching && !loading && <span className="ml-1 text-xs">Searching the whole record…</span>}
+              </>
+            }
           />
         </>
       )}
