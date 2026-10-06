@@ -8,7 +8,10 @@
 
 import type { SessionStagesResponse, UniversalCloseChoice } from '@qc/shared/api'
 import type { StageQuantity, UniversalKind } from '@qc/shared/types'
-import { stagesProblem } from '@qc/shared/rules'
+import { MAX_STAGE, stagesProblem } from '@qc/shared/rules'
+
+/** How many stages one session may cover side by side: an item can run on three presses at the same time. */
+const PARALLEL_STAGES = 3
 import { Badge, Field, Input } from '@/components/ui'
 import { cn } from '@/lib/utils'
 
@@ -70,8 +73,9 @@ export function UniversalChoice({
   kindLocked: boolean
 }) {
   const sessionsAt = new Map(options.stages.map((s) => [s.stage, s.sessions]))
-  // The line's stages, this session's own, and the next two: the item may start on two presses at once.
-  const choices = Array.from(new Set([...options.stages.map((s) => s.stage), ...draft.stages.map((s) => s.stage), options.next, options.next + 1])).sort((a, b) => a - b)
+  // The line's stages, this session's own, and the next three: the item may run on up to three presses at once.
+  const ahead = Array.from({ length: PARALLEL_STAGES }, (_, i) => options.next + i).filter((n) => n <= MAX_STAGE)
+  const choices = Array.from(new Set([...options.stages.map((s) => s.stage), ...draft.stages.map((s) => s.stage), ...ahead])).sort((a, b) => a - b)
   const ticked = (stage: number) => draft.stages.find((s) => s.stage === stage)
   const toggle = (stage: number) => {
     if (ticked(stage)) return onChange({ ...draft, stages: draft.stages.filter((s) => s.stage !== stage) })

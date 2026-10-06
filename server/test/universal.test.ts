@@ -254,3 +254,19 @@ describe('§8.3 — a universal machine takes no configured dimensions', () => {
     expect((await preview(line('F-1'))).dimensionOrder).toHaveLength(1)
   })
 })
+
+describe('§4 — three stages side by side', () => {
+  it("lets a line's first session cover stages 1, 2 and 3 at once", async () => {
+    // A line of its own, so nothing before has chosen for it.
+    await app.api('POST', '/api/orders/import', {
+      token: admin.token,
+      body: { rows: [{ lineKey: 'U-4', orderNumber: '50003-C', item: 'Gusset', itemCode: 'GS-4', workCenterCode: '90', requiredQty: 50, finishedQty: 0, customer: 'C', drawing: 'D-1' }] },
+    })
+    lines = (await app.api<ProductionOrder[]>('GET', '/api/orders', { token: admin.token })).body
+    const s = await open(line('U-4'), 1)
+    expect(await options(s)).toEqual({ universal: true, lineKind: null, stages: [], next: 1 })
+    const closed = await close(s, staged([1, 50], [2, 50], [3, 50]))
+    expect(closed.status).toBe(200)
+    expect(closed.body).toMatchObject({ universalKind: 'staged', stages: [{ stage: 1, qty: 50 }, { stage: 2, qty: 50 }, { stage: 3, qty: 50 }], finalQty: 50 })
+  })
+})
