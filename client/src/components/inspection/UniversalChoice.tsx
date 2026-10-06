@@ -163,8 +163,14 @@ export function UniversalChoice({
 }
 
 /** Beside a session on a universal machine: its stages ("Stages 1 + 2"), or Final product. Nothing for a lone stage 1 or any other machine. */
-export function StageBadge({ kind, stages }: { kind?: UniversalKind; stages?: StageQuantity[] }) {
-  if (kind === 'final') return <Badge tone="violet">Final product</Badge>
+export function StageBadge({ kind, stages, compact = false }: { kind?: UniversalKind; stages?: StageQuantity[]; compact?: boolean }) {
+  if (kind === 'final') return <Badge tone="violet" tip={compact ? 'Final product' : undefined}>{compact ? 'Final' : 'Final product'}</Badge>
   if (!stages?.length || (stages.length === 1 && stages[0].stage === 1)) return null
-  return <Badge tone="violet">{stages.length === 1 ? `Stage ${stages[0].stage}` : `Stages ${stages.map((s) => s.stage).join(' + ')}`}</Badge>
+  const full = stages.length === 1 ? `Stage ${stages[0].stage}` : `Stages ${stages.map((s) => s.stage).join(' + ')}`
+  // The table's form, "St 1+2", says the same in the width of the status column.
+  return (
+    <Badge tone="violet" tip={compact ? full : undefined}>
+      {compact ? `St ${stages.map((s) => s.stage).join('+')}` : full}
+    </Badge>
+  )
 }

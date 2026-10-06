@@ -28,6 +28,18 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-06.5',
+    date: '2026-10-06',
+    title: 'History on one line a session, a calmer Inspections board, a tidier dashboard',
+    items: [
+      { text: 'History: the session number sits beside the order ("20480-Ph3.4  #2"), the status and its signals stay on one line (the full words in the tooltip), and Started shows the time. Far more sessions fit on the screen.' },
+      { text: 'Inspections: New Inspection, Coil Search and PDI Documents in the header; one filter row with the factories and how many sessions each has open (an empty factory stays, greyed), the machine and the inspector; a header row per factory instead of boxes in boxes; a smaller Continue.' },
+      { text: 'Inspections: a new "Recently closed · today" list under the board, read from History; tap a session to open it.' },
+      { text: 'Dashboard: the view, the period (two dates and the presets) and the actions on one row; Arrange and Refresh are icons, Excel and PDF are under Export; the drag timeline is a slim strip behind the calendar button.' },
+      { text: 'Dashboard: explanations moved behind the (i) beside each title (they still print in the PDF); every chart says the period it covers; each change says what it is against ("▼ 13.53% vs Sep"); figures on a chart no longer sit on top of one another; a long name in a pie legend wraps instead of being cut; dates read "Oct 1 – Oct 6, 2026" like the rest of the application.' },
+    ],
+  },
+  {
     id: '2026-10-06.4',
     date: '2026-10-06',
     title: 'Tables: headers in full, the order kept in view, a clear footer',

@@ -97,18 +97,18 @@ const todayISO = () => new Date().toISOString().slice(0, 10)
  * the full picture and switched on from the Columns button.
  */
 const HISTORY_COLUMNS: ColumnDef[] = [
-  { key: 'seq', label: 'Seq', width: 72, min: 56 },
-  { key: 'order', label: 'Order', width: 150, min: 80 },
+  { key: 'seq', label: 'Seq', width: 72, min: 56, defaultHidden: true },
+  { key: 'order', label: 'Order', width: 190, min: 100 },
   { key: 'item', label: 'Item', width: 220, min: 100, flex: true },
   { key: 'itemCode', label: 'Item code', width: 120, min: 80, defaultHidden: true },
   { key: 'customer', label: 'Customer', width: 160, min: 90, defaultHidden: true },
   { key: 'factory', label: 'Factory', width: 110, min: 80, defaultHidden: true },
-  { key: 'machine', label: 'Machine', width: 170, min: 80 },
+  { key: 'machine', label: 'Machine', width: 200, min: 80 },
   { key: 'inspector', label: 'Inspector', width: 150, min: 80 },
-  { key: 'date', label: 'Started', width: 130, min: 90 },
+  { key: 'date', label: 'Started', width: 140, min: 100 },
   { key: 'closed', label: 'Closed', width: 150, min: 90, defaultHidden: true },
   { key: 'closedBy', label: 'Closed by', width: 150, min: 80, defaultHidden: true },
-  { key: 'status', label: 'Status', width: 150, min: 90 },
+  { key: 'status', label: 'Status', width: 180, min: 100 },
   { key: 'samples', label: 'Samples', width: 96, min: 72, align: 'right' },
   { key: 'pieces', label: 'Pieces inspected', width: 120, min: 80, align: 'right' },
   { key: 'defects', label: 'Defects', width: 90, min: 72, align: 'right' },
@@ -129,6 +129,8 @@ const HISTORY_COLUMNS: ColumnDef[] = [
 interface HistoryCellContext {
   /** True on a desktop with fixed column widths: the cell shows what fits and the whole text on hover. */
   fixed: boolean
+  /** The session's number rides in the order cell ("20480-Ph3.4  #2") unless its own column is shown. */
+  seqInOrder: boolean
   workCenterName: (code: string) => string
   factoryOf: (code: string) => string
   processOf: (code: string) => Process
@@ -179,8 +181,9 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
       return <td key={key} className="px-3 py-3 tabular-nums text-muted">#{s.seq}</td>
     case 'order':
       return (
-        <td key={key} className={cn('px-3 py-3 font-bold', clip)} data-tip={s.order?.orderNumber ?? undefined}>
+        <td key={key} className={cn('px-3 py-3 font-bold', clip)} data-tip={s.order?.orderNumber ? `${s.order.orderNumber} · session #${s.seq}` : `Session #${s.seq}`}>
           {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : s.order?.orderNumber ? <GroupLink title="Every session of this order" onOpen={() => ctx.openOrder(s)}>{s.order.orderNumber}</GroupLink> : '—'}
+          {ctx.seqInOrder && <span className="ml-2 text-xs font-medium tabular-nums text-muted">#{s.seq}</span>}
         </td>
       )
     case 'item':
@@ -212,7 +215,7 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
     case 'date':
       return (
         <td key={key} className={cn('px-3 py-3 tabular-nums', clip)} data-tip={formatDateTime(s.startedAt)}>
-          <When iso={s.startedAt} />
+          <When iso={s.startedAt} time />
         </td>
       )
     case 'closed':
@@ -221,11 +224,12 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
       return text(s.closedAt ? (s.closedByName ?? 'Unknown') : '')
     case 'status':
       return (
-        <td key={key} className="px-3 py-3">
-          <span className="inline-flex flex-wrap items-center gap-1.5">
+        <td key={key} className="overflow-hidden px-3 py-3">
+          {/* One line: the status, then the stage and the signal in their short forms, each spelt out in its tooltip. */}
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
             <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
-            <StageBadge kind={s.universalKind} stages={s.stages} />
-            <SessionToneBadge session={s} />
+            <StageBadge kind={s.universalKind} stages={s.stages} compact />
+            <SessionToneBadge session={s} compact />
           </span>
         </td>
       )
@@ -515,6 +519,7 @@ export function HistoryPage() {
   const cellContext = useMemo<HistoryCellContext>(
     () => ({
       fixed: grid.enabled,
+      seqInOrder: !grid.visible.some((c) => c.key === 'seq'),
       workCenterName: (code) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`,
       factoryOf: (code) => machines.find((m) => m.code === code)?.factory ?? '',
       processOf: (code) => processForMachine(machines.find((m) => m.code === code) ?? null, code),
@@ -523,7 +528,7 @@ export function HistoryPage() {
       openMachine,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [grid.enabled, machines, filters],
+    [grid.enabled, grid.visible, machines, filters],
   )
 
   // The lists a filter may offer come from the record, not from the page on

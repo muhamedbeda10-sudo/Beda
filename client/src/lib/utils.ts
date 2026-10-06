@@ -49,6 +49,14 @@ export function formatDateTime(iso?: string | null): string {
   return thisYear(d) ? `${DAY.format(d)}, ${TIME.format(d)}` : DAY_YEAR.format(d)
 }
 
+/**
+ * The calendar day an instant falls on in a named time zone, as YYYY-MM-DD:
+ * the factory's day, whatever zone the device is set to.
+ */
+export function dayInTimeZone(at: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at)
+}
+
 /** The time of day alone, on a 24-hour clock: "15:05". */
 export function formatTime(iso?: string | null): string {
   const d = parse(iso)

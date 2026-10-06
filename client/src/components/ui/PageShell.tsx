@@ -9,7 +9,7 @@
 // ============================================================================
 
 import { useRef, useState, type ReactNode } from 'react'
-import { ChevronDown, Download, RotateCcw, Search, SlidersHorizontal, X } from 'lucide-react'
+import { ChevronDown, Download, Info, RotateCcw, Search, SlidersHorizontal, X } from 'lucide-react'
 import { FloatingPanel } from '@/components/dashboard/filters'
 import { cn } from '@/lib/utils'
 
@@ -51,7 +51,7 @@ export const StatDot = () => (
 /** A two-or-three-way switch the height of the header row. */
 export function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: { value: T; label: string; icon?: ReactNode }[]; onChange: (v: T) => void; label: string }) {
   return (
-    <div role="tablist" aria-label={label} className="inline-flex h-9 items-center rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800">
+    <div role="tablist" aria-label={label} className="inline-flex h-9 items-center rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800 touch:h-11">
       {options.map((o) => (
         <button
           key={o.value}
@@ -60,7 +60,7 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
           aria-selected={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
-            'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-13 font-semibold transition-colors',
+            'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-13 font-semibold transition-colors touch:h-10',
             value === o.value ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-muted hover:text-slate-700 dark:hover:text-slate-200',
           )}
         >
@@ -122,6 +122,33 @@ export function ExportMenu({ items, busy }: { items: ExportItem[]; busy?: boolea
   )
 }
 
+/**
+ * An (i) beside a heading in place of a paragraph under it: the explanation
+ * shows in the tooltip under a mouse, and opens in a small panel on a tap.
+ */
+export function InfoTip({ text, label = 'About this' }: { text: string; label?: string }) {
+  const anchor = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button
+        ref={anchor}
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        data-tip={open ? undefined : text}
+        onClick={() => setOpen((o) => !o)}
+        className="print-hidden inline-grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-9 touch:w-9"
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      <FloatingPanel anchor={anchor} open={open} onClose={() => setOpen(false)} width={320} label={label}>
+        <p className="whitespace-pre-line p-2 text-13 leading-relaxed text-slate-700 dark:text-slate-200">{text}</p>
+      </FloatingPanel>
+    </>
+  )
+}
+
 // ---- Filter bar --------------------------------------------------------------
 
 /** A filter in force, named on a chip that removes it. */
@@ -139,7 +166,7 @@ export function FilterSelect({ label, value, onChange, children, className }: { 
       data-tip={label}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={cn('input h-10 truncate py-0 pl-3 pr-8 text-sm max-md:!w-[calc(50%-4px)] md:!w-auto md:min-w-[8rem] md:max-w-[12rem]', className)}
+      className={cn('input h-10 truncate py-0 pl-3 pr-8 text-sm max-md:!w-[calc(50%-4px)] md:!w-auto md:min-w-[8rem] md:max-w-[12rem] touch:h-11', className)}
     >
       {children}
     </select>
@@ -180,7 +207,7 @@ export function FilterBar({
             onChange={(e) => search.onChange(e.target.value)}
             placeholder={search.placeholder}
             aria-label={search.label}
-            className="input h-10 py-0 pl-9 pr-9 text-sm"
+            className="input h-10 py-0 pl-9 pr-9 text-sm touch:h-11"
           />
           {search.value && (
             <button type="button" onClick={() => search.onChange('')} aria-label="Clear the search" data-tip="Clear the search" className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
@@ -191,7 +218,7 @@ export function FilterBar({
         {filters}
         {more && (
           <>
-            <button ref={anchor} type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="dialog" aria-expanded={open} className={cn('btn-secondary h-10 min-h-0 px-3 py-0 text-sm max-md:flex-1', moreCount > 0 && 'text-brand-700 ring-brand-300 dark:text-brand-200 dark:ring-brand-500/50')}>
+            <button ref={anchor} type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="dialog" aria-expanded={open} className={cn('btn-secondary h-10 min-h-0 px-3 py-0 text-sm max-md:flex-1 touch:h-11', moreCount > 0 && 'text-brand-700 ring-brand-300 dark:text-brand-200 dark:ring-brand-500/50')}>
               <SlidersHorizontal className="h-4 w-4" /> More filters
               {moreCount > 0 && <span className="rounded bg-brand-600 px-1.5 text-[11px] font-bold leading-[18px] text-white">{moreCount}</span>}
             </button>
@@ -200,7 +227,7 @@ export function FilterBar({
             </FloatingPanel>
           </>
         )}
-        <button type="button" onClick={onReset} disabled={!canReset} aria-label="Reset all filters" data-tip="Reset all filters" className="grid h-10 w-10 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-200/70 hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-800 dark:hover:text-slate-200">
+        <button type="button" onClick={onReset} disabled={!canReset} aria-label="Reset all filters" data-tip="Reset all filters" className="grid h-10 w-10 place-items-center rounded-lg text-muted touch:h-11 touch:w-11 transition-colors hover:bg-slate-200/70 hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-800 dark:hover:text-slate-200">
           <RotateCcw className="h-4 w-4" />
         </button>
         {trailing}

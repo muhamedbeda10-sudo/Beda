@@ -38,8 +38,8 @@ describe('dashboard periods', () => {
   })
 
   it('describes a range for people', () => {
-    expect(describeRange({ from: '2026-09-01', to: '2026-09-08' })).toBe('1 Sep – 8 Sep 2026')
-    expect(describeRange({ from: '2025-12-20', to: '2026-01-05' })).toBe('20 Dec 2025 – 5 Jan 2026')
-    expect(describeRange({ from: '2026-09-08', to: '2026-09-08' })).toBe('8 Sep 2026')
+    expect(describeRange({ from: '2026-09-01', to: '2026-09-08' })).toBe('Sep 1 – Sep 8, 2026')
+    expect(describeRange({ from: '2025-12-20', to: '2026-01-05' })).toBe('Dec 20, 2025 – Jan 5, 2026')
+    expect(describeRange({ from: '2026-09-08', to: '2026-09-08' })).toBe('Sep 8, 2026')
   })
 })
