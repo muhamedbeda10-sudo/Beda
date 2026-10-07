@@ -416,22 +416,31 @@ export function ColumnPicker({ grid, className }: { grid: ResizableColumns; clas
  * being cut; its full text is the tooltip. Numbers are right-aligned under a
  * right-aligned label.
  */
-export function GridHead({ grid }: { grid: ResizableColumns }) {
+/** The header row; `menu` puts a column's Excel menu beside its title. */
+export function GridHead({ grid, menu }: { grid: ResizableColumns; menu?: (column: ColumnDef) => ReactNode }) {
   return (
     <thead>
       <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-muted dark:border-slate-800">
-        {grid.visible.map((c) => (
-          // The cell stays overflow-visible so the grab zone can straddle its edge.
-          <th
-            key={c.key}
-            data-col={c.key}
-            className={cn('px-3 py-2 align-bottom', c.align === 'right' && 'text-right', grid.dragging === c.key && '!bg-brand-50 dark:!bg-brand-950')}
-            data-tip={c.label || undefined}
-          >
-            <span className="line-clamp-2 whitespace-normal break-words leading-tight">{c.label}</span>
-            {c.hideable !== false && grid.handle(c.key)}
-          </th>
-        ))}
+        {grid.visible.map((c) => {
+          const button = c.label && menu ? menu(c) : null
+          return (
+            // The cell stays overflow-visible so the grab zone can straddle its edge.
+            <th
+              key={c.key}
+              data-col={c.key}
+              className={cn('px-3 py-2 align-bottom', c.align === 'right' && 'text-right', grid.dragging === c.key && '!bg-brand-50 dark:!bg-brand-950')}
+            >
+              <span className={cn('flex items-end gap-1', c.align === 'right' && 'flex-row-reverse')}>
+                {/* Wraps between words only: a title never splits mid-word. */}
+                <span className="line-clamp-2 min-w-0 whitespace-normal leading-tight [overflow-wrap:normal] [word-break:keep-all]" data-tip={c.label || undefined}>
+                  {c.label}
+                </span>
+                {button}
+              </span>
+              {c.hideable !== false && grid.handle(c.key)}
+            </th>
+          )
+        })}
       </tr>
     </thead>
   )

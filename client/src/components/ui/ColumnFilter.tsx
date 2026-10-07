@@ -58,10 +58,12 @@ export interface ColumnMenuProps {
   /** A column with no list of values (a long free text): sort and Contains only. */
   noValues?: boolean
   align?: 'left' | 'right'
+  /** How a value reads in the list when it is stored otherwise (a day kept as 2026-10-06 reads Oct 6). */
+  formatValue?: (value: string) => string
 }
 
 /** The small button in a header cell and the menu it opens. */
-export function ColumnMenu({ label, filter, sort, numeric = false, onApply, onSort, values, loadValues, noValues = false, align = 'left' }: ColumnMenuProps) {
+export function ColumnMenu({ label, filter, sort, numeric = false, onApply, onSort, values, loadValues, noValues = false, align = 'left', formatValue }: ColumnMenuProps) {
   const anchor = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   const active = isActive(filter)
@@ -96,6 +98,7 @@ export function ColumnMenu({ label, filter, sort, numeric = false, onApply, onSo
             loadValues={loadValues}
             noValues={noValues}
             align={align}
+            formatValue={formatValue}
             onSort={(d) => {
               onSort(d)
               setOpen(false)
@@ -120,6 +123,7 @@ function MenuBody({
   values,
   loadValues,
   noValues,
+  formatValue,
   onSort,
   onApply,
   onCancel,
@@ -132,13 +136,18 @@ function MenuBody({
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
 
-  // The server's list, asked again as the search settles.
+  // The server's list, asked when the menu opens and again as the search settles —
+  // not each time the page draws a new loader.
+  const loader = useRef(loadValues)
+  loader.current = loadValues
+  const remoteList = !!loadValues
   useEffect(() => {
-    if (!loadValues || noValues) return
+    if (!remoteList || noValues || !loader.current) return
+    const load = loader.current
     let live = true
     setLoading(true)
     const t = window.setTimeout(() => {
-      loadValues(search.trim())
+      load(search.trim())
         .then((r) => live && (setRemote(r), setFailed(false)))
         .catch(() => live && setFailed(true))
         .finally(() => live && setLoading(false))
@@ -147,17 +156,17 @@ function MenuBody({
       live = false
       window.clearTimeout(t)
     }
-  }, [loadValues, search, noValues])
+  }, [remoteList, search, noValues])
 
   // A local list is worked out once, when the menu opens.
   const [local] = useState<Values>(() => (values ? values() : []))
   const list: Values = useMemo(() => {
     const base = loadValues ? (remote?.values ?? []) : local
-    const shown = loadValues ? base : base.filter((v) => lower(v.value || '(blanks)').includes(lower(search)))
+    const shown = loadValues ? base : base.filter((v) => lower(v.value ? (formatValue ? formatValue(v.value) : v.value) : '(blanks)').includes(lower(search)))
     // A ticked value the list no longer carries stays, so it can be unticked.
     const extra = (ticked ?? []).filter((t) => !shown.some((v) => v.value === t) && (!search || lower(t).includes(lower(search)))).map((value) => ({ value, count: 0 }))
     return [...shown, ...extra]
-  }, [loadValues, remote, local, search, ticked])
+  }, [loadValues, remote, local, search, ticked, formatValue])
 
   const isOn = (v: string) => ticked === undefined || ticked.includes(v)
   const allOn = list.length > 0 && list.every((v) => isOn(v.value))
@@ -221,7 +230,7 @@ function MenuBody({
             )}
             {list.map((v) => (
               <CheckRow key={v.value} on={isOn(v.value)} onClick={() => toggle(v.value)} count={v.count}>
-                {v.value || <span className="text-muted">(Blanks)</span>}
+                {v.value ? (formatValue ? formatValue(v.value) : v.value) : <span className="text-muted">(Blanks)</span>}
               </CheckRow>
             ))}
             {list.length === 0 && <p className="px-2 py-3 text-center text-xs text-muted">{loading ? 'Loading the values…' : failed ? 'The values could not be loaded.' : 'Nothing matches.'}</p>}
@@ -393,3 +402,73 @@ export function ViewNote<T>({ view, total, className }: { view: TableView<T>; to
     </p>
   )
 }
+
+// ---- A table read page by page from the server ---------------------------------
+
+export interface ServerColumnOptions {
+  numeric?: boolean
+  align?: 'left' | 'right'
+  formatValue?: (value: string) => string
+}
+
+export interface ServerColumns {
+  filters: ColumnFilters
+  sort: ColumnSort | null
+  /** For the request: the filters as JSON and the sort as "key:dir"; absent when unset. */
+  cf: string | undefined
+  sortParam: string | undefined
+  active: boolean
+  clear: () => void
+  /** A chip per filtered column, to remove it from the filter row. */
+  chips: (labelOf: (key: string) => string) => { key: string; label: string; onRemove: () => void }[]
+  /** A column's menu; its values come from `load`. */
+  menu: (key: string, label: string, load: (search: string) => Promise<ColumnValuesResponse>, options?: ServerColumnOptions) => ReactNode
+}
+
+/**
+ * Excel's filter and sort for a list the server pages: the state and the
+ * menus. The page sends `cf` and `sortParam` with its other filters, and asks
+ * the server for a column's values with the same filters (the server leaves
+ * the column's own filter out).
+ */
+export function useServerColumns(): ServerColumns {
+  const [filters, setFilters] = useState<ColumnFilters>({})
+  const [sort, setSort] = useState<ColumnSort | null>(null)
+  const setFilter = (key: string, f: ColumnFilter | undefined) =>
+    setFilters((prev) => {
+      const next = { ...prev }
+      if (f) next[key] = f
+      else delete next[key]
+      return next
+    })
+  const keys = Object.keys(filters)
+  return {
+    filters,
+    sort,
+    cf: keys.length ? JSON.stringify(filters) : undefined,
+    sortParam: sort ? `${sort.key}:${sort.dir}` : undefined,
+    active: keys.length > 0 || sort !== null,
+    clear: () => {
+      setFilters({})
+      setSort(null)
+    },
+    chips: (labelOf) => [
+      ...keys.map((k) => ({ key: `cf:${k}`, label: describeFilter(labelOf(k), filters[k]), onRemove: () => setFilter(k, undefined) })),
+      ...(sort ? [{ key: 'sort', label: `Sorted by ${labelOf(sort.key)} ${sort.dir === 'asc' ? '↑' : '↓'}`, onRemove: () => setSort(null) }] : []),
+    ],
+    menu: (key, label, load, options) => (
+      <ColumnMenu
+        label={label}
+        filter={filters[key]}
+        sort={sort?.key === key ? sort.dir : null}
+        numeric={options?.numeric}
+        align={options?.align}
+        formatValue={options?.formatValue}
+        loadValues={load}
+        onApply={(f) => setFilter(key, f)}
+        onSort={(dir) => setSort(dir ? { key, dir } : null)}
+      />
+    ),
+  }
+}
+

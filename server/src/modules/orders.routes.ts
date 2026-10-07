@@ -28,6 +28,7 @@ import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
 import { badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
+import { columnFilterClauses, columnOrderBy, columnQuerySchema, columnValues, type SqlColumns } from '../lib/columnFilters'
 import { requireCapability, requireUser } from '../auth/middleware'
 import { writeAudit } from '../audit/service'
 import { dropNulls, normaliseKey } from '../lib/rows'
@@ -230,31 +231,59 @@ export function ordersRoutes(ctx: AppContext): Router {
     res.json(rows.map(dropNulls))
   })
 
-  /**
-   * §19 — Access: the imported lines as a table, every filter applied in SQL
-   * over the whole table so a line is found wherever it sits, with what the
-   * inspection record adds to each line. Cancelled lines are listed too:
-   * this is the sheet as it was uploaded.
-   */
-  r.get('/list', requireCapability('view-order-sheet'), async (req, res) => {
-    requireUser(req)
-    const q = parse(
-      z.object({
-        q: z.string().trim().max(120).optional(),
-        workCenterCode: z.string().trim().max(60).optional(),
-        factory: z.string().trim().max(120).optional(),
-        erpStatus: z.string().trim().max(40).optional(),
-        item: z.string().trim().max(440).optional(),
-        remaining: z.enum(['open', 'done']).optional(),
-        inspected: z.enum(['yes', 'no']).optional(),
-        limit: z.coerce.number().int().min(1).max(500).default(100),
-        offset: z.coerce.number().int().min(0).max(100000).default(0),
-      }),
-      req.query,
-    )
+  // The Access list's filters, its joins and its columns, shared by the page and by a column's values.
+  const orderListQuery = z.object({
+    q: z.string().trim().max(120).optional(),
+    workCenterCode: z.string().trim().max(60).optional(),
+    factory: z.string().trim().max(120).optional(),
+    erpStatus: z.string().trim().max(40).optional(),
+    item: z.string().trim().max(440).optional(),
+    remaining: z.enum(['open', 'done']).optional(),
+    inspected: z.enum(['yes', 'no']).optional(),
+  })
+  /** Each line with its machine, and what the inspection record adds: sessions, samples, defect pieces, the last sample. Aggregated once per table, not per row. */
+  const ORDER_LIST_FROM = `
+      FROM production_orders o
+      LEFT JOIN LATERAL (
+        SELECT m.factory, m.display_name FROM machines m WHERE ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('o.work_center_code')} AND m.deleted_at IS NULL
+        ORDER BY m.created_at LIMIT 1) m ON true
+      LEFT JOIN (SELECT order_id, count(*)::int AS n FROM inspection_sessions WHERE deleted_at IS NULL GROUP BY order_id) ss ON ss.order_id = o.id
+      LEFT JOIN (SELECT order_id, count(*)::int AS n, max(created_at) AS last FROM inspection_samples WHERE deleted_at IS NULL GROUP BY order_id) sm ON sm.order_id = o.id
+      LEFT JOIN (SELECT x.order_id, sum(d.qty) AS pieces FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+                  WHERE x.deleted_at IS NULL AND d.deleted_at IS NULL GROUP BY x.order_id) dd ON dd.order_id = o.id`
+  /** The columns as Access shows them: the text a cell reads, and what a figure or a date sorts by. */
+  const orderListColumns = (tz: string): SqlColumns => {
+    const figure = (sql: string) => ({ text: `trim_scale((${sql})::numeric)::text`, sort: `(${sql})` })
+    const day = (sql: string) => ({ text: `to_char((${sql}) AT TIME ZONE '${tz.replace(/'/g, "''")}', 'YYYY-MM-DD')`, sort: `(${sql})` })
+    return {
+      orderNumber: { text: 'btrim(o.order_number)' },
+      lineKey: { text: 'btrim(o.line_key)' },
+      item: { text: 'btrim(o.item)' },
+      itemCode: { text: 'btrim(o.item_code)' },
+      machine: { text: `CASE WHEN btrim(o.work_center_code) = '' THEN '' ELSE COALESCE(NULLIF(btrim(m.display_name), ''), 'Machine ' || btrim(o.work_center_code)) END` },
+      factory: { text: `COALESCE(btrim(m.factory), '')` },
+      erpStatus: { text: 'btrim(o.erp_status)' },
+      requiredQty: figure('o.required_qty'),
+      finishedQty: figure('o.finished_qty'),
+      remainingQty: figure('GREATEST(0, o.required_qty - o.finished_qty)'),
+      customer: { text: 'btrim(o.customer)' },
+      expectedGrade: { text: 'btrim(o.expected_grade)' },
+      drawing: { text: 'btrim(o.drawing)' },
+      drawingAlt: { text: `COALESCE(btrim(o.drawing_alt), '')` },
+      issue: { text: `COALESCE(btrim(o.issue), '')` },
+      material: { text: 'btrim(o.material)' },
+      type: { text: 'btrim(o.type)' },
+      colour: { text: 'btrim(o.colour)' },
+      date: day('o.order_date'),
+      sessions: figure('COALESCE(ss.n, 0)'),
+      samples: figure('COALESCE(sm.n, 0)'),
+      defectPieces: figure('COALESCE(dd.pieces, 0)'),
+      lastInspected: day('sm.last'),
+    }
+  }
+  /** The WHERE clauses of the list's own filters. */
+  function orderListWhere(q: z.infer<typeof orderListQuery>, p: (v: unknown) => string): string[] {
     const clauses = ['o.deleted_at IS NULL']
-    const params: unknown[] = []
-    const p = (v: unknown) => `$${params.push(v)}`
     if (q.q) {
       const t = p(`%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
       clauses.push(`(o.order_number ILIKE ${t} OR o.line_key ILIKE ${t} OR o.item ILIKE ${t} OR o.item_code ILIKE ${t}
@@ -267,25 +296,44 @@ export function ordersRoutes(ctx: AppContext): Router {
     if (q.item) clauses.push(itemFilterSql(q.item, p, 'o.item_code', 'o.item'))
     if (q.remaining === 'open') clauses.push('o.required_qty > o.finished_qty')
     if (q.remaining === 'done') clauses.push('o.required_qty <= o.finished_qty')
-    if (q.inspected === 'yes') clauses.push('EXISTS (SELECT 1 FROM inspection_sessions s WHERE s.order_id = o.id AND s.deleted_at IS NULL)')
-    if (q.inspected === 'no') clauses.push('NOT EXISTS (SELECT 1 FROM inspection_sessions s WHERE s.order_id = o.id AND s.deleted_at IS NULL)')
+    if (q.inspected === 'yes') clauses.push('ss.n > 0')
+    if (q.inspected === 'no') clauses.push('ss.n IS NULL')
+    return clauses
+  }
+
+  /**
+   * §19 — Access: every imported line, filtered in SQL over the whole sheet,
+   * a page at a time, with what the inspection record adds to each line.
+   * Cancelled lines are listed too: this is the sheet as it was uploaded.
+   * Any column filters and sorts as in Excel (cf, sort).
+   */
+  r.get('/list', requireCapability('view-order-sheet'), async (req, res) => {
+    requireUser(req)
+    const q = parse(
+      orderListQuery.merge(columnQuerySchema).extend({
+        limit: z.coerce.number().int().min(1).max(500).default(100),
+        offset: z.coerce.number().int().min(0).max(100000).default(0),
+      }),
+      req.query,
+    )
+    const params: unknown[] = []
+    const p = (v: unknown) => `$${params.push(v)}`
+    const columns = orderListColumns(ctx.config.FACTORY_TIMEZONE)
+    const clauses = [...orderListWhere(q, p), ...columnFilterClauses(columns, q.cf, p)]
+    const orderBy = columnOrderBy(columns, q.sort, 'o.order_number, o.item_code, o.work_center_code, o.id')
     const limit = p(q.limit + 1)
     const offset = p(q.offset)
     const { rows } = await ctx.db.query<OrderListRow & { total: number }>(
       `SELECT ${ORDER_SELECT_O}, COALESCE(m.factory, '') AS factory,
               GREATEST(0, o.required_qty - o.finished_qty) AS "remainingQty",
-              (SELECT count(*)::int FROM inspection_sessions s WHERE s.order_id = o.id AND s.deleted_at IS NULL) AS sessions,
-              (SELECT count(*)::int FROM inspection_samples x WHERE x.order_id = o.id AND x.deleted_at IS NULL) AS samples,
-              (SELECT COALESCE(sum(d.qty), 0)::float8 FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
-                WHERE x.order_id = o.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL) AS "defectPieces",
-              (SELECT max(x.created_at) FROM inspection_samples x WHERE x.order_id = o.id AND x.deleted_at IS NULL) AS "lastInspectedAt",
+              COALESCE(ss.n, 0) AS sessions,
+              COALESCE(sm.n, 0) AS samples,
+              COALESCE(dd.pieces, 0)::float8 AS "defectPieces",
+              sm.last AS "lastInspectedAt",
               count(*) OVER ()::int AS total
-         FROM production_orders o
-         LEFT JOIN LATERAL (
-           SELECT m.factory FROM machines m WHERE ${NORMALISED_CODE('m.code')} = ${NORMALISED_CODE('o.work_center_code')} AND m.deleted_at IS NULL
-           ORDER BY m.created_at LIMIT 1) m ON true
+         ${ORDER_LIST_FROM}
         WHERE ${clauses.join(' AND ')}
-        ORDER BY o.order_number, o.item_code, o.work_center_code, o.id
+        ORDER BY ${orderBy}
         LIMIT ${limit} OFFSET ${offset}`,
       params,
     )
@@ -297,6 +345,22 @@ export function ordersRoutes(ctx: AppContext): Router {
       hasMore,
     }
     res.json(body)
+  })
+
+  /** One Access column's values under every other filter, for its Excel menu. */
+  r.get('/list/values', requireCapability('view-order-sheet'), async (req, res) => {
+    requireUser(req)
+    const q = parse(
+      orderListQuery.merge(columnQuerySchema).extend({
+        column: z.string().max(60),
+        search: z.string().max(200).optional(),
+      }),
+      req.query,
+    )
+    const params: unknown[] = []
+    const p = (v: unknown) => `$${params.push(v)}`
+    const where = orderListWhere(q, p)
+    res.json(await columnValues(ctx.db, { columns: orderListColumns(ctx.config.FACTORY_TIMEZONE), column: q.column, from: ORDER_LIST_FROM, where, params, filters: q.cf, search: q.search }))
   })
 
   /** What the Access filters may offer, drawn from every line on record. */

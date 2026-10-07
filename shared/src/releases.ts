@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-07.2',
+    date: '2026-10-07',
+    title: 'Access: Excel\'s filter and sort on every column, over the whole sheet',
+    items: [
+      { text: 'Every Access column title has the Excel menu: sort, Text contains, and the column\'s values with how many lines carry each. The values, the filter, the sort and the count cover every line of the sheet, not only the page on screen.' },
+      { text: 'Each column filter and the sort show as a chip in the filter row; Reset clears them with the rest. A column title no longer breaks in the middle of a word.' },
+    ],
+  },
+  {
     id: '2026-10-07.1',
     date: '2026-10-07',
     title: 'Filter and sort any column, as in Excel',

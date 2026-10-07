@@ -102,3 +102,57 @@ describe('§19 — Access: the imported lines as a table', () => {
     expect((await get('q=needle', viewer.token)).body.total).toBe(1)
   })
 })
+
+describe('§19 — Access: Excel’s column filter and sort over the whole sheet', () => {
+  const cf = (filters: object) => `cf=${encodeURIComponent(JSON.stringify(filters))}`
+  type Values = { values: { value: string; count: number }[]; truncated: boolean }
+  const values = (query: string) => app.api<Values>('GET', `/api/orders/list/values?${query}`, { token: viewer.token })
+
+  it('keeps the values ticked in a column, counted over every page', async () => {
+    const res = await get(cf({ customer: { values: ['El Hoda Foods'] } }), viewer.token)
+    expect(res.status).toBe(200)
+    expect(res.body.total).toBe(30)
+    expect(res.body.orders.every((o) => o.customer === 'El Hoda Foods')).toBe(true)
+  })
+
+  it('keeps the rows whose cell contains a text, and combines columns', async () => {
+    const res = await get(cf({ item: { contains: 'shelf' }, machine: { values: ['58-A. Welding Line-LM4'] } }), viewer.token)
+    expect(res.body.orders.map((o) => o.orderNumber)).toEqual(['20999-NEEDLE'])
+    expect((await get(cf({ item: { values: [] } }), viewer.token)).body.total).toBe(0)
+  })
+
+  it('filters and sorts the figures and the figures the record adds', async () => {
+    const done = await get(cf({ remainingQty: { values: ['0'] } }), viewer.token)
+    expect(done.body.total).toBe(50)
+    const inspected = await get(cf({ sessions: { values: ['1'] } }), viewer.token)
+    expect(inspected.body.orders.map((o) => o.orderNumber)).toEqual(['20999-NEEDLE'])
+    const desc = await get('sort=remainingQty:desc&limit=5', viewer.token)
+    expect(desc.body.orders.every((o) => o.remainingQty === 60)).toBe(true)
+    const asc = await get('sort=orderNumber:desc&limit=1', viewer.token)
+    expect(asc.body.orders[0].orderNumber).toBe('20999-NEEDLE')
+  })
+
+  it("lists a column's values under the other filters, with their counts, searched", async () => {
+    const all = await values('column=customer')
+    expect(all.status).toBe(200)
+    expect(all.body.values).toEqual([
+      { value: 'Beta Storage', count: 120 },
+      { value: 'El Hoda Foods', count: 30 },
+    ])
+    // Its own filter leaves it out; another column's applies.
+    const underMachine = await values(`column=customer&${cf({ customer: { values: ['Beta Storage'] }, machine: { values: ['58-A. Welding Line-LM4'] } })}`)
+    expect(underMachine.body.values.reduce((n, v) => n + v.count, 0)).toBe(75)
+    const searched = await values('column=customer&search=hoda')
+    expect(searched.body.values).toEqual([{ value: 'El Hoda Foods', count: 30 }])
+    // Figures come in their order, not as text.
+    const remaining = await values('column=remainingQty')
+    expect(remaining.body.values.map((v) => v.value)).toEqual(['0', '60'])
+  })
+
+  it('refuses a column it does not have, and filters it cannot read', async () => {
+    expect((await get(cf({ password: { values: ['x'] } }), viewer.token)).status).toBe(400)
+    expect((await get('sort=nope:asc', viewer.token)).status).toBe(400)
+    expect((await get('cf=not-json', viewer.token)).status).toBe(400)
+    expect((await values('column=nope')).status).toBe(400)
+  })
+})

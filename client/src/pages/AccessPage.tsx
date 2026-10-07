@@ -14,7 +14,8 @@ import { Badge, Button, Card, EmptyState, Field, Input, Select } from '@/compone
 import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
 import { FilterBar, FilterSelect, type FilterChip } from '@/components/ui/PageShell'
 import { ColumnPicker, GridFrame, GridHead, SkeletonRows, TableFooter, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
-import { loadMoreOrders, useDebounced, useMaster, useOrderList, useOrderListOptions } from '@/services/queries'
+import { loadMoreOrders, loadOrderListValues, useDebounced, useMaster, useOrderList, useOrderListOptions } from '@/services/queries'
+import { useServerColumns } from '@/components/ui/ColumnFilter'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useApp } from '@/store/AppContext'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
@@ -28,9 +29,9 @@ const ACCESS_COLUMNS: ColumnDef[] = [
   { key: 'machine', label: 'Machine', width: 160, min: 80 },
   { key: 'factory', label: 'Factory', width: 110, min: 80, defaultHidden: true },
   { key: 'erpStatus', label: 'ERP status', width: 100, min: 80 },
-  { key: 'requiredQty', label: 'Required', width: 100, min: 72, align: 'right' },
-  { key: 'finishedQty', label: 'Finished', width: 100, min: 72, align: 'right' },
-  { key: 'remainingQty', label: 'Remaining', width: 100, min: 72, align: 'right' },
+  { key: 'requiredQty', label: 'Required', width: 124, min: 96, align: 'right' },
+  { key: 'finishedQty', label: 'Finished', width: 124, min: 96, align: 'right' },
+  { key: 'remainingQty', label: 'Remaining', width: 124, min: 96, align: 'right' },
   { key: 'customer', label: 'Customer', width: 170, min: 90 },
   { key: 'expectedGrade', label: 'Expected grade', width: 120, min: 80 },
   { key: 'drawing', label: 'Drawing', width: 130, min: 80, defaultHidden: true },
@@ -40,12 +41,16 @@ const ACCESS_COLUMNS: ColumnDef[] = [
   { key: 'type', label: 'Type', width: 100, min: 64, defaultHidden: true },
   { key: 'colour', label: 'Colour', width: 100, min: 64, defaultHidden: true },
   { key: 'date', label: 'Order date', width: 120, min: 90 },
-  { key: 'sessions', label: 'Sessions', width: 96, min: 72, align: 'right', defaultHidden: true },
-  { key: 'samples', label: 'Samples', width: 96, min: 72, align: 'right', defaultHidden: true },
+  { key: 'sessions', label: 'Sessions', width: 116, min: 96, align: 'right', defaultHidden: true },
+  { key: 'samples', label: 'Samples', width: 116, min: 96, align: 'right', defaultHidden: true },
   { key: 'defectPieces', label: 'Defect pcs', width: 104, min: 80, align: 'right', defaultHidden: true },
   { key: 'lastInspected', label: 'Last inspected', width: 150, min: 90, defaultHidden: true },
   { key: 'open', label: '', width: 48, min: 40, hideable: false },
 ]
+
+/** The columns that hold figures, and those that hold days: they sort as such, and a day reads "Oct 6" in its menu. */
+const ACCESS_FIGURES = new Set(['requiredQty', 'finishedQty', 'remainingQty', 'sessions', 'samples', 'defectPieces'])
+const ACCESS_DAYS = new Set(['date', 'lastInspected'])
 
 const num = (v: number | null | undefined) => (v === null || v === undefined || Number.isNaN(v) ? '—' : String(v))
 
@@ -224,8 +229,11 @@ export function AccessPage() {
   const [inspected, setInspected] = usePersistedState<'all' | 'yes' | 'no'>('qc-access:inspected', 'all')
   const debounced = useDebounced(term.trim())
   /** Every filter back to how the tab opens the first time. */
-  const filtersSet = term !== '' || machine !== 'all' || factory !== 'all' || erpStatus !== 'all' || item !== '' || remaining !== 'all' || inspected !== 'all'
+  const baseFiltersSet = term !== '' || machine !== 'all' || factory !== 'all' || erpStatus !== 'all' || item !== '' || remaining !== 'all' || inspected !== 'all'
+  // Excel's filter and sort on every column, answered over the whole sheet.
+  const columnsView = useServerColumns()
   const resetFilters = () => {
+    columnsView.clear()
     setTerm('')
     setMachine('all')
     setFactory('all')
@@ -244,10 +252,13 @@ export function AccessPage() {
       item: settledItem || undefined,
       remaining: remaining === 'all' ? undefined : remaining,
       inspected: inspected === 'all' ? undefined : inspected,
+      cf: columnsView.cf,
+      sort: columnsView.sortParam,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [debounced, machine, factory, erpStatus, settledItem, remaining, inspected],
+    [debounced, machine, factory, erpStatus, settledItem, remaining, inspected, columnsView.cf, columnsView.sortParam],
   )
+  const filtersSet = baseFiltersSet || columnsView.active
   /** Rows a page brings; kept on this device. */
   const [pageSize, setPageSize] = usePersistedState<number>('qc-access:page-size', 100)
   const { data, isLoading, isError, refetch } = useOrderList(filters, pageSize)
@@ -286,7 +297,7 @@ export function AccessPage() {
     }
   }
 
-  const filtering = !!(debounced || machine !== 'all' || factory !== 'all' || erpStatus !== 'all' || item.trim() || remaining !== 'all' || inspected !== 'all')
+  const filtering = !!(debounced || machine !== 'all' || factory !== 'all' || erpStatus !== 'all' || item.trim() || remaining !== 'all' || inspected !== 'all' || columnsView.cf)
   const clear = () => {
     setTerm('')
     setMachine('all')
@@ -330,7 +341,17 @@ export function AccessPage() {
     ...(factory !== 'all' ? [{ key: 'factory', label: `Factory: ${factory}`, onRemove: () => setFactory('all') }] : []),
     ...(item.trim() ? [{ key: 'item', label: `Item: ${item.trim()}`, onRemove: () => setItem('') }] : []),
     ...(inspected !== 'all' ? [{ key: 'inspected', label: inspected === 'yes' ? 'Inspected' : 'Not inspected yet', onRemove: () => setInspected('all') }] : []),
+    ...columnsView.chips((key) => ACCESS_COLUMNS.find((c) => c.key === key)?.label ?? key),
   ]
+  /** A column's Excel menu: its values over the whole sheet under every other filter. */
+  const columnMenu = (c: ColumnDef) =>
+    c.key === 'open'
+      ? null
+      : columnsView.menu(c.key, c.label, (search) => loadOrderListValues(filters, c.key, search), {
+          numeric: ACCESS_FIGURES.has(c.key) || ACCESS_DAYS.has(c.key),
+          align: c.align === 'right' ? 'right' : 'left',
+          formatValue: ACCESS_DAYS.has(c.key) ? (v) => formatDate(v) : undefined,
+        })
   const moreCount = [factory !== 'all', item.trim() !== '', inspected !== 'all'].filter(Boolean).length
 
   return (
@@ -413,7 +434,7 @@ export function AccessPage() {
           <GridFrame>
             <table className="sticky-first w-full text-sm" style={grid.tableStyle}>
               {grid.colgroup}
-              <GridHead grid={grid} />
+              <GridHead grid={grid} menu={columnMenu} />
               <SkeletonRows grid={grid} />
             </table>
           </GridFrame>
@@ -465,7 +486,7 @@ export function AccessPage() {
             <GridFrame reserve={44}>
               <table ref={grid.tableRef} className={cn('sticky-first w-full text-sm', !grid.enabled && 'min-w-[900px]')} style={grid.tableStyle}>
                 {grid.colgroup}
-                <GridHead grid={grid} />
+                <GridHead grid={grid} menu={columnMenu} />
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {rows.map((o) => (
                     <tr
