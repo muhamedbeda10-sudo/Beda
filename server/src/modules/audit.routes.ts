@@ -11,11 +11,57 @@ import { parse } from '../lib/validate'
 import { requireCapability, requireUser } from '../auth/middleware'
 import { writeAudit } from '../audit/service'
 import { dropNulls } from '../lib/rows'
+import { columnFilterClauses, columnOrderBy, columnQuerySchema, columnValues, type SqlColumns } from '../lib/columnFilters'
 
 const AUDIT_SELECT = `
   id::text AS id, at, user_id AS "userId", user_name AS "userName", action, entity, entity_id AS "entityId",
   field, old_value AS "oldValue", new_value AS "newValue", order_number AS "orderNumber", item,
   work_center_code AS "workCenterCode", session_id AS "sessionId", sample_id AS "sampleId"`
+
+/** The log's own filters; Excel's column filters and sort ride along. */
+const auditFilterSchema = z
+  .object({
+    q: z.string().trim().max(120).optional(),
+    action: z.enum(AUDIT_ACTIONS).optional(),
+    userName: z.string().trim().max(120).optional(),
+    entity: z.string().trim().max(60).optional(),
+    since: z.string().datetime({ offset: true }).optional(),
+  })
+  .merge(columnQuerySchema)
+
+/** The columns as the log's table shows them: the text a cell reads, and what the time sorts by. */
+function auditColumns(tz: string): SqlColumns {
+  return {
+    at: { text: `to_char(at AT TIME ZONE '${tz.replace(/'/g, "''")}', 'YYYY-MM-DD')`, sort: 'at' },
+    user: { text: 'user_name' },
+    action: { text: 'action::text' },
+    entity: { text: 'entity' },
+    entityId: { text: `COALESCE(entity_id, '')` },
+    field: { text: `COALESCE(field, '')` },
+    oldValue: { text: `COALESCE(old_value, '')` },
+    newValue: { text: `COALESCE(new_value, '')` },
+    order: { text: `COALESCE(order_number, '')` },
+    item: { text: `COALESCE(item, '')` },
+    machine: { text: `COALESCE(work_center_code, '')` },
+  }
+}
+
+/** The WHERE clauses of the log's own filters, over audit_log. */
+function auditWhere(q: z.infer<typeof auditFilterSchema>, p: (v: unknown) => string): string[] {
+  const clauses = ['deleted_at IS NULL']
+  if (q.action) clauses.push(`action = ${p(q.action)}`)
+  if (q.userName) clauses.push(`user_name = ${p(q.userName)}`)
+  if (q.entity) clauses.push(`entity = ${p(q.entity)}`)
+  if (q.since) clauses.push(`at >= ${p(q.since)}::timestamptz`)
+  if (q.q) {
+    // What a person types is text: a typed % is a per-cent sign, not a wildcard.
+    const t = p(`%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
+    clauses.push(`(COALESCE(order_number, '') ILIKE ${t} OR COALESCE(item, '') ILIKE ${t} OR COALESCE(field, '') ILIKE ${t}
+                   OR COALESCE(old_value, '') ILIKE ${t} OR COALESCE(new_value, '') ILIKE ${t}
+                   OR COALESCE(work_center_code, '') ILIKE ${t} OR entity ILIKE ${t} OR user_name ILIKE ${t} OR entity_id ILIKE ${t})`)
+  }
+  return clauses
+}
 
 export function auditRoutes(ctx: AppContext): Router {
   const r = Router()
@@ -29,52 +75,49 @@ export function auditRoutes(ctx: AppContext): Router {
    */
   r.get('/', async (req, res) => {
     const q = parse(
-      z.object({
+      auditFilterSchema.extend({
         limit: z.coerce.number().int().min(1).max(2000).default(200),
         /** The last entry of the page already read: (at, id) of it. */
         before: z.string().datetime({ offset: true }).optional(),
         beforeId: z.string().regex(/^\d+$/).optional(),
-        q: z.string().trim().max(120).optional(),
-        action: z.enum(AUDIT_ACTIONS).optional(),
-        userName: z.string().trim().max(120).optional(),
-        entity: z.string().trim().max(60).optional(),
-        since: z.string().datetime({ offset: true }).optional(),
+        /** With a column sort, pages walk by position instead. */
+        offset: z.coerce.number().int().min(0).max(100000).default(0),
       }),
       req.query,
     )
 
-    const clauses = ['deleted_at IS NULL']
     const params: unknown[] = []
     const p = (v: unknown) => `$${params.push(v)}`
-
-    if (q.action) clauses.push(`action = ${p(q.action)}`)
-    if (q.userName) clauses.push(`user_name = ${p(q.userName)}`)
-    if (q.entity) clauses.push(`entity = ${p(q.entity)}`)
-    if (q.since) clauses.push(`at >= ${p(q.since)}::timestamptz`)
-    if (q.q) {
-      // What a person types is text: a typed % is a per-cent sign, not a wildcard.
-      const t = p(`%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
-      clauses.push(`(COALESCE(order_number, '') ILIKE ${t} OR COALESCE(item, '') ILIKE ${t} OR COALESCE(field, '') ILIKE ${t}
-                     OR COALESCE(old_value, '') ILIKE ${t} OR COALESCE(new_value, '') ILIKE ${t}
-                     OR COALESCE(work_center_code, '') ILIKE ${t} OR entity ILIKE ${t} OR user_name ILIKE ${t} OR entity_id ILIKE ${t})`)
-    }
-
-    const where = clauses.join(' AND ')
+    const columns = auditColumns(ctx.config.FACTORY_TIMEZONE)
+    const where = [...auditWhere(q, p), ...columnFilterClauses(columns, q.cf, p)].join(' AND ')
     const filterParams = [...params]
+    // Newest first, walked back by (at, id); sorted by a column, walked by position.
+    const sorted = !!q.sort
+    const keyset = !sorted && q.before && q.beforeId
     // The cursor is not a filter: the total counts the whole match.
-    const paged = q.before && q.beforeId ? `${where} AND (at, id) < (${p(q.before)}::timestamptz, ${p(q.beforeId)}::bigint)` : where
+    const paged = keyset ? `${where} AND (at, id) < (${p(q.before)}::timestamptz, ${p(q.beforeId)}::bigint)` : where
+    const orderBy = columnOrderBy(columns, q.sort, 'at DESC, id DESC')
     const limit = p(q.limit + 1) // One more than asked for, to know whether older ones remain.
+    const offset = sorted ? ` OFFSET ${p(q.offset)}` : ''
+    const firstPage = sorted ? q.offset === 0 : !keyset
 
     const [page, counted] = await Promise.all([
-      ctx.db.query<AuditEntry>(`SELECT ${AUDIT_SELECT} FROM audit_log WHERE ${paged} ORDER BY at DESC, id DESC LIMIT ${limit}`, params),
-      q.before && q.beforeId
-        ? null
-        : ctx.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM audit_log WHERE ${where}`, filterParams),
+      ctx.db.query<AuditEntry>(`SELECT ${AUDIT_SELECT} FROM audit_log WHERE ${paged} ORDER BY ${orderBy} LIMIT ${limit}${offset}`, params),
+      firstPage ? ctx.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM audit_log WHERE ${where}`, filterParams) : null,
     ])
 
     const body: AuditListResponse = { entries: page.rows.slice(0, q.limit).map(dropNulls), hasMore: page.rows.length > q.limit }
     if (counted) body.total = counted.rows[0].n
     res.json(body)
+  })
+
+  /** One column's values under every other filter, over the whole log, for its Excel menu. */
+  r.get('/values', async (req, res) => {
+    const q = parse(auditFilterSchema.extend({ column: z.string().max(60), search: z.string().max(200).optional() }), req.query)
+    const params: unknown[] = []
+    const p = (v: unknown) => `$${params.push(v)}`
+    const where = auditWhere(q, p)
+    res.json(await columnValues(ctx.db, { columns: auditColumns(ctx.config.FACTORY_TIMEZONE), column: q.column, from: 'FROM audit_log', where, params, filters: q.cf, search: q.search }))
   })
 
   /** §11 — who appears in the log and what they touched, over the whole log,

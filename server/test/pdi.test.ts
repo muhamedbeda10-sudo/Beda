@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
-import type { OrderItemOption, OrderNumberSummary, PDIListResponse, PDIOptionsResponse, PDIWithOrder } from '@qc/shared/api'
+import type { ColumnValuesResponse, OrderItemOption, OrderNumberSummary, PDIListResponse, PDIOptionsResponse, PDIWithOrder } from '@qc/shared/api'
 import type { ProductionOrder } from '@qc/shared/types'
 import { TestApp, type Session } from './harness'
 
@@ -194,5 +194,59 @@ describe('§4 — the PDI list', () => {
   it('offers everyone who recorded one', async () => {
     const res = await app.api<PDIOptionsResponse>('GET', '/api/pdi/options', { token: viewer.token })
     expect(res.body.createdBy.map((c) => c.name)).toEqual(['Admin', 'Inspector One'])
+  })
+
+  describe('Excel\'s column filters, over every PDI', () => {
+    const cf = (filters: object) => `cf=${encodeURIComponent(JSON.stringify(filters))}`
+    const list = (query: string) => app.api<PDIListResponse>('GET', `/api/pdi?${query}`, { token: viewer.token })
+    const values = (query: string) => app.api<ColumnValuesResponse>('GET', `/api/pdi/values?${query}`, { token: viewer.token })
+
+    it('ticks values, leaves some out, and finds a piece of text in any column', async () => {
+      const ticked = await list(cf({ order: { values: ['19868-Ph2.2B-EHF'] } }))
+      expect(ticked.body.total).toBe(2)
+      expect(ticked.body.documents.map((d) => d.notes)).toEqual(['Second delivery', 'First delivery'])
+      const allBut = await list(cf({ order: { except: ['19868-Ph2.2B-EHF'] } }))
+      expect(allBut.body.documents.map((d) => d.notes)).toEqual(['Shuttle beams', 'Frames'])
+      // Every item a PDI covers is in its cell, not only the first.
+      expect((await list(cf({ items: { contains: 'frame b' } }))).body.documents.map((d) => d.notes)).toEqual(['Frames'])
+      expect((await list(cf({ items: { contains: 'upright' }, by: { values: ['Inspector One'] } }))).body.total).toBe(1)
+    })
+
+    it('lists a column\'s values under every other filter, with their counts', async () => {
+      const orders = await values('column=order')
+      expect(orders.status).toBe(200)
+      expect(orders.body.values).toEqual([
+        { value: '19868-Ph2.2B-EHF', count: 2 },
+        { value: '20480-Ph1.4-SMA', count: 1 },
+        { value: '31000-SHARED', count: 1 },
+      ])
+      // The order filter narrows who is listed; the column's own filter does not narrow its own list.
+      const by = await values(`column=by&${cf({ order: { values: ['19868-Ph2.2B-EHF'] }, by: { values: ['Admin'] } })}`)
+      expect(by.body.values).toEqual([
+        { value: 'Admin', count: 1 },
+        { value: 'Inspector One', count: 1 },
+      ])
+      expect((await values('column=customer&search=ta')).body.values.map((v) => v.value)).toEqual(['Beta Storage'])
+    })
+
+    it('sorts by a column and pages by position, counting on the first page only', async () => {
+      const first = await list('sort=customer:asc&limit=2')
+      expect(first.body.documents.map((d) => d.customer)).toEqual(['Alpha Racking', 'Beta Storage'])
+      expect(first.body.total).toBe(4)
+      expect(first.body.hasMore).toBe(true)
+      const next = await list('sort=customer:asc&limit=2&offset=2')
+      expect(next.body.documents.map((d) => d.customer)).toEqual(['Beta Storage', 'Gamma'])
+      expect(next.body.hasMore).toBe(false)
+      expect(next.body.total).toBeUndefined()
+      expect((await list('sort=photos:desc&limit=10')).body.total).toBe(4)
+    })
+
+    it('exports what the column filters let through, and refuses a column it does not have', async () => {
+      const exported = await app.api<PDIWithOrder[]>('GET', `/api/pdi/export?${cf({ customer: { values: ['Gamma'] } })}`, { token: admin.token })
+      expect(exported.body.map((d) => d.notes)).toEqual(['Frames'])
+      expect((await list(cf({ secret: { values: ['x'] } }))).status).toBe(400)
+      expect((await list('sort=secret:asc')).status).toBe(400)
+      expect((await values('column=secret')).status).toBe(400)
+    })
   })
 })

@@ -260,26 +260,32 @@ export function FilterBar({
         {trailing}
         {actions && <div className="flex shrink-0 flex-wrap items-center gap-2 max-md:order-first max-md:w-full md:ml-auto">{actions}</div>}
       </div>
-      {chips.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5" aria-label="Filters in force">
-          {chips.map((c) => (
-            <button
-              key={c.key}
-              type="button"
-              onClick={c.onRemove}
-              aria-label={`Remove the filter ${c.label}`}
-              className="inline-flex h-7 items-center gap-1 rounded-md bg-info-50 px-2 text-xs font-semibold text-info-700 ring-1 ring-inset ring-info-200 hover:bg-info-100 dark:bg-info-500/10 dark:text-info-300 dark:ring-info-500/25 dark:hover:bg-info-500/20"
-            >
-              <span className="max-w-[16rem] truncate">{c.label}</span>
-              <X className="h-3.5 w-3.5" />
-            </button>
-          ))}
-          {chips.length > 1 && (
-            <button type="button" onClick={onReset} className="h-7 rounded-md px-2 text-xs font-semibold text-muted hover:text-slate-700 hover:underline dark:hover:text-slate-200">
-              Clear all
-            </button>
-          )}
-        </div>
+      <FilterChips chips={chips} onReset={onReset} />
+    </div>
+  )
+}
+
+/** The filters in force as removable chips, and Clear all when there are several. */
+export function FilterChips({ chips, onReset }: { chips: FilterChip[]; onReset: () => void }) {
+  if (chips.length === 0) return null
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" aria-label="Filters in force">
+      {chips.map((c) => (
+        <button
+          key={c.key}
+          type="button"
+          onClick={c.onRemove}
+          aria-label={`Remove the filter ${c.label}`}
+          className="inline-flex h-7 items-center gap-1 rounded-md bg-info-50 px-2 text-xs font-semibold text-info-700 ring-1 ring-inset ring-info-200 hover:bg-info-100 dark:bg-info-500/10 dark:text-info-300 dark:ring-info-500/25 dark:hover:bg-info-500/20"
+        >
+          <span className="max-w-[16rem] truncate">{c.label}</span>
+          <X className="h-3.5 w-3.5" />
+        </button>
+      ))}
+      {chips.length > 1 && (
+        <button type="button" onClick={onReset} className="h-7 rounded-md px-2 text-xs font-semibold text-muted hover:text-slate-700 hover:underline dark:hover:text-slate-200">
+          Clear all
+        </button>
       )}
     </div>
   )

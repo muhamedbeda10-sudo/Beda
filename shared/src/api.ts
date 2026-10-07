@@ -803,6 +803,10 @@ export interface CreatePDIRequest {
 
 /** How the PDI list narrows. Every filter is applied in SQL over every PDI on record. */
 export interface PDIListFilters {
+  /** Excel's column filters, as JSON (ColumnFilters). */
+  cf?: string
+  /** The column sorted by: "key:asc" or "key:desc"; pages then walk by `offset`. */
+  sort?: string
   /** Any part of the order number, customer, item, item code, drawing, note or who recorded it. */
   q?: string
   /** Any part of an item code, item name or drawing number. */
@@ -839,6 +843,10 @@ export interface AuditStats {
  * so an entry is found however far back it sits.
  */
 export interface AuditFilters {
+  /** Excel's column filters, as JSON (ColumnFilters). */
+  cf?: string
+  /** The column sorted by: "key:asc" or "key:desc"; pages then walk by `offset`. */
+  sort?: string
   /** Free text: order, item, machine, field, either value, entity or user. */
   q?: string
   action?: AuditAction
@@ -1165,10 +1173,13 @@ export interface OrderSyncFailRequest {
 
 /**
  * One column's filter, as Excel's: the values ticked (absent — every value),
- * and a piece of text the cell must contain. Both, when given, must hold.
+ * or, when only a few are unticked, every value but those (`except`), so a
+ * long list never has to travel whole; and a piece of text the cell must
+ * contain. All, when given, must hold.
  */
 export interface ColumnFilter {
   values?: string[]
+  except?: string[]
   contains?: string
 }
 

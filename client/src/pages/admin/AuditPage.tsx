@@ -3,16 +3,18 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ScrollText, Search, Plus, Pencil, Trash2, RotateCcw, ShieldAlert, Download, Flame } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Input, Modal, Select, Stat } from '@/components/ui'
 import { AdminLayout } from '@/components/admin/AdminLayout'
-import { loadAuditMatches, loadOlderAudit, useAuditList, useAuditOptions, useAuditStats, useDebounced } from '@/services/queries'
+import { loadAuditAt, loadAuditMatches, loadAuditValues, loadOlderAudit, useAuditList, useAuditOptions, useAuditStats, useDebounced } from '@/services/queries'
 import { purgeAudit } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
-import { cn, downloadText } from '@/lib/utils'
+import { cn, downloadText, formatDate } from '@/lib/utils'
 import { AUDIT_ACTIONS, type AuditAction, type AuditEntry } from '@qc/shared/types'
 import type { AuditFilters } from '@qc/shared/api'
 import { When } from '@/components/ui/Tooltip'
+import { useServerColumns } from '@/components/ui/ColumnFilter'
+import { FilterChips } from '@/components/ui/PageShell'
 
 const ACTION_META: Record<AuditAction, { icon: typeof Plus; tone: string; label: string }> = {
   create: { icon: Plus, tone: 'text-emerald-500 bg-emerald-100 dark:bg-emerald-500/15', label: 'Create' },
@@ -29,6 +31,20 @@ const PAGE = 200
 
 /** The most the CSV export takes in one go. */
 const EXPORT_CAP = 2000
+
+/** The log's table: the key the server filters and sorts by, the header, its width, and how its values read. */
+const AUDIT_COLUMNS: { key: string; label: string; width: string; day?: boolean }[] = [
+  { key: 'at', label: 'When', width: 'w-[9.5rem]', day: true },
+  { key: 'user', label: 'User', width: 'w-[9rem]' },
+  { key: 'action', label: 'Action', width: 'w-[8.5rem]' },
+  { key: 'entity', label: 'Entity', width: 'w-[10rem]' },
+  { key: 'field', label: 'Field', width: 'w-[8rem]' },
+  { key: 'oldValue', label: 'Old value', width: '' },
+  { key: 'newValue', label: 'New value', width: '' },
+  { key: 'order', label: 'Order', width: 'w-[10rem]' },
+  { key: 'item', label: 'Item', width: 'w-[11rem]' },
+  { key: 'machine', label: 'Machine', width: 'w-[6.5rem]' },
+]
 
 const RANGES = [
   { label: 'All time', days: 0 },
@@ -57,15 +73,18 @@ export function AuditPage() {
   // Every filter goes to the API, which applies it over the whole log — an
   // entry from last season is found as readily as one from this morning.
   const settledTerm = useDebounced(term.trim(), 300)
+  const columnsView = useServerColumns()
   const filters = useMemo<AuditFilters>(() => {
     const f: AuditFilters = {}
+    if (columnsView.cf) f.cf = columnsView.cf
+    if (columnsView.sortParam) f.sort = columnsView.sortParam
     if (settledTerm) f.q = settledTerm
     if (action !== 'all') f.action = action
     if (user !== 'all') f.userName = user
     if (entity !== 'all') f.entity = entity
     if (days > 0) f.since = new Date(Date.now() - days * 86400000).toISOString()
     return f
-  }, [settledTerm, action, user, entity, days])
+  }, [settledTerm, action, user, entity, days, columnsView.cf, columnsView.sortParam])
 
   const { data, isLoading, isFetching } = useAuditList(filters, PAGE)
   const { data: options } = useAuditOptions()
@@ -98,7 +117,8 @@ export function AuditPage() {
     if (!last || loadingOlder) return
     setLoadingOlder(true)
     try {
-      const page = await loadOlderAudit(filters, last.at, last.id)
+      // Sorted by a column, the next page is the next position; otherwise the entries older than the last one.
+      const page = filters.sort ? await loadAuditAt(filters, rows.length, PAGE) : await loadOlderAudit(filters, last.at, last.id)
       setOlder((prev) => [...prev, ...page.entries])
       setOlderHasMore(page.hasMore)
     } catch (e) {
@@ -109,6 +129,15 @@ export function AuditPage() {
   }
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id))
+  const canPurge = can(role, 'purge-audit-logs')
+  const toggleOne = (id: string) =>
+    setSelected((s) => {
+      const n = new Set(s)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  const columnChips = columnsView.chips((key) => AUDIT_COLUMNS.find((c) => c.key === key)?.label ?? key)
 
   function toggleAll() {
     setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)))
@@ -220,8 +249,9 @@ export function AuditPage() {
             : `${matched} of ${totalEvents} events match. ${rows.length} on screen.`}
           {isFetching && !isLoading && ' Searching the whole log…'}
         </p>
-        {can(role, 'purge-audit-logs') && rows.length > 0 && (
-          <label className="flex min-h-[44px] cursor-pointer items-center gap-2 text-sm font-semibold text-slate-600 dark:text-slate-300">
+        <FilterChips chips={columnChips} onReset={columnsView.clear} />
+        {canPurge && rows.length > 0 && (
+          <label className="flex min-h-[44px] cursor-pointer items-center gap-2 text-sm font-semibold text-slate-600 md:hidden dark:text-slate-300">
             <input type="checkbox" checked={allSelected} onChange={toggleAll} className="h-5 w-5 rounded accent-brand-600" />
             Select all {rows.length} shown
           </label>
@@ -233,61 +263,136 @@ export function AuditPage() {
       ) : rows.length === 0 ? (
         <EmptyState icon={<ScrollText className="h-10 w-10" />} title="No matching activity" hint="Nothing in the whole log matches these filters." />
       ) : (
-        <Card className="divide-y divide-slate-100 dark:divide-slate-800">
-          {rows.map((e) => {
-            const meta = ACTION_META[e.action] ?? ACTION_META.update
-            const Icon = meta.icon
-            return (
-              <div key={e.id} className="flex items-start gap-3 px-4 py-3">
-                {can(role, 'purge-audit-logs') && (
-                  <input
-                    type="checkbox"
-                    checked={selected.has(e.id)}
-                    onChange={() =>
-                      setSelected((s) => {
-                        const n = new Set(s)
-                        n.has(e.id) ? n.delete(e.id) : n.add(e.id)
-                        return n
-                      })
-                    }
-                    className="mt-2 h-5 w-5 shrink-0 rounded accent-brand-600"
-                    aria-label="Select entry"
-                  />
-                )}
-                <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl', meta.tone)}>
-                  <Icon className="h-4 w-4" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold">
-                    {meta.label} · <span className="text-muted">{e.entity}</span>
-                    {e.field && <span className="text-brand-600 dark:text-brand-400"> · {e.field}</span>}
-                  </p>
-                  {(e.oldValue || e.newValue) && (
-                    <p dir="auto" className="mt-0.5 break-words text-sm">
-                      <span className="text-rose-600 line-through dark:text-rose-400">{e.oldValue || '(empty)'}</span>
-                      {' → '}
-                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">{e.newValue || '(empty)'}</span>
-                    </p>
+        <>
+          {/* Phone: one card per entry. */}
+          <Card className="divide-y divide-slate-100 md:hidden dark:divide-slate-800">
+            {rows.map((e) => {
+              const meta = ACTION_META[e.action] ?? ACTION_META.update
+              const Icon = meta.icon
+              return (
+                <div key={e.id} className="flex items-start gap-3 px-4 py-3">
+                  {canPurge && (
+                    <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleOne(e.id)} className="mt-2 h-5 w-5 shrink-0 rounded accent-brand-600" aria-label="Select entry" />
                   )}
-                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-                    <span className="font-medium text-muted">{e.userName}</span>
-                    {e.orderNumber && <Badge tone="neutral">{e.orderNumber}</Badge>}
-                    {e.item && <span>{e.item}</span>}
-                    {e.workCenterCode && <span>Machine {e.workCenterCode}</span>}
+                  <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl', meta.tone)}>
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold">
+                      {meta.label} · <span className="text-muted">{e.entity}</span>
+                      {e.field && <span className="text-brand-600 dark:text-brand-400"> · {e.field}</span>}
+                    </p>
+                    {(e.oldValue || e.newValue) && (
+                      <p dir="auto" className="mt-0.5 break-words text-sm">
+                        <span className="text-rose-600 line-through dark:text-rose-400">{e.oldValue || '(empty)'}</span>
+                        {' → '}
+                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">{e.newValue || '(empty)'}</span>
+                      </p>
+                    )}
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                      <span className="font-medium text-muted">{e.userName}</span>
+                      {e.orderNumber && <Badge tone="neutral">{e.orderNumber}</Badge>}
+                      {e.item && <span>{e.item}</span>}
+                      {e.workCenterCode && <span>Machine {e.workCenterCode}</span>}
+                    </div>
                   </div>
+                  <span className="shrink-0 whitespace-nowrap text-xs text-muted">
+                    <When iso={e.at} time />
+                  </span>
                 </div>
-                <span className="shrink-0 whitespace-nowrap text-xs text-muted"><When iso={e.at} time /></span>
-              </div>
-            )
-          })}
+              )
+            })}
+          </Card>
+
+          {/* md+: the log as a table, one line per entry, each header with Excel's sort and filter over the whole log. */}
+          <Card className="hidden overflow-x-auto md:block">
+            <table className="w-full min-w-[1100px] table-fixed text-sm">
+              <colgroup>
+                {canPurge && <col className="w-10" />}
+                {AUDIT_COLUMNS.map((c) => (
+                  <col key={c.key} className={c.width} />
+                ))}
+              </colgroup>
+              <thead className="bg-slate-50 dark:bg-slate-800/60">
+                <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
+                  {canPurge && (
+                    <th className="px-3 py-2">
+                      <input type="checkbox" checked={allSelected} onChange={toggleAll} className="h-4 w-4 rounded accent-brand-600" aria-label={`Select all ${rows.length} shown`} />
+                    </th>
+                  )}
+                  {AUDIT_COLUMNS.map((c) => (
+                    <th key={c.key} className="px-3 py-2 font-semibold">
+                      <span className="inline-flex max-w-full items-center gap-1">
+                        <span className="truncate">{c.label}</span>
+                        {columnsView.menu(c.key, c.label, (search) => loadAuditValues(filters, c.key, search), {
+                          numeric: c.day,
+                          formatValue: c.day ? (v) => formatDate(v) : c.key === 'action' ? (v) => ACTION_META[v as AuditAction]?.label ?? v : undefined,
+                        })}
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {rows.map((e) => {
+                  const meta = ACTION_META[e.action] ?? ACTION_META.update
+                  const Icon = meta.icon
+                  const cell = 'truncate px-3'
+                  return (
+                    <tr key={e.id} className={cn('data-row', selected.has(e.id) && 'bg-brand-50/60 dark:bg-brand-500/10')}>
+                      {canPurge && (
+                        <td className="px-3">
+                          <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleOne(e.id)} className="h-4 w-4 rounded accent-brand-600" aria-label="Select entry" />
+                        </td>
+                      )}
+                      <td className="whitespace-nowrap px-3 tabular-nums text-muted">
+                        <When iso={e.at} time />
+                      </td>
+                      <td className={cn(cell, 'font-medium')} data-tip={e.userName} dir="auto">
+                        {e.userName}
+                      </td>
+                      <td className="px-3">
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className={cn('grid h-6 w-6 shrink-0 place-items-center rounded-lg', meta.tone)}>
+                            <Icon className="h-3.5 w-3.5" />
+                          </span>
+                          {meta.label}
+                        </span>
+                      </td>
+                      <td className={cn(cell, 'text-muted')} data-tip={e.entityId ? `${e.entity} · ${e.entityId}` : e.entity}>
+                        {e.entity}
+                      </td>
+                      <td className={cn(cell, 'text-brand-600 dark:text-brand-400')} data-tip={e.field || undefined}>
+                        {e.field ?? ''}
+                      </td>
+                      <td className={cn(cell, 'text-rose-600 dark:text-rose-400')} data-tip={e.oldValue || undefined} dir="auto">
+                        {e.oldValue ?? ''}
+                      </td>
+                      <td className={cn(cell, 'font-semibold text-emerald-600 dark:text-emerald-400')} data-tip={e.newValue || undefined} dir="auto">
+                        {e.newValue ?? ''}
+                      </td>
+                      <td className={cell} data-tip={e.orderNumber || undefined}>
+                        {e.orderNumber ?? ''}
+                      </td>
+                      <td className={cn(cell, 'text-muted')} data-tip={e.item || undefined} dir="auto">
+                        {e.item ?? ''}
+                      </td>
+                      <td className={cn(cell, 'text-muted')}>{e.workCenterCode ?? ''}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </Card>
+
           {hasMore && (
-            <div className="flex justify-center px-4 py-3">
+            <div className="flex justify-center">
               <Button className="min-h-[48px]" onClick={() => void showOlder()} disabled={loadingOlder}>
-                {loadingOlder ? 'Loading…' : 'Show older entries'}
+                {loadingOlder ? 'Loading…' : filters.sort ? 'Show more entries' : 'Show older entries'}
               </Button>
             </div>
           )}
-        </Card>
+        </>
       )}
 
       <Modal
