@@ -1152,3 +1152,34 @@ export interface OrderSyncFinishRequest {
 export interface OrderSyncFailRequest {
   message: string
 }
+
+// ---- Excel-like column filters (every table) --------------------------------
+
+/**
+ * One column's filter, as Excel's: the values ticked (absent — every value),
+ * and a piece of text the cell must contain. Both, when given, must hold.
+ */
+export interface ColumnFilter {
+  values?: string[]
+  contains?: string
+}
+
+/** The filters on a table's columns, by column key. */
+export type ColumnFilters = Record<string, ColumnFilter>
+
+/** The column a table is sorted by, and which way. */
+export interface ColumnSort {
+  key: string
+  dir: 'asc' | 'desc'
+}
+
+/** The values a column holds under the table's other filters, with how many rows carry each. */
+export interface ColumnValuesResponse {
+  values: { value: string; count: number }[]
+  /** More values exist than were sent: the search narrows them. */
+  truncated: boolean
+}
+
+/** The most distinct values one column's list sends at a time. */
+export const COLUMN_VALUES_LIMIT = 500
+

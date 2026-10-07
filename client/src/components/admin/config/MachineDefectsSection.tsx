@@ -41,6 +41,7 @@ export function MachineDefectsSection() {
         {
           key: 'name',
           label: 'Defect name',
+          text: (r) => r.defectName,
           render: (r) => (
             <span dir="auto" className="font-semibold">
               {r.defectName}
@@ -50,6 +51,7 @@ export function MachineDefectsSection() {
         {
           key: 'wc',
           label: 'Machine',
+          text: (r) => r.workCenterCode,
           render: (r) => <Badge tone="neutral">{r.workCenterCode}</Badge>,
         },
       ]}

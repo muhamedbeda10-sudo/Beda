@@ -10,6 +10,7 @@ import { Search } from 'lucide-react'
 import type { KpiDrillQuery, KpiDrillSession, KpiFirstPartDrillQuery } from '@qc/shared/kpi'
 import { KPI_DRILL_LIMIT } from '@qc/shared/kpi'
 import { Modal } from '@/components/ui'
+import { FilterNote, FilterTh, useColumnFilters } from '@/components/dashboard/filters'
 import { useFirstPartDrill, useKpiDrill } from '@/services/queries'
 import { formatDateTime } from '@/lib/utils'
 import { sessionDetailPath } from '@/lib/links'
@@ -62,6 +63,13 @@ export function DrillModal({ spec, onClose }: { spec: DrillSpec | null; onClose:
   // A slice that is one defect already says which; otherwise each line names its defects.
   const showDefects = !!spec?.query && !spec.query.defect
   const what = spec?.firstPart ? 'rejected before release' : 'rejected'
+  const filters = useColumnFilters(rows, [
+    { key: 'order', value: (r) => r.orderNumber },
+    { key: 'item', value: (r) => `${r.item}${r.itemCode ? ` ${r.itemCode}` : ''}` },
+    { key: 'machine', value: (r) => r.machine },
+    { key: 'defects', value: (r) => r.defects.map((d) => d.defectName).join(', ') },
+    { key: 'pieces', value: (r) => `${num(r.pieces)} pcs`, numeric: true },
+  ])
   if (!spec) return null
   return (
     <Modal open onClose={onClose} title={spec.title} icon={<Search className="h-5 w-5" />} size="xl">
@@ -83,16 +91,16 @@ export function DrillModal({ spec, onClose }: { spec: DrillSpec | null; onClose:
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
                   <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-                    <th className="px-2 py-1.5 font-semibold">Order</th>
-                    <th className="px-2 py-1.5 font-semibold">Item</th>
-                    <th className="px-2 py-1.5 font-semibold">Machine</th>
-                    {showDefects && <th className="px-2 py-1.5 font-semibold">Defects</th>}
-                    <th className="px-2 py-1.5 text-right font-semibold">{spec.firstPart ? 'Rejected before' : 'Rejected'}</th>
+                    <FilterTh filters={filters} column="order" label="Order" />
+                    <FilterTh filters={filters} column="item" label="Item" />
+                    <FilterTh filters={filters} column="machine" label="Machine" />
+                    {showDefects && <FilterTh filters={filters} column="defects" label="Defects" />}
+                    <FilterTh filters={filters} column="pieces" label={spec.firstPart ? 'Rejected before' : 'Rejected'} className="text-right" />
                     <th className="px-2 py-1.5 text-right font-semibold">Open</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {rows.map((r) => (
+                  {filters.rows.map((r) => (
                     <tr key={r.key} className="align-top">
                       <td className="whitespace-nowrap px-2 py-1.5 font-semibold">{r.orderNumber}</td>
                       <td className="px-2 py-1.5" dir="auto">
@@ -126,6 +134,7 @@ export function DrillModal({ spec, onClose }: { spec: DrillSpec | null; onClose:
                   ))}
                 </tbody>
               </table>
+              <FilterNote filters={filters} total={rows.length} />
             </div>
           </>
         )}

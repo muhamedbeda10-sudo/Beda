@@ -54,12 +54,14 @@ export function ReferenceImagesSection() {
         {
           key: 'machine',
           label: 'Machine',
+          text: (r) => r.workCenterCode || 'every machine',
           render: (r) => (r.workCenterCode ? <Badge tone="blue">{r.workCenterCode}</Badge> : <span className="text-muted">every machine</span>),
         },
-        { key: 'caption', label: 'Caption', render: (r) => <span dir="auto">{r.caption || '—'}</span> },
+        { key: 'caption', label: 'Caption', text: (r) => r.caption || '—', render: (r) => <span dir="auto">{r.caption || '—'}</span> },
         {
           key: 'image',
           label: 'Image',
+          filterable: false,
           render: (r) => (
             <ImagePicker imageIds={r.imageId ? [r.imageId] : []} onChange={() => undefined} readOnly />
           ),

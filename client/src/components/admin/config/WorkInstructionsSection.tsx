@@ -24,6 +24,7 @@ import {
   type WorkInstructionStep,
 } from '@qc/shared/types'
 import { When } from '@/components/ui/Tooltip'
+import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 
 interface UploadDraft {
   code: string
@@ -66,6 +67,14 @@ export function WorkInstructionsSection() {
       ),
     [rows],
   )
+  const view = useTableView(sorted, [
+    { key: 'code', value: (w) => w.code },
+    { key: 'title', value: (w) => w.title },
+    { key: 'issue', value: (w) => w.issueNo || '—' },
+    { key: 'scope', value: (w) => SCOPE_LABEL[w.process] },
+    { key: 'step', value: (w) => WORK_INSTRUCTION_STEP_LABEL[w.step] },
+    { key: 'file', value: (w) => w.uploadedByName, noValues: false },
+  ])
 
   async function submitUpload() {
     if (!upload) return
@@ -160,17 +169,17 @@ export function WorkInstructionsSection() {
             <table className="w-full min-w-[60rem] text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
                 <tr>
-                  <th className="px-3 py-2.5 font-bold">Code</th>
-                  <th className="px-3 py-2.5 font-bold">Title</th>
-                  <th className="px-3 py-2.5 font-bold">Issue</th>
-                  <th className="px-3 py-2.5 font-bold">Applies to</th>
-                  <th className="px-3 py-2.5 font-bold">Step</th>
-                  <th className="px-3 py-2.5 font-bold">File</th>
+                  <ViewTh view={view} column="code" label="Code" className="px-3 py-2.5 font-bold" />
+                  <ViewTh view={view} column="title" label="Title" className="px-3 py-2.5 font-bold" />
+                  <ViewTh view={view} column="issue" label="Issue" className="px-3 py-2.5 font-bold" />
+                  <ViewTh view={view} column="scope" label="Applies to" className="px-3 py-2.5 font-bold" />
+                  <ViewTh view={view} column="step" label="Step" className="px-3 py-2.5 font-bold" />
+                  <ViewTh view={view} column="file" label="File" className="px-3 py-2.5 font-bold" />
                   <th className="px-3 py-2.5 text-right font-bold">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {sorted.map((w) => {
+                {view.rows.map((w) => {
                   const superseded = !!w.supersededAt
                   return (
                     <tr key={w.id} className={superseded ? 'opacity-60' : 'hover:bg-slate-50/70 dark:hover:bg-slate-800/40'}>

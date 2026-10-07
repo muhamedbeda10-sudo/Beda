@@ -12,6 +12,7 @@ import { HISTORY_GROUP_LIMIT } from '@qc/shared/api'
 import { Modal } from '@/components/ui'
 import { useHistoryGroup } from '@/services/queries'
 import { cn, formatDateTime } from '@/lib/utils'
+import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 
 export interface GroupSpec {
   title: string
@@ -66,6 +67,15 @@ function byLine(sessions: HistoryGroupSession[]): LineRow[] {
 export function SessionGroupModal({ spec, onClose, onOpenSession, footer }: { spec: GroupSpec | null; onClose: () => void; onOpenSession: (sessionId: string) => void; footer?: ReactNode }) {
   const { data, isLoading, error } = useHistoryGroup(spec?.query ?? null)
   const rows = useMemo(() => byLine(data?.sessions ?? []), [data])
+  const view = useTableView(rows, [
+    { key: 'order', value: (r) => r.orderNumber },
+    { key: 'item', value: (r) => `${r.item}${r.itemCode ? ` ${r.itemCode}` : ''}` },
+    { key: 'machine', value: (r) => r.machine },
+    { key: 'inspected', value: (r) => num(r.inspected), sortValue: (r) => r.inspected, numeric: true },
+    { key: 'defectPieces', value: (r) => num(r.defectPieces), sortValue: (r) => r.defectPieces, numeric: true },
+    { key: 'defects', value: (r) => r.defects.map((d) => d.defectName).join(', ') || '—' },
+    { key: 'sessions', value: (r) => String(r.sessions.length), sortValue: (r) => r.sessions.length, numeric: true },
+  ])
   if (!spec) return null
   const inspected = rows.reduce((n, r) => n + r.inspected, 0)
   const defectPieces = rows.reduce((n, r) => n + r.defectPieces, 0)
@@ -91,17 +101,17 @@ export function SessionGroupModal({ spec, onClose, onOpenSession, footer }: { sp
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
                   <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-                    <th className="px-2 py-1.5 font-semibold">Order</th>
-                    <th className="px-2 py-1.5 font-semibold">Item</th>
-                    <th className="px-2 py-1.5 font-semibold">Machine</th>
-                    <th className="px-2 py-1.5 text-right font-semibold">Inspected</th>
-                    <th className="px-2 py-1.5 text-right font-semibold">Defect pcs</th>
-                    <th className="px-2 py-1.5 font-semibold">Defects</th>
-                    <th className="px-2 py-1.5 text-right font-semibold">Sessions</th>
+                    <ViewTh view={view} column="order" label="Order" className="px-2 py-1.5 font-semibold" />
+                    <ViewTh view={view} column="item" label="Item" className="px-2 py-1.5 font-semibold" />
+                    <ViewTh view={view} column="machine" label="Machine" className="px-2 py-1.5 font-semibold" />
+                    <ViewTh view={view} column="inspected" label="Inspected" className="px-2 py-1.5 text-right font-semibold" />
+                    <ViewTh view={view} column="defectPieces" label="Defect pcs" className="px-2 py-1.5 text-right font-semibold" />
+                    <ViewTh view={view} column="defects" label="Defects" className="px-2 py-1.5 font-semibold" />
+                    <ViewTh view={view} column="sessions" label="Sessions" className="px-2 py-1.5 text-right font-semibold" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {rows.map((r) => (
+                  {view.rows.map((r) => (
                     <tr key={r.key} className="align-top">
                       <td className="whitespace-nowrap px-2 py-1.5 font-semibold">{r.orderNumber}</td>
                       <td className="px-2 py-1.5" dir="auto">

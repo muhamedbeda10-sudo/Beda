@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-07.1',
+    date: '2026-10-07',
+    title: 'Filter and sort any column, as in Excel',
+    items: [
+      { text: 'Every column title has a small arrow. It opens Excel\'s menu: Sort A → Z or Z → A (smallest or largest first for figures and dates), Text contains, and the column\'s values to tick, searchable, with (Select all) and how many rows carry each. Nothing changes until OK; Clear filter shows them all again.' },
+      { text: 'Now on the dashboard\'s tables, the Inspections table view, Recently closed, the sessions behind a figure or a group, and the administration tables (Configuration, Users, Access sync runs, Work instructions, who read a notice). History, Access, PDI and the Audit log follow, filtering the whole record rather than the page on screen.' },
+    ],
+  },
+  {
     id: '2026-10-06.93',
     date: '2026-10-06',
     title: 'Universal machines: up to three stages at once',

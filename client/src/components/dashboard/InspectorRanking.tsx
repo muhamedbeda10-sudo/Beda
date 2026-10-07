@@ -13,6 +13,7 @@ import { useState } from 'react'
 import { Award, ChevronRight, Info, Medal, Trophy } from 'lucide-react'
 import type { KpiInspectorGroup, KpiInspectorRank, KpiInspectorRanking } from '@qc/shared/kpi'
 import { Badge, Card } from '@/components/ui'
+import { FilterNote, FilterTh, useColumnFilters } from '@/components/dashboard/filters'
 import { cn } from '@/lib/utils'
 
 const num = (n: number | null | undefined, digits = 0) =>
@@ -82,28 +83,36 @@ function Podium({ rows, onPick }: { rows: KpiInspectorRank[]; onPick: (id: strin
 }
 
 function RankTable({ rows, onPick }: { rows: KpiInspectorRank[]; onPick: (id: string) => void }) {
+  const filters = useColumnFilters(rows, [
+    { key: 'rank', value: (r) => String(r.rank), numeric: true },
+    { key: 'name', value: (r) => r.name },
+    { key: 'score', value: (r) => num(r.score, 1), numeric: true },
+    ...PARTS.map((p) => ({ key: p.key, value: (r: KpiInspectorRank) => num(r[p.key] as number), numeric: true })),
+    { key: 'samples', value: (r) => num(r.samples), numeric: true },
+    { key: 'perDay', value: (r) => num(r.samplesPerActiveDay, 1), numeric: true },
+    { key: 'dims', value: (r) => (r.dimensionCompletionPct === null ? '—' : `${num(r.dimensionCompletionPct, 1)}%`), numeric: true },
+    { key: 'corrections', value: (r) => num(r.correctionsPer100Samples, 1), numeric: true },
+  ])
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-            <th className="px-2 py-1.5 font-semibold">#</th>
-            <th className="px-2 py-1.5 font-semibold">Inspector</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Score</th>
+            <FilterTh filters={filters} column="rank" label="#" />
+            <FilterTh filters={filters} column="name" label="Inspector" />
+            <FilterTh filters={filters} column="score" label="Score" className="text-right" />
             {PARTS.map((p) => (
-              <th key={p.key} className="px-2 py-1.5 text-right font-semibold">
-                {p.label}
-              </th>
+              <FilterTh key={p.key} filters={filters} column={p.key} label={p.label} className="text-right" />
             ))}
-            <th className="px-2 py-1.5 text-right font-semibold">Samples</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Per day</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Dims measured</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Corrections /100</th>
+            <FilterTh filters={filters} column="samples" label="Samples" className="text-right" />
+            <FilterTh filters={filters} column="perDay" label="Per day" className="text-right" />
+            <FilterTh filters={filters} column="dims" label="Dims measured" className="text-right" />
+            <FilterTh filters={filters} column="corrections" label="Corrections /100" className="text-right" />
             <th className="print-hidden px-2 py-1.5" />
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-          {rows.map((r) => (
+          {filters.rows.map((r) => (
             <tr
               key={r.inspectorId}
               onClick={() => onPick(r.inspectorId)}
@@ -128,6 +137,7 @@ function RankTable({ rows, onPick }: { rows: KpiInspectorRank[]; onPick: (id: st
           ))}
         </tbody>
       </table>
+      <FilterNote filters={filters} total={rows.length} />
     </div>
   )
 }

@@ -15,6 +15,7 @@ import { useAuth } from '@/store/AuthContext'
 import { isStockOrder, sessionTone } from '@/domain'
 import { sessionDetailPath } from '@/lib/links'
 import { cn, dayInTimeZone, formatFullTimestamp, formatTime } from '@/lib/utils'
+import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 import type { HistoryFilters } from '@qc/shared/api'
 
 /** The most the panel lists; the rest are a click away in History. */
@@ -39,7 +40,18 @@ export function RecentlyClosed({ machineName }: { machineName: (code: string) =>
         .sort((a, b) => ((a.closedAt ?? '') < (b.closedAt ?? '') ? 1 : -1)),
     [data, factoryTimeZone, today],
   )
-  const shown = closed.slice(0, SHOWN)
+  // Excel's sort and filter on every column; while one is set the whole day shows, not only the latest.
+  const view = useTableView(closed, [
+    { key: 'closed', value: (r) => formatTime(r.closedAt), sortValue: (r) => (r.closedAt ? Date.parse(r.closedAt) : null), numeric: true },
+    { key: 'order', value: (r) => `${isStockOrder(r.order) ? 'For stock' : (r.order?.orderNumber ?? '—')} #${r.seq}` },
+    { key: 'item', value: (r) => r.order?.item || '—' },
+    { key: 'machine', value: (r) => machineName(r.workCenterCode) },
+    { key: 'inspector', value: (r) => r.inspectorName },
+    { key: 'signal', value: (r) => ((r.holdCount ?? 0) > 0 ? 'On Hold' : (r.defectCount ?? 0) > 0 ? `${r.defectCount} defects` : r.priorDefectsElsewhere ? 'Defects before' : '—') },
+    { key: 'final', value: (r) => (r.finalQty === undefined ? '—' : String(r.finalQty)), sortValue: (r) => r.finalQty ?? null, numeric: true },
+  ])
+  const narrowed = view.active > 0 || view.sort !== null
+  const shown = narrowed ? view.rows : view.rows.slice(0, SHOWN)
 
   return (
     <section aria-labelledby="recently-closed-title" className="space-y-2">
@@ -65,13 +77,13 @@ export function RecentlyClosed({ machineName }: { machineName: (code: string) =>
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-muted dark:bg-slate-800/60">
                 <tr>
-                  <th className="px-3 py-2">Closed</th>
-                  <th className="px-3 py-2">Order</th>
-                  <th className="hidden px-3 py-2 md:table-cell">Item</th>
-                  <th className="hidden px-3 py-2 sm:table-cell">Machine</th>
-                  <th className="hidden px-3 py-2 lg:table-cell">Inspector</th>
-                  <th className="px-3 py-2">Signal</th>
-                  <th className="px-3 py-2 text-right">Final qty</th>
+                  <ViewTh view={view} column="closed" label="Closed" className="px-3 py-2" />
+                  <ViewTh view={view} column="order" label="Order" className="px-3 py-2" />
+                  <ViewTh view={view} column="item" label="Item" className="px-3 py-2 hidden md:table-cell" />
+                  <ViewTh view={view} column="machine" label="Machine" className="px-3 py-2 hidden sm:table-cell" />
+                  <ViewTh view={view} column="inspector" label="Inspector" className="px-3 py-2 hidden lg:table-cell" />
+                  <ViewTh view={view} column="signal" label="Signal" className="px-3 py-2" />
+                  <ViewTh view={view} column="final" label="Final qty" className="px-3 py-2 text-right" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -113,7 +125,8 @@ export function RecentlyClosed({ machineName }: { machineName: (code: string) =>
               </tbody>
             </table>
           </div>
-          {closed.length > SHOWN && (
+          <ViewNote view={view} total={closed.length} className="border-t border-slate-100 dark:border-slate-800" />
+          {!narrowed && closed.length > SHOWN && (
             <Link to="/history" className="flex min-h-[40px] items-center justify-center gap-1 border-t border-slate-100 text-13 font-semibold text-brand-600 hover:bg-slate-50 dark:border-slate-800 dark:text-brand-400 dark:hover:bg-slate-800/50">
               {closed.length - SHOWN} more closed today, in History <ChevronRight className="h-3.5 w-3.5" />
             </Link>
