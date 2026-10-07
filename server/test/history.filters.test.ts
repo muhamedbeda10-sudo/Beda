@@ -237,3 +237,53 @@ describe('§6 — a filter reaches past the first page', () => {
     expect((await get('since=yesterday', one.token)).status).toBe(400)
   })
 })
+
+describe('§6 — Excel’s column filter and sort on History, over the whole record', () => {
+  const cf = (filters: object) => `cf=${encodeURIComponent(JSON.stringify(filters))}`
+  type Values = { values: { value: string; count: number }[]; truncated: boolean }
+  const values = (query: string) => app.api<Values>('GET', `/api/sessions/history/values?${query}`, { token: one.token })
+
+  it('keeps the values ticked in a column and counts the whole match', async () => {
+    const res = await get(cf({ machine: { values: ['STAM 24-Stamping-LM5'] } }), one.token)
+    expect(res.body.sessions.map((s) => s.id)).toEqual([buried])
+    expect(res.body.totals).toEqual({ sessions: 1, open: 1 })
+    const closed = await get(cf({ status: { values: ['Closed'] } }), one.token)
+    expect(closed.body.totals).toEqual({ sessions: 1, open: 0 })
+  })
+
+  it('keeps the rows whose cell contains a text, with the other filters', async () => {
+    const res = await get(`factory=Plant%20A&${cf({ customer: { contains: 'rehab' }, seq: { values: ['#3', '#4'] } })}`, one.token)
+    expect(res.body.sessions.map((s) => s.seq).sort()).toEqual([3, 4])
+  })
+
+  it('sorts by a column and walks the pages by count', async () => {
+    const first = await get('sort=seq:asc', one.token)
+    // The panel's session is #1 of its own line, as is the beam's first: both lead.
+    expect(first.body.sessions.slice(0, 2).map((s) => s.seq)).toEqual([1, 1])
+    expect(first.body.hasMore).toBe(true)
+    const next = await get('sort=seq:asc&offset=5', one.token)
+    expect(next.body.sessions.map((s) => s.seq)).toEqual([5, 6, 7, 8, 9])
+    expect(next.body.totals).toBeUndefined()
+    const byInspector = await get('sort=inspector:desc', one.token)
+    expect(byInspector.body.sessions[0].inspectorName).toBe('Mostafa Zaki')
+  })
+
+  it("lists a column's values under the other filters, counted, searched", async () => {
+    const inspectors = await values('column=inspector')
+    expect(inspectors.status).toBe(200)
+    expect(inspectors.body.values).toEqual([
+      { value: 'Hany Fathy', count: RECENT },
+      { value: 'Mostafa Zaki', count: 1 },
+    ])
+    const underFactory = await values('column=inspector&factory=Plant%20B')
+    expect(underFactory.body.values).toEqual([{ value: 'Mostafa Zaki', count: 1 }])
+    const seqs = await values('column=seq&search=1')
+    expect(seqs.body.values.map((v) => v.value)).toEqual(['#1', '#10', '#11', '#12'])
+  })
+
+  it('refuses a column it does not have', async () => {
+    expect((await get(cf({ password: { contains: 'x' } }), one.token)).status).toBe(400)
+    expect((await get('sort=password:asc', one.token)).status).toBe(400)
+    expect((await values('column=password')).status).toBe(400)
+  })
+})

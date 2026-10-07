@@ -596,6 +596,10 @@ export interface SessionImagesResponse {
  * thousand rows down is still found.
  */
 export interface HistoryFilters {
+  /** Excel's column filters, as JSON (ColumnFilters). */
+  cf?: string
+  /** The column sorted by: "key:asc" or "key:desc"; pages then walk by `offset`. */
+  sort?: string
   /** Free text: order number, item, item code, customer, inspector, machine,
    *  or the session's own number (`#12`). */
   q?: string

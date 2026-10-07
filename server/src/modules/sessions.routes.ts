@@ -41,6 +41,7 @@ import {
   stagesProblem,
   topStageQty,
   takesConfiguredDimensions,
+  PT_MIN_TEST_FREQUENCY_PCT,
 } from '@qc/shared/rules'
 import { instructionsInForce } from './workInstructions.routes'
 import type {
@@ -74,6 +75,8 @@ import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
 import { ConflictError, badRequest, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
+import { columnFilterClauses, columnOrderBy, columnQuerySchema, columnValues, type SqlColumns } from '../lib/columnFilters'
+import type { ColumnFilters } from '@qc/shared/api'
 import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
 import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
 import { auditEvent } from '@qc/shared/audit'
@@ -384,43 +387,64 @@ export function sessionsRoutes(ctx: AppContext): Router {
   r.get('/history', async (req, res) => {
     requireUser(req)
     const q = parse(
-      historyFilterSchema.extend({
+      historyFilterSchema.merge(columnQuerySchema).extend({
         limit: z.coerce.number().int().min(1).max(500).default(100),
         /** Sessions started before this instant: the end of the page already read. */
         before: z.string().datetime({ offset: true }).optional(),
+        /** Sorted by a column, the pages walk by count instead. */
+        offset: z.coerce.number().int().min(0).max(100000).default(0),
       }),
       req.query,
     )
-    const { where, params } = historyWhere(q, ctx.config.FACTORY_TIMEZONE)
+    const tz = ctx.config.FACTORY_TIMEZONE
+    const base = historyWhere(q, tz)
+    const params = base.params
     const p = (v: unknown) => `$${params.push(v)}`
+    const columnClause = historyColumnClause(base.where, q.cf, tz, p)
+    const where = columnClause ? `${base.where} AND ${columnClause}` : base.where
     const filterParams = [...params]
-    // The cursor is not a filter: the totals below count the whole match, and
-    // only the page walks back from where the last one ended.
-    const paged = q.before ? `${where} AND s.started_at < ${p(q.before)}::timestamptz` : where
     const limit = p(q.limit + 1) // One more than asked for, so the page knows whether older ones remain.
 
-    const page = db.query<SessionRow & OrderSummaryRow>(
-      `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
-         FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
-        WHERE ${paged}
-        ORDER BY s.started_at DESC, s.seq DESC LIMIT ${limit}`,
-      params,
-    )
-    // How many match in total, counted once: the first page carries it, and
-    // walking back does not change it.
-    const totals = q.before
-      ? null
-      : db.query<{ sessions: number; open: number }>(
-          `SELECT count(*)::int AS sessions, count(*) FILTER (WHERE s.status = 'Open')::int AS open
-             FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
-            WHERE ${where}`,
-          filterParams,
+    // Newest first, walked back by the last start read; sorted by a column, by count.
+    const page = q.sort
+      ? db.query<SessionRow & OrderSummaryRow>(
+          `SELECT h.* FROM ${historyRows(where)}
+            ORDER BY ${columnOrderBy(historyColumns(tz), q.sort, 'h."startedAt" DESC, h.seq DESC')}
+            LIMIT ${limit} OFFSET ${p(q.offset)}`,
+          params,
         )
+      : db.query<SessionRow & OrderSummaryRow>(
+          `SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT}
+             FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
+            WHERE ${q.before ? `${where} AND s.started_at < ${p(q.before)}::timestamptz` : where}
+            ORDER BY s.started_at DESC, s.seq DESC LIMIT ${limit}`,
+          params,
+        )
+    // How many match in total, counted once: the first page carries it, and
+    // walking on does not change it.
+    const totals =
+      q.before || q.offset > 0
+        ? null
+        : db.query<{ sessions: number; open: number }>(
+            `SELECT count(*)::int AS sessions, count(*) FILTER (WHERE s.status = 'Open')::int AS open
+               FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id
+              WHERE ${where}`,
+            filterParams,
+          )
     const [rows, counted] = await Promise.all([page, totals])
 
     const body: HistoryResponse = { sessions: rows.rows.slice(0, q.limit).map(toSessionWithOrder), hasMore: rows.rows.length > q.limit }
     if (counted) body.totals = counted.rows[0]
     res.json(body)
+  })
+
+  /** One History column's values under every other filter, for its Excel menu. */
+  r.get('/history/values', async (req, res) => {
+    requireUser(req)
+    const q = parse(historyFilterSchema.merge(columnQuerySchema).extend({ column: z.string().max(60), search: z.string().max(200).optional() }), req.query)
+    const tz = ctx.config.FACTORY_TIMEZONE
+    const { where, params } = historyWhere(q, tz)
+    res.json(await columnValues(db, { columns: historyColumns(tz), column: q.column, from: `FROM ${historyRows(where)}`, where: [], params, filters: q.cf, search: q.search }))
   })
 
   /**
@@ -490,8 +514,12 @@ export function sessionsRoutes(ctx: AppContext): Router {
    * EXPORT_MAX_RECORDS sessions the filters must narrow.
    */
   r.get('/history/export', requireCapability('export-records'), async (req, res) => {
-    const q = parse(historyFilterSchema, req.query)
-    const { where, params } = historyWhere(q, ctx.config.FACTORY_TIMEZONE)
+    const q = parse(historyFilterSchema.merge(columnQuerySchema), req.query)
+    const base = historyWhere(q, ctx.config.FACTORY_TIMEZONE)
+    const params = base.params
+    // The export is what the table shows: its column filters too.
+    const columnClause = historyColumnClause(base.where, q.cf, ctx.config.FACTORY_TIMEZONE, (v) => `$${params.push(v)}`)
+    const where = columnClause ? `${base.where} AND ${columnClause}` : base.where
     const counted = await db.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM inspection_sessions s LEFT JOIN production_orders o ON o.id = s.order_id WHERE ${where}`,
       params,
@@ -1369,6 +1397,72 @@ function stagesText(stages: readonly StageQuantity[] | undefined): string | null
 }
 
 /** §6 — what History narrows by. The export reads the same filters. */
+/**
+ * History's rows as its table shows them — the session, its order line, its
+ * machine and what its samples add — for Excel's column filter and sort. Only
+ * the columns a filter or the sort reads are worked out.
+ */
+const historyRows = (where: string) => `(
+  SELECT ${SESSION_SELECT}, ${ORDER_SUMMARY_SELECT},
+         COALESCE(m.display_name, '') AS "m_displayName", COALESCE(m.factory, '') AS "m_factory", COALESCE(m.process::text, '') AS "m_process"
+    FROM inspection_sessions s
+    LEFT JOIN production_orders o ON o.id = s.order_id
+    LEFT JOIN LATERAL (
+      SELECT m.display_name, m.factory, m.process FROM machines m
+       WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
+   WHERE ${where}) h`
+
+/** The columns as History shows them: each cell's text, and what a figure or a day sorts by. */
+function historyColumns(tz: string): SqlColumns {
+  const figure = (sql: string) => ({ text: `trim_scale((${sql})::numeric)::text`, sort: `(${sql})` })
+  const day = (sql: string) => ({ text: `to_char((${sql}) AT TIME ZONE '${tz.replace(/'/g, "''")}', 'YYYY-MM-DD')`, sort: `(${sql})` })
+  const percent = (part: string, whole: string, when: string) => {
+    const value = `round((${part})::numeric / NULLIF((${whole})::numeric, 0) * 100, 1)`
+    return { text: `CASE WHEN ${when} AND (${whole}) > 0 THEN trim_scale(${value})::text || '%' ELSE '—' END`, sort: `CASE WHEN ${when} AND (${whole}) > 0 THEN ${value} END` }
+  }
+  const stock = `upper(btrim(COALESCE(h."o_orderNumber", ''))) = '${STOCK_ORDER_NUMBER}'`
+  const closedWithFinal = `h.status = 'Closed' AND h."finalQty" IS NOT NULL`
+  const ptRequired = `CASE WHEN h."finalQty" <= 0 THEN 0 ELSE ceil(h."finalQty" * ${PT_MIN_TEST_FREQUENCY_PCT} / 100.0 - 1e-9) END`
+  return {
+    seq: { text: `'#' || h.seq`, sort: 'h.seq' },
+    order: { text: `CASE WHEN ${stock} THEN 'For stock' ELSE btrim(COALESCE(h."o_orderNumber", '')) END` },
+    item: { text: `btrim(COALESCE(h."o_item", ''))` },
+    itemCode: { text: `btrim(COALESCE(h."o_itemCode", ''))` },
+    customer: { text: `btrim(COALESCE(h."o_customer", ''))` },
+    factory: { text: `btrim(h."m_factory")` },
+    machine: { text: `COALESCE(NULLIF(btrim(h."m_displayName"), ''), 'Machine ' || h."workCenterCode")` },
+    inspector: { text: `h."inspectorName"` },
+    date: day(`h."startedAt"`),
+    closed: day(`h."closedAt"`),
+    closedBy: { text: `CASE WHEN h."closedAt" IS NULL THEN '' ELSE COALESCE(h."closedByName", 'Unknown') END` },
+    status: { text: 'h.status::text' },
+    samples: figure('h."sampleCount"'),
+    pieces: figure('h."piecesInspected"'),
+    defects: figure('h."defectCount"'),
+    defectPieces: figure('h."defectPieces"'),
+    defectRate: percent('h."defectPieces"', 'h."finalQty"', closedWithFinal),
+    inspectedRate: percent('h."defectPieces"', 'h."piecesInspected"', 'true'),
+    dimFails: figure('h."dimensionFailCount"'),
+    pt: {
+      text: `CASE WHEN h."m_process" <> 'welding' THEN '—' ELSE h."ptTestedCount" || ' / ' || CASE WHEN ${closedWithFinal} THEN (${ptRequired})::text ELSE '—' END END`,
+      sort: `CASE WHEN h."m_process" = 'welding' THEN h."ptTestedCount" END`,
+    },
+    holds: figure('h."holdCount"'),
+    notes: figure('h."noteCount"'),
+    rejected: figure(`CASE WHEN h."startQtyAt" IS NOT NULL AND h."startQtyById" IS NOT NULL THEN h."startQty" END`),
+    produced: figure(`CASE WHEN ${stock} THEN h."producedQty" END`),
+    final: figure('h."finalQty"'),
+    grade: { text: `btrim(COALESCE(h."o_expectedGrade", ''))` },
+  }
+}
+
+/** The column filters as one more clause on History's own: the sessions whose row passes them. */
+function historyColumnClause(where: string, cf: ColumnFilters, tz: string, p: (v: unknown) => string): string | null {
+  if (Object.keys(cf).length === 0) return null
+  const clauses = columnFilterClauses(historyColumns(tz), cf, p)
+  return `s.id IN (SELECT h.id FROM ${historyRows(where)} WHERE ${clauses.join(' AND ')})`
+}
+
 const historyFilterSchema = z.object({
   disposition: z.enum(DISPOSITIONS as unknown as [string, ...string[]]).optional(),
   /** Free text over the order, the item, the customer, the inspector,

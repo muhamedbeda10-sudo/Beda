@@ -149,6 +149,16 @@ export async function loadOlderSessions(filters: HistoryFilters, before: string,
   return api<HistoryResponse>(`/sessions/history${qs({ limit, ...filters, before })}`)
 }
 
+/** §6 — the next page of a History sorted by a column: walked by count. */
+export async function loadSessionsAt(filters: HistoryFilters, offset: number, limit = 100): Promise<HistoryResponse> {
+  return api<HistoryResponse>(`/sessions/history${qs({ limit, ...filters, offset })}`)
+}
+
+/** One History column's values under the other filters, for its Excel menu. */
+export function loadHistoryValues(filters: HistoryFilters, column: string, search: string): Promise<ColumnValuesResponse> {
+  return api<ColumnValuesResponse>(`/sessions/history/values${qs({ ...filters, column, search: search || undefined })}`)
+}
+
 /** §6 — every inspector and machine in the record, for the History filters. */
 export function useHistoryOptions() {
   return useQuery({ queryKey: keys.historyOptions, queryFn: () => api<HistoryOptionsResponse>('/sessions/history/options'), staleTime: 5 * 60_000 })

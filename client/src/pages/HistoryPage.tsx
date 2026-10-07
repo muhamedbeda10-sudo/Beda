@@ -35,11 +35,12 @@ import { StageBadge } from '@/components/inspection/UniversalChoice'
 import { historySheets } from '@/components/history/exportHistory'
 import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
-import { loadHistoryExport, loadOlderSessions, useSession, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
+import { loadHistoryExport, loadHistoryValues, loadOlderSessions, loadSessionsAt, useSession, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { ExportMenu, FilterBar, FilterSelect, HeaderStat, Segmented, StatDot, type FilterChip } from '@/components/ui/PageShell'
 import { ColumnPicker, GridFrame, GridHead, SkeletonRows, TableFooter, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
+import { useServerColumns } from '@/components/ui/ColumnFilter'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, dimensionStatus, isStockOrder, processForMachine, shiftName } from '@/domain'
@@ -98,28 +99,28 @@ const todayISO = () => new Date().toISOString().slice(0, 10)
  */
 const HISTORY_COLUMNS: ColumnDef[] = [
   { key: 'seq', label: 'Seq', width: 72, min: 56, defaultHidden: true },
-  { key: 'order', label: 'Order', width: 190, min: 100 },
+  { key: 'order', label: 'Order', width: 176, min: 100 },
   { key: 'item', label: 'Item', width: 220, min: 100, flex: true },
   { key: 'itemCode', label: 'Item code', width: 120, min: 80, defaultHidden: true },
   { key: 'customer', label: 'Customer', width: 160, min: 90, defaultHidden: true },
   { key: 'factory', label: 'Factory', width: 110, min: 80, defaultHidden: true },
-  { key: 'machine', label: 'Machine', width: 200, min: 80 },
-  { key: 'inspector', label: 'Inspector', width: 150, min: 80 },
-  { key: 'date', label: 'Started', width: 140, min: 100 },
+  { key: 'machine', label: 'Machine', width: 190, min: 80 },
+  { key: 'inspector', label: 'Inspector', width: 140, min: 80 },
+  { key: 'date', label: 'Started', width: 132, min: 100 },
   { key: 'closed', label: 'Closed', width: 150, min: 90, defaultHidden: true },
   { key: 'closedBy', label: 'Closed by', width: 150, min: 80, defaultHidden: true },
-  { key: 'status', label: 'Status', width: 180, min: 100 },
-  { key: 'samples', label: 'Samples', width: 96, min: 72, align: 'right' },
+  { key: 'status', label: 'Status', width: 168, min: 100 },
+  { key: 'samples', label: 'Samples', width: 112, min: 88, align: 'right' },
   { key: 'pieces', label: 'Pieces inspected', width: 120, min: 80, align: 'right' },
-  { key: 'defects', label: 'Defects', width: 90, min: 72, align: 'right' },
+  { key: 'defects', label: 'Defects', width: 108, min: 88, align: 'right' },
   { key: 'defectPieces', label: 'Defect pcs', width: 104, min: 80, align: 'right' },
   { key: 'defectRate', label: 'Defect %', width: 96, min: 72, align: 'right' },
   { key: 'inspectedRate', label: 'Defect % of inspected', width: 120, min: 80, align: 'right', defaultHidden: true },
   { key: 'dimFails', label: 'Dims failed', width: 100, min: 80, align: 'right', defaultHidden: true },
   { key: 'pt', label: 'PT tested / required', width: 150, min: 100, align: 'right', defaultHidden: true },
   { key: 'holds', label: 'On Hold', width: 90, min: 72, align: 'right', defaultHidden: true },
-  { key: 'notes', label: 'Notes', width: 80, min: 64, align: 'right', defaultHidden: true },
-  { key: 'rejected', label: 'Rejected before release', width: 150, min: 90, align: 'right' },
+  { key: 'notes', label: 'Notes', width: 96, min: 80, align: 'right', defaultHidden: true },
+  { key: 'rejected', label: 'Rejected before release', width: 128, min: 90, align: 'right' },
   { key: 'produced', label: 'Produced (stock)', width: 130, min: 90, align: 'right', defaultHidden: true },
   { key: 'final', label: 'Final qty', width: 100, min: 80, align: 'right' },
   { key: 'grade', label: 'Expected grade', width: 120, min: 80, defaultHidden: true },
@@ -156,6 +157,10 @@ function GroupLink({ onOpen, children, title }: { onOpen: () => void; children: 
     </button>
   )
 }
+
+/** The columns that hold figures, and those that hold days: they sort as such, and a day reads "Oct 6" in its menu. */
+const HISTORY_FIGURES = new Set(['seq', 'samples', 'pieces', 'defects', 'defectPieces', 'defectRate', 'inspectedRate', 'dimFails', 'pt', 'holds', 'notes', 'rejected', 'produced', 'final'])
+const HISTORY_DAYS = new Set(['date', 'closed'])
 
 const pctText = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 1000) / 10}%` : '—')
 
@@ -344,8 +349,11 @@ export function HistoryPage() {
   const [itemFilter, setItemFilter] = usePersistedState('qc-history:item', '')
   const settledItem = useDebounced(itemFilter.trim(), 300)
   /** Every filter back to how the tab opens the first time. */
-  const filtersSet = term !== '' || status !== 'All' || workCenter !== 'all' || range !== 'all' || inspectorFilter !== 'all' || factoryFilter !== 'all' || itemFilter !== ''
+  const baseFiltersSet = term !== '' || status !== 'All' || workCenter !== 'all' || range !== 'all' || inspectorFilter !== 'all' || factoryFilter !== 'all' || itemFilter !== ''
+  // Excel's filter and sort on every column, answered over the whole record.
+  const columnsView = useServerColumns()
   const resetFilters = () => {
+    columnsView.clear()
     setTerm('')
     setStatus('All')
     setWorkCenter('all')
@@ -436,8 +444,11 @@ export function HistoryPage() {
     } else if (range !== 'all') f.since = daysAgoISO(Number(range))
     if (dispositionFilter) f.disposition = dispositionFilter
     else if (status === 'Hold') f.disposition = 'Hold'
+    if (columnsView.cf) f.cf = columnsView.cf
+    if (columnsView.sortParam) f.sort = columnsView.sortParam
     return f
-  }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, settledItem, range, fromDay, toDay, dispositionFilter])
+  }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, settledItem, range, fromDay, toDay, dispositionFilter, columnsView.cf, columnsView.sortParam])
+  const filtersSet = baseFiltersSet || columnsView.active
 
   /** Rows a page brings; kept on this device. */
   const [pageSize, setPageSize] = usePersistedState<number>('qc-history:page-size', 100)
@@ -468,7 +479,8 @@ export function HistoryPage() {
     if (!last || loadingOlder) return
     setLoadingOlder(true)
     try {
-      const page = await loadOlderSessions(filters, last.startedAt, pageSize)
+      // Sorted by a column, the next page is the next rows by count; otherwise the ones started before the last.
+      const page = filters.sort ? await loadSessionsAt(filters, sessions.length, pageSize) : await loadOlderSessions(filters, last.startedAt, pageSize)
       setOlder((prev) => [...prev, ...page.sessions])
       setOlderHasMore(page.hasMore)
     } catch (e) {
@@ -551,9 +563,10 @@ export function HistoryPage() {
   }, [machines])
 
   /** The API answers newest first; the merged pages keep that order. */
+  // Newest first — unless a column's sort orders them, as the server sent them.
   const filtered = useMemo(
-    () => [...sessions].sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : b.seq - a.seq)),
-    [sessions],
+    () => (filters.sort ? sessions : [...sessions].sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : b.seq - a.seq))),
+    [sessions, filters.sort],
   )
 
   // Counted by the API over everything that matches — the stat is the size of
@@ -673,7 +686,17 @@ export function HistoryPage() {
     ...(itemFilter !== '' ? [{ key: 'item', label: `Item: ${itemFilter}`, onRemove: () => setItemFilter('') }] : []),
     ...(inspectorFilter !== 'all' ? [{ key: 'inspector', label: `Inspector: ${inspectorOptions.find((i) => i.id === inspectorFilter)?.name ?? 'one inspector'}`, onRemove: () => setInspectorFilter('all') }] : []),
     ...(factoryFilter !== 'all' ? [{ key: 'factory', label: `Factory: ${factoryFilter}`, onRemove: () => setFactoryFilter('all') }] : []),
+    ...columnsView.chips((key) => HISTORY_COLUMNS.find((c) => c.key === key)?.label ?? key),
   ]
+  /** A column's Excel menu: its values over the whole record under every other filter. */
+  const columnMenu = (c: ColumnDef) =>
+    c.key === 'open'
+      ? null
+      : columnsView.menu(c.key, c.label, (search) => loadHistoryValues(filters, c.key, search), {
+          numeric: HISTORY_FIGURES.has(c.key) || HISTORY_DAYS.has(c.key),
+          align: c.align === 'right' ? 'right' : 'left',
+          formatValue: HISTORY_DAYS.has(c.key) ? (v) => formatDate(v) : undefined,
+        })
   const moreCount = [itemFilter !== '', seesAll && inspectorFilter !== 'all', seesAll && factoryFilter !== 'all'].filter(Boolean).length
 
   return (
@@ -775,7 +798,7 @@ export function HistoryPage() {
           <GridFrame>
             <table className="sticky-first w-full text-sm" style={grid.tableStyle}>
               {grid.colgroup}
-              <GridHead grid={grid} />
+              <GridHead grid={grid} menu={columnMenu} />
               <SkeletonRows grid={grid} />
             </table>
           </GridFrame>
@@ -828,7 +851,7 @@ export function HistoryPage() {
             <GridFrame reserve={44}>
               <table ref={grid.tableRef} className={cn('sticky-first w-full text-sm', !grid.enabled && 'min-w-[720px]')} style={grid.tableStyle}>
                 {grid.colgroup}
-                <GridHead grid={grid} />
+                <GridHead grid={grid} menu={columnMenu} />
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {filtered.map((s) => (
                     <tr

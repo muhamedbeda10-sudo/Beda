@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-07.3',
+    date: '2026-10-07',
+    title: 'History: Excel\'s filter and sort on every column, over the whole record',
+    items: [
+      { text: 'Every History column title has the Excel menu — the figures the samples add (defects, defect %, pieces, PT, holds…) included. The values, the filter, the sort and the count cover every session on record, not only the page on screen; sorted by a column, Show the next continues in that order.' },
+      { text: 'Export Excel exports what the table shows, its column filters included.' },
+    ],
+  },
+  {
     id: '2026-10-07.2',
     date: '2026-10-07',
     title: 'Access: Excel\'s filter and sort on every column, over the whole sheet',
