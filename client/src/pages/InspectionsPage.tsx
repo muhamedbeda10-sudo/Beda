@@ -37,7 +37,8 @@ import { closeSession, correctDefect, correctDimension, discardSession } from '@
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can, isStockOrder, processForMachine, sessionTone, shiftName, type Process, type SessionTone } from '@/domain'
-import { cn } from '@/lib/utils'
+import { cn, formatDateTime } from '@/lib/utils'
+import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 import { usePersistedState } from '@/lib/usePersistedState'
 import type { CloseSessionRequest, SampleSummary, SessionWithOrder } from '@qc/shared/api'
 import type { DefectResult, DimensionResult, Disposition, Machine } from '@qc/shared/types'
@@ -204,6 +205,19 @@ export function InspectionsPage() {
     return out
   }, [groups, favourite, factoryTabs])
 
+  // The table view: Excel's sort and filter on every column, the factory header rows kept.
+  const boardRows = useMemo(() => sections.flatMap((sec) => sec.groups.flatMap((g) => g.sessions.map((session) => ({ section: sec.key, group: g, session })))), [sections])
+  const boardView = useTableView(boardRows, [
+    { key: 'machine', value: (r) => r.group.label },
+    { key: 'order', value: (r) => `${isStockOrder(r.session.order) ? 'For stock' : (r.session.order?.orderNumber ?? '—')} #${r.session.seq}` },
+    { key: 'item', value: (r) => `${r.session.order?.item ?? ''} ${r.session.order?.itemCode ?? ''}`.trim() },
+    { key: 'inspector', value: (r) => r.session.inspectorName },
+    { key: 'started', value: (r) => formatDateTime(r.session.startedAt), sortValue: (r) => Date.parse(r.session.startedAt), numeric: true },
+    { key: 'samples', value: (r) => String(samplesBySession.get(r.session.id)?.length ?? 0), sortValue: (r) => samplesBySession.get(r.session.id)?.length ?? 0, numeric: true },
+    { key: 'defects', value: (r) => String(r.session.defectCount ?? 0), sortValue: (r) => r.session.defectCount ?? 0, numeric: true },
+    { key: 'state', value: (r) => [r.session.status, (r.session.holdCount ?? 0) > 0 ? 'On Hold' : (r.session.defectCount ?? 0) > 0 ? 'Defects' : ''].filter(Boolean).join(' · ') },
+  ])
+
   const narrowed = seesAll && inspectorFilter !== 'all'
   const filtering = narrowed || activeFactory !== 'all' || activeMachine !== 'all'
 
@@ -259,20 +273,24 @@ export function InspectionsPage() {
         <table className="w-full min-w-[60rem] text-sm">
           <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-muted dark:bg-slate-800/60">
             <tr>
-              <th className="px-4 py-3">Machine</th>
-              <th className="px-4 py-3">Order</th>
-              <th className="px-4 py-3">Item</th>
-              <th className="px-4 py-3">Inspector</th>
-              <th className="px-4 py-3">Started</th>
-              <th className="px-4 py-3 text-right">Samples</th>
-              <th className="px-4 py-3 text-right">Defects</th>
-              <th className="px-4 py-3">State</th>
+              <ViewTh view={boardView} column="machine" label="Machine" className="px-4 py-3" />
+              <ViewTh view={boardView} column="order" label="Order" className="px-4 py-3" />
+              <ViewTh view={boardView} column="item" label="Item" className="px-4 py-3" />
+              <ViewTh view={boardView} column="inspector" label="Inspector" className="px-4 py-3" />
+              <ViewTh view={boardView} column="started" label="Started" className="px-4 py-3" />
+              <ViewTh view={boardView} column="samples" label="Samples" className="px-4 py-3 text-right" />
+              <ViewTh view={boardView} column="defects" label="Defects" className="px-4 py-3 text-right" />
+              <ViewTh view={boardView} column="state" label="State" className="px-4 py-3" />
               <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           {secs.map((sec) => {
             const showFactory = sec.pinned
-            const sessionCount = sec.groups.reduce((n, g) => n + g.sessions.length, 0)
+            // The section's rows the filters let through, in the order the sort gives.
+            const rows = boardView.rows.filter((r) => r.section === sec.key)
+            if (rows.length === 0) return null
+            const sessionCount = rows.length
+            const machineCount = new Set(rows.map((r) => r.group.code)).size
             return (
               <tbody key={sec.key} className="divide-y divide-slate-100 border-t border-slate-200 dark:divide-slate-800 dark:border-slate-700">
                 <tr className="bg-slate-100/80 dark:bg-slate-800/70">
@@ -281,14 +299,13 @@ export function InspectionsPage() {
                       {sec.pinned ? <Star className="h-3.5 w-3.5 fill-current text-amber-500" /> : <Factory className="h-3.5 w-3.5" />}
                       {sec.label}
                       <span className="font-semibold normal-case tracking-normal tabular-nums">
-                        · {sec.groups.length} machine{sec.groups.length === 1 ? '' : 's'} · {sessionCount} session{sessionCount === 1 ? '' : 's'}
+                        · {machineCount} machine{machineCount === 1 ? '' : 's'} · {sessionCount} session{sessionCount === 1 ? '' : 's'}
                       </span>
                     </span>
                   </th>
                 </tr>
-                {sec.groups.flatMap((g) =>
-                  g.sessions.map((s) => {
-                const order = s.order
+                {rows.map(({ group: g, session: s }) => {
+                    const order = s.order
                     const count = samplesBySession.get(s.id)?.length ?? 0
                     return (
                       <tr key={s.id} onClick={() => setDetails(s)} className={cn('cursor-pointer transition-colors', sessionToneClass(s, 'row', 'hover:bg-slate-50 dark:hover:bg-slate-800/50'))}>
@@ -333,13 +350,14 @@ export function InspectionsPage() {
                         </td>
                       </tr>
                     )
-                  }),
-                )}
+                  })}
               </tbody>
             )
           })}
         </table>
       </div>
+      {boardView.rows.length === 0 && <p className="px-4 py-6 text-center text-sm text-muted">No open session matches the column filters.</p>}
+      <ViewNote view={boardView} total={boardRows.length} className="border-t border-slate-100 dark:border-slate-800" />
     </Card>
   )
 

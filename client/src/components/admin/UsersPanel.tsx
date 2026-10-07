@@ -13,6 +13,7 @@ import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
 import { cn } from '@/lib/utils'
+import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 import { ROLES, type Role, type UserProfile } from '@qc/shared/types'
 
 
@@ -55,6 +56,12 @@ export function UsersPanel() {
     () => [...users].sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name)),
     [users],
   )
+  const view = useTableView(sorted, [
+    { key: 'name', value: (u) => u.name },
+    { key: 'username', value: (u) => u.username },
+    { key: 'role', value: (u) => u.role },
+    { key: 'status', value: (u) => (u.isActive ? 'Active' : 'Deactivated') },
+  ])
 
   async function submitCreate() {
     if (!creating) return
@@ -150,15 +157,15 @@ export function UsersPanel() {
             <table className="w-full min-w-[40rem] text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
                 <tr>
-                  <th className="px-3 py-2.5 font-bold">Name</th>
-                  <th className="px-3 py-2.5 font-bold">Username</th>
-                  <th className="px-3 py-2.5 font-bold">Role</th>
-                  <th className="px-3 py-2.5 font-bold">Status</th>
+                  <ViewTh view={view} column="name" label="Name" className="px-3 py-2.5 font-bold" />
+                  <ViewTh view={view} column="username" label="Username" className="px-3 py-2.5 font-bold" />
+                  <ViewTh view={view} column="role" label="Role" className="px-3 py-2.5 font-bold" />
+                  <ViewTh view={view} column="status" label="Status" className="px-3 py-2.5 font-bold" />
                   <th className="px-3 py-2.5 text-right font-bold">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {sorted.map((u) => (
+                {view.rows.map((u) => (
                   <tr key={u.id} className={cn('hover:bg-slate-50/70 dark:hover:bg-slate-800/40', !u.isActive && 'opacity-60')}>
                     <td className="px-3 py-2.5 font-semibold">
                       {u.name}

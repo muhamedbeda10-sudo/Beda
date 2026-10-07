@@ -52,16 +52,18 @@ export function MachinesSection() {
       columns={[
         { key: 'code', label: 'Code', render: (r) => <Badge tone="blue">{r.code}</Badge> },
         { key: 'name', label: 'Machine', render: (r) => r.name },
-        { key: 'process', label: 'Process', render: (r) => <Badge tone={PROCESS_TONE[r.process ?? 'forming']}>{PROCESS_LABEL[r.process ?? 'forming']}</Badge> },
+        { key: 'process', label: 'Process', text: (r) => PROCESS_LABEL[r.process ?? 'forming'], render: (r) => <Badge tone={PROCESS_TONE[r.process ?? 'forming']}>{PROCESS_LABEL[r.process ?? 'forming']}</Badge> },
         {
           key: 'dimensions',
           label: 'Dimensions',
+          text: (r) => (takesConfiguredDimensions(r.process ?? 'forming', r) ? 'From item setup' : 'Typed by inspector'),
           // What the wizard does, not only the switch: a universal machine is always typed by the inspector.
           render: (r) => (takesConfiguredDimensions(r.process ?? 'forming', r) ? <Badge tone="neutral">From item setup</Badge> : <Badge tone="amber">Typed by inspector</Badge>),
         },
         {
           key: 'dashboard',
           label: 'Dashboard',
+          text: (r) => (r.onDashboard === false ? 'Left out' : 'Counted'),
           render: (r) => (r.onDashboard === false ? <Badge tone="amber">Left out</Badge> : <Badge tone="neutral">Counted</Badge>),
         },
         {

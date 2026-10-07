@@ -27,7 +27,8 @@ import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { NoticeCard, NoticeFileRow, SeverityBadge, TargetChips, validityText } from '@/components/notices/NoticeCard'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { ApiError } from '@/lib/api'
-import { cn } from '@/lib/utils'
+import { cn, formatDateTime } from '@/lib/utils'
+import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 import { deleteNotice, saveNotice, uploadNoticeFile, withdrawNotice } from '@/services/mutations'
 import { useAdminNotices, useLinesOfMachines, useLinesOfOrders, useMaster, useNoticeAcknowledgements, useOrderSearch, useUsers } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
@@ -495,6 +496,16 @@ function NoticeForm({ initial, id, onClose }: { initial: Draft; id: string | nul
 
 function AcksModal({ notice, onClose }: { notice: NoticeAdminRow; onClose: () => void }) {
   const { data = [], isLoading } = useNoticeAcknowledgements(notice.id)
+  const view = useTableView(data, [
+    { key: 'reader', value: (a) => a.userName },
+    { key: 'read', value: (a) => formatDateTime(a.seenAt), sortValue: (a) => Date.parse(a.seenAt), numeric: true },
+    { key: 'ack', value: (a) => (a.acknowledgedAt ? formatDateTime(a.acknowledgedAt) : '—'), sortValue: (a) => (a.acknowledgedAt ? Date.parse(a.acknowledgedAt) : null), numeric: true },
+    {
+      key: 'where',
+      value: (a) =>
+        [a.context?.workCenterCode ? `Machine ${a.context.workCenterCode}` : '', a.context?.orderNumber ?? '', a.context?.itemCode ?? ''].filter(Boolean).join(' · ') || 'From the bell',
+    },
+  ])
   return (
     <Modal open onClose={onClose} size="lg" icon={<Users className="h-5 w-5" />} title="Who has read it">
       <div className="space-y-3">
@@ -509,14 +520,14 @@ function AcksModal({ notice, onClose }: { notice: NoticeAdminRow; onClose: () =>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-                  <th className="px-2 py-1.5">Reader</th>
-                  <th className="px-2 py-1.5">Read</th>
-                  <th className="px-2 py-1.5">Acknowledged</th>
-                  <th className="px-2 py-1.5">Where</th>
+                  <ViewTh view={view} column="reader" label="Reader" className="px-2 py-1.5" />
+                  <ViewTh view={view} column="read" label="Read" className="px-2 py-1.5" />
+                  <ViewTh view={view} column="ack" label="Acknowledged" className="px-2 py-1.5" />
+                  <ViewTh view={view} column="where" label="Where" className="px-2 py-1.5" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {data.map((a) => (
+                {view.rows.map((a) => (
                   <tr key={a.userId}>
                     <td className="px-2 py-1.5 font-semibold">{a.userName}</td>
                     <td className="px-2 py-1.5 text-muted"><When iso={a.seenAt} time /></td>

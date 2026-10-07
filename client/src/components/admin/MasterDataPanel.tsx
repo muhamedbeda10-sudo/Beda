@@ -12,6 +12,7 @@ import { createMaster, deleteManyMaster, deleteMaster, updateMaster } from '@/se
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
 import { cn } from '@/lib/utils'
+import { useTableView, ViewTh } from '@/components/ui/ColumnFilter'
 import type { MasterKind, MasterRecordByKind } from '@qc/shared/api'
 
 
@@ -20,6 +21,18 @@ export interface Column<T> {
   label: string
   render: (row: T) => ReactNode
   className?: string
+  /** What the column's filter lists, searches and sorts for a row; the row's own field of the same key by default. */
+  text?: (row: T) => string
+  /** A figure the column sorts by instead of its text. */
+  sortNum?: (row: T) => number | null
+  /** A column with nothing to filter (a picture, a sign). */
+  filterable?: false
+}
+
+/** A row's own field under a column's key, as text: what a column with no `text` filters on. */
+function fieldText(row: object, key: string): string {
+  const v = (row as Record<string, unknown>)[key]
+  return typeof v === 'string' || typeof v === 'number' ? String(v) : typeof v === 'boolean' ? (v ? 'Yes' : 'No') : ''
 }
 
 interface PanelProps<K extends MasterKind, D> {
@@ -83,10 +96,17 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
     return sort ? copy.sort(sort) : copy
   }, [rows, sort, filter, searchText])
 
+  // Excel's sort and filter on every column, after the filter box.
+  const view = useTableView(
+    sorted,
+    props.columns.map((c) => ({ key: c.key, value: c.text ?? ((r: T) => fieldText(r, c.key)), sortValue: c.sortNum, numeric: !!c.sortNum })),
+  )
+  const shown = view.rows
+
   // A selection only ever holds rows that still exist and are shown.
-  const visibleIds = useMemo(() => new Set(sorted.map((r) => r.id)), [sorted])
+  const visibleIds = useMemo(() => new Set(shown.map((r) => r.id)), [shown])
   const selectedVisible = useMemo(() => Array.from(selected).filter((id) => visibleIds.has(id)), [selected, visibleIds])
-  const allVisibleSelected = sorted.length > 0 && selectedVisible.length === sorted.length
+  const allVisibleSelected = shown.length > 0 && selectedVisible.length === shown.length
 
   const toggle = (id: string) =>
     setSelected((cur) => {
@@ -108,7 +128,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
   const groups = useMemo(() => {
     if (!groupBy) return null
     const map = new Map<string, T[]>()
-    for (const row of sorted) {
+    for (const row of shown) {
       const g = groupBy(row)
       const arr = map.get(g) ?? []
       arr.push(row)
@@ -117,7 +137,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
     return Array.from(map.entries()).sort((a, b) =>
       a[0].localeCompare(b[0], undefined, { numeric: true }),
     )
-  }, [sorted, groupBy])
+  }, [shown, groupBy])
 
   const patch = useCallback((p: Partial<D>) => {
     setEditing((cur) => (cur ? { ...cur, draft: { ...cur.draft, ...p } } : cur))
@@ -205,11 +225,15 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
                 'Select every row in this group',
               )}
             </th>
-            {props.columns.map((c) => (
-              <th key={c.key} className={cn('px-3 py-2.5 font-bold', c.className)}>
-                {c.label}
-              </th>
-            ))}
+            {props.columns.map((c) =>
+              c.filterable === false ? (
+                <th key={c.key} className={cn('px-3 py-2.5 font-bold', c.className)}>
+                  {c.label}
+                </th>
+              ) : (
+                <ViewTh key={c.key} view={view} column={c.key} label={c.label} className={cn('px-3 py-2.5 font-bold', c.className)} />
+              ),
+            )}
             <th className="px-3 py-2.5 text-right font-bold">Actions</th>
           </tr>
         </thead>
@@ -291,7 +315,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
                 </button>
               )}
             </div>
-            {sorted.length > 0 && (
+            {shown.length > 0 && (
               <Button className="min-h-[48px]" onClick={toggleAll}>
                 {allVisibleSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
                 {allVisibleSelected ? 'Unselect all' : `Select all${filter ? ' shown' : ''}`}
@@ -317,6 +341,8 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
           </div>
         ) : rows.length > 0 && sorted.length === 0 ? (
           <EmptyState title="Nothing matches that filter" hint="Try fewer words, or clear the filter." action={<Button onClick={() => setFilter('')}>Clear filter</Button>} />
+        ) : sorted.length > 0 && shown.length === 0 ? (
+          <EmptyState title="No row matches the column filters" hint="Change a column's filter, or show every row again." action={<Button onClick={view.clear}>Clear the column filters</Button>} />
         ) : sorted.length === 0 ? (
           <EmptyState
             title="Nothing here yet"
@@ -346,13 +372,20 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
             ))}
           </div>
         ) : (
-          table(sorted)
+          table(shown)
         )}
 
-        {!props.loading && sorted.length > 0 && (
-          <p className="text-xs text-muted">
-            {sorted.length} {sorted.length === 1 ? 'record' : 'records'}
-            {filter && sorted.length !== rows.length ? ` shown of ${rows.length}` : ''}
+        {!props.loading && shown.length > 0 && (
+          <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
+            <span>
+              {shown.length} {shown.length === 1 ? 'record' : 'records'}
+              {shown.length !== rows.length ? ` shown of ${rows.length}` : ''}
+            </span>
+            {view.active > 0 && (
+              <button type="button" onClick={view.clear} className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
+                Clear the column filters
+              </button>
+            )}
           </p>
         )}
       </Card>

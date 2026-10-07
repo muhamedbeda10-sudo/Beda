@@ -7,8 +7,9 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, Filter, Search } from 'lucide-react'
+import { Check, ChevronDown, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useTableView, ViewNote, ViewTh, type TableView, type ViewColumn } from '@/components/ui/ColumnFilter'
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
@@ -24,18 +25,22 @@ const matches = (text: string, query: string): boolean => text.toLowerCase().inc
  */
 export function FloatingPanel({ anchor, open, onClose, width = 260, label, children }: { anchor: RefObject<HTMLElement>; open: boolean; onClose: () => void; width?: number; label: string; children: ReactNode }) {
   const panel = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+  const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number } | null>(null)
   useLayoutEffect(() => {
     if (!open) return
     const place = () => {
       const a = anchor.current
       if (!a) return
       const r = a.getBoundingClientRect()
-      const h = panel.current?.offsetHeight ?? 320
+      // The panel's own height, not the height it was squeezed to last time.
+      const h = panel.current?.scrollHeight ?? 320
       const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8))
-      const below = r.bottom + 4
-      const top = below + h > window.innerHeight - 8 && r.top - h - 4 > 8 ? r.top - h - 4 : below
-      setPos({ top, left })
+      const below = window.innerHeight - r.bottom - 12
+      const above = r.top - 12
+      // Under the anchor when it fits, over it when only that fits; otherwise on
+      // the roomier side, as tall as there is room, its content scrolling.
+      if (h <= below || below >= above) setPos({ top: r.bottom + 4, left, maxHeight: Math.max(160, below) })
+      else setPos({ top: Math.max(8, r.top - 4 - Math.min(h, above)), left, maxHeight: Math.max(160, above) })
     }
     place()
     window.addEventListener('resize', place)
@@ -70,8 +75,8 @@ export function FloatingPanel({ anchor, open, onClose, width = 260, label, child
       ref={panel}
       role="dialog"
       aria-label={label}
-      style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, width }}
-      className="z-[60] rounded-xl bg-white p-2 text-sm normal-case tracking-normal text-slate-700 shadow-xl ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"
+      style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, width, maxHeight: pos?.maxHeight }}
+      className="z-[60] overflow-y-auto overscroll-contain rounded-xl bg-white p-2 text-sm normal-case tracking-normal text-slate-700 shadow-xl ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"
     >
       {children}
     </div>,
@@ -229,131 +234,43 @@ export function SearchSelect({
 }
 
 // ---- Excel-like column filters ----------------------------------------------
+// The dashboard's tables use the application's one column menu: sort, Text
+// contains, and the values to tick (components/ui/ColumnFilter).
 
 export interface FilterColumn<T> {
   key: string
   /** The text the column shows for a row: what the filter lists and matches. */
   value: (r: T) => string
-  /** List the values as numbers, smallest first. */
+  /** List and sort the values as numbers, smallest first. */
   numeric?: boolean
 }
 
-export interface ColumnFilters<T> {
-  /** The rows every column's ticks let through. */
-  rows: T[]
-  /** How many columns are filtered. */
-  active: number
-  clear: () => void
-  /** The header's filter button for a column. */
-  button: (key: string, label: string) => ReactNode
-}
+export type ColumnFilters<T> = TableView<T>
 
-/**
- * Excel's filter on a table's header row. A column with nothing picked lets
- * every row through; a column lists the values of the rows the other
- * columns' filters let through, with how many rows carry each.
- */
 export function useColumnFilters<T>(rows: T[], columns: FilterColumn<T>[]): ColumnFilters<T> {
-  const [picked, setPicked] = useState<Record<string, string[]>>({})
-  const passes = (r: T, except?: string) => columns.every((c) => c.key === except || picked[c.key] === undefined || picked[c.key].includes(c.value(r)))
-  const valuesOf = (key: string): { value: string; count: number }[] => {
-    const column = columns.find((c) => c.key === key)
-    if (!column) return []
-    const counts = new Map<string, number>()
-    for (const r of rows) if (passes(r, key)) counts.set(column.value(r), (counts.get(column.value(r)) ?? 0) + 1)
-    // A picked value no other row carries now stays listed, so it can be unticked.
-    for (const v of picked[key] ?? []) if (!counts.has(v)) counts.set(v, 0)
-    return Array.from(counts, ([value, count]) => ({ value, count })).sort((a, b) => (column.numeric ? Number(a.value) - Number(b.value) || byName(a.value, b.value) : byName(a.value, b.value)))
-  }
-  const set = (key: string, values: string[] | null) =>
-    setPicked((prev) => {
-      const next = { ...prev }
-      if (values === null) delete next[key]
-      else next[key] = values
-      return next
-    })
-  return {
-    rows: rows.filter((r) => passes(r)),
-    active: Object.keys(picked).length,
-    clear: () => setPicked({}),
-    button: (key, label) => <ColumnFilterButton label={label} values={valuesOf(key)} picked={picked[key]} onChange={(v) => set(key, v)} />,
-  }
+  // Built each render: a column's text may read figures of this render (a share of a total).
+  const view = columns.map<ViewColumn<T>>((c) => ({
+    key: c.key,
+    value: c.value,
+    numeric: c.numeric,
+    sortValue: c.numeric
+      ? (r) => {
+          const text = String(c.value(r)).trim()
+          const cleaned = text.replace(/[^0-9.+-]/g, '')
+          const n = Number(cleaned)
+          return cleaned !== '' && Number.isFinite(n) ? n : null
+        }
+      : undefined,
+  }))
+  return useTableView(rows, view)
 }
 
-function ColumnFilterButton({ label, values, picked, onChange }: { label: string; values: { value: string; count: number }[]; picked: string[] | undefined; onChange: (next: string[] | null) => void }) {
-  const [open, setOpen] = useState(false)
-  const [query, setQuery] = useState('')
-  const anchor = useRef<HTMLButtonElement>(null)
-  const on = (v: string) => picked === undefined || picked.includes(v)
-  const shown = values.filter((v) => matches(v.value || '(blank)', query))
-  const allValues = values.map((v) => v.value)
-  const toggle = (v: string) => {
-    const now = picked ?? allValues
-    const next = now.includes(v) ? now.filter((x) => x !== v) : [...now, v]
-    // Every value ticked again is no filter at all.
-    onChange(allValues.every((x) => next.includes(x)) ? null : next)
-  }
-  return (
-    <>
-      <button
-        ref={anchor}
-        type="button"
-        aria-label={`Filter ${label}`}
-        aria-expanded={open}
-        onClick={(e) => {
-          e.stopPropagation()
-          setOpen((o) => !o)
-        }}
-        className={cn('print-hidden inline-grid h-5 w-5 place-items-center rounded hover:bg-slate-100 dark:hover:bg-slate-800', picked !== undefined ? 'bg-brand-100 text-brand-700 dark:bg-brand-500/20 dark:text-brand-300' : 'text-slate-300 dark:text-slate-600')}
-        data-tip={picked !== undefined ? `${label}: ${picked.length} of ${values.length} shown` : `Filter ${label}`}
-      >
-        <Filter className="h-3 w-3" />
-      </button>
-      <FloatingPanel anchor={anchor} open={open} onClose={() => setOpen(false)} label={`Filter ${label}`}>
-        <SearchBox value={query} onChange={setQuery} placeholder={`Search ${label.toLowerCase()}`} />
-        {query.trim() !== '' && shown.length > 0 && (
-          <button type="button" onClick={() => onChange(shown.map((v) => v.value))} className="mb-1 w-full rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-brand-700 hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-500/10">
-            Only the {shown.length} found
-          </button>
-        )}
-        <CheckRow on={picked === undefined} onClick={() => onChange(picked === undefined ? [] : null)}>(Select all)</CheckRow>
-        <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
-        <div className="max-h-64 overflow-auto">
-          {shown.map((v) => (
-            <CheckRow key={v.value} on={on(v.value)} onClick={() => toggle(v.value)} count={v.count}>
-              {v.value || <span className="text-muted">(blank)</span>}
-            </CheckRow>
-          ))}
-          {shown.length === 0 && <p className="px-2 py-3 text-center text-xs text-muted">Nothing matches.</p>}
-        </div>
-      </FloatingPanel>
-    </>
-  )
-}
-
-/** A header cell with its label and its filter button. */
+/** A header cell with its label and its menu. */
 export function FilterTh<T>({ filters, column, label, className }: { filters: ColumnFilters<T>; column: string; label: string; className?: string }) {
-  return (
-    <th className={cn('whitespace-nowrap px-2 py-1.5 font-semibold', className)}>
-      <span className={cn('inline-flex items-center gap-1', className?.includes('text-right') && 'flex-row-reverse')}>
-        {label}
-        {filters.button(column, label)}
-      </span>
-    </th>
-  )
+  return <ViewTh view={filters} column={column} label={label} className={cn('px-2 py-1.5 font-semibold', className)} />
 }
 
 /** Under a filtered table: how many rows show, and a way to show them all. */
 export function FilterNote<T>({ filters, total }: { filters: ColumnFilters<T>; total: number }) {
-  if (filters.active === 0) return null
-  return (
-    <p className="print-hidden mt-2 flex items-center justify-between gap-2 px-2 text-xs text-muted">
-      <span>
-        {filters.rows.length} of {total} rows · {filters.active} {filters.active === 1 ? 'column' : 'columns'} filtered
-      </span>
-      <button type="button" onClick={filters.clear} className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
-        Clear filters
-      </button>
-    </p>
-  )
+  return <ViewNote view={filters} total={total} className="mt-2" />
 }

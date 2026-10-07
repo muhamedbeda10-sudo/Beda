@@ -68,6 +68,7 @@ import { ApiError } from '@/lib/api'
 import { sessionDetailPath } from '@/lib/links'
 import { When } from '@/components/ui/Tooltip'
 import { ExportMenu, InfoTip, Segmented } from '@/components/ui/PageShell'
+import { useTableView, ViewNote, ViewTh, type ViewColumn } from '@/components/ui/ColumnFilter'
 
 // ---- Formatting ------------------------------------------------------------
 
@@ -254,6 +255,24 @@ interface Column<T> {
   label: string
   className?: string
   render: (row: T) => ReactNode
+  /** What the column's filter lists and searches for a row; a cell that renders plain text needs none. */
+  text?: (row: T) => string
+  /** A figure the column sorts by, smallest first; null sorts last. */
+  sortNum?: (row: T) => number | null
+  /** A column of buttons has nothing to filter. */
+  filterable?: false
+}
+
+/** A cell's plain text, when it renders as text. */
+function plainText(node: ReactNode): string {
+  return typeof node === 'string' || typeof node === 'number' ? String(node) : ''
+}
+
+/** The figure in a cell's text ("1,350", "2.45%"), or null for "—". */
+function figureOf(text: string): number | null {
+  const cleaned = text.replace(/[^0-9.+-]/g, '')
+  const n = Number(cleaned)
+  return cleaned !== '' && Number.isFinite(n) ? n : null
 }
 
 function Table<T>({
@@ -276,18 +295,34 @@ function Table<T>({
   total?: number
 }) {
   const [showAll, setShowAll] = useState(false)
+  const viewColumns = useMemo(
+    () =>
+      columns.map<ViewColumn<T>>((c) => {
+        const text = c.text ?? ((r: T) => plainText(c.render(r)))
+        // A right-aligned column holds figures: it sorts by them, smallest first.
+        const figures = c.sortNum ?? (c.className?.includes('text-right') ? (r: T) => figureOf(text(r)) : undefined)
+        return { key: c.key, value: text, sortValue: figures, numeric: !!figures }
+      }),
+    [columns],
+  )
+  const view = useTableView(rows, viewColumns)
   if (rows.length === 0) return <p className="py-6 text-center text-sm text-muted">{empty}</p>
-  const visible = maxRows && !showAll ? rows.slice(0, maxRows) : rows
+  const filtered = view.active > 0 || view.sort !== null
+  const visible = maxRows && !showAll && !filtered ? view.rows.slice(0, maxRows) : view.rows
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-            {columns.map((c) => (
-              <th key={c.key} className={cn('whitespace-nowrap px-2 py-1.5 font-semibold', c.className)}>
-                {c.label}
-              </th>
-            ))}
+            {columns.map((c) =>
+              c.filterable === false ? (
+                <th key={c.key} className={cn('whitespace-nowrap px-2 py-1.5 font-semibold', c.className)}>
+                  {c.label}
+                </th>
+              ) : (
+                <ViewTh key={c.key} view={view} column={c.key} label={c.label} className={cn('px-2 py-1.5 font-semibold', c.className)} />
+              ),
+            )}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -302,8 +337,9 @@ function Table<T>({
           ))}
         </tbody>
       </table>
+      <ViewNote view={view} total={rows.length} className="mt-1" />
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        {maxRows && rows.length > maxRows && (
+        {maxRows && rows.length > maxRows && !filtered && (
           <button type="button" onClick={() => setShowAll((s) => !s)} className="print-hidden text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
             {showAll ? 'Show fewer' : `Show all ${rows.length}`}
           </button>
@@ -327,15 +363,15 @@ function ToneCell({ value, tone, digits = 2 }: { value: number | null; tone: Kpi
 function groupColumns(t: KpiThresholds, first: Column<KpiGroupRow>): Column<KpiGroupRow>[] {
   return [
     first,
-    { key: 'sessions', label: 'Sessions', className: 'text-right tabular-nums', render: (r) => num(r.sessions) },
-    { key: 'samples', label: 'Samples', className: 'text-right tabular-nums', render: (r) => num(r.samples) },
-    { key: 'pieces', label: 'Inspected', className: 'text-right tabular-nums', render: (r) => num(r.pieces) },
-    { key: 'defects', label: 'Defect pcs', className: 'text-right tabular-nums', render: (r) => num(r.defectPieces) },
-    { key: 'produced', label: 'Produced', className: 'text-right tabular-nums', render: (r) => (r.piecesProduced === null ? <span className="text-muted">—</span> : num(r.piecesProduced)) },
-    { key: 'rate', label: 'Defect rate', className: 'text-right', render: (r) => <ToneCell value={r.defectRatePct} tone={toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /> },
-    { key: 'inspectedRate', label: 'Of inspected', className: 'text-right', render: (r) => <ToneCell value={r.inspectedDefectPct} tone="neutral" /> },
-    { key: 'fpy', label: 'FPY', className: 'text-right', render: (r) => <ToneCell value={r.fpyPct} tone={toneHighIsGood(r.fpyPct, t.fpyGreen, t.fpyAmber)} /> },
-    { key: 'dim', label: 'Dim fail', className: 'text-right', render: (r) => <ToneCell value={r.dimFailPct} tone={toneLowIsGood(r.dimFailPct, t.dimFailGreen, t.dimFailAmber)} /> },
+    { key: 'sessions', label: 'Sessions', className: 'text-right tabular-nums', render: (r) => num(r.sessions), text: (r) => num(r.sessions), sortNum: (r) => r.sessions },
+    { key: 'samples', label: 'Samples', className: 'text-right tabular-nums', render: (r) => num(r.samples), text: (r) => num(r.samples), sortNum: (r) => r.samples },
+    { key: 'pieces', label: 'Inspected', className: 'text-right tabular-nums', render: (r) => num(r.pieces), text: (r) => num(r.pieces), sortNum: (r) => r.pieces },
+    { key: 'defects', label: 'Defect pcs', className: 'text-right tabular-nums', render: (r) => num(r.defectPieces), text: (r) => num(r.defectPieces), sortNum: (r) => r.defectPieces },
+    { key: 'produced', label: 'Produced', className: 'text-right tabular-nums', render: (r) => (r.piecesProduced === null ? <span className="text-muted">—</span> : num(r.piecesProduced)), text: (r) => (r.piecesProduced === null ? '—' : num(r.piecesProduced)), sortNum: (r) => r.piecesProduced },
+    { key: 'rate', label: 'Defect rate', className: 'text-right', render: (r) => <ToneCell value={r.defectRatePct} tone={toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber)} />, text: (r) => pctStr(r.defectRatePct), sortNum: (r) => r.defectRatePct },
+    { key: 'inspectedRate', label: 'Of inspected', className: 'text-right', render: (r) => <ToneCell value={r.inspectedDefectPct} tone="neutral" />, text: (r) => pctStr(r.inspectedDefectPct), sortNum: (r) => r.inspectedDefectPct },
+    { key: 'fpy', label: 'FPY', className: 'text-right', render: (r) => <ToneCell value={r.fpyPct} tone={toneHighIsGood(r.fpyPct, t.fpyGreen, t.fpyAmber)} />, text: (r) => pctStr(r.fpyPct), sortNum: (r) => r.fpyPct },
+    { key: 'dim', label: 'Dim fail', className: 'text-right', render: (r) => <ToneCell value={r.dimFailPct} tone={toneLowIsGood(r.dimFailPct, t.dimFailGreen, t.dimFailAmber)} />, text: (r) => pctStr(r.dimFailPct), sortNum: (r) => r.dimFailPct },
   ]
 }
 
@@ -899,6 +935,13 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
   }))
   const defectLegend = [...topDefects.map((d, k) => ({ label: d.defectName, className: PIE_CLASSES[k] })), ...(restDefects.length ? [{ label: `Others (${restDefects.length})`, className: PIE_CLASSES[PIE_CLASSES.length - 1] }] : [])]
   const defectTotal = (defects?.rows ?? []).reduce((n, d) => n + d.pieces, 0)
+  // Excel's filter on the defects table: the defect, each machine's pieces, the total and the share.
+  const defectFilters = useColumnFilters(defects?.rows ?? [], [
+    { key: 'defect', value: (d) => d.defectName },
+    ...(defects?.machines ?? []).map((m, i) => ({ key: `m:${m.key}`, value: (d: (typeof defects & {})['rows'][number]) => num(d.byMachine[i]), numeric: true })),
+    { key: 'total', value: (d) => num(d.pieces), numeric: true },
+    { key: 'share', value: (d) => pctStr(pct(d.pieces, defectTotal)), numeric: true },
+  ])
 
   const empty = (words: string) => <p className="py-10 text-center text-sm text-muted">Nothing was closed with a final quantity {words}.</p>
   const pickQuery: KpiDrillQuery = { from: general.from, to: general.to, processes: [picked] }
@@ -1016,18 +1059,16 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 z-10 bg-white text-left text-[11px] uppercase tracking-wide text-muted shadow-[0_1px_0_0_rgb(226_232_240)] dark:bg-slate-900 dark:shadow-[0_1px_0_0_rgb(30_41_59)]">
                       <tr>
-                        <th className="px-2 py-1.5 font-semibold">Defect</th>
+                        <FilterTh filters={defectFilters} column="defect" label="Defect" />
                         {defects.machines.map((m) => (
-                          <th key={m.key} className="whitespace-nowrap px-2 py-1.5 text-right font-semibold" data-tip={m.label}>
-                            {m.label.length > 14 ? `${m.label.slice(0, 13)}…` : m.label}
-                          </th>
+                          <FilterTh key={m.key} filters={defectFilters} column={`m:${m.key}`} label={m.label.length > 14 ? `${m.label.slice(0, 13)}…` : m.label} className="text-right" />
                         ))}
-                        <th className="px-2 py-1.5 text-right font-semibold">Total</th>
-                        <th className="px-2 py-1.5 text-right font-semibold">Share</th>
+                        <FilterTh filters={defectFilters} column="total" label="Total" className="text-right" />
+                        <FilterTh filters={defectFilters} column="share" label="Share" className="text-right" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {defects.rows.map((d) => (
+                      {defectFilters.rows.map((d) => (
                         <tr key={d.defectName} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setDrill({ title: `${d.defectName}: rejected pieces`, subtitle: `${processName} · ${periodWords}`, query: { ...pickQuery, defect: d.defectName } })}>
                           <td className="whitespace-nowrap px-2 py-1.5 font-medium" dir="auto">{d.defectName}</td>
                           {d.byMachine.map((v, i) => (
@@ -1041,6 +1082,7 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
                       ))}
                     </tbody>
                   </table>
+                  <FilterNote filters={defectFilters} total={defects.rows.length} />
                 </div>
               )}
             </Section>
@@ -1110,6 +1152,10 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
     { key: 'thickness', value: (d) => (d.thickness === null ? '—' : thicknessText(d.thickness)), numeric: true },
     { key: 'grade', value: (d) => d.grade || '—' },
     { key: 'material', value: (d) => MATERIAL_KIND_LABEL[d.material] },
+    { key: 'made', value: (d) => num(d.made), numeric: true },
+    { key: 'rejected', value: (d) => num(d.productionDefectPieces), numeric: true },
+    { key: 'rate', value: (d) => pctStr(d.defectRatePct), numeric: true },
+    { key: 'ppm', value: (d) => ppmStr(d.defectRatePct), numeric: true },
   ])
   // A row is followed when the trend reads exactly it: its one supplier, thickness and grade.
   const rowPicked = (d: KpiMaterialDetail) =>
@@ -1239,10 +1285,10 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
                         <FilterTh filters={filters} column="thickness" label="Thickness" />
                         <FilterTh filters={filters} column="grade" label="Grade" />
                         <FilterTh filters={filters} column="material" label="Material" />
-                        <th className="px-2 py-1.5 text-right font-semibold">Made</th>
-                        <th className="px-2 py-1.5 text-right font-semibold">Rejected</th>
-                        <th className="px-2 py-1.5 text-right font-semibold">Reject rate</th>
-                        <th className="px-2 py-1.5 text-right font-semibold">PPM</th>
+                        <FilterTh filters={filters} column="made" label="Made" className="text-right" />
+                        <FilterTh filters={filters} column="rejected" label="Rejected" className="text-right" />
+                        <FilterTh filters={filters} column="rate" label="Reject rate" className="text-right" />
+                        <FilterTh filters={filters} column="ppm" label="PPM" className="text-right" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1581,37 +1627,53 @@ function FirstPartParts({ rows, navigate }: { rows: PartRow[]; navigate: (to: st
             <p className="text-sm text-muted">
               {num(open.notClean)} of {num(open.sessions)} sessions started with pieces already rejected, {num(open.rejectedPieces)} pieces in all. The orders behind them:
             </p>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-                  <th className="px-2 py-1.5 font-semibold">Order</th>
-                  <th className="px-2 py-1.5 text-right font-semibold">Sessions not clean</th>
-                  <th className="px-2 py-1.5 text-right font-semibold">Rejected before</th>
-                  <th className="px-2 py-1.5 text-right font-semibold">Open</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {open.orders.map((o) => (
-                  <tr key={o.orderNumber}>
-                    <td className="whitespace-nowrap px-2 py-1.5 font-semibold">{o.orderNumber}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{num(o.notClean)}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{num(o.rejectedPieces)} pcs</td>
-                    <td className="px-2 py-1.5 text-right">
-                      <span className="inline-flex flex-wrap justify-end gap-1">
-                        {o.sessionIds.map((id, i) => (
-                          <button key={id} type="button" onClick={() => navigate(sessionDetailPath(id))} className="rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300">
-                            {o.sessionIds.length === 1 ? 'Session' : `Session ${i + 1}`}
-                          </button>
-                        ))}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <PartOrders orders={open.orders} navigate={navigate} />
           </div>
         )}
       </Modal>
+    </>
+  )
+}
+
+type PartOrder = PartRow['orders'][number]
+/** The orders behind a part not clean on a machine, each with its sessions. */
+function PartOrders({ orders, navigate }: { orders: PartOrder[]; navigate: (to: string) => void }) {
+  const filters = useColumnFilters(orders, [
+    { key: 'order', value: (o) => o.orderNumber },
+    { key: 'notClean', value: (o) => num(o.notClean), numeric: true },
+    { key: 'pieces', value: (o) => `${num(o.rejectedPieces)} pcs`, numeric: true },
+  ])
+  return (
+    <>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
+            <FilterTh filters={filters} column="order" label="Order" />
+            <FilterTh filters={filters} column="notClean" label="Sessions not clean" className="text-right" />
+            <FilterTh filters={filters} column="pieces" label="Rejected before" className="text-right" />
+            <th className="px-2 py-1.5 text-right font-semibold">Open</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          {filters.rows.map((o) => (
+            <tr key={o.orderNumber}>
+              <td className="whitespace-nowrap px-2 py-1.5 font-semibold">{o.orderNumber}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{num(o.notClean)}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{num(o.rejectedPieces)} pcs</td>
+              <td className="px-2 py-1.5 text-right">
+                <span className="inline-flex flex-wrap justify-end gap-1">
+                  {o.sessionIds.map((id, i) => (
+                    <button key={id} type="button" onClick={() => navigate(sessionDetailPath(id))} className="rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300">
+                      {o.sessionIds.length === 1 ? 'Session' : `Session ${i + 1}`}
+                    </button>
+                  ))}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <FilterNote filters={filters} total={orders.length} />
     </>
   )
 }
@@ -1691,17 +1753,19 @@ function DefectsByMonthTable({ data, rejected, rate, onOpen }: { data: KpiBreakd
     onOpen && pieces > 0 ? { onClick: () => onOpen(defect, month), className: 'cursor-pointer hover:bg-brand-50 dark:hover:bg-brand-500/10' } : { className: '' }
   const filters = useColumnFilters(data.defects, [
     { key: 'defect', value: (d) => d.defectName },
+    // Each month's pieces of the defect, a column of its own.
+    ...data.months.map((m) => ({ key: `m:${m.month}`, value: (d: (typeof data.defects)[number]) => num(d.months.find((x) => x.month === m.month)?.pieces ?? 0), numeric: true })),
     { key: 'total', value: (d) => String(d.pieces), numeric: true },
   ])
   if (data.defects.length === 0) return <p className="py-6 text-center text-sm text-muted">No rejected piece in these months.</p>
-  const shown = filters.active > 0 ? filters.rows : filters.rows.slice(0, 15)
+  const shown = filters.active > 0 || filters.sort ? filters.rows : filters.rows.slice(0, 15)
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
             <FilterTh filters={filters} column="defect" label="Defect" />
-            {data.months.map((m) => <th key={m.month} className="px-2 py-1.5 text-right font-semibold">{monthLabel(m.month, false)}</th>)}
+            {data.months.map((m) => <FilterTh key={m.month} filters={filters} column={`m:${m.month}`} label={monthLabel(m.month, false)} className="text-right" />)}
             <FilterTh filters={filters} column="total" label="Total" className="text-right" />
           </tr>
         </thead>
@@ -2423,7 +2487,7 @@ export function DashboardPage() {
                 total={data.counts.defectTypes}
                 empty="No defects recorded in this period."
                 columns={[
-                  { key: 'd', label: 'Defect', render: (r) => <span dir="auto" className="font-semibold">{r.defectName}</span> },
+                  { key: 'd', label: 'Defect', text: (r) => r.defectName, render: (r) => <span dir="auto" className="font-semibold">{r.defectName}</span> },
                   { key: 'p', label: 'Pieces', className: 'text-right tabular-nums font-semibold', render: (r) => num(r.pieces) },
                   { key: 'r', label: 'Records', className: 'text-right tabular-nums', render: (r) => num(r.records) },
                   { key: 'days', label: 'Days seen', className: 'text-right tabular-nums', render: (r) => num(r.days) },
@@ -2432,6 +2496,8 @@ export function DashboardPage() {
                     key: 'share',
                     label: 'Share',
                     className: 'w-40',
+                    text: (r) => pctStr(r.sharePct),
+                    sortNum: (r) => r.sharePct,
                     render: (r) => (
                       <span className="flex items-center gap-2">
                         <span className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-rose-500" style={{ width: `${Math.min(100, r.sharePct)}%` }} /></span>
@@ -2607,7 +2673,7 @@ export function DashboardPage() {
                 maxRows={10}
                 empty="No paint thickness readings in this period."
                 columns={[
-                  { key: 'item', label: 'Item', render: (r) => (<span className="font-semibold">{r.itemCode}<span className="ml-1 text-xs font-normal text-muted">{r.item}</span></span>) },
+                  { key: 'item', label: 'Item', text: (r) => `${r.itemCode} ${r.item}`, render: (r) => (<span className="font-semibold">{r.itemCode}<span className="ml-1 text-xs font-normal text-muted">{r.item}</span></span>) },
                   { key: 'n', label: 'Readings', className: 'text-right tabular-nums', render: (r) => num(r.readings) },
                   { key: 'mean', label: 'Average µm', className: 'text-right tabular-nums font-semibold', render: (r) => num(r.meanMicrons, 1) },
                   { key: 'min', label: 'Min µm', className: 'text-right tabular-nums', render: (r) => num(r.minMicrons, 1) },
@@ -2624,12 +2690,12 @@ export function DashboardPage() {
               maxRows={15}
               empty="No defects recorded in this period."
               columns={[
-                { key: 'item', label: 'Item', render: (r) => (<span className="font-semibold">{r.itemCode}<span className="ml-1 text-xs font-normal text-muted">{r.item}</span></span>) },
-                { key: 'defect', label: 'Defect', render: (r) => <span dir="auto">{r.defectName}</span> },
+                { key: 'item', label: 'Item', text: (r) => `${r.itemCode} ${r.item}`, render: (r) => (<span className="font-semibold">{r.itemCode}<span className="ml-1 text-xs font-normal text-muted">{r.item}</span></span>) },
+                { key: 'defect', label: 'Defect', text: (r) => r.defectName, render: (r) => <span dir="auto">{r.defectName}</span> },
                 { key: 'mc', label: 'Machine', render: (r) => r.machineLabel },
                 { key: 'pcs', label: 'Pieces', className: 'text-right tabular-nums', render: (r) => num(r.pieces) },
                 { key: 'rec', label: 'Records', className: 'text-right tabular-nums', render: (r) => num(r.records) },
-                { key: 'share', label: 'Of item', className: 'text-right', render: (r) => <span className="font-semibold tabular-nums">{pctStr(r.sharePct)}</span> },
+                { key: 'share', label: 'Of item', className: 'text-right', text: (r) => pctStr(r.sharePct), sortNum: (r) => r.sharePct, render: (r) => <span className="font-semibold tabular-nums">{pctStr(r.sharePct)}</span> },
               ]}
             />
           </Section>
@@ -2684,22 +2750,22 @@ export function DashboardPage() {
               ) },
               { id: 'd.tableMachine', title: 'By machine (table)', node: (
             <Section title="By machine" icon={<Activity className="h-4 w-4" />}>
-              <Table rows={data.byMachine} total={data.counts.machines} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Machine', render: (r) => (<span className="font-semibold">{r.label}{r.sub && <span className="ml-1 text-xs font-normal text-muted">{r.sub}</span>}</span>) })} />
+              <Table rows={data.byMachine} total={data.counts.machines} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Machine', text: (r) => r.label, render: (r) => (<span className="font-semibold">{r.label}{r.sub && <span className="ml-1 text-xs font-normal text-muted">{r.sub}</span>}</span>) })} />
             </Section>
               ) },
               { id: 'd.tableInspector', title: 'By inspector (table)', node: (
             <Section title="By inspector" icon={<Users className="h-4 w-4" />}>
-              <Table rows={data.byInspector} total={data.counts.inspectors} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Inspector', render: (r) => <span className="font-semibold">{r.label}</span> })} />
+              <Table rows={data.byInspector} total={data.counts.inspectors} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Inspector', text: (r) => r.label, render: (r) => <span className="font-semibold">{r.label}</span> })} />
             </Section>
               ) },
               { id: 'd.tableShift', title: 'By shift (table)', node: (
             <Section title="By shift" icon={<Users className="h-4 w-4" />}>
-              <Table rows={data.byShift} rowKey={(r) => r.key} columns={groupColumns(t, { key: 'k', label: 'Shift', render: (r) => (<span className="font-semibold">{r.label} <span className="text-xs font-normal text-muted">{shiftName(r.key as ShiftLetter)}</span></span>) })} />
+              <Table rows={data.byShift} rowKey={(r) => r.key} columns={groupColumns(t, { key: 'k', label: 'Shift', text: (r) => `${r.label} ${shiftName(r.key as ShiftLetter)}`, render: (r) => (<span className="font-semibold">{r.label} <span className="text-xs font-normal text-muted">{shiftName(r.key as ShiftLetter)}</span></span>) })} />
             </Section>
               ) },
               { id: 'd.tableItem', title: 'By item (table)', node: (
             <Section title="By item" icon={<ClipboardList className="h-4 w-4" />}>
-              <Table rows={data.byItem} total={data.counts.items} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Item', render: (r) => (<span className="font-semibold">{r.label}<span className="ml-1 text-xs font-normal text-muted">{r.key}</span></span>) })} />
+              <Table rows={data.byItem} total={data.counts.items} rowKey={(r) => r.key} maxRows={10} columns={groupColumns(t, { key: 'k', label: 'Item', text: (r) => `${r.label} ${r.key}`, render: (r) => (<span className="font-semibold">{r.label}<span className="ml-1 text-xs font-normal text-muted">{r.key}</span></span>) })} />
             </Section>
               ) },
               { id: 'd.coilSuppliers', title: 'Coil suppliers', node: (
@@ -2711,12 +2777,12 @@ export function DashboardPage() {
                 maxRows={10}
                 empty="No coil from the register was used in this period."
                 columns={[
-                  { key: 's', label: 'Supplier', render: (s) => <span className="font-semibold">{s.supplier}</span> },
+                  { key: 's', label: 'Supplier', text: (s) => s.supplier, render: (s) => <span className="font-semibold">{s.supplier}</span> },
                   { key: 'g', label: 'Grade', render: (s) => s.grade },
                   { key: 'n', label: 'Samples', className: 'text-right tabular-nums', render: (s) => num(s.samples) },
                   { key: 'p', label: 'Pieces', className: 'text-right tabular-nums', render: (s) => num(s.pieces) },
                   { key: 'd', label: 'Defect pcs', className: 'text-right tabular-nums', render: (s) => num(s.defectPieces) },
-                  { key: 'r', label: 'Of inspected', className: 'text-right', render: (s) => <ToneCell value={s.inspectedDefectPct} tone="neutral" /> },
+                  { key: 'r', label: 'Of inspected', className: 'text-right', text: (s) => pctStr(s.inspectedDefectPct), sortNum: (s) => s.inspectedDefectPct, render: (s) => <ToneCell value={s.inspectedDefectPct} tone="neutral" /> },
                 ]}
               />
             </Section>
@@ -2743,13 +2809,13 @@ export function DashboardPage() {
                 maxRows={10}
                 empty="Nothing on Hold. Good."
                 columns={[
-                  { key: 'age', label: 'Age', className: 'text-right', render: (h) => <Badge tone={h.ageDays >= t.holdAgeRedDays ? 'red' : h.ageDays >= t.holdAgeAmberDays ? 'amber' : 'neutral'}>{h.ageDays} d</Badge> },
-                  { key: 'o', label: 'Order', render: (h) => <span className="font-semibold">{h.orderNumber}</span> },
+                  { key: 'age', label: 'Age', className: 'text-right', text: (h) => `${h.ageDays} d`, sortNum: (h) => h.ageDays, render: (h) => <Badge tone={h.ageDays >= t.holdAgeRedDays ? 'red' : h.ageDays >= t.holdAgeAmberDays ? 'amber' : 'neutral'}>{h.ageDays} d</Badge> },
+                  { key: 'o', label: 'Order', text: (h) => h.orderNumber, render: (h) => <span className="font-semibold">{h.orderNumber}</span> },
                   { key: 'i', label: 'Item', render: (h) => h.item },
                   { key: 'm', label: 'Machine', render: (h) => h.workCenterCode },
                   { key: 'd', label: 'Defect', render: (h) => h.defectName },
                   { key: 'q', label: 'Qty', className: 'text-right tabular-nums', render: (h) => num(h.qty) },
-                  { key: 'go', label: '', className: 'print-hidden text-right', render: (h) => (<button type="button" onClick={() => navigate(sessionDetailPath(h.sessionId))} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">Session</button>) },
+                  { key: 'go', label: '', className: 'print-hidden text-right', filterable: false, render: (h) => (<button type="button" onClick={() => navigate(sessionDetailPath(h.sessionId))} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">Session</button>) },
                 ]}
               />
             </Section>

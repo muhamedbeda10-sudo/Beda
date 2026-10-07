@@ -35,9 +35,9 @@ export function GradeMappingsSection() {
       emptyHint="Add a pair of grades that should be treated as equivalent."
       minTableWidth="min-w-[26rem]"
       columns={[
-        { key: 'a', label: 'Grade A', render: (r) => <span className="font-semibold">{r.gradeA}</span> },
-        { key: 'eq', label: '', className: 'w-8 text-center text-muted', render: () => '≡' },
-        { key: 'b', label: 'Grade B', render: (r) => <span className="font-semibold">{r.gradeB}</span> },
+        { key: 'a', label: 'Grade A', text: (r) => r.gradeA, render: (r) => <span className="font-semibold">{r.gradeA}</span> },
+        { key: 'eq', label: '', className: 'w-8 text-center text-muted', filterable: false, render: () => '≡' },
+        { key: 'b', label: 'Grade B', text: (r) => r.gradeB, render: (r) => <span className="font-semibold">{r.gradeB}</span> },
       ]}
       describe={(r) => `${r.gradeA} ≡ ${r.gradeB}`}
       newDraft={() => ({ gradeA: '', gradeB: '' })}

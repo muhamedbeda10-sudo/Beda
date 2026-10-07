@@ -12,7 +12,8 @@ import { Badge, Button, Card, Field, Input, Modal, type BadgeTone } from '@/comp
 import { useOrderSync } from '@/services/queries'
 import { createIntegrationKey, requestOrderSync, revokeIntegrationKey } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
-import { cn, downloadText, timeAgo } from '@/lib/utils'
+import { cn, downloadText, formatDateTime, timeAgo } from '@/lib/utils'
+import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 import { When } from '@/components/ui/Tooltip'
 
 const STATUS: Record<OrderSyncStatus, { label: string; tone: BadgeTone; icon: typeof CheckCircle2 }> = {
@@ -61,6 +62,16 @@ export function AccessSyncPanel() {
   const [openRun, setOpenRun] = useState<string | null>(null)
 
   const runs = data?.runs ?? []
+  const runView = useTableView(runs, [
+    { key: 'started', value: (r) => formatDateTime(r.startedAt), sortValue: (r) => Date.parse(r.startedAt), numeric: true },
+    { key: 'status', value: (r) => r.status },
+    { key: 'rows', value: (r) => String(r.rowsReceived), sortValue: (r) => r.rowsReceived, numeric: true },
+    { key: 'new', value: (r) => String(r.inserted), sortValue: (r) => r.inserted, numeric: true },
+    { key: 'updated', value: (r) => String(r.updated), sortValue: (r) => r.updated, numeric: true },
+    { key: 'retired', value: (r) => String(r.retired), sortValue: (r) => r.retired, numeric: true },
+    { key: 'invalid', value: (r) => String(r.invalid), sortValue: (r) => r.invalid, numeric: true },
+    { key: 'from', value: (r) => r.source || r.keyName },
+  ])
   const last = runs.find((r) => r.status !== 'running') ?? null
   const running = runs.find((r) => r.status === 'running') ?? null
   const liveKeys = (data?.keys ?? []).filter((k) => !k.revokedAt)
@@ -149,18 +160,18 @@ export function AccessSyncPanel() {
             <table className="w-full text-sm">
               <thead className="text-left text-[11px] uppercase tracking-wide text-muted">
                 <tr>
-                  <th className="px-2 py-1.5 font-semibold">Started</th>
-                  <th className="px-2 py-1.5 font-semibold">Status</th>
-                  <th className="px-2 py-1.5 text-right font-semibold">Rows</th>
-                  <th className="px-2 py-1.5 text-right font-semibold">New</th>
-                  <th className="px-2 py-1.5 text-right font-semibold">Updated</th>
-                  <th className="px-2 py-1.5 text-right font-semibold">Retired</th>
-                  <th className="px-2 py-1.5 text-right font-semibold">Unreadable</th>
-                  <th className="px-2 py-1.5 font-semibold">From</th>
+                  <ViewTh view={runView} column="started" label="Started" className="px-2 py-1.5 font-semibold" />
+                  <ViewTh view={runView} column="status" label="Status" className="px-2 py-1.5 font-semibold" />
+                  <ViewTh view={runView} column="rows" label="Rows" className="px-2 py-1.5 text-right font-semibold" />
+                  <ViewTh view={runView} column="new" label="New" className="px-2 py-1.5 text-right font-semibold" />
+                  <ViewTh view={runView} column="updated" label="Updated" className="px-2 py-1.5 text-right font-semibold" />
+                  <ViewTh view={runView} column="retired" label="Retired" className="px-2 py-1.5 text-right font-semibold" />
+                  <ViewTh view={runView} column="invalid" label="Unreadable" className="px-2 py-1.5 text-right font-semibold" />
+                  <ViewTh view={runView} column="from" label="From" className="px-2 py-1.5 font-semibold" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {runs.map((r) => {
+                {runView.rows.map((r) => {
                   const more = !!r.message || r.errors.length > 0 || r.unknownColumns.length > 0
                   const open = openRun === r.id
                   return (
@@ -198,6 +209,7 @@ export function AccessSyncPanel() {
                 })}
               </tbody>
             </table>
+            <ViewNote view={runView} total={runs.length} />
           </div>
         )}
       </Card>

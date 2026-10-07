@@ -51,11 +51,13 @@ export function PTConsumablesSection() {
         {
           key: 'name',
           label: 'Product',
+          text: (r) => r.productName,
           render: (r) => <span className="font-semibold">{r.productName}</span>,
         },
         {
           key: 'lot',
           label: 'Lot / batch',
+          text: (r) => r.lotBatch,
           render: (r) => <span className="tabular-nums">{r.lotBatch}</span>,
         },
       ]}

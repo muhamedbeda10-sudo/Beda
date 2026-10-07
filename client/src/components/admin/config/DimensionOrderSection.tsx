@@ -47,32 +47,38 @@ export function DimensionOrderSection() {
       emptyHint="Add the dimensions for an item, or load them from the Bulk import tab."
       minTableWidth="min-w-[50rem]"
       columns={[
-        { key: 'item', label: 'Item', render: (r) => <span className="font-semibold">{r.item || r.itemCode}</span> },
+        { key: 'item', label: 'Item', text: (r) => r.item || r.itemCode, render: (r) => <span className="font-semibold">{r.item || r.itemCode}</span> },
         {
           key: 'machine',
           label: 'Machine',
+          text: (r) => r.workCenterCode || 'every machine',
           render: (r) => (r.workCenterCode ? <Badge tone="blue">{r.workCenterCode}</Badge> : <span className="text-muted">every machine</span>),
         },
-        { key: 'name', label: 'Dimension', render: (r) => <span dir="auto">{r.dimensionName}</span> },
+        { key: 'name', label: 'Dimension', text: (r) => r.dimensionName, render: (r) => <span dir="auto">{r.dimensionName}</span> },
         {
           key: 'seq',
           label: 'Seq',
           className: 'tabular-nums',
+          text: (r) => String(r.sequence),
+          sortNum: (r) => r.sequence,
           render: (r) => <Badge tone="neutral">{r.sequence}</Badge>,
         },
         {
           key: 'nominal',
           label: 'Nominal',
           className: 'tabular-nums',
+          text: (r) => (r.nominal === undefined || r.nominal === null ? '—' : String(r.nominal)),
+          sortNum: (r) => r.nominal ?? null,
           render: (r) => (r.nominal === undefined || r.nominal === null ? '—' : r.nominal),
         },
         {
           key: 'tol',
           label: 'Tolerance',
           className: 'tabular-nums',
+          text: (r) => `+${r.tolPlus} / −${r.tolMinus}`,
           render: (r) => `+${r.tolPlus} / −${r.tolMinus}`,
         },
-        { key: 'unit', label: 'Unit', render: (r) => r.unit || '—' },
+        { key: 'unit', label: 'Unit', text: (r) => r.unit || '—', render: (r) => r.unit || '—' },
       ]}
       describe={(r) => `${r.itemCode}${r.workCenterCode ? ` on ${r.workCenterCode}` : ''} · ${r.dimensionName}`}
       newDraft={() => ({
