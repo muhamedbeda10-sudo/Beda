@@ -9,7 +9,7 @@ import { can } from '@qc/shared/rules'
 import { Badge, Card, EmptyState, Modal } from '@/components/ui'
 import { ExportMenu, FilterBar, FilterSelect, type FilterChip } from '@/components/ui/PageShell'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
-import { loadOlderPdi, loadPdiExport, useDebounced, usePdiList, usePdiOptions } from '@/services/queries'
+import { loadOlderPdi, loadPdiAt, loadPdiExport, loadPdiValues, useDebounced, usePdiList, usePdiOptions } from '@/services/queries'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { pdiSheets } from '@/components/history/exportHistory'
 import { usePersistedState } from '@/lib/usePersistedState'
@@ -17,8 +17,20 @@ import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { When } from '@/components/ui/Tooltip'
 import { formatDate } from '@/lib/utils'
+import { useServerColumns } from '@/components/ui/ColumnFilter'
 
 const PAGE = 50
+
+/** The table's columns: the key the server filters and sorts by, the header, and how its values read. */
+const PDI_COLUMNS: { key: string; label: string; numeric?: boolean; day?: boolean; right?: boolean }[] = [
+  { key: 'date', label: 'Date', numeric: true, day: true },
+  { key: 'order', label: 'Order' },
+  { key: 'customer', label: 'Customer' },
+  { key: 'items', label: 'Items · drawing' },
+  { key: 'by', label: 'By' },
+  { key: 'photos', label: 'Photos', numeric: true, right: true },
+  { key: 'notes', label: 'Notes' },
+]
 
 type RangeFilter = 'all' | '7' | '30' | '90' | 'custom'
 const RANGE_LABEL: Record<RangeFilter, string> = {
@@ -127,8 +139,11 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
 
   const settledTerm = useDebounced(term.trim(), 300)
   const settledItem = useDebounced(item.trim(), 300)
+  const columnsView = useServerColumns()
   const filters = useMemo<PDIListFilters>(() => {
     const f: PDIListFilters = {}
+    if (columnsView.cf) f.cf = columnsView.cf
+    if (columnsView.sortParam) f.sort = columnsView.sortParam
     if (settledTerm) f.q = settledTerm
     if (settledItem) f.item = settledItem
     if (by !== 'all') f.createdById = by
@@ -138,8 +153,8 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
       if (b) f.to = b
     } else if (range !== 'all') f.from = localDay(Number(range))
     return f
-  }, [settledTerm, settledItem, by, range, fromDay, toDay])
-  const filtersSet = term !== '' || item !== '' || by !== 'all' || range !== 'all'
+  }, [settledTerm, settledItem, by, range, fromDay, toDay, columnsView.cf, columnsView.sortParam])
+  const filtersSet = term !== '' || item !== '' || by !== 'all' || range !== 'all' || columnsView.active
   const byName = (id: string) => options?.createdBy.find((c) => c.id === id)?.name ?? 'one person'
   const resetFilters = () => {
     setTerm('')
@@ -148,6 +163,7 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
     setRange('all')
     setFromDay(localDay())
     setToDay(localDay())
+    columnsView.clear()
   }
 
   const { data, isLoading, isFetching } = usePdiList(filters, PAGE)
@@ -172,7 +188,8 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
     if (!last || loadingOlder) return
     setLoadingOlder(true)
     try {
-      const page = await loadOlderPdi(filters, last.createdAt, PAGE)
+      // Sorted by a column, the next page is the next position; otherwise the PDIs older than the last one.
+      const page = filters.sort ? await loadPdiAt(filters, docs.length, PAGE) : await loadOlderPdi(filters, last.createdAt, PAGE)
       setOlder((prev) => [...prev, ...page.documents])
       setOlderHasMore(page.hasMore)
     } catch (e) {
@@ -209,6 +226,7 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
       : []),
     ...(item !== '' ? [{ key: 'item', label: `Item or drawing: ${item}`, onRemove: () => setItem('') }] : []),
     ...(by !== 'all' ? [{ key: 'by', label: `Recorded by: ${byName(by)}`, onRemove: () => setBy('all') }] : []),
+    ...columnsView.chips((key) => PDI_COLUMNS.find((c) => c.key === key)?.label ?? key),
   ]
 
   return (
@@ -297,18 +315,23 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
                 <col className="w-[16%]" />
                 <col />
                 <col className="w-[9rem]" />
-                <col className="w-[5rem]" />
+                <col className="w-[6.5rem]" />
                 <col className="w-[18%]" />
               </colgroup>
               <thead className="bg-slate-50 dark:bg-slate-800/60">
                 <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-                  <th className="px-3 py-2 font-semibold">Date</th>
-                  <th className="px-3 py-2 font-semibold">Order</th>
-                  <th className="px-3 py-2 font-semibold">Customer</th>
-                  <th className="px-3 py-2 font-semibold">Items · drawing</th>
-                  <th className="px-3 py-2 font-semibold">By</th>
-                  <th className="px-3 py-2 text-right font-semibold">Photos</th>
-                  <th className="px-3 py-2 font-semibold">Notes</th>
+                  {PDI_COLUMNS.map((c) => (
+                    <th key={c.key} className={`px-3 py-2 font-semibold ${c.right ? 'text-right' : ''}`}>
+                      <span className={`inline-flex max-w-full items-center gap-1 ${c.right ? 'flex-row-reverse' : ''}`}>
+                        <span className="truncate">{c.label}</span>
+                        {columnsView.menu(c.key, c.label, (search) => loadPdiValues(filters, c.key, search), {
+                          numeric: c.numeric,
+                          align: c.right ? 'right' : 'left',
+                          formatValue: c.day ? (v) => formatDate(v) : undefined,
+                        })}
+                      </span>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">

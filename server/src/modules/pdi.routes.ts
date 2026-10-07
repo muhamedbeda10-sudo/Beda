@@ -16,6 +16,7 @@ import { requireCapability, requireUser } from '../auth/middleware'
 import { auditCreate } from '../audit/service'
 import { assertImagesUsable, linkImages } from './images.links'
 import { cancelledSql } from '../lib/orderStatus'
+import { columnFilterClauses, columnOrderBy, columnQuerySchema, columnValues, type SqlColumns } from '../lib/columnFilters'
 
 /** One order can carry a few hundred lines; a PDI covers some or all of them. */
 const MAX_LINES = 500
@@ -28,19 +29,25 @@ const createSchema = z.object({
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a day, YYYY-MM-DD')
 
-const filterSchema = z.object({
-  q: z.string().trim().max(120).optional(),
-  item: z.string().trim().max(120).optional(),
-  createdById: z.string().uuid().optional(),
-  from: day.optional(),
-  to: day.optional(),
-})
+const filterSchema = z
+  .object({
+    q: z.string().trim().max(120).optional(),
+    item: z.string().trim().max(120).optional(),
+    createdById: z.string().uuid().optional(),
+    from: day.optional(),
+    to: day.optional(),
+  })
+  .merge(columnQuerySchema)
 
 const listSchema = filterSchema.extend({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   /** PDIs recorded before this instant: the end of the page already read. */
   before: z.string().datetime({ offset: true }).optional(),
+  /** With a column sort, pages walk by position instead. */
+  offset: z.coerce.number().int().min(0).max(100000).default(0),
 })
+
+const valuesSchema = filterSchema.extend({ column: z.string().max(60), search: z.string().max(200).optional() })
 
 interface Row {
   id: string
@@ -83,6 +90,24 @@ const PDI_SELECT = `
 
 const PDI_FROM = `FROM pdi_documents d LEFT JOIN production_orders o ON o.id = d.order_id`
 
+/** The columns as the PDI table shows them: the text a cell reads, and what a figure or a date sorts by. */
+function pdiColumns(tz: string): SqlColumns {
+  const photos = `(SELECT count(*) FROM pdi_images pi WHERE pi.pdi_id = d.id)`
+  return {
+    date: { text: `to_char(d.created_at AT TIME ZONE '${tz.replace(/'/g, "''")}', 'YYYY-MM-DD')`, sort: 'd.created_at' },
+    order: { text: `COALESCE(btrim(o.order_number), '')` },
+    customer: { text: `COALESCE(btrim(o.customer), '')` },
+    // Every item the PDI covers, A to Z, as one cell: "contains" finds a PDI by any of them.
+    items: {
+      text: `COALESCE((SELECT string_agg(x.item, ', ' ORDER BY lower(x.item))
+                         FROM (SELECT DISTINCT btrim(l.item) AS item FROM pdi_lines pl JOIN production_orders l ON l.id = pl.order_id WHERE pl.pdi_id = d.id) x), '')`,
+    },
+    by: { text: 'btrim(d.created_by_name)' },
+    photos: { text: `${photos}::text`, sort: photos },
+    notes: { text: `COALESCE(btrim(d.notes), '')` },
+  }
+}
+
 function toDto(r: Row): PDIWithOrder {
   return {
     id: r.id,
@@ -102,8 +127,12 @@ function toDto(r: Row): PDIWithOrder {
 /** A literal ILIKE pattern: the wildcards a person types are text. */
 const contains = (term: string): string => `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
 
-/** The PDI list's filters as SQL over pdi_documents `d` joined to its anchor line `o`. */
-function pdiWhere(q: z.infer<typeof filterSchema>, tz: string): { where: string; params: unknown[] } {
+/**
+ * The PDI list's filters as SQL over pdi_documents `d` joined to its anchor
+ * line `o`; with `columns`, the column filters too (a column's own values
+ * leave them to columnValues).
+ */
+function pdiWhere(q: z.infer<typeof filterSchema>, tz: string, columns = true): { where: string; params: unknown[] } {
   if (q.from && q.to && q.from > q.to) throw badRequest('The range ends before it starts.')
   const clauses = ['d.deleted_at IS NULL']
   const params: unknown[] = []
@@ -123,6 +152,7 @@ function pdiWhere(q: z.infer<typeof filterSchema>, tz: string): { where: string;
     if (q.from) clauses.push(`d.created_at >= (${p(q.from)}::date)::timestamp AT TIME ZONE ${zone}`)
     if (q.to) clauses.push(`d.created_at < ((${p(q.to)}::date + 1)::timestamp) AT TIME ZONE ${zone}`)
   }
+  if (columns) clauses.push(...columnFilterClauses(pdiColumns(tz), q.cf, p))
   return { where: clauses.join(' AND '), params }
 }
 
@@ -134,11 +164,17 @@ export function pdiRoutes(ctx: AppContext): Router {
     const { where, params } = pdiWhere(q, ctx.config.FACTORY_TIMEZONE)
     const p = (v: unknown) => `$${params.push(v)}`
     const filterParams = [...params]
-    const paged = q.before ? `${where} AND d.created_at < ${p(q.before)}::timestamptz` : where
+    // Newest first, walked back by `before`; sorted by a column, walked by `offset`.
+    const newest = 'd.created_at DESC, d.id DESC'
+    const sorted = !!q.sort
+    const paged = q.before && !sorted ? `${where} AND d.created_at < ${p(q.before)}::timestamptz` : where
+    const orderBy = columnOrderBy(pdiColumns(ctx.config.FACTORY_TIMEZONE), q.sort, newest)
     const limit = p(q.limit + 1)
+    const offset = sorted ? ` OFFSET ${p(q.offset)}` : ''
+    const firstPage = sorted ? q.offset === 0 : !q.before
     const [page, counted] = await Promise.all([
-      ctx.db.query<Row>(`SELECT ${PDI_SELECT} ${PDI_FROM} WHERE ${paged} ORDER BY d.created_at DESC, d.id DESC LIMIT ${limit}`, params),
-      q.before ? null : ctx.db.query<{ n: number }>(`SELECT count(*)::int AS n ${PDI_FROM} WHERE ${where}`, filterParams),
+      ctx.db.query<Row>(`SELECT ${PDI_SELECT} ${PDI_FROM} WHERE ${paged} ORDER BY ${orderBy} LIMIT ${limit}${offset}`, params),
+      firstPage ? ctx.db.query<{ n: number }>(`SELECT count(*)::int AS n ${PDI_FROM} WHERE ${where}`, filterParams) : null,
     ])
     const body: PDIListResponse = { documents: page.rows.slice(0, q.limit).map(toDto), hasMore: page.rows.length > q.limit }
     if (counted) body.total = counted.rows[0].n
@@ -155,6 +191,14 @@ export function pdiRoutes(ctx: AppContext): Router {
     }
     const { rows } = await ctx.db.query<Row>(`SELECT ${PDI_SELECT} ${PDI_FROM} WHERE ${where} ORDER BY d.created_at, d.id`, params)
     res.json(rows.map(toDto))
+  })
+
+  /** One PDI column's values under every other filter, for its Excel menu. */
+  r.get('/values', async (req, res) => {
+    const q = parse(valuesSchema, req.query)
+    const tz = ctx.config.FACTORY_TIMEZONE
+    const { where, params } = pdiWhere(q, tz, false)
+    res.json(await columnValues(ctx.db, { columns: pdiColumns(tz), column: q.column, from: PDI_FROM, where: [where], params, filters: q.cf, search: q.search }))
   })
 
   /** Who the PDI list may be narrowed to: everyone who ever recorded one. */

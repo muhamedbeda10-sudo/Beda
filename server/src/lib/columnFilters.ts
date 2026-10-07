@@ -22,7 +22,8 @@ export interface SqlColumn {
 export type SqlColumns = Record<string, SqlColumn>
 
 const filterSchema = z.object({
-  values: z.array(z.string().max(400)).max(2000).optional(),
+  values: z.array(z.string().max(4000)).max(2000).optional(),
+  except: z.array(z.string().max(4000)).max(2000).optional(),
   contains: z.string().trim().max(200).optional(),
 })
 
@@ -69,6 +70,7 @@ export function columnFilterClauses(columns: SqlColumns, filters: ColumnFilters,
     if (key === except) continue
     const c = columnOf(columns, key)
     if (f.values) out.push(f.values.length === 0 ? 'false' : `COALESCE(${c.text}, '') = ANY(${p(f.values)}::text[])`)
+    if (f.except?.length) out.push(`COALESCE(${c.text}, '') <> ALL(${p(f.except)}::text[])`)
     if (f.contains) out.push(`COALESCE(${c.text}, '') ILIKE ${p(`%${escapeLike(f.contains)}%`)}`)
   }
   return out

@@ -8,7 +8,7 @@
 // ============================================================================
 
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
-import type { AuditListResponse, AuditOptionsResponse } from '@qc/shared/api'
+import type { AuditListResponse, AuditOptionsResponse, ColumnValuesResponse } from '@qc/shared/api'
 import { TestApp, type Session } from './harness'
 
 const app = new TestApp()
@@ -115,5 +115,41 @@ describe('§11 — a filter reaches the whole log', () => {
     const inspector = await app.register('insp', 'Inspector')
     expect((await app.api('GET', '/api/audit?q=19868', { token: inspector.token })).status).toBe(403)
     expect((await app.api('GET', '/api/audit/options', { token: inspector.token })).status).toBe(403)
+  })
+})
+
+describe('§11 — Excel\'s column filters, over the whole log', () => {
+  const cf = (filters: object) => `cf=${encodeURIComponent(JSON.stringify(filters))}`
+  const values = (query: string) => app.api<ColumnValuesResponse>('GET', `/api/audit/values?${query}`, { token: admin.token })
+
+  it('ticks values and leaves some out', async () => {
+    expect((await get(cf({ order: { values: ['19868-Ph2.2B-EHF'] } }))).body.entries.map((e) => e.entityId)).toEqual(['dim-buried'])
+    expect((await get(cf({ user: { except: ['Admin'] } }))).body.total).toBe(1)
+    expect((await get(cf({ machine: { values: [''] } }))).body.total).toBe(NOISE + PROMOTION)
+    expect((await get(cf({ newValue: { contains: '81.' } }))).body.entries.map((e) => e.entityId)).toEqual(['dim-buried'])
+  })
+
+  it('lists a column\'s values under every other filter', async () => {
+    const users = await values('column=user')
+    expect(users.body.values).toEqual([
+      { value: 'Admin', count: NOISE + PROMOTION },
+      { value: 'Rania Adel', count: 1 },
+    ])
+    expect((await values(`column=action&${cf({ user: { values: ['Rania Adel'] } })}`)).body.values).toEqual([{ value: 'acknowledge', count: 1 }])
+  })
+
+  it('sorts by a column, blanks last, and pages by position', async () => {
+    expect((await get('sort=machine:desc')).body.entries[0].entityId).toBe('dim-buried')
+    const oldest = await get('sort=at:asc')
+    expect(oldest.body.entries[0].entityId).toBe('dim-buried')
+    expect(oldest.body.total).toBe(NOISE + PROMOTION + 1)
+    const seen: string[] = []
+    for (let offset = 0; offset < NOISE + PROMOTION + 1; offset += PAGE) {
+      const page = (await get(`sort=at:asc&offset=${offset}`)).body
+      if (offset > 0) expect(page.total).toBeUndefined()
+      seen.push(...page.entries.map((e) => e.id))
+    }
+    expect(new Set(seen).size).toBe(NOISE + PROMOTION + 1)
+    expect((await get('sort=nothing:asc')).status).toBe(400)
   })
 })

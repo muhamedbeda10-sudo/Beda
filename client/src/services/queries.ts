@@ -345,6 +345,16 @@ export function loadOlderPdi(filters: PDIListFilters, before: string, limit = 50
   return api<PDIListResponse>(`/pdi${qs({ limit, ...filters, before })}`)
 }
 
+/** A page of PDIs at a position, for a list sorted by a column. */
+export function loadPdiAt(filters: PDIListFilters, offset: number, limit = 50): Promise<PDIListResponse> {
+  return api<PDIListResponse>(`/pdi${qs({ limit, ...filters, offset })}`)
+}
+
+/** One PDI column's values under the other filters, for its Excel menu. */
+export function loadPdiValues(filters: PDIListFilters, column: string, search: string): Promise<ColumnValuesResponse> {
+  return api<ColumnValuesResponse>(`/pdi/values${qs({ ...filters, column, search: search || undefined })}`)
+}
+
 export function usePdiOptions(enabled = true) {
   return useQuery({ queryKey: ['pdi', 'options'] as const, queryFn: () => api<PDIOptionsResponse>('/pdi/options'), enabled, staleTime: 5 * 60_000 })
 }
@@ -474,6 +484,16 @@ export function useAuditList(filters: AuditFilters, limit = 200) {
 /** §11 — the next page: the same filters, walked back past one entry. */
 export async function loadOlderAudit(filters: AuditFilters, before: string, beforeId: string, limit = 200): Promise<AuditListResponse> {
   return api<AuditListResponse>(`/audit${qs({ limit, ...filters, before, beforeId })}`)
+}
+
+/** A page of the log at a position, for a log sorted by a column. */
+export async function loadAuditAt(filters: AuditFilters, offset: number, limit = 200): Promise<AuditListResponse> {
+  return api<AuditListResponse>(`/audit${qs({ limit, ...filters, offset })}`)
+}
+
+/** One audit column's values under the other filters, for its Excel menu. */
+export function loadAuditValues(filters: AuditFilters, column: string, search: string): Promise<ColumnValuesResponse> {
+  return api<ColumnValuesResponse>(`/audit/values${qs({ ...filters, column, search: search || undefined })}`)
 }
 
 /** §11 — every entry the filters match, up to `limit`, for the CSV export. */

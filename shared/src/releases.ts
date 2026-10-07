@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-07.4',
+    date: '2026-10-07',
+    title: 'PDI and the audit log: Excel\'s filter and sort on every column',
+    items: [
+      { text: 'History → PDI: every column title (date, order, customer, items, by, photos, notes) has the Excel menu, over every PDI on record. Items lists every item a PDI covers, so Contains finds a PDI by any of them. Export Excel follows the column filters.' },
+      { text: 'Administration → Audit log is now a table on a computer, one line per entry, with the Excel menu on every column (when, user, action, entity, field, old and new value, order, item, machine) over the whole log. Phones keep the cards.' },
+      { text: 'Unticking a few values of a long list now sends "all but these", so a filter on hundreds of values stays quick and never too long to send.' },
+    ],
+  },
+  {
     id: '2026-10-07.3',
     date: '2026-10-07',
     title: 'History: Excel\'s filter and sort on every column, over the whole record',

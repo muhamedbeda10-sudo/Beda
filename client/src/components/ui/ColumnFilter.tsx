@@ -24,19 +24,21 @@ const lower = (s: string) => s.trim().toLowerCase()
 export function passesFilter(text: string, f: ColumnFilter | undefined): boolean {
   if (!f) return true
   if (f.values && !f.values.includes(text)) return false
+  if (f.except?.includes(text)) return false
   if (f.contains && !lower(text).includes(lower(f.contains))) return false
   return true
 }
 
 /** A filter that filters nothing is no filter. */
 export function isActive(f: ColumnFilter | undefined): boolean {
-  return !!f && (f.values !== undefined || !!f.contains?.trim())
+  return !!f && (f.values !== undefined || (f.except?.length ?? 0) > 0 || !!f.contains?.trim())
 }
 
 /** The filter in words, for a chip or a tooltip: "Machine: 2 values", "Item contains "beam"". */
 export function describeFilter(label: string, f: ColumnFilter): string {
   const parts: string[] = []
   if (f.values) parts.push(f.values.length === 1 ? (f.values[0] || '(Blanks)') : `${f.values.length} values`)
+  if (f.except?.length) parts.push(f.except.length === 1 ? `all but ${f.except[0] || '(Blanks)'}` : `all but ${f.except.length} values`)
   if (f.contains?.trim()) parts.push(`contains "${f.contains.trim()}"`)
   return `${label}: ${parts.join(', ')}`
 }
@@ -128,8 +130,10 @@ function MenuBody({
   onApply,
   onCancel,
 }: Omit<ColumnMenuProps, 'onApply' | 'onSort'> & { onSort: (d: 'asc' | 'desc' | null) => void; onApply: (f: ColumnFilter | undefined) => void; onCancel: () => void }) {
-  // A draft: nothing reaches the table until OK.
-  const [ticked, setTicked] = useState<string[] | undefined>(filter?.values)
+  // A draft: nothing reaches the table until OK. `only` the values in `set`, or every value `except` them.
+  const [draft, setDraft] = useState<{ mode: 'only' | 'except'; set: string[] }>(() =>
+    filter?.values ? { mode: 'only', set: filter.values } : { mode: 'except', set: filter?.except ?? [] },
+  )
   const [contains, setContains] = useState(filter?.contains ?? '')
   const [search, setSearch] = useState('')
   const [remote, setRemote] = useState<{ values: Values; truncated: boolean } | null>(null)
@@ -163,30 +167,40 @@ function MenuBody({
   const list: Values = useMemo(() => {
     const base = loadValues ? (remote?.values ?? []) : local
     const shown = loadValues ? base : base.filter((v) => lower(v.value ? (formatValue ? formatValue(v.value) : v.value) : '(blanks)').includes(lower(search)))
-    // A ticked value the list no longer carries stays, so it can be unticked.
-    const extra = (ticked ?? []).filter((t) => !shown.some((v) => v.value === t) && (!search || lower(t).includes(lower(search)))).map((value) => ({ value, count: 0 }))
+    // A value the filter names that the list no longer carries stays, so it can be ticked or unticked again.
+    const extra = draft.set.filter((t) => !shown.some((v) => v.value === t) && (!search || lower(t).includes(lower(search)))).map((value) => ({ value, count: 0 }))
     return [...shown, ...extra]
-  }, [loadValues, remote, local, search, ticked, formatValue])
+  }, [loadValues, remote, local, search, draft.set, formatValue])
 
-  const isOn = (v: string) => ticked === undefined || ticked.includes(v)
+  const isOn = (v: string) => (draft.mode === 'only' ? draft.set.includes(v) : !draft.set.includes(v))
   const allOn = list.length > 0 && list.every((v) => isOn(v.value))
-  const toggle = (v: string) => {
-    const now = ticked ?? list.map((x) => x.value)
-    setTicked(now.includes(v) ? now.filter((x) => x !== v) : [...now, v])
-  }
+  const toggle = (v: string) => setDraft((d) => ({ ...d, set: d.set.includes(v) ? d.set.filter((x) => x !== v) : [...d.set, v] }))
   const toggleAll = () => {
     if (search) {
       // Searching: (Select all) means every value found, as Excel's "Select all search results".
       const found = list.map((v) => v.value)
-      const now = ticked ?? []
-      setTicked(allOn && ticked !== undefined ? now.filter((x) => !found.includes(x)) : Array.from(new Set([...now, ...found])))
-    } else setTicked(allOn ? [] : undefined)
+      const add = (d: string[]) => Array.from(new Set([...d, ...found]))
+      const drop = (d: string[]) => d.filter((x) => !found.includes(x))
+      // Ticking adds to `only` and takes out of `except`; unticking the other way round.
+      setDraft((d) => ({ ...d, set: allOn === (d.mode === 'only') ? drop(d.set) : add(d.set) }))
+    } else setDraft(allOn ? { mode: 'only', set: [] } : { mode: 'except', set: [] })
   }
   const apply = () => {
     const f: ColumnFilter = {}
-    // Every value ticked, with nothing searched and the whole list in hand, is no value filter.
-    const everything = ticked === undefined || (!search && !remote?.truncated && list.length > 0 && list.every((v) => ticked.includes(v.value)))
-    if (!everything) f.values = ticked
+    // With nothing searched and the whole list in hand, the shorter of "these" and "all but those" is sent.
+    const whole = !search && !remote?.truncated && list.length > 0
+    if (search && list.length > 0 && !loading) {
+      // OK on a search keeps what the search found and is ticked, as Excel does.
+      f.values = list.filter((v) => isOn(v.value)).map((v) => v.value)
+    } else if (draft.mode === 'except') {
+      if (draft.set.length) f.except = draft.set
+    } else if (whole) {
+      const unticked = list.map((v) => v.value).filter((v) => !draft.set.includes(v))
+      if (unticked.length === 0) {
+        // Every value ticked is no value filter.
+      } else if (unticked.length < draft.set.length) f.except = unticked
+      else f.values = draft.set
+    } else f.values = draft.set
     if (contains.trim()) f.contains = contains.trim()
     onApply(isActive(f) ? f : undefined)
   }
