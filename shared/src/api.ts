@@ -1017,6 +1017,10 @@ export interface OrderListFilters {
   remaining?: 'open' | 'done'
   /** 'yes' — at least one inspection session on the line; 'no' — none. */
   inspected?: 'yes' | 'no'
+  /** Excel's column filters, as JSON (ColumnFilters). */
+  cf?: string
+  /** The column sorted by: "key:asc" or "key:desc". */
+  sort?: string
 }
 
 /** One imported line with what the inspection record adds to it. */

@@ -50,7 +50,7 @@ import type {
 } from '@qc/shared/api'
 import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiGrainChoice, KpiMaterials, MaterialKind, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
 import { loadAvatar } from '@/lib/avatarLoader'
-import type { AvatarResponse, DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
+import type { AvatarResponse, ColumnValuesResponse, DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import { api, qs } from '@/lib/api'
 
@@ -688,6 +688,11 @@ export function useOrderList(filters: OrderListFilters, limit = 100) {
 /** §19 — the next page of the same filters. */
 export async function loadMoreOrders(filters: OrderListFilters, offset: number, limit = 100): Promise<OrderListResponse> {
   return api<OrderListResponse>(`/orders/list${qs({ limit, offset, ...filters })}`)
+}
+
+/** One Access column's values under the other filters, for its Excel menu. */
+export function loadOrderListValues(filters: OrderListFilters, column: string, search: string): Promise<ColumnValuesResponse> {
+  return api<ColumnValuesResponse>(`/orders/list/values${qs({ ...filters, column, search: search || undefined })}`)
 }
 
 export function useOrderListOptions() {
