@@ -680,8 +680,6 @@ export type Capability =
   | 'export-records'
   /** The dashboard's Inspectors tab: how each inspector is scored and placed. Administrators only. */
   | 'view-inspector-ranking'
-  /** §20 — ask the AI assistant about the record. Administrators only. */
-  | 'use-ai-assistant'
 
 const CAPABILITIES: Record<Role, Capability[]> = {
   // Reads everything the floor produces; writes nothing, hears nothing.
@@ -718,7 +716,6 @@ const CAPABILITIES: Record<Role, Capability[]> = {
     'override-grade-mismatch',
     'manage-admin-data',
     'purge-audit-logs',
-    'use-ai-assistant',
   ],
 }
 
