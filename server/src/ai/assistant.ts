@@ -21,7 +21,9 @@
 //   • each question runs on the model and effort the owner set for the asker
 //     when it was asked, shaped for that model (models.ts).
 //   • the model's tool input is checked here (eager input streaming means the
-//     API no longer does), and a query only ever runs through the sandbox.
+//     API no longer does), and a query only ever runs through the sandbox. A
+//     chart asked for with it is checked against the result (charts.ts); one
+//     that does not fit is left out, with a word on why in the result.
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'
@@ -41,6 +43,7 @@ import type { ApiErrorCode } from '@qc/shared/api'
 import type { Config } from '../config'
 import { withTransaction, type Db } from '../db/pool'
 import { ACCESS_NOTICE, checkCall, isGranted, loadAccess } from './access'
+import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
 import { MAX_TOKENS, MAX_TOKENS_RETRY, modelRequest, systemBlocks, worstCaseUsd } from './models'
 import { RUN_SQL_TOOL_NAME, RunSqlInput } from './prompt'
@@ -450,9 +453,10 @@ async function persist(qn: Question, messages: NewMessage[]): Promise<MessagePar
 }
 
 /**
- * One run_sql call: checked, run in the sandbox, shown as a card, handed back
- * to the model. A Stop or the clock cancels the query itself, so the answer
- * ends at once rather than when the query would have.
+ * One run_sql call: checked, run in the sandbox, shown as a card (with its
+ * chart, when one was asked for and fits the result), handed back to the
+ * model. A Stop or the clock cancels the query itself, so the answer ends at
+ * once rather than when the query would have.
  */
 async function runToolUse(
   qn: Question,
@@ -470,18 +474,29 @@ async function runToolUse(
   if (!parsed.success) {
     return { type: 'tool_result', tool_use_id: tu.id, is_error: true, content: JSON.stringify({ INVALID_JSON: JSON.stringify(tu.input) }) }
   }
-  const { purpose, sql } = parsed.data
+  const { purpose, sql, chart: askedChart } = parsed.data
   const queryId = randomUUID()
   qn.emit({ type: 'query_start', queryId, purpose, sql })
   const run = await runReadOnlyQuery(reader, sql, { maxRows: AI_PREVIEW_ROWS, timeoutMs: CHAT_QUERY_TIMEOUT_MS, timeZone: qn.config.FACTORY_TIMEZONE, signal })
   // Stopped through the signal (not a failure of its own that came first): the replay keeps why.
   if (!run.ok && run.error === AI_QUERY_STOPPED) run.error = INTERRUPTED[cause()].running
   const preview = previewOf(run)
-  const record: QueryRecord = { id: queryId, toolUseId: tu.id, purpose, sql, ok: run.ok, error: run.error, ms: run.ms, ...preview }
+  // A failed query has nothing to draw: its chart goes unmentioned, the error is what the model needs.
+  const chart = run.ok ? checkChart(askedChart, preview) : {}
+  const record: QueryRecord = { id: queryId, toolUseId: tu.id, purpose, sql, ok: run.ok, error: run.error, ms: run.ms, ...preview, chart: chart.chart ?? null }
   queries.push(record)
   qn.emit({ type: 'query_end', part: queryPart(record) })
   if (!run.ok) return { type: 'tool_result', tool_use_id: tu.id, is_error: true, content: run.error ?? 'The query failed.' }
-  return { type: 'tool_result', tool_use_id: tu.id, content: previewJson(preview) }
+  // The rows as ever; what became of the chart, when it was not drawn as asked, in a text of its own after them.
+  if (!chart.note) return { type: 'tool_result', tool_use_id: tu.id, content: previewJson(preview) }
+  return {
+    type: 'tool_result',
+    tool_use_id: tu.id,
+    content: [
+      { type: 'text', text: previewJson(preview) },
+      { type: 'text', text: chart.note },
+    ],
+  }
 }
 
 /** What a call has streamed so far, for counting it if it is cut off. */

@@ -289,6 +289,30 @@ export interface AiQueryPart {
   truncated: boolean
   ms: number
   error?: string
+  /** How the model asked for the result to be drawn, checked against its columns. */
+  chart?: AiChartSpec
+}
+
+export type AiChartType = 'bar' | 'line' | 'area' | 'pie' | 'stacked-bar'
+export const AI_CHART_TYPES: readonly AiChartType[] = ['bar', 'line', 'area', 'pie', 'stacked-bar']
+
+/** A chart of a query's result: `x` the category or day column, `y` 1–4 numeric columns, `series` a column to split by (long to wide). */
+export interface AiChartSpec {
+  type: AiChartType
+  x: string
+  y: string[]
+  series?: string
+  title?: string
+}
+
+export type AiKpiTrend = 'up-good' | 'up-bad' | 'down-good' | 'down-bad' | 'flat'
+export const AI_KPI_TRENDS: readonly AiKpiTrend[] = ['up-good', 'up-bad', 'down-good', 'down-bad', 'flat']
+
+/** A headline figure of an answer, as the model put it at the top. */
+export interface AiKpi {
+  label: string
+  value: string
+  trend?: AiKpiTrend
 }
 
 export type AiPart = { type: 'text'; text: string } | AiQueryPart
@@ -323,6 +347,8 @@ export interface AiMessage {
   turnId?: string
   /** An answer's follow-up questions, as the model offered them (at most 3). */
   suggestions?: string[]
+  /** An answer's headline figures, as the model put them at the top (at most 6). */
+  kpis?: AiKpi[]
   /** The report this answer was saved as, when it was. */
   savedReportId?: string
 }

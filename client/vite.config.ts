@@ -48,8 +48,9 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2}'],
-        // The assistant's chunks (isAiChunk) are fetched when someone given the assistant first opens them.
-        globIgnores: ['**/node_modules/**/*', '**/ai-*.js'],
+        // The assistant's chunks (isAiChunk) are fetched when someone given the assistant first opens them, and its
+        // Arabic typeface (src/components/ai/fonts.ts) when it first draws an Arabic letter.
+        globIgnores: ['**/node_modules/**/*', '**/ai-*.js', '**/ibm-plex-sans-arabic-*'],
         navigateFallback: '/index.html',
         // API calls and image bytes are never answered from the cache, nor the Access sync agent's files, downloaded as they are.
         navigateFallbackDenylist: [/^\/api\//, /^\/agent\//],

@@ -4,7 +4,8 @@
 // sheet over the page with a backdrop. This frame is small and always in the
 // bundle; what fills it (the markdown renderer, the result tables) is fetched
 // the first time it opens, so it never weighs on a phone that does not use
-// it. Access taken away while it is open leaves only a word saying so.
+// it. Access taken away while it is open leaves only a word saying so. On
+// the assistant's full page (/ai) it is not drawn: the page is the assistant.
 // ============================================================================
 
 import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react'
@@ -17,11 +18,11 @@ import { useAi } from './AiAssistantProvider'
 const AiPanel = lazy(() => import('./AiPanel'))
 
 /** Said once the owner has taken the assistant away (kept here, not in the panel's file, so it shows without fetching it). */
-const REVOKED_TEXT = 'You no longer have access to the assistant.'
+export const REVOKED_TEXT = 'You no longer have access to the assistant.'
 
 export function AiPanelHost() {
-  const { open, revoked, setOpen } = useAi()
-  if (!open) return null
+  const { open, revoked, setOpen, workspace } = useAi()
+  if (!open || workspace) return null
   if (revoked) {
     return (
       <AiPanelFrame>
@@ -109,7 +110,7 @@ function AiPanelFrame({ children }: { children: ReactNode }) {
         aria-modal={docked ? undefined : true}
         aria-label="AI assistant"
         className={cn(
-          'flex min-h-0 flex-col overflow-hidden bg-white dark:bg-slate-900',
+          'ai-type flex min-h-0 flex-col overflow-hidden bg-white dark:bg-slate-900',
           docked
             ? 'fixed bottom-0 right-0 top-[calc(4rem+env(safe-area-inset-top))] z-30 w-[30rem] border-l border-slate-200 shadow-lift animate-slide-in-right dark:border-slate-800'
             : 'relative z-10 h-[92dvh] w-full rounded-t-3xl shadow-lift ring-1 ring-slate-200 animate-slide-up dark:ring-slate-800 sm:h-full sm:max-w-xl sm:rounded-none sm:rounded-l-3xl sm:pt-[env(safe-area-inset-top)] sm:animate-slide-in-right',

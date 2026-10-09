@@ -14,6 +14,7 @@ import { ADMIN_NAV, NAV, visibleNav, type NavItem } from '@/components/layout/na
 import { AiAssistantProvider, useAi } from '@/components/ai/AiAssistantProvider'
 import { AiBusyDot, AiButton } from '@/components/ai/AiButton'
 import { AiPanelHost } from '@/components/ai/AiPanelHost'
+import { isAiWorkspacePath } from '@/components/ai/workspace'
 
 function ToastHost() {
   const { toasts, dismissToast } = useApp()
@@ -173,6 +174,10 @@ function Shell({ children }: { children: ReactNode }) {
   const displayName = profile?.name || user
 
   const isActive = (n: NavItem) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to))
+  // §20 — the assistant's full page fills the window under the header, edge to edge; its own addresses (a
+  // conversation, a report) are one page, not a new entrance each.
+  const fullPage = isAiWorkspacePath(location.pathname)
+  const pageKey = fullPage ? '/ai' : location.pathname
 
   return (
     <div className="min-h-full">
@@ -256,7 +261,8 @@ function Shell({ children }: { children: ReactNode }) {
                   type="button"
                   onClick={() => {
                     setMenuOpen(false)
-                    ai.setOpen(true)
+                    // On the assistant's full page, the assistant is already the page.
+                    if (!ai.workspace) ai.setOpen(true)
                   }}
                   className="flex items-center gap-3 rounded-2xl px-4 py-4 text-left text-base font-semibold text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
@@ -298,8 +304,8 @@ function Shell({ children }: { children: ReactNode }) {
 
       {/* Full width; each route change replays the entrance so a page feels placed, not swapped.
           On a very wide screen the page makes room for the docked assistant; narrower, the panel lies over its right edge. */}
-      <main className={cn('px-4 py-5 transition-[padding] duration-300 sm:px-6 lg:px-8 safe-bottom', ai.open && ai.docked && '2xl:pr-[32rem]')}>
-        <div key={location.pathname} className="animate-page-in">
+      <main className={cn(fullPage ? 'min-w-0' : 'px-4 py-5 transition-[padding] duration-300 sm:px-6 lg:px-8 safe-bottom', !fullPage && ai.open && ai.docked && '2xl:pr-[32rem]')}>
+        <div key={pageKey} className="animate-page-in">
           {children}
         </div>
       </main>

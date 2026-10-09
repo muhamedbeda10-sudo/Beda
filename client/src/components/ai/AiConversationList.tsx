@@ -18,7 +18,12 @@ import { isInFlight } from './liveTurn'
 /** Today's time, or the day. */
 const when = (iso: string) => (new Date(iso).toDateString() === new Date().toDateString() ? formatTime(iso) : formatDate(iso))
 
-export function AiConversationList({ onPicked, onNew }: { onPicked: () => void; onNew: () => void }) {
+/**
+ * `onNew`: a New chat button beside the search, where the surface has none of
+ * its own in view (the full page's header has one; there the search takes
+ * the whole width of its column).
+ */
+export function AiConversationList({ onPicked, onNew }: { onPicked: () => void; onNew?: () => void }) {
   const qc = useQueryClient()
   const { toast } = useApp()
   const { conversationId, openConversation, enabled } = useAi()
@@ -88,16 +93,29 @@ export function AiConversationList({ onPicked, onNew }: { onPicked: () => void; 
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search your conversations" className="rounded-full pl-9" aria-label="Search your conversations" dir="auto" />
         </div>
-        <button type="button" onClick={onNew} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-card hover:bg-brand-700 touch:h-11 touch:w-11" aria-label="New chat" data-tip="New chat">
-          <MessageSquarePlus className="h-5 w-5" />
-        </button>
+        {onNew && (
+          <button type="button" onClick={onNew} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-card hover:bg-brand-700 touch:h-11 touch:w-11" aria-label="New chat" data-tip="New chat">
+            <MessageSquarePlus className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-3">
         {isLoading && (
-          <li className="flex items-center justify-center gap-2 py-10 text-sm text-muted">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-          </li>
+          <>
+            <li className="sr-only" role="status">
+              Loading your conversations…
+            </li>
+            {[0, 1, 2, 3, 4].map((i) => (
+              <li key={i} aria-hidden className="flex items-center gap-3 px-2.5 py-2.5">
+                <span className="skeleton h-9 w-9 shrink-0 rounded-full" />
+                <span className="min-w-0 flex-1 space-y-1.5">
+                  <span className={cn('skeleton block h-3.5', i % 2 ? 'w-3/5' : 'w-4/5')} />
+                  <span className="skeleton block h-2.5 w-1/4" />
+                </span>
+              </li>
+            ))}
+          </>
         )}
         {isError && !data && (
           <li className="px-3 py-8 text-center text-sm text-muted">

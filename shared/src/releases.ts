@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-09.4',
+    date: '2026-10-09',
+    title: 'AI assistant: clearer answers, charts, and a full page',
+    items: [
+      { text: 'Answers open with their headline figures as cards, with green or red arrows when a figure moved for the better or the worse. When a trend or a comparison is asked, the answer draws it as a chart above the table.' },
+      { text: 'Tables keep their header in view, line figures up, and copy or export to Excel in one tap. Arabic answers read right to left in an Arabic typeface.' },
+      { text: 'The queries behind an answer are folded under "How I got this". The expand button in the assistant\'s header opens it as a full page, with conversations and reports on the side; Dock brings it back beside the page.' },
+    ],
+  },
+  {
     id: '2026-10-09.3',
     date: '2026-10-09',
     title: 'AI assistant: given person by person',

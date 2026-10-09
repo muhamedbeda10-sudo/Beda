@@ -4,24 +4,35 @@
 // people typed into the record: raw HTML is skipped, images are unwrapped to
 // their words (no remote beacons), and a link is followed only when it is a
 // page of this application or a plain web address (./links). Styled here,
-// with logical properties, so an Arabic answer lays out right to left.
+// with logical properties, so an Arabic answer lays out right to left: the
+// text as a whole and each list and quote take the direction most of their
+// words read in, set explicitly (./tables: proseDirection), each paragraph,
+// item and heading its own; its tables (./AiTable: figures aligned, Copy and
+// Excel under each) and its code, in a block with a Copy of its own.
 // ============================================================================
 
-import { memo, type AnchorHTMLAttributes, type ReactNode } from 'react'
+import { memo, useMemo, type AnchorHTMLAttributes, type HTMLAttributes, type ReactNode } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useNavigate } from 'react-router-dom'
 import { ExternalLink } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { useApp } from '@/store/AppContext'
 import { useAi } from './AiAssistantProvider'
+import { AiCode } from './AiCode'
+import { AiMarkdownTable, TBODY_CLASS, TR_CLASS, tdClass, thClass } from './AiTable'
 import { aiUrlTransform, classifyAiLink } from './links'
+import { DIR_ATTR, NUMERIC_ATTR, codeLanguage, hastDirection, hastRawText, proseDirection, rehypeAiTables, type HastNode } from './tables'
+import { isAiWorkspacePath } from './workspace'
 
 const REMARK = [remarkGfm]
+const REHYPE = [rehypeAiTables]
 const DISALLOWED = ['img']
 const LINK = 'font-semibold text-brand-700 underline decoration-brand-300 underline-offset-2 hover:decoration-brand-600 dark:text-brand-300 dark:decoration-brand-500/50'
 
 function MdLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement> & { children?: ReactNode }) {
   const navigate = useNavigate()
-  const { docked, setOpen } = useAi()
+  const { docked, setOpen, workspace } = useAi()
   const link = classifyAiLink(href)
   if (!link) return <span>{children}</span>
   if (link.kind === 'external') {
@@ -38,10 +49,12 @@ function MdLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement> & { 
       className={LINK}
       onClick={(e) => {
         // A modified click opens a new tab as any link does; a plain one moves the app, and a sheet steps aside.
+        // From the full page on a desktop, the conversation docks beside the page the link opens, still in view.
         if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
         e.preventDefault()
         navigate(link.to)
-        if (!docked) setOpen(false)
+        if (workspace) setOpen(docked && !isAiWorkspacePath(link.to.split(/[?#]/)[0]))
+        else if (!docked) setOpen(false)
       }}
     >
       {children}
@@ -49,46 +62,89 @@ function MdLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement> & { 
   )
 }
 
+/** A header or body cell of a markdown table, aligned with its column (the rehype step in ./tables said how). */
+function MdCell({ header, props }: { header: boolean; props: HTMLAttributes<HTMLTableCellElement> & Record<string, unknown> }) {
+  const { [NUMERIC_ATTR]: numericMark, [DIR_ATTR]: dirMark, className: _className, children, ...rest } = props
+  const numeric = numericMark !== undefined
+  const dir = dirMark === 'rtl' ? 'rtl' : 'ltr'
+  const Tag = header ? 'th' : 'td'
+  return (
+    <Tag dir={numeric ? 'ltr' : 'auto'} {...(header ? { scope: 'col' } : {})} className={header ? thClass(dir, numeric) : tdClass(dir, numeric)} {...rest}>
+      {children as ReactNode}
+    </Tag>
+  )
+}
+
+/** A code block, left to right, under a strip naming its language with a Copy of its own. */
+function CodeBlock({ node, children }: { node: HastNode | undefined; children?: ReactNode }) {
+  const { toast } = useApp()
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(node ? hastRawText(node).replace(/\n$/, '') : '')
+      toast('Copied.', 'success')
+    } catch {
+      toast('Could not copy — select the text and copy it by hand.', 'error')
+    }
+  }
+  return (
+    <AiCode
+      label={(node && codeLanguage(node)) ?? 'Code'}
+      onCopy={() => void copy()}
+      copyLabel="Copy the code"
+      className="my-3 rounded-xl"
+      codeClassName="p-3 text-xs [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-[length:inherit] [&_code]:text-slate-100 dark:[&_code]:bg-transparent"
+    >
+      {children}
+    </AiCode>
+  )
+}
+
+/** A list's or a quote's direction, by the words in it (./tables: hastDirection); none set when it has no words, so it takes the text's. */
+const blockDir = (node: unknown): 'rtl' | 'ltr' | undefined => (node ? (hastDirection(node as HastNode) ?? undefined) : undefined)
+
 // `node` (the syntax tree) is passed to every component; it is taken out so it never reaches the DOM.
 const components: Components = {
   a: ({ node: _node, ...props }) => <MdLink {...props} />,
-  p: ({ node: _node, ...props }) => <p dir="auto" className="my-2 first:mt-0 last:mb-0" {...props} />,
-  h1: ({ node: _node, ...props }) => <h3 dir="auto" className="mb-1.5 mt-4 text-base font-bold first:mt-0" {...props} />,
-  h2: ({ node: _node, ...props }) => <h3 dir="auto" className="mb-1.5 mt-4 text-[15px] font-bold first:mt-0" {...props} />,
-  h3: ({ node: _node, ...props }) => <h4 dir="auto" className="mb-1 mt-3 text-sm font-bold first:mt-0" {...props} />,
+  p: ({ node: _node, ...props }) => <p dir="auto" className="my-2.5 first:mt-0 last:mb-0" {...props} />,
+  h1: ({ node: _node, ...props }) => <h3 dir="auto" className="mb-2 mt-5 text-base font-bold leading-snug text-slate-900 first:mt-0 dark:text-white" {...props} />,
+  h2: ({ node: _node, ...props }) => <h3 dir="auto" className="mb-2 mt-5 text-[15px] font-bold leading-snug text-slate-900 first:mt-0 dark:text-white" {...props} />,
+  h3: ({ node: _node, ...props }) => <h4 dir="auto" className="mb-1.5 mt-4 text-sm font-bold leading-snug text-slate-900 first:mt-0 dark:text-white" {...props} />,
   h4: ({ node: _node, ...props }) => <h5 dir="auto" className="mb-1 mt-3 text-sm font-semibold first:mt-0" {...props} />,
   h5: ({ node: _node, ...props }) => <h6 dir="auto" className="mb-1 mt-3 text-sm font-semibold first:mt-0" {...props} />,
   h6: ({ node: _node, ...props }) => <h6 dir="auto" className="mb-1 mt-3 text-sm font-semibold first:mt-0" {...props} />,
-  ul: ({ node: _node, ...props }) => <ul className="my-2 list-disc space-y-0.5 ps-5 marker:text-slate-400" {...props} />,
-  ol: ({ node: _node, ...props }) => <ol className="my-2 list-decimal space-y-0.5 ps-5 marker:text-slate-400" {...props} />,
-  li: ({ node: _node, ...props }) => <li dir="auto" className="ps-0.5" {...props} />,
-  blockquote: ({ node: _node, ...props }) => <blockquote dir="auto" className="my-2 border-s-4 border-slate-200 ps-3 text-slate-600 dark:border-slate-700 dark:text-slate-300" {...props} />,
+  // A list's or a quote's own direction puts its markers, its indent and its bar on the side its words start from.
+  ul: ({ node, ...props }) => <ul dir={blockDir(node)} className="my-2.5 list-disc space-y-1 ps-5 marker:text-brand-400 dark:marker:text-brand-300" {...props} />,
+  ol: ({ node, ...props }) => <ol dir={blockDir(node)} className="my-2.5 list-decimal space-y-1 ps-5 marker:font-semibold marker:text-slate-500 dark:marker:text-slate-400" {...props} />,
+  li: ({ node: _node, ...props }) => <li dir="auto" className="ps-1 [&>ol]:my-1 [&>ul]:my-1" {...props} />,
+  blockquote: ({ node, ...props }) => (
+    <blockquote dir={blockDir(node)} className="my-3 rounded-e-lg border-s-4 border-brand-300 bg-brand-50/60 py-1.5 pe-3 ps-3 text-slate-700 dark:border-brand-500/60 dark:bg-brand-500/10 dark:text-slate-200" {...props} />
+  ),
   strong: ({ node: _node, ...props }) => <strong className="font-semibold text-slate-900 dark:text-white" {...props} />,
-  hr: () => <hr className="my-3 border-slate-200 dark:border-slate-700" />,
+  hr: () => <hr className="my-4 border-slate-200 dark:border-slate-700" />,
   code: ({ node: _node, className: _lang, ...props }) => <code dir="ltr" className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.85em] text-slate-800 dark:bg-slate-800 dark:text-slate-100" {...props} />,
-  pre: ({ node: _node, ...props }) => (
-    <pre
-      dir="ltr"
-      className="my-2 overflow-x-auto rounded-xl bg-slate-900 p-3 text-xs leading-relaxed text-slate-100 ring-1 ring-slate-800 [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-[length:inherit] [&_code]:text-slate-100 dark:[&_code]:bg-transparent"
-      {...props}
-    />
+  pre: ({ node, children }) => <CodeBlock node={node as HastNode | undefined}>{children}</CodeBlock>,
+  table: ({ node, dir, children }) => (
+    <AiMarkdownTable node={node as HastNode | undefined} dir={dir}>
+      {children}
+    </AiMarkdownTable>
   ),
-  table: ({ node: _node, ...props }) => (
-    <div className="my-2 overflow-x-auto rounded-xl ring-1 ring-slate-200 dark:ring-slate-800">
-      <table className="w-full text-[13px]" {...props} />
-    </div>
-  ),
-  thead: ({ node: _node, ...props }) => <thead className="bg-slate-50 dark:bg-slate-800/60" {...props} />,
-  tbody: ({ node: _node, ...props }) => <tbody className="divide-y divide-slate-100 dark:divide-slate-800" {...props} />,
-  th: ({ node: _node, ...props }) => <th dir="auto" className="whitespace-nowrap px-2.5 py-1.5 text-start text-[11px] font-bold uppercase tracking-wide text-muted" {...props} />,
-  td: ({ node: _node, ...props }) => <td dir="auto" className="px-2.5 py-1.5 align-top" {...props} />,
+  thead: ({ node: _node, ...props }) => <thead {...props} />,
+  tbody: ({ node: _node, ...props }) => <tbody className={TBODY_CLASS} {...props} />,
+  tr: ({ node: _node, ...props }) => <tr className={TR_CLASS} {...props} />,
+  th: ({ node: _node, ...props }) => <MdCell header props={props} />,
+  td: ({ node: _node, ...props }) => <MdCell header={false} props={props} />,
 }
 
-/** Markdown text, drawn safely. Memoised: a finished answer is parsed once, not on every frame of the next one. */
-export const AiMarkdown = memo(function AiMarkdown({ text }: { text: string }) {
+/**
+ * Markdown text, drawn safely. Memoised: a finished answer is parsed once,
+ * not on every frame of the next one. `caret`: the text is still being
+ * written — a caret blinks after its last word.
+ */
+export const AiMarkdown = memo(function AiMarkdown({ text, caret = false }: { text: string; caret?: boolean }) {
+  const dir = useMemo(() => proseDirection(text), [text])
   return (
-    <div dir="auto" className="break-words text-sm leading-relaxed text-slate-800 dark:text-slate-100">
-      <Markdown remarkPlugins={REMARK} components={components} disallowedElements={DISALLOWED} unwrapDisallowed skipHtml urlTransform={aiUrlTransform}>
+    <div dir={dir} className={cn('ai-prose break-words text-sm text-slate-800 dark:text-slate-100', caret && 'ai-caret')}>
+      <Markdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={components} disallowedElements={DISALLOWED} unwrapDisallowed skipHtml urlTransform={aiUrlTransform}>
         {text}
       </Markdown>
     </div>

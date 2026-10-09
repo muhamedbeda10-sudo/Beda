@@ -179,6 +179,119 @@ body {
   background-color: rgb(15 23 42);
 }
 
+/* §20 — the AI assistant's surfaces (the panel and the full page). Latin text stays in Inter; an Arabic letter,
+   which Inter does not have, is drawn in IBM Plex Sans Arabic (loaded with the assistant, components/ai/fonts.ts). */
+.ai-type {
+  font-family: Inter, 'IBM Plex Sans Arabic', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+/* An answer's text: room between the lines, more of it for Arabic, whose letters reach higher and lower. */
+.ai-prose {
+  line-height: 1.65;
+}
+.ai-prose :is(p, li, blockquote, h3, h4, h5, h6):dir(rtl) {
+  line-height: 1.9;
+}
+/* On the full page the column is wide for tables and charts; the words keep a measure that reads easily. */
+.ai-workspace .ai-prose > :is(p, ul, ol, blockquote, h3, h4, h5, h6) {
+  max-width: 52rem;
+}
+/* The full page fills the window under the header (4rem, its 1px rule and the safe area above it); its columns
+   scroll inside it, never the page. */
+.ai-workspace {
+  height: calc(100vh - 4rem - 1px - env(safe-area-inset-top));
+  height: calc(100dvh - 4rem - 1px - env(safe-area-inset-top));
+}
+/* A table of an answer scrolls inside its own frame (components/ai/AiTable.tsx): a dozen rows or so in the panel,
+   more on the full page, fewer under the chart drawn from it. */
+.ai-table-scroll {
+  max-height: 20rem;
+}
+.ai-workspace .ai-table-scroll {
+  max-height: 28rem;
+}
+.ai-figure .ai-table-scroll {
+  max-height: 16rem;
+}
+.ai-workspace .ai-figure .ai-table-scroll {
+  max-height: 20rem;
+}
+/* The caret after the last word of an answer being written. */
+.ai-caret > :is(p, h3, h4, h5, h6, blockquote):last-child::after,
+.ai-caret > :is(ul, ol):last-child > li:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-inline-start: 2px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background-color: theme('colors.brand.500');
+  animation: ai-caret 1.05s ease-in-out infinite;
+}
+@keyframes ai-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+/* "Thinking…": three soft dots that rise in turn. */
+.ai-dots > span {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: theme('colors.brand.500');
+  animation: ai-dot 1.2s ease-in-out infinite;
+}
+.ai-dots > span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.ai-dots > span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes ai-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+/* A query running: a thin bar along the foot of its card. */
+.ai-progress {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background-color: theme('colors.brand.100');
+}
+.dark .ai-progress {
+  background-color: rgb(51 87 194 / 0.25);
+}
+.ai-progress::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 40%;
+  background-color: theme('colors.brand.500');
+  animation: ai-progress 1.3s ease-in-out infinite;
+}
+@keyframes ai-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
 /* Hide number input spinners */
 input[type='number']::-webkit-inner-spin-button,
 input[type='number']::-webkit-outer-spin-button {
