@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-09.1',
+    date: '2026-10-09',
+    title: 'AI assistant: ask about the record in plain words',
+    items: [
+      { text: 'Administrators have a new assistant button in the header (the robot, next to the chat). Ask in Arabic or English — "what were the top defects on machine 34 this month?" — and Claude answers from the factory\'s own record: inspections, defects, measurements, PT, orders and PDI, coils and suppliers, and the audit log.' },
+      { text: 'Every answer shows the queries it ran, with their rows; open a result as a table with the Excel filters, or export it to Excel. The assistant only reads: it cannot change anything.' },
+      { text: 'Conversations are kept per person (History in the panel). Administration → AI assistant holds the Anthropic API key (stored encrypted, never shown again), the on/off switch, the monthly cap ($50 by default; the assistant stops before it is passed) and what was spent, by day and by person.' },
+    ],
+  },
+  {
     id: '2026-10-07.4',
     date: '2026-10-07',
     title: 'PDI and the audit log: Excel\'s filter and sort on every column',
