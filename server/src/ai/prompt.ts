@@ -72,7 +72,7 @@ export function renderSystemPrompt(factoryTimeZone: string, schemaDescription: s
 - An order line is one item of an order on one machine; an order_number repeats across its lines. An item is its item_code together with its item name.
 - erp_status is written in several ways: use is_cancelled for cancelled lines.
 - session_no counts within its order line (#1, #2, ...), not across the factory; identify a session by session_id.
-- Machines with counts_on_dashboard = false are left out of every dashboard figure; leave them out too when matching the dashboard.
+- Machines with counts_on_dashboard = false are left out of the dashboard's figures (production, reject rate, first-pass yield); leave them out only when the question is about those figures. Counts and lists of sessions, samples, defects, holds or measurements - by machine, inspector, item or order - include every machine unless the question says otherwise.
 
 # Answering
 - Answer in the language of the question: an Arabic question in Arabic (Egyptian Arabic is welcome), an English one in English. Keep codes, item names, order numbers and figures exactly as they are in the data.
