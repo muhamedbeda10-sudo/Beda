@@ -182,6 +182,12 @@ export interface AiMessage {
   stopReason?: AiStopReason
   /** A word on how an answer ended when it did not simply finish. */
   notice?: string
+  /** The question and answer this message belongs to: what "Save as report" saves. */
+  turnId?: string
+  /** An answer's follow-up questions, as the model offered them (at most 3). */
+  suggestions?: string[]
+  /** The report this answer was saved as, when it was. */
+  savedReportId?: string
 }
 
 export interface AiMessagesResponse {
@@ -234,3 +240,190 @@ export interface AiUsageResponse {
   byDay: { day: string; costUsd: number; calls: number }[]
   byUser: { userId: string; userName: string; costUsd: number; questions: number }[]
 }
+
+// ---- Saved reports -------------------------------------------------------------------
+
+/** A report's period, kept as it was asked, so "last 30 days" stays the last 30 days. */
+export type AiReportPeriod =
+  | { kind: 'today' }
+  | { kind: 'yesterday' }
+  | { kind: 'last_days'; days: number }
+  | { kind: 'this_week'; weekStart: AiWeekStart }
+  | { kind: 'last_week'; weekStart: AiWeekStart }
+  | { kind: 'this_month' }
+  | { kind: 'last_month' }
+  | { kind: 'this_year' }
+  | { kind: 'last_year' }
+  /** Dates the question named ("in September 2026"); still changeable when run. */
+  | { kind: 'fixed'; from: string; to: string }
+
+export type AiWeekStart = 'saturday' | 'sunday' | 'monday'
+
+/** Factory days, YYYY-MM-DD, both inclusive. */
+export interface AiDayRange {
+  from: string
+  to: string
+}
+
+export const AI_REPORT_MAX_DAYS = 3660
+
+const DAY_MS = 86_400_000
+const isYmd = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s
+const toUtc = (ymd: string) => Date.parse(`${ymd}T00:00:00Z`)
+const fromUtc = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+const addDays = (ymd: string, n: number) => fromUtc(toUtc(ymd) + n * DAY_MS)
+const WEEKDAY: Record<AiWeekStart, number> = { sunday: 0, monday: 1, saturday: 6 }
+
+/** Whether a string is a real calendar day, YYYY-MM-DD. */
+export const isAiDay = isYmd
+
+/** The days a period covers, counted from `today` (a factory day, YYYY-MM-DD). */
+export function resolveAiPeriod(period: AiReportPeriod, today: string): AiDayRange {
+  if (!isYmd(today)) throw new Error(`Not a day: ${today}`)
+  const [y, m] = today.split('-').map(Number)
+  const firstOfMonth = (year: number, month: number) => fromUtc(Date.UTC(year, month - 1, 1))
+  const lastOfMonth = (year: number, month: number) => fromUtc(Date.UTC(year, month, 0))
+  switch (period.kind) {
+    case 'today':
+      return { from: today, to: today }
+    case 'yesterday': {
+      const d = addDays(today, -1)
+      return { from: d, to: d }
+    }
+    case 'last_days': {
+      const days = Math.min(Math.max(1, Math.floor(period.days)), AI_REPORT_MAX_DAYS)
+      return { from: addDays(today, -(days - 1)), to: today }
+    }
+    case 'this_week':
+    case 'last_week': {
+      const weekday = new Date(toUtc(today)).getUTCDay()
+      const back = (weekday - WEEKDAY[period.weekStart] + 7) % 7
+      const start = addDays(today, -back)
+      return period.kind === 'this_week' ? { from: start, to: today } : { from: addDays(start, -7), to: addDays(start, -1) }
+    }
+    case 'this_month':
+      return { from: firstOfMonth(y, m), to: today }
+    case 'last_month': {
+      const py = m === 1 ? y - 1 : y
+      const pm = m === 1 ? 12 : m - 1
+      return { from: firstOfMonth(py, pm), to: lastOfMonth(py, pm) }
+    }
+    case 'this_year':
+      return { from: `${y}-01-01`, to: today }
+    case 'last_year':
+      return { from: `${y - 1}-01-01`, to: `${y - 1}-12-31` }
+    case 'fixed':
+      return { from: period.from, to: period.to }
+  }
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const dayLabel = (ymd: string, withYear: boolean) => {
+  const [y, m, d] = ymd.split('-').map(Number)
+  return `${d} ${MONTHS[m - 1]}${withYear ? ` ${y}` : ''}`
+}
+
+/** A day range in words: "1 Sep – 30 Sep 2026", "9 Oct 2026". */
+export function describeAiDays(r: AiDayRange): string {
+  if (r.from === r.to) return dayLabel(r.from, true)
+  const sameYear = r.from.slice(0, 4) === r.to.slice(0, 4)
+  return `${dayLabel(r.from, !sameYear)} – ${dayLabel(r.to, true)}`
+}
+
+/** A period in words: "Last 30 days", "This month", "1 Sep – 30 Sep 2026". */
+export function describeAiPeriod(period: AiReportPeriod): string {
+  switch (period.kind) {
+    case 'today':
+      return 'Today'
+    case 'yesterday':
+      return 'Yesterday'
+    case 'last_days':
+      return period.days === 1 ? 'Today' : `Last ${period.days} days`
+    case 'this_week':
+      return 'This week'
+    case 'last_week':
+      return 'Last week'
+    case 'this_month':
+      return 'This month'
+    case 'last_month':
+      return 'Last month'
+    case 'this_year':
+      return 'This year'
+    case 'last_year':
+      return 'Last year'
+    case 'fixed':
+      return describeAiDays(period)
+  }
+}
+
+export interface AiReportSection {
+  /** The query's purpose, as the answer showed it. */
+  title: string
+  /** With an adjustable period, the SQL carries {{from}} and {{to}}. */
+  sql: string
+}
+
+export interface AiReportSummary {
+  id: string
+  title: string
+  question: string
+  period: AiReportPeriod | null
+  /** Whether the period can be changed when the report runs. */
+  adjustable: boolean
+  sectionCount: number
+  createdAt: string
+  updatedAt: string
+  lastRunAt?: string
+}
+
+export interface AiReport extends AiReportSummary {
+  conversationId?: string
+  sections: AiReportSection[]
+}
+
+export interface AiReportsResponse {
+  reports: AiReportSummary[]
+  hasMore: boolean
+}
+
+export interface AiSaveReportRequest {
+  turnId: string
+  title?: string
+  /** False: save the queries as they ran, with no model call to make the period changeable. */
+  adjustable?: boolean
+}
+
+export interface AiSaveReportResponse {
+  report: AiReport
+  /** Why the period could not be made changeable, when it could not. */
+  notice?: string
+  status: AiStatusResponse
+}
+
+/** One section of a report, run. */
+export interface AiReportSectionRun {
+  title: string
+  ok: boolean
+  error?: string
+  columns: string[]
+  rows: AiCell[][]
+  rowCount: number
+  truncated: boolean
+  ms: number
+}
+
+export interface AiReportRunResponse {
+  report: AiReport
+  /** The days it ran over, and whether they were chosen for this run. */
+  period: (AiDayRange & { label: string; overridden: boolean }) | null
+  sections: AiReportSectionRun[]
+  ranAt: string
+}
+
+export interface AiReportExportResponse {
+  report: AiReport
+  period: (AiDayRange & { label: string; overridden: boolean }) | null
+  sections: { title: string; ok: boolean; error?: string; columns: string[]; rows: AiCell[][]; truncated: boolean }[]
+  ranAt: string
+}
+
