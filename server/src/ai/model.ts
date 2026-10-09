@@ -11,13 +11,18 @@ import { AI_MODEL } from '@qc/shared/ai'
 
 export type ModelParams = BetaMessageStreamParams
 export type ModelMessage = Anthropic.Beta.BetaMessage
+export type ModelStreamEvent = Anthropic.Beta.BetaRawMessageStreamEvent
 
 /** What the answer loop reads from one streamed call: the SDK's BetaMessageStream, as much of it as is used. */
 export interface ModelStream {
+  /** Every event as it arrives, tool input deltas included. */
+  on(event: 'streamEvent', listener: (event: ModelStreamEvent, snapshot: ModelMessage) => void): unknown
   on(event: 'text' | 'thinking', listener: (delta: string, snapshot: string) => void): unknown
   on(event: 'contentBlock', listener: (block: Anthropic.Beta.BetaContentBlock) => void): unknown
   /** The whole message once the call ends; rejects on an error or an abort. */
   finalMessage(): Promise<ModelMessage>
+  /** Stop reading the response. A stream that failed (unparseable tool input, say) otherwise reads on, unseen. */
+  abort(): void
   /** The message as far as it has streamed — its usage when a call is cut off. */
   readonly currentMessage: ModelMessage | undefined
   readonly request_id?: string | null

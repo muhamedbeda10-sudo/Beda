@@ -10,9 +10,9 @@ import type { AiMessage } from '@qc/shared/ai'
 import { Button, EmptyState } from '@/components/ui'
 import { useAiMessages } from '@/services/queries'
 import { useAi, useAiLive } from './AiAssistantProvider'
-import { BotMark, LiveAnswer, SavedMessage, UserBubble } from './AiMessages'
+import { Answer, BotMark, UserBubble } from './AiMessages'
 import { Notice } from './AiNotice'
-import { answerText, liveView } from './liveTurn'
+import { answerText, liveAnnouncement, liveView, threadItems } from './liveTurn'
 
 /** What an administrator might ask first; a tap puts it in the box to send or change. */
 const EXAMPLES = [
@@ -29,7 +29,10 @@ export function AiThread({ onAskAgain, onExample }: { onAskAgain: (question: str
   const live = useAiLive()
   const { data, isLoading, isError, refetch } = useAiMessages(conversationId, enabled)
   const view = liveView(live, conversationId, data?.messages ?? NONE)
+  const items = threadItems(live, view)
   const empty = conversationId === null && !view.question
+  // Read out when the answer on screen changes phase; the turn of another conversation says nothing here.
+  const announcement = live && live.conversationId === conversationId ? liveAnnouncement(live) : ''
 
   // The question each answer replies to: the user message before it.
   const questions = useMemo(() => {
@@ -119,13 +122,27 @@ export function AiThread({ onAskAgain, onExample }: { onAskAgain: (question: str
         </Notice>
       )}
 
+      {/* One keyed list, saved and live alike: an answer keeps its key, and so its cards' state, as it is saved. */}
       <div className="space-y-4">
-        {view.saved.map((m) => (
-          <SavedMessage key={m.id} message={m} question={questions.get(m.id)} onAskAgain={onAskAgain} />
-        ))}
-        {live && view.question && <UserBubble text={live.question} />}
-        {live && view.answer && <LiveAnswer turn={live} onAskAgain={onAskAgain} />}
+        {items.map((item) =>
+          item.kind === 'saved' ? (
+            item.message.role === 'user' ? (
+              <UserBubble key={item.key} text={answerText(item.message.parts)} at={item.message.createdAt} />
+            ) : (
+              <Answer key={item.key} message={item.message} question={questions.get(item.message.id)} onAskAgain={onAskAgain} />
+            )
+          ) : item.kind === 'question' ? (
+            <UserBubble key={item.key} text={live!.question} />
+          ) : (
+            <Answer key={item.key} turn={live!} question={live!.question} onAskAgain={onAskAgain} />
+          ),
+        )}
       </div>
+
+      {/* Mounted with the thread, so a change is heard; remounted with the conversation, so opening one is not. */}
+      <p key={conversationId ?? 'new'} role="status" aria-live="polite" className="sr-only">
+        {announcement}
+      </p>
 
       {!atBottom && (
         <button

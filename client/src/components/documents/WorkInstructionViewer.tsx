@@ -3,7 +3,7 @@ import { AlertTriangle, FileText, Loader2, Minus, Plus, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { apiBlob } from '@/lib/api'
 import { cachedBlob } from '@/services/mediaCache'
-import { cn } from '@/lib/utils'
+import { cn, lockBodyScroll } from '@/lib/utils'
 import type { WorkInstruction } from '@qc/shared/types'
 
 /**
@@ -28,10 +28,10 @@ export function PdfViewer({ path, title, subtitle, onClose }: { path: string; ti
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     document.addEventListener('keydown', onKey)
-    document.body.style.overflow = 'hidden'
+    const unlock = lockBodyScroll()
     return () => {
       document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = ''
+      unlock()
     }
   }, [onClose])
 

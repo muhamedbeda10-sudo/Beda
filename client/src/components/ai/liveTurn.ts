@@ -6,7 +6,7 @@
 // ============================================================================
 
 import type { ApiErrorCode } from '@qc/shared/api'
-import type { AiConversation, AiMessage, AiPart, AiStreamEvent } from '@qc/shared/ai'
+import type { AiConversation, AiMessage, AiMessagesResponse, AiPart, AiStreamEvent } from '@qc/shared/ai'
 
 /** A query the model asked for that has not come back: running, or cut off when the answer ended. */
 export interface PendingQuery {
@@ -30,6 +30,8 @@ export interface LiveTurn {
   question: string
   /** When it was sent, by this device's clock. */
   sentAt: string
+  /** A message the question was sent after (sentAfter): the question, saved, comes after it. */
+  after: string | null
   /** The question as saved, once the server has it. */
   userMessageId: string | null
   parts: LivePart[]
@@ -41,8 +43,8 @@ export interface LiveTurn {
   message: AiMessage | null
 }
 
-export function startTurn(key: string, conversationId: string | null, question: string, sentAt: string): LiveTurn {
-  return { key, conversationId, conversation: null, question, sentAt, userMessageId: null, parts: [], progress: null, phase: 'sending', error: null, message: null }
+export function startTurn(key: string, conversationId: string | null, question: string, sentAt: string, after: string | null = null): LiveTurn {
+  return { key, conversationId, conversation: null, question, sentAt, after, userMessageId: null, parts: [], progress: null, phase: 'sending', error: null, message: null }
 }
 
 export const isInFlight = (t: LiveTurn | null): boolean => !!t && (t.phase === 'sending' || t.phase === 'streaming')
@@ -107,6 +109,47 @@ export function parseStreamEvent(event: string, data: string): AiStreamEvent | n
 const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'done', 'error'])
 
 /**
+ * What a question is sent after (LiveTurn.after): the last message this device
+ * has of the conversation — unless the answer before it, in the same
+ * conversation, had its question saved (the server named it) and this device
+ * has not fetched it yet. Then that question is the anchor: the new one surely
+ * comes after it. Without it, a Stop then a quick "Ask again" in the same
+ * words that ends before its own start (refused, cut off) would be taken for
+ * the stopped question, and its error never drawn.
+ */
+export function sentAfter(prev: LiveTurn | null, conversationId: string | null, cached: readonly AiMessage[] | undefined): string | null {
+  if (conversationId === null) return null
+  const before = prev && prev.conversationId === conversationId ? prev.userMessageId : null
+  if (before && !cached?.some((m) => m.id === before)) return before
+  return cached?.at(-1)?.id ?? null
+}
+
+/**
+ * Where the turn's question sits in the saved list, or -1. By its id once the
+ * server has named it. A turn that ended before the stream began (a stop, a
+ * lost connection) never learns it, though the server may have saved the
+ * question: that one is placed by its words — the latest question asked in
+ * them since the message the device last had when it was sent. While a turn
+ * is still being sent, its id is moments away and its words could still be
+ * an earlier question's, so it is not placed.
+ */
+export function askedAt(t: LiveTurn, saved: readonly AiMessage[]): number {
+  if (t.userMessageId) return saved.findIndex((m) => m.id === t.userMessageId)
+  if (isInFlight(t)) return -1
+  let from = 0
+  if (t.after !== null) {
+    from = saved.findIndex((m) => m.id === t.after) + 1
+    // What it was sent after is gone from the list (deleted, reloaded short): nothing places it safely.
+    if (from === 0) return -1
+  }
+  for (let i = saved.length - 1; i >= from; i--) {
+    const m = saved[i]
+    if (m.role === 'user' && answerText(m.parts) === t.question) return i
+  }
+  return -1
+}
+
+/**
  * What of the turn the thread still draws itself, given the conversation as
  * saved: the question until the saved list holds it, the answer until an
  * answer follows that question there. While it is being written, the saved
@@ -114,11 +157,87 @@ const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'quer
  */
 export function liveView(t: LiveTurn | null, conversationId: string | null, saved: AiMessage[]): { saved: AiMessage[]; question: boolean; answer: boolean } {
   if (!t || t.conversationId !== conversationId) return { saved, question: false, answer: false }
-  const at = t.userMessageId ? saved.findIndex((m) => m.id === t.userMessageId) : -1
+  const at = askedAt(t, saved)
   if (isInFlight(t)) return { saved: at >= 0 ? saved.slice(0, at) : saved, question: true, answer: true }
   if (at < 0) return { saved, question: true, answer: true }
   const answered = saved.slice(at + 1).some((m) => m.role === 'assistant')
   return { saved, question: false, answer: !answered }
+}
+
+/** A drawn item of the thread, with its React key: a saved message, or the turn's own question or answer. */
+export type ThreadItem = { key: string; kind: 'saved'; message: AiMessage } | { key: string; kind: 'question' } | { key: string; kind: 'answer' }
+
+const answerKey = (questionId: string) => `answer:${questionId}`
+
+/**
+ * The thread in order: the saved messages, then what of the turn is still
+ * drawn live (liveView). An answer is keyed by the question it replies to,
+ * which is the same key while it is written, once it is saved and after the
+ * next question is asked — so it is one component throughout, and its query
+ * cards keep their state (opened, the table and its filters) as it is saved.
+ */
+export function threadItems(t: LiveTurn | null, view: { saved: AiMessage[]; question: boolean; answer: boolean }): ThreadItem[] {
+  const items: ThreadItem[] = []
+  const used = new Set<string>()
+  // A key taken twice (a list the server sent oddly) falls back to one that cannot be.
+  const add = (item: ThreadItem, fallback: string) => {
+    const key = used.has(item.key) ? fallback : item.key
+    used.add(key)
+    items.push({ ...item, key })
+  }
+  let asked: string | null = null
+  for (const m of view.saved) {
+    if (m.role === 'user') {
+      asked = m.id
+      add({ key: m.id, kind: 'saved', message: m }, `message:${m.id}`)
+    } else {
+      add({ key: asked ? answerKey(asked) : m.id, kind: 'saved', message: m }, `message:${m.id}`)
+      asked = null
+    }
+  }
+  if (t && view.question) add({ key: `question:${t.key}`, kind: 'question' }, `question:${t.key}`)
+  if (t && view.answer) {
+    // The question as saved names the answer; before the server has named it, the turn's own key does.
+    const at = askedAt(t, view.saved)
+    const questionId = t.userMessageId ?? (at >= 0 ? view.saved[at].id : null)
+    add({ key: questionId ? answerKey(questionId) : `live:${t.key}`, kind: 'answer' }, `live:${t.key}`)
+  }
+  return items
+}
+
+/**
+ * The question and its answer put into the saved conversation as they ended,
+ * so the hand-over draws nothing twice. A copy already there (a refetch while
+ * the answer was written holds it half-done, without its last words, its cost
+ * or how it ended) is replaced, not kept.
+ */
+export function settleMessages(old: AiMessagesResponse | undefined, conversation: AiConversation, asked: AiMessage, answer: AiMessage): AiMessagesResponse {
+  const base = old ?? { conversation, messages: [] }
+  const fresh = new Map([asked, answer].map((m) => [m.id, m]))
+  const have = new Set(base.messages.map((m) => m.id))
+  const messages = base.messages.map((m) => fresh.get(m.id) ?? m)
+  const add = [asked, answer].filter((m) => !have.has(m.id))
+  return { ...base, messages: [...messages, ...add] }
+}
+
+/**
+ * What a screen reader hears of the answer being written: a word each time
+ * its phase changes — never the model's running commentary, which changes
+ * several times a second.
+ */
+export function liveAnnouncement(t: LiveTurn | null): string {
+  if (!t) return ''
+  switch (t.phase) {
+    case 'sending':
+    case 'streaming':
+      return t.parts.some((p) => p.type === 'pending-query' && p.state === 'running') ? 'Running a query…' : 'Thinking…'
+    case 'done':
+      return 'Answer ready.'
+    case 'stopped':
+      return 'Stopped.'
+    case 'error':
+      return t.error?.message ?? 'The answer could not be finished.'
+  }
 }
 
 /** The text of an answer, as markdown, for the clipboard. */

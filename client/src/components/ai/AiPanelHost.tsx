@@ -7,26 +7,42 @@
 // ============================================================================
 
 import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react'
-import { Loader2 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { Loader2, X } from 'lucide-react'
+import { Button } from '@/components/ui'
+import { ErrorBoundary, LoadFailed } from '@/components/ui/ErrorBoundary'
+import { cn, lockBodyScroll } from '@/lib/utils'
 import { useAi } from './AiAssistantProvider'
 
 const AiPanel = lazy(() => import('./AiPanel'))
 
 export function AiPanelHost() {
-  const { enabled, open } = useAi()
+  const { enabled, open, setOpen } = useAi()
   if (!enabled || !open) return null
   return (
     <AiPanelFrame>
-      <Suspense
+      {/* The panel's file not arriving (a deploy since the page opened, a dropped connection) leaves the page as it was. */}
+      <ErrorBoundary
         fallback={
-          <p className="flex flex-1 items-center justify-center gap-2 text-sm text-muted">
-            <Loader2 className="h-4 w-4 animate-spin" /> Opening the assistant…
-          </p>
+          <LoadFailed
+            what="The assistant"
+            action={
+              <Button className="min-h-[44px]" onClick={() => setOpen(false)}>
+                <X className="h-4 w-4" /> Close
+              </Button>
+            }
+          />
         }
       >
-        <AiPanel />
-      </Suspense>
+        <Suspense
+          fallback={
+            <p className="flex flex-1 items-center justify-center gap-2 text-sm text-muted">
+              <Loader2 className="h-4 w-4 animate-spin" /> Opening the assistant…
+            </p>
+          }
+        >
+          <AiPanel />
+        </Suspense>
+      </ErrorBoundary>
     </AiPanelFrame>
   )
 }
@@ -52,14 +68,10 @@ function AiPanelFrame({ children }: { children: ReactNode }) {
     return () => document.removeEventListener('keydown', onKey)
   }, [docked, setOpen])
 
-  // As a sheet it covers the page, which stops scrolling underneath.
+  // As a sheet it covers the page, which stops scrolling underneath — counted with any modal opened from it.
   useEffect(() => {
     if (docked) return
-    const before = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = before
-    }
+    return lockBodyScroll()
   }, [docked])
 
   // One tree for both shapes, so crossing the breakpoint keeps the conversation, the scroll and the draft.

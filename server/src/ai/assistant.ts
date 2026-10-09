@@ -7,7 +7,8 @@
 //   • the history is append-only and replayed byte for byte. An answer that
 //     asked for queries is stored together with all their results, in one
 //     transaction, so a request never sends a tool call without its result.
-//     A refused answer is kept for display and never sent again.
+//     A refused answer is kept for display and never sent again; so is an
+//     empty one, which the API would refuse anywhere but at the end.
 //   • every call's cost is written the moment the call ends, and before every
 //     call the month's spend plus the most that call could cost must stay
 //     within the cap.
@@ -33,9 +34,8 @@ import type { Config } from '../config'
 import { withTransaction, type Db } from '../db/pool'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
 import { RUN_SQL_TOOL_NAME, RunSqlInput } from './prompt'
-import { previewJson, previewOf, runReadOnlyQuery } from './runQuery'
-import { monthSpend } from './settings'
-import { appendMessages, insertQueries, queryPart, recordUsage, type NewMessage, type QueryRecord } from './transcript'
+import { AI_QUERY_STOPPED, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
+import { appendMessages, insertQueries, monthSpend, queryPart, recordUsage, type NewMessage, type QueryRecord } from './transcript'
 
 type MessageParam = Anthropic.Beta.BetaMessageParam
 type ContentBlock = Anthropic.Beta.BetaContentBlock
@@ -59,6 +59,15 @@ export const CHAT_QUERY_TIMEOUT_MS = 10_000
 /** At most this often a line on what the model is doing. */
 const PROGRESS_EVERY_MS = 250
 const PROGRESS_CHARS = 200
+/**
+ * A call cut off is counted as having written at least this many tokens a
+ * second since it began — more than the model streams. Summarized thinking
+ * sends far fewer characters than it bills, so the characters alone undercount.
+ */
+const CUT_OFF_TOKENS_PER_SECOND = 200
+/** An answer with nothing written: the model is asked to go on (Anthropic's advice) this many times. */
+const EMPTY_RETRIES = 1
+const CONTINUE_PROMPT = 'Please continue.'
 
 const BETAS: Anthropic.Beta.AnthropicBeta[] = ['server-side-fallback-2026-07-01', 'thinking-binding-controls-2026-08-01']
 
@@ -68,6 +77,19 @@ const NOTICE = {
   time: 'This answer took longer than 5 minutes and was stopped. Ask a narrower question.',
   tooLong: 'This conversation is too long to go on. Start a new one.',
   cutOff: 'The answer was cut off at its maximum length.',
+  empty: 'Claude returned an empty answer. Ask again, or rephrase the question.',
+}
+
+/** What cut an answer short: the asker (Stop, or leaving) or the clock. */
+type Cause = 'user' | 'time'
+
+/**
+ * The result a query gets when the answer is cut short, by cause. It stays in
+ * the replay for good, so it says what really happened.
+ */
+const INTERRUPTED: Record<Cause, { running: string; notRun: string }> = {
+  user: { running: 'Interrupted by the user.', notRun: 'Interrupted by the user.' },
+  time: { running: 'Stopped: the answer reached its time limit.', notRun: 'Not run: the answer reached its time limit.' },
 }
 
 export interface Question {
@@ -85,6 +107,8 @@ export interface Question {
   emit: (event: AiStreamEvent) => void
   /** Aborts when the asker presses Stop or leaves. */
   signal: AbortSignal
+  /** How long the answer may take; 5 minutes unless a test needs it shorter. */
+  deadlineMs?: number
 }
 
 export interface Outcome {
@@ -163,12 +187,25 @@ export function usageOf(message: ModelMessage): { model: string; tokens: AiToken
   return { model, tokens, costUsd: Math.round(cost * 1_000_000) / 1_000_000 }
 }
 
+const modelPrice = () => AI_PRICES[AI_MODEL] ?? AI_UNKNOWN_MODEL_PRICE
+
 /** The most a call could cost: every input token written to the cache, every output token used. */
-function worstCaseUsd(params: ModelParams): number {
-  const price = AI_PRICES[AI_MODEL] ?? AI_UNKNOWN_MODEL_PRICE
+function worstCaseUsd(params: Pick<ModelParams, 'system' | 'tools' | 'messages' | 'max_tokens'>): number {
+  const price = modelPrice()
   // About three characters a token, rounded the dear way.
   const inputTokens = Math.ceil(JSON.stringify([params.system, params.tools, params.messages]).length / 3)
   return (inputTokens * Math.max(price.input, price.cacheWrite5m) + params.max_tokens * price.output) / 1_000_000
+}
+
+/**
+ * The most the first call of an answer could cost: the loop's own test before
+ * that call, so a question refused here is one the loop would have stopped
+ * without calling the model. Without a conversation (the status has none),
+ * the least any call may cost: its whole output.
+ */
+export function minCallWorstCaseUsd(start?: { conversation: Question['conversation']; messages: MessageParam[] }): number {
+  if (!start) return (MAX_TOKENS * modelPrice().output) / 1_000_000
+  return worstCaseUsd({ system: systemOf(start.conversation), tools: start.conversation.tools, messages: start.messages, max_tokens: MAX_TOKENS })
 }
 
 // ---- Errors --------------------------------------------------------------------------
@@ -225,17 +262,23 @@ export async function answerQuestion(qn: Question): Promise<Outcome> {
   if (qn.signal.aborted) ac.abort()
   qn.signal.addEventListener('abort', onAbort)
   const deadline = setTimeout(() => {
-    overTime = true
+    // The first to stop it is the cause: a Stop the clock overtakes stays the asker's.
+    if (!ac.signal.aborted) overTime = true
     ac.abort()
-  }, TURN_DEADLINE_MS)
+  }, qn.deadlineMs ?? TURN_DEADLINE_MS)
   deadline.unref()
   try {
-    return await loop(qn, ac.signal, () => (overTime ? { stopReason: 'limit', notice: NOTICE.time } : { stopReason: 'stopped', notice: NOTICE.stopped }))
+    return await loop(qn, ac.signal, () => (overTime ? 'time' : 'user'))
   } finally {
     clearTimeout(deadline)
     qn.signal.removeEventListener('abort', onAbort)
   }
 }
+
+/** The stored system prompt, marked for the cache. */
+const systemOf = (conversation: Question['conversation']): Anthropic.Beta.BetaTextBlockParam[] => [
+  { type: 'text', text: conversation.systemPrompt, cache_control: { type: 'ephemeral' } },
+]
 
 function requestParams(qn: Question, messages: MessageParam[], maxTokens: number): ModelParams {
   return {
@@ -252,19 +295,21 @@ function requestParams(qn: Question, messages: MessageParam[], maxTokens: number
     output_config: { effort: 'medium' },
     // The growing conversation is cached automatically; the system prompt (and the tools before it) explicitly.
     cache_control: { type: 'ephemeral' },
-    system: [{ type: 'text', text: qn.conversation.systemPrompt, cache_control: { type: 'ephemeral' } }],
+    system: systemOf(qn.conversation),
     tools: qn.conversation.tools,
     messages: [...messages],
   }
 }
 
-async function loop(qn: Question, signal: AbortSignal, stopped: () => Outcome): Promise<Outcome> {
+async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Promise<Outcome> {
+  const stopped = (): Outcome => (cause() === 'time' ? { stopReason: 'limit', notice: NOTICE.time } : { stopReason: 'stopped', notice: NOTICE.stopped })
   const messages = [...qn.messages]
   let maxTokens = MAX_TOKENS
   let calls = 0
   let continuations = 0
   let jsonRetries = 0
   let streamRetries = 0
+  let emptyRetries = 0
 
   for (;;) {
     if (signal.aborted) return stopped()
@@ -285,7 +330,9 @@ async function loop(qn: Question, signal: AbortSignal, stopped: () => Outcome): 
     try {
       message = await stream.finalMessage()
     } catch (err) {
-      await recordCutOffUsage(qn, stream, watch.chars())
+      // A stream that failed on its own may still be reading the response, which would go uncounted: stop it.
+      if (!(err instanceof Anthropic.APIUserAbortError)) stream.abort()
+      await recordCutOffUsage(qn, stream, watch, params.max_tokens)
       if (err instanceof Anthropic.APIUserAbortError || signal.aborted) return stopped()
       if (err instanceof Anthropic.APIError) {
         // An error event inside an open stream (no status) is not retried by the SDK: once here.
@@ -316,7 +363,8 @@ async function loop(qn: Question, signal: AbortSignal, stopped: () => Outcome): 
       kind: 'assistant',
       content: replay,
       rawContent: replay === message.content ? undefined : message.content,
-      inReplay,
+      // A message with no content is refused anywhere but at the very end: in the replay it would sink every later question.
+      inReplay: inReplay && replay.length > 0,
       model: message.model,
     })
 
@@ -354,16 +402,27 @@ async function loop(qn: Question, signal: AbortSignal, stopped: () => Outcome): 
       return { stopReason: 'max_tokens', notice: NOTICE.cutOff }
     }
     if (toolUses.length === 0) {
-      messages.push(...(await persist(qn, [answerMessage()])))
-      return { stopReason: 'end_turn', notice: null }
+      if (hasText(replay)) {
+        messages.push(...(await persist(qn, [answerMessage()])))
+        return { stopReason: 'end_turn', notice: null }
+      }
+      // Nothing written (it happens, mostly right after query results). Kept for the record, never
+      // replayed: the model has decided it is done, so it is asked to go on in a message of its own.
+      if (emptyRetries++ < EMPTY_RETRIES) {
+        const goOn: NewMessage = { role: 'user', kind: 'repair', content: [{ type: 'text', text: CONTINUE_PROMPT }] }
+        messages.push(...(await persist(qn, [answerMessage(false), goOn])))
+        continue
+      }
+      await persist(qn, [answerMessage(false)])
+      return { stopReason: 'end_turn', notice: NOTICE.empty }
     }
 
-    // Every call is answered, in one message, in order; after a Stop the rest are answered as interrupted.
+    // Every call is answered, in one message, in order; once the answer is cut short the rest are not run.
     const results: ToolResult[] = []
     const queries: QueryRecord[] = []
     for (const tu of toolUses) {
-      if (signal.aborted) results.push({ type: 'tool_result', tool_use_id: tu.id, is_error: true, content: 'Interrupted by the user.' })
-      else results.push(await runToolUse(qn, tu, queries))
+      if (signal.aborted) results.push({ type: 'tool_result', tool_use_id: tu.id, is_error: true, content: INTERRUPTED[cause()].notRun })
+      else results.push(await runToolUse(qn, tu, queries, signal, cause))
     }
     const stored = await withTransaction(qn.db, async (tx) => {
       const appended = await appendMessages(tx, qn.conversation.id, qn.turnId, [answerMessage(), { role: 'user', kind: 'tool_results', content: results }])
@@ -374,14 +433,21 @@ async function loop(qn: Question, signal: AbortSignal, stopped: () => Outcome): 
   }
 }
 
+/** Whether a reply wrote anything the asker can read. */
+const hasText = (content: ContentBlockParam[]) => content.some((b) => b.type === 'text' && b.text.trim() !== '')
+
 /** Store messages of this answer; returns them as they will be replayed. */
 async function persist(qn: Question, messages: NewMessage[]): Promise<MessageParam[]> {
   const stored = await withTransaction(qn.db, (tx) => appendMessages(tx, qn.conversation.id, qn.turnId, messages))
   return stored.filter((_, i) => messages[i].inReplay !== false).map((s) => s.param)
 }
 
-/** One run_sql call: checked, run in the sandbox, shown as a card, handed back to the model. */
-async function runToolUse(qn: Question, tu: ToolUse, queries: QueryRecord[]): Promise<ToolResult> {
+/**
+ * One run_sql call: checked, run in the sandbox, shown as a card, handed back
+ * to the model. A Stop or the clock cancels the query itself, so the answer
+ * ends at once rather than when the query would have.
+ */
+async function runToolUse(qn: Question, tu: ToolUse, queries: QueryRecord[], signal: AbortSignal, cause: () => Cause): Promise<ToolResult> {
   // A near-miss of the name (Run_SQL) is still the one tool.
   if (tu.name.toLowerCase() !== RUN_SQL_TOOL_NAME) {
     return { type: 'tool_result', tool_use_id: tu.id, is_error: true, content: `Unknown tool "${tu.name}". The only tool is "${RUN_SQL_TOOL_NAME}".` }
@@ -393,7 +459,9 @@ async function runToolUse(qn: Question, tu: ToolUse, queries: QueryRecord[]): Pr
   const { purpose, sql } = parsed.data
   const queryId = randomUUID()
   qn.emit({ type: 'query_start', queryId, purpose, sql })
-  const run = await runReadOnlyQuery(qn.reader, sql, { maxRows: AI_PREVIEW_ROWS, timeoutMs: CHAT_QUERY_TIMEOUT_MS, timeZone: qn.config.FACTORY_TIMEZONE })
+  const run = await runReadOnlyQuery(qn.reader, sql, { maxRows: AI_PREVIEW_ROWS, timeoutMs: CHAT_QUERY_TIMEOUT_MS, timeZone: qn.config.FACTORY_TIMEZONE, signal })
+  // Stopped through the signal (not a failure of its own that came first): the replay keeps why.
+  if (!run.ok && run.error === AI_QUERY_STOPPED) run.error = INTERRUPTED[cause()].running
   const preview = previewOf(run)
   const record: QueryRecord = { id: queryId, toolUseId: tu.id, purpose, sql, ok: run.ok, error: run.error, ms: run.ms, ...preview }
   queries.push(record)
@@ -402,9 +470,18 @@ async function runToolUse(qn: Question, tu: ToolUse, queries: QueryRecord[]): Pr
   return { type: 'tool_result', tool_use_id: tu.id, content: previewJson(preview) }
 }
 
+/** What a call has streamed so far, for counting it if it is cut off. */
+interface StreamWatch {
+  /** Characters of every kind the model wrote: reply, thinking, tool input. */
+  chars: () => number
+  /** When the first event arrived; null before. */
+  startedAt: () => number | null
+}
+
 /** Forward the stream to the asker: the reply as it is written, and now and then a line of what the model is thinking. */
-function watchStream(stream: ModelStream, emit: (e: AiStreamEvent) => void): { chars: () => number } {
+function watchStream(stream: ModelStream, emit: (e: AiStreamEvent) => void): StreamWatch {
   let chars = 0
+  let startedAt: number | null = null
   let thinking = ''
   let lastProgress = 0
   let pending = false
@@ -415,34 +492,46 @@ function watchStream(stream: ModelStream, emit: (e: AiStreamEvent) => void): { c
     if (!line) return
     emit({ type: 'progress', text: line.length > PROGRESS_CHARS ? `…${line.slice(-PROGRESS_CHARS)}` : line })
   }
+  // Counted from the raw deltas: tool input arrives only there (a call cut off mid-input has no finished
+  // block), and each character is seen once. Not the SDK's inputJson event: it parses on every delta.
+  stream.on('streamEvent', (event) => {
+    startedAt ??= Date.now()
+    if (event.type !== 'content_block_delta') return
+    const d = event.delta
+    if (d.type === 'text_delta') chars += d.text.length
+    else if (d.type === 'thinking_delta') chars += d.thinking.length
+    else if (d.type === 'input_json_delta') chars += d.partial_json.length
+  })
   stream.on('text', (delta) => {
-    chars += delta.length
     emit({ type: 'text', delta })
   })
-  stream.on('thinking', (delta, snapshot) => {
-    chars += delta.length
+  stream.on('thinking', (_delta, snapshot) => {
     thinking = snapshot
     if (Date.now() - lastProgress >= PROGRESS_EVERY_MS) progress()
     else pending = true
   })
   stream.on('contentBlock', (block) => {
     if (block.type === 'thinking' && pending) progress()
-    if (block.type === 'tool_use') chars += JSON.stringify(block.input ?? '').length
   })
-  return { chars: () => chars }
+  return { chars: () => chars, startedAt: () => startedAt }
 }
 
 /**
- * A call cut off (Stop, an error) is billed for what it used. The input is
- * known from the stream's start; the output only at its end, so it is taken
- * as the larger of what was reported and a generous count of what streamed.
+ * A call cut off (Stop, the clock, an error) is billed for what it used. The
+ * input is known from the stream's start; the output only at its end, so it
+ * is taken as the largest of what was reported, half a token per streamed
+ * character, and the time it ran at more than the model writes — never more
+ * than the call was allowed. The cap must err on the dear side.
  */
-async function recordCutOffUsage(qn: Question, stream: ModelStream, streamedChars: number): Promise<void> {
+async function recordCutOffUsage(qn: Question, stream: ModelStream, watch: StreamWatch, maxTokens: number): Promise<void> {
   const current = stream.currentMessage
   if (!current) return
   const model = current.model || AI_MODEL
   const reported = tokensOf(current.usage)
-  const tokens = { ...reported, outputTokens: Math.max(reported.outputTokens, Math.ceil(streamedChars / 2)) }
+  const started = watch.startedAt()
+  const seconds = started === null ? 0 : (Date.now() - started) / 1000
+  const estimate = Math.max(reported.outputTokens, Math.ceil(watch.chars() / 2), Math.ceil(seconds * CUT_OFF_TOKENS_PER_SECOND))
+  const tokens = { ...reported, outputTokens: Math.min(maxTokens, estimate) }
   try {
     await recordUsage(qn.db, {
       userId: qn.userId,

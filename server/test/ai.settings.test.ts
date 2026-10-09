@@ -238,6 +238,28 @@ describe('§20 the switch and the monthly cap', () => {
     expect(app.model.calls).toEqual([])
   })
 
+  it('closer to the cap than one call may cost, the assistant is unavailable: no answer could start', async () => {
+    await app.db.query(`INSERT INTO ai_usage (user_id, model, output_tokens, cost_usd) VALUES ($1, $2, 0, 49.8)`, [admin.user.id, AI_MODEL])
+    try {
+      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50 } })
+      // $0.20 left, and one call may write 32 000 tokens at $10 a million: the loop would stop before calling.
+      expect((await status()).body).toMatchObject({ available: false, reason: 'cap-reached', spentUsd: 49.8, capUsd: 50 })
+      const q = await ask()
+      expect(q.status).toBe(402)
+      expect(q.body.error.code).toBe('ai_budget_reached')
+      expect(q.body.error.message).toMatch(/\$50\.00\) is reached, or too close for an answer to start/)
+      const turns = await app.db.query(`SELECT 1 FROM ai_turns`)
+      expect(turns.rowCount).toBe(0)
+      // With room for that call, it is available again.
+      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50.2 } })
+      expect((await status()).body).toMatchObject({ available: true, spentUsd: 49.8, capUsd: 50.2 })
+    } finally {
+      await app.db.query(`UPDATE ai_usage SET created_at = date_trunc('month', now()) - interval '1 day'`)
+      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 10 } })
+    }
+    expect(app.model.calls).toEqual([])
+  })
+
   it('without its database reader, the assistant is unavailable and says why', async () => {
     await app.aiReader.end()
     try {
@@ -262,7 +284,7 @@ describe('§20 the switch and the monthly cap', () => {
 })
 
 describe('§20 a key from the server environment', () => {
-  it('wins over the key set in the app, and is shown as such', async () => {
+  it('wins over the key set in the app, and is shown as such; a key set in the app is still shown and can be removed', async () => {
     const envKey = `sk-ant-api03-${'E'.repeat(40)}nv01`
     const withEnv = new TestApp()
     await withEnv.start({ ANTHROPIC_API_KEY: envKey })
@@ -273,6 +295,38 @@ describe('§20 a key from the server environment', () => {
       expect(res.body.key).toEqual({ set: true, source: 'environment', last4: 'nv01' })
       expect(res.body.status.available).toBe(true)
       expect(JSON.stringify(res.body)).not.toContain(envKey)
+
+      // A key set in the app as well (for when the server has none): not used, but shown.
+      const set = await withEnv.api<AiSettingsResponse>('PUT', '/api/ai/key', { token: boss.token, body: { apiKey: KEY } })
+      expect(set.status).toBe(200)
+      const shown = await withEnv.api<AiSettingsResponse>('GET', '/api/ai/settings', { token: boss.token })
+      expect(shown.body.key).toEqual({
+        set: true,
+        source: 'environment',
+        last4: 'nv01',
+        stored: { last4: 'kZ9x', updatedAt: expect.any(String), updatedByName: 'Boss' },
+      })
+      expect(set.body.key).toEqual(shown.body.key)
+      expect(JSON.stringify(shown.body)).not.toContain(KEY)
+      expect((await resolveApiKey(withEnv.db, withEnv.config)).apiKey).toBe(envKey)
+      // One that can no longer be read says so.
+      const rotated = await resolveApiKey(withEnv.db, { ...withEnv.config, JWT_SECRET: 'a-rotated-secret-a-rotated-secret-a-rotated' })
+      expect(rotated.apiKey).toBe(envKey)
+      expect(rotated.state.stored).toMatchObject({ last4: 'kZ9x', unreadable: true })
+
+      // Removed from the app: gone from the database, the environment's key still in use.
+      const removed = await withEnv.api<AiSettingsResponse>('DELETE', '/api/ai/key', { token: boss.token })
+      expect(removed.status).toBe(200)
+      expect(removed.body.key).toEqual({ set: true, source: 'environment', last4: 'nv01' })
+      expect(removed.body.status.available).toBe(true)
+      expect((await withEnv.db.query(`SELECT 1 FROM ai_credentials`)).rowCount).toBe(0)
+      const audit = await withEnv.db.query<{ oldValue: string; newValue: string }>(
+        `SELECT old_value AS "oldValue", new_value AS "newValue" FROM audit_log WHERE entity = 'AiAssistant' ORDER BY id`,
+      )
+      expect(audit.rows).toEqual([
+        { oldValue: 'not set', newValue: 'set (…kZ9x)' },
+        { oldValue: 'set (…kZ9x)', newValue: 'removed' },
+      ])
     } finally {
       await withEnv.stop()
     }

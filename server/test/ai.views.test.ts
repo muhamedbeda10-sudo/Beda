@@ -1,6 +1,6 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import type { KpiBreakdown, KpiGeneral } from '@qc/shared/kpi'
+import type { KpiBreakdown, KpiGeneral, KpiOverview } from '@qc/shared/kpi'
 import type { CloseSessionRequest, SaveSampleRequest, SessionWithOrder } from '@qc/shared/api'
 import type { AiCell } from '@qc/shared/ai'
 import type { ProductionOrder } from '@qc/shared/types'
@@ -38,12 +38,16 @@ const PT: SaveSampleRequest['pt'] = {
   imageIds: [],
 }
 
-async function open(order: ProductionOrder, defectQty: number, opts: { startQty?: number; disposition?: 'Repair' | 'Hold'; pt?: boolean } = {}): Promise<SessionWithOrder> {
+async function open(
+  order: ProductionOrder,
+  defectQty: number,
+  opts: { startQty?: number; disposition?: 'Repair' | 'Hold'; pt?: boolean; coils?: SaveSampleRequest['coils'] } = {},
+): Promise<SessionWithOrder> {
   const opened = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: order.id, startQty: opts.startQty ?? 0 } })
   expect(opened.status, JSON.stringify(opened.body)).toBe(201)
   const saved = await app.api('POST', `/api/sessions/${opened.body.id}/samples`, {
     token: inspector.token,
-    body: { submissionId: randomUUID(), drawing: 'D-1', sampleQty: 10, dimensions: [], defects: defects(defectQty, opts.disposition), coils: [], ...(opts.pt ? { pt: PT } : {}) },
+    body: { submissionId: randomUUID(), drawing: 'D-1', sampleQty: 10, dimensions: [], defects: defects(defectQty, opts.disposition), coils: opts.coils ?? [], ...(opts.pt ? { pt: PT } : {}) },
   })
   expect(saved.status, JSON.stringify(saved.body)).toBe(201)
   return (await app.api<SessionWithOrder>('GET', `/api/sessions/${opened.body.id}`, { token: inspector.token })).body
@@ -121,6 +125,18 @@ describe('§20 the ai views read like the screens', () => {
       ['90', 90 + 40 + 25, 2 + 3 + 1 + 1],
     ])
     expect(views).toEqual(dashboard)
+    // Asked for every machine, the one off the dashboard has its production too, and says so.
+    const all = await read(
+      `SELECT machine_code, sum(produced), bool_and(counts_on_dashboard)
+         FROM ai.production_between('${from}', '${to}', 'span', true) GROUP BY machine_code ORDER BY machine_code`,
+    )
+    expect(all).toEqual([
+      ['31', 200, true],
+      ['58', 101, true],
+      ['77', 50, false],
+      ['90', 90 + 40 + 25, true],
+    ])
+    expect(await read(`SELECT count(*) FROM ai.production_sessions WHERE NOT counts_on_dashboard`)).toEqual([[1]])
     // The reject rate as the dashboard computes it.
     const [[rate]] = await read(
       `SELECT round((sum(defect_pieces) / (sum(produced) + sum(defect_pieces)) * 100)::numeric, 4) FROM ai.production_between('${from}', '${to}')`,
@@ -193,5 +209,38 @@ describe('§20 the ai views read like the screens', () => {
     expect(entities).not.toContain('Notice')
     expect(entities).not.toContain('ChatGroup')
     expect(entities).not.toContain('AiAssistant')
+  })
+
+  it('groups suppliers as the dashboard’s supplier table does, beside the register’s fuller details', async () => {
+    // A coil typed by hand with a supplier and no grade; the register names its grade afterwards.
+    const s = await open(line('F-1'), 2, { coils: [{ coilNumber: 'K-9', supplier: 'Acme' }] })
+    ids.typedCoil = s.id
+    await app.db.query(`INSERT INTO coils (coil_number, grade, supplier) VALUES ('K-9', 'DX51D+Z275', 'Acme Steel')`)
+    const period = `from=${factoryDay(-1)}&to=${factoryDay(1)}&prevFrom=${factoryDay(-31)}&prevTo=${factoryDay(-2)}`
+    const o = (await app.api<KpiOverview>('GET', `/api/kpi/overview?${period}`, { token: admin.token })).body
+    expect(o.suppliers.map((r) => [r.supplier, r.grade, r.samples, r.pieces, r.defectPieces])).toEqual([['Acme', '—', 1, 10, 2]])
+    expect(
+      await read(
+        `SELECT dashboard_supplier, dashboard_grade, count(DISTINCT sample_id), sum(sample_qty), sum(sample_defect_pieces)
+           FROM ai.sample_coils WHERE process = 'forming' AND counts_on_dashboard GROUP BY 1, 2`,
+      ),
+    ).toEqual([['Acme', '—', 1, 10, 2]])
+    // What the materials chart reads: the sample's own, else the register's.
+    expect(await read(`SELECT supplier, grade, material_kind FROM ai.sample_coils WHERE coil_number = 'K-9'`)).toEqual([['Acme', 'DX51D+Z275', 'galvanized']])
+  })
+
+  it('counts an order line’s samples of live sessions only', async () => {
+    const lineFigures = `SELECT sessions, samples, defect_pieces, last_inspected_at IS NOT NULL FROM ai.order_lines WHERE line_key = 'F-1'`
+    expect(await read(lineFigures)).toEqual([[2, 2, 2 + 2, true]])
+    const removed = await app.api('DELETE', `/api/sessions/${ids.typedCoil}`, { token: admin.token })
+    expect(removed.status).toBe(204)
+    // The deleted session's sample keeps deleted_at NULL itself; the line no longer counts it, like every other view.
+    expect((await app.db.query(`SELECT count(*)::int AS n FROM inspection_samples WHERE session_id = $1 AND deleted_at IS NULL`, [ids.typedCoil])).rows[0].n).toBe(1)
+    expect(await read(lineFigures)).toEqual([[1, 1, 2, true]])
+    const [[last]] = await read(`SELECT last_inspected_at FROM ai.order_lines WHERE line_key = 'F-1'`)
+    expect(await read(`SELECT count(*), sum(x.defect_pieces), max(x.recorded_at) FROM ai.inspection_samples x JOIN ai.order_lines o ON o.order_line_id = x.order_line_id WHERE o.line_key = 'F-1'`)).toEqual([
+      [1, 2, last],
+    ])
+    expect(await read(`SELECT count(*) FROM ai.sample_coils WHERE coil_number = 'K-9'`)).toEqual([[0]])
   })
 })

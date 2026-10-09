@@ -16,7 +16,9 @@ import {
 } from '@qc/shared/ai'
 import type { Config } from '../config'
 import type { Queryable } from '../db/pool'
+import { minCallWorstCaseUsd } from './assistant'
 import { resolveApiKey } from './credentials'
+import { monthSpend } from './transcript'
 
 export const AI_SETTINGS_KEY = 'ai-assistant'
 
@@ -42,18 +44,6 @@ export async function loadAiSettings(q: Queryable): Promise<StoredAiSettings> {
   return { settings, updatedAt: row?.updatedAt ?? undefined, updatedByName: row?.updatedByName ?? undefined }
 }
 
-/** The first instant of the current calendar month in UTC — Anthropic bills by it. */
-const MONTH_START_SQL = `(date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`
-
-/** What this calendar month (UTC) has cost so far. */
-export async function monthSpend(q: Queryable): Promise<{ spentUsd: number; monthStart: string }> {
-  const { rows } = await q.query<{ spent: number; monthStart: string }>(
-    `SELECT COALESCE(sum(cost_usd), 0)::numeric(14, 6) AS spent, ${MONTH_START_SQL} AS "monthStart"
-       FROM ai_usage WHERE created_at >= ${MONTH_START_SQL}`,
-  )
-  return { spentUsd: rows[0].spent, monthStart: rows[0].monthStart }
-}
-
 export interface AiAvailability {
   status: AiStatusResponse
   settings: StoredAiSettings
@@ -64,7 +54,8 @@ export interface AiAvailability {
 
 /**
  * Available when switched on, with a usable key, with the reader ready, and
- * under the cap; otherwise the first of those that fails is the reason.
+ * far enough under the cap for an answer to start; otherwise the first of
+ * those that fails is the reason.
  */
 export async function loadAvailability(q: Queryable, config: Config, readerReady: boolean): Promise<AiAvailability> {
   // One after another: `q` may be a transaction's single connection.
@@ -76,7 +67,9 @@ export async function loadAvailability(q: Queryable, config: Config, readerReady
   if (!settings.settings.enabled) reason = 'disabled'
   else if (!resolved.apiKey) reason = 'no-key'
   else if (!readerReady) reason = 'reader-unavailable'
-  else if (spend.spentUsd >= capUsd) reason = 'cap-reached'
+  // The same test the answer loop makes before every call: closer to the cap than one call may cost,
+  // no answer could start, so the composer must not offer one.
+  else if (spend.spentUsd + minCallWorstCaseUsd() > capUsd) reason = 'cap-reached'
   const status: AiStatusResponse = {
     available: reason === undefined,
     model: AI_MODEL,

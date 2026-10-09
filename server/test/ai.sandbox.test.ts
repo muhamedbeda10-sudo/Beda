@@ -12,6 +12,8 @@ import { describeAiSchema } from '../src/ai/schemaDoc'
 
 const app = new TestApp()
 let role: string
+/** The test database's name: the reader role and its password are per database. */
+let database: string
 const chat: RunOptions = { maxRows: AI_PREVIEW_ROWS, timeoutMs: 10_000, timeZone: 'Africa/Cairo' }
 const run = (sql: string, opts: Partial<RunOptions> = {}) => runReadOnlyQuery(app.aiReader.pool, sql, { ...chat, ...opts })
 
@@ -19,6 +21,7 @@ beforeAll(async () => {
   await app.start()
   await app.resetDatabase()
   role = app.aiReader.role!
+  database = new URL(app.config.DATABASE_URL).pathname.slice(1)
   // Something to read: two machines and an account.
   const admin = await app.register('admin', 'Admin')
   for (const [code, name] of [['58', 'Welding Line-LM4'], ['21', 'Press 400 t']]) {
@@ -30,7 +33,7 @@ afterAll(() => app.stop())
 describe('§20 the reader role', () => {
   it('is per database, provisioned with LOGIN, a SCRAM verifier and the factory time zone', async () => {
     expect(app.aiReader.ready).toBe(true)
-    expect(role).toBe('qc_test_ai_reader')
+    expect(role).toBe(`${database}_ai_reader`)
     const { rows } = await app.db.query<{ rolcanlogin: boolean; rolsuper: boolean; rolcreaterole: boolean; rolcreatedb: boolean; rolconnlimit: number; rolconfig: string[] }>(
       `SELECT rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolconnlimit, rolconfig FROM pg_roles WHERE rolname = $1`,
       [role],
@@ -49,7 +52,7 @@ describe('§20 the reader role', () => {
     // The tests connect as a superuser, which may read the stored verifier: never the password itself.
     const stored = await app.db.query<{ rolpassword: string }>(`SELECT rolpassword FROM pg_authid WHERE rolname = $1`, [role])
     expect(stored.rows[0].rolpassword).toMatch(/^SCRAM-SHA-256\$4096:/)
-    expect(stored.rows[0].rolpassword).not.toContain(readerPassword(app.config.JWT_SECRET, 'qc_test'))
+    expect(stored.rows[0].rolpassword).not.toContain(readerPassword(app.config.JWT_SECRET, database))
   })
 
   it('derives a different password for every database and secret, and sends a verifier in RFC 5803 form', () => {
@@ -100,6 +103,9 @@ describe('§20 the reader role', () => {
     const fn = await run(`SELECT ai.machine_key(' ٠٢١ ') AS k, ai.material_kind('DX51D+Z275') AS m, count(*) AS n FROM ai.production_between('2026-01-01', '2026-12-31', 'month')`)
     expect(fn.ok, fn.error).toBe(true)
     expect(fn.rows).toEqual([['21', 'galvanized', 0]])
+    // What the data dictionary promises of machine_key, and no more.
+    const keys = await run(`SELECT ai.machine_key('024'), ai.machine_key(' 24 '), ai.machine_key('٢٤'), ai.machine_key('STAM 24'), ai.machine_key('stam24')`)
+    expect(keys.rows).toEqual([['24', '24', '24', 'stam24', 'stam24']])
     // search_path is ai: an unqualified view name is found.
     const machines = await run(`SELECT machine_code, machine, process, makes_to_stock FROM machines ORDER BY machine_code`)
     expect(machines.rows).toEqual([
@@ -122,6 +128,15 @@ describe('§20 the reader role', () => {
     expect(doc).toContain('### ai.inspection_sessions')
     expect(doc).toContain('- rejected_before_release double precision: Pieces already rejected on the line before the first-part release inspection')
     expect(doc).toContain('### ai.production_between(p_from date, p_to date, p_per text DEFAULT')
+    expect(doc).toContain("p_all_machines boolean DEFAULT false) returns TABLE(")
+    expect(doc).toContain('pass p_all_machines => true (the 4th argument) to include machines with counts_on_dashboard = false')
+    expect(doc).toContain('- counts_on_dashboard boolean: false = the machine is left out of the dashboard')
+    expect(doc).toContain('- invalid integer: Rows of the run that could not be read (the true count of failed rows).')
+    expect(doc).toContain('- errors_kept integer: How many of the unreadable rows are kept in errors_sample (at most 50); use invalid for the count.')
+    expect(doc).toContain('- dashboard_supplier text: Supplier as the dashboard')
+    expect(doc).toContain('as do "STAM 24" and "stam24" (but "STAM 24" and "24" do not)')
+    // The runner's own row check is no business of the model's.
+    expect(doc).not.toContain('assert_row_size')
     const views = [...doc.matchAll(/^### ai\.(\w+)$/gm)].map((m) => m[1])
     expect(views).toEqual([...views].sort())
     expect(views).toHaveLength(23)
@@ -147,12 +162,63 @@ describe('§20 the query runner', () => {
       "SELECT query_to_xml('select 1', true, false, '')",
       "SELECT lo_import('/etc/passwd')",
       "SELECT pg_read_file('/etc/passwd')",
+      "SELECT * FROM ts_stat('SELECT to_tsvector(pg_sleep(5)::text)')",
+      "SELECT ts_rewrite('a'::tsquery, 'SELECT ''a''::tsquery, pg_sleep(5)::text::tsquery')",
       '',
       'x'.repeat(20_001),
     ]) {
       expect(precheckSql(sql), sql.slice(0, 40)).toHaveProperty('error')
     }
     expect(codeOnly(`SELECT 'it''s' AS "a""b", E'\\'' /* c /* nested */ */ -- d`)).toBe(`SELECT '' AS "", ''    `)
+  })
+
+  it('reads a name however it is written, so the refusals cannot be hidden', () => {
+    for (const sql of [
+      // A quoted name that is a plain word is the same function.
+      'SELECT "pg_sleep"(1)',
+      'SELECT pg_catalog."pg_terminate_backend"(1)',
+      `SELECT "set_config"('search_path', 'public', true)`,
+      `SELECT "pg_catalog"."query_to_xml"('SELECT 1', true, false, '')`,
+      // Unicode escapes spell any name.
+      'SELECT U&"pg\\005fsleep"(1)',
+      `SELECT u&"pg!005fsleep" UESCAPE '!' (1)`,
+      // E' inside a name opens a plain string: its backslash escapes nothing.
+      `SELECT name'x\\', pg_sleep(5) AS z --'`,
+      // $ inside a name is part of it, not a dollar quote.
+      'SELECT 1 AS a$b$, pg_sleep(5) AS c$b$',
+      // A line comment ends at a carriage return too.
+      'SELECT 1 -- note\r, pg_sleep(5)',
+      // A dollar quote's tag may be any length: the quote ends at the same long tag, not at the next '.
+      `SELECT $${'q'.repeat(250)}$ ' $${'q'.repeat(250)}$ AS a, pg_sleep(5) AS b --'`,
+    ]) {
+      expect(precheckSql(sql), sql).toEqual({ error: expect.stringMatching(/cannot be used in the assistant's queries/) })
+    }
+    expect(codeOnly('SELECT "pg_sleep"(1), "a b", "x""y"')).toBe('SELECT  pg_sleep (1), "", ""')
+    expect(codeOnly(`SELECT name'x\\', 1 --'`)).toBe(`SELECT name'', 1  `)
+    expect(codeOnly('SELECT 1 AS a$b$, 2 AS c$b$')).toBe('SELECT 1 AS a$b$, 2 AS c$b$')
+    expect(codeOnly('SELECT $q$ pg_sleep(1) $q$, $é$ ; $é$, 1$t$x$t$')).toBe("SELECT '', '', 1''")
+    expect(codeOnly('SELECT 1 -- a\rFROM x')).toBe('SELECT 1  \rFROM x')
+    // One pass over the text, however many $ it holds: the longest query is read at once, not in seconds.
+    const dollars = `SELECT ${'a$'.repeat(9_990)}`
+    const started = performance.now()
+    expect(codeOnly(dollars)).toBe(dollars)
+    expect(codeOnly(`SELECT a${'$'.repeat(19_990)}`)).toBe(`SELECT a${'$'.repeat(19_990)}`)
+    expect(performance.now() - started).toBeLessThan(500)
+    // Plain quoted names and literals stay acceptable.
+    expect(precheckSql('SELECT "machine_code", U&\'d\\0061t\' FROM ai."machines"')).toHaveProperty('sql')
+  })
+
+  it('refuses the same calls at the database or bounds them, past the text checks', async () => {
+    // What the text checks are a courtesy for: run straight on the role's own connection.
+    const client = await app.aiReader.pool!.connect()
+    try {
+      await expect(client.query(`SELECT "pg_read_file"('/etc/passwd')`)).rejects.toThrow(/permission denied/)
+      await expect(client.query(`SELECT "set_config"('role', 'qc', true)`)).rejects.toThrow(/permission denied/)
+      await client.query(`SET statement_timeout = '200ms'`)
+      await expect(client.query('SELECT "pg_sleep"(2)')).rejects.toThrow(/statement timeout/)
+    } finally {
+      client.release(true)
+    }
   })
 
   it('reads values as PostgreSQL writes them, in factory time, by position', async () => {

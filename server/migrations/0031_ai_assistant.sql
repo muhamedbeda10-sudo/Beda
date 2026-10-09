@@ -39,7 +39,21 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
               THEN COALESCE(NULLIF(ltrim(regexp_replace(lower(translate($1, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')), '\s+', '', 'g'), '0'), ''), '0')
               ELSE regexp_replace(lower(translate($1, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')), '\s+', '', 'g') END
 $$;
-COMMENT ON FUNCTION ai.machine_key(text) IS 'Machine code made comparable: "STAM 24", "stam24" and "024" give the same key. Compare ai.machine_key(a) = ai.machine_key(b).';
+COMMENT ON FUNCTION ai.machine_key(text) IS 'Machine code made comparable: Arabic-Indic digits become Western, spaces are dropped, lower case, and a purely numeric code loses its leading zeros. "024", " 24 " and "٢٤" give the same key, as do "STAM 24" and "stam24" (but "STAM 24" and "24" do not). Compare ai.machine_key(a) = ai.machine_key(b).';
+
+-- The query runner's own guard (server/src/ai/runQuery.ts): it wraps every
+-- query so that a row longer than the run allows (n = its stored size) fails
+-- here, before PostgreSQL sends it to the API, where one huge value could take
+-- the process down. Left out of the data dictionary.
+CREATE OR REPLACE FUNCTION ai.assert_row_size(n int, max int) RETURNS boolean
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+BEGIN
+  IF n > max THEN
+    RAISE EXCEPTION 'A row of the result is larger than % KB. Select fewer or shorter columns, or aggregate.', max / 1024
+      USING ERRCODE = 'program_limit_exceeded';
+  END IF;
+  RETURN true;
+END $$;
 
 -- materialOfGrade (shared/src/kpi.ts:1275): black or galvanized steel from a coil grade.
 CREATE OR REPLACE FUNCTION ai.material_kind(grade text) RETURNS text
@@ -187,7 +201,7 @@ SELECT COALESCE(NULLIF(btrim(c.supplier), ''), '(unknown supplier)') AS supplier
   FROM coils c
  WHERE c.deleted_at IS NULL
  GROUP BY 1;
-COMMENT ON VIEW ai.suppliers IS 'Suppliers as named in the coil register. Supplier quality: aggregate ai.sample_coils by supplier (the dashboard counts each sample once per supplier+grade, forming machines only).';
+COMMENT ON VIEW ai.suppliers IS 'Suppliers as named in the coil register. Supplier quality comes from ai.sample_coils. The dashboard''s supplier table counts DISTINCT sample_id per dashboard_supplier + dashboard_grade over process = ''forming'' AND counts_on_dashboard = true, samples by recorded_day (pieces = sample_qty, defects = sample_defect_pieces, each sample once); supplier / grade there (the sample''s own, else the coil register''s) match the dashboard''s materials chart instead.';
 
 -- ---- Inspection records ------------------------------------------------------
 
@@ -514,7 +528,9 @@ SELECT c.id                                   AS sample_coil_id,
        c.notes,
        x.grade_ack_at IS NOT NULL             AS grade_mismatch_acknowledged,
        x.sample_qty::float8                   AS sample_qty,
-       (SELECT COALESCE(sum(d.qty), 0) FROM defect_results d WHERE d.sample_id = x.id AND d.deleted_at IS NULL)::float8 AS sample_defect_pieces
+       (SELECT COALESCE(sum(d.qty), 0) FROM defect_results d WHERE d.sample_id = x.id AND d.deleted_at IS NULL)::float8 AS sample_defect_pieces,
+       COALESCE(NULLIF(btrim(c.supplier), ''), '(unknown supplier)') AS dashboard_supplier,
+       COALESCE(NULLIF(btrim(c.grade), ''), '—')                    AS dashboard_grade
   FROM sample_coils c
   JOIN inspection_samples x ON x.id = c.sample_id AND x.deleted_at IS NULL
   JOIN inspection_sessions s ON s.id = x.session_id AND s.deleted_at IS NULL
@@ -522,7 +538,9 @@ SELECT c.id                                   AS sample_coil_id,
   LEFT JOIN coils r ON lower(r.coil_number) = lower(c.coil_number) AND r.deleted_at IS NULL
   LEFT JOIN machines m ON lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
  WHERE c.deleted_at IS NULL;
-COMMENT ON VIEW ai.sample_coils IS 'Coils recorded on each live sample (traceability coil -> sample -> order -> customer). Details are the sample''s own snapshot, else the coil register''s, as the dashboard reads them. A sample with several coils appears once per coil: count DISTINCT sample_id before summing sample_qty / sample_defect_pieces.';
+COMMENT ON VIEW ai.sample_coils IS 'Coils recorded on each live sample (traceability coil -> sample -> order -> customer). Details are the sample''s own snapshot, else the coil register''s, as the dashboard''s materials chart reads them. A sample with several coils appears once per coil: count DISTINCT sample_id before summing sample_qty / sample_defect_pieces.';
+COMMENT ON COLUMN ai.sample_coils.dashboard_supplier IS 'Supplier as the dashboard''s supplier table groups it: the sample''s own only, "(unknown supplier)" when blank (never the register''s).';
+COMMENT ON COLUMN ai.sample_coils.dashboard_grade IS 'Grade as the dashboard''s supplier table groups it: the sample''s own only, "—" when blank (never the register''s).';
 COMMENT ON COLUMN ai.sample_coils.picked_from_register IS 'true = chosen from the coil register; false = typed by hand.';
 COMMENT ON COLUMN ai.sample_coils.material_kind IS 'black | galvanized | unknown (from grade).';
 COMMENT ON COLUMN ai.sample_coils.sample_qty IS 'Pieces inspected in the sample (repeated on each of its coils).';
@@ -645,31 +663,37 @@ SELECT s.id                                   AS session_id,
        (SELECT jsonb_object_agg(q.stage::text, q.qty) FROM session_stage_quantities q
          WHERE q.session_id = s.id AND q.deleted_at IS NULL) AS stage_quantities,
        COALESCE((SELECT sum(d.qty) FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
-                  WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL), 0)::float8 AS defect_pieces
+                  WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL), 0)::float8 AS defect_pieces,
+       m.on_dashboard IS NOT FALSE            AS counts_on_dashboard
   FROM inspection_sessions s
   JOIN production_orders o ON o.id = s.order_id
   LEFT JOIN machines m ON lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL
- WHERE m.on_dashboard IS NOT FALSE
-   AND s.deleted_at IS NULL AND s.status = 'Closed' AND s.final_qty IS NOT NULL AND s.closed_at IS NOT NULL;
-COMMENT ON VIEW ai.production_sessions IS 'Inputs of the dashboard''s production figure: sessions closed with a final quantity on machines the dashboard counts. Do NOT sum final_qty for production: universal staged/legacy lines are counted once per line per span. Use ai.production_between(from, to, per).';
+ WHERE s.deleted_at IS NULL AND s.status = 'Closed' AND s.final_qty IS NOT NULL AND s.closed_at IS NOT NULL;
+COMMENT ON VIEW ai.production_sessions IS 'Inputs of the production figure: sessions closed with a final quantity, on every machine (filter counts_on_dashboard = true to match the dashboard). Do NOT sum final_qty for production: universal staged/legacy lines are counted once per line per span. Use ai.production_between(from, to, per).';
+COMMENT ON COLUMN ai.production_sessions.counts_on_dashboard IS 'false = the machine is left out of the dashboard''s figures (machines.on_dashboard), e.g. manual welding.';
 COMMENT ON COLUMN ai.production_sessions.counted_once_per_line IS 'Universal order line that is not a final product (staged, or closed before the choice): its production is counted once per line per span, not per session.';
 COMMENT ON COLUMN ai.production_sessions.sheet_finished_qty IS 'Order sheet finished quantity of the line (used for lines closed before stages existed).';
 COMMENT ON COLUMN ai.production_sessions.defect_pieces IS 'All defect pieces of the session (the dashboard''s rejected pieces).';
 COMMENT ON COLUMN ai.production_sessions.closed_day IS 'Factory day of closed_at; closed_month = its YYYY-MM.';
 COMMENT ON COLUMN ai.production_sessions.stage_quantities IS 'JSON object stage -> quantity of the stages this session covered.';
 
-CREATE OR REPLACE FUNCTION ai.production_between(p_from date, p_to date, p_per text DEFAULT 'span')
+-- The signature and the columns returned changed while the assistant was being
+-- built; CREATE OR REPLACE cannot change either, so an earlier one goes first.
+DROP FUNCTION IF EXISTS ai.production_between(date, date, text);
+CREATE OR REPLACE FUNCTION ai.production_between(p_from date, p_to date, p_per text DEFAULT 'span', p_all_machines boolean DEFAULT false)
 RETURNS TABLE (
   session_id uuid, order_line_id uuid, machine_code text, machine text, factory text, process text,
   order_number text, item_code text, item text, customer text,
   closed_at timestamptz, closed_day date, closed_month text, period text,
-  final_qty double precision, produced double precision, defect_pieces double precision)
+  final_qty double precision, produced double precision, defect_pieces double precision,
+  counts_on_dashboard boolean)
 LANGUAGE sql STABLE AS $$
   WITH r AS (
     SELECT b.*,
            CASE lower(p_per) WHEN 'month' THEN b.closed_month WHEN 'day' THEN b.closed_day::text ELSE '' END AS part
       FROM ai.production_sessions b
      WHERE b.closed_day BETWEEN p_from AND p_to
+       AND (p_all_machines OR b.counts_on_dashboard)
   ), w AS (
     SELECT r.*,
            CASE WHEN r.sheet_finished_qty > 0 THEN r.sheet_finished_qty
@@ -692,10 +716,11 @@ LANGUAGE sql STABLE AS $$
               WHEN t.line_first <> 1 THEN 0
               WHEN t.line_staged THEN sum(t.at_top) OVER (PARTITION BY t.order_line_id, t.counted_once_per_line, t.part)
               ELSE t.line_qty END,
-         t.defect_pieces
+         t.defect_pieces,
+         t.counts_on_dashboard
     FROM t
 $$;
-COMMENT ON FUNCTION ai.production_between(date, date, text) IS 'Dashboard production for factory days p_from..p_to inclusive, one row per closed session. per = span (whole range, default) | month | day: a universal staged/legacy line counts once per period. Sum produced and defect_pieces over any grouping (machine, factory, process, item, order). Reject rate % = sum(defect_pieces) / (sum(produced) + sum(defect_pieces)) x 100; made = produced + defect_pieces; PPM = rate x 10000.';
+COMMENT ON FUNCTION ai.production_between(date, date, text, boolean) IS 'Production for factory days p_from..p_to inclusive, one row per closed session. By default only the machines the dashboard counts, so it gives the dashboard''s figure; pass p_all_machines => true (the 4th argument) to include machines with counts_on_dashboard = false (e.g. manual welding): their production comes only from here, never from summing final_qty. per = span (whole range, default) | month | day: a universal staged/legacy line counts once per period. Sum produced and defect_pieces over any grouping (machine, factory, process, item, order). Reject rate % = sum(defect_pieces) / (sum(produced) + sum(defect_pieces)) x 100; made = produced + defect_pieces; PPM = rate x 10000.';
 
 -- ---- Orders (Access sheet) and PDI ---------------------------------------------
 
@@ -729,10 +754,14 @@ SELECT o.id                                   AS order_line_id,
        (o.order_date AT TIME ZONE current_setting('TimeZone'))::date AS order_day,
        (SELECT count(*) FROM inspection_sessions s WHERE s.order_id = o.id AND s.deleted_at IS NULL)::int AS sessions,
        (SELECT count(*) FROM inspection_sessions s WHERE s.order_id = o.id AND s.deleted_at IS NULL AND s.status = 'Open')::int AS open_sessions,
-       (SELECT count(*) FROM inspection_samples x WHERE x.order_id = o.id AND x.deleted_at IS NULL)::int AS samples,
+       -- Samples of a deleted session keep deleted_at NULL themselves: only a live session's count.
+       (SELECT count(*) FROM inspection_samples x JOIN inspection_sessions s ON s.id = x.session_id AND s.deleted_at IS NULL
+         WHERE x.order_id = o.id AND x.deleted_at IS NULL)::int AS samples,
        (SELECT COALESCE(sum(d.qty), 0) FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
+          JOIN inspection_sessions s ON s.id = x.session_id AND s.deleted_at IS NULL
          WHERE x.order_id = o.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL)::float8 AS defect_pieces,
-       (SELECT max(x.created_at) FROM inspection_samples x WHERE x.order_id = o.id AND x.deleted_at IS NULL) AS last_inspected_at,
+       (SELECT max(x.created_at) FROM inspection_samples x JOIN inspection_sessions s ON s.id = x.session_id AND s.deleted_at IS NULL
+         WHERE x.order_id = o.id AND x.deleted_at IS NULL) AS last_inspected_at,
        (SELECT count(*) FROM pdi_lines pl JOIN pdi_documents d ON d.id = pl.pdi_id AND d.deleted_at IS NULL
          WHERE pl.order_id = o.id)::int       AS pdi_count,
        (SELECT COALESCE(r.finished_at, r.started_at) FROM order_sync_runs r WHERE r.id = o.last_sync_run_id) AS last_seen_by_sync_at,
@@ -757,8 +786,9 @@ COMMENT ON COLUMN ai.order_lines.order_day IS 'Factory day of order_date (the or
 COMMENT ON COLUMN ai.order_lines.sessions IS 'Live inspection sessions on the line; open_sessions = those still Open.';
 COMMENT ON COLUMN ai.order_lines.pdi_count IS 'Live PDIs covering the line.';
 COMMENT ON COLUMN ai.order_lines.expected_grade IS 'Steel grade the order expects; coil grades are checked against it (ai.grade_equivalences).';
-COMMENT ON COLUMN ai.order_lines.samples IS 'Live samples recorded against the line.';
-COMMENT ON COLUMN ai.order_lines.defect_pieces IS 'Defect pieces recorded against the line across all its samples.';
+COMMENT ON COLUMN ai.order_lines.samples IS 'Live samples of live sessions recorded against the line.';
+COMMENT ON COLUMN ai.order_lines.defect_pieces IS 'Defect pieces recorded against the line across its live samples of live sessions.';
+COMMENT ON COLUMN ai.order_lines.last_inspected_at IS 'When a live sample of a live session was last recorded against the line.';
 COMMENT ON COLUMN ai.order_lines.last_seen_by_sync_at IS 'When the Access sync last saw this line.';
 
 CREATE OR REPLACE VIEW ai.pdi_documents AS
@@ -820,13 +850,15 @@ SELECT r.id                                   AS run_id,
        r.invalid,
        r.retired,
        array_to_string(r.unknown_columns, ', ') AS unknown_columns,
-       jsonb_array_length(r.errors)           AS error_rows,
+       jsonb_array_length(r.errors)           AS errors_kept,
        left(r.errors::text, 2000)             AS errors_sample,
        r.message,
        k.name                                 AS integration_key_name
   FROM order_sync_runs r
   LEFT JOIN integration_keys k ON k.id = r.key_id;
 COMMENT ON VIEW ai.order_sync_runs IS 'Each run of the agent that syncs the Access order table into the app. status: running | success | warning | failed. retired = lines marked no longer on the sheet (only after a clean full read).';
+COMMENT ON COLUMN ai.order_sync_runs.invalid IS 'Rows of the run that could not be read (the true count of failed rows).';
+COMMENT ON COLUMN ai.order_sync_runs.errors_kept IS 'How many of the unreadable rows are kept in errors_sample (at most 50); use invalid for the count.';
 
 
 -- ---- Audit log ---------------------------------------------------------------------

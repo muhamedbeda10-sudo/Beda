@@ -1,11 +1,11 @@
 // ============================================================================
 // §20 — a query of an answer to Excel. The server runs it again in full (up
-// to AI_EXPORT_MAX_ROWS rows); the workbook holds the result on one sheet and,
+// to AI_EXPORT_MAX_ROWS rows, fewer when the rows are wide); the workbook holds the result on one sheet and,
 // on a second, what was asked and the SQL that answered it, so the figures
 // can be traced and checked later.
 // ============================================================================
 
-import { AI_EXPORT_MAX_ROWS, type AiQueryExportResponse } from '@qc/shared/ai'
+import type { AiQueryExportResponse } from '@qc/shared/ai'
 import type { CellValue, SheetSpec } from '@/lib/xlsxWrite'
 
 /** Excel holds at most this many characters in a cell; a longer text makes it "repair" the file. */
@@ -35,7 +35,7 @@ export function aiResultSheets(r: AiQueryExportResponse, question?: string): She
     ['Purpose', aiCellValue(r.purpose)],
     ['Run at', stamp(r.ranAt)],
     ['Rows', r.rows.length],
-    ['Complete', r.truncated ? `No — only the first ${AI_EXPORT_MAX_ROWS.toLocaleString('en-US')} rows` : 'Yes'],
+    ['Complete', r.truncated ? `No — only the first ${r.rows.length.toLocaleString('en-US')} rows` : 'Yes'],
     ['SQL', aiCellValue(r.sql)],
   )
   return [

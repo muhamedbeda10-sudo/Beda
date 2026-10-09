@@ -6,7 +6,9 @@
 // four characters are shown.
 //
 // ANTHROPIC_API_KEY in the server's environment, when set, wins over the key
-// set in the app.
+// set in the app. A key set in the app is still reported then (never used),
+// so an administrator can see it is there and remove it: it becomes the live
+// key the day the environment's goes.
 // ============================================================================
 
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto'
@@ -68,19 +70,32 @@ interface CredentialRow {
   updatedByName: string
 }
 
-/** The key the assistant would use now, and what may be shown about it. */
-export async function resolveApiKey(q: Queryable, config: Config): Promise<ResolvedKey> {
-  if (config.ANTHROPIC_API_KEY) {
-    return { apiKey: config.ANTHROPIC_API_KEY, state: { set: true, source: 'environment', last4: last4(config.ANTHROPIC_API_KEY) } }
-  }
+/** The key set in the app, opened; null as the key when it cannot be read back. */
+async function storedKey(q: Queryable, config: Config): Promise<{ row: CredentialRow; apiKey: string | null } | null> {
   const { rows } = await q.query<CredentialRow>(
     `SELECT ciphertext, iv, auth_tag AS "authTag", key_version AS "keyVersion", last4,
             updated_at AS "updatedAt", updated_by_name AS "updatedByName"
        FROM ai_credentials WHERE id = 1`,
   )
   const row = rows[0]
-  if (!row) return { apiKey: null, state: { set: false, source: null } }
-  const apiKey = row.keyVersion === KEY_VERSION ? openApiKey(config.JWT_SECRET, row) : null
+  if (!row) return null
+  return { row, apiKey: row.keyVersion === KEY_VERSION ? openApiKey(config.JWT_SECRET, row) : null }
+}
+
+/** The key the assistant would use now, and what may be shown about it. */
+export async function resolveApiKey(q: Queryable, config: Config): Promise<ResolvedKey> {
+  const stored = await storedKey(q, config)
+  if (config.ANTHROPIC_API_KEY) {
+    const state: AiKeyState = { set: true, source: 'environment', last4: last4(config.ANTHROPIC_API_KEY) }
+    // Not used while the environment's key is there, but shown, so it can be seen and removed.
+    if (stored) {
+      state.stored = { last4: stored.row.last4, updatedAt: stored.row.updatedAt, updatedByName: stored.row.updatedByName }
+      if (stored.apiKey === null) state.stored.unreadable = true
+    }
+    return { apiKey: config.ANTHROPIC_API_KEY, state }
+  }
+  if (!stored) return { apiKey: null, state: { set: false, source: null } }
+  const { row, apiKey } = stored
   const state: AiKeyState = { set: true, source: 'app', last4: row.last4, updatedAt: row.updatedAt, updatedByName: row.updatedByName }
   if (apiKey === null) state.unreadable = true
   return { apiKey, state }

@@ -28,7 +28,7 @@ export function BotMark({ size = 'sm', className }: { size?: 'sm' | 'md' | 'lg';
   )
 }
 
-export function UserBubble({ text, at }: { text: string; at?: string }) {
+export const UserBubble = memo(function UserBubble({ text, at }: { text: string; at?: string }) {
   return (
     <div className="flex justify-end">
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-brand-600 px-3 py-2 text-sm text-white shadow-sm">
@@ -43,7 +43,7 @@ export function UserBubble({ text, at }: { text: string; at?: string }) {
       </div>
     </div>
   )
-}
+})
 
 function AnswerFrame({ children }: { children: ReactNode }) {
   return (
@@ -54,12 +54,12 @@ function AnswerFrame({ children }: { children: ReactNode }) {
   )
 }
 
-/** The parts of an answer in order: text as markdown, each query as its card. */
-function AnswerParts({ parts, question }: { parts: readonly LivePart[]; question?: string }) {
+/** The parts of an answer in order: text as markdown, each query as its card. `writing`: the answer is not finished. */
+function AnswerParts({ parts, question, writing }: { parts: readonly LivePart[]; question?: string; writing: boolean }) {
   return (
     <>
       {parts.map((p, i) =>
-        p.type === 'text' ? <AiMarkdown key={i} text={p.text} /> : <AiQueryCard key={p.queryId} part={p} question={question} />,
+        p.type === 'text' ? <AiMarkdown key={i} text={p.text} /> : <AiQueryCard key={p.queryId} part={p} question={question} writing={writing} />,
       )}
     </>
   )
@@ -105,34 +105,29 @@ function AnswerFooter({ parts, costUsd, at }: { parts: readonly LivePart[]; cost
   )
 }
 
-/** A saved question or answer. `question` is the question an answer replies to, for its exports and Ask again. */
-export const SavedMessage = memo(function SavedMessage({ message: m, question, onAskAgain }: { message: AiMessage; question?: string; onAskAgain?: (q: string) => void }) {
-  if (m.role === 'user') {
-    return <UserBubble text={answerText(m.parts)} at={m.createdAt} />
-  }
-  const retry = m.stopReason && m.stopReason !== 'end_turn' && m.stopReason !== 'refusal'
-  return (
-    <AnswerFrame>
-      <AnswerParts parts={m.parts} question={question} />
-      <StopNotice reason={m.stopReason} notice={m.notice} action={retry ? <AskAgain question={question} onAskAgain={onAskAgain} /> : undefined} />
-      <AnswerFooter parts={m.parts} costUsd={m.costUsd} at={m.createdAt} />
-    </AnswerFrame>
-  )
-})
-
-/** The answer being written, or the last one until the saved conversation holds it. */
-export function LiveAnswer({ turn, onAskAgain }: { turn: LiveTurn; onAskAgain?: (q: string) => void }) {
-  const writing = isInFlight(turn)
-  // Once done, the answer as saved; until then, as streamed.
-  const parts = turn.phase === 'done' && turn.message ? turn.message.parts : turn.parts
+/**
+ * An answer: saved (`message`), or being written (`turn`). One component for
+ * both, drawn at one key (threadItems), so the hand-over when it is saved
+ * keeps its query cards as they were — opened, or showing their table with
+ * its filters. `question` is the question it replies to, for its exports and
+ * Ask again.
+ */
+export const Answer = memo(function Answer({ message, turn, question, onAskAgain }: { message?: AiMessage; turn?: LiveTurn; question?: string; onAskAgain?: (q: string) => void }) {
+  const writing = !!turn && isInFlight(turn)
+  // The answer as it ended: the saved one, or the turn's once done; until then, the parts as streamed.
+  const ended = turn ? (turn.phase === 'done' ? turn.message : null) : (message ?? null)
+  const parts: readonly LivePart[] = ended ? ended.parts : (turn?.parts ?? [])
   const last = parts.at(-1)
-  // Between queries and before the first word, say what the model is doing.
+  // Between queries and before the first word, say what the model is doing. Not a live region: it
+  // changes several times a second; the thread's status line says when the phase changes.
   const working = writing && (turn.progress ?? (!last || last.type === 'query' ? (turn.phase === 'sending' ? 'Sending…' : 'Thinking…') : null))
+  const retry = ended?.stopReason && ended.stopReason !== 'end_turn' && ended.stopReason !== 'refusal'
+  // Each child keeps its place whichever kind of answer this is, so the parts (and their cards) are never redrawn from scratch.
   return (
     <AnswerFrame>
-      <AnswerParts parts={parts} question={turn.question} />
+      <AnswerParts parts={parts} question={question} writing={writing} />
       {working && (
-        <p dir="auto" className="flex items-center gap-2 text-xs italic text-muted" aria-live="polite">
+        <p dir="auto" className="flex items-center gap-2 text-xs italic text-muted">
           <span aria-hidden className="flex shrink-0 gap-0.5">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500" />
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500 [animation-delay:150ms]" />
@@ -141,18 +136,14 @@ export function LiveAnswer({ turn, onAskAgain }: { turn: LiveTurn; onAskAgain?: 
           <span className="line-clamp-2">{working}</span>
         </p>
       )}
-      {turn.phase === 'stopped' && <StopNotice reason="stopped" action={<AskAgain question={turn.question} onAskAgain={onAskAgain} />} />}
-      {turn.phase === 'error' && (
-        <Notice tone="red" action={<AskAgain question={turn.question} onAskAgain={onAskAgain} />}>
+      {turn?.phase === 'stopped' && <StopNotice reason="stopped" action={<AskAgain question={question} onAskAgain={onAskAgain} />} />}
+      {turn?.phase === 'error' && (
+        <Notice tone="red" action={<AskAgain question={question} onAskAgain={onAskAgain} />}>
           {turn.error?.message ?? 'The answer could not be finished.'}
         </Notice>
       )}
-      {turn.phase === 'done' && turn.message && (
-        <>
-          <StopNotice reason={turn.message.stopReason} notice={turn.message.notice} />
-          <AnswerFooter parts={turn.message.parts} costUsd={turn.message.costUsd} at={turn.message.createdAt} />
-        </>
-      )}
+      {ended && <StopNotice reason={ended.stopReason} notice={ended.notice} action={retry ? <AskAgain question={question} onAskAgain={onAskAgain} /> : undefined} />}
+      {ended && <AnswerFooter parts={ended.parts} costUsd={ended.costUsd} at={ended.createdAt} />}
     </AnswerFrame>
   )
-}
+})

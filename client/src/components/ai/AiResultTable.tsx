@@ -87,8 +87,8 @@ interface Row {
   cells: AiCell[]
 }
 
-/** "Open table": the preview, large, with Excel's filter and sort. */
-export function AiResultModal({ part, onClose, onExport, exporting }: { part: AiQueryPart; onClose: () => void; onExport: () => void; exporting: boolean }) {
+/** "Open table": the preview, large, with Excel's filter and sort. `exportWait`: why Export Excel cannot run yet. */
+export function AiResultModal({ part, onClose, onExport, exporting, exportWait }: { part: AiQueryPart; onClose: () => void; onExport: () => void; exporting: boolean; exportWait?: string }) {
   const numeric = useMemo(() => numericColumns(part.columns, part.rows), [part.columns, part.rows])
   const rows = useMemo<Row[]>(() => part.rows.map((cells, i) => ({ i, cells })), [part.rows])
   // useTableView keys its columns by identity: built once per result.
@@ -115,7 +115,7 @@ export function AiResultModal({ part, onClose, onExport, exporting }: { part: Ai
       title={<span dir="auto">{part.purpose}</span>}
       footer={
         <>
-          <Button onClick={onExport} disabled={exporting} className="sm:mr-auto">
+          <Button onClick={onExport} disabled={exporting || !!exportWait} data-tip={exportWait} className="sm:mr-auto">
             {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} {exporting ? 'Exporting…' : 'Export Excel'}
           </Button>
           <Button variant="primary" onClick={onClose}>

@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, lockBodyScroll } from '@/lib/utils'
 import type { DimensionStatus, Disposition, SessionStatus } from '@qc/shared/types'
 
 // ---- Badge -----------------------------------------------------------------
@@ -159,10 +159,10 @@ export function Modal({
     if (!open) return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     document.addEventListener('keydown', onKey)
-    document.body.style.overflow = 'hidden'
+    const unlock = lockBodyScroll()
     return () => {
       document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = ''
+      unlock()
     }
   }, [open, onClose])
 
@@ -235,10 +235,10 @@ export function Drawer({
     if (!open) return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     document.addEventListener('keydown', onKey)
-    document.body.style.overflow = 'hidden'
+    const unlock = lockBodyScroll()
     return () => {
       document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = ''
+      unlock()
     }
   }, [open, onClose])
 

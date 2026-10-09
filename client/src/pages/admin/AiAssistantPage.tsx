@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Activity, Bot, Coins, Eye, EyeOff, Hash, KeyRound, Loader2, MessageSquareText, Save, SlidersHorizontal, Trash2 } from 'lucide-react'
-import { AI_MAX_MONTHLY_CAP_USD, type AiSettingsResponse, type AiStatusResponse, type AiUsageResponse } from '@qc/shared/ai'
+import { AI_MAX_MONTHLY_CAP_USD, type AiKeyState, type AiSettingsResponse, type AiStatusResponse, type AiUsageResponse } from '@qc/shared/ai'
 import { can } from '@qc/shared/rules'
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { useAi } from '@/components/ai/AiAssistantProvider'
@@ -125,8 +125,13 @@ function KeyCard({ data, canManage }: { data: AiSettingsResponse; canManage: boo
   const remove = async () => {
     setRemoving(true)
     try {
-      await removeAiKey(qc)
-      toast('Key removed. The assistant cannot answer until a new one is set.', 'success')
+      const res = await removeAiKey(qc)
+      toast(
+        res.key.source === 'environment'
+          ? "The key set here is removed. The server's own key keeps the assistant answering."
+          : 'Key removed. The assistant cannot answer until a new one is set.',
+        'success',
+      )
       setConfirm(false)
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Could not remove the key.', 'error')
@@ -135,27 +140,7 @@ function KeyCard({ data, canManage }: { data: AiSettingsResponse; canManage: boo
     }
   }
 
-  const ending = key.last4 ? <span className="font-mono">…{key.last4}</span> : null
-  let state: ReactNode
-  let tone: 'green' | 'amber' | 'red' | 'blue'
-  if (key.unreadable) {
-    tone = 'red'
-    state = <>A key is saved but can no longer be read — the server's secret has changed since. Set it again.</>
-  } else if (key.source === 'environment') {
-    tone = 'blue'
-    state = <>From the server's environment (ANTHROPIC_API_KEY){ending && <>, ending {ending}</>}. It wins over a key set here.</>
-  } else if (key.set) {
-    tone = 'green'
-    state = (
-      <>
-        Set{ending && <>, ending {ending}</>}.{key.updatedAt ? ` Changed ${formatDateTime(key.updatedAt)}${key.updatedByName ? ` by ${key.updatedByName}` : ''}.` : ''}
-      </>
-    )
-  } else {
-    tone = 'amber'
-    state = <>No key yet. The assistant cannot answer until one is set.</>
-  }
-  const removable = key.source === 'app' || !!key.unreadable
+  const { state, tone, badge, stored, removable } = describeKey(key)
 
   return (
     <Card className="space-y-4 p-4 sm:p-5">
@@ -166,7 +151,7 @@ function KeyCard({ data, canManage }: { data: AiSettingsResponse; canManage: boo
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-bold">Anthropic API key</h3>
-            <Badge tone={tone}>{key.unreadable ? 'Unreadable' : key.source === 'environment' ? 'From the server' : key.set ? 'Set' : 'Not set'}</Badge>
+            <Badge tone={tone}>{badge}</Badge>
           </div>
           <p className="mt-0.5 text-sm text-muted">{state}</p>
         </div>
@@ -175,7 +160,7 @@ function KeyCard({ data, canManage }: { data: AiSettingsResponse; canManage: boo
       {canManage && (
         <div className="space-y-3">
           <Field
-            label={key.source === 'environment' ? 'A key for when the server has none' : key.set ? 'Replace the key' : 'Key'}
+            label={key.source === 'environment' ? (stored ? 'Replace the key kept for when the server has none' : 'A key for when the server has none') : key.set ? 'Replace the key' : 'Key'}
             hint="Tried with Anthropic before it is kept, then stored encrypted. It is never shown again, here or anywhere."
           >
             <div className="relative">
@@ -217,7 +202,7 @@ function KeyCard({ data, canManage }: { data: AiSettingsResponse; canManage: boo
             </Button>
             {removable && (
               <Button className="min-h-[44px] hover:text-rose-600" onClick={() => setConfirm(true)} disabled={saving}>
-                <Trash2 className="h-4 w-4" /> Remove
+                <Trash2 className="h-4 w-4" /> {stored ? 'Remove the key set here' : 'Remove'}
               </Button>
             )}
           </div>
@@ -229,7 +214,7 @@ function KeyCard({ data, canManage }: { data: AiSettingsResponse; canManage: boo
           open
           onClose={() => !removing && setConfirm(false)}
           size="sm"
-          title="Remove the API key?"
+          title={stored ? 'Remove the key set here?' : 'Remove the API key?'}
           footer={
             <>
               <Button onClick={() => setConfirm(false)} disabled={removing}>
@@ -241,11 +226,60 @@ function KeyCard({ data, canManage }: { data: AiSettingsResponse; canManage: boo
             </>
           }
         >
-          <p className="text-sm text-slate-600 dark:text-slate-300">The assistant stops answering until a new key is set. Conversations and their costs stay. The change is in the audit log.</p>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            {stored
+              ? "The server's own key (ANTHROPIC_API_KEY) keeps the assistant answering. Without the key set here, nothing takes over if the server's key is ever removed. The change is in the audit log."
+              : 'The assistant stops answering until a new key is set. Conversations and their costs stay. The change is in the audit log.'}
+          </p>
         </Modal>
       )}
     </Card>
   )
+}
+
+/**
+ * What the key card says of the key, by where it comes from. With the
+ * server's key in use, a key set here is not used, but kept — it becomes the
+ * live key the day the server's goes — so it is shown, and can be removed.
+ */
+export function describeKey(key: AiKeyState): {
+  state: ReactNode
+  tone: 'green' | 'amber' | 'red' | 'blue'
+  badge: string
+  stored: NonNullable<AiKeyState['stored']> | null
+  removable: boolean
+} {
+  const ending = key.last4 ? <span className="font-mono">…{key.last4}</span> : null
+  const stored = key.source === 'environment' ? (key.stored ?? null) : null
+  const removable = key.source === 'app' || !!key.unreadable || !!stored
+  if (key.unreadable) {
+    return { tone: 'red', badge: 'Unreadable', stored, removable, state: <>A key is saved but can no longer be read — the server's secret has changed since. Set it again.</> }
+  }
+  if (key.source === 'environment') {
+    const state = (
+      <>
+        From the server's environment (ANTHROPIC_API_KEY){ending && <>, ending {ending}</>}. It wins over a key set here.
+        {stored && (
+          <>
+            {' '}
+            A key set here (ending <span className="font-mono">…{stored.last4}</span>, changed {formatDateTime(stored.updatedAt)}
+            {stored.updatedByName ? ` by ${stored.updatedByName}` : ''}) is kept for when the server has none
+            {stored.unreadable ? <>, but it can no longer be read — the server's secret has changed since. Set it again, or remove it.</> : '.'}
+          </>
+        )}
+      </>
+    )
+    return { tone: 'blue', badge: 'From the server', stored, removable, state }
+  }
+  if (key.set) {
+    const state = (
+      <>
+        Set{ending && <>, ending {ending}</>}.{key.updatedAt ? ` Changed ${formatDateTime(key.updatedAt)}${key.updatedByName ? ` by ${key.updatedByName}` : ''}.` : ''}
+      </>
+    )
+    return { tone: 'green', badge: 'Set', stored, removable, state }
+  }
+  return { tone: 'amber', badge: 'Not set', stored, removable, state: <>No key yet. The assistant cannot answer until one is set.</> }
 }
 
 // ---- The switch and the cap ----------------------------------------------------------

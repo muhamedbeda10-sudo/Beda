@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AiAssistantProvider } from './AiAssistantProvider'
 import { AiMarkdown } from './AiMarkdown'
+import { classifyAiLink } from './links'
 
 // Rendered to a string, as on a server: the router's layout effects say they do nothing there, which is all the test needs.
 const consoleError = console.error
@@ -56,5 +57,18 @@ describe('an answer’s markdown', () => {
     // A dropped link keeps its words, as plain text; an image goes altogether.
     expect(html).toContain('<span>click</span>')
     expect(html).not.toContain('beacon')
+  })
+
+  it('drops a path whose dot segments resolve to another site', () => {
+    // Each resolves to "//evil.example/login": as an href, another site, reached by a new-tab open or a modified click.
+    for (const href of ['/..//evil.example/login', '/.//evil.example/login', '/%2e%2e//evil.example/login', '/a/..//evil.example/login', '/%2E%2E/%2e//evil.example']) {
+      expect(classifyAiLink(href)).toBeNull()
+      const html = render(`[Session #3 · 24-0117](${href})`)
+      expect(html).not.toContain('evil.example')
+      expect(html).not.toContain('href=')
+      expect(html).toContain('<span>Session #3 · 24-0117</span>')
+    }
+    // A path of the app with dot segments in it stays a link, as resolved.
+    expect(classifyAiLink('/history/../history?session=abc')).toEqual({ kind: 'app', to: '/history?session=abc' })
   })
 })

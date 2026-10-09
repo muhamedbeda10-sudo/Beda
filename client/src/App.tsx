@@ -17,6 +17,7 @@ import { UsersPage } from '@/pages/admin/UsersPage'
 import { AuditPage } from '@/pages/admin/AuditPage'
 import { NoticesPage } from '@/pages/admin/NoticesPage'
 import { WhatsNewPage } from '@/pages/admin/WhatsNewPage'
+import { ErrorBoundary, LoadFailed } from '@/components/ui/ErrorBoundary'
 import { useAuth } from '@/store/AuthContext'
 import { can, type Capability } from '@qc/shared/rules'
 import { lazy, Suspense, type ReactElement } from 'react'
@@ -76,7 +77,7 @@ export default function App() {
         <Route path="/admin/audit" element={<Only cap="edit-closed-session"><AuditPage /></Only>} />
         <Route path="/admin/notices" element={<Only cap="manage-admin-data"><NoticesPage /></Only>} />
         <Route path="/admin/whats-new" element={<Only cap="manage-admin-data"><WhatsNewPage /></Only>} />
-        <Route path="/admin/ai" element={<Only cap="use-ai-assistant"><Suspense fallback={<PageLoading />}><AiAssistantPage /></Suspense></Only>} />
+        <Route path="/admin/ai" element={<Only cap="use-ai-assistant"><ErrorBoundary fallback={<LoadFailed what="This page" />}><Suspense fallback={<PageLoading />}><AiAssistantPage /></Suspense></ErrorBoundary></Only>} />
         <Route path="/audit" element={<Navigate to="/admin/audit" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -16,7 +16,8 @@ import { ApiError, apiStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
 import { newSubmissionId } from '@/lib/utils'
 import { keys } from '@/services/queries'
-import { applyEvent, endTurn, isInFlight, parseStreamEvent, startTurn, type LiveTurn } from './liveTurn'
+import { applyEvent, endTurn, isInFlight, parseStreamEvent, sentAfter, settleMessages, startTurn, type LiveTurn } from './liveTurn'
+import { STOP_SETTLE_MS, retryAfterStop } from './retryAfterStop'
 
 export interface AiControls {
   /** The signed-in role may use the assistant (administrators). */
@@ -66,6 +67,8 @@ export function AiAssistantProvider({ enabled, children }: { enabled: boolean; c
   const active = useRef<string | null>(null)
   const controller = useRef<AbortController | null>(null)
   const draft = useRef('')
+  // The last answer stopped here, and when: a question right after it may meet that answer still winding down.
+  const lastStop = useRef<{ conversationId: string; at: number } | null>(null)
 
   const setOpen = useCallback((next: boolean) => setOpenState(next), [])
   const toggle = useCallback(() => setOpenState((o) => !o), [])
@@ -101,13 +104,16 @@ export function AiAssistantProvider({ enabled, children }: { enabled: boolean; c
 
       // The question and its answer go into the saved conversation at once, so the hand-over draws nothing twice.
       const settle = (c: AiConversation, asked: AiMessage, answer: AiMessage) => {
-        qc.setQueryData<AiMessagesResponse>(keys.aiMessages(c.id), (old) => {
-          const base = old ?? { conversation: c, messages: [] }
-          const have = new Set(base.messages.map((m) => m.id))
-          const add = [asked, answer].filter((m) => !have.has(m.id))
-          return add.length ? { ...base, messages: [...base.messages, ...add] } : base
-        })
+        qc.setQueryData<AiMessagesResponse>(keys.aiMessages(c.id), (old) => settleMessages(old, c, asked, answer))
       }
+
+      // Refused as "still answering" just after a stop here: that stopped answer is winding down, so ask again
+      // shortly — with the same key, which a refused send never kept.
+      const settling = () => {
+        const stopped = lastStop.current
+        return from !== null && stopped?.conversationId === from && Date.now() - stopped.at < STOP_SETTLE_MS
+      }
+      const connect = (request: AiChatRequest) => retryAfterStop(() => apiStream('/ai/chat', { body: request, signal: ac.signal }), settling, ac.signal)
 
       // The answer has ended: another question may be asked at once, even while the connection winds down.
       const release = () => {
@@ -118,9 +124,11 @@ export function AiAssistantProvider({ enabled, children }: { enabled: boolean; c
       let userMessageId: string | null = null
       let ended = false
       let statusFresh = false
+      // The server answered the request with a refusal: nothing of the question was kept.
+      let refused = false
       try {
         const request: AiChatRequest = from ? { conversationId: from, message: question, clientId: key } : { message: question, clientId: key }
-        const body = await apiStream('/ai/chat', { body: request, signal: ac.signal })
+        const body = await connect(request)
         for await (const raw of readSse(body)) {
           const e = parseStreamEvent(raw.event, raw.data)
           if (!e) continue
@@ -159,14 +167,28 @@ export function AiAssistantProvider({ enabled, children }: { enabled: boolean; c
         if (!ended) update((t) => endTurn(t, 'error', LOST))
       } catch (err) {
         flush()
-        if (ac.signal.aborted) update((t) => endTurn(t, 'stopped'))
-        else if (err instanceof ApiError) update((t) => endTurn(t, 'error', { code: err.code, message: err.message }))
-        else update((t) => endTurn(t, 'error', LOST))
+        if (ac.signal.aborted) {
+          update((t) => endTurn(t, 'stopped'))
+          const stoppedIn = conversation?.id ?? from
+          if (stoppedIn) lastStop.current = { conversationId: stoppedIn, at: Date.now() }
+        } else if (err instanceof ApiError) {
+          // A refusal before the stream began (the cap, the switch, a conflict) kept nothing.
+          refused = !conversation && err.status > 0
+          update((t) => endTurn(t, 'error', { code: err.code, message: err.message }))
+        } else update((t) => endTurn(t, 'error', LOST))
       } finally {
         if (frame) cancelAnimationFrame(frame)
         release()
         // The saved conversation, the history and the month's spend catch up with what happened.
-        if (conversation) void qc.invalidateQueries({ queryKey: keys.aiMessages(conversation.id) })
+        if (conversation) {
+          void qc.invalidateQueries({ queryKey: keys.aiMessages(conversation.id) })
+          // The administration page, when it is open beside the panel: its spend and its usage tiles.
+          void qc.invalidateQueries({ queryKey: keys.aiSettings })
+          void qc.invalidateQueries({ queryKey: ['ai', 'usage'] })
+        } else if (from && !refused) {
+          // Ended before the stream began: the server may still have kept the question (and a stopped answer).
+          void qc.invalidateQueries({ queryKey: keys.aiMessages(from) })
+        }
         void qc.invalidateQueries({ queryKey: keys.aiConversations })
         if (!statusFresh) void qc.invalidateQueries({ queryKey: keys.aiStatus })
       }
@@ -181,13 +203,15 @@ export function AiAssistantProvider({ enabled, children }: { enabled: boolean; c
       const key = newSubmissionId()
       const from = active.current
       const sentAt = new Date().toISOString()
+      // What this device had of the conversation (and of the answer before): the question, once saved, comes after it.
+      const cached = from ? qc.getQueryData<AiMessagesResponse>(keys.aiMessages(from))?.messages : undefined
       const ac = new AbortController()
       controller.current = ac
-      setLive(startTurn(key, from, question, sentAt))
+      setLive((prev) => startTurn(key, from, question, sentAt, sentAfter(prev, from, cached)))
       void stream(key, from, question, sentAt, ac)
       return true
     },
-    [stream],
+    [qc, stream],
   )
 
   const busy = isInFlight(live)

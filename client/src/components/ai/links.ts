@@ -26,8 +26,11 @@ export function classifyAiLink(href: string | null | undefined): AiLink | null {
     } catch {
       return null
     }
-    if (url.origin !== APP) return null
-    return { kind: 'app', to: `${url.pathname}${url.search}${url.hash}` }
+    // Dot segments ("/..//evil.example", "/%2e%2e//evil.example") resolve to a path that starts "//":
+    // as an href, that is another site. The path is judged as resolved, not as written.
+    const to = `${url.pathname}${url.search}${url.hash}`
+    if (url.origin !== APP || to.startsWith('//')) return null
+    return { kind: 'app', to }
   }
   let url: URL
   try {

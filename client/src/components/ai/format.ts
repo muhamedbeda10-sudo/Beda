@@ -72,7 +72,7 @@ export const UNAVAILABLE_TEXT: Record<AiUnavailableReason, string> = {
   'no-key': 'An administrator sets the API key under Administration → AI assistant.',
   disabled: 'The assistant is switched off. An administrator can turn it on under Administration → AI assistant.',
   'reader-unavailable': 'The assistant cannot reach the factory data right now. Try again later; if it persists, check the server log.',
-  'cap-reached': "This month's budget is spent. The assistant answers again on the 1st (UTC), or when an administrator raises the cap.",
+  'cap-reached': "This month's budget is spent, or too little of it is left for an answer to start. The assistant answers again on the 1st (UTC), or when an administrator raises the cap.",
 }
 
 /** How an answer ended when it did not simply finish: the default words, when the server sent none. */

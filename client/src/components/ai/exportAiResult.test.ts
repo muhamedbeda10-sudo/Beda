@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { DOMParser as XmlDomParser } from '@xmldom/xmldom'
-import { AI_EXPORT_MAX_ROWS, type AiQueryExportResponse } from '@qc/shared/ai'
+import type { AiQueryExportResponse } from '@qc/shared/ai'
 import { readWorkbook } from '@/lib/xlsx'
 import { writeWorkbook } from '@/lib/xlsxWrite'
 import { EXCEL_CELL_MAX, aiCellValue, aiExportFilename, aiResultSheets } from './exportAiResult'
@@ -54,10 +54,10 @@ describe('AI query export', () => {
     expect(about.Complete).toBe('Yes')
   })
 
-  it('says when the export stopped at its row limit, and leaves out a question it does not have', () => {
+  it('says how many rows an export cut short holds, and leaves out a question it does not have', () => {
     const [, query] = aiResultSheets({ ...result, truncated: true })
     expect(query.rows.map((r) => r[0])).not.toContain('Question')
-    expect(query.rows.find((r) => r[0] === 'Complete')?.[1]).toBe(`No — only the first ${AI_EXPORT_MAX_ROWS.toLocaleString('en-US')} rows`)
+    expect(query.rows.find((r) => r[0] === 'Complete')?.[1]).toBe(`No — only the first ${result.rows.length.toLocaleString('en-US')} rows`)
   })
 
   it('names the file after the moment the query ran', () => {

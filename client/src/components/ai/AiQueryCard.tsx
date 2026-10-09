@@ -18,8 +18,10 @@ import { AiResultModal, PreviewTable } from './AiResultTable'
 import type { PendingQuery } from './liveTurn'
 
 const SMALL_BTN = 'btn-secondary h-8 min-h-0 gap-1.5 px-2.5 py-0 text-xs touch:h-11 touch:px-3'
+const EXPORT_WAIT = 'Available when the answer is finished'
 
-export const AiQueryCard = memo(function AiQueryCard({ part, question }: { part: AiQueryPart | PendingQuery; question?: string }) {
+/** `writing`: its answer is not finished, and the server keeps a query for export only once the answer's round of queries is saved. */
+export const AiQueryCard = memo(function AiQueryCard({ part, question, writing = false }: { part: AiQueryPart | PendingQuery; question?: string; writing?: boolean }) {
   const { toast } = useApp()
   const [open, setOpen] = useState(false)
   const [table, setTable] = useState(false)
@@ -39,7 +41,7 @@ export const AiQueryCard = memo(function AiQueryCard({ part, question }: { part:
   }
 
   const exportExcel = async () => {
-    if (!done || exporting) return
+    if (!done || exporting || writing) return
     setExporting(true)
     try {
       const data = await loadAiQueryExport(done.queryId)
@@ -107,7 +109,13 @@ export const AiQueryCard = memo(function AiQueryCard({ part, question }: { part:
                 <button type="button" onClick={() => setTable(true)} className={SMALL_BTN} disabled={done.rows.length === 0}>
                   <Table2 className="h-3.5 w-3.5" /> Open table
                 </button>
-                <button type="button" onClick={() => void exportExcel()} className={SMALL_BTN} disabled={exporting} data-tip="Runs the query again now, in full, and saves it as a workbook">
+                <button
+                  type="button"
+                  onClick={() => void exportExcel()}
+                  className={SMALL_BTN}
+                  disabled={exporting || writing}
+                  data-tip={writing ? EXPORT_WAIT : 'Runs the query again now, in full, and saves it as a workbook'}
+                >
                   {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} {exporting ? 'Exporting…' : 'Export Excel'}
                 </button>
               </div>
@@ -116,7 +124,7 @@ export const AiQueryCard = memo(function AiQueryCard({ part, question }: { part:
         </div>
       )}
 
-      {table && done && <AiResultModal part={done} onClose={() => setTable(false)} onExport={() => void exportExcel()} exporting={exporting} />}
+      {table && done && <AiResultModal part={done} onClose={() => setTable(false)} onExport={() => void exportExcel()} exporting={exporting} exportWait={writing ? EXPORT_WAIT : undefined} />}
     </div>
   )
 })

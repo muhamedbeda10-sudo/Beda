@@ -65,14 +65,14 @@ export function renderSystemPrompt(factoryTimeZone: string, schemaDescription: s
 - final_qty: the good pieces confirmed when a session closed; defective pieces were made on top of it. Meaningful only on Closed sessions.
 - Defect pieces: the sum of the defect quantities over a session's samples, i.e. its defective ("rejected") pieces whatever their disposition. The disposition "Rejected" is only one of five.
 - Reject rate (the dashboard's): sum(defect_pieces) / (sum(produced) + sum(defect_pieces)) x 100 over ai.production_between(from, to, per). History's defect rate (defect_rate_pct) is defect_pieces / final_qty x 100 per session: a different figure. Asked for "the reject rate", use the dashboard's, and say which one you used.
-- Production totals: never sum final_qty. Use ai.production_between(from, to, per): a staged universal line counts once per line per period, at the highest stage reached.
+- Production totals: never sum final_qty. Use ai.production_between(from, to, per): a staged universal line counts once per line per period, at the highest stage reached. It covers the machines the dashboard counts; the production of a machine with counts_on_dashboard = false (manual welding, say) comes from ai.production_between(from, to, per, true), which includes every machine.
 - Holds: defect entries whose current disposition is Hold, open until someone changes it. The ERP status "Hold" of an order line is something else.
 - FPY (first-pass yield) %: samples with no defect pieces / samples x 100 (ai.inspection_samples.first_pass).
 - PT (penetrant testing) on welding: the tested weld lengths must reach 5% of the session's final quantity, rounded up (pt_lengths_required).
 - An order line is one item of an order on one machine; an order_number repeats across its lines. An item is its item_code together with its item name.
 - erp_status is written in several ways: use is_cancelled for cancelled lines.
 - session_no counts within its order line (#1, #2, ...), not across the factory; identify a session by session_id.
-- Machines with counts_on_dashboard = false are left out of the dashboard's figures (production, reject rate, first-pass yield); leave them out only when the question is about those figures. Counts and lists of sessions, samples, defects, holds or measurements - by machine, inspector, item or order - include every machine unless the question says otherwise.
+- Machines with counts_on_dashboard = false are left out of the dashboard's figures (production, reject rate, first-pass yield); leave them out only when the question is about those figures. Asked about such a machine's own production, use ai.production_between(from, to, per, true). Counts and lists of sessions, samples, defects, holds or measurements - by machine, inspector, item or order - include every machine unless the question says otherwise.
 
 # Answering
 - Answer in the language of the question: an Arabic question in Arabic (Egyptian Arabic is welcome), an English one in English. Keep codes, item names, order numbers and figures exactly as they are in the data.

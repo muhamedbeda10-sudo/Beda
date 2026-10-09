@@ -34,10 +34,10 @@ import { HttpError, badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { requireCapability, requireUser } from '../auth/middleware'
 import { auditChanges, writeAudit } from '../audit/service'
-import { answerQuestion, describeModelFailure } from '../ai/assistant'
+import { answerQuestion, describeModelFailure, minCallWorstCaseUsd } from '../ai/assistant'
 import { auditKeyLabel, last4, removeApiKey, storeApiKey, storedKeyTail } from '../ai/credentials'
 import { RUN_SQL_TOOL, conversationTitle, questionContent, renderSystemPrompt } from '../ai/prompt'
-import { exportRows, runReadOnlyQuery } from '../ai/runQuery'
+import { AI_EXPORT_LIMITS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
 import { describeAiSchema } from '../ai/schemaDoc'
 import { AI_SETTINGS_KEY, loadAiSettings, loadAvailability } from '../ai/settings'
 import { SseStream } from '../ai/sse'
@@ -93,7 +93,8 @@ const conversationsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 })
 
-const usageQuery = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'A month is YYYY-MM.').optional() })
+// Years 2000–2999 only: outside them a month's bounds are not timestamps PostgreSQL takes (or Date.UTC moves them).
+const usageQuery = z.object({ month: z.string().regex(/^2\d{3}-(0[1-9]|1[0-2])$/, 'A month is YYYY-MM, from 2000-01.').optional() })
 
 /** The refusal for a question the assistant cannot take now, by why. */
 function unavailable(status: AiStatusResponse): HttpError {
@@ -102,7 +103,7 @@ function unavailable(status: AiStatusResponse): HttpError {
       return new HttpError(
         402,
         'ai_budget_reached',
-        `This month's spending cap ($${status.capUsd.toFixed(2)}) is reached. An administrator can raise it under Administration → AI assistant.`,
+        `This month's spending cap ($${status.capUsd.toFixed(2)}) is reached, or too close for an answer to start. An administrator can raise it under Administration → AI assistant.`,
       )
     case 'disabled':
       return new HttpError(503, 'ai_unavailable', 'The AI assistant is switched off. An administrator can switch it on under Administration → AI assistant.')
@@ -247,6 +248,8 @@ export function aiRoutes(ctx: AppContext): Router {
 
     // A new conversation's prompt carries the data dictionary as the catalog has it now, for good.
     const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db))
+    // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
+    if (ac.signal.aborted) return
     const askedAt = new Date()
     const started = await withTransaction(db, async (tx) => {
       const repeated = await tx.query(`SELECT 1 FROM ai_turns WHERE user_id = $1 AND client_id = $2`, [user.id, body.clientId])
@@ -278,7 +281,19 @@ export function aiRoutes(ctx: AppContext): Router {
       const turnId = rows[0].id
       await repairDanglingToolUse(tx, conversation.id, turnId)
       const [question] = await appendMessages(tx, conversation.id, turnId, [{ role: 'user', kind: 'question', content: questionContent(body.message, askedAt, tz) }])
-      return { conversation: (await findConversation(tx, conversation.id, user.id))!, turnId, questionId: question.id }
+      const replay = await loadReplay(tx, conversation.id)
+      const asked = (await findConversation(tx, conversation.id, user.id))!
+      // The loop's own test before its first call (on what the loop is handed), made before anything is kept
+      // or streamed: a question it would stop without calling the model is refused here, no turn left behind.
+      if (avail.status.spentUsd + minCallWorstCaseUsd({ conversation: asked, messages: replay }) > avail.status.capUsd) {
+        throw new HttpError(
+          402,
+          'ai_budget_reached',
+          `Answering this could pass this month's spending cap ($${avail.status.capUsd.toFixed(2)}), so it was not started. ` +
+            `${body.conversationId ? 'A new conversation costs less to start; ' : ''}an administrator can raise the cap under Administration → AI assistant.`,
+        )
+      }
+      return { conversation: asked, turnId, questionId: question.id, replay }
     }).catch((e) => {
       // Two sends racing past the checks above: the database keeps one.
       if (pgCode(e) === PG.UNIQUE_VIOLATION) {
@@ -302,7 +317,7 @@ export function aiRoutes(ctx: AppContext): Router {
         userId: user.id,
         conversation,
         turnId,
-        messages: await loadReplay(db, conversation.id),
+        messages: started.replay,
         capUsd: avail.status.capUsd,
         emit: (event) => sse.send(event),
         signal: ac.signal,
@@ -334,7 +349,8 @@ export function aiRoutes(ctx: AppContext): Router {
     if (!query) throw notFound('That query')
     if (!ctx.aiReader.ready) throw new HttpError(503, 'ai_unavailable', 'The AI assistant cannot reach its data right now. Try again later.')
     const ranAt = new Date().toISOString()
-    const run = await runReadOnlyQuery(ctx.aiReader.pool, query.sql, { maxRows: AI_EXPORT_MAX_ROWS, timeoutMs: EXPORT_QUERY_TIMEOUT_MS, timeZone: tz })
+    // The export's own room: longer rows and more of them than a chat query may hold.
+    const run = await runReadOnlyQuery(ctx.aiReader.pool, query.sql, { maxRows: AI_EXPORT_MAX_ROWS, timeoutMs: EXPORT_QUERY_TIMEOUT_MS, timeZone: tz, ...AI_EXPORT_LIMITS })
     if (!run.ok) throw badRequest(`The query could not be run again: ${run.error}`)
     const body: AiQueryExportResponse = { purpose: query.purpose, sql: query.sql, columns: run.columns, rows: exportRows(run), truncated: run.truncated, ranAt }
     res.json(body)

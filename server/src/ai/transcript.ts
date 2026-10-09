@@ -186,6 +186,18 @@ export interface UsageRecord {
   partial?: boolean
 }
 
+/** The first instant of the current calendar month in UTC — Anthropic bills by it. */
+const MONTH_START_SQL = `(date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`
+
+/** What this calendar month (UTC) has cost so far. Read on every check, never kept in memory, so every instance holds the same cap. */
+export async function monthSpend(q: Queryable): Promise<{ spentUsd: number; monthStart: string }> {
+  const { rows } = await q.query<{ spent: number; monthStart: string }>(
+    `SELECT COALESCE(sum(cost_usd), 0)::numeric(14, 6) AS spent, ${MONTH_START_SQL} AS "monthStart"
+       FROM ai_usage WHERE created_at >= ${MONTH_START_SQL}`,
+  )
+  return { spentUsd: rows[0].spent, monthStart: rows[0].monthStart }
+}
+
 export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
   await q.query(
     `INSERT INTO ai_usage (user_id, conversation_id, turn_id, model, input_tokens, output_tokens, cache_write_5m_tokens,

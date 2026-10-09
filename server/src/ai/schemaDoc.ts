@@ -10,6 +10,7 @@
 // ============================================================================
 
 import type { Queryable } from '../db/pool'
+import { ROW_SIZE_CHECK } from './runQuery'
 
 interface ViewRow {
   name: string
@@ -49,12 +50,14 @@ export async function describeAiSchema(q: Queryable): Promise<string> {
       WHERE c.relnamespace = 'ai'::regnamespace AND c.relkind IN ('v', 'm') AND a.attnum > 0 AND NOT a.attisdropped
       ORDER BY c.relname COLLATE "C", a.attnum`,
   )
+  // The runner's row check lives in ai so the reader may call it, but the model never needs it.
   const functions = await q.query<FunctionRow>(
     `SELECT p.proname AS name, pg_get_function_arguments(p.oid) AS args, pg_get_function_result(p.oid) AS result,
             obj_description(p.oid, 'pg_proc') AS comment
        FROM pg_proc p
-      WHERE p.pronamespace = 'ai'::regnamespace
+      WHERE p.pronamespace = 'ai'::regnamespace AND p.proname <> $1
       ORDER BY p.proname COLLATE "C", pg_get_function_arguments(p.oid) COLLATE "C"`,
+    [ROW_SIZE_CHECK],
   )
 
   const byView = new Map<string, ColumnRow[]>()
