@@ -87,7 +87,8 @@ function reportMeta(r: AiReportSummary): string {
   return bits.join(' · ')
 }
 
-export function AiReportList({ onOpen }: { onOpen: (report: AiReportSummary) => void }) {
+/** `activeId`: the report open beside the list (the full page), marked as such. */
+export function AiReportList({ onOpen, activeId }: { onOpen: (report: AiReportSummary) => void; activeId?: string | null }) {
   const qc = useQueryClient()
   const { toast } = useApp()
   const { enabled } = useAi()
@@ -170,7 +171,13 @@ export function AiReportList({ onOpen }: { onOpen: (report: AiReportSummary) => 
           </li>
         )}
         {list.map((r) => (
-          <li key={r.id} className="group flex items-center gap-1 rounded-2xl pe-1 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800">
+          <li
+            key={r.id}
+            className={cn(
+              'group flex items-center gap-1 rounded-2xl pe-1 transition-colors',
+              r.id === activeId ? 'bg-brand-50 ring-1 ring-brand-200 dark:bg-brand-500/15 dark:ring-brand-500/30' : 'hover:bg-slate-100 dark:hover:bg-slate-800',
+            )}
+          >
             {renaming === r.id ? (
               <div className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-100 text-brand-700 dark:bg-brand-500/20 dark:text-brand-200">
@@ -180,7 +187,7 @@ export function AiReportList({ onOpen }: { onOpen: (report: AiReportSummary) => 
               </div>
             ) : (
               <>
-                <button type="button" onClick={() => onOpen(r)} className="flex min-w-0 flex-1 items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left">
+                <button type="button" onClick={() => onOpen(r)} aria-current={r.id === activeId ? 'true' : undefined} className="flex min-w-0 flex-1 items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left">
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-100 text-brand-700 dark:bg-brand-500/20 dark:text-brand-200">
                     <FileChartColumn className="h-4 w-4" />
                   </span>

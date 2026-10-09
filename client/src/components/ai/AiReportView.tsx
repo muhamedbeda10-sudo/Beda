@@ -73,12 +73,15 @@ export function AiReportView({
   known,
   onBack,
   onOpenConversation,
+  wide = false,
 }: {
   id: string
   /** What the list knew of it: drawn until the report itself arrives. */
   known?: AiReportSummary
   onBack: () => void
   onOpenConversation: (conversationId: string) => void
+  /** The full page: the report is a centred column of at most 1100 px. */
+  wide?: boolean
 }) {
   const qc = useQueryClient()
   const { toast } = useApp()
@@ -149,7 +152,7 @@ export function AiReportView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-1 border-b border-slate-100 px-2 py-2 dark:border-slate-800">
+      <div className={cn('flex shrink-0 items-center gap-1 border-b border-slate-100 px-2 py-2 dark:border-slate-800', wide && 'sm:px-4 lg:px-6')}>
         <button type="button" onClick={onBack} className="icon-btn h-9 w-9 shrink-0 touch:h-11 touch:w-11" aria-label="Back to My reports" data-tip="My reports">
           <ArrowLeft className="h-5 w-5 rtl:rotate-180" />
         </button>
@@ -174,86 +177,88 @@ export function AiReportView({
         )}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4">
-        {gone ? (
-          <Notice
-            tone="red"
-            action={
-              <Button className="h-8 min-h-0 px-3 py-0 text-xs touch:h-11" onClick={onBack}>
-                <ArrowLeft className="h-3.5 w-3.5 rtl:rotate-180" /> My reports
-              </Button>
-            }
-          >
-            This report could not be found. It may have been deleted.
-          </Notice>
-        ) : (
-          <>
-            {report && (
-              <div className="space-y-1">
-                <p dir="auto" className="whitespace-pre-wrap break-words text-13 text-muted">
-                  {report.question}
-                </p>
-                {full?.conversationId && (
-                  <button
-                    type="button"
-                    onClick={() => onOpenConversation(full.conversationId!)}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]"
-                  >
-                    <MessageSquareText className="h-3.5 w-3.5" /> Open the conversation
-                  </button>
-                )}
+      <div className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4', wide && 'sm:px-6 lg:px-8 lg:py-5')}>
+        <div className={cn('space-y-3', wide && 'mx-auto w-full max-w-[1100px]')}>
+          {gone ? (
+            <Notice
+              tone="red"
+              action={
+                <Button className="h-8 min-h-0 px-3 py-0 text-xs touch:h-11" onClick={onBack}>
+                  <ArrowLeft className="h-3.5 w-3.5 rtl:rotate-180" /> My reports
+                </Button>
+              }
+            >
+              This report could not be found. It may have been deleted.
+            </Notice>
+          ) : (
+            <>
+              {report && (
+                <div className="space-y-1">
+                  <p dir="auto" className="whitespace-pre-wrap break-words text-13 text-muted">
+                    {report.question}
+                  </p>
+                  {full?.conversationId && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenConversation(full.conversationId!)}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]"
+                    >
+                      <MessageSquareText className="h-3.5 w-3.5" /> Open the conversation
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {report && hasAdjustablePeriod(report) && (
+                <ReportPeriod saved={report.period!} ran={shown?.period ?? null} state={period} dispatch={setPeriod} />
+              )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => void run.refetch()} disabled={run.isFetching} className={SMALL_BTN} data-tip="Runs every section again now">
+                  <RefreshCw className={cn('h-3.5 w-3.5', run.isFetching && 'animate-spin')} /> {run.isFetching ? 'Running…' : 'Run again'}
+                </button>
+                <button type="button" onClick={onExport} disabled={exporting || !report} className={SMALL_BTN} data-tip={EXPORT_TIP}>
+                  {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} {exporting ? 'Exporting…' : 'Export Excel'}
+                </button>
+                {shown && <RunLine run={shown} running={run.isFetching ? (stale ? 'Running over the days chosen…' : 'Running again…') : null} />}
               </div>
-            )}
 
-            {report && hasAdjustablePeriod(report) && (
-              <ReportPeriod saved={report.period!} ran={shown?.period ?? null} state={period} dispatch={setPeriod} />
-            )}
+              {/* Heard when a run ends, not while the tables are drawn. */}
+              <p role="status" aria-live="polite" className="sr-only">
+                {run.isFetching ? 'Running the report…' : shown ? 'Report ready.' : ''}
+              </p>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => void run.refetch()} disabled={run.isFetching} className={SMALL_BTN} data-tip="Runs every section again now">
-                <RefreshCw className={cn('h-3.5 w-3.5', run.isFetching && 'animate-spin')} /> {run.isFetching ? 'Running…' : 'Run again'}
-              </button>
-              <button type="button" onClick={onExport} disabled={exporting || !report} className={SMALL_BTN} data-tip={EXPORT_TIP}>
-                {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} {exporting ? 'Exporting…' : 'Export Excel'}
-              </button>
-              {shown && <RunLine run={shown} running={run.isFetching ? (stale ? 'Running over the days chosen…' : 'Running again…') : null} />}
-            </div>
-
-            {/* Heard when a run ends, not while the tables are drawn. */}
-            <p role="status" aria-live="polite" className="sr-only">
-              {run.isFetching ? 'Running the report…' : shown ? 'Report ready.' : ''}
-            </p>
-
-            {run.isError && (
-              <Notice
-                tone="red"
-                action={
-                  <>
-                    <Button className="h-8 min-h-0 px-3 py-0 text-xs touch:h-11" onClick={() => void run.refetch()} disabled={run.isFetching}>
-                      Try again
-                    </Button>
-                    {override && (
-                      <Button className="h-8 min-h-0 px-3 py-0 text-xs touch:h-11" onClick={() => setPeriod({ type: 'reset' })}>
-                        <Undo2 className="h-3.5 w-3.5" /> Reset to the saved period
+              {run.isError && (
+                <Notice
+                  tone="red"
+                  action={
+                    <>
+                      <Button className="h-8 min-h-0 px-3 py-0 text-xs touch:h-11" onClick={() => void run.refetch()} disabled={run.isFetching}>
+                        Try again
                       </Button>
-                    )}
-                  </>
-                }
-              >
-                {run.error instanceof Error ? run.error.message : 'The report could not be run.'}
-              </Notice>
-            )}
+                      {override && (
+                        <Button className="h-8 min-h-0 px-3 py-0 text-xs touch:h-11" onClick={() => setPeriod({ type: 'reset' })}>
+                          <Undo2 className="h-3.5 w-3.5" /> Reset to the saved period
+                        </Button>
+                      )}
+                    </>
+                  }
+                >
+                  {run.error instanceof Error ? run.error.message : 'The report could not be run.'}
+                </Notice>
+              )}
 
-            {failures && <Notice tone="amber">{failures} Each says why below.</Notice>}
+              {failures && <Notice tone="amber">{failures} Each says why below.</Notice>}
 
-            {/* Other days' tables are dimmed and still while the asked-for ones come; the same days', only dimmed. */}
-            <div className={cn('space-y-2 transition-opacity', stale ? 'pointer-events-none opacity-50' : run.isFetching && shown && 'opacity-70')} aria-busy={run.isFetching}>
-              {parts && shown
-                ? parts.map((part, i) => <ReportSection key={i} part={part} templated={shown.report.adjustable} onExport={onExport} exporting={exporting} />)
-                : run.isPending && Array.from({ length: Math.max(1, sectionCount) }, (_, i) => <SectionSkeleton key={i} title={full?.sections[i]?.title} />)}
-            </div>
-          </>
-        )}
+              {/* Other days' tables are dimmed and still while the asked-for ones come; the same days', only dimmed. */}
+              <div className={cn('space-y-2 transition-opacity', stale ? 'pointer-events-none opacity-50' : run.isFetching && shown && 'opacity-70')} aria-busy={run.isFetching}>
+                {parts && shown
+                  ? parts.map((part, i) => <ReportSection key={i} part={part} templated={shown.report.adjustable} onExport={onExport} exporting={exporting} />)
+                  : run.isPending && Array.from({ length: Math.max(1, sectionCount) }, (_, i) => <SectionSkeleton key={i} title={full?.sections[i]?.title} />)}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {removing && report && <DeleteReportModal report={report} busy={deleting} onCancel={() => setRemoving(false)} onConfirm={() => void remove()} />}

@@ -1,21 +1,24 @@
 // §20 — the header's door to the AI assistant: opens and closes the panel, and pulses while an answer is being written.
+// On the assistant's full page it docks the assistant back beside the page the person came from.
 
 import { Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAi } from './AiAssistantProvider'
 
 export function AiButton() {
-  const { open, toggle, busy } = useAi()
+  const { open, toggle, busy, workspace, dock } = useAi()
+  const on = open || workspace
   return (
     <button
       type="button"
-      onClick={toggle}
+      onClick={workspace ? () => dock() : toggle}
       // A phone has no room for a fifth icon: there the assistant is in the menu.
-      className={cn('icon-btn relative hidden sm:grid', open && 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200')}
+      className={cn('icon-btn relative hidden sm:grid', on && 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200')}
       aria-label={busy ? 'AI assistant, answering' : 'AI assistant'}
-      aria-haspopup="dialog"
-      aria-expanded={open}
-      data-tip={busy ? 'AI assistant — answering…' : 'AI assistant — ask about the data'}
+      aria-haspopup={workspace ? undefined : 'dialog'}
+      aria-expanded={workspace ? undefined : open}
+      aria-current={workspace ? 'page' : undefined}
+      data-tip={workspace ? 'Dock the assistant beside the page' : busy ? 'AI assistant — answering…' : 'AI assistant — ask about the data'}
     >
       <Bot className="h-5 w-5" />
       {busy && <AiBusyDot />}

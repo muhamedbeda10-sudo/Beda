@@ -10,18 +10,26 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { AI_DOMAIN_IDS, AI_PREVIEW_ROWS, isAiDay, type AiDomain } from '@qc/shared/ai'
+import { CHART_INPUT_SCHEMA, MAX_CHART_Y, MAX_PIE_SLICES } from './charts'
+import { MAX_KPIS } from './kpis'
 import { AI_MAX_SQL_CHARS } from './runQuery'
 
 export const RUN_SQL_TOOL_NAME = 'run_sql'
 
+/**
+ * The tool of a new conversation. A conversation keeps the tool it began
+ * with, byte for byte: one begun before charts (phase 4) goes on without
+ * `chart`, and a change here reaches new conversations only.
+ */
 export const RUN_SQL_TOOL: Anthropic.Beta.BetaTool = {
   name: RUN_SQL_TOOL_NAME,
   description:
     'Run ONE read-only PostgreSQL SELECT (or WITH ... SELECT) over the views and functions in schema ai described in the system prompt. ' +
     'Call this whenever the question needs any fact from the factory record - never answer such questions from memory. Returns JSON ' +
     `{columns, rows, rowCount, truncated}; at most ${AI_PREVIEW_ROWS} rows. On a SQL error the result is an error ` +
-    'with the PostgreSQL message: fix the query and call again.',
-  // A strict schema cannot carry length limits; RunSqlInput enforces them.
+    'with the PostgreSQL message: fix the query and call again. With chart, the result is also drawn as a chart in the answer; ' +
+    'a chart that does not fit the result is not drawn, and the result says why.',
+  // A strict schema cannot carry length limits; RunSqlInput and checkChart enforce them.
   strict: true,
   // The purpose reaches the screen while the SQL is still being written.
   eager_input_streaming: true,
@@ -30,17 +38,23 @@ export const RUN_SQL_TOOL: Anthropic.Beta.BetaTool = {
     properties: {
       purpose: { type: 'string', description: "One short line, in the user's language, saying what this query looks for. Shown to the user." },
       sql: { type: 'string', description: 'A single SELECT over ai.* views. No semicolons, no DDL/DML.' },
+      chart: CHART_INPUT_SCHEMA,
     },
     required: ['purpose', 'sql'],
     additionalProperties: false,
   },
 }
 
-/** With eager streaming the API no longer validates a tool's input: this does, before anything runs. */
+/**
+ * With eager streaming the API no longer validates a tool's input: this does,
+ * before anything runs. A chart is checked on its own against the result
+ * (checkChart): one that does not fit is left out, and the query still runs.
+ */
 export const RunSqlInput = z
   .object({
     purpose: z.string().min(1).max(300),
     sql: z.string().min(1).max(AI_MAX_SQL_CHARS),
+    chart: z.unknown().optional(),
   })
   .strict()
 
@@ -130,6 +144,22 @@ plus the machine register. The views and functions described under "The data" be
 - Lead with the answer. Then, if it helps, a short markdown table of at most 20 rows; when the result is longer, say that the full result is in the query card, which can be exported to Excel.
 - State the period and the filters you used.
 - Show no SQL in the answer unless asked.${has('inspection') ? '\n- Link a session as [Session #<session_no> · <order_number>](/history?session=<session_id>).' : ''}`)
+  sections.push(`# Headline figures
+When the answer comes down to a few figures (a count, a total, a rate, a change), open the answer you write after your queries with them, at most ${MAX_KPIS}, in exactly this form:
+<kpis>
+- Defect pieces | 39
+- Reject rate | 1.29% | down-good
+- Holds open | 4 | up-bad
+</kpis>
+Each line: a short label in the language of the question (at most 40 characters); the figure exactly as your answer gives it, with its unit or % (at most 24 characters); and, only when a query compared it with an earlier period, how it moved and whether that is good for quality: up-good, up-bad, down-good, down-bad or flat. Only figures your queries returned. Leave the block out when the answer is a list, a table or an explanation rather than a few figures. The app shows the figures as cards above the answer and takes the block out of it, so never mention it, and still give the answer in words after it.`)
+  sections.push(`# Charts
+run_sql can also draw its result as a chart, shown with your answer: give the call a chart when a picture says more than the figures.
+- A trend over time (by day, week or month): line, or area for a volume. x is the date column; order the rows by it.
+- A comparison across at most 15 categories (machines, defect types, inspectors, suppliers): bar, rows ordered by the value.
+- The parts of a whole: stacked-bar, or pie for at most ${MAX_PIE_SLICES} parts.
+- Never chart a single number, a list of records or a result of one row.
+- Shape the query for the chart: aggregate in SQL, one row per x (or per x and series), with short readable column aliases (they label the axes and the legend). y takes 1 to ${MAX_CHART_Y} numeric columns. For several lines or stacks of one measure, return it in long form and name the column that splits it as series.
+- If the chart cannot be drawn, the query's result says why; the figures are still there.`)
   sections.push(`# Follow-up questions
 End every answer with two or three short questions the person might ask next, as the very last thing you write, in exactly this form:
 <suggestions>

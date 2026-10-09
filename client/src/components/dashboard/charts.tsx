@@ -773,6 +773,104 @@ export function StackedColumnChart({ columns, legend, height = 240, unit = '' }:
   )
 }
 
+/** One series of grouped bars: a value per category (null for none) and a fill-* class. */
+export interface BarSeries {
+  label: string
+  values: (number | null)[]
+  className: string
+}
+
+/**
+ * Bars for one to a few series side by side over the same categories — the
+ * assistant's bar charts (§20). The value is written on each bar while there
+ * is room; names too long to stand straight under their bars are slanted, and
+ * when there are many only every few are written. Hovering a category reads
+ * every series out under the chart, as the line charts do.
+ */
+export function GroupedBarChart({ labels, series, unit = '', height = 220 }: { labels: string[]; series: BarSeries[]; unit?: string; height?: number }) {
+  const [hover, setHover] = useState<number | null>(null)
+  const frame = useChartFrame()
+  const id = useId()
+  const W = 720
+  const n = labels.length
+  const slot0 = (W - 56) / Math.max(1, n)
+  // Slanted names when a straight one would not fit its column.
+  const tilt = labels.some((l) => l.length * 6.2 > slot0)
+  const pad = { l: 44, r: 12, t: 22, b: tilt ? 96 : 34 }
+  // The slanted names take their room below; the plot keeps its height.
+  const H = height + (tilt ? 62 : 0)
+  const x0 = pad.l
+  const x1 = W - pad.r
+  const y0 = pad.t
+  const y1 = H - pad.b
+  const values = series.flatMap((s) => s.values.map((v) => v ?? 0))
+  if (n === 0 || series.length === 0 || values.every((v) => v === 0)) return <ChartEmpty height={height} />
+  const max = niceMax(Math.max(...values))
+  const slot = (x1 - x0) / n
+  const gap = series.length > 1 ? 2 : 0
+  const group = Math.min(slot * 0.72, (series.length > 1 ? 26 : 56) * series.length)
+  const bw = Math.max(1.5, (group - gap * (series.length - 1)) / series.length)
+  const xAt = (i: number) => x0 + slot * i + slot / 2
+  const barX = (i: number, k: number) => xAt(i) - group / 2 + k * (bw + gap)
+  const yAt = (v: number) => y1 - ((y1 - y0) * v) / max
+  const every = Math.max(1, Math.ceil(n / (tilt ? 24 : 12)))
+  // A figure on every bar only while each has the room for one.
+  const labelled = bw >= 16 && n * series.length <= 32
+  return (
+    <figure className={frame.figure}>
+      <svg viewBox={`0 0 ${W} ${H}`} className={frame.svg} role="img" aria-labelledby={`${id}-t`} onMouseLeave={() => setHover(null)}>
+        <title id={`${id}-t`}>{series.map((s) => s.label).join(', ')} by {labels.length} categories</title>
+        <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} unit={unit} />
+        {labels.map((l, i) => (
+          <g key={l} onMouseEnter={() => setHover(i)} className={cn('transition-opacity', hover !== null && hover !== i && 'opacity-50')}>
+            <rect x={xAt(i) - slot / 2} y={y0} width={slot} height={y1 - y0} fill="transparent" />
+            {series.map((s, k) => {
+              const v = s.values[i]
+              if (v === null || v === undefined || v <= 0) return null
+              return <rect key={s.label} x={barX(i, k)} y={yAt(v)} width={bw} height={Math.max(0, y1 - yAt(v))} rx={Math.min(4, bw / 3)} className={s.className} />
+            })}
+            {labelled &&
+              series.map((s, k) => {
+                const v = s.values[i]
+                if (v === null || v === undefined || v <= 0) return null
+                return (
+                  <text key={`t-${s.label}`} x={barX(i, k) + bw / 2} y={yAt(v) - 4} textAnchor="middle" fontSize="10" fontWeight={700} className="fill-slate-700 dark:fill-slate-200">
+                    {fmt(v)}
+                    {unit}
+                  </text>
+                )
+              })}
+            {i % every === 0 &&
+              (tilt ? (
+                <text x={xAt(i)} y={y1 + 12} textAnchor="end" fontSize="10" fontWeight={600} transform={`rotate(-35 ${xAt(i)} ${y1 + 12})`} className="fill-slate-600 dark:fill-slate-300">
+                  {l.length > 26 ? `${l.slice(0, 25)}…` : l}
+                </text>
+              ) : (
+                <text x={xAt(i)} y={y1 + 16} textAnchor="middle" fontSize="10" className="fill-muted">
+                  {l}
+                </text>
+              ))}
+          </g>
+        ))}
+      </svg>
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+        {series.map((s) => (
+          <span key={s.label} className="inline-flex items-center gap-1.5" dir="auto">
+            <svg width="10" height="10" aria-hidden><rect width="10" height="10" rx="2" className={s.className} /></svg>
+            {s.label}
+            {hover !== null && (
+              <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+                {s.values[hover] === null || s.values[hover] === undefined ? '—' : `${fmt(s.values[hover]!)}${unit}`}
+              </span>
+            )}
+          </span>
+        ))}
+        {hover !== null && <span className="ml-auto font-semibold text-slate-700 dark:text-slate-200" dir="auto">{labels[hover]}</span>}
+      </div>
+    </figure>
+  )
+}
+
 export interface LineSeries {
   label: string
   /** One value per label in `labels`; null draws a gap. */
@@ -784,9 +882,25 @@ export interface LineSeries {
 /**
  * A few lines over the same x axis — one per factory, month by month. A null
  * breaks the line; with `connectGaps` the line runs on to the next known
- * point instead, for days or weeks when nothing was made.
+ * point instead, for days or weeks when nothing was made. With `area` each
+ * line's ground is shaded down to zero.
  */
-export function LineChart({ labels, series, unit = '%', height = 220, connectGaps = false }: { labels: string[]; series: LineSeries[]; unit?: string; height?: number; connectGaps?: boolean }) {
+export function LineChart({
+  labels,
+  series,
+  unit = '%',
+  height = 220,
+  connectGaps = false,
+  area = false,
+}: {
+  labels: string[]
+  series: LineSeries[]
+  unit?: string
+  height?: number
+  connectGaps?: boolean
+  /** Each line's ground shaded beneath it, faintly (the assistant's area charts); off on the dashboard. */
+  area?: boolean
+}) {
   const [hover, setHover] = useState<number | null>(null)
   const frame = useChartFrame()
   const id = useId()
@@ -832,6 +946,15 @@ export function LineChart({ labels, series, unit = '%', height = 220, connectGap
             )}
           </g>
         ))}
+        {area &&
+          series.map((s) =>
+            segmentsOf(s.values).map((d, i) => {
+              const pts = d.split(' ')
+              const first = pts[0].split(',')[0]
+              const last = pts[pts.length - 1].split(',')[0]
+              return <polygon key={`${s.label}-a${i}`} points={`${first},${y1} ${d} ${last},${y1}`} className={s.className.replace(/stroke-/g, 'fill-')} fillOpacity={series.length > 1 ? 0.1 : 0.16} stroke="none" />
+            }),
+          )}
         {series.map((s) =>
           segmentsOf(s.values).map((d, i) => <polyline key={`${s.label}-${i}`} points={d} fill="none" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" className={s.className} />),
         )}

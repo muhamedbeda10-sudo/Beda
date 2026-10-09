@@ -1,23 +1,31 @@
 // ============================================================================
 // §20 — the two sides of a conversation. A question is a bubble on the right;
 // an answer runs the panel's full width (its tables need it), led by the
-// assistant's mark, its text and its query cards in the order they came,
-// then how it ended, when, Save as report and a Copy; the latest
-// answer also offers the questions the model suggests asking next. A saved
-// message changes only when it is saved as a report, so it is memoised; the
-// answer being written redraws once per frame.
+// assistant's mark. While it is written it reads in the order it comes — a
+// word on what is being checked, the queries as they run, the text with a
+// caret — and once it has ended it settles (./answerLayout): its headline
+// figures as cards above the text, the charts its queries asked for, and its
+// queries folded under "How I got this"; then how it ended, when, Save as
+// report and a Copy; the latest answer also offers the questions the model
+// suggests asking next. A saved message changes only when it is saved as a
+// report, so it is memoised; the answer being written redraws once per frame.
 // ============================================================================
 
-import { memo, useMemo, type ReactNode } from 'react'
-import { Bot, Copy, RotateCcw } from 'lucide-react'
-import type { AiMessage } from '@qc/shared/ai'
+import { memo, useId, useMemo, useState, type ReactNode } from 'react'
+import { Bot, ChevronRight, Copy, Loader2, RotateCcw } from 'lucide-react'
+import type { AiKpi, AiMessage } from '@qc/shared/ai'
 import { formatFullTimestamp, formatTime, cn } from '@/lib/utils'
 import { useApp } from '@/store/AppContext'
+import { AiFigure } from './AiFigure'
+import { AiKpiCards } from './AiKpiCards'
 import { AiMarkdown } from './AiMarkdown'
 import { AiQueryCard } from './AiQueryCard'
 import { Notice, StopNotice } from './AiNotice'
 import { useSaveAsReport } from './AiSaveReport'
 import { AiSuggestions } from './AiSuggestions'
+import { answerBlocks, type AnswerBlock } from './answerLayout'
+import { queryChart, type ChartModel } from './chartData'
+import { kpiCards, liveKpis } from './kpis'
 import { answerText, isInFlight, type LivePart, type LiveTurn } from './liveTurn'
 import { liveDisplayParts, suggestionChips } from './suggestions'
 
@@ -58,14 +66,53 @@ function AnswerFrame({ children }: { children: ReactNode }) {
   )
 }
 
-/** The parts of an answer in order: text as markdown, each query as its card. `writing`: the answer is not finished. */
-function AnswerParts({ parts, question, writing }: { parts: readonly LivePart[]; question?: string; writing: boolean }) {
+type QueryPart = Extract<AnswerBlock, { kind: 'queries' }>['queries'][number]
+
+/**
+ * "How I got this": the queries an answer ran, as their cards. Open while the
+ * answer is written, so its progress is in view; folded once it has ended,
+ * unless the reader opened or closed it themselves. Folded cards stay
+ * mounted, so one opened (or its table) keeps its state.
+ */
+function HowIGotThis({ queries, writing, question }: { queries: readonly QueryPart[]; writing: boolean; question?: string }) {
+  const [chosen, setChosen] = useState<boolean | null>(null)
+  const open = chosen ?? writing
+  const id = useId()
+  const n = queries.length
+  const running = queries.some((q) => q.type === 'pending-query' && q.state === 'running')
   return (
-    <>
-      {parts.map((p, i) =>
-        p.type === 'text' ? <AiMarkdown key={i} text={p.text} /> : <AiQueryCard key={p.queryId} part={p} question={question} writing={writing} />,
-      )}
-    </>
+    <section className="pt-0.5">
+      <button
+        type="button"
+        onClick={() => setChosen(!open)}
+        aria-expanded={open}
+        aria-controls={id}
+        className="inline-flex min-h-[28px] items-center gap-1.5 rounded-md pe-1.5 text-xs font-semibold text-muted transition-colors hover:text-slate-700 dark:hover:text-slate-200 touch:min-h-[44px]"
+      >
+        <ChevronRight aria-hidden className={cn('h-4 w-4 transition-transform duration-200', open ? 'rotate-90' : 'rtl:rotate-180')} />
+        How I got this ({n} {n === 1 ? 'query' : 'queries'})
+        {running && <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin text-brand-600 dark:text-brand-300" />}
+      </button>
+      <div id={id} hidden={!open} className="border-s-2 border-slate-200 ps-2.5 dark:border-slate-700">
+        {queries.map((q) => (
+          <AiQueryCard key={q.queryId} part={q} question={question} writing={writing} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/** "Thinking…", or the model's latest word on what it is doing: three soft dots and a muted line. */
+function Working({ text }: { text: string }) {
+  return (
+    <p dir="auto" className="flex items-center gap-2 text-xs text-muted">
+      <span aria-hidden className="ai-dots flex shrink-0 items-center gap-1">
+        <span />
+        <span />
+        <span />
+      </span>
+      <span className="line-clamp-2">{text}</span>
+    </p>
   )
 }
 
@@ -78,10 +125,16 @@ function AskAgain({ question, onAskAgain }: { question?: string; onAskAgain?: (q
   )
 }
 
+/** The answer as markdown for the clipboard: its headline figures as a list, then its text. */
+export function answerCopyText(parts: readonly LivePart[], kpis: readonly AiKpi[]): string {
+  const figures = kpis.map((k) => `- ${k.label}: ${k.value}`).join('\n')
+  return [figures, answerText(parts)].filter(Boolean).join('\n\n')
+}
+
 /** `extra`: what else the answer offers, beside Copy (Save as report). No cost: the chat shows no amounts, to anyone. */
-function AnswerFooter({ parts, at, extra }: { parts: readonly LivePart[]; at: string; extra?: ReactNode }) {
+function AnswerFooter({ parts, kpis, at, extra }: { parts: readonly LivePart[]; kpis: readonly AiKpi[]; at: string; extra?: ReactNode }) {
   const { toast } = useApp()
-  const text = answerText(parts)
+  const text = answerCopyText(parts, kpis)
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text)
@@ -111,6 +164,7 @@ function AnswerFooter({ parts, at, extra }: { parts: readonly LivePart[]; at: st
 }
 
 const NO_PARTS: readonly LivePart[] = []
+const NO_CHARTS: ReadonlyMap<string, ChartModel> = new Map()
 
 /**
  * An answer: saved (`message`), or being written (`turn`). One component for
@@ -139,31 +193,52 @@ export const Answer = memo(function Answer({
 }) {
   const writing = !!turn && isInFlight(turn)
   // The answer as it ended: the saved one, or the turn's once done; until then, the parts as streamed,
-  // without the follow-up questions the model is writing at its end (the saved answer has them apart).
+  // without the blocks the model writes for the app (follow-up questions, headline figures), which the saved answer has apart.
   const ended = turn ? (turn.phase === 'done' ? turn.message : null) : (message ?? null)
   const streamed = turn?.parts ?? NO_PARTS
   const parts: readonly LivePart[] = useMemo(() => (ended ? ended.parts : liveDisplayParts(streamed)), [ended, streamed])
+  const kpis = useMemo(() => (ended ? kpiCards(ended.kpis) : liveKpis(streamed)), [ended, streamed])
+  // Charts once the answer has ended: drawn while it is written, they would move about under the text still coming.
+  const charts = useMemo(() => {
+    if (writing) return NO_CHARTS
+    const out = new Map<string, ChartModel>()
+    for (const p of parts) {
+      if (p.type !== 'query') continue
+      const model = queryChart(p)
+      if (model) out.set(p.queryId, model)
+    }
+    return out
+  }, [parts, writing])
+  const blocks = useMemo(() => answerBlocks(parts, { settled: !writing, kpis: kpis.length > 0, charted: new Set(charts.keys()) }), [parts, writing, kpis.length, charts])
   const save = useSaveAsReport(ended, onOpenReport)
   const chips = latest && ended && onSuggestion ? suggestionChips(ended.suggestions) : []
   const last = parts.at(-1)
   // Between queries and before the first word, say what the model is doing. Not a live region: it
   // changes several times a second; the thread's status line says when the phase changes.
-  const working = writing && (turn.progress ?? (!last || last.type === 'query' ? (turn.phase === 'sending' ? 'Sending…' : 'Thinking…') : null))
+  const working = writing && (turn.progress ?? (!last || last.type !== 'text' ? (turn.phase === 'sending' ? 'Sending…' : 'Thinking…') : null))
+  // The caret follows the text as it is written: the last block, while text is what is arriving.
+  const caretAt = writing && last?.type === 'text' && !working ? blocks.at(-1)?.key : undefined
   const retry = ended?.stopReason && ended.stopReason !== 'end_turn' && ended.stopReason !== 'refusal'
+  const queryOf = (id: string) => parts.find((p): p is Extract<LivePart, { type: 'query' }> => p.type === 'query' && p.queryId === id)
   // Each child keeps its place whichever kind of answer this is, so the parts (and their cards) are never redrawn from scratch.
   return (
     <AnswerFrame>
-      <AnswerParts parts={parts} question={question} writing={writing} />
-      {working && (
-        <p dir="auto" className="flex items-center gap-2 text-xs italic text-muted">
-          <span aria-hidden className="flex shrink-0 gap-0.5">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500" />
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500 [animation-delay:150ms]" />
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500 [animation-delay:300ms]" />
-          </span>
-          <span className="line-clamp-2">{working}</span>
-        </p>
-      )}
+      {blocks.map((b) => {
+        switch (b.kind) {
+          case 'text':
+            return <AiMarkdown key={b.key} text={b.text} caret={b.key === caretAt} />
+          case 'kpis':
+            return <AiKpiCards key={b.key} kpis={kpis} />
+          case 'figure': {
+            const part = queryOf(b.queryId)
+            const model = charts.get(b.queryId)
+            return part && model ? <AiFigure key={b.key} part={part} model={model} question={question} /> : null
+          }
+          case 'queries':
+            return <HowIGotThis key={b.key} queries={b.queries} writing={writing} question={question} />
+        }
+      })}
+      {working && <Working text={working} />}
       {turn?.phase === 'stopped' && <StopNotice reason="stopped" action={<AskAgain question={question} onAskAgain={onAskAgain} />} />}
       {turn?.phase === 'error' && (
         <Notice tone="red" action={<AskAgain question={question} onAskAgain={onAskAgain} />}>
@@ -171,7 +246,7 @@ export const Answer = memo(function Answer({
         </Notice>
       )}
       {ended && <StopNotice reason={ended.stopReason} notice={ended.notice} action={retry ? <AskAgain question={question} onAskAgain={onAskAgain} /> : undefined} />}
-      {ended && <AnswerFooter parts={ended.parts} at={ended.createdAt} extra={save.button} />}
+      {ended && <AnswerFooter parts={ended.parts} kpis={kpis} at={ended.createdAt} extra={save.button} />}
       {save.notice}
       {chips.length > 0 && onSuggestion && <AiSuggestions questions={chips} onPick={onSuggestion} />}
     </AnswerFrame>

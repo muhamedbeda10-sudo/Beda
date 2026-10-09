@@ -1,54 +1,42 @@
 // ============================================================================
 // §20 — the assistant's panel, loaded the first time it opens (AiPanelHost
-// frames it). The header carries the mark, New chat, History, My reports and
-// Close — no amounts: what the assistant costs is on its owner's page alone.
-// Below it the conversation and the question box, the list of
-// conversations, or the saved reports — their list, or one report run.
+// frames it). The header carries the mark, New chat, History, My reports,
+// Expand (to the full page, /ai, with everything as it is) and Close — no
+// amounts: what the assistant costs is on its owner's page alone. Below it
+// the conversation and the question box, the list of conversations, or the
+// saved reports — their list, or one report run.
 // ============================================================================
 
-import { useCallback, useState } from 'react'
-import { FileChartColumn, History, SquarePen, X } from 'lucide-react'
-import type { AiReportSummary } from '@qc/shared/ai'
+import './fonts'
+import { useCallback, useEffect, useState } from 'react'
+import { FileChartColumn, History, Maximize2, SquarePen, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useAiMessages } from '@/services/queries'
-import { useAi, useAiLive } from './AiAssistantProvider'
-import { AiComposer } from './AiComposer'
+import { useAi } from './AiAssistantProvider'
+import { AiComposer, useComposerDraft } from './AiComposer'
 import { AiConversationList } from './AiConversationList'
 import { BotMark } from './AiMessages'
 import { AiReportList } from './AiReportList'
 import { AiReportView } from './AiReportView'
-import { AiThread } from './AiThread'
-import { spentFocus, type ComposerFocus } from './suggestions'
+import { AiConversationTitle, AiThread } from './AiThread'
+import type { AiOpenReport } from './workspace'
 
 type View = 'thread' | 'history' | 'reports'
-
-/** The report open under My reports: its id, and what the list knew of it, drawn until the report itself arrives. */
-interface OpenReport {
-  id: string
-  known?: AiReportSummary
-}
 
 const HEAD_BTN = 'icon-btn h-10 w-10 touch:h-11 touch:w-11'
 const HEAD_ON = 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
 
 export default function AiPanel() {
   const ai = useAi()
-  const [view, setView] = useState<View>('thread')
-  const [report, setReport] = useState<OpenReport | null>(null)
+  const { openConversation, setOpen, expand, handoff } = ai
+  // Docked from the full page with a report open there: the panel opens on it. Read once, cleared after.
+  const [start] = useState(() => handoff.current)
+  useEffect(() => {
+    handoff.current = null
+  }, [handoff])
+  const [view, setView] = useState<View>(start ? 'reports' : 'thread')
+  const [report, setReport] = useState<AiOpenReport | null>(start)
   // The unsent question lives here while the panel is open, and in the provider's ref while it is closed.
-  const [draft, setDraftState] = useState(() => ai.draft.current)
-  const [focus, setFocus] = useState<ComposerFocus>({ key: 0, always: false })
-
-  const { draft: kept, openConversation, setOpen } = ai
-  const setDraft = useCallback(
-    (value: string) => {
-      kept.current = value
-      setDraftState(value)
-    },
-    [kept],
-  )
-  const focusComposer = useCallback((always: boolean) => setFocus((f) => ({ key: f.key + 1, always })), [])
-  const focusUsed = useCallback(() => setFocus(spentFocus), [])
+  const { draft, setDraft, focus, focusComposer, focusUsed } = useComposerDraft()
   const fill = useCallback(
     (question: string) => {
       setDraft(question)
@@ -71,10 +59,12 @@ export default function AiPanel() {
     setView('thread')
     focusComposer(false)
   }
-  const openReport = useCallback((id: string, known?: AiReportSummary) => {
+  const openReport = useCallback((id: string, known?: AiOpenReport['known']) => {
     setReport({ id, known })
     setView('reports')
   }, [])
+  // The same thing on the full page: the conversation, the report open here, or the list on screen.
+  const toPage = () => expand(view === 'reports' ? (report ? { report } : { list: 'reports' }) : view === 'history' ? { list: 'conversations' } : undefined)
   // My reports opens the list; from a report it goes back to the list, and from the list back to the conversation.
   const toReports = () => {
     if (view === 'reports' && !report) {
@@ -100,7 +90,7 @@ export default function AiPanel() {
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-bold leading-tight">AI assistant</h2>
           <p dir="auto" className="truncate text-xs text-muted">
-            {view === 'history' ? 'Your conversations' : view === 'reports' ? 'Your saved reports' : <ConversationTitle />}
+            {view === 'history' ? 'Your conversations' : view === 'reports' ? 'Your saved reports' : <AiConversationTitle />}
           </p>
         </div>
         <button type="button" onClick={newChat} className={HEAD_BTN} aria-label="New chat" data-tip="New chat">
@@ -111,6 +101,9 @@ export default function AiPanel() {
         </button>
         <button type="button" onClick={toReports} className={cn(HEAD_BTN, view === 'reports' && HEAD_ON)} aria-label="My reports" aria-pressed={view === 'reports'} data-tip="My reports">
           <FileChartColumn className="h-5 w-5" />
+        </button>
+        <button type="button" onClick={toPage} className={cn(HEAD_BTN, 'hidden sm:grid')} aria-label="Expand to a full page" data-tip="Expand to a full page">
+          <Maximize2 className="h-[18px] w-[18px]" />
         </button>
         <button type="button" onClick={() => setOpen(false)} className={HEAD_BTN} aria-label="Close the assistant" data-tip="Close (Esc)">
           <X className="h-5 w-5" />
@@ -133,13 +126,4 @@ export default function AiPanel() {
       )}
     </>
   )
-}
-
-/** The open conversation's title (its first question, as the server shortened it). Its own component: it follows the answer being written, the header does not. */
-function ConversationTitle() {
-  const { conversationId, enabled } = useAi()
-  const live = useAiLive()
-  const { data } = useAiMessages(conversationId, enabled)
-  if (conversationId === null) return <>New conversation</>
-  return <>{data?.conversation.title ?? (live?.conversationId === conversationId ? live.conversation?.title : undefined) ?? 'Conversation'}</>
 }

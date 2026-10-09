@@ -2,11 +2,12 @@
 // §20 — a query the assistant ran, as a card in its answer: what it looked
 // for, whether it worked, how many rows and how long. Opened, it shows the
 // SQL and the rows the model read; the rows open as a table with Excel's
-// filters, and Export Excel runs the query again in full for a workbook.
+// filters, copy as text, and Export Excel runs the query again in full for a
+// workbook. While it runs it says so, with what it is looking for.
 // ============================================================================
 
-import { memo, useState } from 'react'
-import { CheckCircle2, ChevronDown, CircleStop, Copy, FileSpreadsheet, Loader2, OctagonX, Table2 } from 'lucide-react'
+import { memo, useCallback, useState } from 'react'
+import { CheckCircle2, ChevronDown, CircleStop, Copy, Loader2, OctagonX, Table2 } from 'lucide-react'
 import { AI_EXPORT_MAX_ROWS, AI_PREVIEW_ROWS, type AiQueryPart } from '@qc/shared/ai'
 import { Badge } from '@/components/ui'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
@@ -15,21 +16,50 @@ import { loadAiQueryExport } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 import { aiExportFilename, aiResultSheets } from './exportAiResult'
 import { AiResultModal, PreviewTable } from './AiResultTable'
+import { ExportTool, TableTool } from './AiTable'
 import type { PendingQuery } from './liveTurn'
 
-const SMALL_BTN = 'btn-secondary h-8 min-h-0 gap-1.5 px-2.5 py-0 text-xs touch:h-11 touch:px-3'
-const EXPORT_WAIT = 'Available when the answer is finished'
+export const EXPORT_WAIT = 'Available when the answer is finished'
+export const EXPORT_TIP = 'Runs the query again now, in full, and saves it as a workbook'
+
+/**
+ * Export Excel for a query of an answer: the server runs it again in full.
+ * `writing`: its answer is not finished, and the server keeps a query for
+ * export only once the answer's round of queries is saved.
+ */
+export function useQueryExport(part: AiQueryPart | null, question: string | undefined, writing: boolean): { exporting: boolean; exportExcel: () => void } {
+  const { toast } = useApp()
+  const [exporting, setExporting] = useState(false)
+  const queryId = part?.queryId
+  const exportExcel = useCallback(() => {
+    if (!queryId || exporting || writing) return
+    setExporting(true)
+    void (async () => {
+      try {
+        const data = await loadAiQueryExport(queryId)
+        downloadWorkbook(aiExportFilename(data.ranAt), aiResultSheets(data, question))
+        const n = data.rows.length
+        toast(data.truncated ? `Exported the first ${n.toLocaleString()} rows — the most an export takes.` : `Exported ${n.toLocaleString()} ${n === 1 ? 'row' : 'rows'}.`, 'success')
+      } catch (e) {
+        toast(e instanceof Error ? e.message : 'Could not export the query.', 'error')
+      } finally {
+        setExporting(false)
+      }
+    })()
+  }, [queryId, exporting, writing, question, toast])
+  return { exporting, exportExcel }
+}
 
 /** `writing`: its answer is not finished, and the server keeps a query for export only once the answer's round of queries is saved. */
 export const AiQueryCard = memo(function AiQueryCard({ part, question, writing = false }: { part: AiQueryPart | PendingQuery; question?: string; writing?: boolean }) {
   const { toast } = useApp()
   const [open, setOpen] = useState(false)
   const [table, setTable] = useState(false)
-  const [exporting, setExporting] = useState(false)
 
   const pending = part.type === 'pending-query'
   const running = pending && part.state === 'running'
   const done = pending ? null : part
+  const { exporting, exportExcel } = useQueryExport(done, question, writing)
 
   const copySql = async () => {
     try {
@@ -37,21 +67,6 @@ export const AiQueryCard = memo(function AiQueryCard({ part, question, writing =
       toast('SQL copied.', 'success')
     } catch {
       toast('Could not copy — select the SQL and copy it by hand.', 'error')
-    }
-  }
-
-  const exportExcel = async () => {
-    if (!done || exporting || writing) return
-    setExporting(true)
-    try {
-      const data = await loadAiQueryExport(done.queryId)
-      downloadWorkbook(aiExportFilename(data.ranAt), aiResultSheets(data, question))
-      const n = data.rows.length
-      toast(data.truncated ? `Exported the first ${n.toLocaleString()} rows — the most an export takes.` : `Exported ${n.toLocaleString()} ${n === 1 ? 'row' : 'rows'}.`, 'success')
-    } catch (e) {
-      toast(e instanceof Error ? e.message : 'Could not export the query.', 'error')
-    } finally {
-      setExporting(false)
     }
   }
 
@@ -69,12 +84,19 @@ export const AiQueryCard = memo(function AiQueryCard({ part, question, writing =
 
   return (
     <div className={cn('my-2 overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', done && !done.ok ? 'ring-rose-200 dark:ring-rose-500/30' : 'ring-slate-200 dark:ring-slate-800')}>
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60 touch:min-h-[44px]">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-start gap-2.5 px-3 py-2 text-start transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60 touch:min-h-[44px]">
         <span className="mt-0.5 shrink-0">{icon}</span>
         <span className="min-w-0 flex-1">
-          <span dir="auto" className="line-clamp-2 block text-13 font-semibold text-slate-800 dark:text-slate-100">
-            {part.purpose}
-          </span>
+          {running ? (
+            // The words are this app's, the purpose the asker's language: the purpose keeps its own direction.
+            <span className="line-clamp-2 block text-13 font-semibold text-slate-800 dark:text-slate-100">
+              <span className="font-medium text-brand-700 dark:text-brand-300">Running a query:</span> <bdi dir="auto">{part.purpose}</bdi>
+            </span>
+          ) : (
+            <span dir="auto" className="line-clamp-2 block text-13 font-semibold text-slate-800 dark:text-slate-100">
+              {part.purpose}
+            </span>
+          )}
           <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] tabular-nums text-muted">
             <span>{meta}</span>
             {done?.truncated && (
@@ -103,28 +125,23 @@ export const AiQueryCard = memo(function AiQueryCard({ part, question, writing =
             </p>
           )}
           {done?.ok && (
-            <>
-              <PreviewTable part={done} />
-              <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => setTable(true)} className={SMALL_BTN} disabled={done.rows.length === 0}>
-                  <Table2 className="h-3.5 w-3.5" /> Open table
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void exportExcel()}
-                  className={SMALL_BTN}
-                  disabled={exporting || writing}
-                  data-tip={writing ? EXPORT_WAIT : 'Runs the query again now, in full, and saves it as a workbook'}
-                >
-                  {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} {exporting ? 'Exporting…' : 'Export Excel'}
-                </button>
-              </div>
-            </>
+            <PreviewTable
+              part={done}
+              tools={
+                <>
+                  <TableTool onClick={() => setTable(true)} disabled={done.rows.length === 0} icon={<Table2 className="h-3.5 w-3.5" />}>
+                    Open table
+                  </TableTool>
+                  <ExportTool onExport={exportExcel} exporting={exporting} wait={writing ? EXPORT_WAIT : undefined} tip={EXPORT_TIP} />
+                </>
+              }
+            />
           )}
         </div>
       )}
 
-      {table && done && <AiResultModal part={done} onClose={() => setTable(false)} onExport={() => void exportExcel()} exporting={exporting} exportWait={writing ? EXPORT_WAIT : undefined} />}
+      {running && <span aria-hidden className="ai-progress block" />}
+      {table && done && <AiResultModal part={done} onClose={() => setTable(false)} onExport={exportExcel} exporting={exporting} exportWait={writing ? EXPORT_WAIT : undefined} />}
     </div>
   )
 })

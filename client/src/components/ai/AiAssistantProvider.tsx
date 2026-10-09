@@ -12,9 +12,15 @@
 // Two contexts: the controls (open, the conversation, send, stop), which
 // change rarely, and the answer being written, which changes every frame
 // while text streams — so the header's button does not redraw with each word.
+//
+// The assistant has two places, one state: the panel beside any page, and
+// the full page at /ai (./workspace). Expand and Dock move between them with
+// the conversation, the draft and the answer being written as they are — the
+// stream never notices. On /ai the panel steps aside.
 // ============================================================================
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AiChatRequest, AiConversation, AiMessage, AiMessagesResponse } from '@qc/shared/ai'
 import { ApiError, apiStream } from '@/lib/api'
@@ -23,6 +29,7 @@ import { newSubmissionId } from '@/lib/utils'
 import { keys, useAiMe } from '@/services/queries'
 import { applyEvent, endTurn, isInFlight, parseStreamEvent, sentAfter, settleMessages, startTurn, type LiveTurn } from './liveTurn'
 import { STOP_SETTLE_MS, retryAfterStop } from './retryAfterStop'
+import { aiWorkspaceHref, isAiWorkspacePath, type AiOpenReport, type AiWorkspaceList, type AiWorkspaceState } from './workspace'
 
 export interface AiControls {
   /** The owner gave the signed-in person the assistant (/ai/me): its button, its menu entry and its panel are there. */
@@ -46,6 +53,14 @@ export interface AiControls {
   stop: () => void
   /** The composer's unsent text, kept while the panel is closed; a ref, so typing redraws nothing up here. */
   draft: MutableRefObject<string>
+  /** The full page (/ai) is on screen: the panel steps aside for it. */
+  workspace: boolean
+  /** From the panel to the full page: the conversation on screen, or the report (`report`) or list (`list`) the panel shows. */
+  expand: (target?: { report?: AiOpenReport; list?: AiWorkspaceList }) => void
+  /** From the full page back to the panel, beside the page the person came from; a report open there opens in the panel. */
+  dock: (report?: AiOpenReport) => void
+  /** What the panel opens on, once, after Dock: the report the page had open. */
+  handoff: MutableRefObject<AiOpenReport | null>
 }
 
 const ControlsContext = createContext<AiControls | null>(null)
@@ -71,6 +86,8 @@ const mayBeRevoked = (err: unknown) => err instanceof ApiError && (err.status ==
 
 export function AiAssistantProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
+  const location = useLocation()
+  const navigate = useNavigate()
   const { data: me } = useAiMe()
   const enabled = me?.granted ?? false
   const owner = me?.owner ?? false
@@ -88,6 +105,19 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   // The last answer stopped here, and when: a question right after it may meet that answer still winding down.
   const lastStop = useRef<{ conversationId: string; at: number } | null>(null)
 
+  // The full page, and where the person was before it: Dock goes back there.
+  const workspace = isAiWorkspacePath(location.pathname)
+  const cameFrom = useRef<string | null>(null)
+  const handoff = useRef<AiOpenReport | null>(null)
+  useEffect(() => {
+    if (!workspace) cameFrom.current = `${location.pathname}${location.search}${location.hash}`
+  }, [workspace, location.pathname, location.search, location.hash])
+  // Arriving on the page puts the panel away: the same conversation is not shown twice, and leaving the page
+  // other than by Dock does not bring it back unasked.
+  useEffect(() => {
+    if (workspace) setOpenState(false)
+  }, [workspace])
+
   const setOpen = useCallback((next: boolean) => setOpenState(next), [])
   const toggle = useCallback(() => setOpenState((o) => !o), [])
   const openConversation = useCallback((id: string | null) => {
@@ -95,6 +125,22 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
     setConversationId(id)
   }, [])
   const stop = useCallback(() => controller.current?.abort(), [])
+  const expand = useCallback(
+    (target?: { report?: AiOpenReport; list?: AiWorkspaceList }) => {
+      setOpenState(false)
+      const state: AiWorkspaceState = { known: target?.report?.known, list: target?.list }
+      navigate(aiWorkspaceHref({ conversationId: active.current, reportId: target?.report?.id }), { state })
+    },
+    [navigate],
+  )
+  const dock = useCallback(
+    (report?: AiOpenReport) => {
+      handoff.current = report ?? null
+      navigate(cameFrom.current ?? '/')
+      setOpenState(true)
+    },
+    [navigate],
+  )
 
   // Losing access stops an answer (the server would stop it at its next call anyway); an open panel stays to say why.
   // Unmounting (signing out) stops it too.
@@ -251,8 +297,26 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
 
   const busy = isInFlight(live)
   const controls = useMemo<AiControls>(
-    () => ({ enabled, owner, revoked, open: (enabled || revoked) && open, setOpen, toggle, docked, conversationId, openConversation, busy, send, stop, draft }),
-    [enabled, owner, revoked, open, setOpen, toggle, docked, conversationId, openConversation, busy, send, stop],
+    () => ({
+      enabled,
+      owner,
+      revoked,
+      open: (enabled || revoked) && open,
+      setOpen,
+      toggle,
+      docked,
+      conversationId,
+      openConversation,
+      busy,
+      send,
+      stop,
+      draft,
+      workspace,
+      expand,
+      dock,
+      handoff,
+    }),
+    [enabled, owner, revoked, open, setOpen, toggle, docked, conversationId, openConversation, busy, send, stop, workspace, expand, dock],
   )
 
   return (

@@ -8,6 +8,7 @@
 // never flashes on screen before the server's copy takes over.
 // ============================================================================
 
+import { hideKpis } from './kpis'
 import type { LivePart } from './liveTurn'
 
 /**
@@ -50,8 +51,9 @@ export function hideSuggestions(text: string): string {
 
 /**
  * The parts of an answer being written, as drawn: each text without its
- * suggestions block, and a text left empty by that dropped. Queries pass
- * through as they are (the same objects, so their cards are not redrawn).
+ * suggestions block and its headline figures' block (./kpis, drawn as cards
+ * instead), and a text left empty by those dropped. Queries pass through as
+ * they are (the same objects, so their cards are not redrawn).
  */
 export function liveDisplayParts(parts: readonly LivePart[]): LivePart[] {
   const out: LivePart[] = []
@@ -60,7 +62,7 @@ export function liveDisplayParts(parts: readonly LivePart[]): LivePart[] {
       out.push(p)
       continue
     }
-    const text = hideSuggestions(p.text)
+    const text = hideKpis(hideSuggestions(p.text))
     if (!text.trim()) continue
     out.push(text === p.text ? p : { type: 'text', text })
   }

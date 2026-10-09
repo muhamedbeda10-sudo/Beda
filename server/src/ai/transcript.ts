@@ -6,14 +6,19 @@
 //     byte for byte (json columns keep the text as written), so nothing an
 //     answer was built on ever changes under it.
 //   • the display: per question, the asker's words and one answer made of the
-//     text the model wrote and the cards of the queries it ran. Thinking and
-//     the tool plumbing stay out of sight.
+//     text the model wrote and the cards of the queries it ran (each with its
+//     chart, when it has one), the blocks the model wrote for the app (its
+//     headline figures, its follow-up questions) taken out of the text and
+//     handed over on their own. Thinking and the tool plumbing stay out of
+//     sight.
 // ============================================================================
 
 import type Anthropic from '@anthropic-ai/sdk'
-import type { AiCell, AiConversation, AiMessage, AiPart, AiQueryPart, AiStopReason, AiTokenUsage } from '@qc/shared/ai'
+import type { AiCell, AiChartSpec, AiConversation, AiKpi, AiMessage, AiPart, AiQueryPart, AiStopReason, AiTokenUsage } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
-import { parseSuggestions, stripSuggestions } from './suggestions'
+import { stripBlocks } from './blocks'
+import { KPIS_BLOCK, parseKpis } from './kpis'
+import { SUGGESTIONS_BLOCK, parseSuggestions } from './suggestions'
 
 type MessageParam = Anthropic.Beta.BetaMessageParam
 
@@ -147,14 +152,31 @@ export interface QueryRecord {
   rowCount: number
   truncated: boolean
   ms: number
+  /** How the result is drawn, as checkChart let it through; null or absent: no chart. */
+  chart?: AiChartSpec | null
 }
 
 export async function insertQueries(q: Queryable, conversationId: string, turnId: string, queries: QueryRecord[]): Promise<void> {
   for (const r of queries) {
     await q.query(
-      `INSERT INTO ai_queries (id, conversation_id, turn_id, tool_use_id, purpose, sql, ok, error, columns, rows, row_count, truncated, ms)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::json, $10::json, $11, $12, $13)`,
-      [r.id, conversationId, turnId, r.toolUseId, r.purpose, r.sql, r.ok, r.error ?? null, JSON.stringify(r.columns), JSON.stringify(r.rows), r.rowCount, r.truncated, Math.round(r.ms)],
+      `INSERT INTO ai_queries (id, conversation_id, turn_id, tool_use_id, purpose, sql, ok, error, columns, rows, row_count, truncated, ms, chart)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::json, $10::json, $11, $12, $13, $14::json)`,
+      [
+        r.id,
+        conversationId,
+        turnId,
+        r.toolUseId,
+        r.purpose,
+        r.sql,
+        r.ok,
+        r.error ?? null,
+        JSON.stringify(r.columns),
+        JSON.stringify(r.rows),
+        r.rowCount,
+        r.truncated,
+        Math.round(r.ms),
+        r.chart ? JSON.stringify(r.chart) : null,
+      ],
     )
   }
 }
@@ -173,6 +195,7 @@ export const queryPart = (r: QueryRecord): AiQueryPart => {
     ms: Math.round(r.ms),
   }
   if (r.error) part.error = r.error
+  if (r.chart) part.chart = r.chart
   return part
 }
 
@@ -268,9 +291,9 @@ interface MessageRow {
 /**
  * The conversation as the panel shows it: each question, then its answer —
  * the model's text with the cards of the queries it ran, in the order they
- * came, the follow-up questions it closed with taken out of its text and
- * offered on their own, and the report it was saved as, if it was. One turn
- * only, when `turnId` is given.
+ * came; the headline figures it opened with and the follow-up questions it
+ * closed with taken out of its text and handed over on their own; and the
+ * report it was saved as, if it was. One turn only, when `turnId` is given.
  */
 export async function loadDisplayMessages(q: Queryable, conversationId: string, turnId?: string): Promise<AiMessage[]> {
   const params = [conversationId, turnId ?? null]
@@ -285,7 +308,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
     params,
   )
   const queries = await q.query<QueryRecord>(
-    `SELECT id, tool_use_id AS "toolUseId", purpose, sql, ok, error, columns, rows, row_count AS "rowCount", truncated, ms
+    `SELECT id, tool_use_id AS "toolUseId", purpose, sql, ok, error, columns, rows, row_count AS "rowCount", truncated, ms, chart
        FROM ai_queries WHERE conversation_id = $1 AND ($2::uuid IS NULL OR turn_id = $2)`,
     params,
   )
@@ -329,7 +352,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
         }
       }
     }
-    const { parts: shown, suggestions } = withoutSuggestions(parts)
+    const { parts: shown, suggestions, kpis } = withoutBlocks(parts)
     if (shown.length === 0 && t.status !== 'done') continue
     const answer: AiMessage = { id: t.id, role: 'assistant', parts: shown, createdAt: t.finishedAt ?? lastAt ?? t.createdAt, turnId: t.id }
     // What an answer cost is the owner's to see, on the settings page: never in the chat.
@@ -338,6 +361,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
       if (t.notice) answer.notice = t.notice
     }
     if (suggestions.length > 0) answer.suggestions = suggestions
+    if (kpis.length > 0) answer.kpis = kpis
     const savedReportId = reportByTurn.get(t.id)
     if (savedReportId) answer.savedReportId = savedReportId
     out.push(answer)
@@ -346,23 +370,25 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
 }
 
 /**
- * An answer's parts as shown: the follow-up block out of every text, and an
- * unfinished one out of the text the answer ends with; the questions of the
- * final text's last block on their own. A text that held nothing but the
- * block is dropped.
+ * An answer's parts as shown: every block for the app out of every text, and
+ * an unfinished one out of the text the answer ends with; the figures of the
+ * last whole <kpis> block, and the questions of the final text's last
+ * <suggestions> block, on their own. A text that held nothing but blocks is
+ * dropped.
  */
-function withoutSuggestions(parts: AiPart[]): { parts: AiPart[]; suggestions: string[] } {
+function withoutBlocks(parts: AiPart[]): { parts: AiPart[]; suggestions: string[]; kpis: AiKpi[] } {
   const last = parts[parts.length - 1]
   const suggestions = last?.type === 'text' ? parseSuggestions(last.text) : []
+  const kpis = parseKpis(parts.flatMap((p) => (p.type === 'text' ? [p.text] : [])))
   const shown: AiPart[] = []
   parts.forEach((p, i) => {
     if (p.type !== 'text') {
       shown.push(p)
       return
     }
-    const text = stripSuggestions(p.text, i === parts.length - 1)
+    const text = stripBlocks(p.text, i === parts.length - 1, [KPIS_BLOCK, SUGGESTIONS_BLOCK])
     if (text === p.text) shown.push(p)
     else if (text.trim() !== '') shown.push({ type: 'text', text })
   })
-  return { parts: shown, suggestions }
+  return { parts: shown, suggestions, kpis }
 }

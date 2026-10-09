@@ -20,11 +20,14 @@ import { WhatsNewPage } from '@/pages/admin/WhatsNewPage'
 import { ErrorBoundary, LoadFailed } from '@/components/ui/ErrorBoundary'
 import { useAuth } from '@/store/AuthContext'
 import { useAiMe } from '@/services/queries'
+import { useAi } from '@/components/ai/AiAssistantProvider'
 import { can, type Capability } from '@qc/shared/rules'
 import { lazy, Suspense, type ReactElement } from 'react'
 
 // §20 — the assistant's settings are its owner's alone: fetched when first opened, in nobody else's bundle.
 const AiAssistantPage = lazy(() => import('@/pages/admin/AiAssistantPage').then((m) => ({ default: m.AiAssistantPage })))
+// §20 — the assistant's full page, for the people given it: fetched when first opened, like its panel.
+const AiWorkspace = lazy(() => import('@/components/ai/AiWorkspace'))
 
 /** A page for a capability the signed-in role lacks sends the reader home; the API refuses it anyway. */
 function Only({ cap, children }: { cap: Capability; children: ReactElement }) {
@@ -40,6 +43,18 @@ function Only({ cap, children }: { cap: Capability; children: ReactElement }) {
 function OnlyAiOwner({ children }: { children: ReactElement }) {
   const { data, isError } = useAiMe()
   if (data) return data.owner ? children : <Navigate to="/" replace />
+  return isError ? <LoadFailed what="This page" /> : <PageLoading />
+}
+
+/**
+ * §20 — the assistant's full page, for the people the owner gave it to (/ai/me
+ * says who), whatever their role. Anyone else is sent home; someone it was
+ * taken from while the page was open stays, to be told so (the page says it).
+ */
+function OnlyAiGranted({ children }: { children: ReactElement }) {
+  const { data, isError } = useAiMe()
+  const { revoked } = useAi()
+  if (data) return data.granted || revoked ? children : <Navigate to="/" replace />
   return isError ? <LoadFailed what="This page" /> : <PageLoading />
 }
 
@@ -81,6 +96,8 @@ export default function App() {
         <Route path="/access" element={<Only cap="view-order-sheet"><AccessPage /></Only>} />
         <Route path="/dashboard" element={<Only cap="view-dashboard"><DashboardPage /></Only>} />
         <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
+        {/* §20 — the assistant's full page: /ai?c=<conversation>, /ai/reports/<id>. */}
+        <Route path="/ai/*" element={<OnlyAiGranted><ErrorBoundary fallback={<LoadFailed what="The assistant" />}><Suspense fallback={<PageLoading />}><AiWorkspace /></Suspense></ErrorBoundary></OnlyAiGranted>} />
         {/* Administration lives behind the gear; every section keeps its own address. */}
         <Route path="/admin" element={<Navigate to="/admin/configuration" replace />} />
         <Route path="/admin/configuration/:section?" element={<Only cap="manage-admin-data"><ConfigurationPage /></Only>} />
