@@ -47,6 +47,8 @@ export class TestApp {
   model = new ScriptedModel()
   /** §20 — questions per person, as in production (30 per 10 minutes). */
   aiLimiter = new RateLimiter(30, 10 * 60_000)
+  /** §20 — saved reports run or exported per person, as in production (60 per 10 minutes). */
+  aiReportLimiter = new RateLimiter(60, 10 * 60_000)
   private tmpDir!: string
 
   async start(overrides: Partial<NodeJS.ProcessEnv> = {}, options: { ai?: AiModelClient } = {}): Promise<this> {
@@ -73,6 +75,7 @@ export class TestApp {
       ai: options.ai ?? this.model,
       aiReader: this.aiReader,
       aiLimiter: this.aiLimiter,
+      aiReportLimiter: this.aiReportLimiter,
     })
     await new Promise<void>((resolve) => {
       this.server = app.listen(0, '127.0.0.1', () => resolve())

@@ -17,7 +17,19 @@ import { UnavailableNotice } from './AiNotice'
 
 const isTouch = () => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none)').matches
 
-export function AiComposer({ value, onChange, status, focusKey }: { value: string; onChange: (v: string) => void; status: AiStatusResponse | undefined; focusKey: number }) {
+function caretAtEnd(el: HTMLTextAreaElement) {
+  el.focus()
+  const end = el.value.length
+  el.setSelectionRange(end, end)
+}
+
+/** A request to put the caret in the box. `always`: on a touch screen too — the asker chose a question to finish there. */
+export interface ComposerFocus {
+  key: number
+  always: boolean
+}
+
+export function AiComposer({ value, onChange, status, focus }: { value: string; onChange: (v: string) => void; status: AiStatusResponse | undefined; focus: ComposerFocus }) {
   const { role } = useAuth()
   const { send, stop, busy, conversationId, openConversation, docked, setOpen } = useAi()
   const live = useAiLive()
@@ -36,10 +48,16 @@ export function AiComposer({ value, onChange, status, focusKey }: { value: strin
     el.style.height = `${Math.min(160, el.scrollHeight)}px`
   }, [value])
 
-  // Ready to type on opening, on a new chat and on an example — not on a phone, where the keyboard would cover the answer.
+  // Ready to type on opening, on a new chat and on an example — not on a phone, where the keyboard would cover the
+  // answer, unless a follow-up question was tapped to be finished there. The caret goes after what was put in.
   useEffect(() => {
-    if (!isTouch()) area.current?.focus()
-  }, [focusKey, conversationId])
+    const el = area.current
+    if (el && (!isTouch() || focus.always)) caretAtEnd(el)
+  }, [focus])
+  useEffect(() => {
+    const el = area.current
+    if (el && !isTouch()) caretAtEnd(el)
+  }, [conversationId])
 
   const submit = () => {
     if (!canSend) return

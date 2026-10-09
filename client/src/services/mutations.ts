@@ -48,7 +48,7 @@ import {
   type SetAvatarRequest,
 } from '@qc/shared/api'
 import type { DashboardLayouts, KpiThresholds } from '@qc/shared/kpi'
-import type { AiSetKeyRequest, AiSettings, AiSettingsResponse } from '@qc/shared/ai'
+import type { AiMessagesResponse, AiReport, AiReportRunResponse, AiSaveReportRequest, AiSaveReportResponse, AiSetKeyRequest, AiSettings, AiSettingsResponse } from '@qc/shared/ai'
 import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
 import { api } from '@/lib/api'
 import { keys } from '@/services/queries'
@@ -502,4 +502,63 @@ export async function deleteAiConversation(qc: QueryClient, id: string): Promise
   await api<void>(`/ai/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' })
   qc.removeQueries({ queryKey: keys.aiMessages(id) })
   await qc.invalidateQueries({ queryKey: keys.aiConversations })
+}
+
+/**
+ * A conversation as cached, with the answer of `turnId` marked as saved as
+ * `reportId` (or, with `turnId` null, every mark of `reportId` taken off — the
+ * report was deleted). Untouched, the same object comes back, so nothing
+ * redraws for a conversation the change is not in.
+ */
+export function markSavedReport(old: AiMessagesResponse | undefined, turnId: string | null, reportId: string): AiMessagesResponse | undefined {
+  if (!old) return old
+  let changed = false
+  const messages = old.messages.map((m) => {
+    if (m.role !== 'assistant') return m
+    if (turnId !== null && m.turnId === turnId && m.savedReportId !== reportId) {
+      changed = true
+      return { ...m, savedReportId: reportId }
+    }
+    if (turnId === null && m.savedReportId === reportId) {
+      changed = true
+      const { savedReportId: _gone, ...rest } = m
+      return rest
+    }
+    return m
+  })
+  return changed ? { ...old, messages } : old
+}
+
+/**
+ * Save an answer as a report. With an adjustable period (the default) the
+ * server asks the model once to make the period changeable, which counts
+ * toward the month's cap — so the spend on screen follows.
+ */
+export async function saveAiReport(qc: QueryClient, body: AiSaveReportRequest): Promise<AiSaveReportResponse> {
+  const res = await api<AiSaveReportResponse>('/ai/reports', { method: 'POST', body })
+  qc.setQueryData(keys.aiStatus, res.status)
+  qc.setQueryData(keys.aiReport(res.report.id), res.report)
+  // The answer's "Save as report" becomes "Saved · Open" wherever its conversation is cached.
+  qc.setQueriesData<AiMessagesResponse>({ queryKey: ['ai', 'messages'] }, (old) => markSavedReport(old, body.turnId, res.report.id))
+  void qc.invalidateQueries({ queryKey: keys.aiSettings })
+  void qc.invalidateQueries({ queryKey: ['ai', 'usage'] })
+  await qc.invalidateQueries({ queryKey: keys.aiReports })
+  return res
+}
+
+export async function renameAiReport(qc: QueryClient, id: string, title: string): Promise<AiReport> {
+  const report = await api<AiReport>(`/ai/reports/${encodeURIComponent(id)}`, { method: 'PATCH', body: { title } })
+  qc.setQueryData(keys.aiReport(id), report)
+  qc.setQueriesData<AiReportRunResponse>({ queryKey: keys.aiReportRuns(id) }, (old) => (old ? { ...old, report } : old))
+  await qc.invalidateQueries({ queryKey: keys.aiReports })
+  return report
+}
+
+/** Remove a report from this person's reports; the answer it came from offers "Save as report" again. */
+export async function deleteAiReport(qc: QueryClient, id: string): Promise<void> {
+  await api<void>(`/ai/reports/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  qc.removeQueries({ queryKey: keys.aiReport(id) })
+  qc.removeQueries({ queryKey: keys.aiReportRuns(id) })
+  qc.setQueriesData<AiMessagesResponse>({ queryKey: ['ai', 'messages'] }, (old) => markSavedReport(old, null, id))
+  await qc.invalidateQueries({ queryKey: keys.aiReports })
 }

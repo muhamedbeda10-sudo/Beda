@@ -8,7 +8,7 @@
 // search, a lookup by id, or a capped page. Nothing loads a whole table.
 // ============================================================================
 
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import type {
   AuditFilters,
@@ -52,7 +52,19 @@ import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiGrainChoice,
 import { loadAvatar } from '@/lib/avatarLoader'
 import type { AvatarResponse, ColumnValuesResponse, DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
-import type { AiConversationsResponse, AiMessagesResponse, AiQueryExportResponse, AiSettingsResponse, AiStatusResponse, AiUsageResponse } from '@qc/shared/ai'
+import type {
+  AiConversationsResponse,
+  AiDayRange,
+  AiMessagesResponse,
+  AiQueryExportResponse,
+  AiReport,
+  AiReportExportResponse,
+  AiReportRunResponse,
+  AiReportsResponse,
+  AiSettingsResponse,
+  AiStatusResponse,
+  AiUsageResponse,
+} from '@qc/shared/ai'
 import { api, qs } from '@/lib/api'
 
 export const keys = {
@@ -109,6 +121,12 @@ export const keys = {
   aiConversations: ['ai', 'conversations'] as const,
   aiMessages: (id: string) => ['ai', 'messages', id] as const,
   aiUsage: (month: string) => ['ai', 'usage', month] as const,
+  aiReports: ['ai', 'reports'] as const,
+  aiReport: (id: string) => ['ai', 'report', id] as const,
+  /** A report run over its saved period (no range) or over the days chosen for it. */
+  aiReportRun: (id: string, range: AiDayRange | null) => ['ai', 'report-run', id, range?.from ?? '', range?.to ?? ''] as const,
+  /** Every run of one report, whatever its days. */
+  aiReportRuns: (id: string) => ['ai', 'report-run', id] as const,
 }
 
 /** A value that settles `ms` after it stops changing, so typing an
@@ -828,4 +846,69 @@ export function useAiUsage(month: string, enabled: boolean) {
 /** A query of an answer run again now, in full (up to AI_EXPORT_MAX_ROWS rows), for Excel. */
 export function loadAiQueryExport(queryId: string): Promise<AiQueryExportResponse> {
   return api<AiQueryExportResponse>(`/ai/queries/${encodeURIComponent(queryId)}/export`)
+}
+
+/** How many reports a page of "My reports" holds. */
+export const AI_REPORTS_PAGE = 50
+
+/** The days of a run as the server takes them: both or neither. */
+const rangeQs = (range: AiDayRange | null) => (range ? qs({ from: range.from, to: range.to }) : '')
+
+/** This person's saved reports, the latest changed first: the first page. */
+export function useAiReports(enabled: boolean) {
+  return useQuery({
+    queryKey: keys.aiReports,
+    queryFn: () => api<AiReportsResponse>(`/ai/reports${qs({ limit: AI_REPORTS_PAGE })}`),
+    enabled,
+    staleTime: 60_000,
+  })
+}
+
+/** The page of reports changed before the given instant (the last one's updatedAt). */
+export function loadOlderAiReports(before: string): Promise<AiReportsResponse> {
+  return api<AiReportsResponse>(`/ai/reports${qs({ before, limit: AI_REPORTS_PAGE })}`)
+}
+
+/** One saved report: its title, question, period and sections (with their SQL). */
+export function useAiReport(id: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.aiReport(id ?? ''),
+    queryFn: () => api<AiReport>(`/ai/reports/${encodeURIComponent(id ?? '')}`),
+    enabled: enabled && id !== null,
+    staleTime: 60_000,
+  })
+}
+
+/**
+ * A report run now: every section's SQL through the server's read-only
+ * runner, over the saved period or the days chosen (`range`). Free, but it
+ * works the database and the server limits how often, so it runs when the
+ * report is opened, when its days change and on "Run again" — never on a
+ * window regaining focus, and a failure is not retried behind the asker's
+ * back. The tables on screen stay while the next run is on its way.
+ */
+export function useAiReportRun(id: string | null, range: AiDayRange | null, enabled: boolean) {
+  const qc = useQueryClient()
+  return useQuery({
+    queryKey: keys.aiReportRun(id ?? '', range),
+    queryFn: async () => {
+      const run = await api<AiReportRunResponse>(`/ai/reports/${encodeURIComponent(id ?? '')}/run${rangeQs(range)}`)
+      // The run carries the report as it is now, and moved its last run: the header and the list follow.
+      qc.setQueryData(keys.aiReport(run.report.id), run.report)
+      void qc.invalidateQueries({ queryKey: keys.aiReports })
+      return run
+    },
+    enabled: enabled && id !== null,
+    staleTime: 0,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: false,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** A report run again in full (up to AI_EXPORT_MAX_ROWS rows a section) over the same days, for Excel. */
+export function loadAiReportExport(id: string, range: AiDayRange | null): Promise<AiReportExportResponse> {
+  return api<AiReportExportResponse>(`/ai/reports/${encodeURIComponent(id)}/export${rangeQs(range)}`)
 }

@@ -25,8 +25,9 @@ const STOP_TONE: Record<Exclude<AiStopReason, 'end_turn'>, Tone> = {
   error: 'red',
 }
 
-export function Notice({ tone, children, action, className }: { tone: Tone; children: ReactNode; action?: ReactNode; className?: string }) {
-  const Icon = ICONS[tone]
+/** `icon`: in place of the tone's own (a word that informs rather than warns). */
+export function Notice({ tone, children, action, className, icon }: { tone: Tone; children: ReactNode; action?: ReactNode; className?: string; icon?: typeof Info }) {
+  const Icon = icon ?? ICONS[tone]
   return (
     <div role={tone === 'red' ? 'alert' : 'status'} className={cn('flex items-start gap-2 rounded-xl px-3 py-2 text-13', TONES[tone], className)}>
       <Icon aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
