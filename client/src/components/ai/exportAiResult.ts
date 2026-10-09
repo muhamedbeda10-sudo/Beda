@@ -21,7 +21,7 @@ export function aiCellValue(v: unknown): CellValue {
 }
 
 /** A local date and time that sorts as text: 2026-10-09 14:05. */
-function stamp(iso: string): string {
+export function aiStamp(iso: string): string {
   const d = new Date(iso)
   if (isNaN(d.getTime())) return iso
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -33,7 +33,7 @@ export function aiResultSheets(r: AiQueryExportResponse, question?: string): She
   if (question?.trim()) about.push(['Question', aiCellValue(question.trim())])
   about.push(
     ['Purpose', aiCellValue(r.purpose)],
-    ['Run at', stamp(r.ranAt)],
+    ['Run at', aiStamp(r.ranAt)],
     ['Rows', r.rows.length],
     ['Complete', r.truncated ? `No — only the first ${r.rows.length.toLocaleString('en-US')} rows` : 'Yes'],
     ['SQL', aiCellValue(r.sql)],
@@ -46,5 +46,5 @@ export function aiResultSheets(r: AiQueryExportResponse, question?: string): She
 
 /** QC-AI-2026-10-09-1405.xlsx: the moment it was run, so two exports of a day never collide. */
 export function aiExportFilename(ranAt: string): string {
-  return `QC-AI-${stamp(ranAt).replace(' ', '-').replace(':', '')}.xlsx`
+  return `QC-AI-${aiStamp(ranAt).replace(' ', '-').replace(':', '')}.xlsx`
 }
