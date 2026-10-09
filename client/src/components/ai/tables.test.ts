@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   asciiDigits,
   cellNumber,
+  codeLanguage,
+  hastDirection,
   hastTableData,
+  letterDirection,
   looksNumeric,
   numericColumns,
   numericTextColumns,
   plainNumber,
+  proseDirection,
   rehypeAiTables,
   tableDirection,
   tableTsv,
@@ -80,6 +84,43 @@ describe('the direction of a table', () => {
     expect(tableDirection(['العيب', 'Pieces'], [])).toBe('rtl')
     expect(tableDirection(['#', '%'], [['1', 'خدش']])).toBe('rtl')
     expect(tableDirection(['#'], [['1']])).toBe('ltr')
+  })
+})
+
+describe('the direction of an answer’s text', () => {
+  it('reads by most of the letters, not the first', () => {
+    expect(letterDirection('LM4 هو أسوأ خط هذا الشهر')).toBe('rtl')
+    expect(letterDirection('The customer شركة ordered 40 pieces')).toBe('ltr')
+    expect(letterDirection('١٢٣ — 45%')).toBeNull()
+  })
+
+  it('reads an answer as a whole by its prose: never by its code or addresses', () => {
+    // Every block of it names its own direction, so dir="auto" on the whole would find nothing and fall back to left to right.
+    expect(proseDirection('## الخلاصة\n\n- LM4 هو أسوأ خط\n- خط الدهان LM2\n\n> ملاحظة: الأرقام تشمل جميع الورديات')).toBe('rtl')
+    expect(proseDirection('أكثر العيوب:\n\n```sql\nSELECT defect_type, sum(defect_pieces) AS pieces FROM ai.production_between(current_date - 29, current_date, \'day\') GROUP BY 1\n```')).toBe('rtl')
+    expect(proseDirection('راجع [سجل الجلسة](/history?session=abcdefghijklmnopqrstuvwxyz) و `ai.production_between_with_a_long_name`')).toBe('rtl')
+    expect(proseDirection('انظر https://qc.example.com/inspections/very-long-path-with-many-latin-letters')).toBe('rtl')
+    // A fence still open while the answer streams is code too.
+    expect(proseDirection('الخلاصة\n\n```sql\nSELECT defect_type, defect_pieces FROM ai.production')).toBe('rtl')
+    expect(proseDirection('Defects fell 12% on **LM4** (شركة الأمل).')).toBe('ltr')
+    expect(proseDirection('| # | % |\n|---|---|\n| 1 | 2 |')).toBe('ltr')
+  })
+
+  it('reads a block (a list, a quote) by the letters in it outside code; none in it, none', () => {
+    const quote = el('blockquote', [el('p', [text('ملاحظة: '), el('code', [text('ai.production_between_with_a_long_name')]), text(' تشمل الورديات')])])
+    expect(hastDirection(quote)).toBe('rtl')
+    expect(hastDirection(el('ul', [el('li', [text('Scratch — 135')])]))).toBe('ltr')
+    expect(hastDirection(el('ol', [el('li', [text('39')])]))).toBeNull()
+  })
+})
+
+describe('a code block of an answer', () => {
+  it('names its language as the model did, and nothing that is no language', () => {
+    const pre = (className?: unknown) => el('pre', [el('code', [text('SELECT 1')], className === undefined ? {} : { className })])
+    expect(codeLanguage(pre(['language-sql']))).toBe('sql')
+    expect(codeLanguage(pre('language-json'))).toBe('json')
+    expect(codeLanguage(pre())).toBeNull()
+    expect(codeLanguage(pre(['language-<script>']))).toBeNull()
   })
 })
 

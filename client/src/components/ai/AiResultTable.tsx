@@ -25,13 +25,13 @@ export function queryDirection(part: Pick<AiQueryPart, 'columns' | 'rows'>): 'rt
  * table and whatever else the caller offers (`tools`: Open table, Export
  * Excel).
  */
-export function PreviewTable({ part, tools, className }: { part: AiQueryPart; tools?: ReactNode; className?: string }) {
+export function PreviewTable({ part, tools }: { part: AiQueryPart; tools?: ReactNode }) {
   const numeric = useMemo(() => numericColumns(part.columns, part.rows), [part.columns, part.rows])
   const dir = useMemo(() => queryDirection(part), [part])
   if (part.rows.length === 0) return <p className="rounded-xl bg-slate-50 px-3 py-2 text-13 text-muted dark:bg-slate-800/60">No rows matched.</p>
   return (
     <TableFrame
-      className={className}
+      dir={dir}
       footer={
         <>
           <RowCount count={part.rows.length} more={part.truncated} />
@@ -114,7 +114,11 @@ export function AiResultModal({
       onClose={onClose}
       size="xl"
       icon={<Table2 className="h-5 w-5" />}
-      title={<span dir="auto">{part.purpose}</span>}
+      title={
+        <span dir="auto" className="ai-type">
+          {part.purpose}
+        </span>
+      }
       footer={
         <>
           <Button onClick={onExport} disabled={exporting || !!exportWait} data-tip={exportWait ?? exportTip} className="sm:mr-auto">
@@ -126,36 +130,40 @@ export function AiResultModal({
         </>
       }
     >
-      <p className="mb-2 text-xs text-muted">
-        {part.rows.length.toLocaleString()} {part.rows.length === 1 ? 'row' : 'rows'}
-        {part.truncated ? ` — more matched. ${exportLabel} runs the query again for all of them.` : '.'}
-      </p>
-      <ViewNote view={view} total={rows.length} />
-      {rows.length === 0 ? (
-        <p className="rounded-xl bg-slate-50 px-3 py-6 text-center text-sm text-muted dark:bg-slate-800/60">No rows matched.</p>
-      ) : (
-        <div className="max-h-[55vh] overflow-auto overscroll-contain rounded-xl ring-1 ring-slate-200 dark:ring-slate-800">
-          <table dir={dir} className={TABLE_CLASS}>
-            <thead>
-              <tr>
-                {part.columns.map((name, c) => (
-                  <ViewTh key={c} view={view} column={`c${c}`} label={name} className={cn(thClass(dir, numeric[c]), 'py-2')} />
-                ))}
-              </tr>
-            </thead>
-            <tbody className={TBODY_CLASS}>
-              {view.rows.map((r) => (
-                <tr key={r.i} className={cn('data-row', TR_CLASS)}>
-                  {part.columns.map((_, c) => (
-                    <ResultCell key={c} value={r.cells[c] ?? null} numeric={numeric[c]} dir={dir} wrap />
+      {/* Drawn over the page, outside the assistant's own frame: its typeface (Arabic too) comes along. */}
+      <div className="ai-type">
+        <p className="mb-2 text-xs text-muted">
+          {part.rows.length.toLocaleString()} {part.rows.length === 1 ? 'row' : 'rows'}
+          {part.truncated ? ` — more matched. ${exportLabel} runs the query again for all of them.` : '.'}
+        </p>
+        <ViewNote view={view} total={rows.length} />
+        {rows.length === 0 ? (
+          <p className="rounded-xl bg-slate-50 px-3 py-6 text-center text-sm text-muted dark:bg-slate-800/60">No rows matched.</p>
+        ) : (
+          // The scroller reads as its table does: a wide table of Arabic opens at its first column, on the right.
+          <div dir={dir} className="max-h-[55vh] overflow-auto overscroll-contain rounded-xl ring-1 ring-slate-200 dark:ring-slate-800">
+            <table dir={dir} className={TABLE_CLASS}>
+              <thead>
+                <tr>
+                  {part.columns.map((name, c) => (
+                    <ViewTh key={c} view={view} column={`c${c}`} label={name} className={cn(thClass(dir, numeric[c]), 'py-2')} />
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {view.rows.length === 0 && <p className="px-3 py-6 text-center text-sm text-muted">No row passes the filters.</p>}
-        </div>
-      )}
+              </thead>
+              <tbody className={TBODY_CLASS}>
+                {view.rows.map((r) => (
+                  <tr key={r.i} className={cn('data-row', TR_CLASS)}>
+                    {part.columns.map((_, c) => (
+                      <ResultCell key={c} value={r.cells[c] ?? null} numeric={numeric[c]} dir={dir} wrap />
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {view.rows.length === 0 && <p className="px-3 py-6 text-center text-sm text-muted">No row passes the filters.</p>}
+          </div>
+        )}
+      </div>
     </Modal>
   )
 }

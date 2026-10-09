@@ -76,6 +76,25 @@ describe('an answer’s markdown', () => {
     expect(html).not.toContain('data-ai-')
   })
 
+  it('lays an Arabic answer out right to left as a whole — its text, its lists and its quotes — each block reading its own way', () => {
+    const html = render('## الخلاصة\n\nLM4 هو أسوأ خط هذا الشهر.\n\n1. مراجعة إعدادات سماكة الدهان على خط LM4.\n2. فحص إضافي للون عند تغيير الدفعة.\n\n- Scratch — 135\n\n> ملاحظة: الأرقام تشمل جميع الورديات حتى نهاية يوم أمس.')
+    // Set, not left to dir="auto": every block in it says its own direction, which dir="auto" on the whole passes over.
+    expect(html).toMatch(/^<div dir="rtl" class="ai-prose/)
+    expect(html).toMatch(/<ol dir="rtl"/)
+    expect(html).toMatch(/<blockquote dir="rtl"/)
+    // A list of other words reads its own way; each paragraph and item still reads by its own first letter.
+    expect(html).toMatch(/<ul dir="ltr"/)
+    expect(html).toMatch(/<p dir="auto"[^>]*>LM4 هو/)
+    expect(html).toMatch(/<li dir="auto"/)
+    expect(render('Defects fell **12%** on LM4.')).toMatch(/^<div dir="ltr" class="ai-prose/)
+  })
+
+  it('scrolls a table in its own direction, a wide Arabic one from its first column on the right, under tools that read left to right', () => {
+    const html = render('| الخط | القطع المنتجة | ملاحظات |\n|---|---:|---|\n| خط الدهان LM4 | 31,420 | ارتفاع في سماكة الدهان |')
+    expect(html).toMatch(/<div dir="rtl" class="ai-table-scroll[^"]*"><table dir="rtl"/)
+    expect(html).toMatch(/<div dir="ltr" class="[^"]*border-t[^"]*"><span[^>]*>1 row/)
+  })
+
   it('puts a row count, Copy table and Export Excel under every table, and a Copy on every code block', () => {
     const html = render('| Machine | Pieces |\n|---|---|\n| RF-01 | 12 |\n| RF-02 | 7 |\n\n```sql\nSELECT 1\n```')
     expect(html).toMatch(/<table dir="ltr"/)
@@ -83,6 +102,9 @@ describe('an answer’s markdown', () => {
     expect(html).toContain('Copy table')
     expect(html).toContain('Export Excel')
     expect(html).toContain('aria-label="Copy the code"')
+    // Copy sits in a strip over the code, naming its language — never over a line of it.
+    expect(html).toMatch(/>sql<\/span><button type="button" aria-label="Copy the code"[^>]*>.*Copy<\/button><\/div><pre dir="ltr"/)
+    expect(render('```\nplain\n```')).toMatch(/>Code<\/span><button/)
     const [machine, pieces] = cells(html)
     expect(machine.attrs).toContain('text-left')
     expect(pieces.attrs).toContain('text-right')

@@ -4,22 +4,26 @@
 // people typed into the record: raw HTML is skipped, images are unwrapped to
 // their words (no remote beacons), and a link is followed only when it is a
 // page of this application or a plain web address (./links). Styled here,
-// with logical properties, so an Arabic answer lays out right to left: its
-// headings, lists and quotes, its tables (./AiTable: figures aligned, Copy
-// and Excel under each) and its code, in a block with a Copy of its own.
+// with logical properties, so an Arabic answer lays out right to left: the
+// text as a whole and each list and quote take the direction most of their
+// words read in, set explicitly (./tables: proseDirection), each paragraph,
+// item and heading its own; its tables (./AiTable: figures aligned, Copy and
+// Excel under each) and its code, in a block with a Copy of its own.
 // ============================================================================
 
-import { memo, type AnchorHTMLAttributes, type HTMLAttributes, type ReactNode } from 'react'
+import { memo, useMemo, type AnchorHTMLAttributes, type HTMLAttributes, type ReactNode } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useNavigate } from 'react-router-dom'
-import { Copy, ExternalLink } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/store/AppContext'
 import { useAi } from './AiAssistantProvider'
+import { AiCode } from './AiCode'
 import { AiMarkdownTable, TBODY_CLASS, TR_CLASS, tdClass, thClass } from './AiTable'
 import { aiUrlTransform, classifyAiLink } from './links'
-import { DIR_ATTR, NUMERIC_ATTR, hastRawText, rehypeAiTables, type HastNode } from './tables'
+import { DIR_ATTR, NUMERIC_ATTR, codeLanguage, hastDirection, hastRawText, proseDirection, rehypeAiTables, type HastNode } from './tables'
+import { isAiWorkspacePath } from './workspace'
 
 const REMARK = [remarkGfm]
 const REHYPE = [rehypeAiTables]
@@ -28,7 +32,7 @@ const LINK = 'font-semibold text-brand-700 underline decoration-brand-300 underl
 
 function MdLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement> & { children?: ReactNode }) {
   const navigate = useNavigate()
-  const { docked, setOpen } = useAi()
+  const { docked, setOpen, workspace } = useAi()
   const link = classifyAiLink(href)
   if (!link) return <span>{children}</span>
   if (link.kind === 'external') {
@@ -45,10 +49,12 @@ function MdLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement> & { 
       className={LINK}
       onClick={(e) => {
         // A modified click opens a new tab as any link does; a plain one moves the app, and a sheet steps aside.
+        // From the full page on a desktop, the conversation docks beside the page the link opens, still in view.
         if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
         e.preventDefault()
         navigate(link.to)
-        if (!docked) setOpen(false)
+        if (workspace) setOpen(docked && !isAiWorkspacePath(link.to.split(/[?#]/)[0]))
+        else if (!docked) setOpen(false)
       }}
     >
       {children}
@@ -69,7 +75,7 @@ function MdCell({ header, props }: { header: boolean; props: HTMLAttributes<HTML
   )
 }
 
-/** A code block, left to right, with a Copy of its own. */
+/** A code block, left to right, under a strip naming its language with a Copy of its own. */
 function CodeBlock({ node, children }: { node: HastNode | undefined; children?: ReactNode }) {
   const { toast } = useApp()
   const copy = async () => {
@@ -81,22 +87,20 @@ function CodeBlock({ node, children }: { node: HastNode | undefined; children?: 
     }
   }
   return (
-    <div dir="ltr" className="group/code relative my-3">
-      <pre dir="ltr" className="overflow-x-auto rounded-xl bg-slate-900 p-3 pe-10 font-mono text-xs leading-relaxed text-slate-100 ring-1 ring-slate-800 [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-[length:inherit] [&_code]:text-slate-100 dark:[&_code]:bg-transparent">
-        {children}
-      </pre>
-      <button
-        type="button"
-        onClick={() => void copy()}
-        aria-label="Copy the code"
-        data-tip="Copy"
-        className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 touch:h-10 touch:w-10"
-      >
-        <Copy className="h-3.5 w-3.5" />
-      </button>
-    </div>
+    <AiCode
+      label={(node && codeLanguage(node)) ?? 'Code'}
+      onCopy={() => void copy()}
+      copyLabel="Copy the code"
+      className="my-3 rounded-xl"
+      codeClassName="p-3 text-xs [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-[length:inherit] [&_code]:text-slate-100 dark:[&_code]:bg-transparent"
+    >
+      {children}
+    </AiCode>
   )
 }
+
+/** A list's or a quote's direction, by the words in it (./tables: hastDirection); none set when it has no words, so it takes the text's. */
+const blockDir = (node: unknown): 'rtl' | 'ltr' | undefined => (node ? (hastDirection(node as HastNode) ?? undefined) : undefined)
 
 // `node` (the syntax tree) is passed to every component; it is taken out so it never reaches the DOM.
 const components: Components = {
@@ -108,11 +112,12 @@ const components: Components = {
   h4: ({ node: _node, ...props }) => <h5 dir="auto" className="mb-1 mt-3 text-sm font-semibold first:mt-0" {...props} />,
   h5: ({ node: _node, ...props }) => <h6 dir="auto" className="mb-1 mt-3 text-sm font-semibold first:mt-0" {...props} />,
   h6: ({ node: _node, ...props }) => <h6 dir="auto" className="mb-1 mt-3 text-sm font-semibold first:mt-0" {...props} />,
-  ul: ({ node: _node, ...props }) => <ul className="my-2.5 list-disc space-y-1 ps-5 marker:text-brand-400 dark:marker:text-brand-300" {...props} />,
-  ol: ({ node: _node, ...props }) => <ol className="my-2.5 list-decimal space-y-1 ps-5 marker:font-semibold marker:text-slate-500 dark:marker:text-slate-400" {...props} />,
+  // A list's or a quote's own direction puts its markers, its indent and its bar on the side its words start from.
+  ul: ({ node, ...props }) => <ul dir={blockDir(node)} className="my-2.5 list-disc space-y-1 ps-5 marker:text-brand-400 dark:marker:text-brand-300" {...props} />,
+  ol: ({ node, ...props }) => <ol dir={blockDir(node)} className="my-2.5 list-decimal space-y-1 ps-5 marker:font-semibold marker:text-slate-500 dark:marker:text-slate-400" {...props} />,
   li: ({ node: _node, ...props }) => <li dir="auto" className="ps-1 [&>ol]:my-1 [&>ul]:my-1" {...props} />,
-  blockquote: ({ node: _node, ...props }) => (
-    <blockquote dir="auto" className="my-3 rounded-e-lg border-s-4 border-brand-300 bg-brand-50/60 py-1.5 pe-3 ps-3 text-slate-700 dark:border-brand-500/60 dark:bg-brand-500/10 dark:text-slate-200" {...props} />
+  blockquote: ({ node, ...props }) => (
+    <blockquote dir={blockDir(node)} className="my-3 rounded-e-lg border-s-4 border-brand-300 bg-brand-50/60 py-1.5 pe-3 ps-3 text-slate-700 dark:border-brand-500/60 dark:bg-brand-500/10 dark:text-slate-200" {...props} />
   ),
   strong: ({ node: _node, ...props }) => <strong className="font-semibold text-slate-900 dark:text-white" {...props} />,
   hr: () => <hr className="my-4 border-slate-200 dark:border-slate-700" />,
@@ -136,8 +141,9 @@ const components: Components = {
  * written — a caret blinks after its last word.
  */
 export const AiMarkdown = memo(function AiMarkdown({ text, caret = false }: { text: string; caret?: boolean }) {
+  const dir = useMemo(() => proseDirection(text), [text])
   return (
-    <div dir="auto" className={cn('ai-prose break-words text-sm text-slate-800 dark:text-slate-100', caret && 'ai-caret')}>
+    <div dir={dir} className={cn('ai-prose break-words text-sm text-slate-800 dark:text-slate-100', caret && 'ai-caret')}>
       <Markdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={components} disallowedElements={DISALLOWED} unwrapDisallowed skipHtml urlTransform={aiUrlTransform}>
         {text}
       </Markdown>

@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { memo, useCallback, useState } from 'react'
-import { CheckCircle2, ChevronDown, CircleStop, Copy, Loader2, OctagonX, Table2 } from 'lucide-react'
+import { CheckCircle2, ChevronDown, CircleStop, Loader2, OctagonX, Table2 } from 'lucide-react'
 import { AI_EXPORT_MAX_ROWS, AI_PREVIEW_ROWS, type AiQueryPart } from '@qc/shared/ai'
 import { Badge } from '@/components/ui'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils'
 import { loadAiQueryExport } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 import { aiExportFilename, aiResultSheets } from './exportAiResult'
+import { AiCode } from './AiCode'
 import { AiResultModal, PreviewTable } from './AiResultTable'
 import { ExportTool, TableTool } from './AiTable'
 import type { PendingQuery } from './liveTurn'
@@ -111,14 +112,9 @@ export const AiQueryCard = memo(function AiQueryCard({ part, question, writing =
 
       {open && (
         <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
-          <div className="relative">
-            <pre dir="ltr" className="max-h-56 overflow-auto rounded-lg bg-slate-900 p-2.5 pe-10 font-mono text-[11px] leading-relaxed text-slate-100 ring-1 ring-slate-800">
-              {part.sql}
-            </pre>
-            <button type="button" onClick={() => void copySql()} aria-label="Copy the SQL" data-tip="Copy the SQL" className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-white/10 hover:text-white touch:h-10 touch:w-10">
-              <Copy className="h-3.5 w-3.5" />
-            </button>
-          </div>
+          <AiCode label="SQL" onCopy={() => void copySql()} copyLabel="Copy the SQL" className="rounded-lg" codeClassName="max-h-56 p-2.5 text-[11px]">
+            {part.sql}
+          </AiCode>
           {done && !done.ok && done.error && (
             <p dir="auto" className="whitespace-pre-wrap break-words rounded-lg bg-rose-50 px-2.5 py-2 text-xs text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
               {done.error}

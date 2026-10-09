@@ -4,11 +4,13 @@
 // closes every answer with a <suggestions> block; the server takes it out of
 // the saved answer and hands the questions over as `AiMessage.suggestions`.
 // While the answer is still being written, the block arrives as text like any
-// other, so the thread hides it here — from its first characters, so the tag
-// never flashes on screen before the server's copy takes over.
+// other, so the thread hides it here — by the server's own rules (./blocks),
+// from its first characters, so the tag never flashes on screen before the
+// server's copy takes over.
 // ============================================================================
 
-import { hideKpis } from './kpis'
+import { stripBlocks, type TaggedBlock } from './blocks'
+import { KPIS_BLOCK } from './kpis'
 import type { LivePart } from './liveTurn'
 
 /**
@@ -29,8 +31,8 @@ export const AI_STARTER_QUESTIONS: readonly string[] = [
 /** Follow-up questions shown under an answer, at most. */
 export const AI_MAX_SUGGESTIONS = 3
 
-const OPEN = '<suggestions'
-const BLOCK = /<suggestions\b[^>]*>[\s\S]*?<\/suggestions\s*>/gi
+/** The block, as ./blocks finds it: it closes the answer, so one cut off in the middle runs to the end. */
+export const SUGGESTIONS_BLOCK: TaggedBlock = { name: 'suggestions', unclosed: 'rest' }
 
 /**
  * An answer's text as it may be shown while it is written: without any whole
@@ -38,34 +40,29 @@ const BLOCK = /<suggestions\b[^>]*>[\s\S]*?<\/suggestions\s*>/gi
  * to the end), and without a tag still arriving at the very end ("<sugg").
  */
 export function hideSuggestions(text: string): string {
-  let out = text.replace(BLOCK, '')
-  const open = out.search(/<suggestions/i)
-  if (open >= 0) out = out.slice(0, open)
-  else {
-    // A lone "<" or "<sugg…" at the end may be the tag's first characters: held back until the next piece says.
-    const lt = out.lastIndexOf('<')
-    if (lt >= 0 && out.length - lt <= OPEN.length && OPEN.startsWith(out.slice(lt).toLowerCase())) out = out.slice(0, lt)
-  }
-  return out === text ? text : out.trimEnd()
+  return stripBlocks(text, true, [SUGGESTIONS_BLOCK])
 }
 
 /**
- * The parts of an answer being written, as drawn: each text without its
- * suggestions block and its headline figures' block (./kpis, drawn as cards
- * instead), and a text left empty by those dropped. Queries pass through as
- * they are (the same objects, so their cards are not redrawn).
+ * The parts of an answer being written, as drawn: each text without the
+ * blocks the model writes for the app — its headline figures (./kpis, drawn
+ * as cards instead) and its follow-up questions — exactly as the server takes
+ * them out of the saved answer: whole ones from every text, one left open as
+ * its kind says, and a tag still being written from the text the answer ends
+ * with. A text left empty by that is dropped. Queries pass through as they are
+ * (the same objects, so their cards are not redrawn).
  */
 export function liveDisplayParts(parts: readonly LivePart[]): LivePart[] {
   const out: LivePart[] = []
-  for (const p of parts) {
+  parts.forEach((p, i) => {
     if (p.type !== 'text') {
       out.push(p)
-      continue
+      return
     }
-    const text = hideKpis(hideSuggestions(p.text))
-    if (!text.trim()) continue
+    const text = stripBlocks(p.text, i === parts.length - 1, [KPIS_BLOCK, SUGGESTIONS_BLOCK])
+    if (!text.trim()) return
     out.push(text === p.text ? p : { type: 'text', text })
-  }
+  })
   return out
 }
 

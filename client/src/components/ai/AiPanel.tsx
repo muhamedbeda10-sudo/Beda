@@ -89,7 +89,8 @@ export default function AiPanel() {
         <BotMark size="md" className="me-1 hidden sm:grid" />
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-bold leading-tight">AI assistant</h2>
-          <p dir="auto" className="truncate text-xs text-muted">
+          {/* A title in Arabic reads right to left (and, too long, is cut at its own end), but sits under the heading. */}
+          <p dir="auto" className="truncate text-left text-xs text-muted">
             {view === 'history' ? 'Your conversations' : view === 'reports' ? 'Your saved reports' : <AiConversationTitle />}
           </p>
         </div>

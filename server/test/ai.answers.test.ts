@@ -95,6 +95,28 @@ describe('§20 headline figures: reading the block', () => {
     expect(both('The answer <kp', true)).toBe('The answer')
     expect(both('The answer <kp', false)).toBe('The answer <kp')
     expect(both('a < b', true)).toBe('a < b')
+    // Its attributes still being written on a line of its own.
+    expect(both('Let me check.\n\n  <kpis lang="en"', true)).toBe('Let me check.')
+  })
+
+  it('leaves a tag the answer only names in its text, and takes a block written after it', () => {
+    // Named in a sentence, in code or not, a tag opens no block: the sentence and the lines after it stay.
+    for (const named of [
+      'The answer uses `<kpis>` tags.\nSecond line\n\nMore',
+      'Use <kpis> to open an answer.\nNext line.\n\nMore',
+      'Use <KPIS lang="en"> to open an answer.\n\nMore',
+      'The <kpisx>\nthing.',
+      '<kpis> opens the figures.\nSecond line',
+    ]) {
+      expect(both(named, true), named).toBe(named)
+      expect(both(named, false), named).toBe(named)
+    }
+    // A whole block written after the tag was named begins at its own opening tag.
+    const after = 'The `<kpis>` block holds the figures.\n\n<kpis>\n- A | 1\n</kpis>\n\nThe answer.'
+    expect(both(after, true)).toBe('The `<kpis>` block holds the figures.\n\n\n\nThe answer.')
+    expect(parseKpis([after])).toEqual([{ label: 'A', value: '1' }])
+    // An unclosed block on a line of its own after a named tag still ends at its blank line.
+    expect(both('Named `<kpis>` here.\n\n  <kpis>  \n- A | 1\n\nThe answer.', false)).toBe('Named `<kpis>` here.\n\n  \n\nThe answer.')
   })
 })
 

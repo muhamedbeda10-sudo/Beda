@@ -35,12 +35,26 @@ export function cellAlign(tableDir: 'rtl' | 'ltr', numeric: boolean): string {
 export const thClass = (tableDir: 'rtl' | 'ltr', numeric: boolean) => cn(TH_CLASS, cellAlign(tableDir, numeric))
 export const tdClass = (tableDir: 'rtl' | 'ltr', numeric: boolean, extra?: string) => cn(TD_CLASS, cellAlign(tableDir, numeric), numeric && 'whitespace-nowrap tabular-nums', extra)
 
-/** The frame a table scrolls in, with its line of tools underneath. */
-export function TableFrame({ children, footer, className }: { children: ReactNode; footer?: ReactNode; className?: string }) {
+/**
+ * The frame a table scrolls in, both ways, with its line of tools underneath.
+ * How tall it may grow is the surface's to say (.ai-table-scroll in
+ * index.css): a few rows in the panel, more on the full page, fewer under a
+ * chart. `dir`: the table's direction, which the scrolling takes too — a
+ * table of Arabic wider than its frame opens at its first column, on the
+ * right, and scrolls on to the left. The tools are this app's words, left
+ * to right under any table.
+ */
+export function TableFrame({ children, footer, dir }: { children: ReactNode; footer?: ReactNode; dir: 'rtl' | 'ltr' }) {
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800">
-      <div className={cn('max-h-80 overflow-auto overscroll-contain', className)}>{children}</div>
-      {footer && <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 border-t border-slate-100 bg-slate-50/70 px-2 py-1 text-[11px] text-muted dark:border-slate-800 dark:bg-slate-800/40">{footer}</div>}
+      <div dir={dir} className="ai-table-scroll overflow-auto overscroll-contain">
+        {children}
+      </div>
+      {footer && (
+        <div dir="ltr" className="flex flex-wrap items-center gap-x-1 gap-y-0.5 border-t border-slate-100 bg-slate-50/70 px-2 py-1 text-[11px] text-muted dark:border-slate-800 dark:bg-slate-800/40">
+          {footer}
+        </div>
+      )}
     </div>
   )
 }
@@ -114,9 +128,11 @@ export function AiMarkdownTable({ node, dir, children }: { node: HastNode | unde
       toast(e instanceof Error ? e.message : 'Could not export the table.', 'error')
     }
   }
+  const tableDir = dir === 'rtl' ? 'rtl' : 'ltr'
   return (
     <div className="my-3">
       <TableFrame
+        dir={tableDir}
         footer={
           <>
             <RowCount count={data.rows.length} />
@@ -125,7 +141,7 @@ export function AiMarkdownTable({ node, dir, children }: { node: HastNode | unde
           </>
         }
       >
-        <table dir={dir === 'rtl' ? 'rtl' : 'ltr'} className={TABLE_CLASS}>
+        <table dir={tableDir} className={TABLE_CLASS}>
           {children}
         </table>
       </TableFrame>

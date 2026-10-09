@@ -16,6 +16,11 @@
 // attributes inside them), and a code fence the model put around it goes
 // with it. The panel hides the blocks while an answer streams; the server's
 // copy takes over when the answer is done.
+//
+// An answer may also name a tag in its text ("the `<kpis>` block"). A tag
+// named that way opens no block: a whole block begins at the last opening tag
+// before its closing one, and one whose closing tag never came begins only
+// with an opening tag on a line of its own, as the prompt has it written.
 // ============================================================================
 
 /** A kind of block, by its tag. */
@@ -23,7 +28,9 @@ export interface AnswerBlock {
   /** The tag's name: "kpis", "suggestions". */
   name: string
   /**
-   * Where a block whose closing tag never came ends:
+   * Where a block whose closing tag never came ends. Such a block begins with
+   * an opening tag on a line of its own (or one still being written as the
+   * answer's last line); a tag in the middle of a line is text.
    *   • 'rest' — at the end of the answer: a block that closes the answer and
    *     was cut off while it was written. Only the answer's last text is cut,
    *     from the opening tag on.
@@ -36,10 +43,15 @@ export interface AnswerBlock {
 }
 
 interface Compiled {
-  /** Every whole block, its body captured. */
+  /**
+   * Every whole block, its body captured: from the last opening tag before
+   * its closing tag, so that a tag the answer named earlier is no part of it.
+   */
   whole: RegExp
-  /** A tag that opens a block, whether it ever closes or not. */
+  /** An opening tag on a line of its own: the start of a block whose closing tag may never come. */
   opening: RegExp
+  /** An opening tag still being written on the text's last line of its own: its name, perhaps attributes, no ">" yet. */
+  writing: RegExp
   /** The opening tag's first characters, which a text cut off may end with. */
   open: string
 }
@@ -49,14 +61,21 @@ const compiled = new Map<string, Compiled>()
 function compile(block: AnswerBlock): Compiled {
   let c = compiled.get(block.name)
   if (!c) {
+    const tag = `<${block.name}\\b`
     c = {
-      whole: new RegExp(`<${block.name}\\b[^>]*>([\\s\\S]*?)<\\/${block.name}\\s*>`, 'gi'),
-      opening: new RegExp(`<${block.name}`, 'gi'),
+      whole: new RegExp(`${tag}[^>]*>((?:(?!${tag})[\\s\\S])*?)<\\/${block.name}\\s*>`, 'gi'),
+      opening: new RegExp(`^[ \\t]*${tag}[^>\\r\\n]*>[ \\t]*$`, 'gim'),
+      writing: new RegExp(`(?:^|\\n)[ \\t]*${tag}[^>\\r\\n]*$`, 'gi'),
       open: `<${block.name}`,
     }
     compiled.set(block.name, c)
   }
   return c
+}
+
+/** Where each tag a pattern finds in a text begins: its "<", after the indentation and line break the pattern takes in. */
+function tagsAt(text: string, pattern: RegExp): number[] {
+  return [...text.matchAll(pattern)].map((m) => m.index + m[0].indexOf('<'))
 }
 
 /** A line that opens or closes a code fence: three or more ` or ~, indented at most three spaces. */
@@ -107,18 +126,18 @@ function spansOf(text: string, block: AnswerBlock, atEnd: boolean): [number, num
   const c = compile(block)
   const spans: [number, number][] = [...text.matchAll(c.whole)].map((m) => [m.index, m.index + m[0].length])
   if (block.unclosed === 'paragraph') {
-    // Every opening tag that is not inside a block already found: a whole one, or the paragraph of one before it.
-    for (const m of text.matchAll(c.opening)) {
-      if (spans.some(([s, e]) => m.index >= s && m.index < e)) continue
-      spans.push([m.index, paragraphEnd(text, m.index)])
+    // Every opening tag on a line of its own that is not inside a block already found: a whole one, or the paragraph of one before it.
+    for (const at of tagsAt(text, c.opening)) {
+      if (spans.some(([s, e]) => at >= s && at < e)) continue
+      spans.push([at, paragraphEnd(text, at)])
     }
   }
   if (atEnd) {
     const after = spans.reduce((max, [, e]) => Math.max(max, e), 0)
     const tail = text.slice(after)
-    const open = block.unclosed === 'rest' ? tail.search(c.opening) : -1
-    // The regex is global: search() ignores lastIndex, so nothing carries over.
-    if (open >= 0) spans.push([after + open, text.length])
+    // A block that closes the answer: from its opening tag on. Either kind: a tag still being written on the last line.
+    const open = [...(block.unclosed === 'rest' ? tagsAt(tail, c.opening) : []), ...tagsAt(tail, c.writing)]
+    if (open.length > 0) spans.push([after + open[0], text.length])
     else {
       // "<s", "<su", … "<suggestions" ending the text: the start of a tag the answer never finished.
       const lt = tail.lastIndexOf('<')

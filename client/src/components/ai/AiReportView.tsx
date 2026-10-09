@@ -15,7 +15,6 @@ import {
   CalendarRange,
   CheckCircle2,
   ChevronDown,
-  Copy,
   FileSpreadsheet,
   Loader2,
   MessageSquareText,
@@ -44,6 +43,7 @@ import { deleteAiReport, renameAiReport } from '@/services/mutations'
 import { keys, loadAiReportExport, newerAiReport, useAiReport, useAiReportRun } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 import { useAi } from './AiAssistantProvider'
+import { AiCode } from './AiCode'
 import { Notice } from './AiNotice'
 import { DeleteReportModal, ReportTitleEditor } from './AiReportList'
 import { AiResultModal, PreviewTable } from './AiResultTable'
@@ -453,14 +453,9 @@ const ReportSection = memo(function ReportSection({ part, templated, onExport, e
         </div>
         {showSql && (
           <div className="space-y-1">
-            <div className="relative">
-              <pre dir="ltr" className="max-h-56 overflow-auto rounded-lg bg-slate-900 p-2.5 pe-10 font-mono text-[11px] leading-relaxed text-slate-100 ring-1 ring-slate-800">
-                {part.sql}
-              </pre>
-              <button type="button" onClick={() => void copySql()} aria-label="Copy the SQL" data-tip="Copy the SQL" className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-white/10 hover:text-white touch:h-10 touch:w-10">
-                <Copy className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            <AiCode label="SQL" onCopy={() => void copySql()} copyLabel="Copy the SQL" className="rounded-lg" codeClassName="max-h-56 p-2.5 text-[11px]">
+              {part.sql}
+            </AiCode>
             {placeholders && (
               <p className="text-[11px] text-muted">
                 <code dir="ltr" className="font-mono">{'{{from}}'}</code> and <code dir="ltr" className="font-mono">{'{{to}}'}</code> stand for the first and last day of the period it runs over.

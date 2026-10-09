@@ -113,6 +113,50 @@ export function textDirection(text: string): 'rtl' | 'ltr' | null {
   return null
 }
 
+/** Which way most of a text's letters read; null when it has none. */
+export function letterDirection(text: string): 'rtl' | 'ltr' | null {
+  let rtl = 0
+  let ltr = 0
+  for (const ch of text) {
+    if (RTL_CHAR.test(ch)) rtl++
+    else if (LTR_CHAR.test(ch)) ltr++
+  }
+  return rtl === 0 && ltr === 0 ? null : rtl > ltr ? 'rtl' : 'ltr'
+}
+
+/** A markdown text's prose: without its code (a fence still open too, while it streams), link addresses and web addresses. */
+function markdownProse(markdown: string): string {
+  return markdown
+    .replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[ \t]*$|(?![\s\S]))/gm, ' ')
+    .replace(/`+[^`\n]*`+/g, ' ')
+    .replace(/\]\([^)]*\)/g, ']')
+    .replace(/<[^<>\s]+>/g, ' ')
+    .replace(/\bhttps?:\/\/\S+/gi, ' ')
+}
+
+/**
+ * Which way an answer's text reads as a whole, set on it once: by most of its
+ * letters, not its first — an Arabic answer may well open with a machine's
+ * code ("LM4 …") — and never by its code or addresses. Set explicitly
+ * because dir="auto" on the text would hear nothing: every paragraph, item
+ * and heading in it says its own direction, and dir="auto" passes over
+ * them, falling back to left to right. Without a letter, left to right.
+ */
+export function proseDirection(markdown: string): 'rtl' | 'ltr' {
+  return letterDirection(markdownProse(markdown)) ?? 'ltr'
+}
+
+/** Which way a block of an answer reads (a list, a quote): by most of the letters in it outside code; null when it has none. */
+export function hastDirection(node: HastNode): 'rtl' | 'ltr' | null {
+  const out: string[] = []
+  const walk = (n: HastNode) => {
+    if (n.type === 'text') out.push(n.value ?? '')
+    else if (!isEl(n, 'code') && !isEl(n, 'pre')) n.children?.forEach(walk)
+  }
+  walk(node)
+  return letterDirection(out.join(' '))
+}
+
 /**
  * Which way a table reads: its header's, else its first cell that says.
  * Decided here and set on the table, because dir="auto" on every cell would
@@ -196,6 +240,17 @@ export function hastText(node: HastNode): string {
   }
   walk(node)
   return out.join('').replace(/\s+/g, ' ').trim()
+}
+
+/** A code block's language as the model named it ("```sql": "sql"); null when it named none, or nothing a language is called. */
+export function codeLanguage(pre: HastNode): string | null {
+  const code = pre.children?.find((c) => isEl(c, 'code'))
+  const names = code?.properties?.className
+  for (const name of Array.isArray(names) ? names : typeof names === 'string' ? names.split(/\s+/) : []) {
+    const m = /^language-([a-z0-9][\w+#.-]{0,19})$/i.exec(String(name))
+    if (m) return m[1]
+  }
+  return null
 }
 
 /** A node's text exactly as written (a code block's lines and indents kept). */

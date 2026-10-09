@@ -54,6 +54,18 @@ describe('§20 follow-up questions: the block however its tags are written', () 
     expect(stripSuggestions('The answer.\n\n<suggestions class="x', true)).toBe('The answer.')
   })
 
+  it('leaves a tag the answer only names in its text, and takes the block written after it', () => {
+    // Named in a sentence, the tag opens no block that runs to the end of the answer.
+    for (const named of ['Use `<suggestions>` to list them.\n\nMore', 'The <Suggestions> tag.\nNext line.', 'The <suggestionsx>\nthing.']) {
+      expect(stripSuggestions(named, true), named).toBe(named)
+    }
+    const after = 'The `<suggestions>` block holds the questions.\n\n<suggestions>\n- Which machine?\n</suggestions>'
+    expect(stripSuggestions(after, true)).toBe('The `<suggestions>` block holds the questions.')
+    expect(parseSuggestions(after)).toEqual(['Which machine?'])
+    // Cut off after a named tag: only the block on a line of its own goes.
+    expect(stripSuggestions('The `<suggestions>` block.\n\n<suggestions>\n- Which ma', true)).toBe('The `<suggestions>` block.')
+  })
+
   it('takes away the code fence a block was put in, and no fence of the answer’s own', () => {
     const fenced = 'There are **2** machines.\n\n```\n<suggestions>\n- Which machine?\n</suggestions>\n```'
     expect(stripSuggestions(fenced, true)).toBe('There are **2** machines.')

@@ -152,7 +152,8 @@ function Workspace() {
         <BotMark size="md" className="me-1 hidden sm:grid" />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-bold leading-tight sm:text-base">AI assistant</h1>
-          <p dir="auto" className="truncate text-xs text-muted">
+          {/* A title in Arabic reads right to left (and, too long, is cut at its own end), but sits under the heading. */}
+          <p dir="auto" className="truncate text-left text-xs text-muted">
             {pane === 'list' ? <span className="md:hidden">{list === 'reports' ? 'Your saved reports' : 'Your conversations'}</span> : null}
             <span className={cn(pane === 'list' && 'hidden md:inline')}>{reportId ? 'A saved report' : <AiConversationTitle />}</span>
           </p>
@@ -202,7 +203,7 @@ function Workspace() {
               My reports
             </ListTab>
           </div>
-          {list === 'conversations' ? <AiConversationList onPicked={toThread} onNew={newChat} /> : <AiReportList onOpen={(r) => openReport(r.id, r)} activeId={reportId} />}
+          {list === 'conversations' ? <AiConversationList onPicked={toThread} /> : <AiReportList onOpen={(r) => openReport(r.id, r)} activeId={reportId} />}
         </aside>
 
         <section aria-label={reportId ? 'Saved report' : 'Conversation'} className={cn('min-h-0 min-w-0 flex-1 flex-col md:flex', pane === 'main' ? 'flex' : 'hidden')}>

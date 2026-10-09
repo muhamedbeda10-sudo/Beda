@@ -213,9 +213,11 @@ export const Answer = memo(function Answer({
   const save = useSaveAsReport(ended, onOpenReport)
   const chips = latest && ended && onSuggestion ? suggestionChips(ended.suggestions) : []
   const last = parts.at(-1)
-  // Between queries and before the first word, say what the model is doing. Not a live region: it
-  // changes several times a second; the thread's status line says when the phase changes.
-  const working = writing && (turn.progress ?? (!last || last.type !== 'text' ? (turn.phase === 'sending' ? 'Sending…' : 'Thinking…') : null))
+  // Between queries and before the first word, say what the model is doing: its latest word on it, or "Thinking…".
+  // While a query runs, its card says so with its own spinner. Not a live region: it changes several times a
+  // second; the thread's status line says when the phase changes.
+  const querying = last?.type === 'pending-query' && last.state === 'running'
+  const working = writing && (turn.progress ?? (querying || last?.type === 'text' ? null : turn.phase === 'sending' ? 'Sending…' : 'Thinking…'))
   // The caret follows the text as it is written: the last block, while text is what is arriving.
   const caretAt = writing && last?.type === 'text' && !working ? blocks.at(-1)?.key : undefined
   const retry = ended?.stopReason && ended.stopReason !== 'end_turn' && ended.stopReason !== 'refusal'
