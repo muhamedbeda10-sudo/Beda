@@ -1,17 +1,16 @@
 // ============================================================================
 // §20 — the assistant's panel, loaded the first time it opens (AiPanelHost
-// frames it). The header carries the mark, the month's spend against the
-// cap, New chat, History, My reports and Close; below it the conversation
-// and the question box, the list of conversations, or the saved reports —
-// their list, or one report run.
+// frames it). The header carries the mark, New chat, History, My reports and
+// Close — no amounts: what the assistant costs is on its owner's page alone.
+// Below it the conversation and the question box, the list of
+// conversations, or the saved reports — their list, or one report run.
 // ============================================================================
 
 import { useCallback, useState } from 'react'
 import { FileChartColumn, History, SquarePen, X } from 'lucide-react'
 import type { AiReportSummary } from '@qc/shared/ai'
-import { Badge } from '@/components/ui'
 import { cn } from '@/lib/utils'
-import { useAiMessages, useAiStatus } from '@/services/queries'
+import { useAiMessages } from '@/services/queries'
 import { useAi, useAiLive } from './AiAssistantProvider'
 import { AiComposer } from './AiComposer'
 import { AiConversationList } from './AiConversationList'
@@ -19,7 +18,6 @@ import { BotMark } from './AiMessages'
 import { AiReportList } from './AiReportList'
 import { AiReportView } from './AiReportView'
 import { AiThread } from './AiThread'
-import { formatCap, formatMonth, formatUsd, spendTone, utcMonth } from './format'
 import { spentFocus, type ComposerFocus } from './suggestions'
 
 type View = 'thread' | 'history' | 'reports'
@@ -40,7 +38,6 @@ export default function AiPanel() {
   // The unsent question lives here while the panel is open, and in the provider's ref while it is closed.
   const [draft, setDraftState] = useState(() => ai.draft.current)
   const [focus, setFocus] = useState<ComposerFocus>({ key: 0, always: false })
-  const { data: status } = useAiStatus(ai.enabled)
 
   const { draft: kept, openConversation, setOpen } = ai
   const setDraft = useCallback(
@@ -106,16 +103,6 @@ export default function AiPanel() {
             {view === 'history' ? 'Your conversations' : view === 'reports' ? 'Your saved reports' : <ConversationTitle />}
           </p>
         </div>
-        {status && (
-          <Badge
-            tone={spendTone(status.spentUsd, status.capUsd)}
-            // The narrowest phones need the room for the four buttons; the spend is on the administration page too.
-            className="hidden tabular-nums min-[380px]:inline-flex"
-            tip={`Spent in ${formatMonth(utcMonth(0, new Date(status.monthStart)))} (UTC), of the monthly cap. It resets on the 1st.`}
-          >
-            {formatUsd(status.spentUsd)} / {formatCap(status.capUsd)}
-          </Badge>
-        )}
         <button type="button" onClick={newChat} className={HEAD_BTN} aria-label="New chat" data-tip="New chat">
           <SquarePen className="h-5 w-5" />
         </button>
@@ -141,7 +128,7 @@ export default function AiPanel() {
       ) : (
         <>
           <AiThread onAskAgain={fill} onExample={fill} onSuggestion={suggest} onOpenReport={openReport} />
-          <AiComposer value={draft} onChange={setDraft} status={status} focus={focus} onFocusUsed={focusUsed} />
+          <AiComposer value={draft} onChange={setDraft} focus={focus} onFocusUsed={focusUsed} />
         </>
       )}
     </>

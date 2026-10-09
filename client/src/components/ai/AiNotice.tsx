@@ -1,9 +1,11 @@
-// §20 — the inline words on how an answer ended when it did not simply finish, and on why the assistant cannot answer now.
+// §20 — the inline words on how an answer ended when it did not simply finish, and on why the assistant cannot answer now:
+// plainly in the question box, precisely on the owner's page.
 
 import type { ReactNode } from 'react'
 import { AlertTriangle, CircleStop, Info, OctagonX } from 'lucide-react'
 import type { AiStopReason, AiUnavailableReason } from '@qc/shared/ai'
 import { cn } from '@/lib/utils'
+import { AI_BLOCK_TEXT, type AiBlock } from './access'
 import { STOP_TEXT, UNAVAILABLE_TEXT } from './format'
 
 type Tone = 'neutral' | 'amber' | 'red'
@@ -55,7 +57,16 @@ export function StopNotice({ reason, notice, action }: { reason: AiStopReason | 
   )
 }
 
-/** Why nothing can be asked right now. */
+/** Why the person in the panel cannot ask now: a plain sentence, the same for everyone. */
+export function BlockedNotice({ reason, action }: { reason: AiBlock; action?: ReactNode }) {
+  return (
+    <Notice tone={reason === 'unavailable' ? 'amber' : 'red'} action={action}>
+      {AI_BLOCK_TEXT[reason]}
+    </Notice>
+  )
+}
+
+/** Why nobody can ask right now, precisely: the owner's page. */
 export function UnavailableNotice({ reason, action }: { reason: AiUnavailableReason; action?: ReactNode }) {
   return (
     <Notice tone={reason === 'cap-reached' ? 'red' : 'amber'} action={action}>

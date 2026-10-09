@@ -1,5 +1,5 @@
 // ============================================================================
-// §20 — My reports: the answers this administrator saved to run again, the
+// §20 — My reports: the answers this person saved to run again, the
 // latest changed first. Search their titles and questions, open one, rename
 // one in place, remove one, page back through older ones. Nobody else sees
 // them.

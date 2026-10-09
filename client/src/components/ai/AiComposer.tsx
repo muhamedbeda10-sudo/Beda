@@ -2,18 +2,19 @@
 // §20 — the question box. Enter sends on a keyboard and Shift+Enter breaks
 // the line; on a touch screen Enter breaks the line and the button sends.
 // While an answer is written the button stops it. When the assistant cannot
-// answer (no key, switched off, the month's budget spent) the box says why.
+// answer the box says so plainly — this month's limit, or "not available" —
+// and only its owner is offered the settings, where the precise reason is.
 // ============================================================================
 
 import { useEffect, useRef, type KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowUp, Square } from 'lucide-react'
-import { AI_MAX_MESSAGE_CHARS, type AiStatusResponse } from '@qc/shared/ai'
-import { can } from '@qc/shared/rules'
-import { useAuth } from '@/store/AuthContext'
+import { AI_MAX_MESSAGE_CHARS } from '@qc/shared/ai'
 import { cn } from '@/lib/utils'
+import { useAiMe } from '@/services/queries'
+import { aiBlock } from './access'
 import { useAi, useAiLive } from './AiAssistantProvider'
-import { UnavailableNotice } from './AiNotice'
+import { BlockedNotice } from './AiNotice'
 import { takesCaret, type ComposerFocus } from './suggestions'
 
 const isTouch = () => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none)').matches
@@ -27,23 +28,21 @@ function caretAtEnd(el: HTMLTextAreaElement) {
 export function AiComposer({
   value,
   onChange,
-  status,
   focus,
   onFocusUsed,
 }: {
   value: string
   onChange: (v: string) => void
-  status: AiStatusResponse | undefined
   focus: ComposerFocus
   /** The request was acted on: its `always` is spent (see spentFocus). */
   onFocusUsed: () => void
 }) {
-  const { role } = useAuth()
   const { send, stop, busy, conversationId, openConversation, docked, setOpen } = useAi()
   const live = useAiLive()
+  const { data: me } = useAiMe()
   const area = useRef<HTMLTextAreaElement>(null)
 
-  const blocked = status && !status.available ? (status.reason ?? 'reader-unavailable') : null
+  const blocked = aiBlock(me)
   // One answer at a time: one being written in another conversation holds this box too.
   const elsewhere = busy && !!live && live.conversationId !== conversationId
   const canSend = !busy && !blocked && value.trim().length > 0
@@ -84,7 +83,8 @@ export function AiComposer({
     submit()
   }
 
-  const settings = blocked && blocked !== 'reader-unavailable' && can(role, 'manage-admin-data') && (
+  // The owner alone has somewhere to go about it: the settings page says precisely why, and holds the switch, the key and the caps.
+  const settings = blocked && me?.owner && (
     <Link to="/admin/ai" onClick={() => !docked && setOpen(false)} className="text-xs font-semibold underline underline-offset-2">
       Open the assistant's settings
     </Link>
@@ -92,7 +92,7 @@ export function AiComposer({
 
   return (
     <div className="shrink-0 border-t border-slate-200 bg-white/95 px-3 pb-3 pt-2 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 safe-bottom">
-      {blocked && <UnavailableNotice reason={blocked} action={settings || undefined} />}
+      {blocked && <BlockedNotice reason={blocked} action={settings || undefined} />}
       {elsewhere && (
         <p className="mb-2 flex flex-wrap items-center gap-x-2 text-xs text-muted">
           Still answering in another conversation.

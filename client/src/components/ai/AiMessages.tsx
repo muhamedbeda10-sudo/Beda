@@ -2,7 +2,7 @@
 // §20 — the two sides of a conversation. A question is a bubble on the right;
 // an answer runs the panel's full width (its tables need it), led by the
 // assistant's mark, its text and its query cards in the order they came,
-// then how it ended, what it cost, Save as report and a Copy; the latest
+// then how it ended, when, Save as report and a Copy; the latest
 // answer also offers the questions the model suggests asking next. A saved
 // message changes only when it is saved as a report, so it is memoised; the
 // answer being written redraws once per frame.
@@ -18,7 +18,6 @@ import { AiQueryCard } from './AiQueryCard'
 import { Notice, StopNotice } from './AiNotice'
 import { useSaveAsReport } from './AiSaveReport'
 import { AiSuggestions } from './AiSuggestions'
-import { formatUsd } from './format'
 import { answerText, isInFlight, type LivePart, type LiveTurn } from './liveTurn'
 import { liveDisplayParts, suggestionChips } from './suggestions'
 
@@ -79,8 +78,8 @@ function AskAgain({ question, onAskAgain }: { question?: string; onAskAgain?: (q
   )
 }
 
-/** `extra`: what else the answer offers, beside Copy (Save as report). */
-function AnswerFooter({ parts, costUsd, at, extra }: { parts: readonly LivePart[]; costUsd?: number; at: string; extra?: ReactNode }) {
+/** `extra`: what else the answer offers, beside Copy (Save as report). No cost: the chat shows no amounts, to anyone. */
+function AnswerFooter({ parts, at, extra }: { parts: readonly LivePart[]; at: string; extra?: ReactNode }) {
   const { toast } = useApp()
   const text = answerText(parts)
   const copy = async () => {
@@ -96,12 +95,6 @@ function AnswerFooter({ parts, costUsd, at, extra }: { parts: readonly LivePart[
       <time dateTime={at} data-tip={formatFullTimestamp(at)}>
         {formatTime(at)}
       </time>
-      {costUsd !== undefined && (
-        <>
-          <span aria-hidden>·</span>
-          <span data-tip="What this answer cost, every call to the model it took">{formatUsd(costUsd)}</span>
-        </>
-      )}
       {extra && <span className="ms-auto inline-flex">{extra}</span>}
       {text && (
         <button
@@ -178,7 +171,7 @@ export const Answer = memo(function Answer({
         </Notice>
       )}
       {ended && <StopNotice reason={ended.stopReason} notice={ended.notice} action={retry ? <AskAgain question={question} onAskAgain={onAskAgain} /> : undefined} />}
-      {ended && <AnswerFooter parts={ended.parts} costUsd={ended.costUsd} at={ended.createdAt} extra={save.button} />}
+      {ended && <AnswerFooter parts={ended.parts} at={ended.createdAt} extra={save.button} />}
       {save.notice}
       {chips.length > 0 && onSuggestion && <AiSuggestions questions={chips} onPick={onSuggestion} />}
     </AnswerFrame>
