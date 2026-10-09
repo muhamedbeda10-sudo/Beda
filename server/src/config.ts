@@ -72,6 +72,16 @@ const schema = z
       .string()
       .optional()
       .transform((v) => (v && v.trim() ? v.trim() : undefined)),
+    /**
+     * §20 — the username of the one account that controls the AI assistant
+     * (its key, switch, caps, who may use it, what it costs). Read once, when
+     * no owner is pinned yet: the live, active account of that name is pinned
+     * for good, and a later change here only logs a warning.
+     */
+    AI_OWNER_USERNAME: z
+      .string()
+      .optional()
+      .transform((v) => (v && v.trim() ? v.trim() : 'beda')),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.IMAGE_STORAGE_DRIVER === 'azure-blob' && !cfg.AZURE_STORAGE_CONNECTION_STRING) {

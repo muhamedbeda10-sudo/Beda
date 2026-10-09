@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-09.3',
+    date: '2026-10-09',
+    title: 'AI assistant: given person by person',
+    items: [
+      { text: 'The AI assistant is now given to specific people rather than to every administrator. Those who have it see the assistant button in the header (or in the menu on a phone); each can ask about the parts of the record they were given.' },
+      { text: 'Answers no longer show what they cost.' },
+    ],
+  },
+  {
     id: '2026-10-09.2',
     date: '2026-10-09',
     title: 'AI assistant: questions to ask next, and answers kept as reports',

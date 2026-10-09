@@ -4,7 +4,7 @@
 // run again any day from My reports. Saving asks the model once to make the
 // question's period changeable ("last 30 days" stays the last 30 days); when
 // that cannot be done the report keeps the period as asked, and says so here
-// once. With the month's budget spent, it can still be saved as asked,
+// once. With this month's limit reached, it can still be saved as asked,
 // which needs no call to the model.
 // ============================================================================
 
@@ -50,7 +50,7 @@ export function useSaveAsReport(message: AiMessage | null, onOpenReport?: (id: s
     done.then(
       () => toast('Saved to My reports.', 'success'),
       (e: unknown) => {
-        // The cap is reached: making the period adjustable needs the model, saving it as asked does not — offered below the answer.
+        // A monthly limit is reached: making the period adjustable needs the model, saving it as asked does not — offered below the answer.
         if (adjustable && e instanceof ApiError && e.code === 'ai_budget_reached') return
         toast(e instanceof Error ? e.message : 'Could not save the report.', 'error')
       },
@@ -91,7 +91,7 @@ export function useSaveAsReport(message: AiMessage | null, onOpenReport?: (id: s
           </Button>
         }
       >
-        This month's budget is spent, so the report's period cannot be made adjustable now. It can still be saved with the period fixed as asked.
+        This month's limit for the assistant is reached, so the report's period cannot be made adjustable now. It can still be saved with the period fixed as asked.
       </Notice>
     ) : fixedWhy && reportId ? (
       <Notice tone="neutral" icon={Info}>

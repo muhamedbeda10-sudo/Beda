@@ -1,13 +1,29 @@
 // ============================================================================
-// §20 — the follow-up questions an answer ends with. The model closes every
-// answer with a <suggestions> block; the server takes it out of the saved
-// answer and hands the questions over as `AiMessage.suggestions`. While the
-// answer is still being written, the block arrives as text like any other,
-// so the thread hides it here — from its first characters, so the tag never
-// flashes on screen before the server's copy takes over.
+// §20 — the questions the assistant offers: the first ones, in an empty
+// conversation, and the follow-up questions an answer ends with. The model
+// closes every answer with a <suggestions> block; the server takes it out of
+// the saved answer and hands the questions over as `AiMessage.suggestions`.
+// While the answer is still being written, the block arrives as text like any
+// other, so the thread hides it here — from its first characters, so the tag
+// never flashes on screen before the server's copy takes over.
 // ============================================================================
 
 import type { LivePart } from './liveTurn'
+
+/**
+ * What someone might ask first; a tap puts it in the box to send or change.
+ * The app does not know which data the person was given, and any one of the
+ * four may be all they have, so each of these is answerable whatever it is:
+ * what the assistant can read for them (its instructions list it), or the
+ * machine register, which everyone given the assistant can read. The answer's
+ * follow-up questions then come from the data they do have.
+ */
+export const AI_STARTER_QUESTIONS: readonly string[] = [
+  'What can I ask you about, and what would be a good first question?',
+  'أقدر أسألك عن إيه بالظبط؟ اقترح عليا كام سؤال مفيد.',
+  'How many machines are on each production line, and what process does each run?',
+  'ما الماكينات المستبعدة من أرقام لوحة المتابعة، وعلى أي خط تعمل كل منها؟',
+]
 
 /** Follow-up questions shown under an answer, at most. */
 export const AI_MAX_SUGGESTIONS = 3

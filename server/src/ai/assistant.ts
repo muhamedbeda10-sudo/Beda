@@ -11,7 +11,15 @@
 //     empty one, which the API would refuse anywhere but at the end.
 //   • every call's cost is written the moment the call ends, and before every
 //     call the month's spend plus the most that call could cost must stay
-//     within the cap.
+//     within both caps, the assistant's and the asker's own; the asker's
+//     access is read again then too, so a person the owner stops (or an
+//     account deactivated) gets no further call.
+//   • each query the model asks for runs as the asker's domains as they are
+//     when it runs, read again right before it: a domain the owner takes away
+//     while the model was writing is gone for that query already, and a
+//     person the owner stops meanwhile gets no query run at all.
+//   • each question runs on the model and effort the owner set for the asker
+//     when it was asked, shaped for that model (models.ts).
 //   • the model's tool input is checked here (eager input streaming means the
 //     API no longer does), and a query only ever runs through the sandbox.
 // ============================================================================
@@ -20,11 +28,11 @@ import { randomUUID } from 'node:crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import type pg from 'pg'
 import {
-  AI_MODEL,
   AI_PREVIEW_ROWS,
-  AI_PRICES,
-  AI_UNKNOWN_MODEL_PRICE,
   aiCostUsd,
+  type AiDomain,
+  type AiEffort,
+  type AiModelId,
   type AiStopReason,
   type AiStreamEvent,
   type AiTokenUsage,
@@ -32,10 +40,12 @@ import {
 import type { ApiErrorCode } from '@qc/shared/api'
 import type { Config } from '../config'
 import { withTransaction, type Db } from '../db/pool'
+import { ACCESS_NOTICE, checkCall, isGranted, loadAccess } from './access'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
+import { MAX_TOKENS, MAX_TOKENS_RETRY, modelRequest, systemBlocks, worstCaseUsd } from './models'
 import { RUN_SQL_TOOL_NAME, RunSqlInput } from './prompt'
 import { AI_QUERY_STOPPED, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
-import { appendMessages, insertQueries, monthSpend, queryPart, recordUsage, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
+import { appendMessages, insertQueries, queryPart, recordUsage, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
 
 type MessageParam = Anthropic.Beta.BetaMessageParam
 type ContentBlock = Anthropic.Beta.BetaContentBlock
@@ -43,9 +53,6 @@ type ContentBlockParam = Anthropic.Beta.BetaContentBlockParam
 type ToolUse = Anthropic.Beta.BetaToolUseBlock
 type ToolResult = Anthropic.Beta.BetaToolResultBlockParam
 
-/** Room for thinking and the reply; once more at the larger size when a tool call was cut off. */
-const MAX_TOKENS = 32_000
-const MAX_TOKENS_RETRY = 64_000
 /** Calls to the model one question may take. */
 const MAX_CALLS = 10
 /** pause_turn continuations (server tools only; there are none, so this is a guard). */
@@ -69,8 +76,6 @@ const CUT_OFF_TOKENS_PER_SECOND = 200
 const EMPTY_RETRIES = 1
 const CONTINUE_PROMPT = 'Please continue.'
 
-const BETAS: Anthropic.Beta.AnthropicBeta[] = ['server-side-fallback-2026-07-01', 'thinking-binding-controls-2026-08-01']
-
 const NOTICE = {
   stopped: 'Stopped before the answer was finished.',
   steps: 'This question needed more steps than one answer may take. Ask a narrower question.',
@@ -92,18 +97,31 @@ const INTERRUPTED: Record<Cause, { running: string; notRun: string }> = {
   time: { running: 'Stopped: the answer reached its time limit.', notRun: 'Not run: the answer reached its time limit.' },
 }
 
+/** The result a query gets when the asker lost the assistant while the model was writing: it never ran. */
+export const WITHDRAWN_NOT_RUN = 'Not run: the person asking no longer has access to the assistant.'
+
+/** Where a step's queries run: the pool of the asker's domains, which read those views and no others. */
+export interface Readers {
+  poolFor(domains: readonly AiDomain[]): pg.Pool | null
+}
+
 export interface Question {
   db: Db
-  reader: pg.Pool | null
+  /** The asker's queries run as their domains as they stand when each runs: a domain the owner takes away is gone for the next query. */
+  readers: Readers
   model: AiModelClient
   apiKey: string
   config: Config
   userId: string
+  /** The model and effort the owner set for the asker, as they stood when the question was asked. */
+  modelId: AiModelId
+  effort: AiEffort
+  /** The asker controls the assistant: told precisely why it failed, where others are told it is not available. */
+  owner?: boolean
   conversation: { id: string; systemPrompt: string; tools: Anthropic.Beta.BetaToolUnion[] }
   turnId: string
   /** The replay, ending with this question. */
   messages: MessageParam[]
-  capUsd: number
   emit: (event: AiStreamEvent) => void
   /** Aborts when the asker presses Stop or leaves. */
   signal: AbortSignal
@@ -166,10 +184,11 @@ const NO_TOKENS: AiTokenUsage = { inputTokens: 0, outputTokens: 0, cacheWrite5mT
 /**
  * A finished call's tokens and cost. With a fallback, `usage.iterations` is
  * the record of every attempt, each billed at its own model's rates; the
- * top-level usage covers only the last one. Never both.
+ * top-level usage covers only the last one. Never both. `requested`: the
+ * model the call asked for, which an attempt that names none ran on.
  */
-export function usageOf(message: ModelMessage): { model: string; tokens: AiTokenUsage; costUsd: number } {
-  const model = message.model || AI_MODEL
+export function usageOf(message: ModelMessage, requested: string): { model: string; tokens: AiTokenUsage; costUsd: number } {
+  const model = message.model || requested
   const iterations = message.usage.iterations ?? []
   if (iterations.length === 0) {
     const tokens = tokensOf(message.usage)
@@ -179,7 +198,7 @@ export function usageOf(message: ModelMessage): { model: string; tokens: AiToken
   let cost = 0
   for (const it of iterations) {
     // An attempt that names no model ran on the model asked for.
-    const itModel = ('model' in it && it.model) || AI_MODEL
+    const itModel = ('model' in it && it.model) || requested
     const t = tokensOf(it)
     tokens = addTokens(tokens, t)
     cost += aiCostUsd(itModel, t)
@@ -187,51 +206,40 @@ export function usageOf(message: ModelMessage): { model: string; tokens: AiToken
   return { model, tokens, costUsd: Math.round(cost * 1_000_000) / 1_000_000 }
 }
 
-const modelPrice = () => AI_PRICES[AI_MODEL] ?? AI_UNKNOWN_MODEL_PRICE
-
-/** The most a call could cost: every input token written to the cache, every output token used. */
-export function worstCaseUsd(params: Pick<ModelParams, 'system' | 'tools' | 'messages' | 'max_tokens'>): number {
-  const price = modelPrice()
-  // About three characters a token, rounded the dear way.
-  const inputTokens = Math.ceil(JSON.stringify([params.system, params.tools, params.messages]).length / 3)
-  return (inputTokens * Math.max(price.input, price.cacheWrite5m) + params.max_tokens * price.output) / 1_000_000
-}
-
-/**
- * The most the first call of an answer could cost: the loop's own test before
- * that call, so a question refused here is one the loop would have stopped
- * without calling the model. Without a conversation (the status has none),
- * the least any call may cost: its whole output.
- */
-export function minCallWorstCaseUsd(start?: { conversation: Question['conversation']; messages: MessageParam[] }): number {
-  if (!start) return (MAX_TOKENS * modelPrice().output) / 1_000_000
-  return worstCaseUsd({ system: systemOf(start.conversation), tools: start.conversation.tools, messages: start.messages, max_tokens: MAX_TOKENS })
-}
-
 // ---- Errors --------------------------------------------------------------------------
 
-export const KEY_REFUSED_MESSAGE =
-  'The API key was refused by Anthropic. An administrator can set a new one under Administration → AI assistant.'
+export const KEY_REFUSED_MESSAGE = 'The API key was refused by Anthropic. Set a new one under Administration → AI assistant.'
+/** What someone who does not control the assistant is told when its key or account is the trouble: theirs to wait out, not to fix. */
+export const NOT_AVAILABLE_MESSAGE = 'The assistant is not available right now. Try again later.'
 const BUSY_MESSAGE = 'Claude is busy right now — try again in a minute.'
 
-/** A failed answer as the asker is told: a short sentence, never the API's own text. */
-export function describeModelFailure(err: unknown, conversationId: string): { code: ApiErrorCode; message: string } {
+/**
+ * A failed answer as the asker is told: a short sentence, never the API's own
+ * text. The owner learns what to fix (the key, the account); anyone else only
+ * that the assistant is not available.
+ */
+export function describeModelFailure(err: unknown, conversationId: string, owner = false): { code: ApiErrorCode; message: string } {
   const where = `[ai] conversation ${conversationId}:`
   if (err instanceof Anthropic.APIError) {
     // The message and the request id only: an error's request details are never logged.
     const logIt = () => console.warn(where, `${err.constructor.name}${err.requestID ? ` (request ${err.requestID})` : ''}: ${err.message}`)
-    if (err instanceof Anthropic.AuthenticationError) return { code: 'ai_unavailable', message: KEY_REFUSED_MESSAGE }
+    const ownersOnly = (message: string) => ({ code: 'ai_unavailable' as const, message: owner ? message : NOT_AVAILABLE_MESSAGE })
+    if (err instanceof Anthropic.AuthenticationError) {
+      logIt()
+      return ownersOnly(KEY_REFUSED_MESSAGE)
+    }
     if (err instanceof Anthropic.PermissionDeniedError) {
       logIt()
-      return { code: 'ai_unavailable', message: 'Anthropic does not allow this API key to use the assistant. An administrator can check the key under Administration → AI assistant.' }
+      return ownersOnly('Anthropic does not allow this API key to use the assistant. Check the key under Administration → AI assistant.')
     }
     if (err instanceof Anthropic.NotFoundError) {
       logIt()
-      return { code: 'ai_unavailable', message: "This API key cannot use the assistant's model. An administrator can check the key under Administration → AI assistant." }
+      return ownersOnly('This API key cannot use the model set for you. Check the key, or choose another model, under Administration → AI assistant.')
     }
     if (err instanceof Anthropic.RateLimitError || err.type === 'overloaded_error' || err.status === 529) return { code: 'rate_limited', message: BUSY_MESSAGE }
     if (err.type === 'billing_error' || err.status === 402) {
-      return { code: 'ai_unavailable', message: 'The Anthropic account behind the API key cannot be billed. An administrator can check it in the Anthropic console.' }
+      logIt()
+      return ownersOnly('The Anthropic account behind the API key cannot be billed. Check it in the Anthropic console.')
     }
     if (err instanceof Anthropic.APIConnectionError) {
       logIt()
@@ -275,27 +283,14 @@ export async function answerQuestion(qn: Question): Promise<Outcome> {
   }
 }
 
-/** The stored system prompt, marked for the cache. */
-const systemOf = (conversation: Question['conversation']): Anthropic.Beta.BetaTextBlockParam[] => [
-  { type: 'text', text: conversation.systemPrompt, cache_control: { type: 'ephemeral' } },
-]
-
 function requestParams(qn: Question, messages: MessageParam[], maxTokens: number): ModelParams {
   return {
-    model: AI_MODEL,
+    // In tests an edited history must fail loudly; in production it costs the thinking, not the answer.
+    ...modelRequest(qn.modelId, qn.effort, qn.config.NODE_ENV === 'test' ? 'error' : 'drop_block'),
     max_tokens: maxTokens,
-    betas: BETAS,
-    fallbacks: 'default',
-    thinking: {
-      type: 'adaptive',
-      display: 'summarized',
-      // In tests an edited history must fail loudly; in production it costs the thinking, not the answer.
-      block_binding: { prefix_mismatch_behavior: qn.config.NODE_ENV === 'test' ? 'error' : 'drop_block' },
-    },
-    output_config: { effort: 'medium' },
     // The growing conversation is cached automatically; the system prompt (and the tools before it) explicitly.
     cache_control: { type: 'ephemeral' },
-    system: systemOf(qn.conversation),
+    system: systemBlocks(qn.conversation.systemPrompt),
     tools: qn.conversation.tools,
     messages: [...messages],
   }
@@ -315,13 +310,9 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
     if (signal.aborted) return stopped()
     if (calls >= MAX_CALLS) return { stopReason: 'limit', notice: NOTICE.steps }
     const params = requestParams(qn, messages, maxTokens)
-    const { spentUsd } = await monthSpend(qn.db)
-    if (spentUsd + worstCaseUsd(params) > qn.capUsd) {
-      return {
-        stopReason: 'cap',
-        notice: `This month's spending cap ($${qn.capUsd.toFixed(2)}) would be passed, so the answer stopped. An administrator can raise the cap under Administration → AI assistant.`,
-      }
-    }
+    // The asker's access and both caps, as they stand now: the owner may have changed them since the answer began.
+    const stop = await checkCall(qn.db, qn.userId, worstCaseUsd(params))
+    if (stop) return stop
     calls++
 
     const stream = qn.model.stream(qn.apiKey, params, { signal })
@@ -332,7 +323,7 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
     } catch (err) {
       // A stream that failed on its own may still be reading the response, which would go uncounted: stop it.
       if (!(err instanceof Anthropic.APIUserAbortError)) stream.abort()
-      await recordCutOffUsage(qn.db, { userId: qn.userId, conversationId: qn.conversation.id, turnId: qn.turnId }, stream, watch, params.max_tokens)
+      await recordCutOffUsage(qn.db, { userId: qn.userId, conversationId: qn.conversation.id, turnId: qn.turnId }, stream, watch, params)
       if (err instanceof Anthropic.APIUserAbortError || signal.aborted) return stopped()
       if (err instanceof Anthropic.APIError) {
         // An error event inside an open stream (no status) is not retried by the SDK: once here.
@@ -345,7 +336,7 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
     }
     jsonRetries = 0
     streamRetries = 0
-    const usage = usageOf(message)
+    const usage = usageOf(message, params.model)
     await recordUsage(qn.db, {
       userId: qn.userId,
       conversationId: qn.conversation.id,
@@ -420,18 +411,34 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
     // Every call is answered, in one message, in order; once the answer is cut short the rest are not run.
     const results: ToolResult[] = []
     const queries: QueryRecord[] = []
+    let withdrawn = false
     for (const tu of toolUses) {
-      if (signal.aborted) results.push({ type: 'tool_result', tool_use_id: tu.id, is_error: true, content: INTERRUPTED[cause()].notRun })
-      else results.push(await runToolUse(qn, tu, queries, signal, cause))
+      if (signal.aborted) {
+        results.push(notRun(tu, INTERRUPTED[cause()].notRun))
+        continue
+      }
+      // The asker's domains as they are now, not as they were before the call: the owner may have
+      // changed them, or taken the assistant away, while the model was writing. One indexed read.
+      const access = withdrawn ? null : await loadAccess(qn.db, qn.userId)
+      if (!isGranted(access)) {
+        withdrawn = true
+        results.push(notRun(tu, WITHDRAWN_NOT_RUN))
+        continue
+      }
+      results.push(await runToolUse(qn, qn.readers.poolFor(access.domains), tu, queries, signal, cause))
     }
     const stored = await withTransaction(qn.db, async (tx) => {
       const appended = await appendMessages(tx, qn.conversation.id, qn.turnId, [answerMessage(), { role: 'user', kind: 'tool_results', content: results }])
       await insertQueries(tx, qn.conversation.id, qn.turnId, queries)
       return appended
     })
+    // Kept whole, results included, so the conversation can go on should the owner give it back.
+    if (withdrawn) return { stopReason: 'stopped', notice: ACCESS_NOTICE.withdrawn }
     messages.push(...stored.map((s) => s.param))
   }
 }
+
+const notRun = (tu: ToolUse, why: string): ToolResult => ({ type: 'tool_result', tool_use_id: tu.id, is_error: true, content: why })
 
 /** Whether a reply wrote anything the asker can read. */
 const hasText = (content: ContentBlockParam[]) => content.some((b) => b.type === 'text' && b.text.trim() !== '')
@@ -447,7 +454,14 @@ async function persist(qn: Question, messages: NewMessage[]): Promise<MessagePar
  * to the model. A Stop or the clock cancels the query itself, so the answer
  * ends at once rather than when the query would have.
  */
-async function runToolUse(qn: Question, tu: ToolUse, queries: QueryRecord[], signal: AbortSignal, cause: () => Cause): Promise<ToolResult> {
+async function runToolUse(
+  qn: Question,
+  reader: pg.Pool | null,
+  tu: ToolUse,
+  queries: QueryRecord[],
+  signal: AbortSignal,
+  cause: () => Cause,
+): Promise<ToolResult> {
   // A near-miss of the name (Run_SQL) is still the one tool.
   if (tu.name.toLowerCase() !== RUN_SQL_TOOL_NAME) {
     return { type: 'tool_result', tool_use_id: tu.id, is_error: true, content: `Unknown tool "${tu.name}". The only tool is "${RUN_SQL_TOOL_NAME}".` }
@@ -459,7 +473,7 @@ async function runToolUse(qn: Question, tu: ToolUse, queries: QueryRecord[], sig
   const { purpose, sql } = parsed.data
   const queryId = randomUUID()
   qn.emit({ type: 'query_start', queryId, purpose, sql })
-  const run = await runReadOnlyQuery(qn.reader, sql, { maxRows: AI_PREVIEW_ROWS, timeoutMs: CHAT_QUERY_TIMEOUT_MS, timeZone: qn.config.FACTORY_TIMEZONE, signal })
+  const run = await runReadOnlyQuery(reader, sql, { maxRows: AI_PREVIEW_ROWS, timeoutMs: CHAT_QUERY_TIMEOUT_MS, timeZone: qn.config.FACTORY_TIMEZONE, signal })
   // Stopped through the signal (not a failure of its own that came first): the replay keeps why.
   if (!run.ok && run.error === AI_QUERY_STOPPED) run.error = INTERRUPTED[cause()].running
   const preview = previewOf(run)
@@ -534,11 +548,12 @@ export async function recordCutOffUsage(
   owner: Pick<UsageRecord, 'userId' | 'conversationId' | 'turnId'>,
   stream: ModelStream,
   watch: StreamWatch,
-  maxTokens: number,
+  request: Pick<ModelParams, 'model' | 'max_tokens'>,
 ): Promise<void> {
   const current = stream.currentMessage
   if (!current) return
-  const model = current.model || AI_MODEL
+  const maxTokens = request.max_tokens
+  const model = current.model || request.model
   const reported = tokensOf(current.usage)
   const started = watch.startedAt()
   const seconds = started === null ? 0 : (Date.now() - started) / 1000

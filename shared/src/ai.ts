@@ -34,6 +34,8 @@ export interface AiPrice {
   /** Writing the prompt cache, one-hour lifetime. */
   cacheWrite1h: number
   cacheRead: number
+  /** Rates for a call whose prompt (input, cache reads and writes together) is above `aboveInputTokens`. */
+  long?: { aboveInputTokens: number; input: number; output: number; cacheWrite5m: number; cacheWrite1h: number; cacheRead: number }
 }
 
 export const AI_PRICES: Readonly<Record<string, AiPrice>> = {
@@ -41,7 +43,19 @@ export const AI_PRICES: Readonly<Record<string, AiPrice>> = {
   // A refusal may be rescued by another model, billed at its own rates: Sonnet 5.5's is Sonnet 5.
   'claude-sonnet-5': { input: 2, output: 10, cacheWrite5m: 2.5, cacheWrite1h: 4, cacheRead: 0.2 },
   'claude-opus-5-5': { input: 4, output: 20, cacheWrite5m: 5, cacheWrite1h: 8, cacheRead: 0.2 },
+  // Opus 5.5's and Fable 5.1's are Opus 5 or Opus 4.8, at the same rates.
+  'claude-opus-5': { input: 5, output: 25, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5 },
+  'claude-opus-4-8': { input: 5, output: 25, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5 },
   'claude-fable-5-1': { input: 10, output: 50, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25 },
+  // Haiku 5.5 is billed at a fifth of its long-prompt rate up to 100K prompt tokens; cache at the usual 1.25×/2×/0.1×.
+  'claude-haiku-5-5': {
+    input: 0.1,
+    output: 0.5,
+    cacheWrite5m: 0.125,
+    cacheWrite1h: 0.2,
+    cacheRead: 0.01,
+    long: { aboveInputTokens: 100_000, input: 0.5, output: 2.5, cacheWrite5m: 0.625, cacheWrite1h: 1, cacheRead: 0.05 },
+  },
 }
 
 /** A model not in the table is counted at the dearest known rates: the cap errs on the safe side. */
@@ -57,7 +71,9 @@ export interface AiTokenUsage {
 
 /** What a call costs, in USD, at the model's rates. */
 export function aiCostUsd(model: string, u: AiTokenUsage): number {
-  const price = AI_PRICES[model] ?? AI_UNKNOWN_MODEL_PRICE
+  const base = AI_PRICES[model] ?? AI_UNKNOWN_MODEL_PRICE
+  const prompt = u.inputTokens + u.cacheReadTokens + u.cacheWrite5mTokens + u.cacheWrite1hTokens
+  const price = base.long && prompt > base.long.aboveInputTokens ? base.long : base
   const usd =
     (u.inputTokens * price.input +
       u.outputTokens * price.output +
@@ -66,6 +82,127 @@ export function aiCostUsd(model: string, u: AiTokenUsage): number {
       u.cacheReadTokens * price.cacheRead) /
     1_000_000
   return Math.round(usd * 1_000_000) / 1_000_000
+}
+
+// ---- Models, effort and data, as the owner gives them to each person ------------------
+
+/** The models the owner may give a person, cheapest first. */
+export const AI_MODELS = [
+  { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', note: 'Fastest and cheapest; fine for simple counts and lists.' },
+  { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', note: 'The balance of speed, cost and judgement. The default.' },
+  { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', note: 'Stronger reasoning for harder analysis; about twice Sonnet\'s cost.' },
+  { id: 'claude-fable-5-1', name: 'Claude Fable 5.1', note: 'The most capable, and by far the dearest.' },
+] as const
+
+export type AiModelId = (typeof AI_MODELS)[number]['id']
+export const AI_MODEL_IDS: readonly AiModelId[] = AI_MODELS.map((m) => m.id)
+export const isAiModel = (v: string): v is AiModelId => (AI_MODEL_IDS as readonly string[]).includes(v)
+
+/**
+ * Where Anthropic hands a request a model refuses, on the server (fallbacks
+ * "default", which picks one by the refusal's category). The fallback's
+ * attempt is billed at its own rates on top of the refused one, so the most
+ * a call may cost counts both. Haiku 5.5 has no server-side fallback.
+ */
+export const AI_FALLBACK_MODELS: Readonly<Record<AiModelId, readonly string[]>> = {
+  'claude-haiku-5-5': [],
+  'claude-sonnet-5-5': ['claude-sonnet-5'],
+  'claude-opus-5-5': ['claude-opus-5', 'claude-opus-4-8'],
+  'claude-fable-5-1': ['claude-opus-5', 'claude-opus-4-8'],
+}
+
+/** The most output one call to the model may write (the answer loop's max_tokens). */
+export const AI_CALL_OUTPUT_TOKENS = 32_000
+
+/**
+ * The least any call's worst case may cost on a model: its whole output, and
+ * the dearest fallback's whole output where the model has one. A monthly cap
+ * below it (rounded up to the cent, see aiMinCapUsd) can never let a question
+ * start. A model this file does not know is counted at the dearest rates.
+ */
+export function aiMinCallUsd(model: string): number {
+  const out = (m: string) => (AI_CALL_OUTPUT_TOKENS * (AI_PRICES[m] ?? AI_UNKNOWN_MODEL_PRICE).output) / 1_000_000
+  const fallbacks = isAiModel(model) ? AI_FALLBACK_MODELS[model] : []
+  // To the millionth of a dollar, as costs are kept: 0.64 + 0.8 is 1.44, not 1.4400000000000002.
+  return Math.round((out(model) + (fallbacks.length > 0 ? Math.max(...fallbacks.map(out)) : 0)) * 1_000_000) / 1_000_000
+}
+
+/** The least a monthly cap may be for a person on this model to ask at all, in whole cents. */
+export function aiMinCapUsd(model: string): number {
+  // Whole millionths first, so a rate like 0.1 cannot round a cent too far.
+  return Math.ceil(Math.round(aiMinCallUsd(model) * 1_000_000) / 10_000) / 100
+}
+
+/** How much thought a model gives each answer: more is slower and costs more. */
+export const AI_EFFORTS = [
+  { id: 'low', name: 'Low', note: 'Quickest and cheapest.' },
+  { id: 'medium', name: 'Medium', note: 'The default: enough for most questions.' },
+  { id: 'high', name: 'High', note: 'More careful on harder analysis.' },
+  { id: 'xhigh', name: 'Extra high', note: 'Slower; for involved, multi-step questions.' },
+  { id: 'max', name: 'Max', note: 'The most thorough and the most expensive.' },
+] as const
+
+export type AiEffort = (typeof AI_EFFORTS)[number]['id']
+export const AI_EFFORT_IDS: readonly AiEffort[] = AI_EFFORTS.map((e) => e.id)
+export const isAiEffort = (v: string): v is AiEffort => (AI_EFFORT_IDS as readonly string[]).includes(v)
+
+/** What a person may ask about. The database itself enforces it, not the model. */
+export const AI_DOMAINS = [
+  { id: 'inspection', name: 'Inspections', note: 'Sessions, samples, defects, measurements, PT, holds, production.' },
+  { id: 'orders', name: 'Orders and PDI', note: 'The order sheet (Access), its lines and quantities, PDI documents.' },
+  { id: 'materials', name: 'Coils, suppliers and master data', note: 'The coil register, suppliers, item dimensions, defect lists, PT products, work instructions.' },
+  { id: 'audit', name: 'Audit log and accounts', note: 'Who changed what and when; the list of accounts and roles.' },
+] as const
+
+export type AiDomain = (typeof AI_DOMAINS)[number]['id']
+export const AI_DOMAIN_IDS: readonly AiDomain[] = AI_DOMAINS.map((d) => d.id)
+export const isAiDomain = (v: string): v is AiDomain => (AI_DOMAIN_IDS as readonly string[]).includes(v)
+
+/** A person's use of the assistant, as the owner set it. */
+export interface AiAccess {
+  userId: string
+  name: string
+  username: string
+  role: string
+  /** The account can sign in. */
+  active: boolean
+  enabled: boolean
+  domains: AiDomain[]
+  model: AiModelId
+  effort: AiEffort
+  /** USD per calendar month (UTC). */
+  monthlyCapUsd: number
+  /** This calendar month (UTC), so far. */
+  spentUsd: number
+  /** The owner's own row. */
+  owner: boolean
+  updatedAt?: string
+  updatedByName?: string
+}
+
+export interface AiAccessListResponse {
+  people: AiAccess[]
+}
+
+export interface AiAccessRequest {
+  enabled: boolean
+  domains: AiDomain[]
+  model: AiModelId
+  effort: AiEffort
+  monthlyCapUsd: number
+}
+
+/** What anyone signed in learns about the assistant: no amounts, no models, no settings. */
+export type AiMeReason = 'not-granted' | 'personal-cap' | 'cap-reached' | 'unavailable'
+
+export interface AiMeResponse {
+  /** The owner gave this person the assistant: show it. */
+  granted: boolean
+  /** This person controls the assistant. */
+  owner: boolean
+  /** It can answer now. */
+  available: boolean
+  reason?: AiMeReason
 }
 
 // ---- Settings ----------------------------------------------------------------

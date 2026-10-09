@@ -219,8 +219,8 @@ export function latestAnswerKey(items: readonly ThreadItem[]): string | null {
 /**
  * The question and its answer put into the saved conversation as they ended,
  * so the hand-over draws nothing twice. A copy already there (a refetch while
- * the answer was written holds it half-done, without its last words, its cost
- * or how it ended) is replaced, not kept.
+ * the answer was written holds it half-done, without its last words or how
+ * it ended) is replaced, not kept.
  */
 export function settleMessages(old: AiMessagesResponse | undefined, conversation: AiConversation, asked: AiMessage, answer: AiMessage): AiMessagesResponse {
   const base = old ?? { conversation, messages: [] }

@@ -37,7 +37,7 @@ export interface SaveAsReportState {
   savedId: string | null
   /** Why the period stayed fixed, when it was to be made adjustable and could not be. */
   fixedWhy: string | null
-  /** The latest save was refused for the month's budget: saving with the period as asked is offered. */
+  /** The latest save was refused for a monthly limit (the person's or the app's): saving with the period as asked is offered. */
   budgetSpent: boolean
 }
 

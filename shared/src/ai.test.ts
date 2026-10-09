@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AI_PRICES, AI_UNKNOWN_MODEL_PRICE, aiCostUsd, describeAiDays, describeAiPeriod, isAiDay, resolveAiPeriod } from './ai'
+import { AI_DOMAIN_IDS, AI_MODEL_IDS, AI_PRICES, AI_UNKNOWN_MODEL_PRICE, aiCostUsd, isAiDomain, isAiEffort, isAiModel, describeAiDays, describeAiPeriod, isAiDay, resolveAiPeriod } from './ai'
 
 const none = { inputTokens: 0, outputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 }
 
@@ -55,5 +55,22 @@ describe('§20 — a saved report\'s period, from the day it runs', () => {
     expect(isAiDay('2026-02-30')).toBe(false)
     expect(isAiDay("2026-01-01' OR 1=1")).toBe(false)
     expect(() => resolveAiPeriod({ kind: 'today' }, 'yesterday')).toThrow()
+  })
+})
+
+describe('§20 — what the owner can give a person', () => {
+  it('prices Haiku 5.5 at its short-prompt rates, and at its long-prompt rates above 100K prompt tokens', () => {
+    expect(aiCostUsd('claude-haiku-5-5', { ...none, inputTokens: 1_000_000 - 1, outputTokens: 0 })).toBeCloseTo(0.5, 6)
+    expect(aiCostUsd('claude-haiku-5-5', { ...none, inputTokens: 50_000, outputTokens: 1_000 })).toBeCloseTo(0.0055, 6)
+    expect(aiCostUsd('claude-haiku-5-5', { ...none, inputTokens: 20_000, cacheReadTokens: 90_000, outputTokens: 1_000 })).toBeCloseTo((20_000 * 0.5 + 90_000 * 0.05 + 1_000 * 2.5) / 1e6, 6)
+  })
+  it('offers every model it can price, and only known models, efforts and domains', () => {
+    for (const id of AI_MODEL_IDS) expect(AI_PRICES[id]).toBeDefined()
+    expect(isAiModel('claude-sonnet-5-5')).toBe(true)
+    expect(isAiModel('gpt-5')).toBe(false)
+    expect(isAiEffort('xhigh')).toBe(true)
+    expect(isAiEffort('extreme')).toBe(false)
+    expect([...AI_DOMAIN_IDS]).toEqual(['inspection', 'orders', 'materials', 'audit'])
+    expect(isAiDomain('chat')).toBe(false)
   })
 })

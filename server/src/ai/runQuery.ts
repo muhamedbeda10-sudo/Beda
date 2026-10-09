@@ -79,6 +79,8 @@ export interface QueryRun {
   truncated: boolean
   ms: number
   error?: string
+  /** PostgreSQL's SQLSTATE when the database refused the query (42501: a view the role may not read). */
+  code?: string
 }
 
 // ---- The text --------------------------------------------------------------------
@@ -191,7 +193,7 @@ function dollarTagAt(sql: string, i: number): string | null {
  * stop: it refuses the file, large-object and dblink functions and any change
  * of role, but pg_sleep runs until the statement timeout, and
  * pg_cancel_backend / pg_terminate_backend reach the reader's own other
- * sessions (another administrator's query).
+ * sessions (another person's query).
  */
 const DENIED: { pattern: RegExp; what: string }[] = [
   { pattern: /\bpg_(try_)?advisory\w*/i, what: 'Advisory locks' },
@@ -401,7 +403,7 @@ function watchMessageSizes(client: pg.PoolClient, limit: number, onTooLarge: (ty
  */
 export async function runReadOnlyQuery(pool: pg.Pool | null, rawSql: string, opts: RunOptions): Promise<QueryRun> {
   const started = Date.now()
-  const fail = (error: string): QueryRun => ({ ok: false, columns: [], rows: [], truncated: false, ms: Date.now() - started, error })
+  const fail = (error: string, code?: string): QueryRun => ({ ok: false, columns: [], rows: [], truncated: false, ms: Date.now() - started, error, ...(code ? { code } : {}) })
   const checked = precheckSql(rawSql)
   if ('error' in checked) return fail(checked.error)
   if (!pool) return fail("The assistant's database access is not available right now.")
@@ -483,7 +485,8 @@ export async function runReadOnlyQuery(pool: pg.Pool | null, rawSql: string, opt
     }
     return { ok: true, columns, rows, truncated, ms: Date.now() - started }
   } catch (e) {
-    return fail(interrupted ?? describeError(e, opts.timeoutMs, at))
+    if (interrupted !== null) return fail(interrupted)
+    return fail(describeError(e, opts.timeoutMs, at), e instanceof pg.DatabaseError ? e.code : undefined)
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener('abort', onAbort)

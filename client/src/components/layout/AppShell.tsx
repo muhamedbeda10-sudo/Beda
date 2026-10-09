@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { AlertCircle, AlertTriangle, BellRing, Bot, CheckCircle2, ChevronRight, ClipboardCheck, History, Info, LayoutDashboard, LogOut, Menu, MessagesSquare, Moon, ScrollText, Settings, SlidersHorizontal, Sparkles, Sun, Table2, UploadCloud, Users, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Bot, CheckCircle2, ChevronRight, Info, LogOut, Menu, MessagesSquare, Moon, Settings, Sun, X } from 'lucide-react'
 import { WhatsNewPrompt } from '@/components/releases/WhatsNew'
 import { NoticeBell } from '@/components/notices/NoticeBell'
 import { useChatUnread } from '@/services/queries'
@@ -8,40 +8,12 @@ import { Brand } from '@/components/brand/Brand'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
-import { can, type Capability } from '@qc/shared/rules'
+import { can } from '@qc/shared/rules'
 import { AccountMenu, AvatarEditor } from '@/components/layout/AccountMenu'
+import { ADMIN_NAV, NAV, visibleNav, type NavItem } from '@/components/layout/navItems'
 import { AiAssistantProvider, useAi } from '@/components/ai/AiAssistantProvider'
 import { AiBusyDot, AiButton } from '@/components/ai/AiButton'
 import { AiPanelHost } from '@/components/ai/AiPanelHost'
-
-interface NavItem {
-  to: string
-  label: string
-  icon: typeof ClipboardCheck
-  end?: boolean
-  needs?: Capability
-  /** One line shown under the label in the administration menu. */
-  hint?: string
-}
-
-/** The work an inspector does: centred in the bar on a desktop, in the menu on a tablet or phone. */
-const NAV: NavItem[] = [
-  { to: '/access', label: 'Access', icon: Table2, needs: 'view-order-sheet' },
-  { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
-  { to: '/history', label: 'History', icon: History },
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
-]
-
-/** Administration, behind the gear. Each entry is shown only to a role that may use it. */
-export const ADMIN_NAV: NavItem[] = [
-  { to: '/admin/configuration', label: 'Configuration', icon: SlidersHorizontal, needs: 'manage-admin-data', hint: 'Machines, items, defects, grades' },
-  { to: '/admin/import', label: 'Data import', icon: UploadCloud, needs: 'manage-admin-data', hint: 'Production orders and coils' },
-  { to: '/admin/users', label: 'Users', icon: Users, needs: 'manage-admin-data', hint: 'Accounts and roles' },
-  { to: '/admin/notices', label: 'Notices', icon: BellRing, needs: 'manage-admin-data', hint: 'Targeted messages and who read them' },
-  { to: '/admin/audit', label: 'Audit log', icon: ScrollText, needs: 'edit-closed-session', hint: 'Who changed what, and when' },
-  { to: '/admin/ai', label: 'AI assistant', icon: Bot, needs: 'use-ai-assistant', hint: 'API key, monthly cap and usage' },
-  { to: '/admin/whats-new', label: "What's new", icon: Sparkles, needs: 'manage-admin-data', hint: 'Every update, newest first' },
-]
 
 function ToastHost() {
   const { toasts, dismissToast } = useApp()
@@ -174,11 +146,15 @@ function AdminMenu({ items }: { items: NavItem[] }) {
   )
 }
 
-/** §20 — the assistant's state sits above the whole shell, so its header button, the menu entry and the panel share it. */
+/**
+ * §20 — the assistant's state sits above the whole shell, so its header
+ * button, the menu entry and the panel share it. Whether any of them is there
+ * is /ai/me's to say (the owner gives the assistant to people one by one), not
+ * the role's.
+ */
 export function AppShell({ children }: { children: ReactNode }) {
-  const { role } = useAuth()
   return (
-    <AiAssistantProvider enabled={can(role, 'use-ai-assistant')}>
+    <AiAssistantProvider>
       <Shell>{children}</Shell>
     </AiAssistantProvider>
   )
@@ -192,8 +168,8 @@ function Shell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
 
-  const nav = NAV.filter((n) => !n.needs || can(role, n.needs))
-  const admin = ADMIN_NAV.filter((n) => !n.needs || can(role, n.needs))
+  const nav = visibleNav(NAV, role, false)
+  const admin = visibleNav(ADMIN_NAV, role, ai.owner)
   const displayName = profile?.name || user
 
   const isActive = (n: NavItem) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to))
@@ -327,7 +303,7 @@ function Shell({ children }: { children: ReactNode }) {
           {children}
         </div>
       </main>
-      {/* Outside <main>, which remounts on every route: an answer keeps streaming while the administrator moves around. */}
+      {/* Outside <main>, which remounts on every route: an answer keeps streaming while its asker moves around. */}
       <AiPanelHost />
       <ToastHost />
       <WhatsNewPrompt />

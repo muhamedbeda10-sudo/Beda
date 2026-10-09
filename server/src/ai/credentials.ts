@@ -1,5 +1,5 @@
 // ============================================================================
-// §20 — the Anthropic API key. An administrator sets it in the app; it is
+// §20 — the Anthropic API key. The assistant's owner sets it in the app; it is
 // kept encrypted (AES-256-GCM) under a key derived from JWT_SECRET, so a copy
 // of the database alone does not give it away. It is never returned by any
 // endpoint, never logged and never written to the audit log: only its last
@@ -7,7 +7,7 @@
 //
 // ANTHROPIC_API_KEY in the server's environment, when set, wins over the key
 // set in the app. A key set in the app is still reported then (never used),
-// so an administrator can see it is there and remove it: it becomes the live
+// so the owner can see it is there and remove it: it becomes the live
 // key the day the environment's goes.
 // ============================================================================
 

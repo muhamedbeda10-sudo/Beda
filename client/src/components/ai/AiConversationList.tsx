@@ -1,5 +1,5 @@
 // ============================================================================
-// §20 — this administrator's conversations with the assistant, the latest
+// §20 — this person's conversations with the assistant, the latest
 // first: search their titles, open one, remove one, page back through older.
 // ============================================================================
 
@@ -178,7 +178,7 @@ export function AiConversationList({ onPicked, onNew }: { onPicked: () => void; 
           <p className="text-sm text-slate-600 dark:text-slate-300">
             <b dir="auto">{removing.title}</b>
             <br />
-            It leaves your list. What it cost stays in the month's usage.
+            It leaves your list.
           </p>
         </Modal>
       )}

@@ -114,7 +114,7 @@ async function answeredOn(askedOn: string, question: string, queries: [string, s
   app.model.reply({ content: queries.map(([purpose, sql], i) => runSql(`toolu_past${i}`, purpose, sql)) }, { content: [text('Here it is.')] })
   const outcome = await answerQuestion({
     db: app.db,
-    reader: app.aiReader.pool,
+    readers: app.aiReader,
     model: app.model,
     apiKey: KEY,
     config: app.config,
@@ -122,7 +122,8 @@ async function answeredOn(askedOn: string, question: string, queries: [string, s
     conversation,
     turnId,
     messages: await loadReplay(app.db, conversation.id),
-    capUsd: 50,
+    modelId: AI_MODEL,
+    effort: 'medium',
     emit: () => undefined,
     signal: new AbortController().signal,
   })
@@ -136,6 +137,12 @@ beforeAll(async () => {
   admin = await app.register('admin', 'Admin')
   await app.api('POST', '/api/users', { token: admin.token, body: { username: 'admin2', password: 'Password#1', name: 'Second Admin', role: 'admin' } })
   other = await app.login('admin2')
+  // Given the assistant by its owner (admin): reports stay personal all the same.
+  const granted = await app.api('PUT', `/api/ai/access/${other.user.id}`, {
+    token: admin.token,
+    body: { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit'], model: AI_MODEL, effort: 'medium', monthlyCapUsd: 50 },
+  })
+  expect(granted.status).toBe(200)
   for (const code of ['58', '31']) {
     const made = await app.api('POST', '/api/master/machines', { token: admin.token, body: { code, name: `Machine ${code}`, displayName: `${code}. Machine`, process: 'forming' } })
     expect(made.status).toBe(201)
@@ -409,7 +416,7 @@ describe('§20 saving an answer as a report', () => {
     const refusedKey = await answered('Coil changes with a revoked key?')
     app.model.reply({ error: apiError(401, 'invalid x-api-key') })
     const revoked = await save({ turnId: refusedKey.turnId })
-    expect(revoked.body.notice).toBe(FIXED_NOTICE.keyRefused)
+    expect(revoked.body.notice).toBe(FIXED_NOTICE.unavailable)
     expect(JSON.stringify(revoked.body)).not.toContain('invalid x-api-key')
 
     for (const reply of [
@@ -489,14 +496,14 @@ describe('§20 saving an answer as a report', () => {
     try {
       const res = await save({ turnId: a.turnId })
       expect(res.status).toBe(201)
-      expect(res.body.notice).toBe(FIXED_NOTICE.noKey)
+      expect(res.body.notice).toBe(FIXED_NOTICE.unavailable)
     } finally {
       await app.api('PUT', '/api/ai/key', { token: admin.token, body: { apiKey: KEY } })
     }
     await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: false, monthlyCapUsd: 50 } })
     try {
       const res = await save({ turnId: b.turnId })
-      expect(res.body.notice).toBe(FIXED_NOTICE.disabled)
+      expect(res.body.notice).toBe(FIXED_NOTICE.unavailable)
       // Switched off, a report still runs: it costs nothing.
       expect((await run(res.body.report.id)).status).toBe(200)
     } finally {
@@ -699,7 +706,7 @@ describe('§20 reports are personal', () => {
     expect(again.body.report.id).not.toBe(saved.id)
   })
 
-  it('keeps a report’s title, often the question word for word, from the supervisors who read the audit log', async () => {
+  it('keeps a report, and so its title (often the question word for word), out of the audit log anyone but the owner reads', async () => {
     const question = 'Which inspector has the worst error rate, to decide whom to let go?'
     const a = await answered(question)
     const res = await save({ turnId: a.turnId, adjustable: false })
@@ -712,15 +719,18 @@ describe('§20 reports are personal', () => {
     await app.api('POST', '/api/users', { token: admin.token, body: { username: 'super', password: 'Password#1', name: 'Supervisor', role: 'supervisor' } })
     const supervisor = await app.login('super')
     expect((await app.api('GET', '/api/ai/reports', { token: supervisor.token })).status).toBe(403)
+    // A supervisor reads the log, but not the assistant's entries: reports are personal.
     const log = await app.api<AuditListResponse>('GET', '/api/audit?entity=AiReport&limit=2000', { token: supervisor.token })
     expect(log.status).toBe(200)
-    // What was done to which report, by whom: nothing of what it is called.
-    expect(log.body.entries.filter((e) => e.entityId === id).map((e) => [e.action, e.userName, e.field ?? null, e.oldValue ?? null, e.newValue ?? null])).toEqual([
+    expect(log.body.entries).toEqual([])
+    // The owner sees what was done to which report, by whom: nothing of what it is called.
+    const owners = await app.api<AuditListResponse>('GET', '/api/audit?entity=AiReport&limit=2000', { token: admin.token })
+    expect(owners.body.entries.filter((e) => e.entityId === id).map((e) => [e.action, e.userName, e.field ?? null, e.oldValue ?? null, e.newValue ?? null])).toEqual([
       ['delete', 'Admin', null, null, null],
       ['update', 'Admin', 'title', null, null],
       ['create', 'Admin', null, null, null],
     ])
-    expect(JSON.stringify(log.body)).not.toMatch(/let go|layoffs/i)
+    expect(JSON.stringify(owners.body)).not.toMatch(/let go|layoffs/i)
     // Nor does a search of the log find it by its words.
     for (const q of ['let go', 'layoffs']) {
       const found = await app.api<AuditListResponse>('GET', `/api/audit?q=${encodeURIComponent(q)}`, { token: supervisor.token })

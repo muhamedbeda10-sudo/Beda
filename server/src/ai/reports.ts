@@ -22,7 +22,8 @@
 // exactly as they ran, its period fixed, and says why.
 //
 // Reports are personal: someone else's report is "not found", never a hint
-// that it exists.
+// that it exists. A report runs as its owner's current domains: a section
+// over data the person can no longer read says so, and the rest still runs.
 // ============================================================================
 
 import Anthropic from '@anthropic-ai/sdk'
@@ -30,7 +31,6 @@ import type pg from 'pg'
 import { z } from 'zod'
 import {
   AI_EXPORT_MAX_ROWS,
-  AI_MODEL,
   AI_PREVIEW_ROWS,
   AI_REPORT_MAX_DAYS,
   describeAiDays,
@@ -38,6 +38,7 @@ import {
   isAiDay,
   resolveAiPeriod,
   type AiDayRange,
+  type AiModelId,
   type AiReport,
   type AiReportExportResponse,
   type AiReportPeriod,
@@ -51,7 +52,7 @@ import { CHAT_QUERY_TIMEOUT_MS, recordCutOffUsage, usageOf, watchStream } from '
 import type { AiModelClient, ModelMessage, ModelParams } from './model'
 import { contextDay, conversationTitle, factoryDay } from './prompt'
 import { checkTemplate, fillTemplate, noDataRange, ordersRows, ownDays, periodProblem, rangeDays, readsClock, sameResult } from './reportTemplate'
-import { AI_EXPORT_LIMITS, exportRows, previewOf, runReadOnlyQuery } from './runQuery'
+import { AI_EXPORT_LIMITS, exportRows, previewOf, runReadOnlyQuery, type QueryRun, type RunOptions } from './runQuery'
 import { loadDisplayMessages, recordUsage, type UsageRecord } from './transcript'
 
 /** The longest title a report may have. */
@@ -229,7 +230,7 @@ const WEEK_STARTS = ['saturday', 'sunday', 'monday'] as const
 
 export const TEMPLATE_SYSTEM_PROMPT = `You prepare a saved report of a factory's quality-control database so that its period can be changed when it is run again.
 
-The input is JSON: the question an administrator asked ("question"), the factory day it was asked on ("today", YYYY-MM-DD), and the PostgreSQL queries that answered it ("sections", each with its index, purpose and sql). Dates and times in the queries are factory time.
+The input is JSON: the question a person asked ("question"), the factory day it was asked on ("today", YYYY-MM-DD), and the PostgreSQL queries that answered it ("sections", each with its index, purpose and sql). Dates and times in the queries are factory time.
 
 Return:
 - title: a short name for the report, at most 80 characters, in the language of the question.
@@ -296,15 +297,15 @@ const ProposalSchema = z.object({
   sections: z.array(z.object({ index: z.number().int(), template: z.string() })),
 })
 
-/** The one request that rewrites a report's queries. No tools; it answers in JSON. */
-export function templateRequest(turn: Pick<SavedTurn, 'question' | 'askedOn' | 'sections'>): ModelParams {
+/** The one request that rewrites a report's queries, on the person's own model. No tools; it answers in JSON. */
+export function templateRequest(turn: Pick<SavedTurn, 'question' | 'askedOn' | 'sections'>, model: AiModelId): ModelParams {
   const input = {
     question: turn.question,
     today: turn.askedOn,
     sections: turn.sections.map((s, index) => ({ index, purpose: s.title, sql: s.sql })),
   }
   return {
-    model: AI_MODEL,
+    model,
     max_tokens: TEMPLATE_MAX_TOKENS,
     thinking: { type: 'adaptive' },
     output_config: { effort: 'low', format: { type: 'json_schema', schema: TEMPLATE_SCHEMA } },
@@ -336,11 +337,10 @@ const named = (title: string) => {
 }
 
 export const FIXED_NOTICE = {
-  disabled: `${KEPT} the AI assistant is switched off, so it could not be made adjustable.`,
-  noKey: `${KEPT} the AI assistant has no API key, so it could not be made adjustable.`,
+  // Why the assistant itself could not help is the owner's to know (and fix): a person is told only that it could not.
+  unavailable: `${KEPT} the assistant is not available right now, so it could not be made adjustable.`,
   noReader: `${KEPT} the assistant cannot reach its data right now to check an adjustable version.`,
   model: `${KEPT} Claude could not be reached to make it adjustable.`,
-  keyRefused: `${KEPT} Anthropic refused the API key, so it could not be made adjustable.`,
   unusable: `${KEPT} Claude did not return a usable adjustable version of the queries.`,
   form: `${KEPT} Claude's adjustable version of the queries was not in the form allowed.`,
   noPlaceholder: `${KEPT} Claude found no period in the queries to make adjustable.`,
@@ -429,7 +429,7 @@ export async function proposeTemplates(args: {
   } catch (err) {
     // A stream that failed on its own may still be reading the response, which would go uncounted: stop it.
     if (!(err instanceof Anthropic.APIUserAbortError)) stream.abort()
-    await recordCutOffUsage(args.db, args.owner, stream, watch, args.params.max_tokens)
+    await recordCutOffUsage(args.db, args.owner, stream, watch, args.params)
     const detail =
       err instanceof Anthropic.APIUserAbortError
         ? `no answer within ${TEMPLATE_TIMEOUT_MS / 1000} s`
@@ -440,11 +440,11 @@ export async function proposeTemplates(args: {
             ? err.message
             : String(err)
     const refused = err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError
-    return { notice: refused ? FIXED_NOTICE.keyRefused : FIXED_NOTICE.model, detail }
+    return { notice: refused ? FIXED_NOTICE.unavailable : FIXED_NOTICE.model, detail }
   } finally {
     clearTimeout(timer)
   }
-  const usage = usageOf(message)
+  const usage = usageOf(message, args.params.model)
   await recordUsage(args.db, { ...args.owner, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd, requestId: stream.request_id ?? null })
   const proposal = readProposal(message, args.sectionCount)
   return 'problem' in proposal ? { notice: FIXED_NOTICE.unusable, detail: proposal.problem } : proposal
@@ -558,6 +558,27 @@ export function runPeriod(report: AiReport, override: AiDayRange | null, today: 
   return { ...resolveAiPeriod(report.period, today), label: describeAiPeriod(report.period), overridden: false }
 }
 
+/** What a section over data the person can no longer read shows instead of its rows. */
+export const NO_ACCESS = 'You no longer have access to this data.'
+
+/**
+ * Where a report's next section runs: the pool of the person's domains as
+ * they are when it starts (the owner may change them while a report runs,
+ * section after section), null when the readers are down, or 'withdrawn'
+ * once the person may no longer use the assistant at all.
+ */
+export type SectionReader = () => Promise<pg.Pool | null | 'withdrawn'>
+
+/** Run one section's SQL as the person's domains as they are now; a person stopped meanwhile reads nothing. */
+async function runSection(reader: SectionReader, sql: string, opts: RunOptions): Promise<QueryRun> {
+  const pool = await reader()
+  if (pool === 'withdrawn') return { ok: false, columns: [], rows: [], truncated: false, ms: 0, error: NO_ACCESS }
+  return runReadOnlyQuery(pool, sql, opts)
+}
+
+/** A run's error as the report shows it: refused for want of a grant, it is the person's access that changed. */
+const sectionError = (run: { error?: string; code?: string }): string | undefined => (run.code === '42501' ? NO_ACCESS : run.error)
+
 /** A section's SQL for one run: a template filled with the run's days, or the query as it ran. */
 function sectionSql(report: AiReport, section: AiReportSection, period: AiDayRange | null): string {
   return report.adjustable && period ? fillTemplate(section.sql, period) : section.sql
@@ -565,7 +586,7 @@ function sectionSql(report: AiReport, section: AiReportSection, period: AiDayRan
 
 /** Every section run now, as the answer's cards show a query: the first rows, how many, and whether there were more. */
 export async function runReportSections(
-  reader: pg.Pool | null,
+  reader: SectionReader,
   report: AiReport,
   period: AiDayRange | null,
   opts: { timeZone: string; signal?: AbortSignal },
@@ -573,7 +594,7 @@ export async function runReportSections(
   const out: AiReportSectionRun[] = []
   // One after another: the reader's few connections are shared with every answer being written.
   for (const section of report.sections) {
-    const run = await runReadOnlyQuery(reader, sectionSql(report, section, period), {
+    const run = await runSection(reader, sectionSql(report, section, period), {
       maxRows: AI_PREVIEW_ROWS,
       timeoutMs: CHAT_QUERY_TIMEOUT_MS,
       timeZone: opts.timeZone,
@@ -589,7 +610,8 @@ export async function runReportSections(
       truncated: preview.truncated,
       ms: Math.round(run.ms),
     }
-    if (run.error) result.error = run.error
+    const error = sectionError(run)
+    if (error) result.error = error
     out.push(result)
   }
   return out
@@ -600,7 +622,7 @@ export async function runReportSections(
  * each, all of them together within one export's room.
  */
 export async function exportReportSections(
-  reader: pg.Pool | null,
+  reader: SectionReader,
   report: AiReport,
   period: AiDayRange | null,
   opts: { timeZone: string; signal?: AbortSignal },
@@ -608,7 +630,7 @@ export async function exportReportSections(
   const out: AiReportExportResponse['sections'] = []
   let room = AI_EXPORT_LIMITS.maxChars
   for (const section of report.sections) {
-    const run = await runReadOnlyQuery(reader, sectionSql(report, section, period), {
+    const run = await runSection(reader, sectionSql(report, section, period), {
       maxRows: AI_EXPORT_MAX_ROWS,
       timeoutMs: REPORT_EXPORT_TIMEOUT_MS,
       timeZone: opts.timeZone,
@@ -619,7 +641,8 @@ export async function exportReportSections(
     const rows = exportRows(run)
     for (const row of rows) for (const c of row) room -= typeof c === 'string' ? c.length : 8
     const result: AiReportExportResponse['sections'][number] = { title: section.title, ok: run.ok, columns: run.columns, rows, truncated: run.truncated }
-    if (run.error) result.error = run.error
+    const error = sectionError(run)
+    if (error) result.error = error
     out.push(result)
   }
   return out

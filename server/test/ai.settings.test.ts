@@ -6,9 +6,9 @@ import { TestApp, type Session } from './harness'
 import { resolveApiKey } from '../src/ai/credentials'
 import { runReadOnlyQuery } from '../src/ai/runQuery'
 
-// §20 — who may use the assistant, its switch and cap, and the API key: set
-// in the app, checked with Anthropic first, kept encrypted, never shown,
-// never logged, never in the audit trail.
+// §20 — the assistant's switch and cap, and the API key: the owner's alone,
+// set in the app, checked with Anthropic first, kept encrypted, never shown,
+// never logged, never in the audit trail. (Who may ask: ai.access.test.ts.)
 
 const app = new TestApp()
 let admin: Session
@@ -54,30 +54,67 @@ beforeAll(async () => {
 })
 afterAll(() => app.stop())
 
-describe('§20 who may use the assistant', () => {
-  it('refuses everyone but administrators, on every route', async () => {
+describe('§20 who may see the settings', () => {
+  it('answers everyone but the owner as if they did not exist — administrators too — and refuses the chat to those not given it', async () => {
     const id = randomUUID()
-    const routes: [string, string, unknown?][] = [
+    const ownerRoutes: [string, string, unknown?][] = [
       ['GET', '/api/ai/status'],
       ['GET', '/api/ai/settings'],
       ['PUT', '/api/ai/settings', { enabled: true, monthlyCapUsd: 10 }],
       ['PUT', '/api/ai/key', { apiKey: KEY }],
       ['DELETE', '/api/ai/key'],
+      ['GET', '/api/ai/usage'],
+      ['GET', '/api/ai/access'],
+      ['GET', '/api/ai/people'],
+      ['PUT', `/api/ai/access/${id}`, { enabled: true, domains: ['inspection'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 }],
+      ['DELETE', `/api/ai/access/${id}`],
+    ]
+    const askerRoutes: [string, string, unknown?][] = [
       ['GET', '/api/ai/conversations'],
       ['GET', `/api/ai/conversations/${id}/messages`],
       ['DELETE', `/api/ai/conversations/${id}`],
       ['POST', '/api/ai/chat', { message: 'hello', clientId: randomUUID() }],
       ['GET', `/api/ai/queries/${id}/export`],
-      ['GET', '/api/ai/usage'],
+      ['GET', '/api/ai/reports'],
     ]
-    for (const s of [sup, insp, viewer]) {
-      for (const [method, path, body] of routes) {
+    const missing = await app.api<ApiErrorBody>('GET', '/api/ai/no-such-thing', { token: other.token })
+    for (const s of [other, sup, insp, viewer]) {
+      for (const [method, path, body] of ownerRoutes) {
+        const res = await app.api<ApiErrorBody>(method, path, { token: s.token, body })
+        expect(res.status, `${s.user.role} ${method} ${path}`).toBe(404)
+        // Word for word what an endpoint that does not exist answers.
+        expect(res.body).toEqual(missing.body)
+      }
+      for (const [method, path, body] of askerRoutes) {
         const res = await app.api(method, path, { token: s.token, body })
         expect(res.status, `${s.user.role} ${method} ${path}`).toBe(403)
       }
     }
     expect((await app.api('GET', '/api/ai/status')).status).toBe(401)
     expect(app.model.checkedKeys).toEqual([])
+    // The owner is answered.
+    expect((await status()).status).toBe(200)
+  })
+
+  it('gives away nothing by any other method: OPTIONS, HEAD or one no route takes answer as an unknown endpoint does', async () => {
+    const id = randomUUID()
+    const paths = ['/api/ai/status', '/api/ai/settings', '/api/ai/key', '/api/ai/usage', '/api/ai/access', `/api/ai/access/${id}`, '/api/ai/people']
+    // All a client could read of the answer: no Allow listing the routes' methods, no ETag, the same body.
+    const seen = async (method: string, path: string, s: Session) => {
+      const res = await app.api(method, path, { token: s.token })
+      return { status: res.status, body: res.body, allow: res.headers.get('allow'), etag: res.headers.get('etag'), length: res.headers.get('content-length') }
+    }
+    for (const s of [other, sup, insp, viewer]) {
+      for (const method of ['OPTIONS', 'HEAD', 'PATCH']) {
+        const missing = await seen(method, '/api/ai/no-such-thing', s)
+        expect(missing.status, method).toBe(404)
+        for (const path of paths) expect(await seen(method, path, s), `${s.user.role} ${method} ${path}`).toEqual(missing)
+      }
+    }
+    // The owner's are there for the owner; the routes everyone may reach list their methods for anyone.
+    const own = await app.api('OPTIONS', '/api/ai/settings', { token: admin.token })
+    expect([own.status, own.headers.get('allow')]).toEqual([200, 'GET, HEAD, PUT'])
+    for (const s of [admin, other]) expect((await app.api('OPTIONS', '/api/ai/me', { token: s.token })).headers.get('allow')).toBe('GET, HEAD')
   })
 })
 
@@ -131,7 +168,7 @@ describe('§20 the API key', () => {
     expect(res.body.key.unreadable).toBeUndefined()
     expect(res.body.status).toMatchObject({ available: true })
     expect(app.model.checkedKeys.at(-1)).toBe(KEY)
-    for (const r of [res, await settings(admin), await settings(other), await status()]) expect(JSON.stringify(r.body)).not.toContain(KEY)
+    for (const r of [res, await settings(admin), await status()]) expect(JSON.stringify(r.body)).not.toContain(KEY)
 
     // Nowhere in the database: not in clear, not as its bytes.
     const everything = await databaseText()
@@ -148,14 +185,17 @@ describe('§20 the API key', () => {
     // The audit trail names the change, never the key.
     const audit = await app.db.query<{ entity: string; entityId: string; field: string; oldValue: string; newValue: string; userName: string }>(
       `SELECT entity, entity_id AS "entityId", field, old_value AS "oldValue", new_value AS "newValue", user_name AS "userName"
-         FROM audit_log WHERE entity = 'AiAssistant' ORDER BY id`,
+         FROM audit_log WHERE entity = 'AiAssistant' AND entity_id = 'api-key' ORDER BY id`,
     )
     expect(audit.rows).toEqual([{ entity: 'AiAssistant', entityId: 'api-key', field: 'apiKey', oldValue: 'not set', newValue: 'set (…kZ9x)', userName: 'Admin' }])
   })
 
   it('replaces and removes the key, each change audited', async () => {
-    const replaced = await app.api<AiSettingsResponse>('PUT', '/api/ai/key', { token: other.token, body: { apiKey: NEW_KEY } })
-    expect(replaced.body.key).toMatchObject({ last4: 'Wq2e', updatedByName: 'Second Admin' })
+    const replaced = await app.api<AiSettingsResponse>('PUT', '/api/ai/key', { token: admin.token, body: { apiKey: NEW_KEY } })
+    expect(replaced.body.key).toMatchObject({ last4: 'Wq2e', updatedByName: 'Admin' })
+    // Another administrator cannot touch it.
+    expect((await app.api('PUT', '/api/ai/key', { token: other.token, body: { apiKey: KEY } })).status).toBe(404)
+    expect((await app.api('DELETE', '/api/ai/key', { token: other.token })).status).toBe(404)
     expect((await resolveApiKey(app.db, app.config)).apiKey).toBe(NEW_KEY)
     const removed = await app.api<AiSettingsResponse>('DELETE', '/api/ai/key', { token: admin.token })
     expect(removed.status).toBe(200)
@@ -164,7 +204,7 @@ describe('§20 the API key', () => {
     // Removing nothing changes nothing.
     expect((await app.api('DELETE', '/api/ai/key', { token: admin.token })).status).toBe(200)
     const audit = await app.db.query<{ oldValue: string; newValue: string }>(
-      `SELECT old_value AS "oldValue", new_value AS "newValue" FROM audit_log WHERE entity = 'AiAssistant' ORDER BY id`,
+      `SELECT old_value AS "oldValue", new_value AS "newValue" FROM audit_log WHERE entity = 'AiAssistant' AND entity_id = 'api-key' ORDER BY id`,
     )
     expect(audit.rows).toEqual([
       { oldValue: 'not set', newValue: 'set (…kZ9x)' },
@@ -231,7 +271,9 @@ describe('§20 the switch and the monthly cap', () => {
     const q = await ask()
     expect(q.status).toBe(402)
     expect(q.body.error.code).toBe('ai_budget_reached')
-    expect(q.body.error.message).toMatch(/\$10\.00/)
+    // No amount, ever: the owner is told where to raise it.
+    expect(q.body.error.message).toBe("The assistant's monthly limit is reached. It is available again on the 1st. You can raise it under Administration → AI assistant.")
+    expect(q.body.error.message).not.toMatch(/\$/)
     // Last month's spend does not count against this month.
     await app.db.query(`UPDATE ai_usage SET created_at = date_trunc('month', now()) - interval '1 day'`)
     expect((await status()).body).toMatchObject({ available: true, spentUsd: 0 })
@@ -247,12 +289,15 @@ describe('§20 the switch and the monthly cap', () => {
       const q = await ask()
       expect(q.status).toBe(402)
       expect(q.body.error.code).toBe('ai_budget_reached')
-      expect(q.body.error.message).toMatch(/\$50\.00\) is reached, or too close for an answer to start/)
+      expect(q.body.error.message).toMatch(/^The assistant's monthly limit is reached\./)
       const turns = await app.db.query(`SELECT 1 FROM ai_turns`)
       expect(turns.rowCount).toBe(0)
-      // With room for that call, it is available again.
+      // Nor with room for the call alone: should Sonnet 5.5 refuse it, Sonnet 5 writes as much again.
       await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50.2 } })
-      expect((await status()).body).toMatchObject({ available: true, spentUsd: 49.8, capUsd: 50.2 })
+      expect((await status()).body).toMatchObject({ available: false, reason: 'cap-reached', spentUsd: 49.8, capUsd: 50.2 })
+      // With room for both, it is available again.
+      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50.5 } })
+      expect((await status()).body).toMatchObject({ available: true, spentUsd: 49.8, capUsd: 50.5 })
     } finally {
       await app.db.query(`UPDATE ai_usage SET created_at = date_trunc('month', now()) - interval '1 day'`)
       await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 10 } })
@@ -287,7 +332,7 @@ describe('§20 a key from the server environment', () => {
   it('wins over the key set in the app, and is shown as such; a key set in the app is still shown and can be removed', async () => {
     const envKey = `sk-ant-api03-${'E'.repeat(40)}nv01`
     const withEnv = new TestApp()
-    await withEnv.start({ ANTHROPIC_API_KEY: envKey })
+    await withEnv.start({ ANTHROPIC_API_KEY: envKey, AI_OWNER_USERNAME: 'Boss' })
     try {
       await withEnv.resetDatabase()
       const boss = await withEnv.register('boss', 'Boss')
@@ -321,7 +366,7 @@ describe('§20 a key from the server environment', () => {
       expect(removed.body.status.available).toBe(true)
       expect((await withEnv.db.query(`SELECT 1 FROM ai_credentials`)).rowCount).toBe(0)
       const audit = await withEnv.db.query<{ oldValue: string; newValue: string }>(
-        `SELECT old_value AS "oldValue", new_value AS "newValue" FROM audit_log WHERE entity = 'AiAssistant' ORDER BY id`,
+        `SELECT old_value AS "oldValue", new_value AS "newValue" FROM audit_log WHERE entity = 'AiAssistant' AND entity_id = 'api-key' ORDER BY id`,
       )
       expect(audit.rows).toEqual([
         { oldValue: 'not set', newValue: 'set (…kZ9x)' },

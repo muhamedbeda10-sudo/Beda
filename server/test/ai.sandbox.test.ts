@@ -30,35 +30,41 @@ beforeAll(async () => {
 })
 afterAll(() => app.stop())
 
-describe('§20 the reader role', () => {
-  it('is per database, provisioned with LOGIN, a SCRAM verifier and the factory time zone', async () => {
+describe('§20 the reader roles', () => {
+  it('are per database and per combination of domains, provisioned with LOGIN, a SCRAM verifier and the factory time zone', async () => {
     expect(app.aiReader.ready).toBe(true)
-    expect(role).toBe(`${database}_ai_reader`)
-    const { rows } = await app.db.query<{ rolcanlogin: boolean; rolsuper: boolean; rolcreaterole: boolean; rolcreatedb: boolean; rolconnlimit: number; rolconfig: string[] }>(
-      `SELECT rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolconnlimit, rolconfig FROM pg_roles WHERE rolname = $1`,
-      [role],
+    expect(role).toBe(`${database}_ai_r_1111`)
+    const { rows } = await app.db.query<{ rolname: string; rolcanlogin: boolean; rolsuper: boolean; rolcreaterole: boolean; rolcreatedb: boolean; rolinherit: boolean; rolconnlimit: number; rolconfig: string[] }>(
+      `SELECT rolname, rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolinherit, rolconnlimit, rolconfig FROM pg_roles WHERE rolname LIKE $1 ORDER BY rolname`,
+      [`${database}\\_ai\\_r\\_%`],
     )
-    expect(rows[0]).toMatchObject({ rolcanlogin: true, rolsuper: false, rolcreaterole: false, rolcreatedb: false, rolconnlimit: 6 })
-    expect(rows[0].rolconfig).toEqual(
-      expect.arrayContaining([
-        'search_path=ai, pg_catalog',
-        'default_transaction_read_only=on',
-        'statement_timeout=10s',
-        'lock_timeout=2s',
-        'idle_in_transaction_session_timeout=15s',
-        'TimeZone=Africa/Cairo',
-      ]),
-    )
-    // The tests connect as a superuser, which may read the stored verifier: never the password itself.
-    const stored = await app.db.query<{ rolpassword: string }>(`SELECT rolpassword FROM pg_authid WHERE rolname = $1`, [role])
-    expect(stored.rows[0].rolpassword).toMatch(/^SCRAM-SHA-256\$4096:/)
-    expect(stored.rows[0].rolpassword).not.toContain(readerPassword(app.config.JWT_SECRET, database))
+    expect(rows.map((r) => r.rolname.slice(-4))).toEqual(['0001', '0010', '0011', '0100', '0101', '0110', '0111', '1000', '1001', '1010', '1011', '1100', '1101', '1110', '1111'])
+    for (const r of rows) {
+      expect(r, r.rolname).toMatchObject({ rolcanlogin: true, rolsuper: false, rolcreaterole: false, rolcreatedb: false, rolinherit: true, rolconnlimit: 3 })
+      expect(r.rolconfig).toEqual(
+        expect.arrayContaining([
+          'search_path=ai, pg_catalog',
+          'default_transaction_read_only=on',
+          'statement_timeout=10s',
+          'lock_timeout=2s',
+          'idle_in_transaction_session_timeout=15s',
+          'TimeZone=Africa/Cairo',
+        ]),
+      )
+      // The tests connect as a superuser, which may read the stored verifier: never the password itself.
+      const stored = await app.db.query<{ rolpassword: string }>(`SELECT rolpassword FROM pg_authid WHERE rolname = $1`, [r.rolname])
+      expect(stored.rows[0].rolpassword).toMatch(/^SCRAM-SHA-256\$4096:/)
+      expect(stored.rows[0].rolpassword).not.toContain(readerPassword(app.config.JWT_SECRET, r.rolname))
+    }
+    // The single reader of the first version is gone.
+    expect((await app.db.query(`SELECT 1 FROM pg_roles WHERE rolname = $1`, [`${database}_ai_reader`])).rowCount).toBe(0)
   })
 
-  it('derives a different password for every database and secret, and sends a verifier in RFC 5803 form', () => {
-    const a = readerPassword(app.config.JWT_SECRET, 'qc_test')
-    expect(readerPassword(app.config.JWT_SECRET, 'qc_dev')).not.toBe(a)
-    expect(readerPassword('another-secret-another-secret-another', 'qc_test')).not.toBe(a)
+  it('derives a different password for every role, database and secret, and sends a verifier in RFC 5803 form', () => {
+    const a = readerPassword(app.config.JWT_SECRET, 'qc_test_ai_r_1111')
+    expect(readerPassword(app.config.JWT_SECRET, 'qc_dev_ai_r_1111')).not.toBe(a)
+    expect(readerPassword(app.config.JWT_SECRET, 'qc_test_ai_r_1010')).not.toBe(a)
+    expect(readerPassword('another-secret-another-secret-another', 'qc_test_ai_r_1111')).not.toBe(a)
     expect(a).toMatch(/^[A-Za-z0-9_-]{43}$/)
     // The verifier for the RFC 7677 example: user's password "pencil" with its salt.
     const salt = Buffer.from('W22ZaJ0SNY7soEsUEjb6gQ==', 'base64')

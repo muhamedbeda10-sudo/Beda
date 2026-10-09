@@ -53,8 +53,10 @@ import { loadAvatar } from '@/lib/avatarLoader'
 import type { AvatarResponse, ColumnValuesResponse, DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import type {
+  AiAccessListResponse,
   AiConversationsResponse,
   AiDayRange,
+  AiMeResponse,
   AiMessagesResponse,
   AiQueryExportResponse,
   AiReport,
@@ -62,7 +64,6 @@ import type {
   AiReportRunResponse,
   AiReportsResponse,
   AiSettingsResponse,
-  AiStatusResponse,
   AiUsageResponse,
 } from '@qc/shared/ai'
 import { api, qs } from '@/lib/api'
@@ -116,8 +117,13 @@ export const keys = {
   orderList: (filters: OrderListFilters) => ['orders', 'list', filters] as const,
   sessionImages: (id: string) => ['sessions', id, 'images'] as const,
   orderListOptions: ['orders', 'list', 'options'] as const,
-  aiStatus: ['ai', 'status'] as const,
+  /** What the signed-in person may do with the assistant: whether it is theirs, whether they own it, whether it can answer. */
+  aiMe: ['ai', 'me'] as const,
   aiSettings: ['ai', 'settings'] as const,
+  /** Who may use the assistant, as the owner set it. */
+  aiAccess: ['ai', 'access'] as const,
+  /** The active accounts the owner has not given the assistant to yet. */
+  aiPeople: ['ai', 'people'] as const,
   aiConversations: ['ai', 'conversations'] as const,
   aiMessages: (id: string) => ['ai', 'messages', id] as const,
   aiUsage: (month: string) => ['ai', 'usage', month] as const,
@@ -796,20 +802,44 @@ export function useOrderSync() {
 }
 
 // ---- §20 AI assistant --------------------------------------------------------
-// Administrators only: every hook takes `enabled`, false for any other role, so
-// nobody else ever asks.
+// Everyone signed in asks one cheap question, /ai/me; the rest is fetched only
+// for someone it says may use the assistant (the chat) or owns it (the
+// settings, the access list, the usage). Every other hook takes `enabled`.
 
 /** How many conversations a page of the history holds. */
 export const AI_CONVERSATIONS_PAGE = 50
 
-/** Whether the assistant can answer now, and this month's spend against the cap. */
-export function useAiStatus(enabled: boolean) {
-  return useQuery({ queryKey: keys.aiStatus, queryFn: () => api<AiStatusResponse>('/ai/status'), enabled, staleTime: 60_000 })
+/**
+ * Whether the owner gave this person the assistant, whether they own it, and
+ * whether it can answer now — no amounts, no model. Kept a minute and asked
+ * again when the window comes back, so access given or withdrawn shows
+ * without a reload.
+ */
+export function useAiMe(enabled = true) {
+  return useQuery({ queryKey: keys.aiMe, queryFn: () => api<AiMeResponse>('/ai/me'), enabled, staleTime: 60_000, refetchOnWindowFocus: true })
 }
 
-/** The switch, the cap and the key's state (never the key), for the administration page. */
+/** The switch, the cap, the key's state (never the key) and the month's spend: the owner's page only. */
 export function useAiSettings(enabled: boolean) {
   return useQuery({ queryKey: keys.aiSettings, queryFn: () => api<AiSettingsResponse>('/ai/settings'), enabled, staleTime: 60_000 })
+}
+
+/** Who may use the assistant, each with their data, model, effort, cap and this month's spend: the owner's page only. */
+export function useAiAccess(enabled: boolean) {
+  return useQuery({ queryKey: keys.aiAccess, queryFn: () => api<AiAccessListResponse>('/ai/access'), enabled, staleTime: 60_000 })
+}
+
+/** An account the owner may give the assistant to. */
+export interface AiPerson {
+  id: string
+  name: string
+  username: string
+  role: string
+}
+
+/** The active accounts not on the access list yet, for "Add person". */
+export function useAiPeople(enabled: boolean) {
+  return useQuery({ queryKey: keys.aiPeople, queryFn: () => api<AiPerson[]>('/ai/people'), enabled, staleTime: 30_000 })
 }
 
 /** This person's conversations, the latest first: the first page. */

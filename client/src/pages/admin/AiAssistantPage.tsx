@@ -1,54 +1,61 @@
 // ============================================================================
-// §20 — the AI assistant, administered: the Anthropic API key (set here,
-// verified with Anthropic before it is kept, stored encrypted and never shown
-// again), the switch and the monthly cap, and what the assistant cost by day
-// and by person, this month or the last.
+// §20 — the AI assistant, administered by its one owner (the server pins the
+// account; nobody else, administrators included, sees this page or its data):
+// the Anthropic API key (set here, verified with Anthropic before it is kept,
+// stored encrypted and never shown again), the switch and the app-wide
+// monthly cap, who may use it and with what, and what it cost by day and by
+// person, this month or the last. Amounts live here alone: the chat shows
+// none, to anyone.
 // ============================================================================
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Activity, Bot, Coins, Eye, EyeOff, Hash, KeyRound, Loader2, MessageSquareText, Save, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { AI_MAX_MONTHLY_CAP_USD, type AiKeyState, type AiSettingsResponse, type AiStatusResponse, type AiUsageResponse } from '@qc/shared/ai'
-import { can } from '@qc/shared/rules'
 import { AdminLayout } from '@/components/admin/AdminLayout'
+import { CAP_RANGE_TEXT, parseCapUsd } from '@/components/ai/access'
+import { AiAccessSection } from '@/components/ai/AiAccessSection'
 import { useAi } from '@/components/ai/AiAssistantProvider'
 import { Notice, UnavailableNotice } from '@/components/ai/AiNotice'
+import { AiSwitch } from '@/components/ai/AiSwitch'
 import { formatCap, formatMonth, formatTokens, formatUsd, formatUtcDay, spendBarClass, spendShare, utcMonth } from '@/components/ai/format'
 import { Badge, Button, Card, Field, Input, Modal, Stat } from '@/components/ui'
 import { Segmented } from '@/components/ui/PageShell'
 import { ApiError } from '@/lib/api'
 import { cn, formatDateTime } from '@/lib/utils'
 import { removeAiKey, saveAiSettings, setAiKey } from '@/services/mutations'
-import { useAiSettings, useAiUsage } from '@/services/queries'
+import { useAiMe, useAiSettings, useAiUsage } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
-import { useAuth } from '@/store/AuthContext'
 
 /** The server's own rule for a key: an Anthropic API key, nothing else. */
 const KEY_PATTERN = /^sk-ant-[A-Za-z0-9_-]+$/
-/** Dollars, with at most two decimals. */
-const CAP_PATTERN = /^\d+(\.\d{1,2})?$/
 
 export function AiAssistantPage() {
-  const { role } = useAuth()
   const ai = useAi()
-  const { data, isLoading, isError, refetch } = useAiSettings(can(role, 'use-ai-assistant'))
-  const canManage = can(role, 'manage-admin-data')
+  // The route lets only the owner in; asked again here so nothing is fetched for anyone else, whatever the route does.
+  const { data: me } = useAiMe()
+  const owner = me?.owner ?? false
+  const { data, isLoading, isError, refetch } = useAiSettings(owner)
 
   return (
     <AdminLayout
       title="AI assistant"
-      needs="use-ai-assistant"
+      allowed={owner}
       actions={
-        <Button variant="primary" className="min-h-[44px]" onClick={() => ai.setOpen(true)}>
-          <Bot className="h-4 w-4" /> Open the assistant
-        </Button>
+        // The owner uses the assistant only if they gave it to themselves too (Who can use it).
+        ai.enabled && (
+          <Button variant="primary" className="min-h-[44px]" onClick={() => ai.setOpen(true)}>
+            <Bot className="h-4 w-4" /> Open the assistant
+          </Button>
+        )
       }
     >
       <div className="space-y-4">
         <p className="text-sm text-muted">
-          An administrator asks about the factory's record in plain words, in English or Arabic. Claude answers by running read-only queries over curated views of
-          the record — inspections, orders and PDI, coils and suppliers, the audit log — and every query is shown with its rows and can be taken to Excel. It
-          cannot change anything. Each question costs a little; the monthly cap stops the assistant before the bill runs away.
+          Only you see this page. The people you choose ask about the factory's record in plain words, in English or Arabic; Claude answers by running read-only
+          queries over curated views of the record, and every query is shown with its rows and can be taken to Excel. It cannot change anything. You decide who
+          may ask, about which data, on which model and effort, and up to what each may spend a month; the app-wide cap stops everyone before the bill runs away.
+          Nobody sees a price or an amount in the chat — the figures are here alone.
         </p>
 
         {isLoading && (
@@ -65,12 +72,14 @@ export function AiAssistantPage() {
 
         {data && (
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <KeyCard data={data} canManage={canManage} />
-            <SettingsCard data={data} canManage={canManage} />
+            <KeyCard data={data} />
+            <SettingsCard data={data} />
           </div>
         )}
 
-        <UsageSection />
+        {owner && <AiAccessSection appCapUsd={data?.settings.monthlyCapUsd} />}
+
+        <UsageSection enabled={owner} />
       </div>
     </AdminLayout>
   )
@@ -82,7 +91,7 @@ function StatusLine({ status }: { status: AiStatusResponse }) {
     <p role="status" className="flex flex-wrap items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-13 text-emerald-800 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/25">
       <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden />
       <span>
-        Answering, on <span className="font-mono text-xs">{status.model}</span>. {formatUsd(status.spentUsd)} of {formatCap(status.capUsd)} spent this month.
+        Answering. {formatUsd(status.spentUsd)} of the app-wide {formatCap(status.capUsd)} spent this month, by everyone together.
       </span>
     </p>
   )
@@ -90,7 +99,7 @@ function StatusLine({ status }: { status: AiStatusResponse }) {
 
 // ---- The API key ----------------------------------------------------------------
 
-function KeyCard({ data, canManage }: { data: AiSettingsResponse; canManage: boolean }) {
+function KeyCard({ data }: { data: AiSettingsResponse }) {
   const qc = useQueryClient()
   const { toast } = useApp()
   // The key typed in: held only until it is saved, never read back from the server.
@@ -157,57 +166,55 @@ function KeyCard({ data, canManage }: { data: AiSettingsResponse; canManage: boo
         </div>
       </div>
 
-      {canManage && (
-        <div className="space-y-3">
-          <Field
-            label={key.source === 'environment' ? (stored ? 'Replace the key kept for when the server has none' : 'A key for when the server has none') : key.set ? 'Replace the key' : 'Key'}
-            hint="Tried with Anthropic before it is kept, then stored encrypted. It is never shown again, here or anywhere."
-          >
-            <div className="relative">
-              <Input
-                type={show ? 'text' : 'password'}
-                value={value}
-                onChange={(e) => {
-                  setValue(e.target.value)
-                  setError(null)
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && value.trim() && void save()}
-                placeholder="sk-ant-…"
-                dir="ltr"
-                name="anthropic-api-key"
-                autoComplete="off"
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                data-1p-ignore
-                data-lpignore="true"
-                disabled={saving}
-                className="pr-11 font-mono"
-              />
-              <button
-                type="button"
-                onClick={() => setShow((s) => !s)}
-                aria-label={show ? 'Hide the key' : 'Show the key'}
-                data-tip={show ? 'Hide' : 'Show'}
-                className="absolute right-1 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-              >
-                {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-          </Field>
-          {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</p>}
-          <div className="flex flex-wrap gap-2">
-            <Button variant="primary" className="min-h-[44px]" onClick={() => void save()} disabled={saving || !value.trim()}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} {saving ? 'Checking with Anthropic…' : 'Save key'}
-            </Button>
-            {removable && (
-              <Button className="min-h-[44px] hover:text-rose-600" onClick={() => setConfirm(true)} disabled={saving}>
-                <Trash2 className="h-4 w-4" /> {stored ? 'Remove the key set here' : 'Remove'}
-              </Button>
-            )}
+      <div className="space-y-3">
+        <Field
+          label={key.source === 'environment' ? (stored ? 'Replace the key kept for when the server has none' : 'A key for when the server has none') : key.set ? 'Replace the key' : 'Key'}
+          hint="Tried with Anthropic before it is kept, then stored encrypted. It is never shown again, here or anywhere."
+        >
+          <div className="relative">
+            <Input
+              type={show ? 'text' : 'password'}
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value)
+                setError(null)
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && value.trim() && void save()}
+              placeholder="sk-ant-…"
+              dir="ltr"
+              name="anthropic-api-key"
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              data-1p-ignore
+              data-lpignore="true"
+              disabled={saving}
+              className="pr-11 font-mono"
+            />
+            <button
+              type="button"
+              onClick={() => setShow((s) => !s)}
+              aria-label={show ? 'Hide the key' : 'Show the key'}
+              data-tip={show ? 'Hide' : 'Show'}
+              className="absolute right-1 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+            >
+              {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
           </div>
+        </Field>
+        {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</p>}
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" className="min-h-[44px]" onClick={() => void save()} disabled={saving || !value.trim()}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} {saving ? 'Checking with Anthropic…' : 'Save key'}
+          </Button>
+          {removable && (
+            <Button className="min-h-[44px] hover:text-rose-600" onClick={() => setConfirm(true)} disabled={saving}>
+              <Trash2 className="h-4 w-4" /> {stored ? 'Remove the key set here' : 'Remove'}
+            </Button>
+          )}
         </div>
-      )}
+      </div>
 
       {confirm && (
         <Modal
@@ -284,7 +291,7 @@ export function describeKey(key: AiKeyState): {
 
 // ---- The switch and the cap ----------------------------------------------------------
 
-function SettingsCard({ data, canManage }: { data: AiSettingsResponse; canManage: boolean }) {
+function SettingsCard({ data }: { data: AiSettingsResponse }) {
   const qc = useQueryClient()
   const { toast } = useApp()
   const [enabled, setEnabled] = useState(data.settings.enabled)
@@ -303,10 +310,9 @@ function SettingsCard({ data, canManage }: { data: AiSettingsResponse; canManage
   const dirty = enabled !== serverEnabled || cap.trim() !== String(serverCap)
 
   const save = async () => {
-    const raw = cap.trim()
-    const n = Number(raw)
-    if (!CAP_PATTERN.test(raw) || !Number.isFinite(n) || n > AI_MAX_MONTHLY_CAP_USD) {
-      setError(`The cap is an amount in dollars from 0 to ${formatCap(AI_MAX_MONTHLY_CAP_USD)}, with at most two decimals.`)
+    const n = parseCapUsd(cap)
+    if (n === null) {
+      setError(CAP_RANGE_TEXT)
       return
     }
     setError(null)
@@ -329,18 +335,16 @@ function SettingsCard({ data, canManage }: { data: AiSettingsResponse; canManage
             <SlidersHorizontal className="h-5 w-5" />
           </span>
           <div className="min-w-0">
-            <h3 className="text-base font-bold">Switch and monthly cap</h3>
+            <h3 className="text-base font-bold">Switch and app-wide monthly cap</h3>
             <p className="mt-0.5 text-sm text-muted">
               Counted per calendar month in UTC, as Anthropic bills.
               {data.updatedAt ? ` Last changed ${formatDateTime(data.updatedAt)}${data.updatedByName ? ` by ${data.updatedByName}` : ''}.` : ' Using the defaults.'}
             </p>
           </div>
         </div>
-        {canManage && (
-          <Button variant="primary" className="min-h-[44px]" onClick={() => void save()} disabled={saving || !dirty}>
-            <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save'}
-          </Button>
-        )}
+        <Button variant="primary" className="min-h-[44px]" onClick={() => void save()} disabled={saving || !dirty}>
+          <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save'}
+        </Button>
       </div>
 
       {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</p>}
@@ -350,25 +354,15 @@ function SettingsCard({ data, canManage }: { data: AiSettingsResponse; canManage
           <p id="ai-enabled-label" className="font-semibold">
             Assistant on
           </p>
-          <p className="mt-0.5 text-xs text-muted">Off, nobody can ask, whatever the key and the cap. Conversations stay.</p>
+          <p className="mt-0.5 text-xs text-muted">Off, nobody can ask — you included — whatever the key and the caps. Conversations stay.</p>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
-          aria-labelledby="ai-enabled-label"
-          disabled={!canManage || saving}
-          onClick={() => setEnabled((v) => !v)}
-          className={cn(
-            'relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:opacity-50 dark:focus-visible:ring-offset-slate-900',
-            enabled ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-600',
-          )}
-        >
-          <span className={cn('inline-block h-5 w-5 rounded-full bg-white shadow transition-transform duration-200', enabled ? 'translate-x-6' : 'translate-x-1')} />
-        </button>
+        <AiSwitch on={enabled} onChange={setEnabled} labelledBy="ai-enabled-label" disabled={saving} />
       </div>
 
-      <Field label="Monthly cap (USD)" hint={`0 to ${formatCap(AI_MAX_MONTHLY_CAP_USD)}. Once reached, the assistant stops until the 1st. No call to the model is made that could go past it.`}>
+      <Field
+        label="App-wide monthly cap (USD)"
+        hint={`0 to ${formatCap(AI_MAX_MONTHLY_CAP_USD)}, for everyone's questions together; each person's own cap applies under it. Once reached, nobody can ask until the 1st. No call to the model is made that could go past it.`}
+      >
         <Input
           type="number"
           inputMode="decimal"
@@ -380,7 +374,7 @@ function SettingsCard({ data, canManage }: { data: AiSettingsResponse; canManage
             setCap(e.target.value)
             setError(null)
           }}
-          disabled={!canManage || saving}
+          disabled={saving}
           className="max-w-[12rem] tabular-nums"
         />
       </Field>
@@ -390,11 +384,10 @@ function SettingsCard({ data, canManage }: { data: AiSettingsResponse; canManage
 
 // ---- Usage -------------------------------------------------------------------------------
 
-function UsageSection() {
-  const { role } = useAuth()
+function UsageSection({ enabled }: { enabled: boolean }) {
   const [which, setWhich] = useState<'this' | 'last'>('this')
   const month = utcMonth(which === 'this' ? 0 : -1)
-  const { data, isLoading, isError, isPlaceholderData, refetch } = useAiUsage(month, can(role, 'use-ai-assistant'))
+  const { data, isLoading, isError, isPlaceholderData, refetch } = useAiUsage(month, enabled)
 
   return (
     <section className="space-y-3" aria-label="Usage">

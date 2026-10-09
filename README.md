@@ -147,6 +147,7 @@ The important ones:
 | `FACTORY_TIMEZONE`                | IANA zone used to derive the shift (A/B/C) from the time of a sample.  |
 | `SEED_DEMO_DATA`                  | Seed demo master data into an empty database on first admin sign-in.  |
 | `ANTHROPIC_API_KEY`               | Optional. The AI assistant's key — normally set in the app instead (Administration → AI assistant), stored encrypted. Set here, it wins. |
+| `AI_OWNER_USERNAME`               | Optional, default `beda`. The account that owns the AI assistant, pinned once (see below). |
 
 ## Database
 
@@ -161,13 +162,26 @@ Main tables: `users`, `auth_sessions`, `machines`, `production_orders`,
 `dimension_results`, `defect_results`, `sample_coils`, `paint_samples`,
 `pt_records`, `pdi_documents`, the image junction tables, and `audit_log`.
 
-The administrators' AI assistant reads the record only through the views in
-schema `ai`, signed in as its own role, `<database>_ai_reader` (for example
-`qc_ai_reader`): migration 0031 creates it with SELECT on those views and
-nothing else, and the API gives it LOGIN and a password derived from
-`JWT_SECRET` every time it starts. Every query runs read-only and is rolled
-back. The assistant's own records are the `ai_*` tables (conversations, usage
-for the monthly cap, the encrypted API key), which that role cannot read.
+The AI assistant belongs to one owner: the live, active account named by
+`AI_OWNER_USERNAME`, pinned in `ai_owner` the first time it exists and never
+moved through the app afterwards (a rename or a changed setting only logs a
+warning; recovery, should that account go, is a database operation). Only the
+owner sees its settings, key, access list and costs; to anyone else those
+endpoints answer 404 and the assistant's audit entries are not in the log.
+The owner gives the assistant to people one by one (`ai_access`): the data
+domains each may ask about, the model and effort, and a personal monthly cap.
+
+The assistant reads the record only through the views in schema `ai`, and the
+database enforces the domains: migration 0033 creates one role without LOGIN
+per domain (`<database>_ai_base`, `_ai_inspection`, `_ai_orders`,
+`_ai_materials`, `_ai_audit`), each holding exactly its views, and every start
+creates one LOGIN role per combination of domains (`<database>_ai_r_1010` and
+so on, fifteen in all), a member of the base and of its domains only, with a
+password derived from `JWT_SECRET` and the role's name. A question runs as the
+asker's combination; every query runs read-only and is rolled back. The
+assistant's own records are the `ai_*` tables (conversations, usage for the
+caps, the encrypted API key, the owner and the access list), which no reader
+role can read.
 
 ## API
 

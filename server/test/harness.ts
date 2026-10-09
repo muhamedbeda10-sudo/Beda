@@ -41,7 +41,7 @@ export class TestApp {
   server!: Server
   baseUrl!: string
   config!: Config
-  /** §20 — the assistant's database reader, provisioned after every reset. */
+  /** §20 — the assistant's database readers, provisioned after every reset. */
   aiReader = new AiReader()
   /** §20 — the model the app talks to: scripted by each test, never the network. */
   model = new ScriptedModel()
@@ -60,6 +60,8 @@ export class TestApp {
       IMAGE_STORAGE_DRIVER: 'local',
       RUN_MIGRATIONS_ON_START: 'false',
       SEED_DEMO_DATA: 'false',
+      // §20 — the account that owns the AI assistant: the first one most files register.
+      AI_OWNER_USERNAME: 'admin',
       ...overrides,
     }
     this.config = loadConfig(env)

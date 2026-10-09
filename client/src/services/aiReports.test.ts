@@ -1,7 +1,8 @@
 // ============================================================================
 // §20 — saved reports through the cache: saving marks the answer it came
-// from wherever its conversation is cached ("Saved · Open"), and moves the
-// month's spend, one save of an answer at a time whatever the screen does;
+// from wherever its conversation is cached ("Saved · Open"), and asks again
+// whether the assistant can still answer — keeping no amount, which the chat
+// never shows — one save of an answer at a time whatever the screen does;
 // deleting takes the mark off again and forgets the report; renaming reaches
 // the report on screen and its runs, and a run ending later does not undo it;
 // My reports pages and searches through the server, without gaps.
@@ -71,12 +72,16 @@ describe('saved reports and the cache', () => {
     qc.setQueryData(keys.aiMessages('c1'), messages)
   })
 
-  it('saving sends the turn, keeps the report and the new spend, and marks the answer', async () => {
+  it('saving sends the turn, keeps the report, marks the answer, and asks /ai/me again without keeping an amount', async () => {
+    qc.setQueryData(keys.aiMe, { granted: true, owner: false, available: true })
     const res: AiSaveReportResponse = { report, status }
     apiMock.mockResolvedValueOnce(res)
     expect(await saveAiReport(qc, { turnId: 't1' })).toBe(res)
     expect(apiMock).toHaveBeenCalledWith('/ai/reports', { method: 'POST', body: { turnId: 't1' } })
-    expect(qc.getQueryData(keys.aiStatus)).toEqual(status)
+    // The model call may have reached a cap: whether the assistant can still answer is asked again.
+    expect(qc.getQueryState(keys.aiMe)?.isInvalidated).toBe(true)
+    // The response's figures go nowhere: the chat shows no amounts.
+    expect(qc.getQueryCache().findAll({ queryKey: ['ai', 'status'] })).toHaveLength(0)
     expect(qc.getQueryData(keys.aiReport('r1'))).toEqual(report)
     expect(qc.getQueryData<AiMessagesResponse>(keys.aiMessages('c1'))?.messages[1].savedReportId).toBe('r1')
   })

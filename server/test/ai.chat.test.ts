@@ -17,7 +17,9 @@ import {
 } from '@qc/shared/ai'
 import { TestApp, type Session } from './harness'
 import { apiError, fallback, runSql, text, thinking, type FakeReply } from './aiFake'
-import { KEY_REFUSED_MESSAGE, answerQuestion, minCallWorstCaseUsd } from '../src/ai/assistant'
+import { ACCESS_NOTICE } from '../src/ai/access'
+import { KEY_REFUSED_MESSAGE, answerQuestion } from '../src/ai/assistant'
+import { minCallWorstCaseUsd } from '../src/ai/models'
 import { appendMessages, findConversation, finishTurn, loadReplay } from '../src/ai/transcript'
 
 // §20 — asking: the answer streams as Server-Sent Events while the model
@@ -100,6 +102,12 @@ beforeAll(async () => {
   admin = await app.register('admin', 'Admin')
   await app.api('POST', '/api/users', { token: admin.token, body: { username: 'admin2', password: 'Password#1', name: 'Second Admin', role: 'admin' } })
   other = await app.login('admin2')
+  // The owner (admin) gives the second administrator the assistant too: conversations stay personal all the same.
+  const granted = await app.api('PUT', `/api/ai/access/${other.user.id}`, {
+    token: admin.token,
+    body: { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit'], model: AI_MODEL, effort: 'medium', monthlyCapUsd: 50 },
+  })
+  expect(granted.status).toBe(200)
   for (const code of ['58', '31']) {
     const made = await app.api('POST', '/api/master/machines', { token: admin.token, body: { code, name: `Machine ${code}`, displayName: `${code}. Machine`, process: 'forming' } })
     expect(made.status).toBe(201)
@@ -167,8 +175,10 @@ describe('§20 asking a question', () => {
       parts: [{ type: 'text', text: 'Let me count the machines.' }, part, { type: 'text', text: 'There are **2** machines in the register.' }],
       stopReason: 'end_turn',
     })
-    expect(done!.message.costUsd).toBeCloseTo(cost, 6)
+    // What it cost is the owner's to see on the settings page, never in the chat.
+    expect(done!.message).not.toHaveProperty('costUsd')
     expect(done!.message.notice).toBeUndefined()
+    // The owner's status still carries the assistant's figures.
     expect(done!.status).toMatchObject({ available: true })
     expect(done!.status.spentUsd).toBeCloseTo(cost, 6)
   })
@@ -591,7 +601,7 @@ describe('§20 how answers end', () => {
       app.model.reply({ content: [runSql('toolu_cap', 'Count', 'SELECT count(*) AS n FROM ai.users')], usage: { input_tokens: 1000, output_tokens: 80_000 } })
       const res = await ask('An expensive question')
       expect(res.done!.message.stopReason).toBe('cap')
-      expect(res.done!.message.notice).toMatch(/spending cap \(\$\d+\.\d\d\) would be passed/)
+      expect(res.done!.message.notice).toBe(ACCESS_NOTICE.appCap)
       expect(res.done!.message.parts).toEqual([expect.objectContaining({ type: 'query', ok: true, rows: [[2]] })])
       expect(app.model.pending).toBe(0)
       // The tool call and its result were stored together: the transcript can go on.
@@ -604,13 +614,13 @@ describe('§20 how answers end', () => {
 
   it('refuses a question too close to the cap for its first call, before anything is kept or streamed', async () => {
     const before = (await app.api<AiStatusResponse>('GET', '/api/ai/status', { token: admin.token })).body
-    const floor = minCallWorstCaseUsd()
+    const floor = minCallWorstCaseUsd(AI_MODEL)
     // Room for one call's output (the status is satisfied), not for the system prompt on top of it.
     const cap = Math.ceil((before.spentUsd + floor) * 100 + 1e-6) / 100
     const prompt = (await app.db.query<{ systemPrompt: string; tools: Anthropic.Beta.BetaToolUnion[] }>(
       `SELECT system_prompt AS "systemPrompt", tools FROM ai_conversations ORDER BY created_at DESC LIMIT 1`,
     )).rows[0]
-    expect(before.spentUsd + minCallWorstCaseUsd({ conversation: { id: '', ...prompt }, messages: [] })).toBeGreaterThan(cap)
+    expect(before.spentUsd + minCallWorstCaseUsd(AI_MODEL, { conversation: prompt, messages: [] })).toBeGreaterThan(cap)
     await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: cap } })
     try {
       expect((await app.api<AiStatusResponse>('GET', '/api/ai/status', { token: admin.token })).body).toMatchObject({ available: true, capUsd: cap })
@@ -623,7 +633,8 @@ describe('§20 how answers end', () => {
         expect(res.res.headers.get('content-type')).toMatch(/application\/json/)
         const error = (res.res.body as ApiErrorBody).error
         expect(error.code).toBe('ai_budget_reached')
-        expect(error.message).toMatch(/could pass this month's spending cap \(\$\d+\.\d\d\), so it was not started/)
+        expect(error.message).toMatch(/^Answering this could pass the assistant's monthly limit, so it was not started\./)
+        expect(error.message).not.toMatch(/\$/)
       }
       expect(await turns()).toBe(turnsBefore)
       expect(app.model.calls).toHaveLength(calls)
@@ -634,7 +645,7 @@ describe('§20 how answers end', () => {
       expect((await app.api<AiStatusResponse>('GET', '/api/ai/status', { token: admin.token })).body).toMatchObject({ available: false, reason: 'cap-reached' })
       const refused = await ask('Still too dear')
       expect(refused.res.status).toBe(402)
-      expect((refused.res.body as ApiErrorBody).error.message).toMatch(/is reached, or too close for an answer to start/)
+      expect((refused.res.body as ApiErrorBody).error.message).toMatch(/^The assistant's monthly limit is reached\./)
     } finally {
       await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50 } })
     }
@@ -763,7 +774,7 @@ describe('§20 the loop’s guards', () => {
     const started = Date.now()
     const outcome = await answerQuestion({
       db: app.db,
-      reader: app.aiReader.pool,
+      readers: app.aiReader,
       model: app.model,
       apiKey: KEY,
       config: app.config,
@@ -771,7 +782,8 @@ describe('§20 the loop’s guards', () => {
       conversation,
       turnId,
       messages: await loadReplay(app.db, conversation.id),
-      capUsd: 50,
+      modelId: AI_MODEL,
+      effort: 'medium',
       emit: (e) => events.push(e),
       signal: new AbortController().signal,
       deadlineMs: 500,
@@ -820,7 +832,7 @@ describe('§20 the loop’s guards', () => {
     try {
       const outcome = await answerQuestion({
         db: app.db,
-        reader: app.aiReader.pool,
+        readers: app.aiReader,
         model: app.model,
         apiKey: KEY,
         config: app.config,
@@ -828,7 +840,8 @@ describe('§20 the loop’s guards', () => {
         conversation,
         turnId,
         messages: await loadReplay(app.db, conversation.id),
-        capUsd: 50,
+        modelId: AI_MODEL,
+        effort: 'medium',
         emit: (e) => {
           if (e.type !== 'query_start') return
           asker.abort()
@@ -939,6 +952,10 @@ describe('§20 Excel and usage', () => {
     // With no key every question is refused, but each one still counts.
     await app.api('POST', '/api/users', { token: admin.token, body: { username: 'admin3', password: 'Password#1', name: 'Third Admin', role: 'admin' } })
     const third = await app.login('admin3')
+    await app.api('PUT', `/api/ai/access/${third.user.id}`, {
+      token: admin.token,
+      body: { enabled: true, domains: ['inspection'], model: AI_MODEL, effort: 'low', monthlyCapUsd: 5 },
+    })
     await app.api('DELETE', '/api/ai/key', { token: admin.token })
     try {
       const statuses: number[] = []
@@ -956,6 +973,6 @@ describe('§20 the answer as stored', () => {
     const res = await messagesOf(first.conversationId)
     const answers = res.body.messages.filter((m: AiMessage) => m.role === 'assistant')
     expect(answers.find((m) => m.id === first.done!.message.id)).toEqual(first.done!.message)
-    expect(answers.every((m) => m.stopReason && typeof m.costUsd === 'number')).toBe(true)
+    expect(answers.every((m) => m.stopReason && !('costUsd' in m))).toBe(true)
   })
 })

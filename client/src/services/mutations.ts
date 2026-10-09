@@ -48,7 +48,19 @@ import {
   type SetAvatarRequest,
 } from '@qc/shared/api'
 import type { DashboardLayouts, KpiThresholds } from '@qc/shared/kpi'
-import type { AiMessagesResponse, AiReport, AiReportRunResponse, AiSaveReportRequest, AiSaveReportResponse, AiSetKeyRequest, AiSettings, AiSettingsResponse } from '@qc/shared/ai'
+import type {
+  AiAccess,
+  AiAccessListResponse,
+  AiAccessRequest,
+  AiMessagesResponse,
+  AiReport,
+  AiReportRunResponse,
+  AiSaveReportRequest,
+  AiSaveReportResponse,
+  AiSetKeyRequest,
+  AiSettings,
+  AiSettingsResponse,
+} from '@qc/shared/ai'
 import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
 import { api } from '@/lib/api'
 import { keys } from '@/services/queries'
@@ -472,11 +484,11 @@ export async function removeMyAvatar(qc: QueryClient, myId: string): Promise<voi
 
 // ---- §20 AI assistant --------------------------------------------------------
 
-/** The switch and the monthly cap. The status and the usage page read the cap, so they follow at once. */
+/** The switch and the app-wide cap. The usage reads the cap, and the owner's own "can it answer?" may change. */
 export async function saveAiSettings(qc: QueryClient, body: AiSettings): Promise<AiSettingsResponse> {
   const res = await api<AiSettingsResponse>('/ai/settings', { method: 'PUT', body })
   qc.setQueryData(keys.aiSettings, res)
-  qc.setQueryData(keys.aiStatus, res.status)
+  void qc.invalidateQueries({ queryKey: keys.aiMe })
   await qc.invalidateQueries({ queryKey: ['ai', 'usage'] })
   return res
 }
@@ -486,15 +498,52 @@ export async function setAiKey(qc: QueryClient, apiKey: string): Promise<AiSetti
   const body: AiSetKeyRequest = { apiKey }
   const res = await api<AiSettingsResponse>('/ai/key', { method: 'PUT', body })
   qc.setQueryData(keys.aiSettings, res)
-  qc.setQueryData(keys.aiStatus, res.status)
+  void qc.invalidateQueries({ queryKey: keys.aiMe })
   return res
 }
 
 export async function removeAiKey(qc: QueryClient): Promise<AiSettingsResponse> {
   const res = await api<AiSettingsResponse>('/ai/key', { method: 'DELETE' })
   qc.setQueryData(keys.aiSettings, res)
-  qc.setQueryData(keys.aiStatus, res.status)
+  void qc.invalidateQueries({ queryKey: keys.aiMe })
   return res
+}
+
+/** The access list with one person's row put in (replacing theirs, or added at the end). Nothing cached, nothing to change. */
+export function upsertAiAccess(old: AiAccessListResponse | undefined, row: AiAccess): AiAccessListResponse | undefined {
+  if (!old) return old
+  const at = old.people.findIndex((p) => p.userId === row.userId)
+  const people = at < 0 ? [...old.people, row] : old.people.map((p, i) => (i === at ? row : p))
+  return { ...old, people }
+}
+
+/** The access list without one person. Untouched, the same object comes back. */
+export function withoutAiAccess(old: AiAccessListResponse | undefined, userId: string): AiAccessListResponse | undefined {
+  if (!old || !old.people.some((p) => p.userId === userId)) return old
+  return { ...old, people: old.people.filter((p) => p.userId !== userId) }
+}
+
+/**
+ * Give a person the assistant, or change what they have of it (the owner
+ * only). Their next question uses it. The list of people still to add loses
+ * them, and the owner's own access may be the one that changed.
+ */
+export async function saveAiAccess(qc: QueryClient, userId: string, body: AiAccessRequest): Promise<AiAccess> {
+  const row = await api<AiAccess>(`/ai/access/${encodeURIComponent(userId)}`, { method: 'PUT', body })
+  qc.setQueryData<AiAccessListResponse>(keys.aiAccess, (old) => upsertAiAccess(old, row))
+  void qc.invalidateQueries({ queryKey: keys.aiPeople })
+  void qc.invalidateQueries({ queryKey: keys.aiMe })
+  await qc.invalidateQueries({ queryKey: keys.aiAccess })
+  return row
+}
+
+/** Take the assistant from a person (the owner only). Their conversations and reports stay theirs, out of reach until it is given back. */
+export async function removeAiAccess(qc: QueryClient, userId: string): Promise<void> {
+  await api<void>(`/ai/access/${encodeURIComponent(userId)}`, { method: 'DELETE' })
+  qc.setQueryData<AiAccessListResponse>(keys.aiAccess, (old) => withoutAiAccess(old, userId))
+  void qc.invalidateQueries({ queryKey: keys.aiPeople })
+  void qc.invalidateQueries({ queryKey: keys.aiMe })
+  await qc.invalidateQueries({ queryKey: keys.aiAccess })
 }
 
 /** Remove a conversation from this person's history (the server keeps it for the cost record). */
@@ -532,15 +581,18 @@ export function markSavedReport(old: AiMessagesResponse | undefined, turnId: str
 /**
  * Save an answer as a report. With an adjustable period (the default) the
  * server asks the model once to make the period changeable, which counts
- * toward the month's cap — so the spend on screen follows.
+ * toward this month's caps — so whether the assistant can still answer is
+ * asked again, and the owner's figures (when the owner's page is cached)
+ * follow. No amount is kept from the response: the chat shows none.
  */
 export async function saveAiReport(qc: QueryClient, body: AiSaveReportRequest): Promise<AiSaveReportResponse> {
   const res = await api<AiSaveReportResponse>('/ai/reports', { method: 'POST', body })
-  qc.setQueryData(keys.aiStatus, res.status)
   qc.setQueryData(keys.aiReport(res.report.id), res.report)
   // The answer's "Save as report" becomes "Saved · Open" wherever its conversation is cached.
   qc.setQueriesData<AiMessagesResponse>({ queryKey: ['ai', 'messages'] }, (old) => markSavedReport(old, body.turnId, res.report.id))
+  void qc.invalidateQueries({ queryKey: keys.aiMe })
   void qc.invalidateQueries({ queryKey: keys.aiSettings })
+  void qc.invalidateQueries({ queryKey: keys.aiAccess })
   void qc.invalidateQueries({ queryKey: ['ai', 'usage'] })
   await qc.invalidateQueries({ queryKey: keys.aiReports })
   return res

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AiQueryPart } from '@qc/shared/ai'
 import type { LivePart } from './liveTurn'
-import { AI_MAX_SUGGESTIONS, hideSuggestions, liveDisplayParts, spentFocus, suggestionChips, takesCaret, type ComposerFocus } from './suggestions'
+import { AI_MAX_SUGGESTIONS, AI_STARTER_QUESTIONS, hideSuggestions, liveDisplayParts, spentFocus, suggestionChips, takesCaret, type ComposerFocus } from './suggestions'
 
 const ANSWER = 'Weld porosity leads with **30** pieces.'
 const BLOCK = '<suggestions>\n- Which machines had it most?\n- كم قطعة الشهر اللي فات؟\n</suggestions>'
@@ -81,5 +81,25 @@ describe('the question box taking the caret', () => {
     expect(takesCaret(kept, true)).toBe(false)
     // Nothing to spend: the same request, so the panel does not draw again.
     expect(spentFocus(kept)).toBe(kept)
+  })
+})
+
+describe('the first questions offered', () => {
+  // Words for data only some people are given: inspections, orders and PDI, coils and master data, the audit log and accounts.
+  // (A machine's production line is the machine register's own.)
+  const DOMAIN_WORDS =
+    /defect|hold|session|inspect|sample|measure|dimension|production(?! line)|order|pdi|coil|supplier|material|grade|consumable|instruction|audit|account|user|role|عيب|عيوب|هولد|جلس|فحص|عينة|عينات|قياس|إنتاج|انتاج|طلب|أوردر|لفائف|لفة|كويل|مورد|خام|سجل|حساب|مستخدم/i
+
+  it('asks nothing that needs data a person may not have been given', () => {
+    for (const q of AI_STARTER_QUESTIONS) expect(q).not.toMatch(DOMAIN_WORDS)
+  })
+
+  it('asks about the assistant itself or the machine register, which everyone given it can read', () => {
+    for (const q of AI_STARTER_QUESTIONS) expect(q).toMatch(/ask you|machine|أسألك|ماكين/i)
+  })
+
+  it('offers English and Arabic alike', () => {
+    expect(AI_STARTER_QUESTIONS.some((q) => /[\u0600-\u06FF]/.test(q))).toBe(true)
+    expect(AI_STARTER_QUESTIONS.some((q) => /^[\x20-\x7E]+$/.test(q))).toBe(true)
   })
 })

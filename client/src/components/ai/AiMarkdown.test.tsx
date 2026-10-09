@@ -21,7 +21,7 @@ function render(text: string): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
-        <AiAssistantProvider enabled>
+        <AiAssistantProvider>
           <AiMarkdown text={text} />
         </AiAssistantProvider>
       </MemoryRouter>

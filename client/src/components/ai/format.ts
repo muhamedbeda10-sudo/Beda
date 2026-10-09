@@ -1,7 +1,8 @@
 // ============================================================================
-// §20 — the AI assistant's words and figures: money, the share of the monthly
-// cap spent, the month a usage report covers, and why the assistant cannot
-// answer when it cannot. Shared by the panel and the administration page.
+// §20 — the AI assistant's words and figures: money, the share of a monthly
+// cap spent, the month a usage report covers (all for the owner's page — the
+// chat shows no amounts), why the assistant cannot answer as the owner's page
+// says it, and how an answer ended.
 // ============================================================================
 
 import type { AiStopReason, AiUnavailableReason } from '@qc/shared/ai'
@@ -67,12 +68,12 @@ export function formatUtcDay(day: string): string {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, d)))
 }
 
-/** Why the assistant cannot answer, in a sentence the asker can act on. */
+/** Why nobody can ask the assistant, precisely, for its owner's page (everyone else reads AI_BLOCK_TEXT, in ./access). */
 export const UNAVAILABLE_TEXT: Record<AiUnavailableReason, string> = {
-  'no-key': 'An administrator sets the API key under Administration → AI assistant.',
-  disabled: 'The assistant is switched off. An administrator can turn it on under Administration → AI assistant.',
+  'no-key': 'There is no API key: nobody can ask until one is set below.',
+  disabled: 'The assistant is switched off: nobody can ask until it is turned on below.',
   'reader-unavailable': 'The assistant cannot reach the factory data right now. Try again later; if it persists, check the server log.',
-  'cap-reached': "This month's budget is spent, or too little of it is left for an answer to start. The assistant answers again on the 1st (UTC), or when an administrator raises the cap.",
+  'cap-reached': 'The app-wide monthly cap is reached, or too little of it is left for an answer to start. Nobody can ask until the 1st (UTC), or until the cap is raised below.',
 }
 
 /** How an answer ended when it did not simply finish: the default words, when the server sent none. */
@@ -81,6 +82,6 @@ export const STOP_TEXT: Record<Exclude<AiStopReason, 'end_turn'>, string> = {
   refusal: 'Claude declined to answer this question.',
   stopped: 'Stopped before the answer finished.',
   limit: 'Stopped: this question took too many queries or too long. Ask a narrower one.',
-  cap: "Stopped: this month's budget is spent.",
+  cap: "Stopped: this month's limit for the assistant is reached.",
   error: 'Something went wrong before the answer finished.',
 }

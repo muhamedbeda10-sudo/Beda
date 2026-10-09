@@ -199,6 +199,15 @@ export async function monthSpend(q: Queryable): Promise<{ spentUsd: number; mont
   return { spentUsd: rows[0].spent, monthStart: rows[0].monthStart }
 }
 
+/** What one person's questions have cost this calendar month (UTC): their own cap is held to it. */
+export async function personalMonthSpend(q: Queryable, userId: string): Promise<number> {
+  const { rows } = await q.query<{ spent: number }>(
+    `SELECT COALESCE(sum(cost_usd), 0)::numeric(14, 6) AS spent FROM ai_usage WHERE user_id = $1 AND created_at >= ${MONTH_START_SQL}`,
+    [userId],
+  )
+  return Number(rows[0].spent)
+}
+
 export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
   await q.query(
     `INSERT INTO ai_usage (user_id, conversation_id, turn_id, model, input_tokens, output_tokens, cache_write_5m_tokens,
@@ -242,7 +251,6 @@ interface TurnRow {
   status: 'running' | 'done'
   stopReason: AiStopReason | null
   notice: string | null
-  costUsd: number
   createdAt: string
   finishedAt: string | null
 }
@@ -267,7 +275,7 @@ interface MessageRow {
 export async function loadDisplayMessages(q: Queryable, conversationId: string, turnId?: string): Promise<AiMessage[]> {
   const params = [conversationId, turnId ?? null]
   const turns = await q.query<TurnRow>(
-    `SELECT id, question, status, stop_reason AS "stopReason", notice, cost_usd AS "costUsd", created_at AS "createdAt", finished_at AS "finishedAt"
+    `SELECT id, question, status, stop_reason AS "stopReason", notice, created_at AS "createdAt", finished_at AS "finishedAt"
        FROM ai_turns WHERE conversation_id = $1 AND ($2::uuid IS NULL OR id = $2) ORDER BY created_at, id`,
     params,
   )
@@ -324,8 +332,8 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
     const { parts: shown, suggestions } = withoutSuggestions(parts)
     if (shown.length === 0 && t.status !== 'done') continue
     const answer: AiMessage = { id: t.id, role: 'assistant', parts: shown, createdAt: t.finishedAt ?? lastAt ?? t.createdAt, turnId: t.id }
+    // What an answer cost is the owner's to see, on the settings page: never in the chat.
     if (t.status === 'done') {
-      answer.costUsd = t.costUsd
       if (t.stopReason) answer.stopReason = t.stopReason
       if (t.notice) answer.notice = t.notice
     }
