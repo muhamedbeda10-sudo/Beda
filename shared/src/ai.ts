@@ -89,6 +89,8 @@ export interface AiKeyState {
   updatedByName?: string
   /** A key set here that can no longer be read (the server's secret changed): set it again. */
   unreadable?: boolean
+  /** With the environment's key in use: a key also set here, kept for when the server has none. */
+  stored?: { last4: string; updatedAt: string; updatedByName: string; unreadable?: boolean } | null
 }
 
 export interface AiSetKeyRequest {
