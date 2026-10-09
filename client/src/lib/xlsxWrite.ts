@@ -36,8 +36,13 @@ function cleanText(s: string): string {
   return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
 }
 
+/**
+ * A name Excel opens, unique in the workbook (case aside). Excel also refuses
+ * a name that starts or ends with an apostrophe, so those go — after the cut
+ * to 31 characters too, which can leave one at the end ("…operator's" → "…operator'").
+ */
 export function sheetName(raw: string, taken: Set<string>): string {
-  let base = raw.replace(/[:\\/?*[\]]/g, ' ').trim().slice(0, 31) || 'Sheet'
+  const base = raw.replace(/[:\\/?*[\]]/g, ' ').trim().slice(0, 31).replace(/^['\s]+|['\s]+$/g, '') || 'Sheet'
   let name = base
   let n = 2
   while (taken.has(name.toLowerCase())) {

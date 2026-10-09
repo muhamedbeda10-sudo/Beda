@@ -35,7 +35,7 @@ import { withTransaction, type Db } from '../db/pool'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
 import { RUN_SQL_TOOL_NAME, RunSqlInput } from './prompt'
 import { AI_QUERY_STOPPED, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
-import { appendMessages, insertQueries, monthSpend, queryPart, recordUsage, type NewMessage, type QueryRecord } from './transcript'
+import { appendMessages, insertQueries, monthSpend, queryPart, recordUsage, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
 
 type MessageParam = Anthropic.Beta.BetaMessageParam
 type ContentBlock = Anthropic.Beta.BetaContentBlock
@@ -190,7 +190,7 @@ export function usageOf(message: ModelMessage): { model: string; tokens: AiToken
 const modelPrice = () => AI_PRICES[AI_MODEL] ?? AI_UNKNOWN_MODEL_PRICE
 
 /** The most a call could cost: every input token written to the cache, every output token used. */
-function worstCaseUsd(params: Pick<ModelParams, 'system' | 'tools' | 'messages' | 'max_tokens'>): number {
+export function worstCaseUsd(params: Pick<ModelParams, 'system' | 'tools' | 'messages' | 'max_tokens'>): number {
   const price = modelPrice()
   // About three characters a token, rounded the dear way.
   const inputTokens = Math.ceil(JSON.stringify([params.system, params.tools, params.messages]).length / 3)
@@ -332,7 +332,7 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
     } catch (err) {
       // A stream that failed on its own may still be reading the response, which would go uncounted: stop it.
       if (!(err instanceof Anthropic.APIUserAbortError)) stream.abort()
-      await recordCutOffUsage(qn, stream, watch, params.max_tokens)
+      await recordCutOffUsage(qn.db, { userId: qn.userId, conversationId: qn.conversation.id, turnId: qn.turnId }, stream, watch, params.max_tokens)
       if (err instanceof Anthropic.APIUserAbortError || signal.aborted) return stopped()
       if (err instanceof Anthropic.APIError) {
         // An error event inside an open stream (no status) is not retried by the SDK: once here.
@@ -471,15 +471,19 @@ async function runToolUse(qn: Question, tu: ToolUse, queries: QueryRecord[], sig
 }
 
 /** What a call has streamed so far, for counting it if it is cut off. */
-interface StreamWatch {
+export interface StreamWatch {
   /** Characters of every kind the model wrote: reply, thinking, tool input. */
   chars: () => number
   /** When the first event arrived; null before. */
   startedAt: () => number | null
 }
 
-/** Forward the stream to the asker: the reply as it is written, and now and then a line of what the model is thinking. */
-function watchStream(stream: ModelStream, emit: (e: AiStreamEvent) => void): StreamWatch {
+/**
+ * Count what the stream writes, and forward it to the asker when there is one
+ * (`emit`): the reply as it is written, and now and then a line of what the
+ * model is thinking.
+ */
+export function watchStream(stream: ModelStream, emit?: (e: AiStreamEvent) => void): StreamWatch {
   let chars = 0
   let startedAt: number | null = null
   let thinking = ''
@@ -490,7 +494,7 @@ function watchStream(stream: ModelStream, emit: (e: AiStreamEvent) => void): Str
     lastProgress = Date.now()
     const line = thinking.replace(/\s+/g, ' ').trim()
     if (!line) return
-    emit({ type: 'progress', text: line.length > PROGRESS_CHARS ? `…${line.slice(-PROGRESS_CHARS)}` : line })
+    emit?.({ type: 'progress', text: line.length > PROGRESS_CHARS ? `…${line.slice(-PROGRESS_CHARS)}` : line })
   }
   // Counted from the raw deltas: tool input arrives only there (a call cut off mid-input has no finished
   // block), and each character is seen once. Not the SDK's inputJson event: it parses on every delta.
@@ -502,17 +506,19 @@ function watchStream(stream: ModelStream, emit: (e: AiStreamEvent) => void): Str
     else if (d.type === 'thinking_delta') chars += d.thinking.length
     else if (d.type === 'input_json_delta') chars += d.partial_json.length
   })
-  stream.on('text', (delta) => {
-    emit({ type: 'text', delta })
-  })
-  stream.on('thinking', (_delta, snapshot) => {
-    thinking = snapshot
-    if (Date.now() - lastProgress >= PROGRESS_EVERY_MS) progress()
-    else pending = true
-  })
-  stream.on('contentBlock', (block) => {
-    if (block.type === 'thinking' && pending) progress()
-  })
+  if (emit) {
+    stream.on('text', (delta) => {
+      emit({ type: 'text', delta })
+    })
+    stream.on('thinking', (_delta, snapshot) => {
+      thinking = snapshot
+      if (Date.now() - lastProgress >= PROGRESS_EVERY_MS) progress()
+      else pending = true
+    })
+    stream.on('contentBlock', (block) => {
+      if (block.type === 'thinking' && pending) progress()
+    })
+  }
   return { chars: () => chars, startedAt: () => startedAt }
 }
 
@@ -523,7 +529,13 @@ function watchStream(stream: ModelStream, emit: (e: AiStreamEvent) => void): Str
  * character, and the time it ran at more than the model writes — never more
  * than the call was allowed. The cap must err on the dear side.
  */
-async function recordCutOffUsage(qn: Question, stream: ModelStream, watch: StreamWatch, maxTokens: number): Promise<void> {
+export async function recordCutOffUsage(
+  db: Db,
+  owner: Pick<UsageRecord, 'userId' | 'conversationId' | 'turnId'>,
+  stream: ModelStream,
+  watch: StreamWatch,
+  maxTokens: number,
+): Promise<void> {
   const current = stream.currentMessage
   if (!current) return
   const model = current.model || AI_MODEL
@@ -533,10 +545,8 @@ async function recordCutOffUsage(qn: Question, stream: ModelStream, watch: Strea
   const estimate = Math.max(reported.outputTokens, Math.ceil(watch.chars() / 2), Math.ceil(seconds * CUT_OFF_TOKENS_PER_SECOND))
   const tokens = { ...reported, outputTokens: Math.min(maxTokens, estimate) }
   try {
-    await recordUsage(qn.db, {
-      userId: qn.userId,
-      conversationId: qn.conversation.id,
-      turnId: qn.turnId,
+    await recordUsage(db, {
+      ...owner,
       model,
       tokens,
       costUsd: aiCostUsd(model, tokens),

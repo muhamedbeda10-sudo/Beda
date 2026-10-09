@@ -54,6 +54,7 @@ const ctx: AppContext = {
   ai: new AnthropicModelClient(),
   aiReader,
   aiLimiter: new RateLimiter(30, 10 * 60_000),
+  aiReportLimiter: new RateLimiter(60, 10 * 60_000),
 }
 const app = createApp(ctx)
 

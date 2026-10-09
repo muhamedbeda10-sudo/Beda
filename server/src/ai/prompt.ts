@@ -9,7 +9,7 @@
 
 import type Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
-import { AI_PREVIEW_ROWS } from '@qc/shared/ai'
+import { AI_PREVIEW_ROWS, isAiDay } from '@qc/shared/ai'
 import { AI_MAX_SQL_CHARS } from './runQuery'
 
 export const RUN_SQL_TOOL_NAME = 'run_sql'
@@ -81,6 +81,14 @@ export function renderSystemPrompt(factoryTimeZone: string, schemaDescription: s
 - Show no SQL in the answer unless asked.
 - Link a session as [Session #<session_no> · <order_number>](/history?session=<session_id>).
 
+# Follow-up questions
+End every answer with two or three short questions the administrator might ask next, as the very last thing you write, in exactly this form:
+<suggestions>
+- first question
+- second question
+</suggestions>
+Write them in the language of the question, each at most 120 characters, each answerable from the ai.* views, and none repeating what you just answered. The app shows them as buttons and takes the block out of your answer, so never mention it.
+
 # Read-only
 You cannot change anything in the system. When asked to, explain where in the app it is done.
 
@@ -103,6 +111,17 @@ export function contextLine(at: Date, timeZone: string): string {
   }).formatToParts(at)
   const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? ''
   return `<context>Today: ${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')} (${timeZone})</context>`
+}
+
+/** The factory day a question was asked on, read back from its date line; null for a line contextLine did not write. */
+export function contextDay(line: string): string | null {
+  const m = /^<context>Today: (\d{4}-\d{2}-\d{2}) \d{2}:\d{2} \([^()]*\)<\/context>$/.exec(line)
+  return m && isAiDay(m[1]) ? m[1] : null
+}
+
+/** The calendar day it is (or was) at `at` where the factory sits, YYYY-MM-DD. */
+export function factoryDay(at: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at)
 }
 
 /** A question as it is sent and stored: the date line, then the words as typed. */

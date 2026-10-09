@@ -87,8 +87,27 @@ interface Row {
   cells: AiCell[]
 }
 
-/** "Open table": the preview, large, with Excel's filter and sort. `exportWait`: why Export Excel cannot run yet. */
-export function AiResultModal({ part, onClose, onExport, exporting, exportWait }: { part: AiQueryPart; onClose: () => void; onExport: () => void; exporting: boolean; exportWait?: string }) {
+/**
+ * "Open table": the preview, large, with Excel's filter and sort. `exportWait`: why Export Excel cannot run yet.
+ * `exportLabel`/`exportTip`: what the export button takes, when it is more than this query (a whole report).
+ */
+export function AiResultModal({
+  part,
+  onClose,
+  onExport,
+  exporting,
+  exportWait,
+  exportLabel = 'Export Excel',
+  exportTip,
+}: {
+  part: AiQueryPart
+  onClose: () => void
+  onExport: () => void
+  exporting: boolean
+  exportWait?: string
+  exportLabel?: string
+  exportTip?: string
+}) {
   const numeric = useMemo(() => numericColumns(part.columns, part.rows), [part.columns, part.rows])
   const rows = useMemo<Row[]>(() => part.rows.map((cells, i) => ({ i, cells })), [part.rows])
   // useTableView keys its columns by identity: built once per result.
@@ -115,8 +134,8 @@ export function AiResultModal({ part, onClose, onExport, exporting, exportWait }
       title={<span dir="auto">{part.purpose}</span>}
       footer={
         <>
-          <Button onClick={onExport} disabled={exporting || !!exportWait} data-tip={exportWait} className="sm:mr-auto">
-            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} {exporting ? 'Exporting…' : 'Export Excel'}
+          <Button onClick={onExport} disabled={exporting || !!exportWait} data-tip={exportWait ?? exportTip} className="sm:mr-auto">
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} {exporting ? 'Exporting…' : exportLabel}
           </Button>
           <Button variant="primary" onClick={onClose}>
             Close
@@ -126,7 +145,7 @@ export function AiResultModal({ part, onClose, onExport, exporting, exportWait }
     >
       <p className="mb-2 text-xs text-muted">
         {part.rows.length.toLocaleString()} {part.rows.length === 1 ? 'row' : 'rows'}
-        {part.truncated ? ' — more matched. Export Excel runs the query again for all of them.' : '.'}
+        {part.truncated ? ` — more matched. ${exportLabel} runs the query again for all of them.` : '.'}
       </p>
       <ViewNote view={view} total={rows.length} />
       {rows.length === 0 ? (

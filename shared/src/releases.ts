@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-09.2',
+    date: '2026-10-09',
+    title: 'AI assistant: questions to ask next, and answers kept as reports',
+    items: [
+      { text: 'Under each new answer, the assistant offers two or three questions to ask next. Tap one to put it in the box, change it if you like, then send.' },
+      { text: '"Save as report" keeps an answer\'s tables to run again any day, at no cost, from My reports in the assistant\'s header. A report keeps its period as it was asked — "the last 30 days" stays the last 30 days — and another range can be chosen for a run. Export Excel gives one sheet per table. Reports are personal.' },
+      { text: 'Saving checks that the adjustable report returns exactly what the answer showed; when it cannot be sure, the report keeps the period it was asked with, and says so.' },
+    ],
+  },
+  {
     id: '2026-10-09.1',
     date: '2026-10-09',
     title: 'AI assistant: ask about the record in plain words',

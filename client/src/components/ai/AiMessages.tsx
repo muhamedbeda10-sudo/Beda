@@ -2,11 +2,13 @@
 // §20 — the two sides of a conversation. A question is a bubble on the right;
 // an answer runs the panel's full width (its tables need it), led by the
 // assistant's mark, its text and its query cards in the order they came,
-// then how it ended, what it cost and a Copy. A saved message never changes,
-// so it is memoised; the answer being written redraws once per frame.
+// then how it ended, what it cost, Save as report and a Copy; the latest
+// answer also offers the questions the model suggests asking next. A saved
+// message changes only when it is saved as a report, so it is memoised; the
+// answer being written redraws once per frame.
 // ============================================================================
 
-import { memo, type ReactNode } from 'react'
+import { memo, useMemo, type ReactNode } from 'react'
 import { Bot, Copy, RotateCcw } from 'lucide-react'
 import type { AiMessage } from '@qc/shared/ai'
 import { formatFullTimestamp, formatTime, cn } from '@/lib/utils'
@@ -14,8 +16,11 @@ import { useApp } from '@/store/AppContext'
 import { AiMarkdown } from './AiMarkdown'
 import { AiQueryCard } from './AiQueryCard'
 import { Notice, StopNotice } from './AiNotice'
+import { useSaveAsReport } from './AiSaveReport'
+import { AiSuggestions } from './AiSuggestions'
 import { formatUsd } from './format'
 import { answerText, isInFlight, type LivePart, type LiveTurn } from './liveTurn'
+import { liveDisplayParts, suggestionChips } from './suggestions'
 
 /** The assistant's round mark. */
 export function BotMark({ size = 'sm', className }: { size?: 'sm' | 'md' | 'lg'; className?: string }) {
@@ -74,7 +79,8 @@ function AskAgain({ question, onAskAgain }: { question?: string; onAskAgain?: (q
   )
 }
 
-function AnswerFooter({ parts, costUsd, at }: { parts: readonly LivePart[]; costUsd?: number; at: string }) {
+/** `extra`: what else the answer offers, beside Copy (Save as report). */
+function AnswerFooter({ parts, costUsd, at, extra }: { parts: readonly LivePart[]; costUsd?: number; at: string; extra?: ReactNode }) {
   const { toast } = useApp()
   const text = answerText(parts)
   const copy = async () => {
@@ -96,8 +102,14 @@ function AnswerFooter({ parts, costUsd, at }: { parts: readonly LivePart[]; cost
           <span data-tip="What this answer cost, every call to the model it took">{formatUsd(costUsd)}</span>
         </>
       )}
+      {extra && <span className="ms-auto inline-flex">{extra}</span>}
       {text && (
-        <button type="button" onClick={() => void copy()} className="ms-auto inline-flex h-7 items-center gap-1 rounded-md px-1.5 font-semibold hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-10 touch:px-2.5" aria-label="Copy the answer">
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className={cn('inline-flex h-7 items-center gap-1 rounded-md px-1.5 font-semibold hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-10 touch:px-2.5', !extra && 'ms-auto')}
+          aria-label="Copy the answer"
+        >
           <Copy className="h-3.5 w-3.5" /> Copy
         </button>
       )}
@@ -105,18 +117,41 @@ function AnswerFooter({ parts, costUsd, at }: { parts: readonly LivePart[]; cost
   )
 }
 
+const NO_PARTS: readonly LivePart[] = []
+
 /**
  * An answer: saved (`message`), or being written (`turn`). One component for
  * both, drawn at one key (threadItems), so the hand-over when it is saved
  * keeps its query cards as they were — opened, or showing their table with
  * its filters. `question` is the question it replies to, for its exports and
- * Ask again.
+ * Ask again. `latest`: the conversation's last answer, the one that offers
+ * its follow-up questions (`onSuggestion` puts one in the box).
  */
-export const Answer = memo(function Answer({ message, turn, question, onAskAgain }: { message?: AiMessage; turn?: LiveTurn; question?: string; onAskAgain?: (q: string) => void }) {
+export const Answer = memo(function Answer({
+  message,
+  turn,
+  question,
+  onAskAgain,
+  latest = false,
+  onSuggestion,
+  onOpenReport,
+}: {
+  message?: AiMessage
+  turn?: LiveTurn
+  question?: string
+  onAskAgain?: (q: string) => void
+  latest?: boolean
+  onSuggestion?: (q: string) => void
+  onOpenReport?: (reportId: string) => void
+}) {
   const writing = !!turn && isInFlight(turn)
-  // The answer as it ended: the saved one, or the turn's once done; until then, the parts as streamed.
+  // The answer as it ended: the saved one, or the turn's once done; until then, the parts as streamed,
+  // without the follow-up questions the model is writing at its end (the saved answer has them apart).
   const ended = turn ? (turn.phase === 'done' ? turn.message : null) : (message ?? null)
-  const parts: readonly LivePart[] = ended ? ended.parts : (turn?.parts ?? [])
+  const streamed = turn?.parts ?? NO_PARTS
+  const parts: readonly LivePart[] = useMemo(() => (ended ? ended.parts : liveDisplayParts(streamed)), [ended, streamed])
+  const save = useSaveAsReport(ended, onOpenReport)
+  const chips = latest && ended && onSuggestion ? suggestionChips(ended.suggestions) : []
   const last = parts.at(-1)
   // Between queries and before the first word, say what the model is doing. Not a live region: it
   // changes several times a second; the thread's status line says when the phase changes.
@@ -143,7 +178,9 @@ export const Answer = memo(function Answer({ message, turn, question, onAskAgain
         </Notice>
       )}
       {ended && <StopNotice reason={ended.stopReason} notice={ended.notice} action={retry ? <AskAgain question={question} onAskAgain={onAskAgain} /> : undefined} />}
-      {ended && <AnswerFooter parts={ended.parts} costUsd={ended.costUsd} at={ended.createdAt} />}
+      {ended && <AnswerFooter parts={ended.parts} costUsd={ended.costUsd} at={ended.createdAt} extra={save.button} />}
+      {save.notice}
+      {chips.length > 0 && onSuggestion && <AiSuggestions questions={chips} onPick={onSuggestion} />}
     </AnswerFrame>
   )
 })

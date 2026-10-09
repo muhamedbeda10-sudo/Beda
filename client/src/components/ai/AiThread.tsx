@@ -12,7 +12,7 @@ import { useAiMessages } from '@/services/queries'
 import { useAi, useAiLive } from './AiAssistantProvider'
 import { Answer, BotMark, UserBubble } from './AiMessages'
 import { Notice } from './AiNotice'
-import { answerText, liveAnnouncement, liveView, threadItems } from './liveTurn'
+import { answerText, latestAnswerKey, liveAnnouncement, liveView, threadItems } from './liveTurn'
 
 /** What an administrator might ask first; a tap puts it in the box to send or change. */
 const EXAMPLES = [
@@ -24,12 +24,25 @@ const EXAMPLES = [
 
 const NONE: AiMessage[] = []
 
-export function AiThread({ onAskAgain, onExample }: { onAskAgain: (question: string) => void; onExample: (question: string) => void }) {
+export function AiThread({
+  onAskAgain,
+  onExample,
+  onSuggestion,
+  onOpenReport,
+}: {
+  onAskAgain: (question: string) => void
+  onExample: (question: string) => void
+  /** A follow-up question tapped under the latest answer: into the box, not sent. */
+  onSuggestion: (question: string) => void
+  onOpenReport: (reportId: string) => void
+}) {
   const { conversationId, openConversation, enabled } = useAi()
   const live = useAiLive()
   const { data, isLoading, isError, refetch } = useAiMessages(conversationId, enabled)
   const view = liveView(live, conversationId, data?.messages ?? NONE)
   const items = threadItems(live, view)
+  // Follow-up questions are offered under the conversation's last answer only: once something is asked after it, they go.
+  const latestAnswer = latestAnswerKey(items)
   const empty = conversationId === null && !view.question
   // Read out when the answer on screen changes phase; the turn of another conversation says nothing here.
   const announcement = live && live.conversationId === conversationId ? liveAnnouncement(live) : ''
@@ -129,12 +142,28 @@ export function AiThread({ onAskAgain, onExample }: { onAskAgain: (question: str
             item.message.role === 'user' ? (
               <UserBubble key={item.key} text={answerText(item.message.parts)} at={item.message.createdAt} />
             ) : (
-              <Answer key={item.key} message={item.message} question={questions.get(item.message.id)} onAskAgain={onAskAgain} />
+              <Answer
+                key={item.key}
+                message={item.message}
+                question={questions.get(item.message.id)}
+                onAskAgain={onAskAgain}
+                latest={item.key === latestAnswer}
+                onSuggestion={onSuggestion}
+                onOpenReport={onOpenReport}
+              />
             )
           ) : item.kind === 'question' ? (
             <UserBubble key={item.key} text={live!.question} />
           ) : (
-            <Answer key={item.key} turn={live!} question={live!.question} onAskAgain={onAskAgain} />
+            <Answer
+              key={item.key}
+              turn={live!}
+              question={live!.question}
+              onAskAgain={onAskAgain}
+              latest={item.key === latestAnswer}
+              onSuggestion={onSuggestion}
+              onOpenReport={onOpenReport}
+            />
           ),
         )}
       </div>

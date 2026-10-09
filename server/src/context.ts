@@ -18,4 +18,6 @@ export interface AppContext {
   aiReader: AiReader
   /** §20 — questions per person, so one runaway client cannot spend the month's cap in minutes. */
   aiLimiter: RateLimiter
+  /** §20 — saved reports run or exported per person: free, but every run reads the database. */
+  aiReportLimiter: RateLimiter
 }

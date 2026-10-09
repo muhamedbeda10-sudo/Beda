@@ -10,18 +10,31 @@
 // can refuse it (the body, the rate, the switch, the key, the cap, the
 // conversation, a send repeated) runs before the stream opens, so a refusal
 // is an ordinary JSON error; once it is open, a failure is an `error` event.
+//
+// An answer can be kept as a report (reports.ts): personal like the
+// conversations, run again on demand through the same sandbox, its creation,
+// renaming and removal in the audit log (which report and what was done to
+// it: never its title, which is personal, nor its SQL).
 // ============================================================================
 
-import { Router } from 'express'
+import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
 import {
   AI_EXPORT_MAX_ROWS,
   AI_MAX_MESSAGE_CHARS,
   AI_MAX_MONTHLY_CAP_USD,
   AI_MODEL,
+  isAiDay,
   type AiConversationsResponse,
   type AiMessagesResponse,
   type AiQueryExportResponse,
+  type AiReport,
+  type AiReportExportResponse,
+  type AiReportPeriod,
+  type AiReportRunResponse,
+  type AiReportSection,
+  type AiReportsResponse,
+  type AiSaveReportResponse,
   type AiSettings,
   type AiSettingsResponse,
   type AiStatusResponse,
@@ -32,11 +45,32 @@ import type { AppContext } from '../context'
 import { PG, pgCode, withTransaction } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
-import { auditChanges, writeAudit } from '../audit/service'
-import { answerQuestion, describeModelFailure, minCallWorstCaseUsd } from '../ai/assistant'
+import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
+import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
+import { answerQuestion, describeModelFailure, minCallWorstCaseUsd, worstCaseUsd } from '../ai/assistant'
 import { auditKeyLabel, last4, removeApiKey, storeApiKey, storedKeyTail } from '../ai/credentials'
-import { RUN_SQL_TOOL, conversationTitle, questionContent, renderSystemPrompt } from '../ai/prompt'
+import { RUN_SQL_TOOL, conversationTitle, factoryDay, questionContent, renderSystemPrompt } from '../ai/prompt'
+import { rangeProblem } from '../ai/reportTemplate'
+import {
+  AI_REPORT_TITLE_CHARS,
+  FIXED_NOTICE,
+  deleteReport,
+  exportReportSections,
+  findReport,
+  findReportOfTurn,
+  insertReport,
+  listReports,
+  loadSavedTurn,
+  markReportRun,
+  proposeTemplates,
+  renameReport,
+  reportTitle,
+  runPeriod,
+  runReportSections,
+  templateRequest,
+  verifyTemplates,
+  type SavedTurn,
+} from '../ai/reports'
 import { AI_EXPORT_LIMITS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
 import { describeAiSchema } from '../ai/schemaDoc'
 import { AI_SETTINGS_KEY, loadAiSettings, loadAvailability } from '../ai/settings'
@@ -95,6 +129,47 @@ const conversationsQuery = z.object({
 
 // Years 2000–2999 only: outside them a month's bounds are not timestamps PostgreSQL takes (or Date.UTC moves them).
 const usageQuery = z.object({ month: z.string().regex(/^2\d{3}-(0[1-9]|1[0-2])$/, 'A month is YYYY-MM, from 2000-01.').optional() })
+
+/** A report's title: one line, 1 to 120 characters. */
+const reportTitleSchema = z
+  .string()
+  .transform((t) => t.replace(/\s+/g, ' ').trim())
+  .pipe(z.string().min(1, 'Give the report a title.').max(AI_REPORT_TITLE_CHARS, `A report's title is at most ${AI_REPORT_TITLE_CHARS} characters.`))
+
+const saveReportSchema = z
+  .object({
+    turnId: uuid,
+    title: reportTitleSchema.optional(),
+    adjustable: z.boolean().default(true),
+  })
+  .strict()
+
+const renameReportSchema = z.object({ title: reportTitleSchema }).strict()
+
+const reportsQuery = z.object({
+  before: z.string().datetime({ offset: true }).optional(),
+  /** With `before`, the last report of the page read: two changed in one millisecond are both reached. */
+  beforeId: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  q: z.string().trim().max(200).optional(),
+})
+
+/**
+ * The days a person runs a report over, both or neither. Only real calendar
+ * days in YYYY-MM-DD pass: they become SQL date literals.
+ */
+const reportDay = z.string().refine(isAiDay, 'A day is YYYY-MM-DD, and a real date.')
+const reportRunQuery = z
+  .object({ from: reportDay.optional(), to: reportDay.optional() })
+  .superRefine((v, issue) => {
+    if ((v.from === undefined) !== (v.to === undefined)) {
+      issue.addIssue({ code: z.ZodIssueCode.custom, message: 'Give both the first and the last day, or neither.' })
+      return
+    }
+    const problem = v.from && v.to ? rangeProblem({ from: v.from, to: v.to }) : null
+    if (problem) issue.addIssue({ code: z.ZodIssueCode.custom, message: problem })
+  })
+  .transform((v) => (v.from && v.to ? { from: v.from, to: v.to } : null))
 
 /** The refusal for a question the assistant cannot take now, by why. */
 function unavailable(status: AiStatusResponse): HttpError {
@@ -406,6 +481,217 @@ export function aiRoutes(ctx: AppContext): Router {
       byDay: byDay.rows,
       byUser: byUser.rows,
     }
+    res.json(body)
+  })
+
+  // ---- Saved reports ------------------------------------------------------------------------
+
+  const readerDown = () => new HttpError(503, 'ai_unavailable', 'The AI assistant cannot reach its data right now. Try again later.')
+
+  /**
+   * Saves under way, by person and answer. A second request for an answer
+   * being saved (another tab, the panel reopened while the first runs) waits
+   * for the first and gets its report, instead of paying for a second call to
+   * Claude. One process serves the API, as the limiters above assume.
+   */
+  const savesUnderWay = new Map<string, Promise<void>>()
+
+  /** An answer kept as a report. With `adjustable` (the default), one call to the model makes its period changeable, if it can. */
+  r.post('/reports', async (req, res) => {
+    const user = requireUser(req)
+    const body = parse(saveReportSchema, req.body)
+    const turn = await loadSavedTurn(db, body.turnId, user.id, tz)
+    if (!turn) throw notFound('That answer')
+    if (turn.status !== 'done') throw new HttpError(409, 'conflict', 'This answer is still being written. Save it once it is finished.')
+    if (turn.sections.length === 0) throw badRequest('This answer ran no query that worked, so there is nothing to keep as a report.')
+    const key = `${user.id}:${turn.turnId}`
+    // Whatever save of this answer is under way is waited for; the claim below follows the last wait with no await between.
+    for (let underWay = savesUnderWay.get(key); underWay; underWay = savesUnderWay.get(key)) await underWay
+    let release = () => {}
+    savesUnderWay.set(key, new Promise<void>((resolve) => (release = resolve)))
+    try {
+      const { status, reply } = await saveReport(user, body, turn)
+      res.status(status).json(reply)
+    } finally {
+      savesUnderWay.delete(key)
+      release()
+    }
+  })
+
+  /** One save, alone for its answer: the report already made of it, or a new one. */
+  async function saveReport(
+    user: AuthUser,
+    body: z.infer<typeof saveReportSchema>,
+    turn: SavedTurn,
+  ): Promise<{ status: 200 | 201; reply: AiSaveReportResponse }> {
+    // Saved already (a second click, another tab): that report, not a second one.
+    const existing = await findReportOfTurn(db, turn.turnId, user.id)
+    if (existing) return { status: 200, reply: { report: existing, status: (await availability()).status } }
+
+    let period: AiReportPeriod | null = null
+    let adjustable = false
+    let sections: AiReportSection[] = turn.sections
+    let proposedTitle: string | null = null
+    let notice: string | undefined
+    if (body.adjustable) {
+      const avail = await availability()
+      if (!avail.settings.settings.enabled) notice = FIXED_NOTICE.disabled
+      else if (!avail.apiKey) notice = FIXED_NOTICE.noKey
+      else if (!ctx.aiReader.ready) notice = FIXED_NOTICE.noReader
+      else {
+        const params = templateRequest(turn)
+        // The loop's own test before a call: refused here, the person can still save the report as it ran.
+        if (avail.status.spentUsd + worstCaseUsd(params) > avail.status.capUsd) {
+          throw new HttpError(
+            402,
+            'ai_budget_reached',
+            `Making this report's period adjustable could pass this month's spending cap ($${avail.status.capUsd.toFixed(2)}). ` +
+              'Save it with its period as asked instead, which needs no call to Claude; an administrator can raise the cap under Administration → AI assistant.',
+          )
+        }
+        // A call to the model, like a question: counted with them.
+        const wait = ctx.aiLimiter.hit(user.id)
+        if (wait > 0) throw new HttpError(429, 'rate_limited', `Too many requests to Claude in a short time. Try again in ${wait} seconds.`)
+        const owner = { userId: user.id, conversationId: turn.conversationId, turnId: turn.turnId }
+        const proposal = await proposeTemplates({ db, model: ctx.ai, apiKey: avail.apiKey, owner, params, sectionCount: turn.sections.length })
+        if ('notice' in proposal) {
+          notice = proposal.notice
+          console.warn(`[ai] report of answer ${turn.turnId}: period kept as asked (${proposal.detail})`)
+        } else {
+          proposedTitle = proposal.title
+          const verified = await verifyTemplates({
+            reader: ctx.aiReader.pool,
+            timeZone: tz,
+            sections: turn.sections,
+            proposal,
+            askedOn: turn.askedOn,
+            today: factoryDay(new Date(), tz),
+          })
+          if (verified.kind === 'adjustable') {
+            period = verified.period
+            adjustable = true
+            sections = verified.sections
+          } else if (verified.kind === 'fixed') {
+            notice = verified.notice
+            console.warn(`[ai] report of answer ${turn.turnId}: period kept as asked (${verified.detail})`)
+          }
+        }
+      }
+    }
+
+    const title = reportTitle(body.title ?? proposedTitle, turn.question)
+    let report: AiReport
+    try {
+      report = await withTransaction(db, async (tx) => {
+        const saved = await insertReport(tx, {
+          userId: user.id,
+          conversationId: turn.conversationId,
+          turnId: turn.turnId,
+          title,
+          question: turn.question,
+          period,
+          adjustable,
+          sections,
+        })
+        // Which report, not its title: a title is personal (by default the question word for word), and supervisors read the audit log.
+        await auditCreate(tx, { userId: user.id, userName: user.name, entity: 'AiReport', entityId: saved.id })
+        return saved
+      })
+    } catch (e) {
+      // Saved meanwhile by a request racing this one (one from another process): the database keeps one, and that is the answer.
+      const raced = pgCode(e) === PG.UNIQUE_VIOLATION ? await findReportOfTurn(db, turn.turnId, user.id) : null
+      if (!raced) throw e
+      return { status: 200, reply: { report: raced, status: (await availability()).status } }
+    }
+    const reply: AiSaveReportResponse = { report, status: (await availability()).status }
+    if (notice) reply.notice = notice
+    return { status: 201, reply }
+  }
+
+  r.get('/reports', async (req, res) => {
+    const user = requireUser(req)
+    const q = parse(reportsQuery, req.query)
+    const body: AiReportsResponse = await listReports(db, user.id, { before: q.before ?? null, beforeId: q.beforeId ?? null, limit: q.limit, search: q.q || null })
+    res.json(body)
+  })
+
+  r.get('/reports/:id', async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    const report = await findReport(db, id, user.id)
+    if (!report) throw notFound('That report')
+    res.json(report)
+  })
+
+  r.patch('/reports/:id', async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    const { title } = parse(renameReportSchema, req.body)
+    const report = await withTransaction(db, async (tx) => {
+      const { rows } = await tx.query<{ title: string }>(`SELECT title FROM ai_reports WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL FOR UPDATE`, [id, user.id])
+      if (!rows[0]) throw notFound('That report')
+      if (rows[0].title === title) return (await findReport(tx, id, user.id))!
+      const renamed = await renameReport(tx, id, title)
+      // That the title changed, not what it says (see the save above).
+      await writeAudit(tx, [auditEvent('update', { userId: user.id, userName: user.name, entity: 'AiReport', entityId: id }, new Date().toISOString(), { field: 'title' })])
+      return renamed
+    })
+    res.json(report)
+  })
+
+  /** Removed from the person's list; the record stays (soft delete). */
+  r.delete('/reports/:id', async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    await withTransaction(db, async (tx) => {
+      const { rows } = await tx.query(`SELECT 1 FROM ai_reports WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL FOR UPDATE`, [id, user.id])
+      if (!rows[0]) throw notFound('That report')
+      await deleteReport(tx, id)
+      await auditDelete(tx, { userId: user.id, userName: user.name, entity: 'AiReport', entityId: id })
+    })
+    res.status(204).end()
+  })
+
+  /**
+   * A report, its period resolved (or the days asked for), the queries it
+   * runs before they run: a person asking for days the report cannot take is
+   * told so, and runs count against the person's limit.
+   */
+  async function reportToRun(req: Request, res: Response) {
+    // The browser leaving stops the queries still to run, inside PostgreSQL too.
+    const ac = new AbortController()
+    res.on('close', () => {
+      if (!res.writableEnded) ac.abort()
+    })
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    const range = parse(reportRunQuery, req.query)
+    const report = await findReport(db, id, user.id)
+    if (!report) throw notFound('That report')
+    if (range && !report.adjustable) throw badRequest("This report's period cannot be changed: it runs over the days its queries name.")
+    const wait = ctx.aiReportLimiter.hit(user.id)
+    if (wait > 0) throw new HttpError(429, 'rate_limited', `Too many report runs in a short time. Try again in ${wait} seconds.`)
+    if (!ctx.aiReader.ready) throw readerDown()
+    // Today where the factory sits, at the moment of the run: "the last 30 days" ends today.
+    const period = runPeriod(report, range, factoryDay(new Date(), tz))
+    return { report, period, signal: ac.signal }
+  }
+
+  /** A report run now: each section's first rows, as an answer's cards show a query. No call to the model. */
+  r.get('/reports/:id/run', async (req, res) => {
+    const { report, period, signal } = await reportToRun(req, res)
+    const ranAt = new Date().toISOString()
+    const sections = await runReportSections(ctx.aiReader.pool, report, period, { timeZone: tz, signal })
+    const body: AiReportRunResponse = { report: await markReportRun(db, report), period, sections, ranAt }
+    res.json(body)
+  })
+
+  /** A report run now in full for Excel: up to AI_EXPORT_MAX_ROWS rows a section. */
+  r.get('/reports/:id/export', async (req, res) => {
+    const { report, period, signal } = await reportToRun(req, res)
+    const ranAt = new Date().toISOString()
+    const sections = await exportReportSections(ctx.aiReader.pool, report, period, { timeZone: tz, signal })
+    const body: AiReportExportResponse = { report: await markReportRun(db, report), period, sections, ranAt }
     res.json(body)
   })
 

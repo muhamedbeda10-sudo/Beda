@@ -13,6 +13,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import type { AiCell, AiConversation, AiMessage, AiPart, AiQueryPart, AiStopReason, AiTokenUsage } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
+import { parseSuggestions, stripSuggestions } from './suggestions'
 
 type MessageParam = Anthropic.Beta.BetaMessageParam
 
@@ -259,7 +260,9 @@ interface MessageRow {
 /**
  * The conversation as the panel shows it: each question, then its answer —
  * the model's text with the cards of the queries it ran, in the order they
- * came. One turn only, when `turnId` is given.
+ * came, the follow-up questions it closed with taken out of its text and
+ * offered on their own, and the report it was saved as, if it was. One turn
+ * only, when `turnId` is given.
  */
 export async function loadDisplayMessages(q: Queryable, conversationId: string, turnId?: string): Promise<AiMessage[]> {
   const params = [conversationId, turnId ?? null]
@@ -278,6 +281,15 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
        FROM ai_queries WHERE conversation_id = $1 AND ($2::uuid IS NULL OR turn_id = $2)`,
     params,
   )
+  // The owner's reports only: a conversation is never anyone else's to see.
+  const reports = await q.query<{ turnId: string; id: string }>(
+    `SELECT DISTINCT ON (r.turn_id) r.turn_id AS "turnId", r.id
+       FROM ai_reports r JOIN ai_conversations c ON c.id = r.conversation_id AND c.user_id = r.user_id
+      WHERE r.conversation_id = $1 AND ($2::uuid IS NULL OR r.turn_id = $2) AND r.deleted_at IS NULL AND r.turn_id IS NOT NULL
+      ORDER BY r.turn_id, r.created_at DESC`,
+    params,
+  )
+  const reportByTurn = new Map(reports.rows.map((r) => [r.turnId, r.id]))
   const queryByToolUse = new Map(queries.rows.map((r) => [r.toolUseId, r]))
   const byTurn = new Map<string, MessageRow[]>()
   for (const m of messages.rows) {
@@ -290,7 +302,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
   for (const t of turns.rows) {
     const rows = byTurn.get(t.id) ?? []
     const question = rows.find((m) => m.kind === 'question')
-    out.push({ id: question?.id ?? `${t.id}:q`, role: 'user', parts: [{ type: 'text', text: t.question }], createdAt: question?.createdAt ?? t.createdAt })
+    out.push({ id: question?.id ?? `${t.id}:q`, role: 'user', parts: [{ type: 'text', text: t.question }], createdAt: question?.createdAt ?? t.createdAt, turnId: t.id })
 
     const parts: AiPart[] = []
     let lastAt: string | null = null
@@ -309,14 +321,40 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
         }
       }
     }
-    if (parts.length === 0 && t.status !== 'done') continue
-    const answer: AiMessage = { id: t.id, role: 'assistant', parts, createdAt: t.finishedAt ?? lastAt ?? t.createdAt }
+    const { parts: shown, suggestions } = withoutSuggestions(parts)
+    if (shown.length === 0 && t.status !== 'done') continue
+    const answer: AiMessage = { id: t.id, role: 'assistant', parts: shown, createdAt: t.finishedAt ?? lastAt ?? t.createdAt, turnId: t.id }
     if (t.status === 'done') {
       answer.costUsd = t.costUsd
       if (t.stopReason) answer.stopReason = t.stopReason
       if (t.notice) answer.notice = t.notice
     }
+    if (suggestions.length > 0) answer.suggestions = suggestions
+    const savedReportId = reportByTurn.get(t.id)
+    if (savedReportId) answer.savedReportId = savedReportId
     out.push(answer)
   }
   return out
+}
+
+/**
+ * An answer's parts as shown: the follow-up block out of every text, and an
+ * unfinished one out of the text the answer ends with; the questions of the
+ * final text's last block on their own. A text that held nothing but the
+ * block is dropped.
+ */
+function withoutSuggestions(parts: AiPart[]): { parts: AiPart[]; suggestions: string[] } {
+  const last = parts[parts.length - 1]
+  const suggestions = last?.type === 'text' ? parseSuggestions(last.text) : []
+  const shown: AiPart[] = []
+  parts.forEach((p, i) => {
+    if (p.type !== 'text') {
+      shown.push(p)
+      return
+    }
+    const text = stripSuggestions(p.text, i === parts.length - 1)
+    if (text === p.text) shown.push(p)
+    else if (text.trim() !== '') shown.push({ type: 'text', text })
+  })
+  return { parts: shown, suggestions }
 }
