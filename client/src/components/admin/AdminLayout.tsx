@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
 import { ShieldAlert } from 'lucide-react'
-import { ADMIN_NAV } from '@/components/layout/AppShell'
+import { ADMIN_NAV, visibleNav } from '@/components/layout/navItems'
 import { Badge, Card } from '@/components/ui'
+import { useAiMe } from '@/services/queries'
 import { useAuth } from '@/store/AuthContext'
 import { can, type Capability } from '@qc/shared/rules'
 import { cn } from '@/lib/utils'
@@ -15,18 +16,24 @@ import { cn } from '@/lib/utils'
 export function AdminLayout({
   title,
   needs,
+  allowed,
   actions,
   children,
 }: {
   title: string
   /** Capability the page requires. */
-  needs: Capability
+  needs?: Capability
+  /** In place of `needs`: whether this person may use the page, decided by the page (§20 — the AI assistant's owner, whatever the role). */
+  allowed?: boolean
   /** Buttons shown beside the heading. */
   actions?: ReactNode
   children: ReactNode
 }) {
   const { role } = useAuth()
-  const sections = ADMIN_NAV.filter((n) => !n.needs || can(role, n.needs))
+  // The AI assistant's settings are listed for its owner alone (one cheap, cached call that the shell has made already).
+  const { data: me } = useAiMe()
+  const sections = visibleNav(ADMIN_NAV, role, me?.owner ?? false)
+  const may = allowed ?? (needs ? can(role, needs) : false)
 
   return (
     <div className="space-y-5">
@@ -60,7 +67,7 @@ export function AdminLayout({
         </nav>
 
         <div className="mt-2 min-w-0 flex-1 lg:mt-0">
-          {can(role, needs) ? (
+          {may ? (
             children
           ) : (
             <Card className="flex flex-col items-center gap-3 p-8 text-center">

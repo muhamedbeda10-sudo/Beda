@@ -1,8 +1,13 @@
 // ============================================================================
 // §20 — the AI assistant's state, above the pages. The shell mounts this
 // outside <main> (which remounts on every route), so an answer keeps
-// streaming while the administrator moves around the app and the panel
-// reopens where it was left. Signing out unmounts it, which stops the stream.
+// streaming while the person moves around the app and the panel reopens
+// where it was left. Signing out unmounts it, which stops the stream.
+//
+// Whether the assistant is there at all is /ai/me's to say — the owner gives
+// it to people one by one, whatever their role. For anyone it is not given
+// to, that one call is all: nothing else is fetched or drawn. Taken away
+// while the panel is open, the panel says so instead of vanishing.
 //
 // Two contexts: the controls (open, the conversation, send, stop), which
 // change rarely, and the answer being written, which changes every frame
@@ -15,13 +20,17 @@ import type { AiChatRequest, AiConversation, AiMessage, AiMessagesResponse } fro
 import { ApiError, apiStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
 import { newSubmissionId } from '@/lib/utils'
-import { keys } from '@/services/queries'
+import { keys, useAiMe } from '@/services/queries'
 import { applyEvent, endTurn, isInFlight, parseStreamEvent, sentAfter, settleMessages, startTurn, type LiveTurn } from './liveTurn'
 import { STOP_SETTLE_MS, retryAfterStop } from './retryAfterStop'
 
 export interface AiControls {
-  /** The signed-in role may use the assistant (administrators). */
+  /** The owner gave the signed-in person the assistant (/ai/me): its button, its menu entry and its panel are there. */
   enabled: boolean
+  /** The signed-in person controls the assistant: the settings page is theirs. */
+  owner: boolean
+  /** It was given and has been taken away since: an open panel says so until it is closed. */
+  revoked: boolean
   open: boolean
   setOpen: (open: boolean) => void
   toggle: () => void
@@ -57,10 +66,19 @@ function useMediaQuery(query: string): boolean {
   return matches
 }
 
-export function AiAssistantProvider({ enabled, children }: { enabled: boolean; children: ReactNode }) {
+/** A refusal that may mean the assistant was taken away (or never given): /ai/me is asked again, and says which. */
+const mayBeRevoked = (err: unknown) => err instanceof ApiError && (err.status === 403 || err.status === 404)
+
+export function AiAssistantProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
+  const { data: me } = useAiMe()
+  const enabled = me?.granted ?? false
+  const owner = me?.owner ?? false
   const docked = useMediaQuery('(min-width: 1024px)')
   const [open, setOpenState] = useState(false)
+  const [revoked, setRevoked] = useState(false)
+  // Whether it was ever given in this sign-in: losing it then is "taken away", not "never there".
+  const given = useRef(false)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [live, setLive] = useState<LiveTurn | null>(null)
   // What async code reads: the conversation on screen now, and the answer's abort handle.
@@ -78,13 +96,30 @@ export function AiAssistantProvider({ enabled, children }: { enabled: boolean; c
   }, [])
   const stop = useCallback(() => controller.current?.abort(), [])
 
-  // Losing the capability closes the panel and stops an answer; unmounting (signing out) stops it too.
+  // Losing access stops an answer (the server would stop it at its next call anyway); an open panel stays to say why.
+  // Unmounting (signing out) stops it too.
   useEffect(() => {
-    if (enabled) return
+    if (enabled) {
+      given.current = true
+      setRevoked(false)
+      return
+    }
     controller.current?.abort()
-    setOpenState(false)
+    if (given.current) setRevoked(true)
   }, [enabled])
   useEffect(() => () => controller.current?.abort(), [])
+
+  // A list, a conversation or a report refused as forbidden or not found may be the first sign that access was
+  // withdrawn: /ai/me is asked again at once rather than at the end of its minute.
+  useEffect(
+    () =>
+      qc.getQueryCache().subscribe((e) => {
+        if (e.type !== 'updated' || e.action.type !== 'error') return
+        const [scope, what] = e.query.queryKey as readonly unknown[]
+        if (scope === 'ai' && what !== 'me' && mayBeRevoked(e.action.error)) void qc.invalidateQueries({ queryKey: keys.aiMe })
+      }),
+    [qc],
+  )
 
   const stream = useCallback(
     async (key: string, from: string | null, question: string, sentAt: string, ac: AbortController) => {
@@ -123,7 +158,6 @@ export function AiAssistantProvider({ enabled, children }: { enabled: boolean; c
       let conversation: AiConversation | null = null
       let userMessageId: string | null = null
       let ended = false
-      let statusFresh = false
       // The server answered the request with a refusal: nothing of the question was kept.
       let refused = false
       try {
@@ -151,10 +185,9 @@ export function AiAssistantProvider({ enabled, children }: { enabled: boolean; c
             }
             void qc.invalidateQueries({ queryKey: keys.aiConversations })
           } else if (e.type === 'done') {
+            // The event also carries the month's figures: the chat shows no amounts, so they are left where they are.
             ended = true
-            statusFresh = true
             release()
-            qc.setQueryData(keys.aiStatus, e.status)
             if (conversation && userMessageId) settle(conversation, { id: userMessageId, role: 'user', parts: [{ type: 'text', text: question }], createdAt: sentAt }, e.message)
             break
           } else if (e.type === 'error') {
@@ -172,25 +205,27 @@ export function AiAssistantProvider({ enabled, children }: { enabled: boolean; c
           const stoppedIn = conversation?.id ?? from
           if (stoppedIn) lastStop.current = { conversationId: stoppedIn, at: Date.now() }
         } else if (err instanceof ApiError) {
-          // A refusal before the stream began (the cap, the switch, a conflict) kept nothing.
+          // A refusal before the stream began (a cap, the switch, access taken away, a conflict) kept nothing.
           refused = !conversation && err.status > 0
           update((t) => endTurn(t, 'error', { code: err.code, message: err.message }))
         } else update((t) => endTurn(t, 'error', LOST))
       } finally {
         if (frame) cancelAnimationFrame(frame)
         release()
-        // The saved conversation, the history and the month's spend catch up with what happened.
+        // The saved conversation and the history catch up with what happened.
         if (conversation) {
           void qc.invalidateQueries({ queryKey: keys.aiMessages(conversation.id) })
-          // The administration page, when it is open beside the panel: its spend and its usage tiles.
+          // The owner's page, when it is open beside the panel: the spend, each person's month and the usage tiles.
           void qc.invalidateQueries({ queryKey: keys.aiSettings })
+          void qc.invalidateQueries({ queryKey: keys.aiAccess })
           void qc.invalidateQueries({ queryKey: ['ai', 'usage'] })
         } else if (from && !refused) {
           // Ended before the stream began: the server may still have kept the question (and a stopped answer).
           void qc.invalidateQueries({ queryKey: keys.aiMessages(from) })
         }
         void qc.invalidateQueries({ queryKey: keys.aiConversations })
-        if (!statusFresh) void qc.invalidateQueries({ queryKey: keys.aiStatus })
+        // Whether the next question can be asked: this one may have reached a cap, or met access taken away.
+        void qc.invalidateQueries({ queryKey: keys.aiMe })
       }
     },
     [qc],
@@ -216,8 +251,8 @@ export function AiAssistantProvider({ enabled, children }: { enabled: boolean; c
 
   const busy = isInFlight(live)
   const controls = useMemo<AiControls>(
-    () => ({ enabled, open: enabled && open, setOpen, toggle, docked, conversationId, openConversation, busy, send, stop, draft }),
-    [enabled, open, setOpen, toggle, docked, conversationId, openConversation, busy, send, stop],
+    () => ({ enabled, owner, revoked, open: (enabled || revoked) && open, setOpen, toggle, docked, conversationId, openConversation, busy, send, stop, draft }),
+    [enabled, owner, revoked, open, setOpen, toggle, docked, conversationId, openConversation, busy, send, stop],
   )
 
   return (

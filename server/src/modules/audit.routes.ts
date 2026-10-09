@@ -1,5 +1,10 @@
 // §11 — the audit browser. Supervisors and admins read; only an admin may
 // mark entries purged, and that purge is itself an audit entry.
+//
+// §20 — the AI assistant's own entries (its settings, its key, who may use
+// it, the saved reports) are the assistant owner's alone: to anyone else they
+// are not in the log at all — not listed, counted, offered as a filter value
+// or purgeable.
 
 import { Router } from 'express'
 import { z } from 'zod'
@@ -9,6 +14,7 @@ import type { AppContext } from '../context'
 import { withTransaction } from '../db/pool'
 import { parse } from '../lib/validate'
 import { requireCapability, requireUser } from '../auth/middleware'
+import { currentAiOwner } from '../ai/owner'
 import { writeAudit } from '../audit/service'
 import { dropNulls } from '../lib/rows'
 import { columnFilterClauses, columnOrderBy, columnQuerySchema, columnValues, type SqlColumns } from '../lib/columnFilters'
@@ -46,9 +52,15 @@ function auditColumns(tz: string): SqlColumns {
   }
 }
 
+/** The assistant's own entries, which only its owner sees. */
+const AI_ENTRIES = `(entity IN ('AiAssistant', 'AiAccess', 'AiReport') OR (entity = 'AppSettings' AND entity_id LIKE 'ai%'))`
+
+/** The entries a reader of the log may see: everything but the assistant's own, unless they own it. */
+const visible = (aiOwner: boolean) => (aiOwner ? 'deleted_at IS NULL' : `deleted_at IS NULL AND NOT ${AI_ENTRIES}`)
+
 /** The WHERE clauses of the log's own filters, over audit_log. */
-function auditWhere(q: z.infer<typeof auditFilterSchema>, p: (v: unknown) => string): string[] {
-  const clauses = ['deleted_at IS NULL']
+function auditWhere(q: z.infer<typeof auditFilterSchema>, p: (v: unknown) => string, aiOwner: boolean): string[] {
+  const clauses = [visible(aiOwner)]
   if (q.action) clauses.push(`action = ${p(q.action)}`)
   if (q.userName) clauses.push(`user_name = ${p(q.userName)}`)
   if (q.entity) clauses.push(`entity = ${p(q.entity)}`)
@@ -67,6 +79,9 @@ export function auditRoutes(ctx: AppContext): Router {
   const r = Router()
   r.use(requireCapability('edit-closed-session'))
 
+  /** Whether the reader owns the assistant, read again on every request. Nothing is pinned from here. */
+  const ownsAi = async (userId: string) => (await currentAiOwner(ctx.db, ctx.config)) === userId
+
   /**
    * §11 — a page of the log, newest first. The filters are applied here, in
    * SQL, over every entry: the log is the one table that grows without bound,
@@ -74,6 +89,7 @@ export function auditRoutes(ctx: AppContext): Router {
    * this morning.
    */
   r.get('/', async (req, res) => {
+    const aiOwner = await ownsAi(requireUser(req).id)
     const q = parse(
       auditFilterSchema.extend({
         limit: z.coerce.number().int().min(1).max(2000).default(200),
@@ -89,7 +105,7 @@ export function auditRoutes(ctx: AppContext): Router {
     const params: unknown[] = []
     const p = (v: unknown) => `$${params.push(v)}`
     const columns = auditColumns(ctx.config.FACTORY_TIMEZONE)
-    const where = [...auditWhere(q, p), ...columnFilterClauses(columns, q.cf, p)].join(' AND ')
+    const where = [...auditWhere(q, p, aiOwner), ...columnFilterClauses(columns, q.cf, p)].join(' AND ')
     const filterParams = [...params]
     // Newest first, walked back by (at, id); sorted by a column, walked by position.
     const sorted = !!q.sort
@@ -113,28 +129,29 @@ export function auditRoutes(ctx: AppContext): Router {
 
   /** One column's values under every other filter, over the whole log, for its Excel menu. */
   r.get('/values', async (req, res) => {
+    const aiOwner = await ownsAi(requireUser(req).id)
     const q = parse(auditFilterSchema.extend({ column: z.string().max(60), search: z.string().max(200).optional() }), req.query)
     const params: unknown[] = []
     const p = (v: unknown) => `$${params.push(v)}`
-    const where = auditWhere(q, p)
+    const where = auditWhere(q, p, aiOwner)
     res.json(await columnValues(ctx.db, { columns: auditColumns(ctx.config.FACTORY_TIMEZONE), column: q.column, from: 'FROM audit_log', where, params, filters: q.cf, search: q.search }))
   })
 
   /** §11 — who appears in the log and what they touched, over the whole log,
    *  so the filters are never limited to the page on screen. */
-  r.get('/options', async (_req, res) => {
+  r.get('/options', async (req, res) => {
+    const where = visible(await ownsAi(requireUser(req).id))
     const [users, entities] = await Promise.all([
-      ctx.db.query<{ name: string }>(`SELECT DISTINCT user_name AS name FROM audit_log WHERE deleted_at IS NULL ORDER BY name`),
-      ctx.db.query<{ entity: string }>(`SELECT DISTINCT entity FROM audit_log WHERE deleted_at IS NULL ORDER BY entity`),
+      ctx.db.query<{ name: string }>(`SELECT DISTINCT user_name AS name FROM audit_log WHERE ${where} ORDER BY name`),
+      ctx.db.query<{ entity: string }>(`SELECT DISTINCT entity FROM audit_log WHERE ${where} ORDER BY entity`),
     ])
     const body: AuditOptionsResponse = { users: users.rows.map((u) => u.name), entities: entities.rows.map((e) => e.entity) }
     res.json(body)
   })
 
-  r.get('/stats', async (_req, res) => {
-    const { rows } = await ctx.db.query<{ action: AuditAction; n: number }>(
-      `SELECT action, count(*)::int AS n FROM audit_log WHERE deleted_at IS NULL GROUP BY action`,
-    )
+  r.get('/stats', async (req, res) => {
+    const where = visible(await ownsAi(requireUser(req).id))
+    const { rows } = await ctx.db.query<{ action: AuditAction; n: number }>(`SELECT action, count(*)::int AS n FROM audit_log WHERE ${where} GROUP BY action`)
     const byAction: Partial<Record<AuditAction, number>> = {}
     let total = 0
     for (const row of rows) {
@@ -148,10 +165,12 @@ export function auditRoutes(ctx: AppContext): Router {
   r.post('/purge', requireCapability('purge-audit-logs'), async (req, res) => {
     const user = requireUser(req)
     const { ids } = parse(z.object({ ids: z.array(z.string().regex(/^\d+$/)).min(1).max(1000) }), req.body)
+    // Only entries the reader can see: an id guessed at cannot reach the assistant's own.
+    const where = visible(await ownsAi(user.id))
     const marked = await withTransaction(ctx.db, async (tx) => {
       const { rowCount } = await tx.query(
         `UPDATE audit_log SET deleted_at = now(), deleted_by_id = $2, deleted_by_name = $3
-          WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL`,
+          WHERE id = ANY($1::bigint[]) AND ${where}`,
         [ids, user.id, user.name],
       )
       await writeAudit(tx, [

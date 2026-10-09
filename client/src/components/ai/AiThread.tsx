@@ -13,14 +13,7 @@ import { useAi, useAiLive } from './AiAssistantProvider'
 import { Answer, BotMark, UserBubble } from './AiMessages'
 import { Notice } from './AiNotice'
 import { answerText, latestAnswerKey, liveAnnouncement, liveView, threadItems } from './liveTurn'
-
-/** What someone might ask first — all of the inspection record, the data most people are given; a tap puts it in the box to send or change. */
-const EXAMPLES = [
-  'Which five defects cost the most pieces this month, and on which machines?',
-  'كام عيب لسه على Hold، وأقدمهم من إمتى؟',
-  'Which items had the highest defect rate last month?',
-  'كم جلسة فحص أُغلقت الأسبوع الماضي على كل ماكينة؟',
-]
+import { AI_STARTER_QUESTIONS } from './suggestions'
 
 const NONE: AiMessage[] = []
 
@@ -96,7 +89,7 @@ export function AiThread({
           hint="Whatever of the record you were given: inspections, orders and PDI, coils and suppliers, the audit log. Every figure comes from a query shown in the answer, which opens as a table and exports to Excel. The assistant only reads; it changes nothing."
           action={
             <div className="grid w-full gap-2 px-3">
-              {EXAMPLES.map((q) => (
+              {AI_STARTER_QUESTIONS.map((q) => (
                 <button
                   key={q}
                   type="button"

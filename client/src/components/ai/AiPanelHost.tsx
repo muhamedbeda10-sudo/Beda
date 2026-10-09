@@ -3,11 +3,12 @@
 // under the header and leaves the page usable beside it; below that it is a
 // sheet over the page with a backdrop. This frame is small and always in the
 // bundle; what fills it (the markdown renderer, the result tables) is fetched
-// the first time it opens, so it never weighs on an inspector's phone.
+// the first time it opens, so it never weighs on a phone that does not use
+// it. Access taken away while it is open leaves only a word saying so.
 // ============================================================================
 
 import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react'
-import { Loader2, X } from 'lucide-react'
+import { Loader2, ShieldOff, X } from 'lucide-react'
 import { Button } from '@/components/ui'
 import { ErrorBoundary, LoadFailed } from '@/components/ui/ErrorBoundary'
 import { cn, lockBodyScroll } from '@/lib/utils'
@@ -15,9 +16,33 @@ import { useAi } from './AiAssistantProvider'
 
 const AiPanel = lazy(() => import('./AiPanel'))
 
+/** Said once the owner has taken the assistant away (kept here, not in the panel's file, so it shows without fetching it). */
+const REVOKED_TEXT = 'You no longer have access to the assistant.'
+
 export function AiPanelHost() {
-  const { enabled, open, setOpen } = useAi()
-  if (!enabled || !open) return null
+  const { open, revoked, setOpen } = useAi()
+  if (!open) return null
+  if (revoked) {
+    return (
+      <AiPanelFrame>
+        <header className="flex shrink-0 items-center gap-2 border-b border-slate-100 px-3 py-2.5 dark:border-slate-800">
+          <h2 className="min-w-0 flex-1 truncate text-sm font-bold">AI assistant</h2>
+          <button type="button" onClick={() => setOpen(false)} className="icon-btn h-10 w-10 touch:h-11 touch:w-11" aria-label="Close the assistant" data-tip="Close (Esc)">
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+        <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
+          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+            <ShieldOff aria-hidden className="h-6 w-6" />
+          </span>
+          <p className="font-semibold text-slate-700 dark:text-slate-200">{REVOKED_TEXT}</p>
+          <Button className="min-h-[44px]" onClick={() => setOpen(false)}>
+            <X className="h-4 w-4" /> Close
+          </Button>
+        </div>
+      </AiPanelFrame>
+    )
+  }
   return (
     <AiPanelFrame>
       {/* The panel's file not arriving (a deploy since the page opened, a dropped connection) leaves the page as it was. */}

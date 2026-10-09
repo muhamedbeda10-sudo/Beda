@@ -19,16 +19,28 @@ import { NoticesPage } from '@/pages/admin/NoticesPage'
 import { WhatsNewPage } from '@/pages/admin/WhatsNewPage'
 import { ErrorBoundary, LoadFailed } from '@/components/ui/ErrorBoundary'
 import { useAuth } from '@/store/AuthContext'
+import { useAiMe } from '@/services/queries'
 import { can, type Capability } from '@qc/shared/rules'
 import { lazy, Suspense, type ReactElement } from 'react'
 
-// §20 — the assistant's administration is for administrators alone: fetched when first opened, never in an inspector's bundle.
+// §20 — the assistant's settings are its owner's alone: fetched when first opened, in nobody else's bundle.
 const AiAssistantPage = lazy(() => import('@/pages/admin/AiAssistantPage').then((m) => ({ default: m.AiAssistantPage })))
 
 /** A page for a capability the signed-in role lacks sends the reader home; the API refuses it anyway. */
 function Only({ cap, children }: { cap: Capability; children: ReactElement }) {
   const { role } = useAuth()
   return can(role, cap) ? children : <Navigate to="/" replace />
+}
+
+/**
+ * §20 — the AI assistant's settings, for the one person who owns it (/ai/me
+ * says who), whatever their role. Anyone else is sent home as from an address
+ * that does not exist — the server answers them 404 as well.
+ */
+function OnlyAiOwner({ children }: { children: ReactElement }) {
+  const { data, isError } = useAiMe()
+  if (data) return data.owner ? children : <Navigate to="/" replace />
+  return isError ? <LoadFailed what="This page" /> : <PageLoading />
 }
 
 /** A page still being fetched: a spinner where it will be. */
@@ -77,7 +89,7 @@ export default function App() {
         <Route path="/admin/audit" element={<Only cap="edit-closed-session"><AuditPage /></Only>} />
         <Route path="/admin/notices" element={<Only cap="manage-admin-data"><NoticesPage /></Only>} />
         <Route path="/admin/whats-new" element={<Only cap="manage-admin-data"><WhatsNewPage /></Only>} />
-        <Route path="/admin/ai" element={<Only cap="use-ai-assistant"><ErrorBoundary fallback={<LoadFailed what="This page" />}><Suspense fallback={<PageLoading />}><AiAssistantPage /></Suspense></ErrorBoundary></Only>} />
+        <Route path="/admin/ai" element={<OnlyAiOwner><ErrorBoundary fallback={<LoadFailed what="This page" />}><Suspense fallback={<PageLoading />}><AiAssistantPage /></Suspense></ErrorBoundary></OnlyAiOwner>} />
         <Route path="/audit" element={<Navigate to="/admin/audit" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

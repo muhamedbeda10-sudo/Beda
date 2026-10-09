@@ -2,7 +2,9 @@
 // §20 — whether the assistant may answer now, and what it has cost. The
 // settings (on/off, the monthly cap) live in app_settings beside the KPI
 // thresholds; the spend is read from ai_usage on every check, not kept in
-// memory, so every App Service instance holds the same cap.
+// memory, so every App Service instance holds the same cap. All of it is the
+// owner's to see and change (owner.ts); a person learns only whether they
+// may ask now (access.ts).
 // ============================================================================
 
 import {
@@ -16,8 +18,8 @@ import {
 } from '@qc/shared/ai'
 import type { Config } from '../config'
 import type { Queryable } from '../db/pool'
-import { minCallWorstCaseUsd } from './assistant'
 import { resolveApiKey } from './credentials'
+import { minCallWorstCaseUsd } from './models'
 import { monthSpend } from './transcript'
 
 export const AI_SETTINGS_KEY = 'ai-assistant'
@@ -53,11 +55,12 @@ export interface AiAvailability {
 }
 
 /**
- * Available when switched on, with a usable key, with the reader ready, and
- * far enough under the cap for an answer to start; otherwise the first of
- * those that fails is the reason.
+ * Available when switched on, with a usable key, with the readers ready, and
+ * far enough under the cap for an answer to start on `model` (the default
+ * model unless a person's is given); otherwise the first of those that fails
+ * is the reason.
  */
-export async function loadAvailability(q: Queryable, config: Config, readerReady: boolean): Promise<AiAvailability> {
+export async function loadAvailability(q: Queryable, config: Config, readerReady: boolean, model: string = AI_MODEL): Promise<AiAvailability> {
   // One after another: `q` may be a transaction's single connection.
   const settings = await loadAiSettings(q)
   const resolved = await resolveApiKey(q, config)
@@ -69,10 +72,10 @@ export async function loadAvailability(q: Queryable, config: Config, readerReady
   else if (!readerReady) reason = 'reader-unavailable'
   // The same test the answer loop makes before every call: closer to the cap than one call may cost,
   // no answer could start, so the composer must not offer one.
-  else if (spend.spentUsd + minCallWorstCaseUsd() > capUsd) reason = 'cap-reached'
+  else if (spend.spentUsd + minCallWorstCaseUsd(model) > capUsd) reason = 'cap-reached'
   const status: AiStatusResponse = {
     available: reason === undefined,
-    model: AI_MODEL,
+    model,
     spentUsd: spend.spentUsd,
     capUsd,
     monthStart: spend.monthStart,

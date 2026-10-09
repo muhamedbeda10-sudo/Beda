@@ -27,7 +27,7 @@ export interface FakeReply {
   stopReason?: Anthropic.Beta.BetaStopReason
   stopDetails?: Anthropic.Beta.BetaRefusalStopDetails | null
   usage?: FakeUsage
-  /** The model that served it (a fallback names another). */
+  /** The model that served it (a fallback names another); the model asked for unless given. */
   model?: string
   /** Fail instead of finishing, after streaming the content. */
   error?: unknown
@@ -137,7 +137,8 @@ class FakeStream implements ModelStream {
       id: `msg_fake_${n}`,
       type: 'message',
       role: 'assistant',
-      model: reply.model ?? AI_MODEL,
+      // The model asked for serves, as the API names it, unless the reply says a fallback did.
+      model: reply.model ?? (this.call.params.model || AI_MODEL),
       content: [] as Block[],
       stop_reason: null as Anthropic.Beta.BetaStopReason | null,
       stop_sequence: null,

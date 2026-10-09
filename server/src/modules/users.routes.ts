@@ -3,11 +3,12 @@ import { z } from 'zod'
 import { ROLES, type UserProfile } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
-import { badRequest, duplicate, notFound } from '../lib/errors'
+import { badRequest, duplicate, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { hashPassword, MIN_PASSWORD_LENGTH } from '../auth/password'
 import { requireRole, requireUser } from '../auth/middleware'
 import { auditChanges, auditCreate, auditDelete } from '../audit/service'
+import { aiOwnerAccount } from '../ai/owner'
 import { USER_COLUMNS, usernameSchema } from './auth.routes'
 
 const uuid = z.string().uuid()
@@ -71,9 +72,13 @@ export function usersRoutes(ctx: AppContext): Router {
     const admin = requireUser(req)
     const body = parse(updateSchema, req.body)
     const id = parse(uuid, req.params.id)
+    // Whoever sets a password holds the account: the AI assistant's owner's is theirs alone to set (§20),
+    // deactivated or not. Read before the transaction, which locks the row a first pin would wait on.
+    const ownerAccount = body.password && id !== admin.id ? await aiOwnerAccount(ctx.db, ctx.config) : null
 
     const user = await withTransaction(ctx.db, async (tx) => {
       const before = await lockUser(tx, id)
+      if (ownerAccount === id) throw forbidden(`Only ${before.name} can change this account's password.`)
 
       const nextRole = body.role ?? before.role
       const nextActive = body.isActive ?? before.isActive

@@ -43,6 +43,9 @@ export const AI_PRICES: Readonly<Record<string, AiPrice>> = {
   // A refusal may be rescued by another model, billed at its own rates: Sonnet 5.5's is Sonnet 5.
   'claude-sonnet-5': { input: 2, output: 10, cacheWrite5m: 2.5, cacheWrite1h: 4, cacheRead: 0.2 },
   'claude-opus-5-5': { input: 4, output: 20, cacheWrite5m: 5, cacheWrite1h: 8, cacheRead: 0.2 },
+  // Opus 5.5's and Fable 5.1's are Opus 5 or Opus 4.8, at the same rates.
+  'claude-opus-5': { input: 5, output: 25, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5 },
+  'claude-opus-4-8': { input: 5, output: 25, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5 },
   'claude-fable-5-1': { input: 10, output: 50, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25 },
   // Haiku 5.5 is billed at a fifth of its long-prompt rate up to 100K prompt tokens; cache at the usual 1.25×/2×/0.1×.
   'claude-haiku-5-5': {
@@ -94,6 +97,41 @@ export const AI_MODELS = [
 export type AiModelId = (typeof AI_MODELS)[number]['id']
 export const AI_MODEL_IDS: readonly AiModelId[] = AI_MODELS.map((m) => m.id)
 export const isAiModel = (v: string): v is AiModelId => (AI_MODEL_IDS as readonly string[]).includes(v)
+
+/**
+ * Where Anthropic hands a request a model refuses, on the server (fallbacks
+ * "default", which picks one by the refusal's category). The fallback's
+ * attempt is billed at its own rates on top of the refused one, so the most
+ * a call may cost counts both. Haiku 5.5 has no server-side fallback.
+ */
+export const AI_FALLBACK_MODELS: Readonly<Record<AiModelId, readonly string[]>> = {
+  'claude-haiku-5-5': [],
+  'claude-sonnet-5-5': ['claude-sonnet-5'],
+  'claude-opus-5-5': ['claude-opus-5', 'claude-opus-4-8'],
+  'claude-fable-5-1': ['claude-opus-5', 'claude-opus-4-8'],
+}
+
+/** The most output one call to the model may write (the answer loop's max_tokens). */
+export const AI_CALL_OUTPUT_TOKENS = 32_000
+
+/**
+ * The least any call's worst case may cost on a model: its whole output, and
+ * the dearest fallback's whole output where the model has one. A monthly cap
+ * below it (rounded up to the cent, see aiMinCapUsd) can never let a question
+ * start. A model this file does not know is counted at the dearest rates.
+ */
+export function aiMinCallUsd(model: string): number {
+  const out = (m: string) => (AI_CALL_OUTPUT_TOKENS * (AI_PRICES[m] ?? AI_UNKNOWN_MODEL_PRICE).output) / 1_000_000
+  const fallbacks = isAiModel(model) ? AI_FALLBACK_MODELS[model] : []
+  // To the millionth of a dollar, as costs are kept: 0.64 + 0.8 is 1.44, not 1.4400000000000002.
+  return Math.round((out(model) + (fallbacks.length > 0 ? Math.max(...fallbacks.map(out)) : 0)) * 1_000_000) / 1_000_000
+}
+
+/** The least a monthly cap may be for a person on this model to ask at all, in whole cents. */
+export function aiMinCapUsd(model: string): number {
+  // Whole millionths first, so a rate like 0.1 cannot round a cent too far.
+  return Math.ceil(Math.round(aiMinCallUsd(model) * 1_000_000) / 10_000) / 100
+}
 
 /** How much thought a model gives each answer: more is slower and costs more. */
 export const AI_EFFORTS = [

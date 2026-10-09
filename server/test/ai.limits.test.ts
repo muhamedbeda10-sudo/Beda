@@ -146,10 +146,10 @@ describe('§20 stopping a query', () => {
     before.abort()
     expect(await run('SELECT 1', { ...chat, signal: before.signal })).toMatchObject({ ok: false, error: AI_QUERY_STOPPED })
 
-    // The pool holds four connections: fill it, then stop a fifth query that is waiting for one.
-    const busy = Array.from({ length: 4 }, () => new AbortController())
+    // A combination's pool holds two connections: fill it, then stop a third query that is waiting for one.
+    const busy = Array.from({ length: 2 }, () => new AbortController())
     const running = busy.map((ac) => run(SLOW, { ...chat, signal: ac.signal }))
-    await waitFor(async () => (await readerRunning()) === 4, 'four queries to run')
+    await waitFor(async () => (await readerRunning()) === 2, 'two queries to run')
     const waiting = new AbortController()
     const queued = run('SELECT 1', { ...chat, signal: waiting.signal })
     await new Promise((r) => setTimeout(r, 100))

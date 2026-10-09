@@ -15,6 +15,7 @@ import { seedWorkInstructionsIfEmpty } from './db/seedWorkInstructions'
 import type { AppContext } from './context'
 import { AnthropicModelClient } from './ai/model'
 import { AiReader } from './ai/reader'
+import { aiOwner } from './ai/owner'
 
 function readVersion(): string {
   try {
@@ -34,11 +35,24 @@ if (config.RUN_MIGRATIONS_ON_START) {
   for (const m of applied) console.log(`[db] applied migration ${m.version}_${m.name}`)
 }
 
-// §20 — the AI assistant's database reader. Idempotent, so it runs at every
+// §20 — the AI assistant's database readers. Idempotent, so it runs at every
 // start whether or not migrations did; a failure leaves the assistant
-// unavailable and everything else running.
+// unavailable and everything else running. Then its owner, if not pinned yet
+// and the account exists (otherwise the first request after it does pins it).
 const aiReader = new AiReader()
 await aiReader.provision(db, config)
+try {
+  if (!(await aiOwner(db, config))) {
+    const pinned = await db.query(`SELECT 1 FROM ai_owner`)
+    console.warn(
+      pinned.rowCount
+        ? "[ai] the assistant's owner account is deactivated or removed: nobody controls the assistant until it is back (a database operation)"
+        : `[ai] no active account "${config.AI_OWNER_USERNAME}" to own the assistant yet; nobody controls it until there is one`,
+    )
+  }
+} catch (e) {
+  console.warn('[ai] the assistant\'s owner could not be pinned:', e instanceof Error ? e.message : String(e))
+}
 
 const images: ImageStorage =
   config.IMAGE_STORAGE_DRIVER === 'azure-blob'
