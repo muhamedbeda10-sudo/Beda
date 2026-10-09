@@ -12,7 +12,7 @@ import { useAiMessages } from '@/services/queries'
 import { useAi, useAiLive } from './AiAssistantProvider'
 import { Answer, BotMark, UserBubble } from './AiMessages'
 import { Notice } from './AiNotice'
-import { answerText, liveAnnouncement, liveView, threadItems } from './liveTurn'
+import { answerText, latestAnswerKey, liveAnnouncement, liveView, threadItems } from './liveTurn'
 
 /** What an administrator might ask first; a tap puts it in the box to send or change. */
 const EXAMPLES = [
@@ -42,8 +42,7 @@ export function AiThread({
   const view = liveView(live, conversationId, data?.messages ?? NONE)
   const items = threadItems(live, view)
   // Follow-up questions are offered under the conversation's last answer only: once something is asked after it, they go.
-  const last = items.at(-1)
-  const latestAnswer = last && (last.kind === 'answer' || (last.kind === 'saved' && last.message.role === 'assistant')) ? last.key : null
+  const latestAnswer = latestAnswerKey(items)
   const empty = conversationId === null && !view.question
   // Read out when the answer on screen changes phase; the turn of another conversation says nothing here.
   const announcement = live && live.conversationId === conversationId ? liveAnnouncement(live) : ''

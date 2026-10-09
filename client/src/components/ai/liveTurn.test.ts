@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AiConversation, AiMessage, AiMessagesResponse, AiQueryPart, AiStatusResponse } from '@qc/shared/ai'
-import { answerText, applyEvent, endTurn, isInFlight, liveAnnouncement, liveView, parseStreamEvent, sentAfter, settleMessages, startTurn, threadItems, type LiveTurn } from './liveTurn'
+import { answerText, applyEvent, endTurn, isInFlight, latestAnswerKey, liveAnnouncement, liveView, parseStreamEvent, sentAfter, settleMessages, startTurn, threadItems, type LiveTurn } from './liveTurn'
 
 const conversation: AiConversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z' }
 const status: AiStatusResponse = { available: true, model: 'claude-sonnet-5-5', spentUsd: 1, capUsd: 50, monthStart: '2026-10-01T00:00:00Z' }
@@ -203,6 +203,17 @@ describe('the answer being written', () => {
     expect(liveAnnouncement(applyEvent(querying, { type: 'done', message: answer, status }))).toBe('Answer ready.')
     expect(liveAnnouncement(endTurn(querying, 'stopped'))).toBe('Stopped.')
     expect(liveAnnouncement(endTurn(querying, 'error', { code: 'ai_budget_reached', message: 'The monthly cap is reached.' }))).toBe('The monthly cap is reached.')
+  })
+
+  it('offers follow-up questions under the last answer only, and none while a question waits for its answer', () => {
+    const saved = [question, answer]
+    expect(latestAnswerKey(threadItems(null, { saved, question: false, answer: false }))).toBe('answer:u1')
+    expect(latestAnswerKey(threadItems(null, { saved: [question], question: false, answer: false }))).toBeNull()
+    expect(latestAnswerKey([])).toBeNull()
+    // A next question asked: the answer being written is the latest, and the one before it is not.
+    const next = run([{ type: 'start', conversation, userMessageId: 'u2' }], startTurn('k2', 'c1', 'And last month?', '2026-10-09T10:01:00Z', 'a1'))
+    const items = threadItems(next, liveView(next, 'c1', saved))
+    expect(latestAnswerKey(items)).toBe('answer:u2')
   })
 
   it('copies the text of an answer as markdown, without its queries', () => {

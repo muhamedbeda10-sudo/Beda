@@ -206,6 +206,17 @@ export function threadItems(t: LiveTurn | null, view: { saved: AiMessage[]; ques
 }
 
 /**
+ * The conversation's last answer, the one that offers follow-up questions:
+ * the last item, when it is an answer. Once a question is asked after it,
+ * there is none until that question's answer ends.
+ */
+export function latestAnswerKey(items: readonly ThreadItem[]): string | null {
+  const last = items.at(-1)
+  if (!last) return null
+  return last.kind === 'answer' || (last.kind === 'saved' && last.message.role === 'assistant') ? last.key : null
+}
+
+/**
  * The question and its answer put into the saved conversation as they ended,
  * so the hand-over draws nothing twice. A copy already there (a refetch while
  * the answer was written holds it half-done, without its last words, its cost

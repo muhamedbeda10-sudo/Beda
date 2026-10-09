@@ -329,6 +329,7 @@ export const FIXED_NOTICE = {
   noKey: `${KEPT} the AI assistant has no API key, so it could not be made adjustable.`,
   noReader: `${KEPT} the assistant cannot reach its data right now to check an adjustable version.`,
   model: `${KEPT} Claude could not be reached to make it adjustable.`,
+  keyRefused: `${KEPT} Anthropic refused the API key, so it could not be made adjustable.`,
   unusable: `${KEPT} Claude did not return a usable adjustable version of the queries.`,
   form: `${KEPT} Claude's adjustable version of the queries was not in the form allowed.`,
   noPlaceholder: `${KEPT} Claude found no period in the queries to make adjustable.`,
@@ -424,7 +425,8 @@ export async function proposeTemplates(args: {
           : err instanceof Error
             ? err.message
             : String(err)
-    return { notice: FIXED_NOTICE.model, detail }
+    const refused = err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError
+    return { notice: refused ? FIXED_NOTICE.keyRefused : FIXED_NOTICE.model, detail }
   } finally {
     clearTimeout(timer)
   }
