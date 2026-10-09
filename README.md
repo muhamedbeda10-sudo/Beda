@@ -127,8 +127,9 @@ npm run db:seed    # load demo master data into an empty database
 ```
 
 The API tests run against a real PostgreSQL database and reset it (they drop
-and recreate the `public` schema), so point `TEST_DATABASE_URL` at a throwaway
-database.
+and recreate the `public` and `ai` schemas), so point `TEST_DATABASE_URL` at a
+throwaway database. They never call Anthropic: the AI assistant's tests use a
+scripted stand-in for the model.
 
 ## Configuration
 
@@ -145,6 +146,7 @@ The important ones:
 | `RUN_MIGRATIONS_ON_START`         | Apply pending SQL migrations when the API starts.                     |
 | `FACTORY_TIMEZONE`                | IANA zone used to derive the shift (A/B/C) from the time of a sample.  |
 | `SEED_DEMO_DATA`                  | Seed demo master data into an empty database on first admin sign-in.  |
+| `ANTHROPIC_API_KEY`               | Optional. The AI assistant's key — normally set in the app instead (Administration → AI assistant), stored encrypted. Set here, it wins. |
 
 ## Database
 
@@ -158,6 +160,14 @@ Main tables: `users`, `auth_sessions`, `machines`, `production_orders`,
 `pt_consumables`, `images`, `inspection_sessions`, `inspection_samples`,
 `dimension_results`, `defect_results`, `sample_coils`, `paint_samples`,
 `pt_records`, `pdi_documents`, the image junction tables, and `audit_log`.
+
+The administrators' AI assistant reads the record only through the views in
+schema `ai`, signed in as its own role, `<database>_ai_reader` (for example
+`qc_ai_reader`): migration 0031 creates it with SELECT on those views and
+nothing else, and the API gives it LOGIN and a password derived from
+`JWT_SECRET` every time it starts. Every query runs read-only and is rolled
+back. The assistant's own records are the `ai_*` tables (conversations, usage
+for the monthly cap, the encrypted API key), which that role cannot read.
 
 ## API
 

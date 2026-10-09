@@ -17,6 +17,9 @@ import { migrate } from '../src/db/migrate'
 import { createApp } from '../src/app'
 import { LocalImageStorage } from '../src/images/storage'
 import { RateLimiter } from '../src/lib/rateLimit'
+import type { AiModelClient } from '../src/ai/model'
+import { AiReader } from '../src/ai/reader'
+import { ScriptedModel } from './aiFake'
 
 export interface ApiResponse<T = unknown> {
   status: number
@@ -38,9 +41,15 @@ export class TestApp {
   server!: Server
   baseUrl!: string
   config!: Config
+  /** §20 — the assistant's database reader, provisioned after every reset. */
+  aiReader = new AiReader()
+  /** §20 — the model the app talks to: scripted by each test, never the network. */
+  model = new ScriptedModel()
+  /** §20 — questions per person, as in production (30 per 10 minutes). */
+  aiLimiter = new RateLimiter(30, 10 * 60_000)
   private tmpDir!: string
 
-  async start(overrides: Partial<NodeJS.ProcessEnv> = {}): Promise<this> {
+  async start(overrides: Partial<NodeJS.ProcessEnv> = {}, options: { ai?: AiModelClient } = {}): Promise<this> {
     const env: NodeJS.ProcessEnv = {
       NODE_ENV: 'test',
       DATABASE_URL: process.env.TEST_DATABASE_URL ?? 'postgresql://qc:qc@127.0.0.1:5432/qc_test',
@@ -61,6 +70,9 @@ export class TestApp {
       images: this.images,
       loginLimiter: new RateLimiter(10, 15 * 60_000),
       version: 'test',
+      ai: options.ai ?? this.model,
+      aiReader: this.aiReader,
+      aiLimiter: this.aiLimiter,
     })
     await new Promise<void>((resolve) => {
       this.server = app.listen(0, '127.0.0.1', () => resolve())
@@ -70,14 +82,16 @@ export class TestApp {
     return this
   }
 
-  /** Drop everything and re-run the migrations from scratch. */
+  /** Drop everything and re-run the migrations from scratch, then set up the assistant's reader as the API does at start. */
   async resetDatabase(): Promise<void> {
-    await this.db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
+    await this.db.query('DROP SCHEMA IF EXISTS ai CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
     await migrate(this.db)
+    await this.aiReader.provision(this.db, this.config)
   }
 
   async stop(): Promise<void> {
     await new Promise<void>((resolve) => this.server.close(() => resolve()))
+    await this.aiReader.end()
     await this.db.end()
     await rm(this.tmpDir, { recursive: true, force: true })
   }

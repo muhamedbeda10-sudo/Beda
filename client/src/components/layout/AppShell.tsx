@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { AlertCircle, AlertTriangle, BellRing, CheckCircle2, ChevronRight, ClipboardCheck, History, Info, LayoutDashboard, LogOut, Menu, MessagesSquare, Moon, ScrollText, Settings, SlidersHorizontal, Sparkles, Sun, Table2, UploadCloud, Users, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, BellRing, Bot, CheckCircle2, ChevronRight, ClipboardCheck, History, Info, LayoutDashboard, LogOut, Menu, MessagesSquare, Moon, ScrollText, Settings, SlidersHorizontal, Sparkles, Sun, Table2, UploadCloud, Users, X } from 'lucide-react'
 import { WhatsNewPrompt } from '@/components/releases/WhatsNew'
 import { NoticeBell } from '@/components/notices/NoticeBell'
 import { useChatUnread } from '@/services/queries'
@@ -10,6 +10,9 @@ import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
 import { can, type Capability } from '@qc/shared/rules'
 import { AccountMenu, AvatarEditor } from '@/components/layout/AccountMenu'
+import { AiAssistantProvider, useAi } from '@/components/ai/AiAssistantProvider'
+import { AiBusyDot, AiButton } from '@/components/ai/AiButton'
+import { AiPanelHost } from '@/components/ai/AiPanelHost'
 
 interface NavItem {
   to: string
@@ -36,6 +39,7 @@ export const ADMIN_NAV: NavItem[] = [
   { to: '/admin/users', label: 'Users', icon: Users, needs: 'manage-admin-data', hint: 'Accounts and roles' },
   { to: '/admin/notices', label: 'Notices', icon: BellRing, needs: 'manage-admin-data', hint: 'Targeted messages and who read them' },
   { to: '/admin/audit', label: 'Audit log', icon: ScrollText, needs: 'edit-closed-session', hint: 'Who changed what, and when' },
+  { to: '/admin/ai', label: 'AI assistant', icon: Bot, needs: 'use-ai-assistant', hint: 'API key, monthly cap and usage' },
   { to: '/admin/whats-new', label: "What's new", icon: Sparkles, needs: 'manage-admin-data', hint: 'Every update, newest first' },
 ]
 
@@ -170,9 +174,20 @@ function AdminMenu({ items }: { items: NavItem[] }) {
   )
 }
 
+/** §20 — the assistant's state sits above the whole shell, so its header button, the menu entry and the panel share it. */
 export function AppShell({ children }: { children: ReactNode }) {
+  const { role } = useAuth()
+  return (
+    <AiAssistantProvider enabled={can(role, 'use-ai-assistant')}>
+      <Shell>{children}</Shell>
+    </AiAssistantProvider>
+  )
+}
+
+function Shell({ children }: { children: ReactNode }) {
   const { theme, toggleTheme, user } = useApp()
   const { role, signOutUser, profile } = useAuth()
+  const ai = useAi()
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
@@ -218,6 +233,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           {/* Right — theme, administration, account */}
           <div className="ml-auto flex shrink-0 items-center gap-1 lg:ml-0 lg:justify-self-end">
+            {ai.enabled && <AiButton />}
             {can(role, 'use-chat') && <ChatButton />}
             {can(role, 'read-notices') && <NoticeBell />}
             <button onClick={toggleTheme} className="icon-btn" aria-label="Toggle light or dark theme" data-tip={theme === 'dark' ? 'Light theme' : 'Dark theme'}>
@@ -236,8 +252,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <LogOut className="h-5 w-5" />
               </button>
             </div>
-            <button onClick={() => setMenuOpen(true)} className="icon-btn lg:hidden" aria-label="Open menu">
+            <button onClick={() => setMenuOpen(true)} className="icon-btn relative lg:hidden" aria-label="Open menu">
               <Menu className="h-6 w-6" />
+              {/* A phone keeps the assistant in the menu: the menu shows an answer being written. */}
+              {ai.busy && <AiBusyDot className="sm:hidden" />}
             </button>
           </div>
         </div>
@@ -257,6 +275,20 @@ export function AppShell({ children }: { children: ReactNode }) {
               {nav.map((n) => (
                 <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
               ))}
+              {ai.enabled && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    ai.setOpen(true)
+                  }}
+                  className="flex items-center gap-3 rounded-2xl px-4 py-4 text-left text-base font-semibold text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  <Bot className="h-5 w-5" />
+                  <span className="flex-1">Ask the AI assistant</span>
+                  {ai.busy && <span className="text-xs font-semibold text-accent-600 dark:text-accent-400">Answering…</span>}
+                </button>
+              )}
               {admin.length > 0 && (
                 <>
                   <p className="px-4 pb-1 pt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Administration</p>
@@ -288,12 +320,15 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {/* Full width; each route change replays the entrance so a page feels placed, not swapped. */}
-      <main className="px-4 py-5 sm:px-6 lg:px-8 safe-bottom">
+      {/* Full width; each route change replays the entrance so a page feels placed, not swapped.
+          On a very wide screen the page makes room for the docked assistant; narrower, the panel lies over its right edge. */}
+      <main className={cn('px-4 py-5 transition-[padding] duration-300 sm:px-6 lg:px-8 safe-bottom', ai.open && ai.docked && '2xl:pr-[32rem]')}>
         <div key={location.pathname} className="animate-page-in">
           {children}
         </div>
       </main>
+      {/* Outside <main>, which remounts on every route: an answer keeps streaming while the administrator moves around. */}
+      <AiPanelHost />
       <ToastHost />
       <WhatsNewPrompt />
     </div>

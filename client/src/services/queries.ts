@@ -52,6 +52,7 @@ import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiGrainChoice,
 import { loadAvatar } from '@/lib/avatarLoader'
 import type { AvatarResponse, ColumnValuesResponse, DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
+import type { AiConversationsResponse, AiMessagesResponse, AiQueryExportResponse, AiSettingsResponse, AiStatusResponse, AiUsageResponse } from '@qc/shared/ai'
 import { api, qs } from '@/lib/api'
 
 export const keys = {
@@ -103,6 +104,11 @@ export const keys = {
   orderList: (filters: OrderListFilters) => ['orders', 'list', filters] as const,
   sessionImages: (id: string) => ['sessions', id, 'images'] as const,
   orderListOptions: ['orders', 'list', 'options'] as const,
+  aiStatus: ['ai', 'status'] as const,
+  aiSettings: ['ai', 'settings'] as const,
+  aiConversations: ['ai', 'conversations'] as const,
+  aiMessages: (id: string) => ['ai', 'messages', id] as const,
+  aiUsage: (month: string) => ['ai', 'usage', month] as const,
 }
 
 /** A value that settles `ms` after it stops changing, so typing an
@@ -764,4 +770,62 @@ export function useLinesOfMachines(codes: string[], enabled = true) {
 /** §7.7 — the Access order sync: its runs, a waiting "Sync now", the keys. Refreshed while it is on screen, so a run shows as it finishes. */
 export function useOrderSync() {
   return useQuery({ queryKey: ['integrations', 'order-sync'] as const, queryFn: () => api<OrderSyncStatusResponse>('/integrations/order-sync'), refetchInterval: 15_000 })
+}
+
+// ---- §20 AI assistant --------------------------------------------------------
+// Administrators only: every hook takes `enabled`, false for any other role, so
+// nobody else ever asks.
+
+/** How many conversations a page of the history holds. */
+export const AI_CONVERSATIONS_PAGE = 50
+
+/** Whether the assistant can answer now, and this month's spend against the cap. */
+export function useAiStatus(enabled: boolean) {
+  return useQuery({ queryKey: keys.aiStatus, queryFn: () => api<AiStatusResponse>('/ai/status'), enabled, staleTime: 60_000 })
+}
+
+/** The switch, the cap and the key's state (never the key), for the administration page. */
+export function useAiSettings(enabled: boolean) {
+  return useQuery({ queryKey: keys.aiSettings, queryFn: () => api<AiSettingsResponse>('/ai/settings'), enabled, staleTime: 60_000 })
+}
+
+/** This person's conversations, the latest first: the first page. */
+export function useAiConversations(enabled: boolean) {
+  return useQuery({
+    queryKey: keys.aiConversations,
+    queryFn: () => api<AiConversationsResponse>(`/ai/conversations${qs({ limit: AI_CONVERSATIONS_PAGE })}`),
+    enabled,
+    staleTime: 60_000,
+  })
+}
+
+/** The page of conversations older than the given instant (the last one's latest message). */
+export function loadOlderAiConversations(before: string): Promise<AiConversationsResponse> {
+  return api<AiConversationsResponse>(`/ai/conversations${qs({ before, limit: AI_CONVERSATIONS_PAGE })}`)
+}
+
+/** One conversation, every question and answer with the queries they ran. */
+export function useAiMessages(conversationId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: keys.aiMessages(conversationId ?? ''),
+    queryFn: () => api<AiMessagesResponse>(`/ai/conversations/${encodeURIComponent(conversationId ?? '')}/messages`),
+    enabled: enabled && conversationId !== null,
+    staleTime: 60_000,
+  })
+}
+
+/** What the assistant cost in a calendar month (UTC, YYYY-MM), by day and by person. */
+export function useAiUsage(month: string, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.aiUsage(month),
+    queryFn: () => api<AiUsageResponse>(`/ai/usage${qs({ month })}`),
+    enabled,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** A query of an answer run again now, in full (up to AI_EXPORT_MAX_ROWS rows), for Excel. */
+export function loadAiQueryExport(queryId: string): Promise<AiQueryExportResponse> {
+  return api<AiQueryExportResponse>(`/ai/queries/${encodeURIComponent(queryId)}/export`)
 }

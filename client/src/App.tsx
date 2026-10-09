@@ -19,12 +19,24 @@ import { NoticesPage } from '@/pages/admin/NoticesPage'
 import { WhatsNewPage } from '@/pages/admin/WhatsNewPage'
 import { useAuth } from '@/store/AuthContext'
 import { can, type Capability } from '@qc/shared/rules'
-import type { ReactElement } from 'react'
+import { lazy, Suspense, type ReactElement } from 'react'
+
+// §20 — the assistant's administration is for administrators alone: fetched when first opened, never in an inspector's bundle.
+const AiAssistantPage = lazy(() => import('@/pages/admin/AiAssistantPage').then((m) => ({ default: m.AiAssistantPage })))
 
 /** A page for a capability the signed-in role lacks sends the reader home; the API refuses it anyway. */
 function Only({ cap, children }: { cap: Capability; children: ReactElement }) {
   const { role } = useAuth()
   return can(role, cap) ? children : <Navigate to="/" replace />
+}
+
+/** A page still being fetched: a spinner where it will be. */
+function PageLoading() {
+  return (
+    <p className="flex items-center justify-center gap-2 py-16 text-sm text-muted">
+      <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+    </p>
+  )
 }
 
 function Splash() {
@@ -64,6 +76,7 @@ export default function App() {
         <Route path="/admin/audit" element={<Only cap="edit-closed-session"><AuditPage /></Only>} />
         <Route path="/admin/notices" element={<Only cap="manage-admin-data"><NoticesPage /></Only>} />
         <Route path="/admin/whats-new" element={<Only cap="manage-admin-data"><WhatsNewPage /></Only>} />
+        <Route path="/admin/ai" element={<Only cap="use-ai-assistant"><Suspense fallback={<PageLoading />}><AiAssistantPage /></Suspense></Only>} />
         <Route path="/audit" element={<Navigate to="/admin/audit" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -133,6 +133,34 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   return (await res.json()) as T
 }
 
+/**
+ * POST whose answer is a stream of Server-Sent Events (§20, the AI assistant).
+ * The same refresh-and-retry as `api`: a 401 comes from the middleware before
+ * the route runs, so sending again is safe. A refusal (no key, the monthly
+ * cap, a bad request) is an ordinary JSON error, thrown as ApiError before any
+ * of the body is read; once the headers are OK the caller reads the stream.
+ */
+export async function apiStream(path: string, opts: RequestOptions = {}): Promise<ReadableStream<Uint8Array>> {
+  const request: RequestOptions = { method: 'POST', ...opts }
+  const attempt = async (): Promise<Response> => {
+    try {
+      return await send(path, request)
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') throw e
+      throw new ApiError(0, 'internal', 'Network error — check your connection.')
+    }
+  }
+  let res = await attempt()
+  if (res.status === 401 && !opts.noRetry) {
+    const ok = await refreshAccessToken()
+    if (ok) res = await attempt()
+    else onSessionLost?.()
+  }
+  if (!res.ok) throw await parseError(res)
+  if (!res.body) throw new ApiError(0, 'internal', 'This browser cannot read a streamed answer.')
+  return res.body
+}
+
 /** Binary GET (image bytes). Same refresh behaviour as `api`. */
 export async function apiBlob(path: string, signal?: AbortSignal): Promise<Blob> {
   let res = await send(path, { signal })

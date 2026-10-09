@@ -30,6 +30,7 @@ import { kpiRoutes } from './modules/kpi.routes'
 import { noticesRoutes } from './modules/notices.routes'
 import { chatRoutes } from './modules/chat.routes'
 import { releasesRoutes } from './modules/releases.routes'
+import { aiRoutes } from './modules/ai.routes'
 
 export function createApp(ctx: AppContext): Express {
   const app = express()
@@ -92,6 +93,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/notices', guard, noticesRoutes(ctx))
   app.use('/api/chat', guard, chatRoutes(ctx))
   app.use('/api/releases', guard, releasesRoutes(ctx))
+  app.use('/api/ai', guard, aiRoutes(ctx))
 
   app.all('/api/{*rest}', (_req, res) => {
     const body: ApiErrorBody = { error: { code: 'not_found', message: 'No such endpoint.' } }
@@ -151,7 +153,8 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     body = { error: { code: 'validation', message: 'The database rejected one of the values.' } }
   }
 
-  if (status >= 500) console.error('[api] unhandled error', err)
+  // A deliberate 503 (the AI assistant cannot answer now) is not a fault worth a stack trace.
+  if (status >= 500 && !(err instanceof HttpError)) console.error('[api] unhandled error', err)
   res.status(status).json(body)
 }
 
