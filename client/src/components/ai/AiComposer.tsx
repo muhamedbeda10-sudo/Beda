@@ -14,6 +14,7 @@ import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
 import { useAi, useAiLive } from './AiAssistantProvider'
 import { UnavailableNotice } from './AiNotice'
+import { takesCaret, type ComposerFocus } from './suggestions'
 
 const isTouch = () => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none)').matches
 
@@ -23,13 +24,20 @@ function caretAtEnd(el: HTMLTextAreaElement) {
   el.setSelectionRange(end, end)
 }
 
-/** A request to put the caret in the box. `always`: on a touch screen too — the asker chose a question to finish there. */
-export interface ComposerFocus {
-  key: number
-  always: boolean
-}
-
-export function AiComposer({ value, onChange, status, focus }: { value: string; onChange: (v: string) => void; status: AiStatusResponse | undefined; focus: ComposerFocus }) {
+export function AiComposer({
+  value,
+  onChange,
+  status,
+  focus,
+  onFocusUsed,
+}: {
+  value: string
+  onChange: (v: string) => void
+  status: AiStatusResponse | undefined
+  focus: ComposerFocus
+  /** The request was acted on: its `always` is spent (see spentFocus). */
+  onFocusUsed: () => void
+}) {
   const { role } = useAuth()
   const { send, stop, busy, conversationId, openConversation, docked, setOpen } = useAi()
   const live = useAiLive()
@@ -49,11 +57,17 @@ export function AiComposer({ value, onChange, status, focus }: { value: string; 
   }, [value])
 
   // Ready to type on opening, on a new chat and on an example — not on a phone, where the keyboard would cover the
-  // answer, unless a follow-up question was tapped to be finished there. The caret goes after what was put in.
+  // answer, unless a follow-up question was tapped to be finished there. The caret goes after what was put in. Each
+  // request is acted on once here (`handled`), and its `always` is spent then: coming back to the thread later
+  // mounts the box again, and must not raise a phone's keyboard over the answer.
+  const handled = useRef<number | null>(null)
   useEffect(() => {
+    if (handled.current === focus.key) return
+    handled.current = focus.key
     const el = area.current
-    if (el && (!isTouch() || focus.always)) caretAtEnd(el)
-  }, [focus])
+    if (el && takesCaret(focus, isTouch())) caretAtEnd(el)
+    if (focus.always) onFocusUsed()
+  }, [focus, onFocusUsed])
   useEffect(() => {
     const el = area.current
     if (el && !isTouch()) caretAtEnd(el)

@@ -12,7 +12,7 @@ import type { AiReportSummary } from '@qc/shared/ai'
 import { Button, Input, Modal } from '@/components/ui'
 import { cn, formatDate, formatFullTimestamp, formatTime } from '@/lib/utils'
 import { deleteAiReport, renameAiReport } from '@/services/mutations'
-import { loadOlderAiReports, useAiReports } from '@/services/queries'
+import { AI_REPORT_SEARCH_MAX, useAiReports, useDebounced } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 import { useAi } from './AiAssistantProvider'
 import { AI_REPORT_TITLE_MAX, cleanReportTitle, filterAiReports, mergeAiReportPages, reportPeriodLabel } from './reports'
@@ -91,38 +91,29 @@ export function AiReportList({ onOpen }: { onOpen: (report: AiReportSummary) => 
   const qc = useQueryClient()
   const { toast } = useApp()
   const { enabled } = useAi()
-  const { data, isLoading, isError, refetch } = useAiReports(enabled)
-  const [older, setOlder] = useState<AiReportSummary[]>([])
-  const [olderHasMore, setOlderHasMore] = useState<boolean | null>(null)
-  const [loadingOlder, setLoadingOlder] = useState(false)
   const [term, setTerm] = useState('')
+  // The server searches every report, not only the pages loaded; asked once typing pauses.
+  const search = useDebounced(term.trim(), 300)
+  const { data, isLoading, isError, isFetching, isPlaceholderData, refetch, hasNextPage, fetchNextPage, isFetchingNextPage } = useAiReports(search, enabled)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [removing, setRemoving] = useState<AiReportSummary | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const all = useMemo(() => mergeAiReportPages(data?.reports ?? [], older), [data, older])
-  const hasMore = olderHasMore ?? data?.hasMore ?? false
-  const list = useMemo(() => filterAiReports(all, term), [all, term])
+  const all = useMemo(() => mergeAiReportPages(data?.pages), [data])
+  // While the last search's reports stand in for this one's, they are narrowed to what is typed at once.
+  const searching = isPlaceholderData || term.trim() !== search
+  const list = useMemo(() => (searching ? filterAiReports(all, term) : all), [all, searching, term])
 
   const loadMore = async () => {
-    const last = all.at(-1)
-    if (!last || loadingOlder) return
-    setLoadingOlder(true)
-    try {
-      const page = await loadOlderAiReports(last.updatedAt)
-      setOlder((o) => [...o, ...page.reports])
-      setOlderHasMore(page.hasMore)
-    } catch (e) {
-      toast(e instanceof Error ? e.message : 'Older reports could not be loaded.', 'error')
-    } finally {
-      setLoadingOlder(false)
-    }
+    if (isFetchingNextPage) return
+    const res = await fetchNextPage()
+    if (res.isFetchNextPageError) toast(res.error instanceof Error ? res.error.message : 'Older reports could not be loaded.', 'error')
   }
 
+  // Each change fetches the pages on screen again (see aiReportListOptions): the list follows it in place.
   const rename = async (id: string, title: string): Promise<boolean> => {
     try {
-      const report = await renameAiReport(qc, id, title)
-      setOlder((o) => o.map((r) => (r.id === id ? { ...r, title: report.title, updatedAt: report.updatedAt } : r)))
+      await renameAiReport(qc, id, title)
       setRenaming(null)
       toast('Report renamed.', 'success')
       return true
@@ -137,7 +128,6 @@ export function AiReportList({ onOpen }: { onOpen: (report: AiReportSummary) => 
     setBusy(true)
     try {
       await deleteAiReport(qc, removing.id)
-      setOlder((o) => o.filter((r) => r.id !== removing.id))
       toast('Report deleted.', 'success')
       setRemoving(null)
     } catch (e) {
@@ -152,7 +142,16 @@ export function AiReportList({ onOpen }: { onOpen: (report: AiReportSummary) => 
       <div className="px-3 pb-2 pt-3">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-          <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search your reports" className="rounded-full pl-9" aria-label="Search your reports" dir="auto" />
+          <Input
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+            maxLength={AI_REPORT_SEARCH_MAX}
+            placeholder="Search your reports"
+            className="rounded-full pl-9 pr-9"
+            aria-label="Search your reports"
+            dir="auto"
+          />
+          {searching && isFetching && <Loader2 aria-hidden className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted" />}
         </div>
       </div>
 
@@ -206,7 +205,9 @@ export function AiReportList({ onOpen }: { onOpen: (report: AiReportSummary) => 
         ))}
         {!isLoading && !isError && list.length === 0 && (
           <li className="px-4 py-10 text-center text-sm text-muted">
-            {term.trim() ? (
+            {searching ? (
+              'Searching…'
+            ) : search ? (
               'No report matches.'
             ) : (
               <>
@@ -216,10 +217,10 @@ export function AiReportList({ onOpen }: { onOpen: (report: AiReportSummary) => 
             )}
           </li>
         )}
-        {hasMore && !term.trim() && (
+        {hasNextPage && !searching && (
           <li className="flex justify-center pt-2">
-            <button type="button" onClick={() => void loadMore()} disabled={loadingOlder} className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-muted shadow ring-1 ring-slate-200 hover:text-slate-700 dark:bg-slate-800 dark:ring-slate-700 dark:hover:text-slate-200 touch:min-h-[44px]">
-              {loadingOlder ? 'Loading…' : 'Older reports'}
+            <button type="button" onClick={() => void loadMore()} disabled={isFetchingNextPage} className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-muted shadow ring-1 ring-slate-200 hover:text-slate-700 dark:bg-slate-800 dark:ring-slate-700 dark:hover:text-slate-200 touch:min-h-[44px]">
+              {isFetchingNextPage ? 'Loading…' : search ? 'Older matches' : 'Older reports'}
             </button>
           </li>
         )}

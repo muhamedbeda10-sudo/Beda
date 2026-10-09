@@ -57,7 +57,21 @@ describe('a report to Excel', () => {
     expect(rows.filter((r) => r[0] === 'Sheet').map((r) => r[1])).toEqual(['1 Defects by machine', '2 Defects by machine', '3 Report   holds'])
     expect(rows.filter((r) => r[0] === 'Complete').map((r) => r[1])).toEqual(['Yes', 'No — only the first 1 rows'])
     expect(value('Error')).toBe('column "broken" does not exist')
-    expect(rows.filter((r) => r[0] === 'SQL').map((r) => r[1])).toEqual(report.sections.map((s) => s.sql))
+    // The SQL that produced the rows: the template filled with the export's days, as the server ran it.
+    expect(rows.filter((r) => r[0] === 'SQL').map((r) => r[1])).toEqual([
+      "SELECT machine, sum(pieces) FROM ai.defects WHERE recorded_day >= DATE '2026-09-10' AND recorded_day < DATE '2026-10-09' + 1 GROUP BY 1",
+      'SELECT 2',
+      'SELECT broken',
+    ])
+  })
+
+  it('writes the SQL over the days chosen for the export, and a fixed report\'s as it was saved', () => {
+    const sqlOf = (d: AiReportExportResponse) => aiReportSheets(d)[0].rows.filter((r) => r[0] === 'SQL').map((r) => r[1])
+    const chosen = sqlOf({ ...data, period: { from: '2026-09-01', to: '2026-09-30', label: '1 Sep – 30 Sep 2026', overridden: true } })
+    expect(chosen[0]).toBe("SELECT machine, sum(pieces) FROM ai.defects WHERE recorded_day >= DATE '2026-09-01' AND recorded_day < DATE '2026-09-30' + 1 GROUP BY 1")
+    // A report whose period could not be made adjustable runs its queries as they ran; its text is never touched.
+    const fixed: AiReport = { ...report, adjustable: false, period: null, sections: [{ title: 'Odd', sql: "SELECT '{{from}}'" }] }
+    expect(sqlOf({ ...data, report: fixed, period: null, sections: [data.sections[1]] })).toEqual(["SELECT '{{from}}'"])
   })
 
   it('writes each section as it came, and a failed one as its error', () => {

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { AI_REPORT_MAX_DAYS, type AiMessage, type AiQueryPart, type AiReportSectionRun, type AiReportSummary } from '@qc/shared/ai'
+import { AI_REPORT_MAX_DAYS, type AiMessage, type AiQueryPart, type AiReport, type AiReportSectionRun, type AiReportSummary, type AiSaveReportResponse } from '@qc/shared/ai'
+import { ApiError } from '@/lib/api'
 import {
   AI_REPORT_TITLE_MAX,
+  REPORT_PERIOD_SAVED,
   canSaveAsReport,
   checkAiDayRange,
   cleanReportTitle,
@@ -9,11 +11,17 @@ import {
   filterAiReports,
   hasAdjustablePeriod,
   mergeAiReportPages,
+  reportPeriodDraft,
   reportPeriodLabel,
+  reportPeriodReducer,
   runFailures,
   runPeriodText,
   sameRange,
+  saveAsReportState,
   sectionAsQuery,
+  sectionSqlForRun,
+  type ReportPeriodAction,
+  type ReportPeriodState,
 } from './reports'
 
 const ok: AiQueryPart = { type: 'query', queryId: 'q1', purpose: 'Defects', sql: 'SELECT 1', ok: true, columns: ['n'], rows: [[1]], rowCount: 1, truncated: false, ms: 3 }
@@ -44,6 +52,86 @@ describe('saving an answer as a report', () => {
     expect(canSaveAsReport({ ...answer, turnId: undefined })).toBe(false)
     expect(canSaveAsReport({ ...answer, role: 'user' })).toBe(false)
     expect(canSaveAsReport(null)).toBe(false)
+  })
+})
+
+describe('what saving an answer has come to', () => {
+  const saved = (adjustable: boolean, notice?: string): AiSaveReportResponse => ({
+    report: { ...summary('r1', 'Top'), adjustable, period: adjustable ? { kind: 'last_days', days: 30 } : null, sections: [{ title: 'Defects', sql: 'SELECT 1' }] },
+    ...(notice ? { notice } : {}),
+    status: { available: true, model: 'm', spentUsd: 1, capUsd: 50, monthStart: '2026-10-01T00:00:00Z' },
+  })
+  const none = { saving: null, savedId: null, fixedWhy: null, budgetSpent: false }
+
+  it('is nothing before a save, and the save on its way while it runs', () => {
+    expect(saveAsReportState([])).toEqual(none)
+    expect(saveAsReportState([{ status: 'pending', data: undefined, error: null, variables: { turnId: 't1' } }]).saving).toBe('adjustable')
+    expect(saveAsReportState([{ status: 'pending', data: undefined, error: null, variables: { turnId: 't1', adjustable: false } }]).saving).toBe('fixed')
+  })
+
+  it('names the report saved, and why its period stayed fixed only when it was to be adjustable', () => {
+    expect(saveAsReportState([{ status: 'success', data: saved(true), error: null, variables: { turnId: 't1' } }])).toEqual({ ...none, savedId: 'r1' })
+    expect(saveAsReportState([{ status: 'success', data: saved(false, 'Rows differ.'), error: null, variables: { turnId: 't1' } }])).toEqual({ ...none, savedId: 'r1', fixedWhy: 'Rows differ.' })
+    expect(saveAsReportState([{ status: 'success', data: saved(false, 'Rows differ.'), error: null, variables: { turnId: 't1', adjustable: false } }]).fixedWhy).toBeNull()
+  })
+
+  it('offers saving as asked when the budget refused making the period adjustable, and only then', () => {
+    const spent = new ApiError(402, 'ai_budget_reached', 'The monthly cap is reached.')
+    expect(saveAsReportState([{ status: 'error', data: undefined, error: spent, variables: { turnId: 't1' } }]).budgetSpent).toBe(true)
+    expect(saveAsReportState([{ status: 'error', data: undefined, error: spent, variables: { turnId: 't1', adjustable: false } }]).budgetSpent).toBe(false)
+    expect(saveAsReportState([{ status: 'error', data: undefined, error: new Error('offline'), variables: { turnId: 't1' } }])).toEqual(none)
+    // The latest save decides.
+    expect(saveAsReportState([{ status: 'error', data: undefined, error: spent, variables: { turnId: 't1' } }, { status: 'pending', data: undefined, error: null, variables: { turnId: 't1', adjustable: false } }])).toEqual({ ...none, saving: 'fixed' })
+  })
+})
+
+describe('the SQL a run ran', () => {
+  const report: Pick<AiReport, 'adjustable'> = { adjustable: true }
+  const template = 'SELECT count(*) FROM ai.defects WHERE day >= {{from}} AND day < {{to}} + 1 AND note <> $${{x}}$$'
+
+  it("fills an adjustable report's days as the server does", () => {
+    expect(sectionSqlForRun(report, template, { from: '2026-09-01', to: '2026-09-30' })).toBe("SELECT count(*) FROM ai.defects WHERE day >= DATE '2026-09-01' AND day < DATE '2026-09-30' + 1 AND note <> $${{x}}$$")
+  })
+
+  it('leaves the SQL as saved without days, for a fixed report, or for days that are not days', () => {
+    expect(sectionSqlForRun(report, template, null)).toBe(template)
+    expect(sectionSqlForRun({ adjustable: false }, template, { from: '2026-09-01', to: '2026-09-30' })).toBe(template)
+    expect(sectionSqlForRun(report, template, { from: "2026-09-01'; DROP", to: '2026-09-30' })).toBe(template)
+  })
+})
+
+describe('the period control of a report', () => {
+  const run = (...actions: ReportPeriodAction[]): ReportPeriodState => actions.reduce(reportPeriodReducer, REPORT_PERIOD_SAVED)
+  const ran = { from: '2026-09-10', to: '2026-10-09' }
+
+  it('starts choosing from the days on screen, and keeps what was typed', () => {
+    expect(run({ type: 'choose', ran })).toEqual({ override: null, choosing: true, ...ran })
+    expect(run({ type: 'from', value: '2026-09-01' }, { type: 'choose', ran })).toMatchObject({ from: '2026-09-01', to: '' })
+  })
+
+  it('applies days that can run, once', () => {
+    const chosen = run({ type: 'choose', ran }, { type: 'from', value: '2026-09-01' }, { type: 'to', value: '2026-09-30' })
+    expect(reportPeriodDraft(chosen)).toEqual({ problem: null, ready: true, applied: false })
+    const applied = reportPeriodReducer(chosen, { type: 'apply' })
+    expect(applied.override).toEqual({ from: '2026-09-01', to: '2026-09-30' })
+    expect(reportPeriodDraft(applied).applied).toBe(true)
+    // The same days again: nothing changes, so nothing runs again.
+    expect(reportPeriodReducer(applied, { type: 'apply' })).toBe(applied)
+    const backwards = reportPeriodReducer(applied, { type: 'to', value: '2026-08-01' })
+    expect(reportPeriodDraft(backwards)).toMatchObject({ problem: 'The first day comes after the last.', ready: false })
+    expect(reportPeriodReducer(backwards, { type: 'apply' })).toBe(backwards)
+  })
+
+  it('a reset from anywhere — the run error too — leaves the control saying the saved period', () => {
+    // Days chosen, the run over them failed, and "Reset to the saved period" under the error.
+    const failed = run({ type: 'choose', ran }, { type: 'from', value: '2026-09-01' }, { type: 'to', value: '2026-09-30' }, { type: 'apply' })
+    const reset = reportPeriodReducer(failed, { type: 'reset' })
+    expect(reset).toEqual({ override: null, choosing: false, from: '2026-09-01', to: '2026-09-30' })
+    // "As saved" pressed again, Apply not offered for days no longer shown.
+    expect(reset.choosing).toBe(false)
+    expect(reportPeriodDraft(reset).applied).toBe(false)
+    // Already on the saved period: the same state.
+    expect(reportPeriodReducer(REPORT_PERIOD_SAVED, { type: 'reset' })).toBe(REPORT_PERIOD_SAVED)
   })
 })
 
@@ -120,14 +208,18 @@ describe('My reports', () => {
     expect(filterAiReports(list, 'عيب').map((r) => r.id)).toEqual(['r2'])
   })
 
-  it('lists each report once across pages, the fresh first page winning', () => {
+  it('lists each report once across pages, the earlier page winning', () => {
     const renamed = summary('r2', 'Renamed', { updatedAt: '2026-10-09T08:00:00Z' })
-    const merged = mergeAiReportPages([renamed, summary('r1', 'A')], [summary('r2', 'Old name'), summary('r3', 'C')])
+    const merged = mergeAiReportPages([
+      { reports: [renamed, summary('r1', 'A')] },
+      { reports: [summary('r2', 'Old name'), summary('r3', 'C')] },
+    ])
     expect(merged.map((r) => [r.id, r.title])).toEqual([
       ['r2', 'Renamed'],
       ['r1', 'A'],
       ['r3', 'C'],
     ])
+    expect(mergeAiReportPages(undefined)).toEqual([])
   })
 
   it('keeps a title trimmed, on one line, within the longest allowed', () => {

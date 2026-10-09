@@ -65,3 +65,26 @@ export function suggestionChips(suggestions: readonly string[] | undefined): str
   }
   return out
 }
+
+/**
+ * A request to put the caret in the question box. `always`: on a touch screen
+ * too, raising its keyboard — a follow-up question was tapped to be finished
+ * there. Any other request (the panel opening, a new chat, an example) leaves
+ * a phone's keyboard down, where it would cover the answer.
+ */
+export interface ComposerFocus {
+  key: number
+  always: boolean
+}
+
+/** Whether the box takes the caret for a request. */
+export const takesCaret = (focus: ComposerFocus, touch: boolean): boolean => !touch || focus.always
+
+/**
+ * A request once acted on: its `always` is spent. The panel keeps the last
+ * request while the box comes and goes (History, My reports, a report's "Open
+ * the conversation"), and the box acts on it again each time it comes back —
+ * as on opening, so a phone's keyboard stays down. The same object when there
+ * is nothing to spend.
+ */
+export const spentFocus = (focus: ComposerFocus): ComposerFocus => (focus.always ? { key: focus.key, always: false } : focus)

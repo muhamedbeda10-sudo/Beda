@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AI_MODEL, AI_REPORT_MAX_DAYS } from '@qc/shared/ai'
-import { checkTemplate, fillTemplate, ordersRows, rangeDays, rangeProblem, sameResult } from '../src/ai/reportTemplate'
+import { checkTemplate, fillTemplate, noDataRange, ordersRows, ownDays, periodProblem, rangeDays, rangeProblem, readsClock, sameResult } from '../src/ai/reportTemplate'
 import { readProposal, reportTitle, runPeriod, templateRequest, TEMPLATE_SCHEMA } from '../src/ai/reports'
 import type { ModelMessage } from '../src/ai/model'
 
@@ -97,6 +97,83 @@ describe('§20 report templates: the form a template must keep', () => {
     expect(rangeProblem({ from: '2016-01-01', to: '2026-01-07' })).toBeNull()
     expect(rangeDays({ from: '2016-01-01', to: '2026-01-07' })).toBe(AI_REPORT_MAX_DAYS)
     expect(rangeProblem({ from: '2016-01-01', to: '2026-01-08' })).toMatch(/at most 3660 days/)
+  })
+})
+
+describe('§20 report templates: days from the period, and from nothing else', () => {
+  const where = (cond: string) => `SELECT day, count(*) AS n FROM ai.audit_log WHERE entity = 'Coil' AND ${cond} GROUP BY day ORDER BY day`
+
+  it('takes a template that holds the data between bounds made of both placeholders', () => {
+    for (const t of [
+      where('at >= {{from}} AND at < {{to}} + 1'),
+      where('day BETWEEN {{from}} AND {{to}}'),
+      where('day BETWEEN SYMMETRIC {{from}} AND {{to}}'),
+      where('{{from}} <= day AND day <= {{to}}'),
+      where('at >= {{from}}::timestamptz AND at < ({{to}} + 1)::timestamptz'),
+      where("date_trunc('day', at) >= {{from}} AND date_trunc('day', at) < {{to}} + interval '1 day'"),
+      where("at >= date_trunc('month', {{from}}) AND (at AT TIME ZONE 'Africa/Cairo')::date <= {{to}}"),
+      where('day = {{from}} OR day = {{to}}'),
+      "SELECT sum(produced) AS produced FROM ai.production_between({{from}}, {{to}}, 'day')",
+      "SELECT machine, sum(produced) FROM ai.production_between({{from}}, {{to}}, p_all_machines => true) GROUP BY machine",
+      "SELECT d::date AS day, count(a.audit_id) AS n FROM generate_series({{from}}, {{to}}, interval '1 day') d LEFT JOIN ai.audit_log a ON a.day = d::date GROUP BY 1 ORDER BY 1",
+      // Placeholders may also be counted with, once the data is bounded: changes per day of the period.
+      'SELECT count(*)::numeric / ({{to}} - {{from}} + 1) AS per_day FROM ai.audit_log WHERE day >= {{from}} AND day <= {{to}}',
+      // The period before, as long as the period: still both days, still bounded on both sides.
+      'SELECT count(*) AS n FROM ai.audit_log WHERE day >= {{from}} - ({{to}} - {{from}} + 1) AND day < {{from}}',
+      "SELECT count(*) FILTER (WHERE day >= {{from}} AND day <= {{to}}) AS n FROM ai.audit_log WHERE entity = 'Coil'",
+    ]) {
+      expect(periodProblem(t), t).toBeNull()
+    }
+  })
+
+  it('refuses a bound left out, or a day of its own left in', () => {
+    const cases: [string, RegExp][] = [
+      // "Since a week ago": a lower bound alone shows rows past the last day chosen.
+      [where('at >= {{from}}'), /both \{\{from\}\} and \{\{to\}\}/],
+      [where('at >= {{from}} AND at < {{from}}'), /both/],
+      // The original's days kept, and the placeholders compared with each other.
+      [where("at >= '2026-09-10' AND at < '2026-10-10' AND {{from}} <= {{to}}"), /names a day/],
+      [where('at >= {{from}} AND {{from}} <= {{to}}'), /compared with constants only/],
+      [where('{{to}} - {{from}} < 31 AND at >= {{from}} AND at < {{to}} + 1'), /compared with constants only/],
+      // One bound forgotten as a date, or left to the clock.
+      [where("at >= {{from}} AND at < '2026-10-10'"), /names a day/],
+      [where("at >= {{from}} AND at < {{to}} + 1 AND closed_month = '2026-09'"), /names a day/],
+      [where('at >= current_date - 6 AND at < {{to}} + 1'), /reads the clock/],
+      [where('at >= {{from}} AND at < CURRENT_DATE + 1 AND {{to}} IS NOT NULL'), /reads the clock/],
+      [where('at >= {{from}} AND at < now()::date + 1 AND day <= {{to}}'), /reads the clock/],
+      [where("day BETWEEN {{from}} AND {{to}} AND at < 'today'::date + 1"), /reads the clock/],
+      [where('day BETWEEN {{from}} AND {{to}} AND at > make_date(2026, 9, 1)'), /makes a day/],
+      // Bounded on one side only, the other placeholder doing nothing.
+      [where('at >= {{from}} AND {{to}} IS NOT NULL'), /does not hold the data/],
+      [where('at >= {{from}} AND at >= {{to}}'), /does not hold the data/],
+      [where('day NOT BETWEEN {{from}} AND {{to}}'), /does not hold the data/],
+      [where('day IN ({{from}}, {{to}})'), /does not hold the data/],
+      [where('day <> {{from}} AND day <> {{to}}'), /does not hold the data/],
+      ['SELECT count(*) FROM ai.production_between({{from}}, {{from}} + 30) WHERE {{to}} IS NOT NULL', /does not hold the data/],
+    ]
+    for (const [t, why] of cases) expect(periodProblem(t), t).toMatch(why)
+  })
+
+  it('tells a query with days of its own from one with none', () => {
+    expect(ownDays('SELECT count(*)::int AS machines FROM ai.machines')).toBeNull()
+    expect(ownDays("SELECT count(*) FROM ai.sessions WHERE order_number = '20095-QC1-HYH' AND item_code = 'LB406015-5TA3'")).toBeNull()
+    expect(ownDays("SELECT count(*) FROM ai.audit_log WHERE at >= '2026-09-10' AND at < '2026-10-10'")).toMatch(/names a day/)
+    expect(ownDays("SELECT count(*) FROM ai.audit_log WHERE at >= DATE '2026-09-10 08:00'")).toMatch(/names a day/)
+    expect(ownDays("SELECT count(*) FROM ai.audit_log WHERE to_char(at, 'DD/MM/YYYY') = '10/09/2026'")).toMatch(/names a day/)
+    expect(ownDays('SELECT count(*) FROM ai.audit_log WHERE at >= current_date - 29')).toMatch(/reads the clock/)
+    expect(ownDays("SELECT count(*) FROM ai.audit_log WHERE at >= now() - interval '30 days'")).toMatch(/reads the clock/)
+    expect(ownDays("SELECT count(*) FROM ai.audit_log WHERE day = 'yesterday'")).toMatch(/reads the clock/)
+    expect(ownDays('SELECT count(*) FROM ai.audit_log WHERE day >= make_date(2026, 9, 1)')).toMatch(/makes a day/)
+    // The clock's name inside a string is not the clock; a day in a comment still counts (it only keeps the period fixed).
+    expect(readsClock("SELECT 'now() or current_date' AS note FROM ai.machines")).toBe(false)
+    expect(readsClock('SELECT localtimestamp')).toBe(true)
+    expect(ownDays('SELECT 1 -- since 2026-09-01')).toMatch(/names a day/)
+  })
+
+  it('finds days that hold no data, as many as the period has', () => {
+    expect(noDataRange({ from: '2026-09-10', to: '2026-10-09' })).toEqual({ from: '1900-01-01', to: '1900-01-30' })
+    expect(noDataRange({ from: '2026-10-09', to: '2026-10-09' })).toEqual({ from: '1900-01-01', to: '1900-01-01' })
+    expect(rangeDays(noDataRange({ from: '2016-01-01', to: '2026-01-07' }))).toBe(AI_REPORT_MAX_DAYS)
   })
 })
 

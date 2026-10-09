@@ -8,7 +8,7 @@
 // search, a lookup by id, or a capped page. Nothing loads a whole table.
 // ============================================================================
 
-import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { infiniteQueryOptions, keepPreviousData, useInfiniteQuery, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import type {
   AuditFilters,
@@ -121,8 +121,13 @@ export const keys = {
   aiConversations: ['ai', 'conversations'] as const,
   aiMessages: (id: string) => ['ai', 'messages', id] as const,
   aiUsage: (month: string) => ['ai', 'usage', month] as const,
+  /** Every list of this person's reports, whatever its search. */
   aiReports: ['ai', 'reports'] as const,
+  /** The list of reports matching a search ('' for all of them), page after page. */
+  aiReportList: (search: string) => ['ai', 'reports', search] as const,
   aiReport: (id: string) => ['ai', 'report', id] as const,
+  /** Saving an answer as a report: a mutation's key (not a query's), so the save outlives the answer on screen. */
+  aiSaveReport: (turnId: string) => ['ai', 'save-report', turnId] as const,
   /** A report run over its saved period (no range) or over the days chosen for it. */
   aiReportRun: (id: string, range: AiDayRange | null) => ['ai', 'report-run', id, range?.from ?? '', range?.to ?? ''] as const,
   /** Every run of one report, whatever its days. */
@@ -854,19 +859,40 @@ export const AI_REPORTS_PAGE = 50
 /** The days of a run as the server takes them: both or neither. */
 const rangeQs = (range: AiDayRange | null) => (range ? qs({ from: range.from, to: range.to }) : '')
 
-/** This person's saved reports, the latest changed first: the first page. */
-export function useAiReports(enabled: boolean) {
-  return useQuery({
-    queryKey: keys.aiReports,
-    queryFn: () => api<AiReportsResponse>(`/ai/reports${qs({ limit: AI_REPORTS_PAGE })}`),
-    enabled,
+/** The longest search of My reports the server takes. */
+export const AI_REPORT_SEARCH_MAX = 200
+
+/** One page of this person's saved reports, the latest changed first: matching `search` ('' for all), changed before `before` (null for the first page). */
+/** A page of My reports after `before`: the last report of the page already read. */
+export function loadAiReportsPage(search: string, before: { updatedAt: string; id: string } | null): Promise<AiReportsResponse> {
+  return api<AiReportsResponse>(`/ai/reports${qs({ q: search, before: before?.updatedAt, beforeId: before?.id, limit: AI_REPORTS_PAGE })}`)
+}
+
+/**
+ * My reports as cached: the reports matching a search, page after page, each
+ * page starting after the last report of the one before. The server searches
+ * (title and question), so a report not loaded yet is found too. When a report
+ * changes (renamed, saved, deleted) every page loaded is fetched again, in
+ * order, from the new first page on — a report renamed to the top never leaves
+ * a gap where the pages used to meet.
+ */
+export function aiReportListOptions(search: string) {
+  const q = search.trim().slice(0, AI_REPORT_SEARCH_MAX)
+  return infiniteQueryOptions({
+    queryKey: keys.aiReportList(q),
+    queryFn: ({ pageParam }) => loadAiReportsPage(q, pageParam),
+    initialPageParam: null as { updatedAt: string; id: string } | null,
+    getNextPageParam: (last: AiReportsResponse) => {
+      const end = last.reports.at(-1)
+      return last.hasMore && end ? { updatedAt: end.updatedAt, id: end.id } : null
+    },
     staleTime: 60_000,
   })
 }
 
-/** The page of reports changed before the given instant (the last one's updatedAt). */
-export function loadOlderAiReports(before: string): Promise<AiReportsResponse> {
-  return api<AiReportsResponse>(`/ai/reports${qs({ before, limit: AI_REPORTS_PAGE })}`)
+/** This person's saved reports matching a search ('' for all of them); "Older reports" is fetchNextPage. The last search's reports stay while the next one's come. */
+export function useAiReports(search: string, enabled: boolean) {
+  return useInfiniteQuery({ ...aiReportListOptions(search), enabled, placeholderData: keepPreviousData })
 }
 
 /** One saved report: its title, question, period and sections (with their SQL). */
@@ -891,13 +917,7 @@ export function useAiReportRun(id: string | null, range: AiDayRange | null, enab
   const qc = useQueryClient()
   return useQuery({
     queryKey: keys.aiReportRun(id ?? '', range),
-    queryFn: async () => {
-      const run = await api<AiReportRunResponse>(`/ai/reports/${encodeURIComponent(id ?? '')}/run${rangeQs(range)}`)
-      // The run carries the report as it is now, and moved its last run: the header and the list follow.
-      qc.setQueryData(keys.aiReport(run.report.id), run.report)
-      void qc.invalidateQueries({ queryKey: keys.aiReports })
-      return run
-    },
+    queryFn: () => runAiReport(qc, id ?? '', range),
     enabled: enabled && id !== null,
     staleTime: 0,
     gcTime: 5 * 60_000,
@@ -906,6 +926,29 @@ export function useAiReportRun(id: string | null, range: AiDayRange | null, enab
     retry: false,
     placeholderData: keepPreviousData,
   })
+}
+
+/**
+ * The newer of two copies of a report. A run (or an export) carries the
+ * report as the server read it before running its sections, which can take a
+ * while: a rename made meanwhile is newer, and must not be undone by the run
+ * ending. The last run is the latest either copy knows.
+ */
+export function newerAiReport(cached: AiReport | undefined, fromRun: AiReport): AiReport {
+  if (!cached || cached.id !== fromRun.id || Date.parse(cached.updatedAt) <= Date.parse(fromRun.updatedAt)) return fromRun
+  const runs = [cached.lastRunAt, fromRun.lastRunAt].filter((t): t is string => !!t)
+  const lastRunAt = runs.sort((a, b) => Date.parse(a) - Date.parse(b)).at(-1)
+  return lastRunAt ? { ...cached, lastRunAt } : cached
+}
+
+/** Run a report now (see useAiReportRun); the report on screen and the list follow what the run moved. */
+export async function runAiReport(qc: QueryClient, id: string, range: AiDayRange | null): Promise<AiReportRunResponse> {
+  const run = await api<AiReportRunResponse>(`/ai/reports/${encodeURIComponent(id)}/run${rangeQs(range)}`)
+  // Its last run moved; its title may have moved too while it ran (a rename), and the newer copy is kept.
+  const report = newerAiReport(qc.getQueryData<AiReport>(keys.aiReport(run.report.id)), run.report)
+  qc.setQueryData(keys.aiReport(report.id), report)
+  void qc.invalidateQueries({ queryKey: keys.aiReports })
+  return report === run.report ? run : { ...run, report }
 }
 
 /** A report run again in full (up to AI_EXPORT_MAX_ROWS rows a section) over the same days, for Excel. */

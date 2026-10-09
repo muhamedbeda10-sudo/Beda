@@ -8,7 +8,7 @@
 // section in full, a sheet each, after a sheet on the report itself.
 // ============================================================================
 
-import { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useReducer, useState, type Dispatch } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft,
@@ -30,7 +30,6 @@ import {
   AI_EXPORT_MAX_ROWS,
   AI_PREVIEW_ROWS,
   describeAiPeriod,
-  type AiDayRange,
   type AiQueryPart,
   type AiReport,
   type AiReportPeriod,
@@ -42,14 +41,25 @@ import { ApiError } from '@/lib/api'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { cn, formatDate, formatFullTimestamp, formatTime } from '@/lib/utils'
 import { deleteAiReport, renameAiReport } from '@/services/mutations'
-import { loadAiReportExport, useAiReport, useAiReportRun } from '@/services/queries'
+import { keys, loadAiReportExport, newerAiReport, useAiReport, useAiReportRun } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 import { useAi } from './AiAssistantProvider'
 import { Notice } from './AiNotice'
 import { DeleteReportModal, ReportTitleEditor } from './AiReportList'
 import { AiResultModal, PreviewTable } from './AiResultTable'
 import { aiReportExportMessage, aiReportFilename, aiReportSheets } from './exportAiReport'
-import { checkAiDayRange, daysInRange, hasAdjustablePeriod, runFailures, runPeriodText, sameRange, sectionAsQuery } from './reports'
+import {
+  REPORT_PERIOD_SAVED,
+  daysInRange,
+  hasAdjustablePeriod,
+  reportPeriodDraft,
+  reportPeriodReducer,
+  runFailures,
+  runPeriodText,
+  sectionAsQuery,
+  type ReportPeriodAction,
+  type ReportPeriodState,
+} from './reports'
 
 const SMALL_BTN = 'btn-secondary h-8 min-h-0 gap-1.5 px-2.5 py-0 text-xs touch:h-11 touch:px-3'
 const EXPORT_LABEL = 'Export report'
@@ -73,8 +83,9 @@ export function AiReportView({
   const qc = useQueryClient()
   const { toast } = useApp()
   const { enabled } = useAi()
-  // Days chosen for this run; null runs the saved period, as of today.
-  const [override, setOverride] = useState<AiDayRange | null>(null)
+  // The period control and the days of the run (override: days chosen; null runs the saved period, as of today), one state.
+  const [period, setPeriod] = useReducer(reportPeriodReducer, REPORT_PERIOD_SAVED)
+  const override = period.override
   const detail = useAiReport(id, enabled)
   const run = useAiReportRun(id, override, enabled)
   const [renaming, setRenaming] = useState(false)
@@ -117,7 +128,10 @@ export function AiReportView({
   const exportExcel = useCallback(async () => {
     setExporting(true)
     try {
-      const data = await loadAiReportExport(id, override)
+      const res = await loadAiReportExport(id, override)
+      // A rename made while it ran is newer than the copy the export carries: the file takes the title on screen.
+      const report = newerAiReport(qc.getQueryData<AiReport>(keys.aiReport(id)), res.report)
+      const data = report === res.report ? res : { ...res, report }
       downloadWorkbook(aiReportFilename(data.report.title, data.ranAt), aiReportSheets(data))
       toast(aiReportExportMessage(data), 'success')
     } catch (e) {
@@ -125,7 +139,7 @@ export function AiReportView({
     } finally {
       setExporting(false)
     }
-  }, [id, override, toast])
+  }, [id, override, qc, toast])
   const onExport = useCallback(() => void exportExcel(), [exportExcel])
 
   // Each section in the shape the answer's cards take, built once per run so the cards keep their state.
@@ -192,7 +206,7 @@ export function AiReportView({
             )}
 
             {report && hasAdjustablePeriod(report) && (
-              <ReportPeriod saved={report.period!} ran={shown?.period ?? null} override={override} onOverride={setOverride} />
+              <ReportPeriod saved={report.period!} ran={shown?.period ?? null} state={period} dispatch={setPeriod} />
             )}
 
             <div className="flex flex-wrap items-center gap-2">
@@ -219,7 +233,7 @@ export function AiReportView({
                       Try again
                     </Button>
                     {override && (
-                      <Button className="h-8 min-h-0 px-3 py-0 text-xs touch:h-11" onClick={() => setOverride(null)}>
+                      <Button className="h-8 min-h-0 px-3 py-0 text-xs touch:h-11" onClick={() => setPeriod({ type: 'reset' })}>
                         <Undo2 className="h-3.5 w-3.5" /> Reset to the saved period
                       </Button>
                     )}
@@ -279,40 +293,24 @@ function RunLine({ run, running }: { run: AiReportRunResponse; running: string |
  * The period a report runs over: as saved (its question's period, as of
  * today), or days chosen for this run. Choosing starts from the days the
  * tables on screen cover; Apply runs them; Reset goes back to the saved one.
+ * Its state is the report view's (see ReportPeriodState).
  */
 function ReportPeriod({
   saved,
   ran,
-  override,
-  onOverride,
+  state,
+  dispatch,
 }: {
   saved: AiReportPeriod
   ran: AiReportRunResponse['period']
-  override: AiDayRange | null
-  onOverride: (range: AiDayRange | null) => void
+  state: ReportPeriodState
+  dispatch: Dispatch<ReportPeriodAction>
 }) {
-  const [choosing, setChoosing] = useState(override !== null)
-  const [from, setFrom] = useState(override?.from ?? '')
-  const [to, setTo] = useState(override?.to ?? '')
-
-  const choose = () => {
-    setChoosing(true)
-    if (!from && !to && ran) {
-      setFrom(ran.from)
-      setTo(ran.to)
-    }
-  }
-  const reset = () => {
-    setChoosing(false)
-    onOverride(null)
-  }
-
-  const problem = from || to ? checkAiDayRange(from, to) : null
-  const ready = !!from && !!to && !problem
-  const applied = override !== null && sameRange(override, { from, to })
-  const apply = () => {
-    if (ready && !applied) onOverride({ from, to })
-  }
+  const { override, choosing, from, to } = state
+  const { problem, ready, applied } = reportPeriodDraft(state)
+  const choose = () => dispatch({ type: 'choose', ran })
+  const reset = () => dispatch({ type: 'reset' })
+  const apply = () => dispatch({ type: 'apply' })
 
   const option = (on: boolean) =>
     cn(
@@ -346,11 +344,11 @@ function ReportPeriod({
             apply()
           }}
         >
-          <input type="date" aria-label="First day" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="input h-9 w-[9.25rem] px-2 py-0 text-13 tabular-nums touch:h-11" />
+          <input type="date" aria-label="First day" value={from} max={to || undefined} onChange={(e) => dispatch({ type: 'from', value: e.target.value })} className="input h-9 w-[9.25rem] px-2 py-0 text-13 tabular-nums touch:h-11" />
           <span className="text-muted" aria-hidden>
             –
           </span>
-          <input type="date" aria-label="Last day" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="input h-9 w-[9.25rem] px-2 py-0 text-13 tabular-nums touch:h-11" />
+          <input type="date" aria-label="Last day" value={to} min={from || undefined} onChange={(e) => dispatch({ type: 'to', value: e.target.value })} className="input h-9 w-[9.25rem] px-2 py-0 text-13 tabular-nums touch:h-11" />
           <Button type="submit" variant="primary" disabled={!ready || applied} className="h-9 min-h-0 px-3 py-0 text-xs touch:h-11">
             Apply
           </Button>

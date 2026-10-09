@@ -24,6 +24,17 @@ describe('xlsx writer', () => {
     expect(sheetName('', taken)).toBe('Sheet')
   })
 
+  it('never starts or ends a sheet name with an apostrophe, which Excel refuses — after the cut too', () => {
+    const taken = new Set<string>()
+    // Cut at 31 characters, the name would end just after "operator'".
+    expect(sheetName("1 Rejects per line by operator's shift", taken)).toBe('1 Rejects per line by operator')
+    expect(sheetName("'quoted'", taken)).toBe('quoted')
+    expect(sheetName("''", taken)).toBe('Sheet')
+    // Still unique once the apostrophe is gone.
+    expect(sheetName("1 Rejects per line by operator''", taken)).toBe('1 Rejects per line by opera (2)')
+    for (const name of taken) expect(name).not.toMatch(/^'|'$/)
+  })
+
   it('escapes what XML cannot hold', () => {
     expect(escapeXml('a<b>&"c"\'')).toBe('a&lt;b&gt;&amp;&quot;c&quot;&apos;')
   })

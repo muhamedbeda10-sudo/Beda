@@ -13,13 +13,14 @@ import { Badge } from '@/components/ui'
 import { cn } from '@/lib/utils'
 import { useAiMessages, useAiStatus } from '@/services/queries'
 import { useAi, useAiLive } from './AiAssistantProvider'
-import { AiComposer, type ComposerFocus } from './AiComposer'
+import { AiComposer } from './AiComposer'
 import { AiConversationList } from './AiConversationList'
 import { BotMark } from './AiMessages'
 import { AiReportList } from './AiReportList'
 import { AiReportView } from './AiReportView'
 import { AiThread } from './AiThread'
 import { formatCap, formatMonth, formatUsd, spendTone, utcMonth } from './format'
+import { spentFocus, type ComposerFocus } from './suggestions'
 
 type View = 'thread' | 'history' | 'reports'
 
@@ -50,6 +51,7 @@ export default function AiPanel() {
     [kept],
   )
   const focusComposer = useCallback((always: boolean) => setFocus((f) => ({ key: f.key + 1, always })), [])
+  const focusUsed = useCallback(() => setFocus(spentFocus), [])
   const fill = useCallback(
     (question: string) => {
       setDraft(question)
@@ -139,7 +141,7 @@ export default function AiPanel() {
       ) : (
         <>
           <AiThread onAskAgain={fill} onExample={fill} onSuggestion={suggest} onOpenReport={openReport} />
-          <AiComposer value={draft} onChange={setDraft} status={status} focus={focus} />
+          <AiComposer value={draft} onChange={setDraft} status={status} focus={focus} onFocusUsed={focusUsed} />
         </>
       )}
     </>

@@ -37,6 +37,41 @@ describe('§20 follow-up questions: reading the block', () => {
   })
 })
 
+describe('§20 follow-up questions: the block however its tags are written', () => {
+  it('reads a block in any case, with spaces or attributes in its tags, as the panel hides it while streaming', () => {
+    for (const block of [
+      '<Suggestions>\n- Which machine?\n- And last week?\n</Suggestions>',
+      '<SUGGESTIONS>\n- Which machine?\n- And last week?\n</SUGGESTIONS >',
+      '<suggestions >\n- Which machine?\n- And last week?\n</suggestions\n>',
+      '<suggestions lang="en">\n- Which machine?\n- And last week?\n</suggestions>',
+    ]) {
+      const text = `There are **2** machines.\n\n${block}`
+      expect(parseSuggestions(text), block).toEqual(['Which machine?', 'And last week?'])
+      expect(stripSuggestions(text, true), block).toBe('There are **2** machines.')
+    }
+    expect(stripSuggestions('The answer.\n\n<Suggestions>\n- Half a quest', true)).toBe('The answer.')
+    expect(stripSuggestions('The answer.\n\n<Sugg', true)).toBe('The answer.')
+    expect(stripSuggestions('The answer.\n\n<suggestions class="x', true)).toBe('The answer.')
+  })
+
+  it('takes away the code fence a block was put in, and no fence of the answer’s own', () => {
+    const fenced = 'There are **2** machines.\n\n```\n<suggestions>\n- Which machine?\n</suggestions>\n```'
+    expect(stripSuggestions(fenced, true)).toBe('There are **2** machines.')
+    expect(parseSuggestions(fenced)).toEqual(['Which machine?'])
+    expect(stripSuggestions('Text.\n\n~~~~ text\n\n<suggestions>\n- Q?\n</suggestions>\n\n~~~~\n\nAfter.', false)).toBe('Text.\n\n\n\nAfter.')
+    // Cut off inside its fence: the fence that never closes goes too.
+    expect(stripSuggestions('The answer.\n\n```markdown\n<suggestions>\n- Which ma', true)).toBe('The answer.')
+    // A code block of the answer just before the block keeps its closing fence.
+    const code = 'Run this:\n\n```sql\nSELECT 1\n```\n\n<suggestions>\n- Q?\n</suggestions>'
+    expect(stripSuggestions(code, true)).toBe('Run this:\n\n```sql\nSELECT 1\n```')
+    const codeThenCut = 'Run this:\n\n```\nSELECT 1\n```\n<suggestions>\n- Q'
+    expect(stripSuggestions(codeThenCut, true)).toBe('Run this:\n\n```\nSELECT 1\n```')
+    // A fence that does not close right after the block is the answer's, and stays.
+    const open = 'Text\n```\n<suggestions>\n- Q?\n</suggestions>\nmore code\n```'
+    expect(stripSuggestions(open, true)).toBe('Text\n```\n\nmore code\n```')
+  })
+})
+
 const app = new TestApp()
 let admin: Session
 
@@ -117,6 +152,13 @@ describe('§20 follow-up questions in a conversation', () => {
       ['Which machines were added this month?', 'ما هي أكثر العيوب تكرارًا؟'],
       ['And last month?'],
     ])
+  })
+
+  it('takes a block out of the answer however the model wrote its tags, and offers its questions', async () => {
+    app.model.reply({ content: [text('One machine.\n\n```\n<Suggestions>\n- Which machine was added last?\n</Suggestions >\n```')] })
+    const res = await ask('How many machines, written oddly?')
+    expect(res.done.message.parts).toEqual([{ type: 'text', text: 'One machine.' }])
+    expect(res.done.message.suggestions).toEqual(['Which machine was added last?'])
   })
 
   it('shows no block of an answer cut off while writing it, and offers nothing then', async () => {

@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import type { ApiErrorBody } from '@qc/shared/api'
+import type { ApiErrorBody, AuditListResponse } from '@qc/shared/api'
 import {
   AI_MODEL,
   describeAiDays,
@@ -90,6 +90,45 @@ async function coilChangeOn(day: string): Promise<void> {
 }
 
 const callsSoFar = () => app.model.calls.length
+
+/** Wait until a condition holds (a request reaching the scripted model), or fail after a few seconds. */
+async function until(condition: () => boolean): Promise<void> {
+  for (const started = Date.now(); !condition(); ) {
+    if (Date.now() - started > 5000) throw new Error('Waited too long.')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}
+
+/** A question asked on an earlier day (its date line says so), answered by running these queries, as the route would have. */
+async function answeredOn(askedOn: string, question: string, queries: [string, string][]): Promise<string> {
+  const ready = await answered('A conversation to go on in', [['Machines', MACHINES]])
+  const conversation = (await findConversation(app.db, ready.conversationId, admin.user.id))!
+  const asked = await app.db.query<{ id: string }>(
+    `INSERT INTO ai_turns (conversation_id, user_id, client_id, question) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [conversation.id, admin.user.id, randomUUID(), question],
+  )
+  const turnId = asked.rows[0].id
+  await appendMessages(app.db, conversation.id, turnId, [
+    { role: 'user', kind: 'question', content: [{ type: 'text', text: `<context>Today: ${askedOn} 09:30 (Africa/Cairo)</context>` }, { type: 'text', text: question }] },
+  ])
+  app.model.reply({ content: queries.map(([purpose, sql], i) => runSql(`toolu_past${i}`, purpose, sql)) }, { content: [text('Here it is.')] })
+  const outcome = await answerQuestion({
+    db: app.db,
+    reader: app.aiReader.pool,
+    model: app.model,
+    apiKey: KEY,
+    config: app.config,
+    userId: admin.user.id,
+    conversation,
+    turnId,
+    messages: await loadReplay(app.db, conversation.id),
+    capUsd: 50,
+    emit: () => undefined,
+    signal: new AbortController().signal,
+  })
+  await finishTurn(app.db, turnId, outcome.stopReason, outcome.notice)
+  return turnId
+}
 
 beforeAll(async () => {
   await app.start()
@@ -196,9 +235,9 @@ describe('§20 saving an answer as a report', () => {
     expect(usage.rows).toHaveLength(3)
     expect(usage.rows[2]).toEqual({ input_tokens: 1500, output_tokens: 400, partial: false })
 
-    // In the audit log by its title alone.
+    // In the audit log as which report was made, never by its title.
     const audit = await app.db.query(`SELECT action, field, old_value, new_value, user_name FROM audit_log WHERE entity = 'AiReport' AND entity_id = $1`, [saved.id])
-    expect(audit.rows).toEqual([{ action: 'create', field: 'title', old_value: null, new_value: 'Coil changes, last 30 days', user_name: 'Admin' }])
+    expect(audit.rows).toEqual([{ action: 'create', field: null, old_value: null, new_value: null, user_name: 'Admin' }])
 
     // The answer now says where it was saved.
     const shown = await app.api<AiMessagesResponse>('GET', `/api/ai/conversations/${first.conversationId}/messages`, { token: admin.token })
@@ -224,34 +263,8 @@ describe('§20 saving an answer as a report', () => {
 
   it('resolves the period at the day the question was asked, not the day it is saved', async () => {
     // A question asked a hundred days ago, as the route stores one, answered by the loop.
-    const ready = await answered('A conversation to go on in', [['Machines', MACHINES]])
-    const conversation = (await findConversation(app.db, ready.conversationId, admin.user.id))!
-    const asked = await app.db.query<{ id: string }>(
-      `INSERT INTO ai_turns (conversation_id, user_id, client_id, question) VALUES ($1, $2, $3, 'Changes in the last 30 days?') RETURNING id`,
-      [conversation.id, admin.user.id, randomUUID()],
-    )
-    const turnId = asked.rows[0].id
     const askedOn = factoryDay(-100)
-    await appendMessages(app.db, conversation.id, turnId, [
-      { role: 'user', kind: 'question', content: [{ type: 'text', text: `<context>Today: ${askedOn} 09:30 (Africa/Cairo)</context>` }, { type: 'text', text: 'Changes in the last 30 days?' }] },
-    ])
-    const original = PER_DAY(factoryDay(-129), factoryDay(-99))
-    app.model.reply({ content: [runSql('toolu_past', 'Changes per day', original)] }, { content: [text('One change, 110 days ago.')] })
-    const outcome = await answerQuestion({
-      db: app.db,
-      reader: app.aiReader.pool,
-      model: app.model,
-      apiKey: KEY,
-      config: app.config,
-      userId: admin.user.id,
-      conversation,
-      turnId,
-      messages: await loadReplay(app.db, conversation.id),
-      capUsd: 50,
-      emit: () => undefined,
-      signal: new AbortController().signal,
-    })
-    await finishTurn(app.db, turnId, outcome.stopReason, outcome.notice)
+    const turnId = await answeredOn(askedOn, 'Changes in the last 30 days?', [['Changes per day', PER_DAY(factoryDay(-129), factoryDay(-99))]])
 
     const calls = callsSoFar()
     app.model.reply(proposal([PER_DAY_TEMPLATE]))
@@ -283,6 +296,103 @@ describe('§20 saving an answer as a report', () => {
         { title: 'Machines', sql: MACHINES },
       ],
     })
+  })
+
+  it('keeps the period as asked when a template does not take its days from the period alone', async () => {
+    // Each would pass a run at the question's own days, where no change lies past today; over other days each shows wrong numbers.
+    for (const template of [
+      // "Since a week ago": the lower bound alone; rows after the last day chosen would show.
+      PER_DAY_TEMPLATE.replace(' AND at < {{to}} + 1', ''),
+      // One bound forgotten as the question's date.
+      PER_DAY_TEMPLATE.replace('{{to}} + 1', `'${factoryDay(1)}'`),
+      // The question's days kept, and the placeholders compared with each other.
+      PER_DAY(factoryDay(-29), factoryDay(1)).replace('GROUP BY', 'AND {{from}} <= {{to}} GROUP BY'),
+      // A bound left to the clock.
+      PER_DAY_TEMPLATE.replace('{{from}}', 'current_date - 29'),
+      PER_DAY_TEMPLATE.replace('{{to}} + 1', 'current_date + 1'),
+    ]) {
+      const a = await answered('Coil changes per day, last 30 days, once again?')
+      app.model.reply(proposal([template, MACHINES]))
+      const res = await save({ turnId: a.turnId })
+      expect(res.status, template).toBe(201)
+      expect(res.body.notice, template).toBe(FIXED_NOTICE.notFromPeriod('Changes per day'))
+      expect(res.body.report, template).toMatchObject({ adjustable: false, period: null, sections: [{ sql: PER_DAY(factoryDay(-29), factoryDay(1)) }, { sql: MACHINES }] })
+    }
+  })
+
+  it('keeps the period as asked when a query left as it ran still counts days of its own', async () => {
+    const total = (from: string, toExclusive: string) => `SELECT count(*)::int AS changes FROM ai.audit_log WHERE entity = 'Coil' AND at >= '${from}' AND at < '${toExclusive}'`
+    for (const kept of [total(factoryDay(-29), factoryDay(1)), "SELECT count(*)::int AS changes FROM ai.audit_log WHERE entity = 'Coil' AND at >= current_date - 29"]) {
+      const a = await answered('Coil changes per day and in all, last 30 days?', [['Changes per day', PER_DAY(factoryDay(-29), factoryDay(1))], ['Total changes', kept]])
+      // The per-day query made a template; the total, limited to the same days, left as it ran: run over other days, the two would disagree.
+      app.model.reply(proposal([PER_DAY_TEMPLATE, kept]))
+      const res = await save({ turnId: a.turnId })
+      expect(res.status, kept).toBe(201)
+      expect(res.body.notice, kept).toBe(FIXED_NOTICE.ownDays('Total changes'))
+      expect(res.body.report, kept).toMatchObject({ adjustable: false, period: null, sections: [{ sql: PER_DAY(factoryDay(-29), factoryDay(1)) }, { sql: kept }] })
+    }
+  })
+
+  it('keeps the period as asked when the answer found nothing a wrong template would not find too', async () => {
+    const nobody = (sql: string) => sql.replace("entity = 'Coil'", "entity = 'Nobody'")
+    const count = (from: string, toExclusive: string) => `SELECT count(*)::int AS changes FROM ai.audit_log WHERE entity = 'Nobody' AND at >= '${from}' AND at < '${toExclusive}'`
+    const cases: [string, string][] = [
+      [nobody(PER_DAY(factoryDay(-29), factoryDay(1))), nobody(PER_DAY_TEMPLATE)],
+      // Bounds the wrong way round return nothing anywhere: with an answer of nothing, they would pass.
+      [nobody(PER_DAY(factoryDay(-29), factoryDay(1))), nobody(PER_DAY_TEMPLATE).replace('at >= {{from}} AND at < {{to}} + 1', 'at >= {{to}} + 1 AND at < {{from}}')],
+      // A count of nothing is what days with no data give too.
+      [count(factoryDay(-29), factoryDay(1)), `SELECT count(*)::int AS changes FROM ai.audit_log WHERE entity = 'Nobody' AND at >= {{from}} AND at < {{to}} + 1`],
+    ]
+    for (const [original, template] of cases) {
+      const a = await answered('Changes nobody made in the last 30 days?', [['Changes', original]])
+      app.model.reply(proposal([template]))
+      const res = await save({ turnId: a.turnId })
+      expect(res.status, template).toBe(201)
+      expect(res.body.notice, template).toBe(FIXED_NOTICE.unproven('Changes'))
+      expect(res.body.report, template).toMatchObject({ adjustable: false, period: null, sections: [{ sql: original }] })
+    }
+  })
+
+  it('checks a query that counts from the clock against the period as it stands the day it is saved', async () => {
+    // Asked three days ago; run now, "the last 7 days" of the query are the last 7 days up to today.
+    const relative = `SELECT day::text AS day, count(*)::int AS changes FROM ai.audit_log WHERE entity = 'Coil' AND at >= current_date - 6 AND at < current_date + 1 GROUP BY day ORDER BY day`
+    const lastWeek = { kind: 'last_days', days: 7, from: null, to: null, weekStart: null }
+    const right = await answeredOn(factoryDay(-3), 'Coil changes per day in the last 7 days?', [['Changes per day', relative]])
+    app.model.reply(proposal([PER_DAY_TEMPLATE], lastWeek, 'Coil changes, last 7 days'))
+    const kept = await save({ turnId: right })
+    expect(kept.status).toBe(201)
+    expect(kept.body.notice).toBeUndefined()
+    expect(kept.body.report).toMatchObject({ adjustable: true, period: { kind: 'last_days', days: 7 }, sections: [{ sql: PER_DAY_TEMPLATE }] })
+    expect((await run(kept.body.report.id)).body.sections[0].rows).toEqual([[factoryDay(-5), 1], [factoryDay(0), 1]])
+
+    // A template that kept the clock for its end matches the query run now, and is refused all the same.
+    const wrong = await answeredOn(factoryDay(-3), 'Coil changes per day in the last 7 days, again?', [['Changes per day', relative]])
+    app.model.reply(proposal([PER_DAY_TEMPLATE.replace('{{to}} + 1', 'current_date + 1')], lastWeek))
+    const refused = await save({ turnId: wrong })
+    expect(refused.body.notice).toBe(FIXED_NOTICE.notFromPeriod('Changes per day'))
+    expect(refused.body.report).toMatchObject({ adjustable: false, sections: [{ sql: relative }] })
+  })
+
+  it('makes one call to Claude for an answer saved twice at once, and keeps one report', async () => {
+    const a = await answered('Coil changes, saved from two tabs at once?')
+    let release = () => {}
+    app.model.reply({ ...proposal([PER_DAY_TEMPLATE, MACHINES]), hold: new Promise<void>((resolve) => (release = resolve)) })
+    const calls = callsSoFar()
+    const first = save({ turnId: a.turnId })
+    // The first save is with Claude; the second arrives while it is.
+    await until(() => callsSoFar() === calls + 1)
+    const second = save({ turnId: a.turnId })
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    release()
+    const [one, two] = await Promise.all([first, second])
+    expect([one.status, two.status]).toEqual([201, 200])
+    expect(two.body.report).toEqual(one.body.report)
+    expect(one.body.report.adjustable).toBe(true)
+    expect(callsSoFar()).toBe(calls + 1)
+    // The answer's two calls, and the one save.
+    const usage = await app.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_usage WHERE turn_id = $1`, [a.turnId])
+    expect(usage.rows[0].n).toBe(3)
+    expect((await app.db.query(`SELECT 1 FROM ai_reports WHERE turn_id = $1`, [a.turnId])).rowCount).toBe(1)
   })
 
   it('keeps the period as asked when Claude fails or answers in a way that cannot be used', async () => {
@@ -536,7 +646,24 @@ describe('§20 reports are personal', () => {
     expect((await app.api<AiReportsResponse>('GET', `/api/ai/reports?q=${encodeURIComponent('%')}`, { token: admin.token })).body.reports).toEqual([])
   })
 
-  it('renames a report, in the audit log by its title alone', async () => {
+  it('reaches every report a page at a time, even two changed in the same millisecond', async () => {
+    // Every report of the person changed at one instant: only the id tells them apart.
+    await app.db.query(`UPDATE ai_reports SET updated_at = '2026-10-01T08:00:00.123456Z' WHERE user_id = $1 AND deleted_at IS NULL`, [admin.user.id])
+    const all = (await app.api<AiReportsResponse>('GET', '/api/ai/reports?limit=100', { token: admin.token })).body.reports
+    const seen: string[] = []
+    let cursor = ''
+    for (let guard = 0; guard < 50; guard++) {
+      const page = (await app.api<AiReportsResponse>('GET', `/api/ai/reports?limit=2${cursor}`, { token: admin.token })).body
+      seen.push(...page.reports.map((r) => r.id))
+      if (!page.hasMore) break
+      const end = page.reports[page.reports.length - 1]
+      cursor = `&before=${encodeURIComponent(end.updatedAt)}&beforeId=${end.id}`
+    }
+    expect(seen).toEqual(all.map((r) => r.id))
+    expect(new Set(seen).size).toBe(all.length)
+  })
+
+  it('renames a report, in the audit log as a new title without the words', async () => {
     const res = await app.api<AiReport>('PATCH', `/api/ai/reports/${saved.id}`, { token: admin.token, body: { title: '  Coil   changes  ' } })
     expect(res.status).toBe(200)
     expect(res.body).toMatchObject({ id: saved.id, title: 'Coil changes', sections: saved.sections })
@@ -548,8 +675,8 @@ describe('§20 reports are personal', () => {
     }
     const audit = await app.db.query(`SELECT action, field, old_value, new_value FROM audit_log WHERE entity = 'AiReport' AND entity_id = $1 ORDER BY id`, [saved.id])
     expect(audit.rows).toEqual([
-      { action: 'create', field: 'title', old_value: null, new_value: 'Coil changes, last 30 days' },
-      { action: 'update', field: 'title', old_value: 'Coil changes, last 30 days', new_value: 'Coil changes' },
+      { action: 'create', field: null, old_value: null, new_value: null },
+      { action: 'update', field: 'title', old_value: null, new_value: null },
     ])
   })
 
@@ -561,7 +688,7 @@ describe('§20 reports are personal', () => {
     const list = (await app.api<AiReportsResponse>('GET', '/api/ai/reports?limit=100', { token: admin.token })).body
     expect(list.reports.map((r) => r.id)).not.toContain(saved.id)
     const audit = await app.db.query(`SELECT action, field, old_value FROM audit_log WHERE entity = 'AiReport' AND entity_id = $1 AND action = 'delete'`, [saved.id])
-    expect(audit.rows).toEqual([{ action: 'delete', field: 'title', old_value: 'Coil changes' }])
+    expect(audit.rows).toEqual([{ action: 'delete', field: null, old_value: null }])
     await expect(app.db.query(`DELETE FROM ai_reports WHERE id = $1`, [saved.id])).rejects.toThrow(/Hard delete is not allowed/)
 
     // The answer no longer points at it, and can be kept again.
@@ -572,10 +699,39 @@ describe('§20 reports are personal', () => {
     expect(again.body.report.id).not.toBe(saved.id)
   })
 
-  it('never puts SQL in the audit log, and leaves the reports’ entries out of what the assistant reads', async () => {
-    const audit = await app.db.query<{ v: string }>(`SELECT concat_ws(' ', field, old_value, new_value) AS v FROM audit_log WHERE entity = 'AiReport'`)
+  it('keeps a report’s title, often the question word for word, from the supervisors who read the audit log', async () => {
+    const question = 'Which inspector has the worst error rate, to decide whom to let go?'
+    const a = await answered(question)
+    const res = await save({ turnId: a.turnId, adjustable: false })
+    expect(res.status).toBe(201)
+    const id = res.body.report.id
+    expect(res.body.report.title).toBe(question)
+    expect((await app.api('PATCH', `/api/ai/reports/${id}`, { token: admin.token, body: { title: 'Error rates before the layoffs' } })).status).toBe(200)
+    expect((await app.api('DELETE', `/api/ai/reports/${id}`, { token: admin.token })).status).toBe(204)
+
+    await app.api('POST', '/api/users', { token: admin.token, body: { username: 'super', password: 'Password#1', name: 'Supervisor', role: 'supervisor' } })
+    const supervisor = await app.login('super')
+    expect((await app.api('GET', '/api/ai/reports', { token: supervisor.token })).status).toBe(403)
+    const log = await app.api<AuditListResponse>('GET', '/api/audit?entity=AiReport&limit=2000', { token: supervisor.token })
+    expect(log.status).toBe(200)
+    // What was done to which report, by whom: nothing of what it is called.
+    expect(log.body.entries.filter((e) => e.entityId === id).map((e) => [e.action, e.userName, e.field ?? null, e.oldValue ?? null, e.newValue ?? null])).toEqual([
+      ['delete', 'Admin', null, null, null],
+      ['update', 'Admin', 'title', null, null],
+      ['create', 'Admin', null, null, null],
+    ])
+    expect(JSON.stringify(log.body)).not.toMatch(/let go|layoffs/i)
+    // Nor does a search of the log find it by its words.
+    for (const q of ['let go', 'layoffs']) {
+      const found = await app.api<AuditListResponse>('GET', `/api/audit?q=${encodeURIComponent(q)}`, { token: supervisor.token })
+      expect(found.body.entries, q).toEqual([])
+    }
+  })
+
+  it('never puts a title or SQL in the audit log, and leaves the reports’ entries out of what the assistant reads', async () => {
+    const audit = await app.db.query<{ v: string | null }>(`SELECT COALESCE(old_value, new_value) AS v FROM audit_log WHERE entity = 'AiReport'`)
     expect(audit.rows.length).toBeGreaterThan(5)
-    for (const r of audit.rows) expect(r.v).not.toMatch(/SELECT|\{\{/i)
+    for (const r of audit.rows) expect(r.v).toBeNull()
     const read = await runReadOnlyQuery(app.aiReader.pool, `SELECT count(*)::int AS n FROM ai.audit_log WHERE entity = 'AiReport'`, { maxRows: 10, timeoutMs: 10_000, timeZone: 'Africa/Cairo' })
     expect(read).toMatchObject({ ok: true, rows: [[0]] })
     const coils = await runReadOnlyQuery(app.aiReader.pool, `SELECT count(*)::int AS n FROM ai.audit_log WHERE entity = 'Coil'`, { maxRows: 10, timeoutMs: 10_000, timeZone: 'Africa/Cairo' })

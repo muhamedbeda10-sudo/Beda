@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AiQueryPart } from '@qc/shared/ai'
 import type { LivePart } from './liveTurn'
-import { AI_MAX_SUGGESTIONS, hideSuggestions, liveDisplayParts, suggestionChips } from './suggestions'
+import { AI_MAX_SUGGESTIONS, hideSuggestions, liveDisplayParts, spentFocus, suggestionChips, takesCaret, type ComposerFocus } from './suggestions'
 
 const ANSWER = 'Weld porosity leads with **30** pieces.'
 const BLOCK = '<suggestions>\n- Which machines had it most?\n- كم قطعة الشهر اللي فات؟\n</suggestions>'
@@ -61,5 +61,25 @@ describe('follow-up questions while the answer is written', () => {
     expect(suggestionChips(undefined)).toEqual([])
     expect(suggestionChips([' a ', '', 'a', 'b', 'c', 'd'])).toEqual(['a', 'b', 'c'])
     expect(suggestionChips(['x', 'y', 'z', 'w'])).toHaveLength(AI_MAX_SUGGESTIONS)
+  })
+})
+
+describe('the question box taking the caret', () => {
+  it('takes it on a keyboard always, on a touch screen only for a follow-up question tapped', () => {
+    expect(takesCaret({ key: 1, always: false }, false)).toBe(true)
+    expect(takesCaret({ key: 1, always: false }, true)).toBe(false)
+    expect(takesCaret({ key: 1, always: true }, true)).toBe(true)
+  })
+
+  it("raises a phone's keyboard once for a follow-up question, not each time the box comes back", () => {
+    // A chip tapped: the box takes the caret, the keyboard too, and the request is spent.
+    const tapped: ComposerFocus = { key: 4, always: true }
+    expect(takesCaret(tapped, true)).toBe(true)
+    const kept = spentFocus(tapped)
+    expect(kept).toEqual({ key: 4, always: false })
+    // History, then a conversation picked: the box is mounted again with the panel's last request — the keyboard stays down.
+    expect(takesCaret(kept, true)).toBe(false)
+    // Nothing to spend: the same request, so the panel does not draw again.
+    expect(spentFocus(kept)).toBe(kept)
   })
 })

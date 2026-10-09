@@ -13,7 +13,8 @@
 //
 // An answer can be kept as a report (reports.ts): personal like the
 // conversations, run again on demand through the same sandbox, its creation,
-// renaming and removal in the audit log (the title only, never the SQL).
+// renaming and removal in the audit log (which report and what was done to
+// it: never its title, which is personal, nor its SQL).
 // ============================================================================
 
 import { Router, type Request, type Response } from 'express'
@@ -44,8 +45,8 @@ import type { AppContext } from '../context'
 import { PG, pgCode, withTransaction } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
-import { auditChanges, writeAudit } from '../audit/service'
+import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
+import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
 import { answerQuestion, describeModelFailure, minCallWorstCaseUsd, worstCaseUsd } from '../ai/assistant'
 import { auditKeyLabel, last4, removeApiKey, storeApiKey, storedKeyTail } from '../ai/credentials'
 import { RUN_SQL_TOOL, conversationTitle, factoryDay, questionContent, renderSystemPrompt } from '../ai/prompt'
@@ -68,6 +69,7 @@ import {
   runReportSections,
   templateRequest,
   verifyTemplates,
+  type SavedTurn,
 } from '../ai/reports'
 import { AI_EXPORT_LIMITS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
 import { describeAiSchema } from '../ai/schemaDoc'
@@ -146,6 +148,8 @@ const renameReportSchema = z.object({ title: reportTitleSchema }).strict()
 
 const reportsQuery = z.object({
   before: z.string().datetime({ offset: true }).optional(),
+  /** With `before`, the last report of the page read: two changed in one millisecond are both reached. */
+  beforeId: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   q: z.string().trim().max(200).optional(),
 })
@@ -484,6 +488,14 @@ export function aiRoutes(ctx: AppContext): Router {
 
   const readerDown = () => new HttpError(503, 'ai_unavailable', 'The AI assistant cannot reach its data right now. Try again later.')
 
+  /**
+   * Saves under way, by person and answer. A second request for an answer
+   * being saved (another tab, the panel reopened while the first runs) waits
+   * for the first and gets its report, instead of paying for a second call to
+   * Claude. One process serves the API, as the limiters above assume.
+   */
+  const savesUnderWay = new Map<string, Promise<void>>()
+
   /** An answer kept as a report. With `adjustable` (the default), one call to the model makes its period changeable, if it can. */
   r.post('/reports', async (req, res) => {
     const user = requireUser(req)
@@ -492,13 +504,29 @@ export function aiRoutes(ctx: AppContext): Router {
     if (!turn) throw notFound('That answer')
     if (turn.status !== 'done') throw new HttpError(409, 'conflict', 'This answer is still being written. Save it once it is finished.')
     if (turn.sections.length === 0) throw badRequest('This answer ran no query that worked, so there is nothing to keep as a report.')
+    const key = `${user.id}:${turn.turnId}`
+    // Whatever save of this answer is under way is waited for; the claim below follows the last wait with no await between.
+    for (let underWay = savesUnderWay.get(key); underWay; underWay = savesUnderWay.get(key)) await underWay
+    let release = () => {}
+    savesUnderWay.set(key, new Promise<void>((resolve) => (release = resolve)))
+    try {
+      const { status, reply } = await saveReport(user, body, turn)
+      res.status(status).json(reply)
+    } finally {
+      savesUnderWay.delete(key)
+      release()
+    }
+  })
+
+  /** One save, alone for its answer: the report already made of it, or a new one. */
+  async function saveReport(
+    user: AuthUser,
+    body: z.infer<typeof saveReportSchema>,
+    turn: SavedTurn,
+  ): Promise<{ status: 200 | 201; reply: AiSaveReportResponse }> {
     // Saved already (a second click, another tab): that report, not a second one.
     const existing = await findReportOfTurn(db, turn.turnId, user.id)
-    if (existing) {
-      const reply: AiSaveReportResponse = { report: existing, status: (await availability()).status }
-      res.status(200).json(reply)
-      return
-    }
+    if (existing) return { status: 200, reply: { report: existing, status: (await availability()).status } }
 
     let period: AiReportPeriod | null = null
     let adjustable = false
@@ -531,7 +559,14 @@ export function aiRoutes(ctx: AppContext): Router {
           console.warn(`[ai] report of answer ${turn.turnId}: period kept as asked (${proposal.detail})`)
         } else {
           proposedTitle = proposal.title
-          const verified = await verifyTemplates({ reader: ctx.aiReader.pool, timeZone: tz, sections: turn.sections, proposal, askedOn: turn.askedOn })
+          const verified = await verifyTemplates({
+            reader: ctx.aiReader.pool,
+            timeZone: tz,
+            sections: turn.sections,
+            proposal,
+            askedOn: turn.askedOn,
+            today: factoryDay(new Date(), tz),
+          })
           if (verified.kind === 'adjustable') {
             period = verified.period
             adjustable = true
@@ -558,28 +593,25 @@ export function aiRoutes(ctx: AppContext): Router {
           adjustable,
           sections,
         })
-        await writeAudit(tx, [
-          auditEvent('create', { userId: user.id, userName: user.name, entity: 'AiReport', entityId: saved.id }, new Date().toISOString(), { field: 'title', newValue: title }),
-        ])
+        // Which report, not its title: a title is personal (by default the question word for word), and supervisors read the audit log.
+        await auditCreate(tx, { userId: user.id, userName: user.name, entity: 'AiReport', entityId: saved.id })
         return saved
       })
     } catch (e) {
-      // Saved meanwhile by a request racing this one: the database keeps one, and that is the answer.
+      // Saved meanwhile by a request racing this one (one from another process): the database keeps one, and that is the answer.
       const raced = pgCode(e) === PG.UNIQUE_VIOLATION ? await findReportOfTurn(db, turn.turnId, user.id) : null
       if (!raced) throw e
-      const reply: AiSaveReportResponse = { report: raced, status: (await availability()).status }
-      res.status(200).json(reply)
-      return
+      return { status: 200, reply: { report: raced, status: (await availability()).status } }
     }
     const reply: AiSaveReportResponse = { report, status: (await availability()).status }
     if (notice) reply.notice = notice
-    res.status(201).json(reply)
-  })
+    return { status: 201, reply }
+  }
 
   r.get('/reports', async (req, res) => {
     const user = requireUser(req)
     const q = parse(reportsQuery, req.query)
-    const body: AiReportsResponse = await listReports(db, user.id, { before: q.before ?? null, limit: q.limit, search: q.q || null })
+    const body: AiReportsResponse = await listReports(db, user.id, { before: q.before ?? null, beforeId: q.beforeId ?? null, limit: q.limit, search: q.q || null })
     res.json(body)
   })
 
@@ -600,7 +632,8 @@ export function aiRoutes(ctx: AppContext): Router {
       if (!rows[0]) throw notFound('That report')
       if (rows[0].title === title) return (await findReport(tx, id, user.id))!
       const renamed = await renameReport(tx, id, title)
-      await auditChanges(tx, { userId: user.id, userName: user.name, entity: 'AiReport', entityId: id }, { title: rows[0].title }, { title })
+      // That the title changed, not what it says (see the save above).
+      await writeAudit(tx, [auditEvent('update', { userId: user.id, userName: user.name, entity: 'AiReport', entityId: id }, new Date().toISOString(), { field: 'title' })])
       return renamed
     })
     res.json(report)
@@ -611,12 +644,10 @@ export function aiRoutes(ctx: AppContext): Router {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     await withTransaction(db, async (tx) => {
-      const { rows } = await tx.query<{ title: string }>(`SELECT title FROM ai_reports WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL FOR UPDATE`, [id, user.id])
+      const { rows } = await tx.query(`SELECT 1 FROM ai_reports WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL FOR UPDATE`, [id, user.id])
       if (!rows[0]) throw notFound('That report')
       await deleteReport(tx, id)
-      await writeAudit(tx, [
-        auditEvent('delete', { userId: user.id, userName: user.name, entity: 'AiReport', entityId: id }, new Date().toISOString(), { field: 'title', oldValue: rows[0].title }),
-      ])
+      await auditDelete(tx, { userId: user.id, userName: user.name, entity: 'AiReport', entityId: id })
     })
     res.status(204).end()
   })

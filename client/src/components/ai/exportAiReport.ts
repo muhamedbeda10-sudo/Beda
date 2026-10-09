@@ -9,9 +9,7 @@
 import { describeAiDays, type AiReportExportResponse } from '@qc/shared/ai'
 import { sheetName, type CellValue, type SheetSpec } from '@/lib/xlsxWrite'
 import { aiCellValue, aiStamp } from './exportAiResult'
-
-/** Excel refuses a sheet name that starts or ends with an apostrophe. */
-const sheetTitle = (raw: string) => raw.replace(/^'+|'+$/g, '').trim()
+import { sectionSqlForRun } from './reports'
 
 /** The period of an export in words, and whether it was the saved one. */
 function periodCell(p: NonNullable<AiReportExportResponse['period']>): string {
@@ -25,7 +23,7 @@ export function aiReportSheets(r: AiReportExportResponse): SheetSpec[] {
   // Named here, in the order the workbook takes them, so the Report sheet can say where each section is.
   const taken = new Set<string>()
   const reportSheet = sheetName('Report', taken)
-  const names = r.sections.map((s, i) => sheetName(sheetTitle(`${i + 1} ${s.title}`), taken))
+  const names = r.sections.map((s, i) => sheetName(`${i + 1} ${s.title}`, taken))
 
   const about: CellValue[][] = [
     ['Report', aiCellValue(r.report.title)],
@@ -41,8 +39,9 @@ export function aiReportSheets(r: AiReportExportResponse): SheetSpec[] {
     } else {
       about.push(['Error', aiCellValue(s.error || 'The query failed.')])
     }
-    const sql = r.report.sections[i]?.sql
-    if (sql) about.push(['SQL', aiCellValue(sql)])
+    // As it ran: a template's {{from}} and {{to}} are the export's days, so the SQL runs as it reads.
+    const section = r.report.sections[i]
+    if (section?.sql) about.push(['SQL', aiCellValue(sectionSqlForRun(r.report, section.sql, r.period))])
   })
 
   return [
