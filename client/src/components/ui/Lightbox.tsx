@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, RotateCw, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { lockBodyScroll } from '@/lib/utils'
 
 /** Minimal shape the viewer needs — decoupled from any storage model. */
 export interface ViewableImage {
@@ -127,10 +128,10 @@ export function Lightbox({
       }
     }
     document.addEventListener('keydown', onKey)
-    document.body.style.overflow = 'hidden'
+    const unlock = lockBodyScroll()
     return () => {
       document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = ''
+      unlock()
     }
   }, [go, onClose, reset, zoom, zoomAt])
 

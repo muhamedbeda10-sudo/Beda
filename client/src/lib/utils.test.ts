@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { chunk, dayInTimeZone, formatDate, formatDateTime, formatFullTimestamp, formatTime } from './utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { chunk, dayInTimeZone, formatDate, formatDateTime, formatFullTimestamp, formatTime, lockBodyScroll } from './utils'
 
 describe('chunk', () => {
   it('slices a list into consecutive pieces of at most the given size', () => {
@@ -40,5 +40,48 @@ describe('the factory day', () => {
     // 22:30 UTC on Oct 5 is already Oct 6 in Cairo (UTC+3 in summer time).
     expect(dayInTimeZone(new Date('2026-10-05T22:30:00Z'), 'Africa/Cairo')).toBe('2026-10-06')
     expect(dayInTimeZone(new Date('2026-10-05T22:30:00Z'), 'UTC')).toBe('2026-10-05')
+  })
+})
+
+describe('the page under an overlay', () => {
+  // The tests run without a browser: a body with a style is all the lock touches.
+  const stubBody = (overflow: string) => {
+    const body = { style: { overflow } }
+    vi.stubGlobal('document', { body })
+    return body
+  }
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('scrolls again only when the last overlay closes, in whatever order they close', () => {
+    const body = stubBody('')
+    const sheet = lockBodyScroll()
+    expect(body.style.overflow).toBe('hidden')
+    // A modal opened from the sheet, then closed: the sheet still covers the page.
+    const modal = lockBodyScroll()
+    modal()
+    expect(body.style.overflow).toBe('hidden')
+    sheet()
+    expect(body.style.overflow).toBe('')
+  })
+
+  it('gives back what the page had before the first lock, not what the second one saw', () => {
+    const body = stubBody('auto')
+    // A modal open while the panel turns from docked to a sheet (a rotation), then both close.
+    const modal = lockBodyScroll()
+    const sheet = lockBodyScroll()
+    modal()
+    sheet()
+    expect(body.style.overflow).toBe('auto')
+  })
+
+  it('counts a release once, however often it is called', () => {
+    const body = stubBody('')
+    const outer = lockBodyScroll()
+    const inner = lockBodyScroll()
+    inner()
+    inner()
+    expect(body.style.overflow).toBe('hidden')
+    outer()
+    expect(body.style.overflow).toBe('')
   })
 })

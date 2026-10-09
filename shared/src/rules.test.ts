@@ -583,6 +583,11 @@ describe('roles', () => {
     expect(can('viewer', 'view-inspector-ranking')).toBe(false)
     expect(can('admin', 'view-inspector-ranking')).toBe(true)
   })
+  it('keeps the AI assistant to administrators', () => {
+    expect(can('admin', 'use-ai-assistant')).toBe(true)
+    for (const role of ['viewer', 'inspector', 'supervisor'] as const) expect(can(role, 'use-ai-assistant')).toBe(false)
+    expect(can(undefined, 'use-ai-assistant')).toBe(false)
+  })
   it('everyone who records is in the chat and receives notices', () => {
     for (const role of ['inspector', 'supervisor', 'admin'] as const) {
       expect(can(role, 'record-inspection')).toBe(true)

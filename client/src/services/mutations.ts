@@ -48,6 +48,7 @@ import {
   type SetAvatarRequest,
 } from '@qc/shared/api'
 import type { DashboardLayouts, KpiThresholds } from '@qc/shared/kpi'
+import type { AiSetKeyRequest, AiSettings, AiSettingsResponse } from '@qc/shared/ai'
 import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
 import { api } from '@/lib/api'
 import { keys } from '@/services/queries'
@@ -467,4 +468,38 @@ export async function removeMyAvatar(qc: QueryClient, myId: string): Promise<voi
   await api<void>('/auth/me/avatar', { method: 'DELETE' })
   qc.setQueryData<AvatarResponse>(keys.myAvatar, { dataUrl: null })
   qc.setQueryData(keys.userAvatar(myId), null)
+}
+
+// ---- §20 AI assistant --------------------------------------------------------
+
+/** The switch and the monthly cap. The status and the usage page read the cap, so they follow at once. */
+export async function saveAiSettings(qc: QueryClient, body: AiSettings): Promise<AiSettingsResponse> {
+  const res = await api<AiSettingsResponse>('/ai/settings', { method: 'PUT', body })
+  qc.setQueryData(keys.aiSettings, res)
+  qc.setQueryData(keys.aiStatus, res.status)
+  await qc.invalidateQueries({ queryKey: ['ai', 'usage'] })
+  return res
+}
+
+/** Set the Anthropic API key. The server tries it with Anthropic before it keeps it; it is never sent back. */
+export async function setAiKey(qc: QueryClient, apiKey: string): Promise<AiSettingsResponse> {
+  const body: AiSetKeyRequest = { apiKey }
+  const res = await api<AiSettingsResponse>('/ai/key', { method: 'PUT', body })
+  qc.setQueryData(keys.aiSettings, res)
+  qc.setQueryData(keys.aiStatus, res.status)
+  return res
+}
+
+export async function removeAiKey(qc: QueryClient): Promise<AiSettingsResponse> {
+  const res = await api<AiSettingsResponse>('/ai/key', { method: 'DELETE' })
+  qc.setQueryData(keys.aiSettings, res)
+  qc.setQueryData(keys.aiStatus, res.status)
+  return res
+}
+
+/** Remove a conversation from this person's history (the server keeps it for the cost record). */
+export async function deleteAiConversation(qc: QueryClient, id: string): Promise<void> {
+  await api<void>(`/ai/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  qc.removeQueries({ queryKey: keys.aiMessages(id) })
+  await qc.invalidateQueries({ queryKey: keys.aiConversations })
 }

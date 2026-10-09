@@ -108,6 +108,18 @@ The template writes every runtime setting (`DATABASE_URL`, `JWT_SECRET`,
 `AZURE_STORAGE_CONNECTION_STRING`, …) into the Web App's **Configuration →
 Application settings**. You never put a secret in the repository.
 
+The AI assistant's Anthropic API key is **optional** here and not part of the
+template: an administrator sets it inside the app, under **Administration → AI
+assistant**, where it is checked with Anthropic and stored encrypted (with a
+key derived from `JWT_SECRET`); it is never shown again, only its last four
+characters. If you prefer to keep it in Azure, add an Application setting
+`ANTHROPIC_API_KEY`; set there, it wins over the key set in the app. Without
+any key the assistant is simply off — the app runs as usual.
+
+مفتاح Anthropic بتاع المساعد الذكي (AI assistant) مش لازم يتحط هنا: الـ admin
+بيحطه من جوه البرنامج من Administration → AI assistant، وبيتخزن متشفر. لو
+حطيت `ANTHROPIC_API_KEY` في الـ Application settings هو اللي بيتاخد بيه.
+
 ## 3. Connect GitHub to the Web App · ربط GitHub بالـ Web App
 
 1. Azure portal → the Web App → **Overview → Get publish profile**. A `.PublishSettings`
@@ -155,7 +167,8 @@ az webapp config appsettings set -g rg-qc-system -n <webAppName> \
 | Photo backups               | Soft delete is on for 30 days; add lifecycle / geo-redundancy in the storage account if needed   |
 | Scale up                    | App Service plan → **Scale up** (e.g. F1 → B1); PostgreSQL server → **Compute + storage**. No redeploy needed. |
 | Connect with a SQL client   | PostgreSQL server → **Networking** → add your client IP; connect with `sslmode=require`          |
-| Rotate the JWT secret       | Set a new `JWT_SECRET`; everyone signs in again (refresh cookies stay valid)                      |
+| Rotate the JWT secret       | Set a new `JWT_SECRET`; everyone signs in again (refresh cookies stay valid). An AI assistant key set in the app can no longer be read: set it again under **Administration → AI assistant** |
+| AI assistant key and cap    | **Administration → AI assistant**: the API key (checked with Anthropic before it is kept), on/off, and the monthly spending cap (default $50, UTC calendar month) |
 
 ## 6. Security notes · ملاحظات أمنية
 
@@ -168,6 +181,12 @@ az webapp config appsettings set -g rg-qc-system -n <webAppName> \
   or move both into a virtual network.
 - Passwords are hashed with scrypt; sign-in is rate-limited per email and IP.
 - Deactivating a user (Admin → Users) signs them out everywhere immediately.
+- The AI assistant is for administrators only and can never change data: it
+  reads through curated views in schema `ai` as its own database role
+  (`<database>_ai_reader`), which may read nothing else, in read-only
+  transactions that are always rolled back. Chat, notices, passwords, tokens
+  and photos are outside those views. Its API key is stored encrypted, never
+  returned by any endpoint and never written to the log or the audit trail.
 
 ## 7. Costs · التكلفة
 
@@ -175,6 +194,11 @@ With the default sizes (B1 App Service, B1ms PostgreSQL, LRS storage) the
 monthly cost is in the range of tens of US dollars. Both compute resources can
 be scaled up or down at any time from the portal without redeploying the
 application.
+
+The AI assistant, when it has a key, is billed by Anthropic per use. It stops
+by itself at the monthly cap an administrator sets under **Administration → AI
+assistant** (default $50 per UTC calendar month, the month Anthropic bills by),
+and that page shows what was spent, by day and by person.
 
 بالأحجام الافتراضية التكلفة الشهرية في حدود عشرات الدولارات، وتقدر تكبّر أو
 تصغّر الحجم في أي وقت من الـ Portal من غير ما تعيد النشر.

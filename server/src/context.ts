@@ -1,6 +1,8 @@
 import type { Config } from './config'
 import type { Db } from './db/pool'
 import type { ImageStorage } from './images/storage'
+import type { AiModelClient } from './ai/model'
+import type { AiReader } from './ai/reader'
 import { RateLimiter } from './lib/rateLimit'
 
 /** Everything a route module needs, handed in once when the app is built. */
@@ -10,4 +12,10 @@ export interface AppContext {
   images: ImageStorage
   loginLimiter: RateLimiter
   version: string
+  /** §20 — the model behind the AI assistant: Anthropic in production, a scripted stand-in in tests. */
+  ai: AiModelClient
+  /** §20 — the assistant's read-only way into the database, set up at start. */
+  aiReader: AiReader
+  /** §20 — questions per person, so one runaway client cannot spend the month's cap in minutes. */
+  aiLimiter: RateLimiter
 }

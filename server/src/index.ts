@@ -12,6 +12,9 @@ import { createApp } from './app'
 import { AzureBlobImageStorage, LocalImageStorage, type ImageStorage } from './images/storage'
 import { RateLimiter } from './lib/rateLimit'
 import { seedWorkInstructionsIfEmpty } from './db/seedWorkInstructions'
+import type { AppContext } from './context'
+import { AnthropicModelClient } from './ai/model'
+import { AiReader } from './ai/reader'
 
 function readVersion(): string {
   try {
@@ -31,17 +34,26 @@ if (config.RUN_MIGRATIONS_ON_START) {
   for (const m of applied) console.log(`[db] applied migration ${m.version}_${m.name}`)
 }
 
+// §20 — the AI assistant's database reader. Idempotent, so it runs at every
+// start whether or not migrations did; a failure leaves the assistant
+// unavailable and everything else running.
+const aiReader = new AiReader()
+await aiReader.provision(db, config)
+
 const images: ImageStorage =
   config.IMAGE_STORAGE_DRIVER === 'azure-blob'
     ? new AzureBlobImageStorage(config.AZURE_STORAGE_CONNECTION_STRING!, config.AZURE_STORAGE_CONTAINER)
     : new LocalImageStorage(path.resolve(config.IMAGE_LOCAL_DIR))
 
-const ctx = {
+const ctx: AppContext = {
   config,
   db,
   images,
   loginLimiter: new RateLimiter(10, 15 * 60_000),
   version: readVersion(),
+  ai: new AnthropicModelClient(),
+  aiReader,
+  aiLimiter: new RateLimiter(30, 10 * 60_000),
 }
 const app = createApp(ctx)
 
@@ -58,11 +70,11 @@ const server = app.listen(config.PORT, () => {
 })
 
 // App Service sends SIGTERM on restart/scale-in: stop accepting, finish
-// in-flight requests, then release the pool.
+// in-flight requests, then release the pools.
 function shutdown(signal: string) {
   console.log(`[api] ${signal} received, shutting down`)
   server.close(() => {
-    db.end().finally(() => process.exit(0))
+    Promise.allSettled([db.end(), aiReader.end()]).finally(() => process.exit(0))
   })
   setTimeout(() => process.exit(1), 10_000).unref()
 }

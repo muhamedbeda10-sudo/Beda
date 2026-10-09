@@ -8,6 +8,15 @@ import { fileURLToPath, URL } from 'node:url'
 // serves the built client itself.
 const API_PROXY_TARGET = process.env.VITE_API_PROXY ?? 'http://localhost:8080'
 
+/**
+ * A chunk only the AI assistant loads — its panel, its administration page
+ * and what those two share. Named `ai-…`, so the service worker leaves it out
+ * of the precache: it is fetched the first time an administrator opens it,
+ * never downloaded by every inspector's phone on install and on each deploy.
+ */
+const AI_MODULE = /\/src\/components\/ai\/|\/src\/pages\/admin\/AiAssistantPage\./
+const isAiChunk = (chunk: { moduleIds: readonly string[] }) => chunk.moduleIds.some((id) => AI_MODULE.test(id))
+
 export default defineConfig({
   plugins: [
     react(),
@@ -39,6 +48,8 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2}'],
+        // The assistant's chunks (isAiChunk) are fetched when an administrator first opens them.
+        globIgnores: ['**/node_modules/**/*', '**/ai-*.js'],
         navigateFallback: '/index.html',
         // API calls and image bytes are never answered from the cache, nor the Access sync agent's files, downloaded as they are.
         navigateFallbackDenylist: [/^\/api\//, /^\/agent\//],
@@ -65,6 +76,7 @@ export default defineConfig({
     chunkSizeWarningLimit: 900,
     rollupOptions: {
       output: {
+        chunkFileNames: (chunk) => (isAiChunk(chunk) ? 'assets/ai-[name]-[hash].js' : 'assets/[name]-[hash].js'),
         manualChunks: {
           react: ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query'],
         },

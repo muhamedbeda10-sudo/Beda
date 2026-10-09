@@ -156,3 +156,30 @@ export function chunk<T>(items: readonly T[], size: number): T[][] {
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
   return out
 }
+
+let scrollLocks = 0
+let scrollBefore = ''
+
+/**
+ * Stops the page scrolling under an overlay (a modal, a drawer, the
+ * assistant's sheet) until the returned release is called. Counted, so
+ * overlays opened over one another, and closed in any order, give the page
+ * its scrolling back only when the last one closes — as it was before the
+ * first one opened.
+ */
+export function lockBodyScroll(): () => void {
+  const style = document.body.style
+  if (scrollLocks === 0) {
+    scrollBefore = style.overflow
+    style.overflow = 'hidden'
+  }
+  scrollLocks += 1
+  let released = false
+  return () => {
+    // Called twice (an effect's cleanup run again), it still counts once.
+    if (released) return
+    released = true
+    scrollLocks -= 1
+    if (scrollLocks === 0) style.overflow = scrollBefore
+  }
+}

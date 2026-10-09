@@ -16,6 +16,7 @@
     "db:seed": "tsx --env-file-if-exists=.env src/db/seed-cli.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
     "@azure/storage-blob": "^12.26.0",
     "@qc/shared": "*",
     "cookie-parser": "^1.4.7",

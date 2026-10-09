@@ -63,6 +63,10 @@ export type ApiErrorCode =
   | 'rate_limited'
   | 'payload_too_large'
   | 'internal'
+  /** §20 — the AI assistant has no key, is switched off, or cannot reach its data. */
+  | 'ai_unavailable'
+  /** §20 — the AI assistant's monthly cap is reached. */
+  | 'ai_budget_reached'
 
 export interface ApiErrorBody {
   error: {
