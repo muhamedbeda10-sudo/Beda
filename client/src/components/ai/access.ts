@@ -3,8 +3,8 @@
 // is closed for someone (never an amount, a key or a settings page), what a
 // model costs per million tokens and so the least a cap may be on it, the
 // owner's draft of one person's access (with whether they may create
-// automations, §21) and whether it can be saved. Pure, so it is tested
-// without a browser.
+// automations, §21, and manage notices through it, §23) and whether it can
+// be saved. Pure, so it is tested without a browser.
 // ============================================================================
 
 import {
@@ -24,6 +24,8 @@ import {
   type AiMeResponse,
   type AiModelId,
 } from '@qc/shared/ai'
+import { can } from '@qc/shared/rules'
+import { ROLES, type Role } from '@qc/shared/types'
 import { formatCap, formatTokens } from './format'
 
 /** Why someone who has the assistant cannot ask it now. ('not-granted' is never said: the assistant is simply not there.) */
@@ -136,6 +138,8 @@ export interface AccessDraft {
   cap: string
   /** §21 — may create automations (the owner always may). */
   automations: boolean
+  /** §23 — may manage notices through the assistant, while an administrator (the owner always may, while one). */
+  notices: boolean
 }
 
 /** A newcomer's monthly cap: a fifth of the default app-wide cap, never above the app-wide cap set now. The owner raises it. */
@@ -151,12 +155,20 @@ export const AI_NEW_PERSON_CAP_USD = 10
 export function newAccessDraft(appCapUsd: number): AccessDraft {
   const model: AiModelId = 'claude-sonnet-5-5'
   const cap = Math.max(minCapUsd(model), Math.min(AI_NEW_PERSON_CAP_USD, appCapUsd))
-  return { enabled: true, domains: ['inspection'], model, effort: 'medium', cap: String(cap), automations: false }
+  return { enabled: true, domains: ['inspection'], model, effort: 'medium', cap: String(cap), automations: false, notices: false }
 }
 
-/** A person's access as it is saved, to edit. */
+/** A person's access as it is saved, to edit. The owner's notices switch reads on while they are an administrator, as it then holds. */
 export function draftFromAccess(a: AiAccess): AccessDraft {
-  return { enabled: a.enabled, domains: orderDomains(a.domains), model: a.model, effort: a.effort, cap: String(a.monthlyCapUsd), automations: a.owner || a.automations }
+  return {
+    enabled: a.enabled,
+    domains: orderDomains(a.domains),
+    model: a.model,
+    effort: a.effort,
+    cap: String(a.monthlyCapUsd),
+    automations: a.owner || a.automations,
+    notices: a.notices || (a.owner && isAdministrator(a.role)),
+  }
 }
 
 /** Why the draft cannot be saved, or null when it can. */
@@ -171,7 +183,7 @@ export function checkAccessDraft(d: AccessDraft): string | null {
 
 /** The draft as the server takes it. Call checkAccessDraft first: an unreadable cap goes as 0. */
 export function accessRequest(d: AccessDraft): AiAccessRequest {
-  return { enabled: d.enabled, domains: orderDomains(d.domains), model: d.model, effort: d.effort, monthlyCapUsd: parseCapUsd(d.cap) ?? 0, automations: d.automations }
+  return { enabled: d.enabled, domains: orderDomains(d.domains), model: d.model, effort: d.effort, monthlyCapUsd: parseCapUsd(d.cap) ?? 0, automations: d.automations, notices: d.notices }
 }
 
 /** Whether the draft says anything other than the saved access. */
@@ -183,9 +195,45 @@ export function accessChanged(a: AiAccess, d: AccessDraft): boolean {
     saved.model !== d.model ||
     saved.effort !== d.effort ||
     saved.automations !== d.automations ||
+    saved.notices !== d.notices ||
     cap !== a.monthlyCapUsd ||
     saved.domains.join() !== orderDomains(d.domains).join()
   )
+}
+
+// ---- Notices through the assistant (§23) -------------------------------------------
+
+/** An administrator in the app: their role may manage its data (notices among it). Checked again by the server on every call, with the role then. */
+export function isAdministrator(role: string): boolean {
+  return (ROLES as readonly string[]).includes(role) && can(role as Role, 'manage-admin-data')
+}
+
+/** Why the notices switch cannot be turned on for someone: only administrators manage notices. */
+export const NOTICES_ADMIN_ONLY = 'Only administrators manage notices'
+
+/**
+ * Whether a person may manage notices through the assistant, as the owner's
+ * table says it. `can`: in effect now (an administrator the owner allowed,
+ * or the owner while an administrator). `held`: allowed, but not in effect
+ * while their role is not an administrator's — it applies again if it
+ * becomes one. `no`: not allowed.
+ */
+export interface NoticesAccessView {
+  key: 'can' | 'held' | 'no'
+  tip: string
+}
+
+export function noticesAccessView(a: Pick<AiAccess, 'owner' | 'notices' | 'role'>): NoticesAccessView {
+  const admin = isAdministrator(a.role)
+  if (a.owner) {
+    return admin
+      ? { key: 'can', tip: 'You always can, as the assistant’s owner, while you are an administrator' }
+      : { key: 'no', tip: `${NOTICES_ADMIN_ONLY}: as the owner, you can again once your role is administrator` }
+  }
+  if (!a.notices) return { key: 'no', tip: 'May not have the assistant change notices; they can still ask about the ones they see' }
+  return admin
+    ? { key: 'can', tip: 'May have the assistant write, change, withdraw and delete notices: each only when they press its card’s button' }
+    : { key: 'held', tip: `Allowed, but not in effect: ${NOTICES_ADMIN_ONLY.toLowerCase()}. It applies again if their role becomes administrator.` }
 }
 
 /** One domain ticked or unticked, the rest kept in order. */

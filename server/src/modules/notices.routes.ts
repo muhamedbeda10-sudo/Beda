@@ -15,53 +15,20 @@ import { Router, type Request, type Response } from 'express'
 import multer from 'multer'
 import { z } from 'zod'
 import type { AcknowledgeNoticeRequest, MatchNoticesResponse, NoticeInboxResponse, SaveNoticeRequest } from '@qc/shared/api'
-import { NOTICE_SEVERITIES, NOTICE_TARGET_KINDS, PROCESSES, ROLES, type Notice, type NoticeAcknowledgement, type NoticeAdminRow, type NoticeFile, type Process } from '@qc/shared/types'
+import type { NoticeAcknowledgement, NoticeAdminRow, NoticeFile, Process } from '@qc/shared/types'
 import { deriveShift, processForMachine, stockProductionOf } from '@qc/shared/rules'
 import type { AppContext } from '../context'
-import { withTransaction, type Queryable } from '../db/pool'
+import { withTransaction } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { requireCapability, requireUser } from '../auth/middleware'
-import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
-import { auditEvent } from '@qc/shared/audit'
 import { dropNulls } from '../lib/rows'
 import { NOTICE_FILE_TYPES, buildNoticeFileStorageKey } from '../images/storage'
 import { isPdf } from './workInstructions.routes'
 import { NOTICE_SELECT, attachNoticeParts, loadInbox, loadPending, type NoticeContext, type NoticeRow } from './notices'
+import { createNotice, deleteNotice, noticeSaveSchema, updateNotice, withdrawNotice } from './noticesService'
 
 const uuid = z.string().uuid()
-const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date as YYYY-MM-DD.')
-
-const targetSchema = z.object({
-  kind: z.enum(NOTICE_TARGET_KINDS as unknown as [string, ...string[]]),
-  value: z.string().trim().min(1).max(200),
-  label: z.string().trim().max(300).default(''),
-})
-
-const saveSchema = z
-  .object({
-    title: z.string().trim().min(1).max(200),
-    body: z.string().trim().max(4000).default(''),
-    severity: z.enum(NOTICE_SEVERITIES as unknown as [string, ...string[]]),
-    requiresAck: z.boolean().default(true),
-    matchMode: z.enum(['all', 'any']).default('all'),
-    validFrom: day,
-    validTo: day.nullable().default(null),
-    targets: z.array(targetSchema).max(100).default([]),
-    imageIds: z.array(uuid).max(20).default([]),
-    fileIds: z.array(uuid).max(10).default([]),
-  })
-  .superRefine((b, ctx) => {
-    if (b.validTo && b.validTo < b.validFrom) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['validTo'], message: 'The end is before the start.' })
-    for (const [i, t] of b.targets.entries()) {
-      const bad =
-        (t.kind === 'process' && !(PROCESSES as readonly string[]).includes(t.value)) ||
-        (t.kind === 'role' && !(ROLES as readonly string[]).includes(t.value)) ||
-        (t.kind === 'shift' && !['A', 'B', 'C'].includes(t.value)) ||
-        ((t.kind === 'user' || t.kind === 'order-line') && !uuid.safeParse(t.value).success)
-      if (bad) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targets', i, 'value'], message: `Not a valid ${t.kind}.` })
-    }
-  })
 
 const matchSchema = z.union([z.object({ sessionId: uuid }), z.object({ workCenterCode: z.string().trim().min(1).max(40), orderId: uuid.optional() })])
 
@@ -81,50 +48,6 @@ export function sniffNoticeFile(name: string, bytes: Buffer): keyof typeof NOTIC
   if (ext === 'xlsx' && bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) return 'xlsx'
   if (ext === 'xls' && bytes.length > 8 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) return 'xls'
   throw badRequest('Only PDF and Excel files (.pdf, .xlsx, .xls) are accepted.')
-}
-
-async function loadNotice(q: Queryable, tz: string, id: string): Promise<(NoticeRow & Pick<Notice, 'targets' | 'imageIds' | 'files'>) | null> {
-  const { rows } = await q.query<NoticeRow>(`SELECT ${NOTICE_SELECT} FROM notices n WHERE n.id = $2 AND n.deleted_at IS NULL`, [tz, id])
-  if (!rows[0]) return null
-  return (await attachNoticeParts(q, rows))[0]
-}
-
-/** Replace the targets, images and files of a notice with the request's. */
-async function writeParts(tx: Queryable, noticeId: string, body: SaveNoticeRequest): Promise<void> {
-  await tx.query(`DELETE FROM notice_targets WHERE notice_id = $1`, [noticeId])
-  for (const t of body.targets) {
-    await tx.query(`INSERT INTO notice_targets (notice_id, kind, value, label) VALUES ($1, $2, $3, $4)`, [noticeId, t.kind, t.value, t.label])
-  }
-  await tx.query(`DELETE FROM notice_images WHERE notice_id = $1`, [noticeId])
-  for (const [i, imageId] of body.imageIds.entries()) {
-    const { rowCount } = await tx.query(`SELECT 1 FROM images WHERE id = $1 AND deleted_at IS NULL`, [imageId])
-    if (!rowCount) throw badRequest('An attached image was not found.')
-    await tx.query(`INSERT INTO notice_images (notice_id, image_id, position) VALUES ($1, $2, $3)`, [noticeId, imageId, i])
-  }
-  // A file belongs to at most one notice; the ones dropped from this notice are marked deleted, not moved.
-  await tx.query(`UPDATE notice_files SET deleted_at = now() WHERE notice_id = $1 AND deleted_at IS NULL AND NOT (id = ANY($2::uuid[]))`, [noticeId, body.fileIds])
-  for (const fileId of body.fileIds) {
-    const { rowCount } = await tx.query(
-      `UPDATE notice_files SET notice_id = $1 WHERE id = $2 AND deleted_at IS NULL AND (notice_id IS NULL OR notice_id = $1)`,
-      [noticeId, fileId],
-    )
-    if (!rowCount) throw badRequest('An attached file was not found.')
-  }
-}
-
-function pick(n: SaveNoticeRequest | Notice) {
-  return {
-    title: n.title,
-    body: n.body,
-    severity: n.severity,
-    requiresAck: n.requiresAck,
-    matchMode: n.matchMode ?? 'all',
-    validFrom: n.validFrom,
-    validTo: n.validTo ?? null,
-    targets: n.targets.map((t) => `${t.kind}:${t.value}`).sort().join(', '),
-    images: n.imageIds.length,
-    files: 'fileIds' in n ? n.fileIds.length : n.files.length,
-  }
 }
 
 export function noticesRoutes(ctx: AppContext): Router {

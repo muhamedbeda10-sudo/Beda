@@ -1,7 +1,10 @@
 // ============================================================================
 // §16 — one notice as the reader sees it: how serious, what it says, what it
 // is aimed at, its photos and documents. Shared by the bell, the gate and
-// the administrator's list so a notice always reads the same.
+// the administrator's list so a notice always reads the same — and by the
+// assistant's notice card (§23), whose preview shows a draft exactly as it
+// will read. Its title and text read the way their letters do (Arabic right
+// to left), whatever the page's direction.
 // ============================================================================
 
 import { useState, type ReactNode } from 'react'
@@ -11,6 +14,7 @@ import { Badge, type BadgeTone } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { PdfViewer } from '@/components/documents/WorkInstructionViewer'
 import { apiBlob } from '@/lib/api'
+import { textDirection } from '@/lib/direction'
 import { cn, formatDate } from '@/lib/utils'
 import { useApp } from '@/store/AppContext'
 
@@ -104,8 +108,26 @@ export function TargetChips({ notice, className }: { notice: Pick<Notice, 'targe
   )
 }
 
-/** The full notice. `actions` sits under the body: an Acknowledge button, or nothing. */
-export function NoticeCard({ notice, actions, showTargets = true, hideHeader = false, className }: { notice: Notice; actions?: ReactNode; showTargets?: boolean; /** The list row already shows the title. */ hideHeader?: boolean; className?: string }) {
+/**
+ * The full notice. `actions` sits under the body: an Acknowledge button, or nothing. `preview`: a draft not out yet
+ * (§23, the assistant's card) — its days without an author or a withdrawn mark, the rest exactly as it will read.
+ */
+export function NoticeCard({
+  notice,
+  actions,
+  showTargets = true,
+  hideHeader = false,
+  preview = false,
+  className,
+}: {
+  notice: Notice
+  actions?: ReactNode
+  showTargets?: boolean
+  /** The list row already shows the title. */
+  hideHeader?: boolean
+  preview?: boolean
+  className?: string
+}) {
   const m = SEVERITY_META[notice.severity]
   return (
     <article className={cn('rounded-2xl bg-white p-4 ring-1 dark:bg-slate-900', m.ring, className)}>
@@ -118,14 +140,26 @@ export function NoticeCard({ notice, actions, showTargets = true, hideHeader = f
             <SeverityBadge severity={notice.severity} />
             {notice.requiresAck && <Badge tone="violet">Acknowledgement required</Badge>}
           </div>
-          <h3 className="mt-1.5 text-base font-bold leading-snug">{notice.title}</h3>
+          <h3 dir={textDirection(notice.title) ?? 'auto'} className="mt-1.5 break-words text-start text-base font-bold leading-snug">
+            {notice.title}
+          </h3>
           <p className="mt-0.5 text-xs text-muted">
-            {notice.createdByName} · {validityText(notice)}
-            {notice.withdrawnAt ? ' · withdrawn' : ''}
+            {preview ? (
+              `Shown ${validityText(notice)}`
+            ) : (
+              <>
+                {notice.createdByName} · {validityText(notice)}
+                {notice.withdrawnAt ? ' · withdrawn' : ''}
+              </>
+            )}
           </p>
         </div>
       </div>}
-      {notice.body && <p className={cn('whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-200', !hideHeader && 'mt-3')}>{notice.body}</p>}
+      {notice.body && (
+        <p dir={textDirection(notice.body) ?? 'auto'} className={cn('whitespace-pre-wrap break-words text-start text-sm leading-relaxed text-slate-700 dark:text-slate-200', !hideHeader && 'mt-3')}>
+          {notice.body}
+        </p>
+      )}
       {notice.imageIds.length > 0 && (
         <div className="mt-3">
           <ImagePicker imageIds={notice.imageIds} onChange={() => {}} readOnly />

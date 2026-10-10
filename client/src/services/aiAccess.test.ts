@@ -29,6 +29,7 @@ const access = (userId: string, over: Partial<AiAccess> = {}): AiAccess => ({
   spentUsd: 0,
   owner: false,
   automations: false,
+  notices: false,
   ...over,
 })
 

@@ -15,9 +15,11 @@ import {
   effortName,
   formatRate,
   groupByRole,
+  isAdministrator,
   minCapUsd,
   modelName,
   newAccessDraft,
+  noticesAccessView,
   orderDomains,
   parseCapUsd,
   roleLabel,
@@ -42,6 +44,7 @@ const row = (over: Partial<AiAccess>): AiAccess => ({
   spentUsd: 1.25,
   owner: false,
   automations: false,
+  notices: false,
   ...over,
 })
 
@@ -143,7 +146,7 @@ describe('the owner’s draft of one person’s access', () => {
   })
 
   it('starts a newcomer narrow: on, the inspection record, Sonnet at medium effort, a small cap within the app’s, no automations', () => {
-    expect(newAccessDraft(50)).toEqual({ enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', cap: '10', automations: false })
+    expect(newAccessDraft(50)).toEqual({ enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', cap: '10', automations: false, notices: false })
     expect(newAccessDraft(4).cap).toBe('4')
     // Never a cap they could not ask with, even under a tiny app-wide cap (the drawer names that one).
     expect(newAccessDraft(0.1).cap).toBe('0.64')
@@ -174,13 +177,14 @@ describe('the owner’s draft of one person’s access', () => {
   })
 
   it('sends the draft as the server takes it, domains in order', () => {
-    expect(accessRequest({ enabled: false, domains: ['audit', 'inspection'], model: 'claude-haiku-5-5', effort: 'low', cap: '12.50', automations: true })).toEqual({
+    expect(accessRequest({ enabled: false, domains: ['audit', 'inspection'], model: 'claude-haiku-5-5', effort: 'low', cap: '12.50', automations: true, notices: true })).toEqual({
       enabled: false,
       domains: ['inspection', 'audit'],
       model: 'claude-haiku-5-5',
       effort: 'low',
       monthlyCapUsd: 12.5,
       automations: true,
+      notices: true,
     })
   })
 
@@ -188,6 +192,15 @@ describe('the owner’s draft of one person’s access', () => {
     expect(draftFromAccess(row({ automations: true })).automations).toBe(true)
     expect(draftFromAccess(row({})).automations).toBe(false)
     expect(draftFromAccess(row({ owner: true, automations: false })).automations).toBe(true)
+  })
+
+  it('reads the notices permission back: as stored, the owner’s on while an administrator', () => {
+    expect(draftFromAccess(row({ role: 'admin', notices: true })).notices).toBe(true)
+    expect(draftFromAccess(row({ role: 'admin' })).notices).toBe(false)
+    // Stored for someone who is not an administrator now: read back as it is, so it can be turned off.
+    expect(draftFromAccess(row({ role: 'supervisor', notices: true })).notices).toBe(true)
+    expect(draftFromAccess(row({ role: 'admin', owner: true })).notices).toBe(true)
+    expect(draftFromAccess(row({ role: 'supervisor', owner: true })).notices).toBe(false)
   })
 
   it('knows when the draft says something new', () => {
@@ -203,6 +216,25 @@ describe('the owner’s draft of one person’s access', () => {
     expect(accessChanged(saved, { ...d, model: 'claude-opus-5-5' })).toBe(true)
     expect(accessChanged(saved, { ...d, effort: 'max' })).toBe(true)
     expect(accessChanged(saved, { ...d, automations: true })).toBe(true)
+    expect(accessChanged(saved, { ...d, notices: true })).toBe(true)
+  })
+})
+
+describe('notices through the assistant, on the owner’s page', () => {
+  it('knows an administrator by the app’s own rule: the role that manages its data', () => {
+    expect(isAdministrator('admin')).toBe(true)
+    for (const role of ['supervisor', 'inspector', 'viewer', '', 'superuser', 'ADMIN']) expect(isAdministrator(role)).toBe(false)
+  })
+
+  it('says whether it is in effect: allowed administrators and the owner while one; allowed otherwise is held', () => {
+    expect(noticesAccessView({ owner: false, notices: true, role: 'admin' }).key).toBe('can')
+    expect(noticesAccessView({ owner: false, notices: false, role: 'admin' }).key).toBe('no')
+    expect(noticesAccessView({ owner: true, notices: false, role: 'admin' }).key).toBe('can')
+    expect(noticesAccessView({ owner: true, notices: true, role: 'supervisor' }).key).toBe('no')
+    const held = noticesAccessView({ owner: false, notices: true, role: 'supervisor' })
+    expect(held.key).toBe('held')
+    expect(held.tip).toMatch(/only administrators manage notices/)
+    expect(noticesAccessView({ owner: false, notices: false, role: 'inspector' }).tip).toMatch(/can still ask about the ones they see/)
   })
 })
 

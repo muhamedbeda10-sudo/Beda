@@ -2,15 +2,17 @@
 // §20 — Who can use it, on the owner's page: the people the owner gave the
 // assistant to, each with the data they may ask about, the model and effort
 // their questions use, and their own monthly cap against what they spent of
-// it this month, and whether they may create automations (§21). Add a person
-// (any active account, any role), change what one has, or take it away.
+// it this month, whether they may create automations (§21), and whether they
+// may have it write notices (§23: administrators only — the switch says so
+// for anyone else). Add a person (any active account, any role), change what
+// one has, or take it away.
 // Nobody but the owner ever sees this: the server answers anyone else 404,
 // and the page is not even listed for them.
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Loader2, Pencil, Save, Trash2, UserPlus, UsersRound, Zap } from 'lucide-react'
+import { BellRing, Loader2, Pencil, Save, Trash2, UserPlus, UsersRound, Zap } from 'lucide-react'
 import { AI_DOMAINS, AI_EFFORTS, AI_MAX_MONTHLY_CAP_USD, AI_MODELS, type AiAccess } from '@qc/shared/ai'
 import { Badge, Button, Card, Drawer, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { ApiError } from '@/lib/api'
@@ -21,6 +23,7 @@ import { useApp } from '@/store/AppContext'
 import {
   AI_DOMAIN_SHORT,
   AI_NEW_PERSON_CAP_USD,
+  NOTICES_ADMIN_ONLY,
   accessChanged,
   accessLive,
   accessRequest,
@@ -31,9 +34,11 @@ import {
   draftFromAccess,
   effortName,
   groupByRole,
+  isAdministrator,
   minCapUsd,
   modelName,
   newAccessDraft,
+  noticesAccessView,
   orderDomains,
   parseCapUsd,
   roleLabel,
@@ -115,13 +120,14 @@ export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; 
   // Positioned, so the screen-reader-only header (absolutely placed) stays inside the scroller instead of widening the page on a phone.
   return (
     <div className="relative overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
-      <table className="w-full min-w-[60rem] text-sm">
+      <table className="w-full min-w-[66rem] text-sm">
         <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
           <tr>
             <th className={th}>Person</th>
             <th className={th}>Role</th>
             <th className={th}>Access</th>
             <th className={th}>Automations</th>
+            <th className={th}>Notices</th>
             <th className={th}>Data</th>
             <th className={th}>Model</th>
             <th className={th}>Effort</th>
@@ -145,6 +151,7 @@ function AccessRow({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => voi
   const domains = orderDomains(row.domains)
   // A row that cannot ask now (switched off, no data, an account that cannot sign in) is drawn quieter.
   const live = accessLive(row)
+  const notices = noticesAccessView(row)
   return (
     <tr className={cn('align-top hover:bg-slate-50/70 dark:hover:bg-slate-800/40', !live && 'opacity-70')}>
       <td className="px-3 py-2.5">
@@ -178,6 +185,21 @@ function AccessRow({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => voi
           </Badge>
         ) : (
           <span className="text-xs text-muted">No</span>
+        )}
+      </td>
+      <td className="px-3 py-2.5">
+        {notices.key === 'can' ? (
+          <Badge tone="blue" icon={<BellRing className="h-3 w-3" />} tip={notices.tip}>
+            Can manage
+          </Badge>
+        ) : notices.key === 'held' ? (
+          <span className="text-xs font-medium text-amber-700 dark:text-amber-300" data-tip={notices.tip}>
+            Allowed, not in effect
+          </span>
+        ) : (
+          <span className="text-xs text-muted" data-tip={notices.tip}>
+            No
+          </span>
         )}
       </td>
       <td className="px-3 py-2.5">
@@ -264,6 +286,10 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
 
   const groups = useMemo(() => groupByRole(candidates.data ?? []), [candidates.data])
   const person = row ? null : (candidates.data?.find((p) => p.id === personId) ?? null)
+  // §23 — notices through the assistant are an administrator's: the switch turns on only for one (the server holds it too,
+  // and a stored permission applies only while the role is one). Left on from before, it can still be turned off.
+  const admin = isAdministrator(row?.role ?? person?.role ?? '')
+  const noticesLocked = saving || !!row?.owner || (!admin && !row?.notices)
   const cap = parseCapUsd(draft.cap)
   const minCap = minCapUsd(draft.model)
   // An app-wide cap under one call's cost on their model holds every question of theirs back, whatever their own cap.
@@ -338,7 +364,10 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
                 className="min-h-[48px]"
                 value={personId}
                 onChange={(e) => {
+                  const next = candidates.data?.find((p) => p.id === e.target.value)
                   setPersonId(e.target.value)
+                  // Turned on for an administrator, then another person chosen: it goes with the administrator.
+                  if (!next || !isAdministrator(next.role)) setDraft((d) => (d.notices ? { ...d, notices: false } : d))
                   setError(null)
                 }}
                 disabled={saving || !candidates.data || candidates.data.length === 0}
@@ -386,6 +415,26 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
             </p>
           </div>
           <AiSwitch on={draft.automations} onChange={(on) => patch({ automations: on })} labelledBy="ai-access-automations" disabled={saving || !!row?.owner} />
+        </div>
+
+        <div className={cn('flex items-center justify-between gap-4 rounded-xl border border-slate-200 p-4 dark:border-slate-800', !admin && 'bg-slate-50/70 dark:bg-slate-800/30')}>
+          <div className="min-w-0">
+            <p id="ai-access-notices" className={cn('font-semibold', !admin && 'text-muted')}>
+              Can manage notices
+            </p>
+            <p className="mt-0.5 text-xs text-muted">
+              {!admin
+                ? row?.notices
+                  ? `${NOTICES_ADMIN_ONLY}: this is not in effect while their role is ${row.role || 'not one'}, and applies again if it becomes administrator. Turn it off to drop it.`
+                  : `${NOTICES_ADMIN_ONLY}. Like everyone with the assistant, they can still ask about the notices they see.`
+                : row?.owner
+                  ? 'You always can, as the assistant’s owner, while you are an administrator.'
+                  : 'They may have the assistant write a notice, or change, withdraw or delete one. Each comes as a card showing exactly what goes out and to whom, and nothing changes until they press its button. Only while they are an administrator; photos and files are still added on the Notices page.'}
+            </p>
+          </div>
+          <span data-tip={!admin && !row?.notices ? NOTICES_ADMIN_ONLY : undefined}>
+            <AiSwitch on={draft.notices} onChange={(on) => patch({ notices: on })} labelledBy="ai-access-notices" disabled={noticesLocked} />
+          </span>
         </div>
 
         <fieldset className="space-y-2" disabled={saving}>
