@@ -182,6 +182,14 @@ export interface AutomationBacktest {
   /** watch: the first sample case's title and body, filled in. */
   sampleTitle?: string
   sampleBody?: string
+  /** A change of a watch (replacesAutomationId): of the cases matching now, those its automation has not told yet. */
+  newCases?: number
+  /**
+   * A change of a watch that keeps its query and key column: its cases carry
+   * on — those told are not told again, those not told yet fire on its next
+   * run — whatever notifyExisting says.
+   */
+  keepsCases?: boolean
   /** report: the period as of today and each section's result (preview rows). */
   period?: AiDayRange & { label: string }
   sections?: AiReportSectionRun[]
@@ -228,7 +236,11 @@ export interface AutomationEdits {
 
 export interface AutomationActivateRequest {
   edits?: AutomationEdits
-  /** watch: also tell about the cases that match right now (otherwise they are recorded as seen and only new ones fire). */
+  /**
+   * watch: also tell about the cases that match right now (otherwise they are
+   * recorded as seen and only new ones fire). A change that keeps its query
+   * and key column (backtest.keepsCases) records nothing: its cases carry on.
+   */
   notifyExisting?: boolean
 }
 

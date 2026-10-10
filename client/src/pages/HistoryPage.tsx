@@ -34,6 +34,8 @@ import { PdiList } from '@/components/pdi/PdiList'
 import { StageBadge } from '@/components/inspection/UniversalChoice'
 import { historySheets } from '@/components/history/exportHistory'
 import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
+import { NeedsReviewBadge } from '@/components/followUps/parts'
+import { SessionFollowUps } from '@/components/followUps/SessionFollowUps'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { loadHistoryExport, loadHistoryValues, loadOlderSessions, loadSessionsAt, useSession, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
@@ -109,7 +111,7 @@ const HISTORY_COLUMNS: ColumnDef[] = [
   { key: 'date', label: 'Started', width: 132, min: 100 },
   { key: 'closed', label: 'Closed', width: 150, min: 90, defaultHidden: true },
   { key: 'closedBy', label: 'Closed by', width: 150, min: 80, defaultHidden: true },
-  { key: 'status', label: 'Status', width: 168, min: 100 },
+  { key: 'status', label: 'Status', width: 208, min: 100 },
   { key: 'samples', label: 'Samples', width: 112, min: 88, align: 'right' },
   { key: 'pieces', label: 'Pieces inspected', width: 120, min: 80, align: 'right' },
   { key: 'defects', label: 'Defects', width: 108, min: 88, align: 'right' },
@@ -230,11 +232,12 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
     case 'status':
       return (
         <td key={key} className="overflow-hidden px-3 py-3">
-          {/* One line: the status, then the stage and the signal in their short forms, each spelt out in its tooltip. */}
+          {/* One line: the status, the stage and the signal in their short forms, then §21's "Needs review" as its flag alone — each spelt out in its tooltip, none pushing the Hold out of sight. */}
           <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
             <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
             <StageBadge kind={s.universalKind} stages={s.stages} compact />
             <SessionToneBadge session={s} compact />
+            <NeedsReviewBadge count={s.openFollowUps ?? 0} compact />
           </span>
         </td>
       )
@@ -310,14 +313,16 @@ export function HistoryPage() {
   /** What History lists: inspection sessions, or PDI documents. Kept on this device. */
   const [kind, setKind] = usePersistedState<'sessions' | 'pdi'>('qc-history:kind', 'sessions')
   // A grouped view elsewhere (Access) sends a session in the address: it opens, once, and leaves the address.
+  // §21 — a follow-up sends its sample with it: the sample's full record opens over the session.
   useEffect(() => {
     const id = params.get('session')
     if (id === null) return
     setKind('sessions')
-    setOpenSampleId(null)
+    setOpenSampleId(params.get('sample') || null)
     setOpenSessionId(id)
     const next = new URLSearchParams(params)
     next.delete('session')
+    next.delete('sample')
     setParams(next, { replace: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params])
@@ -826,6 +831,7 @@ export function HistoryPage() {
                   <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status.toUpperCase()}</Badge>
                   <StageBadge kind={s.universalKind} stages={s.stages} />
                   <SessionToneBadge session={s} />
+                  <NeedsReviewBadge count={s.openFollowUps ?? 0} />
                 </div>
                 <p className="mt-1 truncate text-sm font-medium text-brand-600 dark:text-brand-400">{s.order?.item ?? 'Unknown item'}</p>
                 <p className="mt-0.5 text-xs text-muted">
@@ -913,6 +919,7 @@ export function HistoryPage() {
             <span className="flex flex-wrap items-center gap-2">
               <span>{openSession.order?.orderNumber ?? 'Session'}</span>
               <span className="text-sm font-semibold text-muted">#{openSession.seq}</span>
+              {!openSample && <NeedsReviewBadge count={openSession.openFollowUps ?? 0} />}
               {openSample && (
                 <span className="text-sm font-semibold text-brand-600 dark:text-brand-400">
                   · Sample {openSession.seq}-{openSample.index}
@@ -1038,6 +1045,9 @@ export function HistoryPage() {
                     </div>
                   )}
                 </dl>
+
+                {/* §21 — the follow-ups on this session that are not done: why it reads "Needs review". */}
+                <SessionFollowUps sessionId={openSession.id} openCount={openSession.openFollowUps ?? 0} />
 
                 {samplesLoading ? (
                   <SectionEmpty message="Loading the samples of this session…" />

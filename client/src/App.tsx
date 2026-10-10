@@ -28,6 +28,12 @@ import { lazy, Suspense, type ReactElement } from 'react'
 const AiAssistantPage = lazy(() => import('@/pages/admin/AiAssistantPage').then((m) => ({ default: m.AiAssistantPage })))
 // §20 — the assistant's full page, for the people given it: fetched when first opened, like its panel.
 const AiWorkspace = lazy(() => import('@/components/ai/AiWorkspace'))
+// §21 — automations: their pages for the few who may create them, a delivered report for whoever it went to.
+const AutomationsPage = lazy(() => import('@/pages/AutomationsPage').then((m) => ({ default: m.AutomationsPage })))
+const AutomationPage = lazy(() => import('@/pages/AutomationPage').then((m) => ({ default: m.AutomationPage })))
+const AutomationDeliveryPage = lazy(() => import('@/pages/AutomationDeliveryPage').then((m) => ({ default: m.AutomationDeliveryPage })))
+// §21 — follow-ups: the list and, over it, the one opened (/follow-ups/<id>); the server says whose each person sees.
+const FollowUpsPage = lazy(() => import('@/pages/FollowUpsPage').then((m) => ({ default: m.FollowUpsPage })))
 
 /** A page for a capability the signed-in role lacks sends the reader home; the API refuses it anyway. */
 function Only({ cap, children }: { cap: Capability; children: ReactElement }) {
@@ -56,6 +62,27 @@ function OnlyAiGranted({ children }: { children: ReactElement }) {
   const { revoked } = useAi()
   if (data) return data.granted || revoked ? children : <Navigate to="/" replace />
   return isError ? <LoadFailed what="This page" /> : <PageLoading />
+}
+
+/**
+ * §21 — the Automations pages, for the people who may create automations
+ * (/ai/me says who: the assistant's owner, and those the owner allowed),
+ * whatever their role. Anyone else is sent home — the server answers them
+ * 404 as well.
+ */
+function OnlyAutomator({ children }: { children: ReactElement }) {
+  const { data, isError } = useAiMe()
+  if (data) return data.automations ? children : <Navigate to="/" replace />
+  return isError ? <LoadFailed what="This page" /> : <PageLoading />
+}
+
+/** A page fetched when first opened, with a word should its file not arrive. */
+function LazyPage({ what, children }: { what: string; children: ReactElement }) {
+  return (
+    <ErrorBoundary fallback={<LoadFailed what={what} />}>
+      <Suspense fallback={<PageLoading />}>{children}</Suspense>
+    </ErrorBoundary>
+  )
 }
 
 /** A page still being fetched: a spinner where it will be. */
@@ -98,6 +125,11 @@ export default function App() {
         <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
         {/* §20 — the assistant's full page: /ai?c=<conversation>, /ai/reports/<id>. */}
         <Route path="/ai/*" element={<OnlyAiGranted><ErrorBoundary fallback={<LoadFailed what="The assistant" />}><Suspense fallback={<PageLoading />}><AiWorkspace /></Suspense></ErrorBoundary></OnlyAiGranted>} />
+        {/* §21 — automations; a delivered report opens for the people it was sent to (the server decides who). */}
+        <Route path="/automations" element={<OnlyAutomator><LazyPage what="This page"><AutomationsPage /></LazyPage></OnlyAutomator>} />
+        <Route path="/automations/deliveries/:id" element={<LazyPage what="This report"><AutomationDeliveryPage /></LazyPage>} />
+        <Route path="/automations/:id" element={<OnlyAutomator><LazyPage what="This page"><AutomationPage /></LazyPage></OnlyAutomator>} />
+        <Route path="/follow-ups/:id?" element={<LazyPage what="Follow-ups"><FollowUpsPage /></LazyPage>} />
         {/* Administration lives behind the gear; every section keeps its own address. */}
         <Route path="/admin" element={<Navigate to="/admin/configuration" replace />} />
         <Route path="/admin/configuration/:section?" element={<Only cap="manage-admin-data"><ConfigurationPage /></Only>} />

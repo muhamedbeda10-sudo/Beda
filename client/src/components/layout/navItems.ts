@@ -1,8 +1,10 @@
 // The app's sections: the work an inspector does, and administration behind
 // the gear. Each is shown only to someone who may use it — by role, or, for
-// the AI assistant's settings, to the one person who owns the assistant.
+// the AI assistant's settings, to the one person who owns the assistant, and
+// for automations (§21), to the people who may create them; follow-ups (§21)
+// to whoever has some, or may see everyone's.
 
-import { BellRing, Bot, ClipboardCheck, History, LayoutDashboard, ScrollText, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
+import { BellRing, Bot, ClipboardCheck, History, LayoutDashboard, ListChecks, ScrollText, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users, Zap } from 'lucide-react'
 import { can, type Capability } from '@qc/shared/rules'
 import type { Role } from '@qc/shared/types'
 
@@ -14,6 +16,10 @@ export interface NavItem {
   needs?: Capability
   /** §20 — for the AI assistant's owner alone, whatever the role; to anyone else the entry does not exist. */
   aiOwner?: boolean
+  /** §21 — for the people who may create automations (the assistant's owner, and those the owner allowed), whatever the role. */
+  automations?: boolean
+  /** §21 — for whoever the follow-ups page has something for (/follow-ups/counts' `visible`), whatever the role. */
+  followUps?: boolean
   /** One line shown under the label in the administration menu. */
   hint?: string
 }
@@ -23,7 +29,9 @@ export const NAV: NavItem[] = [
   { to: '/access', label: 'Access', icon: Table2, needs: 'view-order-sheet' },
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/history', label: 'History', icon: History },
+  { to: '/follow-ups', label: 'Follow-ups', icon: ListChecks, followUps: true },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
+  { to: '/automations', label: 'Automations', icon: Zap, automations: true },
 ]
 
 /** Administration, behind the gear. */
@@ -37,7 +45,12 @@ export const ADMIN_NAV: NavItem[] = [
   { to: '/admin/whats-new', label: "What's new", icon: Sparkles, needs: 'manage-admin-data', hint: 'Every update, newest first' },
 ]
 
-/** The entries this person sees: by their role's capabilities, and the AI assistant's settings only for its owner. */
-export function visibleNav(items: readonly NavItem[], role: Role | undefined, aiOwner: boolean): NavItem[] {
-  return items.filter((n) => (n.aiOwner ? aiOwner : !n.needs || can(role, n.needs)))
+/**
+ * The entries this person sees: by their role's capabilities, the AI
+ * assistant's settings only for its owner, Automations only for someone who
+ * may create them (/ai/me's `automations`), and Follow-ups only for someone
+ * the page has something for (/follow-ups/counts' `visible`).
+ */
+export function visibleNav(items: readonly NavItem[], role: Role | undefined, aiOwner: boolean, automations = false, followUps = false): NavItem[] {
+  return items.filter((n) => (n.aiOwner ? aiOwner : n.automations ? automations : n.followUps ? followUps : !n.needs || can(role, n.needs)))
 }

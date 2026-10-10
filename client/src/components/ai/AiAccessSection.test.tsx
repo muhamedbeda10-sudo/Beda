@@ -17,6 +17,7 @@ const row = (over: Partial<AiAccess>): AiAccess => ({
   monthlyCapUsd: 10,
   spentUsd: 1.25,
   owner: false,
+  automations: false,
   ...over,
 })
 
@@ -37,14 +38,14 @@ describe('who can use it, as the owner reads it', () => {
       row({ userId: 'o', name: 'Mohamed Beda', username: 'beda', role: 'admin', owner: true, domains: ['inspection', 'orders', 'materials', 'audit'], monthlyCapUsd: 50, spentUsd: 12.5 }),
     ])
     // The owner's own row first, marked as theirs.
-    expect(t).toMatch(/Mohamed Beda You beda \| admin \| On \| Inspections Orders & PDI Coils & master data Audit & accounts \| Claude Sonnet 5.5 \| Medium \| \$12.50 of \$50 \|/)
+    expect(t).toMatch(/Mohamed Beda You beda \| admin \| On \| Can create \| Inspections Orders & PDI Coils & master data Audit & accounts \| Claude Sonnet 5.5 \| Medium \| \$12.50 of \$50 \|/)
     // Domains in the app's order, whatever order they were stored in.
-    expect(t).toMatch(/Basem Fathy basem \| supervisor \| On \| Orders & PDI Audit & accounts \| Claude Haiku 5.5 \| Low \| \$0.0040 of \$5 \|/)
+    expect(t).toMatch(/Basem Fathy basem \| supervisor \| On \| No \| Orders & PDI Audit & accounts \| Claude Haiku 5.5 \| Low \| \$0.0040 of \$5 \|/)
   })
 
   it('says when a person cannot ask whatever is set: switched off, no data, or an account that cannot sign in', () => {
     const t = text([row({ enabled: false, domains: [], active: false })])
-    expect(t).toMatch(/Mona Adel Account off mona \| inspector \| Off \| None: cannot ask \|/)
+    expect(t).toMatch(/Mona Adel Account off mona \| inspector \| Off \| No \| None: cannot ask \|/)
   })
 
   it('says why someone whose cap is under one call to their model can never ask', () => {
@@ -59,5 +60,13 @@ describe('who can use it, as the owner reads it', () => {
     expect(html).toContain('data-tip="$4 in · $20 out per million tokens"')
     expect(html).toContain('aria-label="Change Mona Adel&#x27;s access"')
     expect(html).toContain('aria-label="Take the assistant from Mona Adel"')
+    // The scroller is positioned: its screen-reader-only header stays inside it, never widening a phone's page.
+    expect(html).toMatch(/^<div class="relative overflow-x-auto/)
+  })
+
+  it('says who may create automations: those allowed, and the owner always', () => {
+    const t = text([row({ automations: true }), row({ userId: 'b', name: 'Basem', username: 'basem' })])
+    expect(t).toMatch(/Mona Adel mona \| inspector \| On \| Can create \|/)
+    expect(t).toMatch(/Basem basem \| inspector \| On \| No \|/)
   })
 })

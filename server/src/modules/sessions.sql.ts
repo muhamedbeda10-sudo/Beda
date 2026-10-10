@@ -16,6 +16,8 @@ export const SESSION_STAGES_SELECT = `(SELECT COALESCE(jsonb_agg(jsonb_build_obj
  * signals the lists colour a session by: how many defects it holds, how many
  * of them are on Hold, and whether the same item of the same order already
  * showed defects elsewhere — on another machine, or in an earlier session.
+ * And §21's "Needs review": its follow-ups not done yet (an index lookup per
+ * row, follow_ups_session_open_idx).
  */
 export const SESSION_SELECT = `
   s.id, s.seq, s.order_id AS "orderId", s.work_center_code AS "workCenterCode",
@@ -32,6 +34,7 @@ export const SESSION_SELECT = `
   (SELECT count(*)::int FROM defect_results d JOIN inspection_samples x ON x.id = d.sample_id
     WHERE x.session_id = s.id AND x.deleted_at IS NULL AND d.deleted_at IS NULL AND d.disposition = 'Hold') AS "holdCount",
   (SELECT count(*)::int FROM session_notes n WHERE n.session_id = s.id AND n.deleted_at IS NULL) AS "noteCount",
+  (SELECT count(*)::int FROM follow_ups f WHERE f.session_id = s.id AND f.status <> 'done') AS "openFollowUps",
   ${SESSION_STAGES_SELECT} AS stages,
   (SELECT COALESCE(sum(x.sample_qty), 0)::float8 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL) AS "piecesInspected",
   (SELECT count(*)::int FROM dimension_results r JOIN inspection_samples x ON x.id = r.sample_id
@@ -103,6 +106,7 @@ export interface SessionRow {
   defectPieces: number
   holdCount: number
   noteCount: number
+  openFollowUps: number
   piecesInspected: number
   dimensionFailCount: number
   ptTestedCount: number
@@ -137,6 +141,7 @@ export function toSession(r: SessionRow): InspectionSession {
     defectPieces: r.defectPieces,
     holdCount: r.holdCount,
     noteCount: r.noteCount,
+    openFollowUps: r.openFollowUps,
     piecesInspected: r.piecesInspected,
     dimensionFailCount: r.dimensionFailCount,
     ptTestedCount: r.ptTestedCount,

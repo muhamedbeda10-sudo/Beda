@@ -41,7 +41,7 @@ export function usersRoutes(ctx: AppContext): Router {
   r.use(requireRole('admin'))
 
   r.get('/', async (_req, res) => {
-    const { rows } = await ctx.db.query<UserProfile>(`SELECT ${USER_COLUMNS} FROM users WHERE deleted_at IS NULL ORDER BY name, username`)
+    const { rows } = await ctx.db.query<UserProfile>(`SELECT ${USER_COLUMNS} FROM users WHERE deleted_at IS NULL AND NOT is_system ORDER BY name, username`)
     res.json(rows)
   })
 
@@ -155,9 +155,9 @@ export function usersRoutes(ctx: AppContext): Router {
   return r
 }
 
-/** The live account, locked for the rest of the transaction. */
+/** The live account, locked for the rest of the transaction. The system sender (§21) is no account to administer. */
 async function lockUser(tx: Queryable, id: string): Promise<UserProfile> {
-  const { rows } = await tx.query<UserProfile>(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [id])
+  const { rows } = await tx.query<UserProfile>(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1 AND deleted_at IS NULL AND NOT is_system FOR UPDATE`, [id])
   if (!rows[0]) throw notFound('That user')
   return rows[0]
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AiConversation, AiMessage, AiMessagesResponse, AiQueryPart, AiStatusResponse } from '@qc/shared/ai'
+import type { AiAutomationPart } from '@qc/shared/automation'
 import { answerText, applyEvent, endTurn, isInFlight, latestAnswerKey, liveAnnouncement, liveView, parseStreamEvent, sentAfter, settleMessages, startTurn, threadItems, type LiveTurn } from './liveTurn'
 
 const conversation: AiConversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z' }
@@ -55,6 +56,18 @@ describe('the answer being written', () => {
     const t = startTurn('k2', 'c1', 'q', '2026-10-09T10:00:00Z')
     expect(endTurn(t, 'error', { code: 'ai_budget_reached', message: 'The monthly cap is reached.' })).toMatchObject({ phase: 'error', error: { code: 'ai_budget_reached' } })
     expect(endTurn(t, 'stopped')).toMatchObject({ phase: 'stopped', error: null })
+  })
+
+  it('puts a proposed automation’s card where it came, and the same proposal again in its place', () => {
+    const card: AiAutomationPart = { type: 'automation', proposalId: 'p1', ok: false, error: 'watch.keyColumn: not a column', state: 'proposed' }
+    const fixed: AiAutomationPart = { ...card, ok: true, error: undefined }
+    const t = run([{ type: 'start', conversation, userMessageId: 'u1' }, { type: 'progress', text: 'Drafting it' }, { type: 'automation', part: card }])
+    expect(t.parts).toEqual([card])
+    expect(t.progress).toBeNull()
+    expect(applyEvent(t, { type: 'automation', part: fixed }).parts).toEqual([fixed])
+    const second: AiAutomationPart = { ...fixed, proposalId: 'p2' }
+    expect(applyEvent(applyEvent(t, { type: 'text', delta: 'Here it is.' }), { type: 'automation', part: second }).parts).toEqual([card, { type: 'text', text: 'Here it is.' }, second])
+    expect(parseStreamEvent('automation', JSON.stringify({ type: 'automation', part: card }))).toEqual({ type: 'automation', part: card })
   })
 
   it('reads only the events it knows, and only when the name matches the type', () => {

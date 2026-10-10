@@ -53,8 +53,9 @@ const registerSchema = z.object({
 
 export const USER_COLUMNS = `id, username, name, role, is_active AS "isActive", created_at AS "createdAt", last_login_at AS "lastLoginAt"`
 
+/** People with an account. The system sender (§21) is nobody: the first person to register still becomes the admin. */
 async function countUsers(q: Queryable): Promise<number> {
-  const { rows } = await q.query<{ n: number }>('SELECT count(*)::int AS n FROM users WHERE deleted_at IS NULL')
+  const { rows } = await q.query<{ n: number }>('SELECT count(*)::int AS n FROM users WHERE deleted_at IS NULL AND NOT is_system')
   return rows[0].n
 }
 
@@ -153,20 +154,22 @@ export function authRoutes(ctx: AppContext): Router {
       throw new HttpError(429, 'rate_limited', `Too many attempts. Try again in ${wait} seconds.`)
     }
 
-    const { rows } = await db.query<UserProfile & { passwordHash: string }>(
-      `SELECT ${USER_COLUMNS}, password_hash AS "passwordHash" FROM users WHERE username = $1 AND deleted_at IS NULL`,
+    const { rows } = await db.query<UserProfile & { passwordHash: string; isSystem: boolean }>(
+      `SELECT ${USER_COLUMNS}, password_hash AS "passwordHash", is_system AS "isSystem" FROM users WHERE username = $1 AND deleted_at IS NULL`,
       [body.username],
     )
     const row = rows[0]
     // Verify against a real hash even when the user does not exist, so timing
-    // does not reveal which usernames exist.
-    const ok = row ? await verifyPassword(body.password, row.passwordHash) : await verifyPassword(body.password, DUMMY_HASH).then(() => false)
+    // does not reveal which usernames exist. The system sender (§21) is
+    // refused like an unknown name, whatever its stored hash says.
+    const ok =
+      row && !row.isSystem ? await verifyPassword(body.password, row.passwordHash) : await verifyPassword(body.password, DUMMY_HASH).then(() => false)
     if (!ok) throw unauthenticated('Incorrect username or password.')
     if (!row.isActive) throw unauthenticated('This account has been deactivated. Contact your administrator.')
 
     ctx.loginLimiter.reset(limiterKey)
     await db.query('UPDATE users SET last_login_at = now() WHERE id = $1', [row.id])
-    const { passwordHash: _omit, ...user } = row
+    const { passwordHash: _omit, isSystem: _system, ...user } = row
     res.json(await issueTokens(req, res, { ...user, lastLoginAt: new Date().toISOString() }))
   })
 
@@ -183,7 +186,7 @@ export function authRoutes(ctx: AppContext): Router {
                 u.created_at AS "createdAt", u.last_login_at AS "lastLoginAt"
            FROM auth_sessions s JOIN users u ON u.id = s.user_id
           WHERE s.refresh_token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
-            AND u.deleted_at IS NULL
+            AND u.deleted_at IS NULL AND NOT u.is_system
           FOR UPDATE OF s`,
         [hashRefreshToken(presented)],
       )

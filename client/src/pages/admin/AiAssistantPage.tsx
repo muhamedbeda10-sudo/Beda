@@ -3,14 +3,15 @@
 // account; nobody else, administrators included, sees this page or its data):
 // the Anthropic API key (set here, verified with Anthropic before it is kept,
 // stored encrypted and never shown again), the switch and the app-wide
-// monthly cap, who may use it and with what, and what it cost by day and by
-// person, this month or the last. Amounts live here alone: the chat shows
+// monthly cap, who may use it and with what, and what it cost by day, by
+// person and by automation (§21: scheduled reports' summaries), this month or
+// the last. Amounts live here alone: the chat and the Automations pages show
 // none, to anyone.
 // ============================================================================
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Activity, Bot, Coins, Eye, EyeOff, Hash, KeyRound, Loader2, MessageSquareText, Save, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { Activity, Bot, Coins, Eye, EyeOff, Hash, KeyRound, Loader2, MessageSquareText, Save, SlidersHorizontal, Trash2, Zap } from 'lucide-react'
 import { AI_MAX_MONTHLY_CAP_USD, type AiKeyState, type AiSettingsResponse, type AiStatusResponse, type AiUsageResponse } from '@qc/shared/ai'
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { CAP_RANGE_TEXT, parseCapUsd } from '@/components/ai/access'
@@ -422,6 +423,7 @@ function Usage({ data, stale }: { data: AiUsageResponse; stale: boolean }) {
   const share = spendShare(data.spentUsd, data.capUsd)
   const days = useMemo(() => [...data.byDay].sort((a, b) => b.day.localeCompare(a.day)), [data.byDay])
   const people = useMemo(() => [...data.byUser].sort((a, b) => b.costUsd - a.costUsd), [data.byUser])
+  const automations = useMemo(() => [...(data.byAutomation ?? [])].sort((a, b) => b.costUsd - a.costUsd || a.name.localeCompare(b.name)), [data.byAutomation])
   const dayMax = Math.max(0, ...days.map((d) => d.costUsd))
 
   return (
@@ -519,7 +521,55 @@ function Usage({ data, stale }: { data: AiUsageResponse; stale: boolean }) {
             </div>
           )}
         </Card>
+
+        <UsageByAutomation rows={automations} month={data.month} />
       </div>
     </div>
+  )
+}
+
+/**
+ * §21 — what scheduled reports' summaries cost, by automation: the one model
+ * call each run makes for its summary (the sections themselves cost nothing).
+ * Counted in the days above and in each creator's line too. Here alone.
+ */
+export function UsageByAutomation({ rows, month }: { rows: AiUsageResponse['byAutomation']; month: string }) {
+  return (
+    <Card className="overflow-hidden lg:col-span-2">
+      <h3 className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 text-sm font-bold dark:border-slate-800">
+        <Zap className="h-4 w-4 text-muted" /> By automation
+        <span className="font-normal text-muted">· scheduled reports’ summaries, also counted above</span>
+      </h3>
+      {rows.length === 0 ? (
+        <p className="px-4 py-8 text-center text-sm text-muted">No scheduled report was summarised in {formatMonth(month)}.</p>
+      ) : (
+        <div className="max-h-96 overflow-auto">
+          <table className="w-full min-w-[32rem] text-sm">
+            <thead className="text-left text-xs uppercase tracking-wide text-muted">
+              <tr>
+                <th className="sticky top-0 bg-slate-50 px-4 py-2 font-bold dark:bg-slate-800">Automation</th>
+                <th className="sticky top-0 bg-slate-50 px-4 py-2 font-bold dark:bg-slate-800">Creator</th>
+                <th className="sticky top-0 bg-slate-50 px-4 py-2 text-right font-bold dark:bg-slate-800">Runs</th>
+                <th className="sticky top-0 bg-slate-50 px-4 py-2 text-right font-bold dark:bg-slate-800">Cost</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {rows.map((a) => (
+                <tr key={a.automationId} className="data-row">
+                  <td className="px-4 font-semibold" dir="auto">
+                    {a.name}
+                  </td>
+                  <td className="px-4" dir="auto">
+                    {a.creatorName}
+                  </td>
+                  <td className="px-4 text-right tabular-nums">{a.runs.toLocaleString()}</td>
+                  <td className="px-4 text-right tabular-nums">{formatUsd(a.costUsd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   )
 }

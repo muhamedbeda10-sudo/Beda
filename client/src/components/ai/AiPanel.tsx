@@ -36,7 +36,8 @@ export default function AiPanel() {
   const [view, setView] = useState<View>(start ? 'reports' : 'thread')
   const [report, setReport] = useState<AiOpenReport | null>(start)
   // The unsent question lives here while the panel is open, and in the provider's ref while it is closed.
-  const { draft, setDraft, focus, focusComposer, focusUsed } = useComposerDraft()
+  // A conversation composed elsewhere ("Edit in chat") brings the panel back to the thread to show it.
+  const { draft, setDraft, focus, focusComposer, focusUsed } = useComposerDraft(() => setView('thread'))
   const fill = useCallback(
     (question: string) => {
       setDraft(question)

@@ -4,7 +4,8 @@
 // trusted only as far as its shape: a page of this application (opened in
 // place, e.g. a session in History) or a plain web address (opened in a new
 // tab). Anything else — javascript:, data:, mailto:, a protocol-relative
-// //host — is dropped and its words shown as text.
+// //host — is dropped and its words shown as text. Text read by more people
+// than the one who asked keeps the pages of this application alone.
 // ============================================================================
 
 export type AiLink = { kind: 'app'; to: string } | { kind: 'external'; href: string }
@@ -47,4 +48,13 @@ export function classifyAiLink(href: string | null | undefined): AiLink | null {
 /** react-markdown's urlTransform: the address kept as written when it may be followed, emptied when not. */
 export function aiUrlTransform(url: string): string {
   return classifyAiLink(url) ? url : ''
+}
+
+/**
+ * The same, for text that goes beyond the person who asked (a scheduled
+ * report delivered to whole roles): only a page of this application may be
+ * followed; a web address keeps its words, as text.
+ */
+export function aiAppUrlTransform(url: string): string {
+  return classifyAiLink(url)?.kind === 'app' ? url : ''
 }

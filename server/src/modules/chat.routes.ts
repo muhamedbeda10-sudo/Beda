@@ -4,6 +4,10 @@
 // deleting for everyone blanks one, deleting for me hides it. Nothing here
 // pushes: the client polls, and every read checks membership, so a direct
 // conversation is readable by its two people and nobody else.
+//
+// §21 — the system sender "QC Automations" writes to people in a direct
+// conversation of its own (automations/systemChat.ts). It is in no list of
+// people, nobody starts a conversation with it, and a reply is refused.
 // ============================================================================
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -46,6 +50,8 @@ import { sniffNoticeFile } from './notices.routes'
 
 const uuid = z.string().uuid()
 const PAGE = 40
+/** §21 — what someone writing to the system sender is told: its conversation only delivers. */
+const AUTOMATED_REPLY_REFUSED = 'Automated messages — replies are not read.'
 
 // ---- Mentions --------------------------------------------------------------
 
@@ -105,7 +111,7 @@ async function loadMembers(q: Queryable, conversations: ConversationRow[]): Prom
     const { rows } = await q.query<ChatMember & { conversationId: string }>(
       `SELECT u.id, u.name, u.username, u.role, m.last_read_at AS "lastReadAt"
          FROM users u LEFT JOIN chat_members m ON m.conversation_id = $1 AND m.user_id = u.id
-        WHERE u.deleted_at IS NULL AND u.is_active ORDER BY u.name`,
+        WHERE u.deleted_at IS NULL AND u.is_active AND NOT u.is_system ORDER BY u.name`,
       [general[0].id],
     )
     out.set(general[0].id, rows.map(({ ...r }) => r))
@@ -147,7 +153,7 @@ const MESSAGE_SELECT = `
   m.created_at AS "createdAt", m.edited_at AS "editedAt", (m.deleted_at IS NOT NULL) AS deleted,
   (SELECT count(*) FROM chat_members r WHERE r.conversation_id = m.conversation_id AND r.user_id <> m.sender_id AND r.removed_at IS NULL AND r.last_read_at >= m.created_at)::int AS "readBy",
   CASE WHEN c.kind = 'general'
-       THEN (SELECT count(*) FROM users u WHERE u.deleted_at IS NULL AND u.is_active AND u.id <> m.sender_id)
+       THEN (SELECT count(*) FROM users u WHERE u.deleted_at IS NULL AND u.is_active AND NOT u.is_system AND u.id <> m.sender_id)
        ELSE (SELECT count(*) FROM chat_members r WHERE r.conversation_id = m.conversation_id AND r.user_id <> m.sender_id AND r.removed_at IS NULL) END::int AS others`
 
 /** Attachments, reactions, mentions and reply previews for a page of messages. */
@@ -267,9 +273,20 @@ function titleFor(c: ConversationRow, members: ChatMember[], user: AuthUser): st
   return c.name
 }
 
+/** §21 — the conversations among these that are with the system sender: automated messages, no replies. */
+async function automatedAmong(q: Queryable, conversationIds: string[]): Promise<Set<string>> {
+  const { rows } = await q.query<{ conversationId: string }>(
+    `SELECT m.conversation_id AS "conversationId" FROM chat_members m JOIN users u ON u.id = m.user_id AND u.is_system
+      WHERE m.conversation_id = ANY($1::uuid[])`,
+    [conversationIds],
+  )
+  return new Set(rows.map((r) => r.conversationId))
+}
+
 async function buildConversations(q: Queryable, rows: ConversationRow[], user: AuthUser): Promise<ChatConversation[]> {
   if (rows.length === 0) return []
-  const [members, unread, last] = await Promise.all([
+  const direct = rows.filter((c) => c.kind === 'direct').map((c) => c.id)
+  const [members, unread, last, automated] = await Promise.all([
     loadMembers(q, rows),
     unreadFor(q, user),
     q.query<{ conversationId: string; id: string; senderId: string; senderName: string; body: string; createdAt: string; deleted: boolean; images: number; files: number }>(
@@ -283,13 +300,14 @@ async function buildConversations(q: Queryable, rows: ConversationRow[], user: A
         ORDER BY m.conversation_id, m.created_at DESC, m.id DESC`,
       [rows.map((c) => c.id), user.id],
     ),
+    direct.length ? automatedAmong(q, direct) : Promise.resolve(new Set<string>()),
   ])
   const lastBy = new Map(last.rows.map((r) => [r.conversationId, r]))
   return rows.map((c) => {
     const ms = members.get(c.id) ?? []
     const u = unread.get(c.id)
     const l = lastBy.get(c.id)
-    return {
+    const out: ChatConversation = {
       id: c.id,
       kind: c.kind,
       title: titleFor(c, ms, user),
@@ -301,6 +319,8 @@ async function buildConversations(q: Queryable, rows: ConversationRow[], user: A
       mentionCount: u?.mentions ?? 0,
       lastMessage: l ? preview(l) : null,
     }
+    if (automated.has(c.id)) out.automated = true
+    return out
   })
 }
 
@@ -332,7 +352,9 @@ export function chatRoutes(ctx: AppContext): Router {
 
   /** Everyone who can be written to. */
   r.get('/users', async (_req, res) => {
-    const { rows } = await db.query<ChatUser>(`SELECT id, name, username, role FROM users WHERE deleted_at IS NULL AND is_active AND role <> 'viewer' ORDER BY name`)
+    const { rows } = await db.query<ChatUser>(
+      `SELECT id, name, username, role FROM users WHERE deleted_at IS NULL AND is_active AND NOT is_system AND role <> 'viewer' ORDER BY name`,
+    )
     res.json(rows)
   })
 
@@ -371,7 +393,8 @@ export function chatRoutes(ctx: AppContext): Router {
     const created = await withTransaction(db, async (tx) => {
       if (body.kind === 'direct') {
         if (body.userId === user.id) throw badRequest('That is you.')
-        const other = await tx.query(`SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL AND is_active`, [body.userId])
+        // Nobody starts a conversation with the system sender (§21): it only writes.
+        const other = await tx.query(`SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL AND is_active AND NOT is_system`, [body.userId])
         if (!other.rowCount) throw notFound('That user')
         const key = [user.id, body.userId].sort().join(':')
         const { rows } = await tx.query<{ id: string }>(
@@ -392,7 +415,7 @@ export function chatRoutes(ctx: AppContext): Router {
       const { rows } = await tx.query<{ id: string }>(`INSERT INTO chat_conversations (kind, name, created_by_id) VALUES ('group', $1, $2) RETURNING id`, [body.name, user.id])
       const id = rows[0].id
       const ids = Array.from(new Set([user.id, ...body.memberIds]))
-      const valid = await tx.query<{ id: string }>(`SELECT id FROM users WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL AND is_active`, [ids])
+      const valid = await tx.query<{ id: string }>(`SELECT id FROM users WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL AND is_active AND NOT is_system`, [ids])
       for (const row of valid.rows) await tx.query(`INSERT INTO chat_members (conversation_id, user_id) VALUES ($1, $2)`, [id, row.id])
       return id
     })
@@ -410,7 +433,7 @@ export function chatRoutes(ctx: AppContext): Router {
       if (rows[0].kind !== 'group') throw badRequest('Only a group can be changed.')
       if (body.name) await tx.query(`UPDATE chat_conversations SET name = $2 WHERE id = $1`, [id, body.name])
       for (const uid of body.addMemberIds ?? []) {
-        const ok = await tx.query(`SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL AND is_active`, [uid])
+        const ok = await tx.query(`SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL AND is_active AND NOT is_system`, [uid])
         if (!ok.rowCount) continue
         await tx.query(`INSERT INTO chat_members (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT (conversation_id, user_id) DO UPDATE SET removed_at = NULL, joined_at = now()`, [id, uid])
       }
@@ -466,7 +489,8 @@ export function chatRoutes(ctx: AppContext): Router {
     const body = parse(sendSchema, req.body) as Required<SendChatMessageRequest>
     if (!CHAT_FILE_ATTACHMENTS_ENABLED && body.fileIds.length > 0) throw badRequest('File attachments are switched off; send a photo instead.')
     if (!body.body.trim() && body.imageIds.length === 0 && body.fileIds.length === 0) throw badRequest('Write something or attach a photo.')
-    await requireMembership(db, id, user)
+    const conversation = await requireMembership(db, id, user)
+    if (conversation.kind === 'direct' && (await automatedAmong(db, [id])).has(id)) throw new HttpError(403, 'forbidden', AUTOMATED_REPLY_REFUSED)
     const messageId = await withTransaction(db, async (tx) => {
       const existing = await tx.query<{ id: string }>(`SELECT id FROM chat_messages WHERE sender_id = $1 AND client_id = $2`, [user.id, body.clientId])
       if (existing.rows[0]) return existing.rows[0].id

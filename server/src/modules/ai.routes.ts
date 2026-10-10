@@ -24,6 +24,13 @@
 // person's current domains, its creation, renaming and removal in the audit
 // log (which report and what was done to it: never its title, which is
 // personal, nor its SQL).
+//
+// §21 — a person the owner allows to create automations (and the owner) gets
+// two more tools in each NEW conversation, and the system prompt says how to
+// use them; an automation the assistant proposes is activated or discarded
+// from its card here, by the person who asked, while they still may (404 to
+// anyone else). The Automations page has its own routes
+// (automations.routes.ts).
 // ============================================================================
 
 import { Router, type Request, type RequestHandler, type Response } from 'express'
@@ -56,6 +63,7 @@ import {
   type AiUsageResponse,
 } from '@qc/shared/ai'
 import { auditEvent } from '@qc/shared/audit'
+import type { AutomationActivateResponse, AutomationDiscardResponse } from '@qc/shared/automation'
 import type { AppContext } from '../context'
 import { PG, pgCode, withTransaction } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
@@ -66,6 +74,7 @@ import {
   isGranted,
   listAccess,
   loadAccess,
+  mayAutomate,
   personAvailability,
   removeAccess,
   saveAccess,
@@ -79,7 +88,7 @@ import { auditKeyLabel, last4, removeApiKey, storeApiKey, storedKeyTail } from '
 import { canonicalDomains } from '../ai/domains'
 import { minCallWorstCaseUsd, worstCaseUsd } from '../ai/models'
 import { aiOwner } from '../ai/owner'
-import { RUN_SQL_TOOL, conversationTitle, factoryDay, questionContent, renderSystemPrompt } from '../ai/prompt'
+import { conversationTitle, conversationTools, factoryDay, questionContent, renderSystemPrompt } from '../ai/prompt'
 import { rangeProblem } from '../ai/reportTemplate'
 import {
   AI_REPORT_TITLE_CHARS,
@@ -106,6 +115,9 @@ import { AI_EXPORT_LIMITS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
 import { describeAiSchema } from '../ai/schemaDoc'
 import { AI_SETTINGS_KEY, loadAiSettings, loadAvailability } from '../ai/settings'
 import { SseStream } from '../ai/sse'
+import { EditsInput } from '../automations/draft'
+import { activateProposal, discardProposal } from '../automations/lifecycle'
+import { AUTOMATION_TOOLS, automationToolHandlers } from '../automations/tools'
 import {
   appendMessages,
   createConversation,
@@ -159,8 +171,13 @@ const accessSchema = z
     model: z.string().refine(isAiModel, 'Not one of the models the assistant offers.'),
     effort: z.string().refine(isAiEffort, 'Not one of the effort levels.'),
     monthlyCapUsd: capUsd,
+    /** §21 — may create automations; left out, unchanged (off for a new row). */
+    automations: z.boolean().optional(),
   })
   .strict()
+
+/** §21 — what activating a proposal may carry: changes made on its card, and whether to tell about the cases matching now. */
+const activateSchema = z.object({ edits: EditsInput.optional(), notifyExisting: z.boolean().optional() }).strict()
 
 const chatSchema = z.object({
   conversationId: uuid.optional(),
@@ -326,7 +343,7 @@ export function aiRoutes(ctx: AppContext): Router {
     const access = await loadAccess(db, user.id)
     // Most people were never given the assistant: asked on every page, they cost two reads and no more.
     if (!isGranted(access)) {
-      const body: AiMeResponse = { granted: false, owner: owner === user.id, available: false, reason: 'not-granted' }
+      const body: AiMeResponse = { granted: false, owner: owner === user.id, available: false, reason: 'not-granted', automations: false }
       res.json(body)
       return
     }
@@ -427,7 +444,7 @@ export function aiRoutes(ctx: AppContext): Router {
       const { rows } = await tx.query<{ id: string; name: string; username: string; active: boolean; listed: boolean }>(
         `SELECT u.id, u.name, u.username, (u.is_active AND u.deleted_at IS NULL) AS active,
                 EXISTS (SELECT 1 FROM ai_access a WHERE a.user_id = u.id) AS listed
-           FROM users u WHERE u.id = $1 FOR UPDATE OF u`,
+           FROM users u WHERE u.id = $1 AND NOT u.is_system FOR UPDATE OF u`,
         [userId],
       )
       const person = rows[0]
@@ -496,8 +513,10 @@ export function aiRoutes(ctx: AppContext): Router {
     if (!avail.me.available || !avail.app.apiKey) throw unavailable(avail)
     const apiKey = avail.app.apiKey
 
-    // A new conversation's prompt carries the data dictionary of the person's domains as the catalog has it now, for good.
-    const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains)
+    // A new conversation's prompt carries the data dictionary of the person's domains as the catalog has it now, for good,
+    // and — for a person who may create automations as it starts — how to propose one, with the tools to do it (§21).
+    const automations = avail.me.automations
+    const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains, { automations })
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return
     const askedAt = new Date()
@@ -521,7 +540,7 @@ export function aiRoutes(ctx: AppContext): Router {
           title: conversationTitle(body.message),
           model: access.model,
           systemPrompt: systemPrompt!,
-          tools: [RUN_SQL_TOOL],
+          tools: conversationTools(automations ? AUTOMATION_TOOLS : null),
         })
       }
       // The model and effort the owner set for the person now: an earlier conversation goes on with them too.
@@ -570,6 +589,16 @@ export function aiRoutes(ctx: AppContext): Router {
         messages: started.replay,
         emit: (event) => sse.send(event),
         signal: ac.signal,
+        // Run only for a conversation that was given these tools; each checks the person may still use them.
+        tools: automationToolHandlers({
+          db,
+          config: ctx.config,
+          readers: ctx.aiReader,
+          userId: user.id,
+          conversationId: conversation.id,
+          turnId,
+          emit: (event) => sse.send(event),
+        }),
       })
       await finishTurn(db, turnId, outcome.stopReason, outcome.notice)
       const answer = (await loadDisplayMessages(db, conversation.id, turnId)).find((m) => m.role === 'assistant')!
@@ -646,6 +675,15 @@ export function aiRoutes(ctx: AppContext): Router {
         ORDER BY 3 DESC, u.name`,
       [from, to],
     )
+    // §21 — what scheduled reports' summaries cost, by automation (in byDay and their creator's byUser too).
+    const byAutomation = await db.query<AiUsageResponse['byAutomation'][number]>(
+      `SELECT a.id AS "automationId", a.name, u.name AS "creatorName", sum(g.cost_usd)::numeric(14, 6) AS "costUsd", count(*)::int AS runs
+         FROM ai_usage g JOIN ai_automations a ON a.id = g.automation_id JOIN users u ON u.id = a.creator_id
+        WHERE g.created_at >= $1 AND g.created_at < $2
+        GROUP BY a.id, a.name, u.name
+        ORDER BY 4 DESC, a.name`,
+      [from, to],
+    )
     const t = totals.rows[0]
     const body: AiUsageResponse = {
       month,
@@ -659,8 +697,47 @@ export function aiRoutes(ctx: AppContext): Router {
       cacheWriteTokens: t.cacheWriteTokens,
       byDay: byDay.rows,
       byUser: byUser.rows,
+      byAutomation: byAutomation.rows,
     }
     res.json(body)
+  })
+
+  // ---- Automations proposed in answers (§21) -------------------------------------------------
+
+  /** The person asking, while they may create automations; to anyone else these routes do not exist. */
+  async function automator(req: Request): Promise<{ user: AuthUser; access: AccessRecord }> {
+    const user = requireUser(req)
+    const access = await loadAccess(db, user.id)
+    if (!mayAutomate(access, (await ownerId()) === user.id)) throw noSuchEndpoint()
+    return { user, access }
+  }
+
+  const automationDeps = { db, config: ctx.config, readers: ctx.aiReader, model: ctx.ai }
+
+  /**
+   * Activate a proposal from its card: the person who asked only, once, after
+   * the same checks again. Its queries run again, so attempts count against
+   * the person's report runs, and stop when the person leaves. Audited.
+   */
+  r.post('/automation-proposals/:id/activate', async (req, res) => {
+    const ac = new AbortController()
+    res.on('close', () => {
+      if (!res.writableEnded) ac.abort()
+    })
+    const { user, access } = await automator(req)
+    const id = parse(uuid, req.params.id)
+    const body = parse(activateSchema, req.body ?? {})
+    const wait = ctx.aiReportLimiter.hit(user.id)
+    if (wait > 0) throw new HttpError(429, 'rate_limited', `Too many tries in a short time. Try again in ${wait} seconds.`)
+    const reply: AutomationActivateResponse = await activateProposal(automationDeps, id, { id: user.id, name: user.name }, access, body, new Date(), ac.signal)
+    res.json(reply)
+  })
+
+  r.post('/automation-proposals/:id/discard', async (req, res) => {
+    const { user } = await automator(req)
+    const id = parse(uuid, req.params.id)
+    const reply: AutomationDiscardResponse = await discardProposal(automationDeps, id, { id: user.id, name: user.name })
+    res.json(reply)
   })
 
   // ---- Saved reports ------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { AiKeyState } from '@qc/shared/ai'
-import { describeKey } from './AiAssistantPage'
+import { UsageByAutomation, describeKey } from './AiAssistantPage'
 
 /** The card's words on the key, as text. */
 const words = (key: AiKeyState) =>
@@ -44,3 +44,26 @@ describe('the key card', () => {
     expect(describeKey({ set: false, source: null })).toMatchObject({ removable: false, badge: 'Not set', tone: 'amber' })
   })
 })
+
+describe('the usage by automation', () => {
+  /** The card as text, cell by cell. */
+  const cells = (rows: Parameters<typeof UsageByAutomation>[0]['rows']) =>
+    renderToStaticMarkup(<UsageByAutomation rows={rows} month="2026-10" />)
+      .replace(/<(td|th)[^>]*>/g, ' | ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&#x27;/g, "'")
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+  it('lists what each scheduled report’s summaries cost, with its creator and runs', () => {
+    const t = cells([{ automationId: 'a1', name: 'Daily rejects', creatorName: 'Mona Adel', costUsd: 0.42, runs: 9 }])
+    expect(t).toMatch(/\| Daily rejects \| Mona Adel \| 9 \| \$0\.42/)
+    expect(t).toContain('also counted above')
+  })
+
+  it('says when no report was summarised that month', () => {
+    expect(cells([])).toContain('No scheduled report was summarised in October 2026.')
+  })
+})
+

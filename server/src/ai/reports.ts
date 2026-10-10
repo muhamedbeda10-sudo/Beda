@@ -225,8 +225,8 @@ const TEMPLATE_MAX_TOKENS = 8000
 /** How long the model may take to answer. */
 const TEMPLATE_TIMEOUT_MS = 120_000
 
-const PERIOD_KINDS = ['today', 'yesterday', 'last_days', 'this_week', 'last_week', 'this_month', 'last_month', 'this_year', 'last_year', 'fixed'] as const
-const WEEK_STARTS = ['saturday', 'sunday', 'monday'] as const
+export const PERIOD_KINDS = ['today', 'yesterday', 'last_days', 'this_week', 'last_week', 'this_month', 'last_month', 'this_year', 'last_year', 'fixed'] as const
+export const WEEK_STARTS = ['saturday', 'sunday', 'monday'] as const
 
 export const TEMPLATE_SYSTEM_PROMPT = `You prepare a saved report of a factory's quality-control database so that its period can be changed when it is run again.
 
@@ -354,8 +354,11 @@ export const FIXED_NOTICE = {
   unproven: (title: string) => `${KEPT} ${named(title)} found nothing in the question's period to check an adjustable version against.`,
 }
 
-/** A period as the model gave it, in the shared type; null when it is not one. */
-function toPeriod(p: NonNullable<z.infer<typeof ProposalSchema>['period']>): AiReportPeriod | null {
+/** A period as the model writes one: a kind, and the fields that kind takes (the rest null or absent). */
+export type ModelPeriod = NonNullable<z.infer<typeof ProposalSchema>['period']>
+
+/** A period as the model gave it, in the shared type; null when it is not one. Automations' schedules take the same (§21). */
+export function toPeriod(p: ModelPeriod): AiReportPeriod | null {
   switch (p.kind) {
     case 'last_days':
       return typeof p.days === 'number' && p.days >= 1 && p.days <= AI_REPORT_MAX_DAYS ? { kind: 'last_days', days: p.days } : null

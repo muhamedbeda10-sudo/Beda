@@ -24,13 +24,13 @@ afterAll(() => {
 })
 
 /** The answer's text as the panel draws it, to HTML. */
-function render(text: string, caret = false): string {
+function render(text: string, caret = false, links: 'any' | 'app' = 'any'): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>
       <AppProvider>
         <MemoryRouter>
           <AiAssistantProvider>
-            <AiMarkdown text={text} caret={caret} />
+            <AiMarkdown text={text} caret={caret} links={links} />
           </AiAssistantProvider>
         </MemoryRouter>
       </AppProvider>
@@ -157,5 +157,18 @@ describe('an answer’s markdown', () => {
     }
     // A path of the app with dot segments in it stays a link, as resolved.
     expect(classifyAiLink('/history/../history?session=abc')).toEqual({ kind: 'app', to: '/history?session=abc' })
+  })
+
+  it('follows only pages of the application in text sent beyond the person who asked, a web address staying words', () => {
+    // A delivered report's summary: a note in the record may have asked for a link to a look-alike login page.
+    const html = render('See [the sign-in page](https://evil.example/qc-login), https://evil.example/qc-login and [Session #3](/history?session=abc).', false, 'app')
+    expect(html).not.toContain('href="https://evil.example')
+    expect(html).not.toContain('target="_blank"')
+    expect(html).toContain('<span>the sign-in page</span>')
+    // A bare address is still read, as plain text: it opens nothing.
+    expect(html).toContain('<span>https://evil.example/qc-login</span>')
+    expect(html).toContain('href="/history?session=abc"')
+    // Anything dangerous goes as before.
+    expect(render('[click](javascript:alert(1)) [proto](//evil.example)', false, 'app')).not.toMatch(/javascript:|href=/)
   })
 })

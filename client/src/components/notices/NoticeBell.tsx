@@ -2,18 +2,30 @@
 // §16 — the bell. A count of what is still to be read, and the list behind
 // it: what needs attention first, then everything earlier as an archive.
 // Polls every few minutes while the tab is open; nothing pushes.
+//
+// §21 — beside the notices, the person's alerts: what automations and
+// follow-ups told them (AlertList). The count on the bell is both together;
+// the notices themselves read and acknowledge exactly as before. Someone who
+// receives no notices (a viewer) has the alerts alone.
 // ============================================================================
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Bell, Check, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
+import { Bell, BellRing, Check, ChevronDown, ChevronUp, Loader2, Megaphone } from 'lucide-react'
 import type { NoticeForUser } from '@qc/shared/types'
 import { Badge, Button, Drawer, EmptyState } from '@/components/ui'
+import { Segmented } from '@/components/ui/PageShell'
 import { useNoticeInbox } from '@/services/queries'
 import { acknowledgeNotice, markNoticeSeen } from '@/services/mutations'
+import { trimNotifications, useNotifications } from '@/services/notifications'
+import { followUpKeys } from '@/services/followUps'
 import { useApp } from '@/store/AppContext'
 import { cn, timeAgo } from '@/lib/utils'
 import { NoticeCard, SEVERITY_META, validityText } from './NoticeCard'
+import { AlertList } from './AlertList'
+import { badgeText, bellCount, unreadAlerts } from './alerts'
+
+type BellTab = 'notices' | 'alerts'
 
 function InboxRow({ notice, open, onToggle }: { notice: NoticeForUser; open: boolean; onToggle: () => void }) {
   const qc = useQueryClient()
@@ -68,15 +80,28 @@ function InboxRow({ notice, open, onToggle }: { notice: NoticeForUser; open: boo
   )
 }
 
-export function NoticeBell({ className }: { className?: string }) {
+/** `notices`: this person receives notices (by role); without, the bell holds their alerts alone. */
+export function NoticeBell({ className, notices: receivesNotices = true }: { className?: string; notices?: boolean }) {
   const qc = useQueryClient()
-  const { data, isLoading } = useNoticeInbox()
+  const { data, isLoading } = useNoticeInbox(receivesNotices)
+  const { data: alertPages } = useNotifications()
   const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState<BellTab>('notices')
   const [expanded, setExpanded] = useState<string | null>(null)
-  const pending = data?.pendingCount ?? 0
+  const pending = receivesNotices ? (data?.pendingCount ?? 0) : 0
+  const unread = unreadAlerts(alertPages)
+  const total = bellCount(pending, unread)
   const notices = data?.notices ?? []
   const attention = notices.filter((n) => n.pending)
   const earlier = notices.filter((n) => !n.pending)
+  const shown: BellTab = receivesNotices ? tab : 'alerts'
+
+  // A new alert is often a follow-up just given to this person: the navigation's count is asked again with it.
+  const lastUnread = useRef(unread)
+  useEffect(() => {
+    if (unread > lastUnread.current) void qc.invalidateQueries({ queryKey: followUpKeys.counts })
+    lastUnread.current = unread
+  }, [unread, qc])
 
   const toggle = (n: NoticeForUser) => {
     const next = expanded === n.id ? null : n.id
@@ -85,42 +110,76 @@ export function NoticeBell({ className }: { className?: string }) {
     if (next && n.pending && !n.requiresAck) void markNoticeSeen(qc, n.id).catch(() => undefined)
   }
 
+  // Notices waiting come first (one may need acknowledging); otherwise the alerts not opened.
+  const openBell = () => {
+    setTab(pending === 0 && unread > 0 ? 'alerts' : 'notices')
+    setOpen(true)
+  }
+  const close = () => {
+    setOpen(false)
+    // Only the newest page of alerts is polled from now on.
+    trimNotifications(qc)
+  }
+
+  const label = receivesNotices ? 'Notices and alerts' : 'Alerts'
+  const subtitle =
+    shown === 'notices' ? (pending > 0 ? `${pending} to read` : 'Nothing waiting for you') : unread > 0 ? `${unread} not opened yet` : 'Nothing new for you'
+
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className={cn('icon-btn relative', className)} aria-label={pending > 0 ? `Notices, ${pending} to read` : 'Notices'}>
-        <Bell className={cn('h-5 w-5', pending > 0 && 'animate-[wiggle_1.2s_ease-in-out_1]')} />
-        {pending > 0 && (
+      <button type="button" onClick={openBell} className={cn('icon-btn relative', className)} aria-label={total > 0 ? `${label}, ${total} to read` : label}>
+        <Bell className={cn('h-5 w-5', total > 0 && 'animate-[wiggle_1.2s_ease-in-out_1]')} />
+        {total > 0 && (
           <span className="absolute -right-0.5 -top-0.5 grid min-w-[18px] place-items-center rounded-full bg-rose-600 px-1 text-[10px] font-bold leading-[18px] text-white ring-2 ring-white dark:ring-slate-900">
-            {pending > 99 ? '99+' : pending}
+            {badgeText(total)}
           </span>
         )}
       </button>
-      <Drawer open={open} onClose={() => setOpen(false)} title="Notices" subtitle={pending > 0 ? `${pending} to read` : 'Nothing waiting for you'} icon={<Bell className="h-5 w-5" />}>
-        {isLoading && (
-          <p className="flex items-center gap-2 py-8 text-sm text-muted">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-          </p>
+      <Drawer open={open} onClose={close} title={shown === 'notices' ? 'Notices' : 'Alerts'} subtitle={subtitle} icon={shown === 'notices' ? <Bell className="h-5 w-5" /> : <BellRing className="h-5 w-5" />}>
+        {receivesNotices && (
+          <div className="mb-4">
+            <Segmented
+              label="Notices or alerts"
+              value={tab}
+              onChange={setTab}
+              options={[
+                { value: 'notices', label: pending > 0 ? `Notices · ${badgeText(pending)}` : 'Notices', icon: <Megaphone className="h-4 w-4" /> },
+                { value: 'alerts', label: unread > 0 ? `Alerts · ${badgeText(unread)}` : 'Alerts', icon: <BellRing className="h-4 w-4" /> },
+              ]}
+            />
+          </div>
         )}
-        {!isLoading && notices.length === 0 && <EmptyState icon={<Bell className="h-10 w-10" />} title="No notices" hint="Notices from the quality office will show here." />}
-        {attention.length > 0 && (
-          <section className="space-y-2">
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Needs your attention</p>
-            <ul className="space-y-2">
-              {attention.map((n) => (
-                <InboxRow key={n.id} notice={n} open={expanded === n.id} onToggle={() => toggle(n)} />
-              ))}
-            </ul>
-          </section>
-        )}
-        {earlier.length > 0 && (
-          <section className={cn('space-y-2', attention.length > 0 && 'mt-5')}>
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Earlier</p>
-            <ul className="space-y-2">
-              {earlier.map((n) => (
-                <InboxRow key={n.id} notice={n} open={expanded === n.id} onToggle={() => toggle(n)} />
-              ))}
-            </ul>
-          </section>
+        {shown === 'alerts' ? (
+          <AlertList onLeave={close} />
+        ) : (
+          <>
+            {isLoading && (
+              <p className="flex items-center gap-2 py-8 text-sm text-muted">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+              </p>
+            )}
+            {!isLoading && notices.length === 0 && <EmptyState icon={<Bell className="h-10 w-10" />} title="No notices" hint="Notices from the quality office will show here." />}
+            {attention.length > 0 && (
+              <section className="space-y-2">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Needs your attention</p>
+                <ul className="space-y-2">
+                  {attention.map((n) => (
+                    <InboxRow key={n.id} notice={n} open={expanded === n.id} onToggle={() => toggle(n)} />
+                  ))}
+                </ul>
+              </section>
+            )}
+            {earlier.length > 0 && (
+              <section className={cn('space-y-2', attention.length > 0 && 'mt-5')}>
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Earlier</p>
+                <ul className="space-y-2">
+                  {earlier.map((n) => (
+                    <InboxRow key={n.id} notice={n} open={expanded === n.id} onToggle={() => toggle(n)} />
+                  ))}
+                </ul>
+              </section>
+            )}
+          </>
         )}
       </Drawer>
     </>

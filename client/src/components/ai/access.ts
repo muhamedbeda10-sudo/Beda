@@ -2,8 +2,9 @@
 // §20 — who may use the assistant, in words and checks: why the question box
 // is closed for someone (never an amount, a key or a settings page), what a
 // model costs per million tokens and so the least a cap may be on it, the
-// owner's draft of one person's access and whether it can be saved. Pure, so
-// it is tested without a browser.
+// owner's draft of one person's access (with whether they may create
+// automations, §21) and whether it can be saved. Pure, so it is tested
+// without a browser.
 // ============================================================================
 
 import {
@@ -133,6 +134,8 @@ export interface AccessDraft {
   model: AiModelId
   effort: AiEffort
   cap: string
+  /** §21 — may create automations (the owner always may). */
+  automations: boolean
 }
 
 /** A newcomer's monthly cap: a fifth of the default app-wide cap, never above the app-wide cap set now. The owner raises it. */
@@ -148,12 +151,12 @@ export const AI_NEW_PERSON_CAP_USD = 10
 export function newAccessDraft(appCapUsd: number): AccessDraft {
   const model: AiModelId = 'claude-sonnet-5-5'
   const cap = Math.max(minCapUsd(model), Math.min(AI_NEW_PERSON_CAP_USD, appCapUsd))
-  return { enabled: true, domains: ['inspection'], model, effort: 'medium', cap: String(cap) }
+  return { enabled: true, domains: ['inspection'], model, effort: 'medium', cap: String(cap), automations: false }
 }
 
 /** A person's access as it is saved, to edit. */
 export function draftFromAccess(a: AiAccess): AccessDraft {
-  return { enabled: a.enabled, domains: orderDomains(a.domains), model: a.model, effort: a.effort, cap: String(a.monthlyCapUsd) }
+  return { enabled: a.enabled, domains: orderDomains(a.domains), model: a.model, effort: a.effort, cap: String(a.monthlyCapUsd), automations: a.owner || a.automations }
 }
 
 /** Why the draft cannot be saved, or null when it can. */
@@ -168,7 +171,7 @@ export function checkAccessDraft(d: AccessDraft): string | null {
 
 /** The draft as the server takes it. Call checkAccessDraft first: an unreadable cap goes as 0. */
 export function accessRequest(d: AccessDraft): AiAccessRequest {
-  return { enabled: d.enabled, domains: orderDomains(d.domains), model: d.model, effort: d.effort, monthlyCapUsd: parseCapUsd(d.cap) ?? 0 }
+  return { enabled: d.enabled, domains: orderDomains(d.domains), model: d.model, effort: d.effort, monthlyCapUsd: parseCapUsd(d.cap) ?? 0, automations: d.automations }
 }
 
 /** Whether the draft says anything other than the saved access. */
@@ -179,6 +182,7 @@ export function accessChanged(a: AiAccess, d: AccessDraft): boolean {
     saved.enabled !== d.enabled ||
     saved.model !== d.model ||
     saved.effort !== d.effort ||
+    saved.automations !== d.automations ||
     cap !== a.monthlyCapUsd ||
     saved.domains.join() !== orderDomains(d.domains).join()
   )

@@ -7,7 +7,8 @@
 // figures as cards above the text, the charts its queries asked for, and its
 // queries folded under "How I got this"; then how it ended, when, Save as
 // report and a Copy; the latest answer also offers the questions the model
-// suggests asking next. A saved message changes only when it is saved as a
+// suggests asking next. An automation it proposed (§21) is a card in its
+// place, to activate, edit or discard. A saved message changes only when it is saved as a
 // report, so it is memoised; the answer being written redraws once per frame.
 // ============================================================================
 
@@ -23,6 +24,7 @@ import { AiQueryCard } from './AiQueryCard'
 import { Notice, StopNotice } from './AiNotice'
 import { useSaveAsReport } from './AiSaveReport'
 import { AiSuggestions } from './AiSuggestions'
+import { AutomationProposalCard } from '@/components/automations/AutomationProposalCard'
 import { answerBlocks, type AnswerBlock } from './answerLayout'
 import { queryChart, type ChartModel } from './chartData'
 import { kpiCards, liveKpis } from './kpis'
@@ -238,6 +240,8 @@ export const Answer = memo(function Answer({
           }
           case 'queries':
             return <HowIGotThis key={b.key} queries={b.queries} writing={writing} question={question} />
+          case 'automation':
+            return <AutomationProposalCard key={b.key} part={b.part} writing={writing} />
         }
       })}
       {working && <Working text={working} />}

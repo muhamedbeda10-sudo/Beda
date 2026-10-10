@@ -204,6 +204,8 @@ export interface InspectionSession {
   priorDefectsElsewhere?: boolean
   /** Notes about the order written during this session. Computed by the API. */
   noteCount?: number
+  /** §21 — follow-ups linked to this session that are not done: above 0 it reads "Needs review". Computed by the API. */
+  openFollowUps?: number
   /** Optimistic-concurrency token (§9.4). */
   version: number
 }
@@ -751,6 +753,12 @@ export interface ChatConversation {
   /** Unread messages that mention the reader by name. */
   mentionCount: number
   lastMessage: ChatMessagePreview | null
+  /**
+   * §21 — a direct conversation with the app's automations sender ("QC
+   * Automations"): it only delivers messages; replies are refused, so the
+   * screen shows no composer.
+   */
+  automated?: boolean
 }
 
 /**

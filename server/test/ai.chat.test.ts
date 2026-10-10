@@ -202,8 +202,11 @@ describe('§20 asking a question', () => {
     const system = (p.system as { text: string }[])[0].text
     expect(system).toContain('The factory\'s time zone is Africa/Cairo.')
     expect(system).not.toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
+    // The owner may create automations (§21): their new conversations also get the automations' two tools.
     expect(p.tools).toEqual([
       expect.objectContaining({ name: 'run_sql', strict: true, eager_input_streaming: true, input_schema: expect.objectContaining({ additionalProperties: false, required: ['purpose', 'sql'] }) }),
+      expect.objectContaining({ name: 'propose_automation', strict: true, eager_input_streaming: true }),
+      expect.objectContaining({ name: 'my_automations', strict: true }),
     ])
     expect(p.messages).toHaveLength(1)
     const question = p.messages[0]
@@ -532,7 +535,7 @@ describe('§20 how answers end', () => {
     const results = last(app.model.calls).params.messages[2].content as Anthropic.Beta.BetaToolResultBlockParam[]
     expect(results).toEqual([
       { type: 'tool_result', tool_use_id: 'toolu_bad', is_error: true, content: JSON.stringify({ INVALID_JSON: JSON.stringify({ purpose: 'No SQL' }) }) },
-      { type: 'tool_result', tool_use_id: 'toolu_other', is_error: true, content: 'Unknown tool "drop_everything". The only tool is "run_sql".' },
+      { type: 'tool_result', tool_use_id: 'toolu_other', is_error: true, content: 'Unknown tool "drop_everything". The tools are "run_sql", "propose_automation", "my_automations".' },
       { type: 'tool_result', tool_use_id: 'toolu_case', is_error: true, content: expect.stringMatching(/permission denied/) },
     ])
     const parts = res.done!.message.parts.filter((p): p is AiQueryPart => p.type === 'query')

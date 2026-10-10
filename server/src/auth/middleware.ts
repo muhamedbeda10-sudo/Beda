@@ -22,7 +22,8 @@ declare module 'express-serve-static-core' {
  * Resolve the Bearer token to a user. The token is trusted for identity, but
  * role and active flag are re-read from the database on every request, so a
  * deactivated or removed account or a changed role takes effect immediately
- * rather than when the token expires.
+ * rather than when the token expires. The system sender (§21) never has a
+ * session, whatever a token claims.
  */
 export function authenticate(db: Db, secret: string) {
   return async (req: Request, _res: Response, next: NextFunction) => {
@@ -37,7 +38,7 @@ export function authenticate(db: Db, secret: string) {
               (s.id IS NULL OR s.revoked_at IS NOT NULL OR s.expires_at < now()) AS revoked
          FROM users u
          LEFT JOIN auth_sessions s ON s.id = $2 AND s.user_id = u.id
-        WHERE u.id = $1 AND u.deleted_at IS NULL`,
+        WHERE u.id = $1 AND u.deleted_at IS NULL AND NOT u.is_system`,
       [claims.sub, claims.sid],
     )
     const u = rows[0]
