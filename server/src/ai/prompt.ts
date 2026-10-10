@@ -70,6 +70,7 @@ const DOMAIN_LINES: Record<AiDomain, string> = {
   orders: 'the order sheet ("Access") with its order lines and quantities, and pre-delivery inspections (PDI)',
   materials: 'the coil register, suppliers and master data: item dimensions, defect lists, PT products, work instructions',
   audit: 'the audit trail of changes and the list of accounts',
+  production: "the ERP's production task record: what each machine made per day, by whom and in which shift, with hours, weights and lengths",
 }
 
 /** Meanings that are easy to get wrong, each told only to someone who can read the views it concerns. */
