@@ -71,7 +71,11 @@ const ACTION_LOOK: Record<AiNoticeAction, { icon: typeof BellPlus; tile: string;
   delete: { icon: Trash2, tile: 'bg-rose-600 text-white', wash: 'from-rose-50/80 dark:from-rose-500/10', ring: 'ring-rose-200 dark:ring-rose-500/30' },
 }
 
-/** `writing`: its answer is not finished yet. */
+/**
+ * `writing`: an answer that may still replace it is not finished yet — its
+ * own, or a later one of the conversation that drafted a notice card. Its
+ * buttons wait until it ends.
+ */
 export const AiNoticeProposalCard = memo(function AiNoticeProposalCard({ part, writing = false }: { part: AiNoticePart; writing?: boolean }) {
   // The card as its button or Discard left it, until the conversation itself says so.
   const [decided, setDecided] = useState<AiNoticePart | null>(null)
@@ -313,7 +317,7 @@ function Proposal({ part, notice, writing, onDecided }: { part: AiNoticePart; no
               <Button onClick={() => setConfirmDelete(false)} disabled={busy !== null}>
                 Keep it
               </Button>
-              <Button variant="danger" onClick={() => void apply()} disabled={busy !== null}>
+              <Button variant="danger" onClick={() => void apply()} disabled={writing || busy !== null} data-tip={writing ? PROPOSAL_WAIT : undefined}>
                 {busy === 'apply' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} {busy === 'apply' ? NOTICE_ACTION_BUSY.delete : 'Delete'}
               </Button>
             </>

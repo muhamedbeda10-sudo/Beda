@@ -136,7 +136,31 @@ export async function findTargets(q: Queryable, kind: NoticeTargetKind, query?: 
   }
 }
 
-const orderLineLabel = (o: { orderNumber: string; item: string; itemCode: string }) => `${o.orderNumber} · ${o.item} (${o.itemCode})`
+/** The longest label a target is saved with: the Notices page's rule (noticeTargetSchema), counted as it counts, in UTF-16 units. */
+export const MAX_TARGET_LABEL = 300
+
+/** `text` within `max` UTF-16 units, cut at a whole character with an ellipsis when it is longer. */
+function fitUnits(text: string, max: number): string {
+  if (text.length <= max) return text
+  let out = ''
+  for (const ch of text) {
+    if (out.length + ch.length > max - 1) break
+    out += ch
+  }
+  return `${out.trimEnd()}…`
+}
+
+/**
+ * An order line as people read it: its order number, item and item code. An
+ * item name may be longer than a label is kept (an order line's may run to
+ * 440 characters): the item is shortened then, the number and code kept whole.
+ */
+function orderLineLabel(o: { orderNumber: string; item: string; itemCode: string }): string {
+  const whole = `${o.orderNumber} · ${o.item} (${o.itemCode})`
+  if (whole.length <= MAX_TARGET_LABEL) return whole
+  const room = MAX_TARGET_LABEL - (whole.length - o.item.length)
+  return room >= 8 ? `${o.orderNumber} · ${fitUnits(o.item, room)} (${o.itemCode})` : fitUnits(whole, MAX_TARGET_LABEL)
+}
 
 async function machines(q: Queryable): Promise<{ code: string; displayName: string; factory: string | null }[]> {
   const { rows } = await q.query<{ code: string; displayName: string; factory: string | null }>(
@@ -178,7 +202,8 @@ export async function resolveTargets(q: Queryable, asked: readonly TargetAsked[]
     const key = keyOf(t)
     if (seen.has(key)) return
     seen.add(key)
-    targets.push(t)
+    // Every label within what the Notices page saves (one the notice already has is within it already).
+    targets.push(t.label.length > MAX_TARGET_LABEL ? { ...t, label: fitUnits(t.label, MAX_TARGET_LABEL) } : t)
   }
   for (const [i, t] of asked.entries()) {
     const where = `targets.${i}`

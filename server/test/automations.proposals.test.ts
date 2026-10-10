@@ -152,7 +152,7 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
       expect(prompt).toContain('the assistant\'s owner decides what each person gets. Never call it something that needs development.')
     }
     // Automations are agreed in words before any card, with the person's words passed along; a revision names what it revises.
-    expect(section).toContain('Agree on the plan in words before any card.')
+    expect(section).toContain('Agree on the plan in words before any automation card.')
     expect(section).toContain('Ask them to confirm it or change it, and stop there: no propose_automation call in that answer.')
     expect(section).toContain('Choosing one of several options you offered is agreement only when you described that option as a full plan')
     expect(section).toContain('Call propose_automation only after they agree, in a later message, and pass their words of agreement as confirmation, exactly as they wrote them')

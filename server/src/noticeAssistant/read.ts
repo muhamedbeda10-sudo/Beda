@@ -144,7 +144,8 @@ function listRow(n: ReadNotice, admin: boolean, today: string, timeZone: string)
   row.createdAt = factoryTime(n.createdAt, timeZone)
   if (admin) {
     row.seen = n.seenCount ?? 0
-    row.acknowledged = n.acknowledgedCount ?? 0
+    // Only a notice that asks for it can be acknowledged: a 0 on any other would read as "nobody did".
+    if (n.requiresAck) row.acknowledged = n.acknowledgedCount ?? 0
   } else {
     row.youRead = n.seenAt != null
     if (n.requiresAck) row.youAcknowledged = n.acknowledgedAt != null

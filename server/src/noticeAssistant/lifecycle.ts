@@ -20,9 +20,15 @@
 //     for that share while holding the card would deadlock (the lock-order
 //     care of the automations' activation, §22). Storing a card takes no lock
 //     on the card it revises, so a press never waits on an answer;
-//   • a new version of a new notice whose earlier card was published while the
-//     model was writing (so it was never superseded) would publish the notice
-//     twice: refused, the card turned stale.
+//   • every version of a card is one notice (proposals.ts noticeVersions):
+//     a new notice is refused, the card turned stale, once any other version
+//     of it was published — an earlier one pressed while the model was
+//     writing (so never superseded), a later one, or one beside it. Presses
+//     of versions of one card wait for one another (a lock on the first
+//     version, which no answer storing a card ever takes), so two pressed at
+//     once publish it once;
+//   • a card stored under older rules that no longer passes the page's own
+//     checks writes nothing: refused with the card as it stands.
 // ============================================================================
 
 import type { AiNoticeApplyResponse, AiNoticeDiscardResponse, AiNoticePart } from '@qc/shared/noticeAssistant'
@@ -30,7 +36,7 @@ import type { SaveNoticeRequest } from '@qc/shared/api'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
 import { HttpError, notFound } from '../lib/errors'
 import { createNotice, deleteNotice, loadNotice, noticeSaveSchema, updateNotice, withdrawNotice, type NoticeWriter } from '../modules/noticesService'
-import { findNoticeProposal, noticePart, type StoredNoticeProposal } from './proposals'
+import { findNoticeProposal, noticePart, noticeVersions, type StoredNoticeProposal } from './proposals'
 
 /** A press refused: a 409 with the card as it now stands, for the person's screen to show. */
 const refused = (message: string, part: AiNoticePart) => new HttpError(409, 'conflict', message, { part })
@@ -42,8 +48,12 @@ const MESSAGES = {
   stale: 'The notice changed after this card was made, so it can no longer be applied. Ask the assistant again.',
   failed: 'This card did not pass its checks, so there is nothing to apply. Ask the assistant to fix it.',
   changed: 'The notice changed (or was withdrawn or deleted) after this card was made, so nothing was written. Ask the assistant again.',
-  republish: 'An earlier version of this card was published meanwhile, so this one would publish the notice twice. Ask the assistant to change that notice instead.',
+  republish: 'Another version of this card was published already, so this one would publish the notice twice. Ask the assistant to change that notice instead.',
+  rules: 'This card no longer passes the Notices page\'s checks, so nothing was written. Ask the assistant to make it again.',
 }
+
+/** The advisory lock class of the presses of one card's versions, keyed by its first version: they wait for one another. */
+const VERSIONS_LOCK_CLASS = 8_811_038
 
 /** Why a card cannot be pressed in the state it is in; null while it is proposed and passed. */
 function undecided(p: StoredNoticeProposal): string | null {
@@ -73,11 +83,15 @@ async function noticeUnchanged(tx: Queryable, p: StoredNoticeProposal): Promise<
   return rows[0]?.same === true
 }
 
-/** A card's draft as the Notices page would save it: no photos or files of its own, or the notice's own kept. */
-function saveRequest(p: StoredNoticeProposal, kept: { imageIds: string[]; fileIds: string[] }): SaveNoticeRequest {
+/**
+ * A card's draft as the Notices page would save it: no photos or files of its
+ * own, or the notice's own kept. Checked again as the page's request would
+ * be: a card stored under an older version of these rules applies only if it
+ * still passes; null when it does not (checkCard holds every new card to them).
+ */
+function saveRequest(p: StoredNoticeProposal, kept: { imageIds: string[]; fileIds: string[] }): SaveNoticeRequest | null {
   const d = p.draft!
-  // Checked again as the page's request would be: a card stored by an older version of these rules applies only if it still passes.
-  return noticeSaveSchema.parse({
+  const checked = noticeSaveSchema.safeParse({
     title: d.title,
     body: d.body,
     severity: d.severity,
@@ -87,7 +101,8 @@ function saveRequest(p: StoredNoticeProposal, kept: { imageIds: string[]; fileId
     validTo: d.validTo,
     targets: d.targets,
     ...kept,
-  }) as SaveNoticeRequest
+  })
+  return checked.success ? (checked.data as SaveNoticeRequest) : null
 }
 
 const turnStale = (tx: Queryable, id: string) => tx.query(`UPDATE ai_notice_proposals SET state = 'stale' WHERE id = $1`, [id])
@@ -106,14 +121,16 @@ export async function applyNoticeProposal(db: Db, tz: string, proposalId: string
     let noticeId = p.noticeId
     switch (p.action) {
       case 'create': {
-        if (p.revisesProposalId) {
-          const { rows } = await tx.query(`SELECT 1 FROM ai_notice_proposals WHERE id = $1 AND state = 'applied'`, [p.revisesProposalId])
-          if (rows[0]) {
-            await turnStale(tx, p.id)
-            return { refused: MESSAGES.republish }
-          }
+        // One notice from all the versions of the card: read again once the presses of the others are through.
+        const { first } = await noticeVersions(tx, p.conversationId, p.id)
+        await tx.query('SELECT pg_advisory_xact_lock($1, hashtext($2::text))', [VERSIONS_LOCK_CLASS, first])
+        if ((await noticeVersions(tx, p.conversationId, p.id)).published) {
+          await turnStale(tx, p.id)
+          return { refused: MESSAGES.republish }
         }
-        noticeId = (await createNotice(tx, tz, by, saveRequest(p, { imageIds: [], fileIds: [] }))).id
+        const request = saveRequest(p, { imageIds: [], fileIds: [] })
+        if (!request) return { refused: MESSAGES.rules }
+        noticeId = (await createNotice(tx, tz, by, request)).id
         break
       }
       case 'update':
@@ -126,7 +143,9 @@ export async function applyNoticeProposal(db: Db, tz: string, proposalId: string
         if (p.action === 'update') {
           // Its photos and files stay as they are: the assistant never touches them.
           const notice = (await loadNotice(tx, tz, p.noticeId!))!
-          await updateNotice(tx, tz, by, notice.id, saveRequest(p, { imageIds: notice.imageIds, fileIds: notice.files.map((f) => f.id) }))
+          const request = saveRequest(p, { imageIds: notice.imageIds, fileIds: notice.files.map((f) => f.id) })
+          if (!request) return { refused: MESSAGES.rules }
+          await updateNotice(tx, tz, by, notice.id, request)
         } else if (p.action === 'withdraw') await withdrawNotice(tx, tz, by, p.noticeId!)
         else await deleteNotice(tx, by, p.noticeId!)
         break

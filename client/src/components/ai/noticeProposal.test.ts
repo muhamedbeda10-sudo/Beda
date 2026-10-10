@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AiMessagesResponse } from '@qc/shared/ai'
 import type { AiNoticeDraft, AiNoticePart } from '@qc/shared/noticeAssistant'
 import { ApiError } from '@/lib/api'
+import { applyEvent, endTurn, startTurn, type LiveTurn } from './liveTurn'
 import {
   NOTICE_ACTION_BUTTON,
   NOTICE_ACTION_TITLE,
@@ -12,6 +13,7 @@ import {
   daysText,
   hasOpenNoticeCard,
   matchModeText,
+  noticeCardsWait,
   noticeChanges,
   noticePartOf,
   noticeStateLabel,
@@ -219,6 +221,21 @@ describe('the card in the cached conversation', () => {
     expect(hasOpenNoticeCard(conversation([card({ state: 'applied' })]), 'n2')).toBe(false)
     expect(hasOpenNoticeCard(conversation([card({ ok: false, error: 'title: blank' })]), 'n2')).toBe(false)
     expect(hasOpenNoticeCard(undefined, 'n2')).toBe(false)
+  })
+
+  it('holds the saved cards while the answer being written in their conversation has drafted a notice card', () => {
+    const asking: LiveTurn = { ...startTurn('k1', 'c1', 'Make it until Friday.', '2026-10-10T05:02:00Z'), phase: 'streaming' }
+    const drafted = applyEvent(asking, { type: 'notice', part: card({ proposalId: 'n2' }) })
+    expect(noticeCardsWait(drafted, 'c1')).toBe(true)
+    // Not before it drafts one, nor for a draft the server did not accept (it replaces nothing), nor once it ended.
+    expect(noticeCardsWait(asking, 'c1')).toBe(false)
+    expect(noticeCardsWait(applyEvent(asking, { type: 'notice', part: card({ proposalId: 'n2', ok: false, error: 'validTo: before validFrom' }) }), 'c1')).toBe(false)
+    expect(noticeCardsWait(endTurn(drafted, 'stopped'), 'c1')).toBe(false)
+    expect(noticeCardsWait({ ...drafted, phase: 'done' }, 'c1')).toBe(false)
+    // A card replaces only one of its own conversation; a first question has none before it.
+    expect(noticeCardsWait(drafted, 'c2')).toBe(false)
+    expect(noticeCardsWait({ ...drafted, conversationId: null }, null)).toBe(false)
+    expect(noticeCardsWait(null, 'c1')).toBe(false)
   })
 
   it('reads the card a refusal carries, only when it is this card', () => {

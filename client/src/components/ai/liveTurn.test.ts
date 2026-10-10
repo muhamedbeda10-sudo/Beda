@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AiConversation, AiMessage, AiMessagesResponse, AiQueryPart, AiStatusResponse } from '@qc/shared/ai'
 import type { AiAutomationPart, AutomationDraft } from '@qc/shared/automation'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
-import { answerText, applyEvent, endTurn, isInFlight, latestAnswerKey, liveAnnouncement, liveView, parseStreamEvent, sentAfter, settleMessages, startTurn, threadItems, type LiveTurn } from './liveTurn'
+import { answerText, applyEvent, endTurn, followsKeptRound, isInFlight, latestAnswerKey, liveAnnouncement, liveView, parseStreamEvent, sentAfter, settleMessages, startTurn, threadItems, type LiveTurn } from './liveTurn'
 
 const conversation: AiConversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z' }
 const status: AiStatusResponse = { available: true, model: 'claude-sonnet-5-5', spentUsd: 1, capUsd: 50, monthStart: '2026-10-01T00:00:00Z' }
@@ -102,6 +102,17 @@ describe('the answer being written', () => {
     expect(applyEvent(applyEvent(t, { type: 'text', delta: 'Here it is.' }), { type: 'notice', part: second }).parts).toEqual([card, { type: 'text', text: 'Here it is.' }, second])
     expect(parseStreamEvent('notice', JSON.stringify({ type: 'notice', part: fixed }))).toEqual({ type: 'notice', part: fixed })
     expect(parseStreamEvent('automation', JSON.stringify({ type: 'notice', part: fixed }))).toBeNull()
+  })
+
+  it('knows the round of the tools before an event is kept only once the model writes again', () => {
+    expect(followsKeptRound({ type: 'text', delta: 'Here is the new version.' })).toBe(true)
+    expect(followsKeptRound({ type: 'progress', text: 'Checking the dates' })).toBe(true)
+    // A query or a card may come from a later call of the same round, which is kept only after its last call.
+    const card: AiNoticePart = { type: 'notice', proposalId: 'n2', ok: true, action: 'withdraw', state: 'proposed' }
+    expect(followsKeptRound({ type: 'notice', part: card })).toBe(false)
+    expect(followsKeptRound({ type: 'query_start', queryId: 'q1', purpose: 'Readers', sql: 'SELECT 1' })).toBe(false)
+    expect(followsKeptRound({ type: 'query_end', part: query })).toBe(false)
+    expect(followsKeptRound({ type: 'start', conversation, userMessageId: 'u1' })).toBe(false)
   })
 
   it('reads only the events it knows, and only when the name matches the type', () => {

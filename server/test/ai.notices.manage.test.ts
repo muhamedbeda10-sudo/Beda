@@ -440,7 +440,7 @@ describe('§23 a card decided once', () => {
     await applied(p.boss, first.part!.proposalId)
     const res = await press(p.boss, second.part!.proposalId, 'apply')
     expect(res.status).toBe(409)
-    expect(refusal(res)).toMatchObject({ message: expect.stringMatching(/^An earlier version of this card was published meanwhile/), details: { part: { state: 'stale' } } })
+    expect(refusal(res)).toMatchObject({ message: expect.stringMatching(/^Another version of this card was published already/), details: { part: { state: 'stale' } } })
     expect(await noticeCount('Raced two')).toBe(0)
   })
 })
@@ -509,7 +509,7 @@ describe('§23 a card checked before it is shown', () => {
       [{ action: 'create', draft: draft({ title: '   ' }) }, [/draft\.title: /]],
       [{ action: 'create', draft: draft({ validFrom: factoryDay(-10), validTo: factoryDay(-1) }) }, [/the notice would never be shown/]],
       [{ action: 'create', noticeId: unchanged.id, draft: draft() }, [/noticeId: a new notice has none yet/]],
-      [{ action: 'update' }, [/draft: a change needs the whole notice/, /noticeId: name the notice to change/]],
+      [{ action: 'update' }, [/draft: a change needs what changes/, /noticeId: name the notice to change/]],
       // Photos and files are the Notices page's: a draft cannot carry any.
       [{ action: 'update', noticeId: unchanged.id, draft: { ...draft({ targets: [] }), imageIds: [] } }, [/draft: Unrecognized key\(s\) in object: 'imageIds'/]],
       [{ action: 'update', noticeId: unchanged.id, draft: draft({ title: 'Already right', targets: [] }) }, [/it is the notice exactly as it is/]],
@@ -546,5 +546,148 @@ describe('§23 a card checked before it is shown', () => {
     expect(await reachOf({ targets: [{ kind: 'machine', value: '48' }, { kind: 'role', value: 'supervisor' }] })).toEqual({ everyone: false, people: null, placeBound: true })
     expect(await reachOf({ matchMode: 'any', targets: [{ kind: 'machine', value: '48' }, { kind: 'role', value: 'supervisor' }] })).toEqual({ everyone: false, people: 1, placeBound: true })
     expect(await reachOf({ matchMode: 'any', targets: [{ kind: 'shift', value: 'B' }] })).toEqual({ everyone: false, people: null, placeBound: true })
+  })
+})
+
+describe('§23 one notice from every version of its card', () => {
+  it('never publishes a new notice twice through a chain of versions, however far back the published one is', async () => {
+    // The first version published while the second was being written (so it was never superseded), then a third revises the second.
+    const first = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Chain v1' }) })
+    const second = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Chain v2' }), revisesProposalId: first.part!.proposalId }, first.conversationId)
+    await app.db.query(`UPDATE ai_notice_proposals SET state = 'proposed' WHERE id = $1`, [first.part!.proposalId])
+    const made = await applied(p.boss, first.part!.proposalId)
+    // The model is told the notice is out, and what to ask for instead: a third version would publish it again.
+    const third = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Chain v3' }), revisesProposalId: second.part!.proposalId }, first.conversationId)
+    expect(third.part).toMatchObject({ ok: false, state: 'proposed' })
+    expect(third.part!.error).toContain(`another version of that card was published: it is the notice ${made.noticeId} now. To change it, propose an update with noticeId "${made.noticeId}"`)
+    expect(resultsOf(app)[0]).toMatchObject({ is_error: true })
+    expect((await historyCards(p.boss, first.conversationId)).map((c) => c.state)).toEqual(['applied', 'proposed', 'proposed'])
+    // The second is still refused at its press.
+    expect(refusal(await press(p.boss, second.part!.proposalId, 'apply')).details?.part.state).toBe('stale')
+    expect([await noticeCount('Chain v1'), await noticeCount('Chain v2'), await noticeCount('Chain v3')]).toEqual([1, 0, 0])
+  })
+
+  it('refuses any version of a new notice once another one of them is out: an earlier one, a later one, or one beside it', async () => {
+    // A version that failed leaves its card as it was, so the first and the third are both live.
+    const first = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Family v1' }) })
+    const failed = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: ' ' }), revisesProposalId: first.part!.proposalId }, first.conversationId)
+    expect(failed.part).toMatchObject({ ok: false })
+    const third = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Family v3' }), revisesProposalId: failed.part!.proposalId }, first.conversationId)
+    expect(third.part).toMatchObject({ ok: true, state: 'proposed' })
+    expect((await historyCards(p.boss, first.conversationId)).map((c) => c.state)).toEqual(['proposed', 'proposed', 'proposed'])
+    await applied(p.boss, third.part!.proposalId)
+    const older = await press(p.boss, first.part!.proposalId, 'apply')
+    expect(older.status).toBe(409)
+    expect(refusal(older)).toMatchObject({ message: expect.stringMatching(/^Another version of this card was published/), details: { part: { state: 'stale' } } })
+    expect([await noticeCount('Family v1'), await noticeCount('Family v3')]).toEqual([0, 1])
+
+    // Two versions of one card (the model named the same card twice): the second leaves the first live, and only one goes out.
+    const root = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Twin v1' }) })
+    const a = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Twin a' }), revisesProposalId: root.part!.proposalId }, root.conversationId)
+    const b = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Twin b' }), revisesProposalId: root.part!.proposalId }, root.conversationId)
+    expect((await historyCards(p.boss, root.conversationId)).map((c) => c.state)).toEqual(['superseded', 'proposed', 'proposed'])
+    // Pressed at once, both held where the notice is written (its author's account locked here): the second waits for the
+    // first before it looks at the other versions, so it finds the notice out, never both writing it.
+    const lock = await app.db.connect()
+    let presses: Awaited<ReturnType<typeof press>>[]
+    try {
+      await lock.query('BEGIN')
+      await lock.query('SELECT 1 FROM users WHERE id = $1 FOR UPDATE', [p.boss.user.id])
+      const both = Promise.all([press(p.boss, a.part!.proposalId, 'apply'), press(p.boss, b.part!.proposalId, 'apply')])
+      const waiting = async () => (await app.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`)).rows[0].n >= 2
+      for (let i = 0; !(await waiting()); i++) {
+        if (i === 200) throw new Error('Timed out waiting for both presses to wait')
+        await new Promise((r) => setTimeout(r, 25))
+      }
+      await lock.query('COMMIT')
+      presses = await both
+    } finally {
+      lock.release()
+    }
+    expect(presses.map((r) => r.status).sort()).toEqual([200, 409])
+    expect([await noticeCount('Twin a'), await noticeCount('Twin b')].sort()).toEqual([0, 1])
+  })
+})
+
+describe('§23 a change changes only what it names', () => {
+  it('keeps every field a change leaves out as the notice has it, and ends it only when asked', async () => {
+    const notice = await pageNotice(app, p.boss, {
+      title: 'Coil change on 58',
+      body: 'Keep this text',
+      validFrom: factoryDay(-3),
+      validTo: factoryDay(10),
+      targets: [
+        { kind: 'machine', value: '58', label: '58-A. Welding Line-LM4' },
+        { kind: 'role', value: 'inspector', label: 'Inspector' },
+      ],
+    })
+    const { part, result } = await proposeInChat(p.boss, { action: 'update', noticeId: notice.id, draft: { title: 'Coil change on 58, both ends', severity: 'critical' } })
+    expect(part).toMatchObject({
+      ok: true,
+      draft: {
+        title: 'Coil change on 58, both ends',
+        body: 'Keep this text',
+        severity: 'critical',
+        requiresAck: true,
+        matchMode: 'all',
+        validFrom: factoryDay(-3),
+        validTo: factoryDay(10),
+        targets: notice.targets,
+      },
+      reach: { everyone: false, people: null, placeBound: true },
+    })
+    expect(resultJson(result)).toMatchObject({ notice: { days: `${factoryDay(-3)} to ${factoryDay(10)}`, audience: ['Machine: 58-A. Welding Line-LM4', 'Role: Inspector'] } })
+    await applied(p.boss, part!.proposalId)
+    expect((await auditOf(notice.id)).filter((r) => r.action === 'update').map((r) => r.field)).toEqual(['title', 'severity'])
+
+    // null is "until withdrawn": the end goes only when the draft says so.
+    const open = await proposeInChat(p.boss, { action: 'update', noticeId: notice.id, draft: { validTo: null } })
+    expect(open.part).toMatchObject({ ok: true, draft: { validTo: null, validFrom: factoryDay(-3), body: 'Keep this text', title: 'Coil change on 58, both ends' } })
+    // A new notice still needs its title, severity and acknowledgement.
+    const bare = await proposeInChat(p.boss, { action: 'create', draft: { body: 'No title' } })
+    expect(bare.part).toMatchObject({ ok: false })
+    expect(bare.part!.error).toMatch(/draft\.title: Required/)
+    expect(bare.part!.error).toMatch(/draft\.severity: Required/)
+    expect(bare.part!.error).toMatch(/draft\.requiresAck: Required/)
+  })
+
+  it('never counts the match mode of one kind of target as a change, nor writes it', async () => {
+    const notice = await pageNotice(app, p.boss, { title: 'One machine', targets: [{ kind: 'machine', value: '58', label: '58-A. Welding Line-LM4' }] })
+    const same = await proposeInChat(p.boss, { action: 'update', noticeId: notice.id, draft: { matchMode: 'any' } })
+    expect(same.part!.error).toMatch(/it is the notice exactly as it is/)
+    const retitled = await proposeInChat(p.boss, { action: 'update', noticeId: notice.id, draft: { title: 'One machine only', matchMode: 'any' } })
+    expect(retitled.part).toMatchObject({ ok: true, draft: { title: 'One machine only', matchMode: 'all' } })
+    await applied(p.boss, retitled.part!.proposalId)
+    expect((await auditOf(notice.id)).filter((r) => r.action === 'update').map((r) => r.field)).toEqual(['title'])
+  })
+})
+
+describe('§23 a card that passed can be applied', () => {
+  it('keeps the label of an order line with a long item within what the Notices page saves', async () => {
+    const item = `Beam ${'x'.repeat(290)}`.slice(0, 295)
+    const imported = await app.api('POST', '/api/orders/import', {
+      token: p.owner.token,
+      body: { rows: [{ lineKey: 'L-LONG', orderNumber: '20999-LONG', item, itemCode: 'LONG-1', workCenterCode: '58', requiredQty: 10, finishedQty: 0, customer: 'Beta Storage' }] },
+    })
+    expect(imported.status, JSON.stringify(imported.body)).toBeLessThan(300)
+    const { rows } = await app.db.query<{ id: string }>(`SELECT id FROM production_orders WHERE line_key = 'L-LONG'`)
+    app.model.reply({ content: [findTargets({ kind: 'order-line', query: '20999' })] }, { content: [text('Found it.')] })
+    await ask(app, p.boss, 'Which line?')
+    const found = resultJson<{ values: { value: string; label: string }[] }>(resultsOf(app)[0]).values
+    expect(found[0].label.length).toBeLessThanOrEqual(300)
+    expect(found[0].label).toMatch(/^20999-LONG · Beam x+…? ?\(LONG-1\)$/)
+    const { part } = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Long item', targets: [{ kind: 'order-line', value: rows[0].id }] }) })
+    expect(part).toMatchObject({ ok: true })
+    const label = part!.draft!.targets[0].label
+    expect(label).toBe(found[0].label)
+    const made = await applied(p.boss, part!.proposalId)
+    const notice = (await app.api<Notice[]>('GET', '/api/notices/admin', { token: p.boss.token })).body.find((x) => x.id === made.noticeId)!
+    expect(notice.targets[0]).toMatchObject({ kind: 'order-line', value: rows[0].id, label })
+  })
+
+  it('tells the model when a card reaches nobody', async () => {
+    const { part, result } = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'For the viewer', targets: [{ kind: 'user', value: p.viewer.user.id }] }) })
+    expect(part).toMatchObject({ ok: true, reach: { everyone: false, people: 0, placeBound: false } })
+    expect(resultJson(result).note).toContain('It reaches nobody now')
   })
 })

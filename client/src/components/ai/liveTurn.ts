@@ -83,7 +83,8 @@ export function applyEvent(t: LiveTurn, e: AiStreamEvent): LiveTurn {
     }
     case 'notice': {
       // §23 — a notice card, where it came; the same card again (sent twice) takes its place. A card it replaced in an
-      // earlier answer is marked so in the saved conversation, fetched again as it comes (AiAssistantProvider).
+      // earlier answer is marked so in the saved conversation, fetched again once the server keeps this one
+      // (AiAssistantProvider); until then that card waits (noticeCardsWait).
       const at = t.parts.findIndex((p) => p.type === 'notice' && p.proposalId === e.part.proposalId)
       const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
       return { ...t, phase: 'streaming', progress: null, parts }
@@ -96,6 +97,15 @@ export function applyEvent(t: LiveTurn, e: AiStreamEvent): LiveTurn {
       return t
   }
 }
+
+/**
+ * Whether an event comes from a later call of the model than the tool calls
+ * before it, so the round they ran in is kept by now: the server runs a
+ * round's calls once the model has written it, keeps the round, then calls
+ * the model again — and text, and its word on what it is doing, come only
+ * while it writes. A query or a card may still be of the round being run.
+ */
+export const followsKeptRound = (e: AiStreamEvent): boolean => e.type === 'text' || e.type === 'progress'
 
 /** The answer ended on this side: the asker stopped it, or the connection or the request failed. */
 export function endTurn(t: LiveTurn, phase: 'stopped' | 'error', error?: { code: ApiErrorCode; message: string }): LiveTurn {

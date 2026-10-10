@@ -62,7 +62,9 @@ export const LIST_NOTICES_TOOL: Anthropic.Beta.BetaTool = {
       status: {
         type: 'string',
         enum: [...LIST_STATUSES],
-        description: 'active (shown today; the default), upcoming (starts on a later day), expired (its last day has passed), withdrawn (stopped early), or all.',
+        description:
+          'active (shown today; the default), upcoming (starts on a later day), expired (its last day has passed), withdrawn (stopped early), or all. ' +
+          'Use all when looking for a particular notice (to read, change, withdraw or delete it) or when the question is about the past.',
       },
       text: { type: 'string', description: 'Optional. Words to find in the title or the text.' },
       targetKind: { type: 'string', enum: [...NOTICE_TARGET_KINDS], description: 'Optional. Only notices aimed at a target of this kind.' },
@@ -115,6 +117,7 @@ export const PROPOSE_NOTICE_CHANGE_TOOL: Anthropic.Beta.BetaTool = {
   description:
     'Show the person a card for a new notice, a change to a notice, its withdrawal or its deletion. The card shows exactly how the notice will look, its days, its audience and how many people it reaches, ' +
     'with a button (Publish, Apply changes, Withdraw or Delete) and Discard: nothing changes until the person presses the button. ' +
+    'Call it as soon as the request is clear: the card is the confirmation, so no agreement in words is needed first. ' +
     'Returns the card (its proposalId, what it shows, whom it reaches), or the exact problems to fix before calling again.',
   eager_input_streaming: true,
   input_schema: PROPOSE_INPUT_SCHEMA as Anthropic.Beta.BetaTool.InputSchema,
@@ -252,13 +255,18 @@ async function propose(ctx: NoticeToolContext, tu: ToolUse): Promise<ToolOutcome
   if (action === 'update' && shown.attachments) notes.push("The notice's photos and files stay as they are; to add or remove some, the person uses the Notices page.")
   if (action === 'create') notes.push('To add photos or files, the person opens the notice on the Notices page once it is published.')
   if (supersedes) notes.push('The card of the version it revises is marked as replaced by this one.')
+  // Aimed at people none of whom receives notices (a viewer), or, under all, at people and a role none of them has.
+  const reach = record.reach!
+  if (!reach.everyone && reach.people === 0 && !reach.placeBound) {
+    notes.push('It reaches nobody now (the people it names do not receive notices, or no one matches every kind under all): tell the person, and suggest other targets or matchMode any.')
+  }
   const content = {
     proposed: true,
     proposalId: record.id,
     action,
     ...(record.noticeId ? { noticeId: record.noticeId } : {}),
     notice: shownForModel(shown),
-    reach: reachText(record.reach!),
+    reach: reachText(reach),
     note: notes.join(' '),
   }
   return { result: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(content) }, store }

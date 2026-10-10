@@ -7,7 +7,10 @@
 // valid targets, a match mode), with a few more that only a draft needs:
 // every target names something that exists, a new notice is shown on some
 // day from today, a change changes something, and a withdrawal is of a
-// notice still shown or still to come.
+// notice still shown or still to come. A change names only what changes:
+// every field it leaves out stays as the notice has it, never a new
+// notice's default. The draft is checked once more as the press will save
+// it, labels and all, so a card that passes is one its button can apply.
 // ============================================================================
 
 import { z } from 'zod'
@@ -27,7 +30,9 @@ import { draftOfNotice, noticeStatus, reachOf } from './view'
 
 const DRAFT_SCHEMA = {
   type: 'object',
-  description: 'create and update only: the whole notice as it will be. For update, everything the person did not ask to change kept as it is.',
+  description:
+    'create and update only. create: the new notice (title, severity and requiresAck at least; anything left out takes the default given). ' +
+    'update: only what changes; every field left out stays as the notice has it.',
   properties: {
     title: { type: 'string', description: "A short title, one line, in the person's language: exactly as readers will see it (at most 200 characters)." },
     body: { type: 'string', description: "The text: clear and complete, in the person's language (at most 4000 characters)." },
@@ -36,16 +41,18 @@ const DRAFT_SCHEMA = {
     matchMode: {
       type: 'string',
       enum: ['all', 'any'],
-      description: 'How the targets combine. all: every kind of target must hold, several values of one kind being alternatives. any: one target of any kind is enough.',
+      description:
+        'How targets of different kinds combine (several values of one kind are always alternatives). all: every kind must hold (people named together with a role: only those who have it). any: one target of any kind is enough. One kind only: all.',
     },
-    validFrom: { type: 'string', description: 'The first factory day it is shown, YYYY-MM-DD. Today unless the person says otherwise.' },
+    validFrom: { type: 'string', description: 'The first factory day it is shown, YYYY-MM-DD. New notice: today unless the person gives a start.' },
     validTo: {
       anyOf: [{ type: 'string' }, { type: 'null' }],
-      description: 'The last factory day it is shown, YYYY-MM-DD; null: until withdrawn. Null unless the person gives an end.',
+      description: 'The last factory day it is shown, YYYY-MM-DD, or null: until withdrawn. New notice: null unless the person gives an end. Update: leave it out to keep the end the notice has.',
     },
     targets: {
       type: 'array',
-      description: 'Whom or where it is aimed at, each value as find_notice_targets returned it. Empty: everyone, everywhere.',
+      description:
+        'Whom or where it is aimed at: each value as find_notice_targets returned it or, for a target the notice already has, as notice_details shows it. Empty: everyone, everywhere. Update: the whole new list, or left out to keep it.',
       items: {
         type: 'object',
         properties: {
@@ -57,7 +64,7 @@ const DRAFT_SCHEMA = {
       },
     },
   },
-  required: ['title', 'body', 'severity', 'requiresAck', 'matchMode', 'validFrom', 'validTo', 'targets'],
+  // Nothing is required here: a change names only what changes. A new notice's own needs are checked below (createDraftInput).
   additionalProperties: false,
 }
 
@@ -68,9 +75,9 @@ export const PROPOSE_INPUT_SCHEMA = {
     action: {
       type: 'string',
       enum: [...AI_NOTICE_ACTIONS],
-      description: 'create: a new notice. update: change a notice (the whole new version in draft). withdraw: stop showing it, keeping the record and its acknowledgements. delete: remove it from every list.',
+      description: 'create: a new notice. update: change a notice (what changes, in draft). withdraw: stop showing it, keeping the record and its acknowledgements. delete: remove it from every list.',
     },
-    noticeId: { type: 'string', description: 'update, withdraw and delete: the id of the notice (from list_notices).' },
+    noticeId: { type: 'string', description: "update, withdraw and delete: the notice's id (list_notices finds it; for update, read it first with notice_details)." },
     draft: DRAFT_SCHEMA,
     revisesProposalId: {
       type: 'string',
@@ -95,11 +102,14 @@ const targetInput = z
   })
   .strict()
 
-const draftInput = z
+const severityInput = z.enum(NOTICE_SEVERITIES as unknown as [NoticeSeverity, ...NoticeSeverity[]])
+
+/** A new notice: its title, severity and acknowledgement given; the rest has its default (checkCard). */
+const createDraftInput = z
   .object({
     title: z.string(),
     body: optional(z.string()),
-    severity: z.enum(NOTICE_SEVERITIES as unknown as [NoticeSeverity, ...NoticeSeverity[]]),
+    severity: severityInput,
     requiresAck: z.boolean(),
     matchMode: optional(z.enum(['all', 'any'])),
     validFrom: optional(z.string()),
@@ -108,11 +118,31 @@ const draftInput = z
   })
   .strict()
 
+/**
+ * A change: what changes only, every field left out kept as the notice has
+ * it. validTo tells "left out" (kept) from null (until withdrawn).
+ */
+const updateDraftInput = z
+  .object({
+    title: optional(z.string()),
+    body: optional(z.string()),
+    severity: optional(severityInput),
+    requiresAck: optional(z.boolean()),
+    matchMode: optional(z.enum(['all', 'any'])),
+    validFrom: optional(z.string()),
+    validTo: z.string().nullable().optional(),
+    targets: optional(z.array(targetInput)),
+  })
+  .strict()
+
+type DraftInput = z.infer<typeof updateDraftInput>
+
 const proposeInput = z
   .object({
     action: z.enum(AI_NOTICE_ACTIONS as unknown as [AiNoticeAction, ...AiNoticeAction[]]),
     noticeId: optional(z.string()),
-    draft: optional(draftInput),
+    // Read by its action's own schema (checkCard): a new notice and a change need different things.
+    draft: optional(z.unknown()),
     revisesProposalId: optional(z.string()),
   })
   .strict()
@@ -170,7 +200,14 @@ export interface CheckedCard {
   notes: string[]
 }
 
-/** The whole notice compared, its photos and files aside (a change keeps them) and its targets in any order. */
+/**
+ * Whether the match mode decides anything: only between targets of different
+ * kinds. With none, or with values of one kind (always alternatives), all and
+ * any reach the very same people (modules/notices.ts noticeApplies).
+ */
+const modeMatters = (targets: readonly { kind: string }[]): boolean => new Set(targets.map((t) => t.kind)).size > 1
+
+/** The whole notice compared, its photos and files aside (a change keeps them), its targets in any order, its match mode where it matters. */
 const sameNotice = (a: AiNoticeDraft, b: AiNoticeDraft): boolean => {
   const targets = (d: AiNoticeDraft) => d.targets.map((t) => `${t.kind}:${t.value}`).sort().join('\n')
   return (
@@ -178,7 +215,7 @@ const sameNotice = (a: AiNoticeDraft, b: AiNoticeDraft): boolean => {
     a.body === b.body &&
     a.severity === b.severity &&
     a.requiresAck === b.requiresAck &&
-    a.matchMode === b.matchMode &&
+    (a.matchMode === b.matchMode || !modeMatters(a.targets)) &&
     a.validFrom === b.validFrom &&
     a.validTo === b.validTo &&
     targets(a) === targets(b)
@@ -200,7 +237,9 @@ export async function checkCard(q: Queryable, tz: string, action: AiNoticeAction
   const call = parsed.data
   const today = factoryDay(now, tz)
   const wantsDraft = action === 'create' || action === 'update'
-  if (wantsDraft && !call.draft) out.errors.push(`draft: ${action === 'create' ? 'a new notice' : 'a change'} needs the whole notice as it will be.`)
+  if (wantsDraft && !call.draft) {
+    out.errors.push(action === 'create' ? 'draft: a new notice needs its draft: its title, severity and requiresAck at least.' : 'draft: a change needs what changes (every field left out stays as it is).')
+  }
   if (!wantsDraft && call.draft) out.errors.push(`draft: a ${action === 'withdraw' ? 'withdrawal' : 'deletion'} carries no draft; leave it out.`)
   if (action === 'create' && call.noticeId) out.errors.push('noticeId: a new notice has none yet; leave it out (to change a notice, use action "update").')
 
@@ -222,22 +261,30 @@ export async function checkCard(q: Queryable, tz: string, action: AiNoticeAction
     }
   }
 
-  if (call.draft) {
-    const d = call.draft
-    const validFrom = d.validFrom ?? today
-    const validTo = d.validTo ?? null
+  const read = !wantsDraft || call.draft === undefined ? null : (action === 'update' ? updateDraftInput : createDraftInput).safeParse(call.draft)
+  if (read && !read.success) out.errors.push(...describeIssues(read.error, 'draft'))
+  // A change to a notice that cannot be read has nothing to keep fields from: its noticeId is reported above.
+  if (read?.success && (action !== 'update' || current)) {
+    const d: DraftInput = read.data
+    // What a change leaves out stays as the notice has it; a new notice takes the defaults.
+    const base = action === 'update' ? current!.draft : null
+    const validFrom = d.validFrom ?? base?.validFrom ?? today
+    const validTo = d.validTo !== undefined ? d.validTo : (base?.validTo ?? null)
     if (!isAiDay(validFrom)) out.errors.push(`draft.validFrom: "${validFrom.slice(0, 40)}" is not a day; write YYYY-MM-DD.`)
     if (validTo !== null && !isAiDay(validTo)) out.errors.push(`draft.validTo: "${validTo.slice(0, 40)}" is not a day; write YYYY-MM-DD, or null for until withdrawn.`)
+    const asked = d.targets ?? base?.targets ?? []
+    // Between targets of one kind the match mode decides nothing: a change keeps the notice's, so nothing is written that changes nothing.
+    const matchMode = base && !modeMatters(asked) ? base.matchMode : (d.matchMode ?? base?.matchMode ?? 'all')
     // The page's own rules first, on the targets as written: kinds, values in their form, how many.
     const asSaved = noticeSaveSchema.safeParse({
-      title: d.title,
-      body: d.body ?? '',
-      severity: d.severity,
-      requiresAck: d.requiresAck,
-      matchMode: d.matchMode ?? 'all',
+      title: d.title ?? base?.title,
+      body: d.body ?? base?.body ?? '',
+      severity: d.severity ?? base?.severity,
+      requiresAck: d.requiresAck ?? base?.requiresAck,
+      matchMode,
       validFrom,
       validTo,
-      targets: (d.targets ?? []).map((t) => ({ kind: t.kind, value: t.value })),
+      targets: asked.map((t) => ({ kind: t.kind, value: t.value })),
     })
     if (!asSaved.success) out.errors.push(...describeIssues(asSaved.error, 'draft'))
     else {
@@ -254,6 +301,9 @@ export async function checkCard(q: Queryable, tz: string, action: AiNoticeAction
         validTo: s.validTo,
         targets: resolved.targets,
       }
+      // Then the notice exactly as the press will save it, labels and all: a card that passes here is one its button can apply.
+      const pressed = noticeSaveSchema.safeParse(draft)
+      if (!pressed.success) out.errors.push(...describeIssues(pressed.error, 'draft'))
       // A change keeps the notice's photos and files: the card says how many.
       if (current?.draft.attachments) draft.attachments = current.draft.attachments
       if (action === 'create' && draft.validTo !== null && draft.validTo < today) {

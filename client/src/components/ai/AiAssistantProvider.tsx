@@ -33,7 +33,7 @@ import { newSubmissionId } from '@/lib/utils'
 import { keys, useAiMe } from '@/services/queries'
 import { revisedProposalId, supersedeAutomationPart } from '@/components/automations/wording'
 import { hasOpenNoticeCard } from './noticeProposal'
-import { applyEvent, endTurn, isInFlight, parseStreamEvent, sentAfter, settleMessages, startTurn, type LiveTurn } from './liveTurn'
+import { applyEvent, endTurn, followsKeptRound, isInFlight, parseStreamEvent, sentAfter, settleMessages, startTurn, type LiveTurn } from './liveTurn'
 import { STOP_SETTLE_MS, retryAfterStop } from './retryAfterStop'
 import { aiWorkspaceHref, isAiWorkspacePath, type AiOpenReport, type AiWorkspaceList, type AiWorkspaceState } from './workspace'
 
@@ -232,6 +232,13 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
 
       let conversation: AiConversation | null = null
       let userMessageId: string | null = null
+      // §23 — a conversation to fetch again once the round that drafted a notice card is kept (see 'notice' below).
+      let recheck: string | null = null
+      const recheckNotices = () => {
+        if (!recheck) return
+        void qc.invalidateQueries({ queryKey: keys.aiMessages(recheck) })
+        recheck = null
+      }
       let ended = false
       // The server answered the request with a refusal: nothing of the question was kept.
       let refused = false
@@ -241,6 +248,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
         for await (const raw of readSse(body)) {
           const e = parseStreamEvent(raw.event, raw.data)
           if (!e) continue
+          if (followsKeptRound(e)) recheckNotices()
           if (e.type === 'text') {
             pending += e.delta
             if (!frame) frame = requestAnimationFrame(flush)
@@ -266,12 +274,12 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
             const id = conversation?.id ?? from
             if (replaced && id) qc.setQueryData<AiMessagesResponse>(keys.aiMessages(id), (old) => supersedeAutomationPart(old, replaced))
           } else if (e.type === 'notice') {
-            // §23 — a newer notice card may replace one of an earlier answer still waiting for its button (the server
-            // marks it so as it keeps this one): with such a card on screen, the conversation is fetched again now.
+            // §23 — a newer notice card may replace one of an earlier answer still waiting for its button. The server
+            // marks it so only as it keeps the round that drafted this one, once every call of that round has run, so
+            // with such a card on screen the conversation is fetched again after that: at the model's next words, or
+            // as the answer ends. Until then the earlier cards wait (noticeCardsWait).
             const id = conversation?.id ?? from
-            if (e.part.ok && id && hasOpenNoticeCard(qc.getQueryData<AiMessagesResponse>(keys.aiMessages(id)), e.part.proposalId)) {
-              void qc.invalidateQueries({ queryKey: keys.aiMessages(id) })
-            }
+            if (e.part.ok && id && hasOpenNoticeCard(qc.getQueryData<AiMessagesResponse>(keys.aiMessages(id)), e.part.proposalId)) recheck = id
           } else if (e.type === 'done') {
             // The event also carries the month's figures: the chat shows no amounts, so they are left where they are.
             ended = true

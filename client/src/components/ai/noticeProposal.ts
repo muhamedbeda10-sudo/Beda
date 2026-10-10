@@ -3,8 +3,9 @@
 // change, a withdrawal, a deletion) and how it stands, the days a notice
 // shows, how its targets combine and whom it reaches, what a change changes
 // (before → after, field by field), what becomes of its photos and files,
-// the draft as the reader will see it, and the card as it stands now in the
-// cached conversation. Pure, so it is tested without a browser.
+// the draft as the reader will see it, the card as it stands now in the
+// cached conversation, and when the cards wait for the answer being written.
+// Pure, so it is tested without a browser.
 // ============================================================================
 
 import type { AiMessagesResponse } from '@qc/shared/ai'
@@ -13,6 +14,7 @@ import { NOTICE_TARGET_KINDS, NOTICE_TARGET_LABEL, type Notice, type NoticeSever
 import type { BadgeTone } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { formatDate } from '@/lib/utils'
+import { isInFlight, type LiveTurn } from './liveTurn'
 
 // ---- What it does, and how it stands ------------------------------------------------------
 
@@ -274,6 +276,19 @@ export function replaceNoticePart(old: AiMessagesResponse | undefined, part: AiN
  */
 export function hasOpenNoticeCard(old: AiMessagesResponse | undefined, except: string): boolean {
   return !!old?.messages.some((m) => m.parts.some((p) => p.type === 'notice' && p.ok && p.state === 'proposed' && p.proposalId !== except))
+}
+
+/**
+ * Whether the cards of a conversation's saved answers wait before they can be
+ * decided: the answer being written in it has drafted a notice card that
+ * passed, which may be a newer version of one of them. The server marks the
+ * one it replaces only as it keeps the round that drafted it, after every
+ * call of that round — and a card pressed before then would go out just
+ * before its replacement is kept. So their buttons wait until the answer
+ * ends; the conversation fetched meanwhile says which one it replaced.
+ */
+export function noticeCardsWait(live: LiveTurn | null, conversationId: string | null): boolean {
+  return !!live && conversationId !== null && live.conversationId === conversationId && isInFlight(live) && live.parts.some((p) => p.type === 'notice' && p.ok)
 }
 
 /** The card as a refusal says it stands now (out of date, applied already), when the server sent it along. */

@@ -10,7 +10,9 @@
 //
 // A new version of a card of the same conversation (revisesProposalId)
 // supersedes it in the transaction that stores the new one, and only when
-// the new one passed — as automations' proposals do (§22).
+// the new one passed — as automations' proposals do (§22). All the versions
+// of a card are one notice: of the new notices among them, only one is ever
+// published (noticeVersions; lifecycle.ts).
 // ============================================================================
 
 import type { AiNoticeAction, AiNoticeDraft, AiNoticePart, AiNoticeProposalState, AiNoticeReach } from '@qc/shared/noticeAssistant'
@@ -70,13 +72,58 @@ export interface NoticeRevision {
 
 const quotedId = (s: string) => `"${cutChars(s, 60, true)}"`
 
+/** A version of a new notice that was published: the notice it made, and whether that is still there. */
+export interface PublishedVersion {
+  proposalId: string
+  noticeId: string
+  noticeLive: boolean
+}
+
+/**
+ * A card's versions: every card of its conversation linked to it through
+ * revisesProposalId — back to the first and on to every later one, one card
+ * revised twice giving two versions side by side. They are all versions of
+ * one notice, so of the new notices among them only one may ever be
+ * published. `first`: the one card they all go back to.
+ */
+export async function noticeVersions(q: Queryable, conversationId: string, proposalId: string): Promise<{ first: string; published: PublishedVersion | null }> {
+  // A conversation holds a handful of cards: read once, walked here.
+  const { rows } = await q.query<{ id: string; revises: string | null; action: AiNoticeAction; state: AiNoticeProposalState; noticeId: string | null; noticeLive: boolean }>(
+    `SELECT p.id, p.revises_proposal_id AS revises, p.action, p.state, p.notice_id AS "noticeId",
+            EXISTS (SELECT 1 FROM notices n WHERE n.id = p.notice_id AND n.deleted_at IS NULL) AS "noticeLive"
+       FROM ai_notice_proposals p
+      WHERE p.conversation_id = $1`,
+    [conversationId],
+  )
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  const firsts = new Map<string, string>()
+  const firstOf = (id: string): string => {
+    const path: string[] = []
+    let at = id
+    // A card names only one stored before it, so the walk ends; the guard is for a link no card should have.
+    while (!firsts.has(at) && !path.includes(at)) {
+      path.push(at)
+      const up = byId.get(at)?.revises
+      if (!up || !byId.has(up)) break
+      at = up
+    }
+    const first = firsts.get(at) ?? at
+    for (const p of path) firsts.set(p, first)
+    return first
+  }
+  const first = firstOf(proposalId)
+  const made = rows.find((r) => r.action === 'create' && r.state === 'applied' && r.noticeId && firstOf(r.id) === first)
+  return { first, published: made ? { proposalId: made.id, noticeId: made.noticeId!, noticeLive: made.noticeLive } : null }
+}
+
 /**
  * Check the card a new one revises: one of the same conversation, made for
  * the same person. One still proposed (and passed) is superseded when the new
  * one is stored; one discarded, superseded, stale already or that did not
  * pass leaves nothing to mark. One applied has done what it did: a new
  * version of it would do it twice, so the model is told what to ask for
- * instead.
+ * instead — as when another version of it published its notice already
+ * (pressed while a later version was being written, say).
  */
 export async function checkNoticeRevision(q: Queryable, conversationId: string, userId: string, revisesProposalId: string): Promise<NoticeRevision> {
   const none = (error: string): NoticeRevision => ({ errors: [error], revises: null, supersedes: null })
@@ -100,6 +147,14 @@ export async function checkNoticeRevision(q: Queryable, conversationId: string, 
           ? `that card was applied already. To change the notice again, propose a new ${revised.action === 'update' ? 'update' : 'change'} of notice ${revised.noticeId} and leave revisesProposalId out.`
           : 'that card was applied already, and its notice is deleted now. Leave revisesProposalId out.'
     return none(`revisesProposalId: ${what}`)
+  }
+  const { published } = await noticeVersions(q, conversationId, revised.id)
+  if (published) {
+    return none(
+      published.noticeLive
+        ? `revisesProposalId: another version of that card was published: it is the notice ${published.noticeId} now. To change it, propose an update with noticeId "${published.noticeId}" and leave revisesProposalId out.`
+        : 'revisesProposalId: another version of that card was published, and the notice it made has since been deleted. Propose this as a new notice and leave revisesProposalId out.',
+    )
   }
   return { errors: [], revises: revised.id, supersedes: revised.ok && revised.state === 'proposed' ? revised.id : null }
 }

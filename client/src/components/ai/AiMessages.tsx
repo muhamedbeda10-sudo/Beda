@@ -177,6 +177,8 @@ const NO_CHARTS: ReadonlyMap<string, ChartModel> = new Map()
  * its filters. `question` is the question it replies to, for its exports and
  * Ask again. `latest`: the conversation's last answer, the one that offers
  * its follow-up questions (`onSuggestion` puts one in the box).
+ * `noticesWait`: a later answer, still being written, drafted a notice card
+ * that may replace one of this answer's (noticeCardsWait), so they wait.
  */
 export const Answer = memo(function Answer({
   message,
@@ -186,6 +188,7 @@ export const Answer = memo(function Answer({
   latest = false,
   onSuggestion,
   onOpenReport,
+  noticesWait = false,
 }: {
   message?: AiMessage
   turn?: LiveTurn
@@ -194,6 +197,7 @@ export const Answer = memo(function Answer({
   latest?: boolean
   onSuggestion?: (q: string) => void
   onOpenReport?: (reportId: string) => void
+  noticesWait?: boolean
 }) {
   const writing = !!turn && isInFlight(turn)
   // The answer as it ended: the saved one, or the turn's once done; until then, the parts as streamed,
@@ -245,7 +249,7 @@ export const Answer = memo(function Answer({
           case 'automation':
             return <AutomationProposalCard key={b.key} part={b.part} writing={writing} />
           case 'notice':
-            return <AiNoticeProposalCard key={b.key} part={b.part} writing={writing} />
+            return <AiNoticeProposalCard key={b.key} part={b.part} writing={writing || noticesWait} />
         }
       })}
       {working && <Working text={working} />}
