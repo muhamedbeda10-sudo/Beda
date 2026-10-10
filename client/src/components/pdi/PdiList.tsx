@@ -6,8 +6,9 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ChevronRight, FileText } from 'lucide-react'
 import type { PDIListFilters, PDIWithOrder } from '@qc/shared/api'
 import { can } from '@qc/shared/rules'
-import { Badge, Card, EmptyState, Modal } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, Modal } from '@/components/ui'
 import { ExportMenu, FilterBar, FilterSelect, type FilterChip } from '@/components/ui/PageShell'
+import { ScrollX } from '@/components/ui/ScrollX'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { loadOlderPdi, loadPdiAt, loadPdiExport, loadPdiValues, useDebounced, usePdiList, usePdiOptions } from '@/services/queries'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
@@ -17,20 +18,28 @@ import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { When } from '@/components/ui/Tooltip'
 import { formatDate } from '@/lib/utils'
+import { useMediaQuery } from '@/lib/media'
 import { useServerColumns } from '@/components/ui/ColumnFilter'
 
 const PAGE = 50
 
-/** The table's columns: the key the server filters and sorts by, the header, and how its values read. */
-const PDI_COLUMNS: { key: string; label: string; numeric?: boolean; day?: boolean; right?: boolean }[] = [
-  { key: 'date', label: 'Date', numeric: true, day: true },
-  { key: 'order', label: 'Order' },
-  { key: 'customer', label: 'Customer' },
+/**
+ * The table's columns: the key the server filters and sorts by, the header, how its values read, and its width in
+ * rem. The items column has none: it takes what the others leave, never less than ITEMS_MIN_REM, and the table
+ * scrolls sideways in its frame before it would squeeze the column that says what was delivered.
+ */
+const PDI_COLUMNS: { key: string; label: string; numeric?: boolean; day?: boolean; right?: boolean; rem?: number }[] = [
+  { key: 'date', label: 'Date', numeric: true, day: true, rem: 8 },
+  { key: 'order', label: 'Order', rem: 10 },
+  { key: 'customer', label: 'Customer', rem: 11 },
   { key: 'items', label: 'Items · drawing' },
-  { key: 'by', label: 'By' },
-  { key: 'photos', label: 'Photos', numeric: true, right: true },
-  { key: 'notes', label: 'Notes' },
+  { key: 'by', label: 'By', rem: 8 },
+  { key: 'photos', label: 'Photos', numeric: true, right: true, rem: 6.5 },
+  { key: 'notes', label: 'Notes', rem: 14 },
 ]
+const ITEMS_MIN_REM = 14
+/** The table's least width: every set column and the items column at its least. */
+const PDI_TABLE_MIN_REM = PDI_COLUMNS.reduce((sum, c) => sum + (c.rem ?? ITEMS_MIN_REM), 0)
 
 type RangeFilter = 'all' | '7' | '30' | '90' | 'custom'
 const RANGE_LABEL: Record<RangeFilter, string> = {
@@ -38,8 +47,11 @@ const RANGE_LABEL: Record<RangeFilter, string> = {
   '7': 'Last 7 days',
   '30': 'Last 30 days',
   '90': 'Last 90 days',
-  custom: 'A day or a range…',
+  custom: 'Custom range…',
 }
+
+/** From a wide screen the search box has room to say everything it searches; narrower, it says the gist. */
+const WIDE = '(min-width: 1280px)'
 
 /** A calendar day on this device, YYYY-MM-DD, `back` days ago. */
 function localDay(back = 0): string {
@@ -53,9 +65,10 @@ function ItemsCell({ doc, max = 3 }: { doc: PDIWithOrder; max?: number }) {
   const shown = doc.items.slice(0, max)
   return (
     <ul className="space-y-0.5">
+      {/* The name isolated in its own direction: an Arabic name reads right to left without pulling the drawings into it, and starts at the card's edge like the rest. */}
       {shown.map((i) => (
-        <li key={i.itemCode || i.item} className="text-sm" dir="auto">
-          <span className="font-medium">{i.item}</span>
+        <li key={i.itemCode || i.item} className="text-start text-sm">
+          <bdi className="font-medium">{i.item}</bdi>
           {i.drawings.length > 0 && <span className="ml-1.5 text-xs text-muted">· {i.drawings.join(', ')}</span>}
         </li>
       ))}
@@ -80,7 +93,15 @@ function ItemsLine({ doc }: { doc: PDIWithOrder }) {
 
 export function PdiDetail({ doc, onClose }: { doc: PDIWithOrder; onClose: () => void }) {
   return (
-    <Modal open onClose={onClose} title={`PDI · ${doc.orderNumber}`} icon={<FileText className="h-5 w-5" />} size="lg">
+    <Modal
+      open
+      onClose={onClose}
+      title={`PDI · ${doc.orderNumber}`}
+      icon={<FileText className="h-5 w-5" />}
+      size="lg"
+      // A way out the width of the thumb at the bottom of a phone, not only the X at the top.
+      footer={<Button onClick={onClose}>Close</Button>}
+    >
       <div className="space-y-4">
         <p className="text-sm text-muted">
           {doc.customer && <span className="font-semibold text-slate-700 dark:text-slate-200">{doc.customer} · </span>}
@@ -101,7 +122,10 @@ export function PdiDetail({ doc, onClose }: { doc: PDIWithOrder; onClose: () => 
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {doc.items.map((i) => (
                 <tr key={i.itemCode || i.item}>
-                  <td className="px-2 py-1.5 font-semibold" dir="auto">{i.item}</td>
+                  {/* Under its left-aligned header: the cell starts where the header does, the name in its own direction. */}
+                  <td className="px-2 py-1.5 text-start font-semibold">
+                    <bdi>{i.item}</bdi>
+                  </td>
                   <td className="px-2 py-1.5 text-muted">{i.itemCode || '—'}</td>
                   <td className="px-2 py-1.5">{i.drawings.length ? i.drawings.join(' · ') : '—'}</td>
                 </tr>
@@ -136,6 +160,7 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
   const [by, setBy] = usePersistedState('qc-pdi:by', 'all')
   const [exporting, setExporting] = useState(false)
   const [open, setOpen] = useState<PDIWithOrder | null>(null)
+  const wide = useMediaQuery(WIDE)
 
   const settledTerm = useDebounced(term.trim(), 300)
   const settledItem = useDebounced(item.trim(), 300)
@@ -234,7 +259,8 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
       {/* One filter row, like the sessions: the switch, the search, the filters, and Export at the right end. The count is under the list. */}
       <FilterBar
         leading={leading}
-        search={{ value: term, onChange: setTerm, placeholder: 'Order, customer, item, drawing, note or who…', label: 'Search PDI' }}
+        actionsInline
+        search={{ value: term, onChange: setTerm, placeholder: wide ? 'Order, customer, item, drawing, note or who…' : 'Search orders, items, notes…', label: 'Search PDI' }}
         filters={
           <>
             <FilterSelect label="Date range" value={range} onChange={(v) => setRange(v as RangeFilter)}>
@@ -246,8 +272,9 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
             </FilterSelect>
             {range === 'custom' && (
               <>
-                <input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} className="input h-10 !w-[9rem] py-0 text-sm touch:h-11" aria-label="From day" data-tip="From day" />
-                <input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} className="input h-10 !w-[9rem] py-0 text-sm touch:h-11" aria-label="To day" data-tip="To day" />
+                {/* On a phone the two days share a row, half each, like the selects around them. */}
+                <input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} className="input h-10 py-0 text-sm max-md:!w-[calc(50%-4px)] md:!w-[9rem] touch:h-11" aria-label="From day" data-tip="From day" />
+                <input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} className="input h-10 py-0 text-sm max-md:!w-[calc(50%-4px)] md:!w-[9rem] touch:h-11" aria-label="To day" data-tip="To day" />
               </>
             )}
             <input
@@ -284,8 +311,8 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
         />
       ) : (
         <>
-          {/* Phone: one card per PDI. */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:hidden">
+          {/* Phone and tablet held upright: one card per PDI. The table needs a large tablet's width for its items to show. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:hidden">
             {docs.map((d) => (
               <button key={d.id} type="button" onClick={() => setOpen(d)} className="card-hover w-full min-w-0 p-4 text-left">
                 <div className="flex flex-wrap items-center gap-2">
@@ -306,60 +333,60 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
             ))}
           </div>
 
-          {/* md+: the same PDIs as a table, one line each; what does not fit is in the tooltips. */}
-          <Card className="hidden overflow-x-auto md:block">
-            <table className="w-full table-fixed text-sm">
-              <colgroup>
-                <col className="w-[9rem]" />
-                <col className="w-[11rem]" />
-                <col className="w-[16%]" />
-                <col />
-                <col className="w-[9rem]" />
-                <col className="w-[6.5rem]" />
-                <col className="w-[18%]" />
-              </colgroup>
-              <thead className="bg-slate-50 dark:bg-slate-800/60">
-                <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
+          {/* lg+: the same PDIs as a table, one line each; what does not fit is in the tooltips. Its columns are set in rem
+              and it scrolls sideways in its frame rather than squeeze the items, which say what was delivered. */}
+          <Card className="hidden overflow-hidden lg:block">
+            <ScrollX>
+              <table className="w-full table-fixed text-sm" style={{ minWidth: `${PDI_TABLE_MIN_REM}rem` }}>
+                <colgroup>
                   {PDI_COLUMNS.map((c) => (
-                    <th key={c.key} className={`px-3 py-2 font-semibold ${c.right ? 'text-right' : ''}`}>
-                      <span className={`inline-flex max-w-full items-center gap-1 ${c.right ? 'flex-row-reverse' : ''}`}>
-                        <span className="truncate">{c.label}</span>
-                        {columnsView.menu(c.key, c.label, (search) => loadPdiValues(filters, c.key, search), {
-                          numeric: c.numeric,
-                          align: c.right ? 'right' : 'left',
-                          formatValue: c.day ? (v) => formatDate(v) : undefined,
-                        })}
-                      </span>
-                    </th>
+                    <col key={c.key} style={c.rem ? { width: `${c.rem}rem` } : undefined} />
                   ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {docs.map((d) => (
-                  <tr key={d.id} onClick={() => setOpen(d)} className="data-row cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60">
-                    <td className="whitespace-nowrap px-3 tabular-nums text-muted">
-                      <When iso={d.createdAt} time />
-                    </td>
-                    <td className="truncate px-3 font-semibold" data-tip={d.orderNumber || undefined}>
-                      {d.orderNumber || '—'}
-                    </td>
-                    <td className="truncate px-3 text-slate-600 dark:text-slate-300" data-tip={d.customer || undefined}>
-                      {d.customer || '—'}
-                    </td>
-                    <td className="px-3">
-                      <ItemsLine doc={d} />
-                    </td>
-                    <td className="truncate px-3" data-tip={d.createdByName}>
-                      {d.createdByName}
-                    </td>
-                    <td className={`px-3 text-right tabular-nums ${d.imageIds.length === 0 ? 'text-muted' : ''}`}>{d.imageIds.length}</td>
-                    <td className="truncate px-3 text-muted" dir="auto" data-tip={d.notes || undefined}>
-                      {d.notes ?? ''}
-                    </td>
+                </colgroup>
+                <thead className="bg-slate-50 dark:bg-slate-800/60">
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
+                    {PDI_COLUMNS.map((c) => (
+                      <th key={c.key} className={`px-3 py-2 align-bottom font-semibold ${c.right ? 'text-right' : ''}`}>
+                        <span className={`inline-flex max-w-full items-end gap-1 ${c.right ? 'flex-row-reverse' : ''}`}>
+                          {/* Wraps between words, never cut: a header says what its column holds. */}
+                          <span className="min-w-0 whitespace-normal leading-tight [overflow-wrap:normal] [word-break:keep-all]">{c.label}</span>
+                          {columnsView.menu(c.key, c.label, (search) => loadPdiValues(filters, c.key, search), {
+                            numeric: c.numeric,
+                            align: c.right ? 'right' : 'left',
+                            formatValue: c.day ? (v) => formatDate(v) : undefined,
+                          })}
+                        </span>
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {docs.map((d) => (
+                    <tr key={d.id} onClick={() => setOpen(d)} className="data-row cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                      <td className="whitespace-nowrap px-3 tabular-nums text-muted">
+                        <When iso={d.createdAt} time />
+                      </td>
+                      <td className="truncate px-3 font-semibold" data-tip={d.orderNumber || undefined}>
+                        {d.orderNumber || '—'}
+                      </td>
+                      <td className="truncate px-3 text-slate-600 dark:text-slate-300" data-tip={d.customer || undefined}>
+                        {d.customer || '—'}
+                      </td>
+                      <td className="px-3">
+                        <ItemsLine doc={d} />
+                      </td>
+                      <td className="truncate px-3" data-tip={d.createdByName}>
+                        {d.createdByName}
+                      </td>
+                      <td className={`px-3 text-right tabular-nums ${d.imageIds.length === 0 ? 'text-muted' : ''}`}>{d.imageIds.length}</td>
+                      <td className="truncate px-3 text-muted" dir="auto" data-tip={d.notes || undefined}>
+                        {d.notes ?? ''}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ScrollX>
           </Card>
 
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 text-13 text-muted">

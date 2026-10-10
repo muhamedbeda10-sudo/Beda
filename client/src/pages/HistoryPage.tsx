@@ -40,12 +40,13 @@ import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { loadHistoryExport, loadHistoryValues, loadOlderSessions, loadSessionsAt, useSession, useDebounced, useHistory, useHistoryOptions, useMaster, useSampleDetail, useSessionNotes, useSessionSamples } from '@/services/queries'
 import { correctDefect, correctDimension, deleteNote, deleteSample, deleteSession, reopenSession } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
-import { ExportMenu, FilterBar, FilterSelect, HeaderStat, Segmented, StatDot, type FilterChip } from '@/components/ui/PageShell'
+import { ExportMenu, FilterBar, FilterSelect, HeaderStat, Segmented, type FilterChip } from '@/components/ui/PageShell'
 import { ColumnPicker, GridFrame, GridHead, SkeletonRows, TableFooter, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { useServerColumns } from '@/components/ui/ColumnFilter'
+import { useCoarsePointer, useMediaQuery } from '@/lib/media'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can, dimensionStatus, isStockOrder, processForMachine, shiftName } from '@/domain'
+import { can, dimensionStatus, isStockOrder, processForMachine, sessionTone, shiftName } from '@/domain'
 import { cn, daysAgoISO, formatDate, formatDateTime } from '@/lib/utils'
 import {
   DISPOSITIONS,
@@ -88,8 +89,21 @@ const RANGE_LABEL: Record<RangeFilter, string> = {
   '7': 'Last 7 days',
   '30': 'Last 30 days',
   '90': 'Last 90 days',
-  custom: 'A day or a range…',
+  custom: 'Custom range…',
 }
+
+/**
+ * Below a tablet the list is cards and the column menus are out of reach: the sorts a phone wants most, sent as a
+ * column's menu would send them. No pick is the record's own order, the newest first.
+ */
+const PHONE_SORTS: { value: string; label: string }[] = [
+  { value: 'date:asc', label: 'Oldest first' },
+  { value: 'defectPieces:desc', label: 'Most defect pcs' },
+  { value: 'final:desc', label: 'Largest final qty' },
+]
+
+/** From a wide screen the search box has room to say everything it searches; narrower, it says the gist. */
+const WIDE = '(min-width: 1280px)'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 
@@ -97,25 +111,27 @@ const todayISO = () => new Date().toISOString().slice(0, 10)
 /**
  * The table's columns and their starting widths; a desktop drags them, anyone
  * hides them (§11). The everyday set is on by default; the rest are there for
- * the full picture and switched on from the Columns button.
+ * the full picture and switched on from the Columns button. The status comes
+ * right after the order, so a tablet sees it without scrolling; a screen
+ * narrower than 1180 px starts with the lean set.
  */
 const HISTORY_COLUMNS: ColumnDef[] = [
   { key: 'seq', label: 'Seq', width: 72, min: 56, defaultHidden: true },
-  { key: 'order', label: 'Order', width: 176, min: 100 },
-  { key: 'item', label: 'Item', width: 220, min: 100, flex: true },
+  { key: 'order', label: 'Order', width: 176, min: 100, lean: true },
+  { key: 'status', label: 'Status', width: 208, min: 100, lean: true },
+  { key: 'item', label: 'Item', width: 220, min: 100, flex: true, lean: true },
   { key: 'itemCode', label: 'Item code', width: 120, min: 80, defaultHidden: true },
   { key: 'customer', label: 'Customer', width: 160, min: 90, defaultHidden: true },
   { key: 'factory', label: 'Factory', width: 110, min: 80, defaultHidden: true },
-  { key: 'machine', label: 'Machine', width: 190, min: 80 },
+  { key: 'machine', label: 'Machine', width: 190, min: 80, lean: true },
   { key: 'inspector', label: 'Inspector', width: 140, min: 80 },
-  { key: 'date', label: 'Started', width: 132, min: 100 },
+  { key: 'date', label: 'Started', width: 132, min: 100, lean: true },
   { key: 'closed', label: 'Closed', width: 150, min: 90, defaultHidden: true },
   { key: 'closedBy', label: 'Closed by', width: 150, min: 80, defaultHidden: true },
-  { key: 'status', label: 'Status', width: 208, min: 100 },
   { key: 'samples', label: 'Samples', width: 112, min: 88, align: 'right' },
   { key: 'pieces', label: 'Pieces inspected', width: 120, min: 80, align: 'right' },
   { key: 'defects', label: 'Defects', width: 108, min: 88, align: 'right' },
-  { key: 'defectPieces', label: 'Defect pcs', width: 104, min: 80, align: 'right' },
+  { key: 'defectPieces', label: 'Defect pcs', width: 104, min: 80, align: 'right', lean: true },
   { key: 'defectRate', label: 'Defect %', width: 96, min: 72, align: 'right' },
   { key: 'inspectedRate', label: 'Defect % of inspected', width: 120, min: 80, align: 'right', defaultHidden: true },
   { key: 'dimFails', label: 'Dims failed', width: 100, min: 80, align: 'right', defaultHidden: true },
@@ -124,14 +140,26 @@ const HISTORY_COLUMNS: ColumnDef[] = [
   { key: 'notes', label: 'Notes', width: 96, min: 80, align: 'right', defaultHidden: true },
   { key: 'rejected', label: 'Rejected before release', width: 128, min: 90, align: 'right' },
   { key: 'produced', label: 'Produced (stock)', width: 130, min: 90, align: 'right', defaultHidden: true },
-  { key: 'final', label: 'Final qty', width: 100, min: 80, align: 'right' },
+  { key: 'final', label: 'Final qty', width: 100, min: 80, align: 'right', lean: true },
   { key: 'grade', label: 'Expected grade', width: 120, min: 80, defaultHidden: true },
   { key: 'open', label: '', width: 48, min: 40, hideable: false },
 ]
 
+/**
+ * The columns on a touch screen: the status column takes the badges spelt out, wrapping, at 16rem at least (a finger
+ * gets no tooltip to read the short forms in).
+ */
+const HISTORY_COLUMNS_TOUCH: ColumnDef[] = HISTORY_COLUMNS.map((c) => (c.key === 'status' ? { ...c, width: Math.max(c.width, 256), min: 256 } : c))
+
 interface HistoryCellContext {
-  /** True on a desktop with fixed column widths: the cell shows what fits and the whole text on hover. */
+  /** True wherever the table shows: fixed column widths, the cell shows what fits and the whole text on hover. */
   fixed: boolean
+  /**
+   * Under a mouse: the status column's badges in their short forms on one line, each spelt out in its tooltip, and
+   * the order, item and machine as links to their grouped views. On a touch screen the badges say their words, and the
+   * whole row is one target that opens the session (whose dialog offers the order, the item and the machine).
+   */
+  mouse: boolean
   /** The session's number rides in the order cell ("20480-Ph3.4  #2") unless its own column is shown. */
   seqInOrder: boolean
   workCenterName: (code: string) => string
@@ -143,8 +171,12 @@ interface HistoryCellContext {
   openMachine: (s: SessionWithOrder) => void
 }
 
-/** A cell's text as a link to a grouped view; the row's own click (the session) is not triggered. */
-function GroupLink({ onOpen, children, title }: { onOpen: () => void; children: ReactNode; title: string }) {
+/**
+ * A cell's text as a link to a grouped view; the row's own click (the session) is not triggered. `plain` on a touch
+ * screen: the text alone, so a tap anywhere on the row opens the session, as nothing on screen marks the link apart.
+ */
+function GroupLink({ onOpen, children, title, plain = false }: { onOpen: () => void; children: ReactNode; title: string; plain?: boolean }) {
+  if (plain) return <>{children}</>
   return (
     <button
       type="button"
@@ -165,6 +197,21 @@ const HISTORY_FIGURES = new Set(['seq', 'samples', 'pieces', 'defects', 'defectP
 const HISTORY_DAYS = new Set(['date', 'closed'])
 
 const pctText = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 1000) / 10}%` : '—')
+
+/**
+ * The session's signal (Hold, defects, defects before). `compact` is the table's short form under a mouse. Otherwise
+ * the "Defects before" mark is spelt out too, where its tooltip cannot be read: a touch screen, a phone's cards.
+ */
+function SessionSignal({ session, compact = false }: { session: SessionWithOrder; compact?: boolean }) {
+  if (!compact && sessionTone(session) === 'prior') {
+    return (
+      <Badge tone="neutral" icon={<HistoryIcon className="h-3 w-3" aria-hidden />} tip="This item of this order showed defects on another machine or in an earlier session.">
+        Defects before
+      </Badge>
+    )
+  }
+  return <SessionToneBadge session={session} compact={compact} />
+}
 
 /** One cell of the table, by column key. */
 function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext): ReactNode {
@@ -189,20 +236,20 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
     case 'order':
       return (
         <td key={key} className={cn('px-3 py-3 font-bold', clip)} data-tip={s.order?.orderNumber ? `${s.order.orderNumber} · session #${s.seq}` : `Session #${s.seq}`}>
-          {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : s.order?.orderNumber ? <GroupLink title="Every session of this order" onOpen={() => ctx.openOrder(s)}>{s.order.orderNumber}</GroupLink> : '—'}
+          {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : s.order?.orderNumber ? <GroupLink title="Every session of this order" plain={!ctx.mouse} onOpen={() => ctx.openOrder(s)}>{s.order.orderNumber}</GroupLink> : '—'}
           {ctx.seqInOrder && <span className="ml-2 text-xs font-medium tabular-nums text-muted">#{s.seq}</span>}
         </td>
       )
     case 'item':
       return (
         <td key={key} className={cn('px-3 py-3', ctx.fixed ? 'truncate' : 'max-w-[220px] truncate')} data-tip={s.order?.item ?? undefined}>
-          {s.order?.item ? <GroupLink title="This item's sessions, within the filters" onOpen={() => ctx.openItem(s)}>{s.order.item}</GroupLink> : '—'}
+          {s.order?.item ? <GroupLink title="This item's sessions, within the filters" plain={!ctx.mouse} onOpen={() => ctx.openItem(s)}>{s.order.item}</GroupLink> : '—'}
         </td>
       )
     case 'itemCode':
       return s.order?.itemCode ? (
         <td key={key} className={cn('px-3 py-3 font-mono text-xs', clip)} data-tip={s.order.itemCode}>
-          <GroupLink title="This item's sessions, within the filters" onOpen={() => ctx.openItem(s)}>{s.order.itemCode}</GroupLink>
+          <GroupLink title="This item's sessions, within the filters" plain={!ctx.mouse} onOpen={() => ctx.openItem(s)}>{s.order.itemCode}</GroupLink>
         </td>
       ) : (
         text('', 'font-mono text-xs')
@@ -213,8 +260,8 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
       return text(ctx.factoryOf(s.workCenterCode))
     case 'machine':
       return (
-        <td key={key} className={cn('px-3 py-3', clip)} data-tip={ctx.workCenterName(s.workCenterCode)}>
-          <GroupLink title="This machine's sessions, within the filters" onOpen={() => ctx.openMachine(s)}>{ctx.workCenterName(s.workCenterCode)}</GroupLink>
+        <td key={key} className={cn('px-3 py-3', ctx.fixed ? 'truncate' : 'max-w-[200px] truncate')} data-tip={ctx.workCenterName(s.workCenterCode)}>
+          <GroupLink title="This machine's sessions, within the filters" plain={!ctx.mouse} onOpen={() => ctx.openMachine(s)}>{ctx.workCenterName(s.workCenterCode)}</GroupLink>
         </td>
       )
     case 'inspector':
@@ -231,13 +278,14 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
       return text(s.closedAt ? (s.closedByName ?? 'Unknown') : '')
     case 'status':
       return (
-        <td key={key} className="overflow-hidden px-3 py-3">
-          {/* One line: the status, the stage and the signal in their short forms, then §21's "Needs review" as its flag alone — each spelt out in its tooltip, none pushing the Hold out of sight. */}
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+        <td key={key} className={cn('px-3 py-3', ctx.mouse ? 'overflow-hidden' : 'whitespace-normal')}>
+          {/* Under a mouse, one line: the status, the stage and the signal in their short forms, then §21's "Needs review" as its flag alone — each spelt out in its tooltip, none pushing the Hold out of sight.
+              On a touch screen, which shows no tooltip, the words themselves, wrapping in a wider column. */}
+          <span className={cn('items-center', ctx.mouse ? 'inline-flex gap-1.5 whitespace-nowrap' : 'flex flex-wrap gap-1 py-1')}>
             <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status}</Badge>
-            <StageBadge kind={s.universalKind} stages={s.stages} compact />
-            <SessionToneBadge session={s} compact />
-            <NeedsReviewBadge count={s.openFollowUps ?? 0} compact />
+            <StageBadge kind={s.universalKind} stages={s.stages} compact={ctx.mouse} />
+            <SessionSignal session={s} compact={ctx.mouse} />
+            <NeedsReviewBadge count={s.openFollowUps ?? 0} compact={ctx.mouse} />
           </span>
         </td>
       )
@@ -357,8 +405,15 @@ export function HistoryPage() {
   const baseFiltersSet = term !== '' || status !== 'All' || workCenter !== 'all' || range !== 'all' || inspectorFilter !== 'all' || factoryFilter !== 'all' || itemFilter !== ''
   // Excel's filter and sort on every column, answered over the whole record.
   const columnsView = useServerColumns()
+  /** A phone's pick from Sort by (PHONE_SORTS), in place of a column's sort it cannot reach; the latest of the two wins. */
+  const [phoneSort, setPhoneSort] = useState<string | null>(null)
+  useEffect(() => {
+    if (columnsView.sortParam) setPhoneSort(null)
+  }, [columnsView.sortParam])
+  const sortParam = columnsView.sortParam ?? phoneSort ?? undefined
   const resetFilters = () => {
     columnsView.clear()
+    setPhoneSort(null)
     setTerm('')
     setStatus('All')
     setWorkCenter('all')
@@ -371,7 +426,9 @@ export function HistoryPage() {
   }
 
   const [openSessionId, setOpenSessionId] = useState<string | null>(null)
-  const grid = useResizableColumns('qc-history:grid', HISTORY_COLUMNS)
+  const coarse = useCoarsePointer()
+  const wide = useMediaQuery(WIDE)
+  const grid = useResizableColumns('qc-history:grid', coarse ? HISTORY_COLUMNS_TOUCH : HISTORY_COLUMNS)
   const [openSampleId, setOpenSampleId] = useState<string | null>(null)
   const [editingDim, setEditingDim] = useState<DimensionResult | null>(null)
   const [editingDefect, setEditingDefect] = useState<DefectResult | null>(null)
@@ -450,10 +507,10 @@ export function HistoryPage() {
     if (dispositionFilter) f.disposition = dispositionFilter
     else if (status === 'Hold') f.disposition = 'Hold'
     if (columnsView.cf) f.cf = columnsView.cf
-    if (columnsView.sortParam) f.sort = columnsView.sortParam
+    if (sortParam) f.sort = sortParam
     return f
-  }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, settledItem, range, fromDay, toDay, dispositionFilter, columnsView.cf, columnsView.sortParam])
-  const filtersSet = baseFiltersSet || columnsView.active
+  }, [settledTerm, status, workCenter, inspectorFilter, factoryFilter, settledItem, range, fromDay, toDay, dispositionFilter, columnsView.cf, sortParam])
+  const filtersSet = baseFiltersSet || columnsView.active || phoneSort !== null
 
   /** Rows a page brings; kept on this device. */
   const [pageSize, setPageSize] = usePersistedState<number>('qc-history:page-size', 100)
@@ -536,6 +593,7 @@ export function HistoryPage() {
   const cellContext = useMemo<HistoryCellContext>(
     () => ({
       fixed: grid.enabled,
+      mouse: !coarse,
       seqInOrder: !grid.visible.some((c) => c.key === 'seq'),
       workCenterName: (code) => machines.find((m) => m.code === code)?.displayName ?? `Machine ${code}`,
       factoryOf: (code) => machines.find((m) => m.code === code)?.factory ?? '',
@@ -545,7 +603,7 @@ export function HistoryPage() {
       openMachine,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [grid.enabled, grid.visible, machines, filters],
+    [grid.enabled, coarse, grid.visible, machines, filters],
   )
 
   // The lists a filter may offer come from the record, not from the page on
@@ -681,6 +739,14 @@ export function HistoryPage() {
 
   // §6 — the filters in force, each on a chip that removes it. The search shows in its own box.
   const machineLabel = (code: string) => workCenterName(code)
+  const columnChips = columnsView.chips((key) => HISTORY_COLUMNS.find((c) => c.key === key)?.label ?? key)
+  /** The column sort in force, set with the table on screen (a tablet, a phone on its side): the Sort by select shows it. */
+  const columnSortChip = columnChips.find((c) => c.key === 'sort')
+  const pickSort = (value: string) => {
+    // A column's sort gives way to the pick, as a pick gives way to a column's sort.
+    columnSortChip?.onRemove()
+    setPhoneSort(value || null)
+  }
   const chips: FilterChip[] = [
     ...(dispositionFilter ? [{ key: 'disposition', label: `Disposition: ${dispositionFilter}`, onRemove: clearDisposition }] : []),
     ...(status !== 'All' ? [{ key: 'status', label: `Status: ${status === 'Hold' ? 'On Hold' : status}`, onRemove: () => setStatus('All') }] : []),
@@ -691,7 +757,8 @@ export function HistoryPage() {
     ...(itemFilter !== '' ? [{ key: 'item', label: `Item: ${itemFilter}`, onRemove: () => setItemFilter('') }] : []),
     ...(inspectorFilter !== 'all' ? [{ key: 'inspector', label: `Inspector: ${inspectorOptions.find((i) => i.id === inspectorFilter)?.name ?? 'one inspector'}`, onRemove: () => setInspectorFilter('all') }] : []),
     ...(factoryFilter !== 'all' ? [{ key: 'factory', label: `Factory: ${factoryFilter}`, onRemove: () => setFactoryFilter('all') }] : []),
-    ...columnsView.chips((key) => HISTORY_COLUMNS.find((c) => c.key === key)?.label ?? key),
+    ...columnChips,
+    ...(phoneSort ? [{ key: 'phone-sort', label: `Sorted: ${PHONE_SORTS.find((o) => o.value === phoneSort)?.label ?? phoneSort}`, onRemove: () => setPhoneSort(null) }] : []),
   ]
   /** A column's Excel menu: its values over the whole record under every other filter. */
   const columnMenu = (c: ColumnDef) =>
@@ -709,6 +776,7 @@ export function HistoryPage() {
       {/* No title row: the tab names the page. The view switch, the filters and the actions share one row. */}
       <FilterBar
         leading={kindToggle}
+        actionsInline
         actions={
           <>
             <span className="hidden md:inline-flex">
@@ -717,7 +785,7 @@ export function HistoryPage() {
             {canExport && <ExportMenu busy={exporting} items={[{ label: 'Export Excel', onClick: () => void exportExcel(), disabled: totals.sessions === 0 }]} />}
           </>
         }
-        search={{ value: term, onChange: setTerm, placeholder: 'Order, item, code, customer, inspector, machine or #session…', label: 'Search history' }}
+        search={{ value: term, onChange: setTerm, placeholder: wide ? 'Order, item, code, customer, inspector, machine or #session…' : 'Search orders, items, machines…', label: 'Search history' }}
         filters={
           <>
             <FilterSelect label="Status" value={status} onChange={(v) => setStatus(v as StatusFilter)}>
@@ -735,8 +803,9 @@ export function HistoryPage() {
             </FilterSelect>
             {range === 'custom' && (
               <>
-                <input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} className="input h-10 !w-[9rem] py-0 text-sm" aria-label="From day" data-tip="From day" />
-                <input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} className="input h-10 !w-[9rem] py-0 text-sm" aria-label="To day" data-tip="To day" />
+                {/* On a phone the two days share a row, half each, like the selects around them. */}
+                <input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} className="input h-10 py-0 text-sm max-md:!w-[calc(50%-4px)] md:!w-[9rem] touch:h-11" aria-label="From day" data-tip="From day" />
+                <input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} className="input h-10 py-0 text-sm max-md:!w-[calc(50%-4px)] md:!w-[9rem] touch:h-11" aria-label="To day" data-tip="To day" />
               </>
             )}
             <FilterSelect label="Machine" value={workCenter} onChange={setWorkCenter}>
@@ -746,6 +815,16 @@ export function HistoryPage() {
                   {workCenterName(code)}
                 </option>
               ))}
+            </FilterSelect>
+            {/* A phone has no column menus (the list is cards): the sorts it needs most, here. */}
+            <FilterSelect label="Sort by" value={sortParam ?? ''} onChange={pickSort} className="md:hidden">
+              <option value="">Newest first</option>
+              {PHONE_SORTS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+              {columnsView.sortParam && !PHONE_SORTS.some((o) => o.value === columnsView.sortParam) && <option value={columnsView.sortParam}>{columnSortChip?.label ?? 'Sorted by a column'}</option>}
             </FilterSelect>
           </>
         }
@@ -830,7 +909,7 @@ export function HistoryPage() {
                   {isStockOrder(s.order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{s.order?.orderNumber ?? '—'}</span>}
                   <Badge tone={s.status === 'Open' ? 'green' : 'neutral'}>{s.status.toUpperCase()}</Badge>
                   <StageBadge kind={s.universalKind} stages={s.stages} />
-                  <SessionToneBadge session={s} />
+                  <SessionSignal session={s} />
                   <NeedsReviewBadge count={s.openFollowUps ?? 0} />
                 </div>
                 <p className="mt-1 truncate text-sm font-medium text-brand-600 dark:text-brand-400">{s.order?.item ?? 'Unknown item'}</p>
@@ -854,7 +933,7 @@ export function HistoryPage() {
 
           {/* md+ — the same rows as a table; the columns are the person's to size and choose, from the tools at the top. */}
           <Card className="hidden overflow-hidden md:block">
-            <GridFrame reserve={44}>
+            <GridFrame>
               <table ref={grid.tableRef} className={cn('sticky-first w-full text-sm', !grid.enabled && 'min-w-[720px]')} style={grid.tableStyle}>
                 {grid.colgroup}
                 <GridHead grid={grid} menu={columnMenu} />
@@ -888,20 +967,19 @@ export function HistoryPage() {
             onPageSize={setPageSize}
             extra={
               <>
-                {/* Each figure opens its sessions grouped by order line. */}
-                <StatDot />
+                {/* Each figure opens its sessions grouped by order line; on a touch screen each is a chip, like the figures. */}
                 <HeaderStat value={totals.open} label="open" tone="success" onClick={() => openCounter('Open')} tip="Grouped by order line" />
-                <StatDot />
                 <HeaderStat value={totals.closed} label="closed" onClick={() => openCounter('Closed')} tip="Grouped by order line" />
                 {totals.sessions > 0 && (
-                  <>
-                    <StatDot />
-                    <button type="button" onClick={() => openCounter()} className="rounded font-semibold text-brand-600 underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-brand-400">
-                      By order line
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    onClick={() => openCounter()}
+                    className="rounded font-semibold text-brand-600 underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-brand-400 touch:inline-flex touch:min-h-[40px] touch:items-center touch:rounded-lg touch:px-3 touch:ring-1 touch:ring-inset touch:ring-slate-200 dark:touch:ring-slate-700"
+                  >
+                    By order line
+                  </button>
                 )}
-                {isFetching && !loading && <span className="ml-1 text-xs">Searching the whole record…</span>}
+                {isFetching && !loading && <span className="text-xs">Searching the whole record…</span>}
               </>
             }
           />
@@ -930,6 +1008,22 @@ export function HistoryPage() {
         }
         footer={
           <>
+            {/* Delete first: from a small tablet up it stands alone at the left, away from the everyday actions. */}
+            {canDelete && openSession && (
+              <Button
+                variant="danger"
+                className="min-h-[48px] sm:mr-auto"
+                onClick={() =>
+                  setRemoving(
+                    openSample
+                      ? { kind: 'sample', id: openSample.id, label: `sample ${openSession.seq}-${openSample.index}` }
+                      : { kind: 'session', id: openSession.id, label: `session #${openSession.seq} of ${openSession.order?.orderNumber ?? 'this order'}` },
+                  )
+                }
+              >
+                <Trash2 className="h-4 w-4" /> {openSample ? 'Delete sample' : 'Delete session'}
+              </Button>
+            )}
             {openSession && openSample && editable && (
               <Button variant="secondary" className="min-h-[48px]" onClick={() => navigate(`/wizard/${openSession.id}/edit/${openSample.id}`)}>
                 <Pencil className="h-4 w-4" /> Edit sample
@@ -942,27 +1036,15 @@ export function HistoryPage() {
             )}
             {openSession && !openSample && openSession.status === 'Closed' && can(role, 'edit-closed-session') && (
               <Button variant="secondary" className="min-h-[48px]" disabled={saving} onClick={() => void reopen()}>
-                <LockOpen className="h-4 w-4" /> Reopen session
+                {/* Half a phone's width holds the short words on one line. */}
+                <LockOpen className="h-4 w-4" /> <span className="sm:hidden">Reopen</span>
+                <span className="hidden sm:inline">Reopen session</span>
               </Button>
             )}
             {openSession && !openSample && canCorrectQuantities(openSession) && (
               <Button variant="secondary" className="min-h-[48px]" onClick={() => setCorrectingQty(openSession)}>
-                <Pencil className="h-4 w-4" /> Correct quantities
-              </Button>
-            )}
-            {canDelete && openSession && (
-              <Button
-                variant="danger"
-                className="mr-auto min-h-[48px]"
-                onClick={() =>
-                  setRemoving(
-                    openSample
-                      ? { kind: 'sample', id: openSample.id, label: `sample ${openSession.seq}-${openSample.index}` }
-                      : { kind: 'session', id: openSession.id, label: `session #${openSession.seq} of ${openSession.order?.orderNumber ?? 'this order'}` },
-                  )
-                }
-              >
-                <Trash2 className="h-4 w-4" /> {openSample ? 'Delete sample' : 'Delete session'}
+                <Pencil className="h-4 w-4" /> <span className="sm:hidden">Correct qty</span>
+                <span className="hidden sm:inline">Correct quantities</span>
               </Button>
             )}
             <Button className="min-h-[48px]" onClick={closeDrilldown}>
@@ -976,16 +1058,16 @@ export function HistoryPage() {
             {!openSampleId && (
               <div className="print-hidden flex flex-wrap gap-2 text-xs">
                 {openSession.order?.orderNumber && !isStockOrder(openSession.order) && (
-                  <Button className="min-h-[36px]" onClick={() => openOrder(openSession)}>
+                  <Button className="min-h-[36px] touch:min-h-[44px]" onClick={() => openOrder(openSession)}>
                     <Layers className="h-3.5 w-3.5" /> Whole order
                   </Button>
                 )}
                 {openSession.order?.item && (
-                  <Button className="min-h-[36px]" onClick={() => openItem(openSession)}>
+                  <Button className="min-h-[36px] touch:min-h-[44px]" onClick={() => openItem(openSession)}>
                     <Layers className="h-3.5 w-3.5" /> This item
                   </Button>
                 )}
-                <Button className="min-h-[36px]" onClick={() => openMachine(openSession)}>
+                <Button className="min-h-[36px] touch:min-h-[44px]" onClick={() => openMachine(openSession)}>
                   <Layers className="h-3.5 w-3.5" /> This machine
                 </Button>
               </div>

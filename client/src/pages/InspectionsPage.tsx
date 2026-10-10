@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { Badge, Button, Card, Field, Input, Modal } from '@/components/ui'
 import { FilterBar, FilterSelect, Segmented } from '@/components/ui/PageShell'
+import { EdgeShadows, ScrollX, useScrollEdges } from '@/components/ui/ScrollX'
 import { RecentlyClosed } from '@/components/inspection/RecentlyClosed'
 import { NewInspectionDialog } from '@/components/inspection/NewInspectionDialog'
 import { PtCoverageBadge, SessionToneBadge, ptCoverageText, sessionToneClass } from '@/components/inspection/SessionTone'
@@ -30,6 +31,7 @@ import { DefectEditDialog, DimensionEditDialog, type DefectCorrection } from '@/
 import { SessionQuantitiesDialog } from '@/components/inspection/SessionQuantitiesDialog'
 import { HoldDecisionDialog } from '@/components/inspection/HoldDecisionDialog'
 import { OrderDetailsPanel } from '@/components/inspection/OrderDetailsPanel'
+import { boardViewFor, factorySwitch, offersFactoryChoice, type BoardDensity, type FactoryCount } from '@/components/inspection/boardLayout'
 import { InstallBanner } from '@/components/layout/InstallBanner'
 import { useMaster, useOpenBoard, useSampleDetail, useSessionStages } from '@/services/queries'
 import { UniversalChoice, readUniversalDraft, universalDraft, type UniversalDraft } from '@/components/inspection/UniversalChoice'
@@ -40,6 +42,7 @@ import { can, isStockOrder, processForMachine, sessionTone, shiftName, type Proc
 import { cn, formatDateTime } from '@/lib/utils'
 import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 import { usePersistedState } from '@/lib/usePersistedState'
+import { PHONE, useMediaQuery } from '@/lib/media'
 import type { CloseSessionRequest, SampleSummary, SessionWithOrder } from '@qc/shared/api'
 import type { DefectResult, DimensionResult, Disposition, Machine } from '@qc/shared/types'
 import { When } from '@/components/ui/Tooltip'
@@ -49,6 +52,15 @@ const COLLAPSE_AFTER = 3
 const NO_FACTORY = '__none__'
 /** Machines are ordered by the worst thing on them: Hold before defects before the rest. */
 const TONE_RANK: Record<NonNullable<SessionTone> | 'none', number> = { hold: 0, defect: 1, prior: 2, none: 3 }
+/**
+ * The board's filter selects on a phone: the factory and the inspector share their row, half each. Once a filter is
+ * set, Reset joins the inspector's select on its row and the factory's takes a row of its own (FACTORY_ALONE), so the
+ * value chosen is read in full ("Factory 10", not "Factory 1…") and Reset never sits alone on a row. The browser
+ * draws the select's arrow in a room of its own, so the padding beside it is cut back to leave the words what is
+ * left. Important, as these override FilterSelect's own phone sizes.
+ */
+const PHONE_SELECT = 'max-md:!min-w-0 max-md:!pl-3 max-md:!pr-2'
+const FACTORY_ALONE = 'max-md:!basis-full'
 
 interface MachineGroup {
   code: string
@@ -86,7 +98,11 @@ export function InspectionsPage() {
   const [machinePick, setMachinePick] = usePersistedState<string>('qc-board:machine', 'all')
   const [collapsed, setCollapsed] = usePersistedState<Record<string, boolean>>('qc-board:collapsed', {})
   const [favourite, setFavourite] = usePersistedState<string | null>('qc-board:favourite', null)
-  const [density, setDensity] = usePersistedState<'cards' | 'compact' | 'table'>('qc-board:density', 'cards')
+  const [density, setDensity] = usePersistedState<BoardDensity>('qc-board:density', 'cards')
+  // A phone has no room for the table's columns: a Table kept on this device reads as Compact there, and is the table
+  // again once the device is turned or docked wider.
+  const phone = useMediaQuery(PHONE)
+  const view = boardViewFor(density, phone)
 
   // ---- Who sees what (§14) ------------------------------------------------
   // The board is everyone's: every open session, with an inspector filter so
@@ -115,7 +131,7 @@ export function InspectionsPage() {
   const base = useMemo(() => (!seesAll || inspectorFilter === 'all' ? openSessions : openSessions.filter((s) => s.inspectorId === inspectorFilter)), [seesAll, openSessions, inspectorFilter])
 
   /** Every factory in the register, with how many open sessions it holds now. */
-  const factoryTabs = useMemo(() => {
+  const factoryTabs = useMemo<FactoryCount[]>(() => {
     const counts = new Map<string, number>()
     for (const m of machines) {
       const f = m.factory?.trim()
@@ -133,6 +149,12 @@ export function InspectionsPage() {
   }, [machines, base, factoryOf])
   const factoryKnown = factoryTab === 'all' || factoryTabs.some((t) => t.key === factoryTab)
   const activeFactory = factoryKnown ? factoryTab : 'all'
+  /** What the factory switch offers beside All: the factories with work open, the busiest first (boardLayout). */
+  const factoryChoices = useMemo(() => factorySwitch(factoryTabs, activeFactory), [factoryTabs, activeFactory])
+  const pickFactory = (key: string) => {
+    setFactoryTab(key)
+    setMachinePick('all')
+  }
 
   /** Sessions in the chosen factory; the machine chips count these. */
   const inFactory = useMemo(() => (activeFactory === 'all' ? base : base.filter((s) => factoryOf(s.workCenterCode) === activeFactory)), [base, activeFactory, factoryOf])
@@ -266,108 +288,125 @@ export function InspectionsPage() {
   // ---- The board's two renderings of a set of machines ---------------------
   // Each frame below hands its machines to one of these; the factory name on
   // a machine is shown only where the frame does not already say it.
-  const boardTable = (secs: typeof sections) => (
-    // Every open session in one table: a header row per factory, then its machines in the same order as the cards.
-    <Card className="overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[60rem] text-sm">
-          <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-muted dark:bg-slate-800/60">
-            <tr>
-              <ViewTh view={boardView} column="machine" label="Machine" className="px-4 py-3" />
-              <ViewTh view={boardView} column="order" label="Order" className="px-4 py-3" />
-              <ViewTh view={boardView} column="item" label="Item" className="px-4 py-3" />
-              <ViewTh view={boardView} column="inspector" label="Inspector" className="px-4 py-3" />
-              <ViewTh view={boardView} column="started" label="Started" className="px-4 py-3" />
-              <ViewTh view={boardView} column="samples" label="Samples" className="px-4 py-3 text-right" />
-              <ViewTh view={boardView} column="defects" label="Defects" className="px-4 py-3 text-right" />
-              <ViewTh view={boardView} column="state" label="State" className="px-4 py-3" />
-              <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          {secs.map((sec) => {
-            const showFactory = sec.pinned
-            // The section's rows the filters let through, in the order the sort gives.
-            const rows = boardView.rows.filter((r) => r.section === sec.key)
-            if (rows.length === 0) return null
-            const sessionCount = rows.length
-            const machineCount = new Set(rows.map((r) => r.group.code)).size
-            return (
-              <tbody key={sec.key} className="divide-y divide-slate-100 border-t border-slate-200 dark:divide-slate-800 dark:border-slate-700">
-                <tr className="bg-slate-100/80 dark:bg-slate-800/70">
-                  <th colSpan={9} scope="colgroup" className="px-4 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-muted">
-                    <span className="inline-flex items-center gap-2">
-                      {sec.pinned ? <Star className="h-3.5 w-3.5 fill-current text-amber-500" /> : <Factory className="h-3.5 w-3.5" />}
-                      {sec.label}
-                      <span className="font-semibold normal-case tracking-normal tabular-nums">
-                        · {machineCount} machine{machineCount === 1 ? '' : 's'} · {sessionCount} session{sessionCount === 1 ? '' : 's'}
+  const boardTable = (secs: typeof sections) => {
+    // The Continue column is for someone who may continue; a reader's table has no empty column to scroll to.
+    const actions = canRecord
+    const columns = actions ? 9 : 8
+    return (
+      // Every open session in one table: a header row per factory, then its machines in the same order as the cards.
+      // Narrower than its columns (a tablet, a phone turned), the table scrolls sideways inside the card, with a shadow
+      // where columns hide; the state sits beside the order, and Continue stays pinned at the right edge
+      // (.table-sticky-last), so neither is scrolled out of reach. Cells on 12 px padding: on a desktop the whole table fits.
+      <Card className="overflow-hidden">
+        <ScrollX label="Open sessions" shadows={actions ? 'start' : 'both'}>
+          <table className={cn('w-full min-w-[60rem] text-sm', actions && 'table-sticky-last')}>
+            <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-muted dark:bg-slate-800/60">
+              <tr>
+                <ViewTh view={boardView} column="machine" label="Machine" className="px-3 py-3" />
+                <ViewTh view={boardView} column="order" label="Order" className="px-3 py-3" />
+                <ViewTh view={boardView} column="state" label="State" className="px-3 py-3" />
+                <ViewTh view={boardView} column="item" label="Item" className="px-3 py-3" />
+                <ViewTh view={boardView} column="inspector" label="Inspector" className="px-3 py-3" />
+                <ViewTh view={boardView} column="started" label="Started" className="px-3 py-3" />
+                <ViewTh view={boardView} column="samples" label="Samples" className="px-3 py-3 text-right" />
+                <ViewTh view={boardView} column="defects" label="Defects" className="px-3 py-3 text-right" />
+                {/* Named for a screen reader, with no hidden text in the cell; opaque, the header's tint laid over the card, as rows pass under it. */}
+                {actions && <th aria-label="Actions" className="bg-slate-50 px-3 py-3 dark:bg-[#182234]" />}
+              </tr>
+            </thead>
+            {secs.map((sec) => {
+              const showFactory = sec.pinned
+              // The section's rows the filters let through, in the order the sort gives.
+              const rows = boardView.rows.filter((r) => r.section === sec.key)
+              if (rows.length === 0) return null
+              const sessionCount = rows.length
+              const machineCount = new Set(rows.map((r) => r.group.code)).size
+              return (
+                <tbody key={sec.key} className="divide-y divide-slate-100 border-t border-slate-200 dark:divide-slate-800 dark:border-slate-700">
+                  <tr>
+                    {/* The factory's row spans the table: it scrolls with it rather than being pinned as the last cell. */}
+                    <th colSpan={columns} scope="colgroup" className="static bg-slate-100/80 px-3 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-muted shadow-none dark:bg-slate-800/70">
+                      <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                        {sec.pinned ? <Star className="h-3.5 w-3.5 fill-current text-amber-500" /> : <Factory className="h-3.5 w-3.5" />}
+                        {sec.label}
+                        <span className="font-semibold normal-case tracking-normal tabular-nums">
+                          · {machineCount} machine{machineCount === 1 ? '' : 's'} · {sessionCount} session{sessionCount === 1 ? '' : 's'}
+                        </span>
                       </span>
-                    </span>
-                  </th>
-                </tr>
-                {rows.map(({ group: g, session: s }) => {
+                    </th>
+                  </tr>
+                  {rows.map(({ group: g, session: s }) => {
                     const order = s.order
                     const count = samplesBySession.get(s.id)?.length ?? 0
                     return (
-                      <tr key={s.id} onClick={() => setDetails(s)} className={cn('cursor-pointer transition-colors', sessionToneClass(s, 'row', 'hover:bg-slate-50 dark:hover:bg-slate-800/50'))}>
-                        <td className="px-4 py-2.5">
+                      // Opaque rows: the pinned Continue cell takes the row's colour (bg-inherit), its hover included.
+                      <tr
+                        key={s.id}
+                        onClick={() => setDetails(s)}
+                        className={cn('cursor-pointer transition-colors', sessionToneClass(s, 'row', 'bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-[#172033]'))}
+                      >
+                        <td className="whitespace-nowrap px-3 py-2.5">
                           <span className="flex items-center gap-1.5 font-semibold">
                             {g.code === favourite && <Star className="h-3.5 w-3.5 fill-current text-amber-500" />}
                             {g.label}
                           </span>
                           {showFactory && g.factory !== NO_FACTORY && <span className="block text-xs text-muted">{g.factory}</span>}
                         </td>
-                        <td className="px-4 py-2.5 font-bold">
+                        <td className="whitespace-nowrap px-3 py-2.5 font-bold">
                           {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : (order?.orderNumber ?? '—')}
                           <span className="ml-1.5 text-xs font-bold tabular-nums text-muted">#{s.seq}</span>
                         </td>
-                        <td className="max-w-[220px] truncate px-4 py-2.5">
-                          <span className="block truncate">{order?.item ?? '—'}</span>
-                          <span className="block truncate font-mono text-xs text-muted">{order?.itemCode ?? ''}</span>
-                        </td>
-                        <td className="px-4 py-2.5">{s.inspectorName}</td>
-                        <td className="px-4 py-2.5 tabular-nums text-muted"><When iso={s.startedAt} time /></td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">{count}</td>
-                        <td className={cn('px-4 py-2.5 text-right tabular-nums', (s.defectCount ?? 0) > 0 && 'font-bold text-rose-600 dark:text-rose-400')}>{s.defectCount ?? 0}</td>
-                        <td className="px-4 py-2.5">
+                        <td className="px-3 py-2.5">
                           <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
                             {s.status === 'Open' ? <Badge tone="green">OPEN</Badge> : <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>CLOSED</Badge>}
                             <SessionToneBadge session={s} onHold={mayDecide(s) ? () => setHoldFor(s) : undefined} />
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 text-right">
-                          {s.status === 'Open' && canRecord && (
-                            <Button
-                              variant="primary"
-                              className="min-h-[36px] px-3 py-1.5 touch:min-h-[44px]"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                navigate(`/wizard/${s.id}`)
-                              }}
-                            >
-                              <Play className="h-4 w-4" /> Continue
-                            </Button>
-                          )}
+                        <td className="max-w-[220px] truncate px-3 py-2.5">
+                          <span className="block truncate">{order?.item ?? '—'}</span>
+                          <span className="block truncate font-mono text-xs text-muted">{order?.itemCode ?? ''}</span>
                         </td>
+                        <td className="px-3 py-2.5">{s.inspectorName}</td>
+                        <td className="px-3 py-2.5 tabular-nums text-muted"><When iso={s.startedAt} time /></td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">{count}</td>
+                        <td className={cn('px-3 py-2.5 text-right tabular-nums', (s.defectCount ?? 0) > 0 && 'font-bold text-rose-600 dark:text-rose-400')}>{s.defectCount ?? 0}</td>
+                        {actions && (
+                          <td className="bg-inherit px-3 py-2.5 text-right">
+                            {s.status === 'Open' && (
+                              <Button
+                                variant="primary"
+                                className="min-h-[36px] whitespace-nowrap px-3 py-1.5 touch:min-h-[44px]"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  navigate(`/wizard/${s.id}`)
+                                }}
+                              >
+                                <Play className="h-4 w-4" /> Continue
+                              </Button>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     )
                   })}
-              </tbody>
-            )
-          })}
-        </table>
-      </div>
-      {boardView.rows.length === 0 && <p className="px-4 py-6 text-center text-sm text-muted">No open session matches the column filters.</p>}
-      <ViewNote view={boardView} total={boardRows.length} className="border-t border-slate-100 dark:border-slate-800" />
-    </Card>
-  )
+                </tbody>
+              )
+            })}
+          </table>
+        </ScrollX>
+        {boardView.rows.length === 0 && <p className="px-4 py-6 text-center text-sm text-muted">No open session matches the column filters.</p>}
+        <ViewNote view={boardView} total={boardRows.length} className="border-t border-slate-100 dark:border-slate-800" />
+      </Card>
+    )
+  }
 
   const machineCards = (gs: MachineGroup[], showFactory: boolean) => (
-    // Several machines side by side on a wide screen; one column on a phone.
-    <div className={cn('grid items-start gap-4', density === 'cards' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1 xl:grid-cols-2')}>
+    // Several machines side by side from a small tablet up (two, three on a wide screen); one column on a phone.
+    <div className={cn('grid items-start gap-4', view === 'cards' ? 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1 xl:grid-cols-2')}>
       {gs.map((g) => {
         const isCollapsed = collapsed[g.code] === true
         const isExpanded = expanded[g.code]
-        const visible = isExpanded || density === 'compact' ? g.sessions : g.sessions.slice(0, COLLAPSE_AFTER)
+        const visible = isExpanded || view === 'compact' ? g.sessions : g.sessions.slice(0, COLLAPSE_AFTER)
         const hidden = g.sessions.length - visible.length
         const isFavourite = g.code === favourite
         return (
@@ -393,8 +432,9 @@ export function InspectionsPage() {
                   <Factory className="h-5 w-5" />
                 </span>
                 <span className="min-w-0 flex-1">
-                  {/* The full machine name, on two lines if it must; the counts sit under it so a narrow column never clips it. */}
-                  <span className="line-clamp-2 text-base font-extrabold leading-tight" data-tip={g.label}>
+                  {/* The full machine name while the card is open, on as many lines as it takes (a finger gets no tooltip);
+                      folded, three lines on a phone and two from a tablet up. The counts sit under it, never clipping it. */}
+                  <span className={cn('text-base font-extrabold leading-tight', isCollapsed && 'line-clamp-3 sm:line-clamp-2')} data-tip={isCollapsed ? g.label : undefined}>
                     {g.label}
                   </span>
                   <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
@@ -418,7 +458,7 @@ export function InspectionsPage() {
               </button>
             </div>
 
-            {!isCollapsed && density === 'compact' ? (
+            {!isCollapsed && view === 'compact' ? (
               <ul className="divide-y divide-slate-100 dark:divide-slate-800">
                 {visible.map((s) => {
                   const order = s.order
@@ -437,7 +477,10 @@ export function InspectionsPage() {
                           {s.producedQty !== undefined ? ` · produced ${s.producedQty} pairs` : ''}
                         </span>
                       </button>
-                      <SessionToneBadge session={s} className="hidden sm:inline-flex" onHold={mayDecide(s) ? () => setHoldFor(s) : undefined} />
+                      {/* What is wrong with the session, in words, on every screen: on a phone the short form ("Hold ×2", "3"),
+                          from a small tablet up the sentence. On Hold, either is the way into the decision. */}
+                      <SessionToneBadge session={s} compact className="sm:hidden" onHold={mayDecide(s) ? () => setHoldFor(s) : undefined} />
+                      <SessionToneBadge session={s} className="max-sm:hidden" onHold={mayDecide(s) ? () => setHoldFor(s) : undefined} />
                       {s.status === 'Open' ? (
                         <Button variant="primary" className={cn('min-h-[40px] shrink-0 touch:min-h-[44px]', !canRecord && 'hidden')} onClick={() => navigate(`/wizard/${s.id}`)} aria-label="Continue">
                           <Play className="h-4 w-4" />
@@ -520,9 +563,9 @@ export function InspectionsPage() {
                         <Button variant="primary" className="min-h-[40px] px-5 touch:min-h-[44px]" onClick={() => navigate(`/wizard/${s.id}`)}>
                           <Play className="h-4 w-4" /> Continue
                         </Button>
+                        {/* Named on every screen: a padlock alone reads as a state, not as the start of closing the session. */}
                         <Button variant="secondary" className="min-h-[40px] touch:min-h-[44px]" onClick={() => setClosing(s)} aria-label="Close session">
-                          <Lock className="h-4 w-4" />
-                          <span className="hidden sm:inline">Close</span>
+                          <Lock className="h-4 w-4" /> Close
                         </Button>
                       </div>
                     )}
@@ -540,7 +583,7 @@ export function InspectionsPage() {
                               type="button"
                               onClick={() => setViewing({ session: s, sample: sm })}
                               className={cn(
-                                'min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 transition-colors',
+                                'min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 transition-colors touch:min-h-[44px] touch:min-w-[44px]',
                                 // The chip wears the sample's worst signal: amber while a defect waits on Hold, red for defects decided, blue when clean.
                                 (sm.holdCount ?? 0) > 0
                                   ? 'bg-amber-50 text-amber-800 ring-amber-300 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/40'
@@ -562,7 +605,7 @@ export function InspectionsPage() {
             </div>
             ) : null}
 
-            {!isCollapsed && density === 'cards' && hidden > 0 && (
+            {!isCollapsed && view === 'cards' && hidden > 0 && (
               <button
                 onClick={() => setExpanded((e) => ({ ...e, [g.code]: true }))}
                 className="flex w-full items-center justify-center gap-1.5 border-t border-slate-100 py-3 text-sm font-semibold text-brand-600 hover:bg-slate-50 dark:border-slate-800 dark:text-brand-400 dark:hover:bg-slate-800/50"
@@ -599,79 +642,117 @@ export function InspectionsPage() {
     <div className="space-y-4">
       <InstallBanner />
 
-      {/* No title row: the tab names the page. New Inspection and the other actions sit at the right end; on a phone they head it. */}
+      {/* No title row: the tab names the page. New Inspection and the other actions sit at the right end; on a phone they
+          head it, in two rows: New Inspection with the board's view beside it, then Coil search and New PDI, half each.
+          Under them the factory and the inspector, half each, and Reset beside them once a filter is set. From a small
+          tablet the actions sit right-aligned on a row of their own under the filters (Coil search, New PDI, the view,
+          New Inspection last), the words always shown on a touch screen; from 1280 px everything is one row. */}
       <FilterBar
         actions={
-          <>
-            {canRecord && (
-              <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center">
-                <button type="button" onClick={() => setNewOpen(true)} className="btn-primary col-span-2 h-11 min-h-0 px-4 py-0 text-sm sm:order-last sm:h-10 touch:h-11">
+          <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
+            {/* A phone's first row; from a small tablet this box steps aside (contents) and its button joins the row. */}
+            <div className="col-span-2 flex gap-2 sm:contents">
+              {canRecord && (
+                <button type="button" onClick={() => setNewOpen(true)} className="btn-primary h-11 min-h-0 min-w-0 flex-1 px-4 py-0 text-sm sm:order-last sm:h-10 sm:flex-none touch:h-11">
                   <Plus className="h-4 w-4" /> New Inspection
                 </button>
-                <button type="button" onClick={() => navigate('/coils')} aria-label="Coil Search" data-tip="Coil Search" className="btn-secondary h-11 min-h-0 px-3 py-0 text-13 sm:h-10 md:max-2xl:px-2.5 touch:h-11">
-                  <Search className="h-4 w-4" /> <span className="md:max-2xl:sr-only">Coil Search</span>
+              )}
+              {/* A phone: the view as a select as wide as its longest name (the whole row for a reader, who has no
+                  actions); the table is not offered there (boardViewFor). From a small tablet: the switch. */}
+              <select
+                aria-label="Board view"
+                value={view}
+                onChange={(e) => setDensity(e.target.value as BoardDensity)}
+                className={cn('input h-11 py-0 pl-3 pr-2 text-13 sm:hidden', canRecord ? 'w-auto shrink-0' : 'flex-1')}
+              >
+                <option value="cards">Cards</option>
+                <option value="compact">Compact</option>
+              </select>
+            </div>
+            {canRecord && (
+              <>
+                {/* Icons alone only under a mouse from a tablet to a wide screen, their names in the tooltip; a finger always gets the words. */}
+                <button type="button" onClick={() => navigate('/coils')} data-tip="Coil search" className="btn-secondary h-11 min-h-0 whitespace-nowrap px-3 py-0 text-13 sm:h-10 md:max-2xl:mouse:px-2.5 touch:h-11">
+                  <Search className="h-4 w-4 shrink-0" /> <span className="md:max-2xl:mouse:sr-only">Coil search</span>
                 </button>
-                <button type="button" onClick={() => navigate('/pdi')} aria-label="PDI Documents" data-tip="PDI Documents" className="btn-secondary h-11 min-h-0 px-3 py-0 text-13 sm:h-10 md:max-2xl:px-2.5 touch:h-11">
-                  <FileText className="h-4 w-4" /> <span className="md:max-2xl:sr-only">PDI Documents</span>
+                <button type="button" onClick={() => navigate('/pdi')} data-tip="New PDI" className="btn-secondary h-11 min-h-0 whitespace-nowrap px-3 py-0 text-13 sm:h-10 md:max-2xl:mouse:px-2.5 touch:h-11">
+                  <FileText className="h-4 w-4 shrink-0" /> <span className="md:max-2xl:mouse:sr-only">New PDI</span>
                 </button>
-              </div>
+              </>
             )}
-            <Segmented
-              iconsWhenTight
-              label="Board view"
-              value={density}
-              onChange={setDensity}
-              options={[
-                { value: 'cards', label: 'Cards', icon: <LayoutGrid className="h-4 w-4" /> },
-                { value: 'compact', label: 'Compact', icon: <LayoutList className="h-4 w-4" /> },
-                { value: 'table', label: 'Table', icon: <Table2 className="h-4 w-4" /> },
-              ]}
-            />
-          </>
+            <div className="max-sm:hidden">
+              <Segmented
+                iconsWhenTight
+                label="Board view"
+                value={density}
+                onChange={setDensity}
+                options={[
+                  { value: 'cards', label: 'Cards', icon: <LayoutGrid className="h-4 w-4" /> },
+                  { value: 'compact', label: 'Compact', icon: <LayoutList className="h-4 w-4" /> },
+                  { value: 'table', label: 'Table', icon: <Table2 className="h-4 w-4" /> },
+                ]}
+              />
+            </div>
+          </div>
         }
         singleRow
         filters={
           seesAll && openSessions.length > 0 ? (
           <>
-            {factoryTabs.length > 0 && (
-              <div role="tablist" aria-label="Factory" className="flex h-10 min-w-0 max-w-full shrink items-center gap-0.5 overflow-x-auto rounded-lg bg-slate-200/70 p-0.5 max-md:w-full dark:bg-slate-800 touch:h-11">
-                {[{ key: 'all', label: 'All', count: base.length }, ...factoryTabs].map((t) => {
-                  const active = activeFactory === t.key
-                  return (
-                    <button
-                      key={t.key}
-                      type="button"
-                      role="tab"
-                      aria-selected={active}
-                      aria-label={`${t.key === 'all' ? 'All factories' : t.label}, ${t.count} open`}
-                      onClick={() => {
-                        setFactoryTab(t.key)
-                        setMachinePick('all')
-                      }}
-                      className={cn(
-                        'inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-13 font-semibold transition-colors touch:h-10',
-                        active
-                          ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300'
-                          : t.count === 0
-                            ? 'text-muted hover:text-slate-700 dark:hover:text-slate-200'
-                            : 'text-slate-700 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white',
-                      )}
-                    >
-                      {t.label}
-                      <span
+            {/* The factory: tabs from a portrait tablet up, a select on a phone; offered only when there is a choice to make. */}
+            {offersFactoryChoice(factoryChoices, activeFactory) && (
+              <>
+                <Strip
+                  label="Factory"
+                  follow={activeFactory}
+                  className="min-w-0 max-w-full shrink max-md:hidden"
+                  stripClassName="scrollbar-none flex h-10 items-center gap-0.5 rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800 touch:h-11"
+                  shadowClassName="rounded-lg"
+                >
+                  {[{ key: 'all', label: 'All', count: base.length }, ...factoryChoices].map((t) => {
+                    const active = activeFactory === t.key
+                    return (
+                      <button
+                        key={t.key}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        aria-label={`${t.key === 'all' ? 'All factories' : t.label}, ${t.count} open`}
+                        onClick={() => pickFactory(t.key)}
                         className={cn(
-                          'rounded px-1.5 text-[11px] font-bold tabular-nums leading-[18px]',
-                          t.count === 0 ? 'font-semibold text-muted' : active ? 'bg-brand-600 text-white' : 'bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-100',
+                          'inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-13 font-semibold transition-colors touch:h-10',
+                          active
+                            ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300'
+                            : t.count === 0
+                              ? 'text-muted hover:text-slate-700 dark:hover:text-slate-200'
+                              : 'text-slate-700 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white',
                         )}
                       >
-                        {t.count}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
+                        {t.label}
+                        <span
+                          className={cn(
+                            'rounded px-1.5 text-[11px] font-bold tabular-nums leading-[18px]',
+                            t.count === 0 ? 'font-semibold text-muted' : active ? 'bg-brand-600 text-white' : 'bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-100',
+                          )}
+                        >
+                          {t.count}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </Strip>
+                <FilterSelect label="Factory" value={activeFactory} onChange={pickFactory} className={cn('md:hidden', PHONE_SELECT, filtering && FACTORY_ALONE)}>
+                  <option value="all">All factories</option>
+                  {factoryChoices.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.label} · {t.count}
+                    </option>
+                  ))}
+                </FilterSelect>
+              </>
             )}
-            <FilterSelect label="Inspector" value={inspectorFilter} onChange={setInspectorFilter}>
+            {/* From a tablet up the select keeps its width in a full row; the factory tabs beside it give way and scroll. */}
+            <FilterSelect label="Inspector" value={inspectorFilter} onChange={setInspectorFilter} className={cn('md:shrink-0', PHONE_SELECT)}>
               <option value="all">All inspectors</option>
               {inspectorOptions.map((i) => (
                 <option key={i.id} value={i.id}>
@@ -687,9 +768,10 @@ export function InspectionsPage() {
         canReset={filtering}
       />
 
-      {/* The machines with something open, spread out, each coloured by the worst signal on it; tap one to see it alone. */}
+      {/* The machines with something open, spread out, each coloured by the worst signal on it; tap one to see it alone.
+          Below a desktop's width they scroll sideways in one row, with a shadow where chips hide. */}
       {seesAll && groupsInFactory.length > 1 && (
-        <div role="tablist" aria-label="Machine" className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0">
+        <Strip label="Machine" follow={activeMachine} className="-mx-1" stripClassName="flex gap-2 px-1 pb-1 pt-0.5 touch:scrollbar-none lg:flex-wrap lg:overflow-visible">
           <button type="button" role="tab" aria-selected={activeMachine === 'all'} onClick={() => setMachinePick('all')} className={chipTone(null, activeMachine === 'all')}>
             All machines
             <span className={cn('rounded-full px-1.5 text-xs tabular-nums', activeMachine === 'all' ? 'bg-white/20' : 'bg-black/5 dark:bg-white/10')}>{groupsInFactory.length}</span>
@@ -701,7 +783,7 @@ export function InspectionsPage() {
               <span className={cn('rounded-full px-1.5 text-xs tabular-nums', activeMachine === g.code ? 'bg-white/20' : 'bg-black/5 dark:bg-white/10')}>{g.sessions.length}</span>
             </button>
           ))}
-        </div>
+        </Strip>
       )}
 
       {isLoading ? (
@@ -724,7 +806,7 @@ export function InspectionsPage() {
             </Button>
           ) : null}
         </div>
-      ) : density === 'table' ? (
+      ) : view === 'table' ? (
         boardTable(sections)
       ) : (
         // A header row per factory, its machines under it; the pinned machine heads the board under its own.
@@ -894,7 +976,7 @@ function CloseSessionDialog({
         size="sm"
         footer={
           <>
-            <Button variant="ghost" onClick={onClose}>
+            <Button variant="secondary" onClick={onClose}>
               Keep it open
             </Button>
             <Button variant="danger" onClick={onDiscard}>
@@ -920,7 +1002,8 @@ function CloseSessionDialog({
       size="sm"
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          {/* The safe choice drawn as a button beside the solid one, not as stray text. */}
+          <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
           <Button variant="primary" disabled={!valid} onClick={confirm}>
@@ -967,3 +1050,49 @@ function CloseSessionDialog({
     </Modal>
   )
 }
+
+/**
+ * A row of tabs or chips (role tablist) that scrolls sideways when it is
+ * longer than its room: a shadow at each end that hides tabs says there is
+ * more that way, and the chosen tab (`follow` names it) is scrolled into view
+ * whenever it changes or the row is drawn again, never the page around it.
+ * The strip is positioned, so nothing inside it can widen the page.
+ */
+function Strip({
+  label,
+  follow,
+  className,
+  stripClassName,
+  shadowClassName,
+  children,
+}: {
+  label: string
+  follow: string
+  className?: string
+  stripClassName?: string
+  shadowClassName?: string
+  children: ReactNode
+}) {
+  const strip = useRef<HTMLDivElement>(null)
+  const edges = useScrollEdges(strip)
+  useLayoutEffect(() => {
+    const el = strip.current
+    const tab = el?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (!el || !tab || el.scrollWidth <= el.clientWidth) return
+    // Measured against the strip, with a little room beside the tab so the shadow does not lie over it.
+    const frame = el.getBoundingClientRect()
+    const box = tab.getBoundingClientRect()
+    const room = 24
+    if (box.left < frame.left + room) el.scrollLeft -= frame.left + room - box.left
+    else if (box.right > frame.right - room) el.scrollLeft += box.right - (frame.right - room)
+  }, [follow])
+  return (
+    <div className={cn('relative', className)}>
+      <div ref={strip} role="tablist" aria-label={label} className={cn('relative overflow-x-auto overscroll-x-contain', stripClassName)}>
+        {children}
+      </div>
+      <EdgeShadows {...edges} className={shadowClassName} />
+    </div>
+  )
+}
+

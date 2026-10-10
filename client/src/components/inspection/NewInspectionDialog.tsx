@@ -11,6 +11,7 @@ import { useApp } from '@/store/AppContext'
 import { processForMachine, stockProductionOf } from '@qc/shared/rules'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
 import { When } from '@/components/ui/Tooltip'
+import { isCoarsePointer } from '@/lib/media'
 
 /**
  * §4 — New Inspection.
@@ -21,6 +22,10 @@ import { When } from '@/components/ui/Tooltip'
  * line shows the order context and asks for the starting production quantity
  * before any session exists — that confirmation is the baseline every later
  * quantity is judged against.
+ *
+ * On a touch screen no box takes the focus by itself: the keyboard it would
+ * open covers the sheet (the order list, the Start button) before the
+ * inspector has asked to type. A mouse and keyboard still start in the box.
  */
 export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate()
@@ -210,8 +215,18 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             <Button variant="ghost" onClick={() => setPicked(null)}>
               <ArrowLeft className="h-4 w-4" /> Back
             </Button>
+            {/* "Start" on a phone, where the footer gives the button half the width and the longer label wrapped. */}
             <Button variant="primary" disabled={!valid || busy} onClick={() => start()} className="min-h-[48px]">
-              <Play className="h-4 w-4" /> {busy ? 'Opening…' : openOnLine ? `Join session #${openOnLine.seq}` : 'Start inspection'}
+              <Play className="h-4 w-4" />{' '}
+              {busy ? (
+                'Opening…'
+              ) : openOnLine ? (
+                `Join session #${openOnLine.seq}`
+              ) : (
+                <span>
+                  Start<span className="max-sm:hidden"> inspection</span>
+                </span>
+              )}
             </Button>
           </>
         }
@@ -258,7 +273,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
           {!openOnLine && (
           <Field label="Rejected qty before release" hint="Pieces already rejected on this line before the release inspection. Leave it at zero when there are none; the session is opened when the first sample is saved.">
             <Input
-              autoFocus
+              autoFocus={!isCoarsePointer()}
               type="number"
               inputMode="numeric"
               min={0}
@@ -340,7 +355,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
         </ol>
 
         <Field label="Machine">
-          <Select value={machineCode} onChange={(e) => chooseMachine(e.target.value)} className="min-h-[48px]" autoFocus>
+          <Select value={machineCode} onChange={(e) => chooseMachine(e.target.value)} className="min-h-[48px]" autoFocus={!isCoarsePointer()}>
             <option value="">— choose the machine you are at —</option>
             {machineGroups.map(([factory, group]) =>
               factory ? (
@@ -391,7 +406,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             </div>
             <Field label="Quantity produced (pairs)" hint="How many came out of the press for this session — right = left, entered once. Confirmed again when the session is closed.">
               <Input
-                autoFocus
+                autoFocus={!isCoarsePointer()}
                 type="number"
                 inputMode="numeric"
                 min={0}
@@ -417,14 +432,16 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               <Input
-                autoFocus
+                autoFocus={!isCoarsePointer()}
                 value={orderTerm}
                 onChange={(e) => setOrderTerm(e.target.value)}
                 placeholder="Order number…"
                 className="min-h-[48px] pl-9"
               />
             </div>
-            <div className="max-h-[42vh] space-y-2 overflow-y-auto pr-1">
+            {/* A list of its own from a small tablet up; on a phone the sheet's body is the one scroller, so a swipe never
+                has two lists to choose between. */}
+            <div className="space-y-2 sm:max-h-[42vh] sm:overflow-y-auto sm:pr-1">
               {orders.length === 0 && (
                 <p className="py-8 text-center text-sm text-muted">
                   {ordersLoading ? 'Searching…' : orderTerm ? 'No orders on this machine match that number.' : 'No orders have lines on this machine.'}
@@ -473,7 +490,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
                 <Input
-                  autoFocus
+                  autoFocus={!isCoarsePointer()}
                   value={itemTerm}
                   onChange={(e) => setItemTerm(e.target.value)}
                   placeholder={`Filter ${lines.length} items by code, name or Order ID…`}
@@ -481,7 +498,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
                 />
               </div>
             )}
-            <div className="max-h-[42vh] space-y-2 overflow-y-auto pr-1">
+            <div className="space-y-2 sm:max-h-[42vh] sm:overflow-y-auto sm:pr-1">
               {visibleLines.length === 0 && (
                 <p className="py-8 text-center text-sm text-muted">
                   {linesLoading ? 'Loading…' : itemTerm ? 'No item on this machine matches that.' : 'This order has no items on this machine.'}
@@ -559,11 +576,12 @@ function Metric({ label, value, tone }: { label: string; value: number; tone?: '
   )
 }
 
+/** A detail of the line, in full: a long machine or customer name wraps rather than hiding its end (a finger gets no tooltip). */
 function Detail({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <div className="min-w-0">
       <dt className="text-xs font-semibold uppercase text-muted">{label}</dt>
-      <dd className="truncate font-semibold text-slate-800 dark:text-slate-100">{value || '—'}</dd>
+      <dd dir="auto" className="break-words text-start font-semibold text-slate-800 dark:text-slate-100">{value || '—'}</dd>
     </div>
   )
 }

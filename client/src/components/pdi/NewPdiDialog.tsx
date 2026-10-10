@@ -1,10 +1,12 @@
 // §4 — a new PDI: find the order by any words of its number, or narrow the
 // orders to a factory, a machine or an item picked from a list; see every item the order carries
 // with its drawing number, untick what does not ship this time, then notes
-// and photos.
+// and photos. Closing a form with any of that in it asks first: a stray tap
+// on the dimmed page or an Escape must not throw away photos taken on the
+// floor.
 
 import { useEffect, useMemo, useState } from 'react'
-import { Check, FileText, Search, X } from 'lucide-react'
+import { Check, FileText, Search, Trash2, X } from 'lucide-react'
 import { Button, Field, Input, Modal, Select } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { useMaster, useOrderAllLines, useOrderItems, useOrderNumbersAnywhere } from '@/services/queries'
@@ -57,6 +59,19 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
   const orderIds = ticked.flatMap((i) => i.lineIds)
   const customer = numbers.find((n) => n.orderNumber === orderNumber)?.customer ?? lines[0]?.customer ?? ''
 
+  /** Something that would be lost: notes, photos, or an order with items ticked for this delivery. */
+  const unsaved = notes.trim() !== '' || imageIds.length > 0 || orderIds.length > 0
+  const [confirmingClose, setConfirmingClose] = useState(false)
+  /**
+   * Every way out but Save — Cancel, the X, the dimmed page, Escape — asks first while something would be lost. While
+   * the question is up, the form's own Escape does nothing: the question's Escape answers it (Keep editing).
+   */
+  const requestClose = () => {
+    if (saving || confirmingClose) return
+    if (unsaved) setConfirmingClose(true)
+    else onClose()
+  }
+
   const pickOrder = (n: string) => {
     setOrderNumber(n)
     setUnticked(new Set())
@@ -75,13 +90,13 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={requestClose}
       title="New PDI document"
       icon={<FileText className="h-5 w-5" />}
       size="lg"
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={requestClose}>
             Cancel
           </Button>
           <Button variant="primary" disabled={orderIds.length === 0 || saving} onClick={() => onSave(orderIds, notes, imageIds)}>
@@ -156,7 +171,7 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
           <div className="flex flex-wrap items-center gap-2 rounded-xl bg-brand-50 px-3 py-2.5 ring-1 ring-brand-200 dark:bg-brand-500/10 dark:ring-brand-500/30">
             <span className="font-bold">{orderNumber}</span>
             {customer && <span className="text-sm text-muted">{customer}</span>}
-            <button type="button" onClick={() => pickOrder('')} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
+            <button type="button" onClick={() => pickOrder('')} className="btn-ghost -my-1.5 -mr-1.5 ml-auto min-h-[44px] gap-1 px-3 py-0 text-xs text-brand-700 hover:bg-brand-100/60 dark:text-brand-300 dark:hover:bg-brand-500/15">
               <X className="h-3.5 w-3.5" /> Change order
             </button>
           </div>
@@ -168,11 +183,12 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
               <span className="label !mb-0">
                 Items in this delivery · {ticked.length} of {items.length}
               </span>
-              <span className="flex gap-3 text-xs font-semibold">
-                <button type="button" className="text-brand-700 hover:underline disabled:opacity-40 dark:text-brand-300" disabled={unticked.size === 0} onClick={() => setUnticked(new Set())}>
+              {/* Buttons a finger can hit, not words under a link's hover. */}
+              <span className="-my-1 -mr-3 flex gap-1">
+                <button type="button" className="btn-ghost min-h-[44px] px-3 py-0 text-xs text-brand-700 dark:text-brand-300" disabled={unticked.size === 0} onClick={() => setUnticked(new Set())}>
                   Tick all
                 </button>
-                <button type="button" className="text-muted hover:underline disabled:opacity-40" disabled={ticked.length === 0} onClick={() => setUnticked(new Set(items.map((i) => i.key)))}>
+                <button type="button" className="btn-ghost min-h-[44px] px-3 py-0 text-xs text-muted" disabled={ticked.length === 0} onClick={() => setUnticked(new Set(items.map((i) => i.key)))}>
                   Untick all
                 </button>
               </span>
@@ -183,19 +199,25 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
                 <Input value={itemTerm} onChange={(e) => setItemTerm(e.target.value)} placeholder="Find an item, code or drawing…" className="min-h-[44px] pl-9" aria-label="Find an item" />
               </div>
             )}
-            <ul className="max-h-[45vh] min-h-[12rem] divide-y divide-slate-100 overflow-auto rounded-xl ring-1 ring-slate-200 dark:divide-slate-800 dark:ring-slate-700" aria-label="Items of the order">
+            {/* As tall as its items, up to near half the screen; the room for a long list is kept only while it loads. */}
+            <ul className={cn('max-h-[45vh] divide-y divide-slate-100 overflow-auto rounded-xl ring-1 ring-slate-200 dark:divide-slate-800 dark:ring-slate-700', linesLoading && 'min-h-[12rem]')} aria-label="Items of the order">
               {linesLoading && <li className="px-3 py-4 text-center text-sm text-muted">Loading the items…</li>}
               {shownItems.map((i) => {
                 const on = !unticked.has(i.key)
                 return (
                   <li key={i.key}>
-                    <button type="button" role="checkbox" aria-checked={on} onClick={() => toggle(i.key)} className="flex w-full items-start gap-3 px-3 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800">
+                    <button type="button" role="checkbox" aria-checked={on} onClick={() => toggle(i.key)} className="flex w-full items-start gap-3 px-3 py-2.5 text-start hover:bg-slate-50 dark:hover:bg-slate-800">
                       <span className={cn('mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded border', on ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 dark:border-slate-600')}>{on && <Check className="h-3.5 w-3.5" />}</span>
                       <span className="min-w-0 flex-1">
-                        <span className="block font-semibold" dir="auto">
-                          {i.item}
-                          {i.itemCode && <span className="ml-1.5 text-xs font-normal text-muted">{i.itemCode}</span>}
+                        {/* The name in its own direction, the code on its own line: an Arabic name and a Latin code never run into one another. */}
+                        <span className="block break-words font-semibold">
+                          <bdi dir="auto">{i.item}</bdi>
                         </span>
+                        {i.itemCode && (
+                          <span className="block text-xs text-muted" dir="ltr">
+                            {i.itemCode}
+                          </span>
+                        )}
                         <span className="block text-xs text-muted">
                           Drawing: <span className="font-semibold text-slate-700 dark:text-slate-200">{i.drawings.length ? i.drawings.join(' · ') : '—'}</span>
                         </span>
@@ -218,6 +240,43 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
           <ImagePicker imageIds={imageIds} onChange={setImageIds} orderId={orderIds[0]} />
         </div>
       </div>
+
+      {/* Over the form; the form keeps its place underneath. */}
+      <Modal
+        open={confirmingClose}
+        onClose={() => setConfirmingClose(false)}
+        title="Discard this PDI?"
+        icon={<Trash2 className="h-5 w-5" />}
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmingClose(false)}>
+              Keep editing
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setConfirmingClose(false)
+                onClose()
+              }}
+            >
+              Discard
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          {[
+            orderNumber && orderIds.length > 0 ? `order ${orderNumber} with ${ticked.length} ${ticked.length === 1 ? 'item' : 'items'} ticked` : '',
+            notes.trim() ? 'the notes' : '',
+            imageIds.length > 0 ? `${imageIds.length} ${imageIds.length === 1 ? 'photo' : 'photos'}` : '',
+          ]
+            .filter(Boolean)
+            .join(', ')
+            .replace(/^./, (c) => c.toUpperCase())}{' '}
+          will not be saved. Nothing of this PDI is recorded until you save it.
+        </p>
+      </Modal>
     </Modal>
   )
 }

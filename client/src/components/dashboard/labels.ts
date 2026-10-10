@@ -22,6 +22,50 @@ export function spreadLabels(ys: number[], gap: number, top: number, bottom: num
 /** About how wide a chart's name is drawn, per character: at 10 px, and at 11 px or 10 px bold. Generous, so names reckoned apart are apart. */
 export const CHAR_WIDTH = 5.8
 export const CHAR_WIDTH_WIDE = 6.2
+/** The same at 11 px bold: the figures written on a dashboard chart's marks. */
+export const CHAR_WIDTH_BOLD = 6.8
+
+/**
+ * Which of the `n` names along an x axis are written: every k-th from the
+ * first, k as small as gives each name a room of its own across a plot
+ * `plotWidth` wide — as wide as the longest (`longest` letters of
+ * `charWidth`) and a gap, and never under `minRoom`. 1 writes every name.
+ */
+export function labelEvery(n: number, plotWidth: number, longest: number, charWidth = CHAR_WIDTH_WIDE, minRoom = 32): number {
+  if (n <= 1) return 1
+  const room = Math.max(minRoom, longest * charWidth + 12)
+  const fit = Math.max(1, Math.floor(plotWidth / room))
+  return Math.max(1, Math.ceil(n / fit))
+}
+
+/**
+ * The run of an axis worth drawing: from its first point that holds
+ * anything to its last, so a period whose first months made nothing does not
+ * crowd its figures into one corner. Points [from, to); the whole axis when
+ * no point holds anything (the chart then says so itself).
+ */
+export function dataSpan(n: number, has: (i: number) => boolean): { from: number; to: number } {
+  let from = 0
+  while (from < n && !has(from)) from++
+  if (from === n) return { from: 0, to: n }
+  let to = n
+  while (to > from && !has(to - 1)) to--
+  return { from, to }
+}
+
+/**
+ * Consecutive points gathered into runs — days into weeks — a run starting
+ * at the first point and wherever `startsRun` says (a Monday). Points
+ * [from, to) of each run, in order.
+ */
+export function runsOf(n: number, startsRun: (i: number) => boolean): { from: number; to: number }[] {
+  const runs: { from: number; to: number }[] = []
+  for (let i = 0; i < n; i++) {
+    if (i === 0 || startsRun(i)) runs.push({ from: i, to: i + 1 })
+    else runs[runs.length - 1].to = i + 1
+  }
+  return runs
+}
 
 /** A name slanted at the bar charts' angle (35°): how much of its length runs across, and how much of its height leans back. */
 const SLANT_COS = Math.cos((35 * Math.PI) / 180)

@@ -123,7 +123,21 @@ export default {
     },
   },
   plugins: [
-    // `touch:` — a finger on a tablet or phone: controls grow to a 44 px target there and stay compact under a mouse.
-    plugin(({ addVariant }) => addVariant('touch', '@media (pointer: coarse)')),
+    plugin(({ addVariant }) => {
+      // `touch:` — a finger on a tablet or phone: controls grow to a 44 px target there and stay compact under a mouse.
+      // `mouse:` — a mouse, trackpad or pen: what only a pointer that hovers should get (icons whose words are in a tooltip).
+      //
+      // Tailwind writes these media blocks before the width ones (sm:, md:…), so on their own they would lose to a
+      // width class on the same element: `h-11 sm:h-10 touch:h-11` drew 40 px on every tablet. `:root &` makes the
+      // selector one class stronger (`:root .touch\:h-11`), so the pointer wins whatever the width — a width class
+      // still applies where the pointer class says nothing. Two rules follow from the `:root` in front:
+      //   - write `dark:touch:…` for a dark-mode touch value: `.dark` lands at the end (`:is(.dark *)`), and it beats
+      //     a plain `touch:` as `dark:` beats a plain class;
+      //   - write `touch:group-hover:…`, never `group-hover:touch:…`: a group/peer variant outside it would need the
+      //     group to be an ancestor of :root, and never matches.
+      // (Registering them as `screens` with `raw` was tried: Tailwind then drops every max-* and range class.)
+      addVariant('touch', '@media (pointer: coarse) { :root & }')
+      addVariant('mouse', '@media (pointer: fine) { :root & }')
+    }),
   ],
 }

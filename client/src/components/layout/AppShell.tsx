@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { AlertCircle, AlertTriangle, Bot, CheckCircle2, ChevronRight, Info, LogOut, Menu, MessagesSquare, Settings, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, Info, LogOut, Menu, MessagesSquare, Settings, X } from 'lucide-react'
 import { WhatsNewPrompt } from '@/components/releases/WhatsNew'
 import { NoticeBell } from '@/components/notices/NoticeBell'
 import { useChatUnread } from '@/services/queries'
@@ -10,13 +10,14 @@ import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
 import { can } from '@qc/shared/rules'
 import { AccountMenu, AvatarEditor, ThemeSwitch } from '@/components/layout/AccountMenu'
-import { ADMIN_NAV, NAV, visibleNav, type NavItem } from '@/components/layout/navItems'
+import { ADMIN_NAV, NAV, TOOLS_NAV, visibleNav, type NavItem } from '@/components/layout/navItems'
 import { AiAssistantProvider, useAi } from '@/components/ai/AiAssistantProvider'
 import { AiButton } from '@/components/ai/AiButton'
 import { AiPanelHost } from '@/components/ai/AiPanelHost'
 import { isAiWorkspacePath } from '@/components/ai/workspace'
 import { useFollowUpCounts } from '@/services/followUps'
 import { useNavFit } from '@/components/layout/navFit'
+import { useCoarsePointer } from '@/lib/media'
 
 function ToastHost() {
   const { toasts, dismissToast } = useApp()
@@ -27,8 +28,11 @@ function ToastHost() {
     info: 'text-brand-500',
     warning: 'text-amber-500',
   }
+  // Under the header, never over it: a toast lies over the page, not over the chat, the bell or the menu it may be
+  // about. No wider than the screen, and held to its left edge: should a page ever lay itself out wider than the
+  // screen (a phone then widens its layout), the toasts stay on the part that shows rather than centring on the rest.
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-3 z-[70] flex flex-col items-center gap-2 px-3">
+    <div className="pointer-events-none fixed inset-x-0 top-[calc(4.5rem+env(safe-area-inset-top))] z-[70] flex max-w-[100vw] flex-col items-center gap-2 px-3">
       {toasts.map((t) => {
         const Icon = icons[t.kind]
         return (
@@ -154,7 +158,8 @@ function AdminMenu({ items }: { items: NavItem[] }) {
               </span>
               <span className="min-w-0 flex-1 leading-tight">
                 <span className="block text-sm font-semibold">{n.label}</span>
-                {n.hint && <span className="block truncate text-xs text-muted">{n.hint}</span>}
+                {/* The whole hint, on two lines if it must: the menu is wide enough, and a finger gets no tooltip. */}
+                {n.hint && <span className="block text-xs text-muted">{n.hint}</span>}
               </span>
               <ChevronRight className="h-4 w-4 text-slate-300 transition-transform duration-200 group-hover/item:translate-x-0.5 group-hover/item:text-brand-500" />
             </NavLink>
@@ -191,12 +196,19 @@ function Shell({ children }: { children: ReactNode }) {
   // whoever has some or may see everyone's, with the count of their own open ones (polled like the bell).
   const { data: followUps } = useFollowUpCounts(!!profile)
   const nav = visibleNav(NAV, role, false, ai.automations, followUps?.visible ?? false)
+  const tools = visibleNav(TOOLS_NAV, role, false)
   const navCount = (n: NavItem) => (n.followUps && followUps ? { count: followUps.mineOpen, overdue: followUps.mineOverdue } : null)
   // The tabs keep their names while those fit beside the brand and the icons; then tighter padding; then icons alone, the
   // names in tooltips. Measured on this bar, for these tabs and this window (navFit), not guessed from how many there are.
   const barRef = useRef<HTMLDivElement>(null)
   const navRef = useRef<HTMLElement>(null)
   const fit = useNavFit(barRef, navRef, `${nav.map((n) => n.to).join(' ')}${followUps?.mineOpen ? ' #' : ''}`)
+  // A finger gets no tooltip, so on a touch screen the tabs never stand as bare icons: where only icons would fit (a
+  // landscape tablet, six tabs), the bar keeps the menu button, as on a portrait tablet, and the menu names them. The
+  // tabs stay laid out, out of sight and out of the row, so navFit goes on measuring them and the names come back as
+  // soon as they fit. A mouse keeps the icons, with their names in tooltips.
+  const coarse = useCoarsePointer()
+  const menuAtLg = coarse && fit === 'icons'
   const admin = visibleNav(ADMIN_NAV, role, ai.owner)
   const displayName = profile?.name || user
 
@@ -210,15 +222,27 @@ function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-full">
       <header className="print:hidden sticky top-0 z-40 border-b border-slate-200/80 bg-white/85 shadow-[0_1px_0_rgba(255,255,255,.6)_inset] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/85 safe-top">
-        {/* A desktop centres the tabs and shows the gear and the account; a tablet or phone keeps all of that behind the menu button. */}
-        <div ref={barRef} className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:px-8">
+        {/* A desktop centres the tabs and shows the gear and the account; a tablet or phone keeps all of that behind the menu button.
+            From lg the brand and the icons share what the tabs leave, half each, so the tabs sit in the middle while they
+            can; when the icons need more than half, the brand's spare room goes to the tabs before they lose their names. */}
+        <div ref={barRef} className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:px-8">
           {/* Left — brand */}
-          <button type="button" onClick={() => navigate('/')} className="shrink-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 lg:justify-self-start" aria-label="Home">
-            <Brand />
-          </button>
+          <div className="flex shrink-0 lg:flex-1">
+            <button type="button" onClick={() => navigate('/')} className="flex min-h-[44px] items-center rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" aria-label="Home">
+              <Brand />
+            </button>
+          </div>
 
           {/* The inspector's tabs, centred — desktop only */}
-          <nav ref={navRef} className="hidden items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 lg:flex lg:justify-self-center dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
+          <nav
+            ref={navRef}
+            aria-hidden={menuAtLg || undefined}
+            className={cn(
+              'hidden shrink-0 items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 lg:flex dark:bg-slate-800/70 dark:ring-slate-700/70',
+              menuAtLg && 'pointer-events-none invisible absolute',
+            )}
+            aria-label="Main"
+          >
             {nav.map((n) => {
               const active = isActive(n)
               const count = navCount(n)
@@ -246,25 +270,26 @@ function Shell({ children }: { children: ReactNode }) {
           </nav>
 
           {/* Right — the assistant, chat, the bell, administration, account (the theme is in the account panel / the menu) */}
-          <div className="ml-auto flex shrink-0 items-center gap-1 lg:ml-0 lg:justify-self-end">
+          <div className="ml-auto flex shrink-0 items-center justify-end gap-1 lg:flex-1">
             {ai.enabled && <AiButton />}
             {can(role, 'use-chat') && <ChatButton />}
             {/* §21 — everyone has the bell for their alerts; the notices in it are for the roles that receive them. */}
             <NoticeBell notices={can(role, 'read-notices')} />
+            {/* With the menu button kept at lg, the menu holds administration and the account as well: the bar reads as on a portrait tablet. */}
             {admin.length > 0 && (
-              <div className="hidden lg:block">
+              <div className={cn('hidden', !menuAtLg && 'lg:block')}>
                 <AdminMenu items={admin} />
               </div>
             )}
-            <div className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 lg:block" />
-            <div className="hidden items-center gap-2 lg:flex">
+            <div className={cn('mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700', !menuAtLg && 'lg:block')} />
+            <div className={cn('hidden items-center gap-2', !menuAtLg && 'lg:flex')}>
               {/* Only the circle: the photo or the initials; the name is in its tooltip and its panel. */}
               <AccountMenu name={displayName ?? ''} role={role ?? ''} username={profile?.username} />
               <button onClick={() => signOutUser()} className="icon-btn hover:text-rose-600" aria-label="Sign out">
                 <LogOut className="h-5 w-5" />
               </button>
             </div>
-            <button onClick={() => setMenuOpen(true)} className="icon-btn relative lg:hidden" aria-label="Open menu">
+            <button onClick={() => setMenuOpen(true)} className={cn('icon-btn relative', !menuAtLg && 'lg:hidden')} aria-label="Open menu" aria-expanded={menuOpen}>
               <Menu className="h-6 w-6" />
             </button>
           </div>
@@ -272,39 +297,35 @@ function Shell({ children }: { children: ReactNode }) {
       </header>
 
       {menuOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className={cn('fixed inset-0 z-50', !menuAtLg && 'lg:hidden')}>
           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fade-in" onClick={() => setMenuOpen(false)} />
-          <div className="absolute right-0 top-0 h-full w-[85%] max-w-sm overflow-y-auto bg-white shadow-lift animate-slide-up dark:bg-slate-900 safe-top">
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+          <div className="absolute right-0 top-0 h-full w-[85%] max-w-sm overflow-y-auto overscroll-contain bg-white shadow-lift animate-slide-up dark:bg-slate-900 safe-top">
+            {/* The way out stays in view however far a long menu (an administrator's) is scrolled. */}
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-5 py-4 dark:border-slate-800 dark:bg-slate-900">
               <Brand />
               <button onClick={() => setMenuOpen(false)} className="icon-btn" aria-label="Close menu">
                 <X className="h-6 w-6" />
               </button>
             </div>
             <nav className="flex flex-col gap-1 p-3">
+              {/* The assistant is the header's own button on every screen, so the menu does not offer it a second time. */}
               {nav.map((n) => (
                 <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} count={navCount(n)} />
               ))}
-              {ai.enabled && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    // On the assistant's full page, the assistant is already the page.
-                    if (!ai.workspace) ai.setOpen(true)
-                  }}
-                  className="flex items-center gap-3 rounded-2xl px-4 py-4 text-left text-base font-semibold text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
-                >
-                  <Bot className="h-5 w-5" />
-                  <span className="flex-1">Ask the AI assistant</span>
-                  {ai.busy && <span className="text-xs font-semibold text-accent-600 dark:text-accent-400">Answering…</span>}
-                </button>
+              {tools.length > 0 && (
+                <>
+                  <p className="px-4 pb-1 pt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Tools</p>
+                  {tools.map((n) => (
+                    <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
+                  ))}
+                </>
               )}
               {admin.length > 0 && (
                 <>
                   <p className="px-4 pb-1 pt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Administration</p>
+                  {/* With the line under each name that the gear's menu shows: "AI assistant" says it holds the settings. */}
                   {admin.map((n) => (
-                    <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
+                    <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} hint />
                   ))}
                 </>
               )}
@@ -349,19 +370,29 @@ function Shell({ children }: { children: ReactNode }) {
   )
 }
 
-function DrawerLink({ item, active, onClick, count }: { item: NavItem; active: boolean; onClick: () => void; count?: { count: number; overdue: number } | null }) {
+/** `hint`: the entry's line under its name (administration), as the gear's menu shows it. */
+function DrawerLink({ item, active, onClick, count, hint = false }: { item: NavItem; active: boolean; onClick: () => void; count?: { count: number; overdue: number } | null; hint?: boolean }) {
+  const sub = hint ? item.hint : undefined
   return (
     <NavLink
       to={item.to}
       end={item.end}
       onClick={onClick}
       className={cn(
-        'flex items-center gap-3 rounded-2xl px-4 py-4 text-base font-semibold transition-colors',
+        'flex items-center gap-3 rounded-2xl px-4 text-base font-semibold transition-colors',
+        sub ? 'py-3' : 'py-4',
         active ? 'bg-brand-700 text-white shadow-card' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800',
       )}
     >
-      <item.icon className="h-5 w-5" />
-      <span className="flex-1">{item.label}</span>
+      <item.icon className="h-5 w-5 shrink-0" />
+      {sub ? (
+        <span className="min-w-0 flex-1 leading-tight">
+          <span className="block">{item.label}</span>
+          <span className={cn('mt-0.5 block text-xs font-medium', active ? 'text-white/80' : 'text-muted')}>{sub}</span>
+        </span>
+      ) : (
+        <span className="flex-1">{item.label}</span>
+      )}
       {count && <NavCount count={count.count} overdue={count.overdue} />}
     </NavLink>
   )

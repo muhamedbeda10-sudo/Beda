@@ -58,7 +58,12 @@ export function NoticeGate({
       title={
         <span>
           Read before you continue
-          {notices.length > 1 && <span className="ml-2 text-sm font-semibold text-muted">{index + 1} of {notices.length}</span>}
+          {/* "2 of 3" kept whole when the title wraps on a phone. */}
+          {notices.length > 1 && (
+            <span className="ml-2 whitespace-nowrap text-sm font-semibold text-muted">
+              {index + 1} of {notices.length}
+            </span>
+          )}
         </span>
       }
       footer={
@@ -70,7 +75,15 @@ export function NoticeGate({
           )}
           <Button variant="primary" onClick={advance} disabled={busy} className="min-h-[44px]">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            {current.requiresAck ? 'I have read this — acknowledge' : 'Got it'}
+            {/* On a phone the footer gives it half the width: the one word, which the sentence ends with. */}
+            {current.requiresAck ? (
+              <>
+                <span className="sm:hidden">Acknowledge</span>
+                <span className="max-sm:hidden">I have read this — acknowledge</span>
+              </>
+            ) : (
+              'Got it'
+            )}
           </Button>
         </>
       }

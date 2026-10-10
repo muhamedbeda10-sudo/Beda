@@ -21,6 +21,7 @@ import { trimNotifications, useNotifications } from '@/services/notifications'
 import { followUpKeys } from '@/services/followUps'
 import { useApp } from '@/store/AppContext'
 import { cn, timeAgo } from '@/lib/utils'
+import { textDirection } from '@/lib/direction'
 import { NoticeCard, SEVERITY_META, validityText } from './NoticeCard'
 import { AlertList } from './AlertList'
 import { badgeText, bellCount, unreadAlerts } from './alerts'
@@ -43,21 +44,33 @@ function InboxRow({ notice, open, onToggle }: { notice: NoticeForUser; open: boo
       setBusy(false)
     }
   }
+  const badge = notice.pending ? <Badge tone={notice.requiresAck ? 'violet' : 'blue'}>{notice.requiresAck ? 'Acknowledge' : 'New'}</Badge> : null
   return (
     <li className={cn('rounded-2xl ring-1 transition-shadow', notice.pending ? m.ring : 'ring-slate-200/70 dark:ring-slate-800', open && 'shadow-card')}>
-      <button type="button" onClick={onToggle} className="flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-left hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+      <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-left hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
         <span className={cn('mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl', notice.pending ? m.iconBg : 'bg-slate-100 text-muted dark:bg-slate-800')}>
           <m.icon className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className={cn('block truncate text-sm', notice.pending ? 'font-bold' : 'font-semibold text-slate-600 dark:text-slate-300')}>{notice.title}</span>
-          <span className="mt-0.5 block text-xs text-muted">
-            {timeAgo(notice.createdAt)} · {validityText(notice)}
-            {!notice.active ? ' · expired' : ''}
-            {notice.acknowledgedAt ? ' · acknowledged' : notice.seenAt ? ' · read' : ''}
+          {/* The title in its own direction (an Arabic one starts at the right, its end clipped, not its start), on two
+              lines at most while folded, and whole once open: the card under it leaves its own title out. */}
+          <span
+            dir={textDirection(notice.title) ?? 'auto'}
+            className={cn('break-words text-start text-sm', open ? 'block' : 'line-clamp-2', notice.pending ? 'font-bold' : 'font-semibold text-slate-600 dark:text-slate-300')}
+          >
+            {notice.title}
+          </span>
+          {/* On a phone the badge waits on this line, under the title, so the title has the row's width. */}
+          <span className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted">
+            {badge && <span className="sm:hidden">{badge}</span>}
+            <span>
+              {timeAgo(notice.createdAt)} · <span className="whitespace-nowrap">{validityText(notice)}</span>
+              {!notice.active ? ' · expired' : ''}
+              {notice.acknowledgedAt ? ' · acknowledged' : notice.seenAt ? ' · read' : ''}
+            </span>
           </span>
         </span>
-        {notice.pending && <Badge tone={notice.requiresAck ? 'violet' : 'blue'}>{notice.requiresAck ? 'Acknowledge' : 'New'}</Badge>}
+        {badge && <span className="shrink-0 max-sm:hidden">{badge}</span>}
         {open ? <ChevronUp className="mt-1 h-4 w-4 shrink-0 text-muted" /> : <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-muted" />}
       </button>
       {open && (

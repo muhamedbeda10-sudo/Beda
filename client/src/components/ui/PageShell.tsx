@@ -15,7 +15,10 @@ import { cn } from '@/lib/utils'
 
 // ---- Figures ------------------------------------------------------------------
 
-/** One figure in the header's line: the number bold, its noun muted; a button when it opens what it counts. */
+/**
+ * One figure in the header's line: the number bold, its noun muted; a button when it opens what it counts. On a touch
+ * screen that button is drawn as a chip, 40 px tall, so it reads as something to tap and takes a gloved finger.
+ */
 export function HeaderStat({ value, label, onClick, tip, tone }: { value: number; label: string; onClick?: () => void; tip?: string; tone?: 'success' }) {
   const body = (
     <>
@@ -24,7 +27,12 @@ export function HeaderStat({ value, label, onClick, tip, tone }: { value: number
   )
   if (!onClick || value === 0) return <span data-tip={tip}>{body}</span>
   return (
-    <button type="button" onClick={onClick} data-tip={tip} className="rounded underline-offset-4 hover:text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:hover:text-brand-300">
+    <button
+      type="button"
+      onClick={onClick}
+      data-tip={tip}
+      className="rounded underline-offset-4 hover:text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:hover:text-brand-300 touch:inline-flex touch:min-h-[40px] touch:items-center touch:gap-1 touch:rounded-lg touch:px-3 touch:ring-1 touch:ring-inset touch:ring-slate-200 dark:touch:ring-slate-700"
+    >
       {body}
     </button>
   )
@@ -49,11 +57,15 @@ export function Segmented<T extends string>({
   options: { value: T; label: string; icon?: ReactNode }[]
   onChange: (v: T) => void
   label: string
-  /** From a tablet to a wide screen only the icons show, the words in their tooltips; a phone and a wide screen show the words. */
+  /**
+   * From a tablet to a wide screen only the icons show under a mouse, the words in their tooltips; a phone, a wide
+   * screen and every touch screen show the words (a finger gets no tooltip).
+   */
   iconsWhenTight?: boolean
 }) {
+  // One line whatever the width: a word never breaks inside its tab, and a switch wider than its row scrolls inside itself.
   return (
-    <div role="tablist" aria-label={label} className="inline-flex h-9 items-center rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800 touch:h-11">
+    <div role="tablist" aria-label={label} className="scrollbar-none inline-flex h-9 max-w-full items-center overflow-x-auto rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800 touch:h-11">
       {options.map((o) => (
         <button
           key={o.value}
@@ -64,13 +76,13 @@ export function Segmented<T extends string>({
           aria-label={iconsWhenTight ? o.label : undefined}
           data-tip={iconsWhenTight ? o.label : undefined}
           className={cn(
-            'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-13 font-semibold transition-colors touch:h-10',
-            iconsWhenTight && 'md:max-2xl:px-2.5',
+            'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-13 font-semibold transition-colors touch:h-10',
+            iconsWhenTight && 'md:max-2xl:mouse:px-2.5',
             value === o.value ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-muted hover:text-slate-700 dark:hover:text-slate-200',
           )}
         >
           {o.icon}
-          {iconsWhenTight ? <span className="md:max-2xl:sr-only">{o.label}</span> : o.label}
+          {iconsWhenTight ? <span className="md:max-2xl:mouse:sr-only">{o.label}</span> : o.label}
         </button>
       ))}
     </div>
@@ -84,7 +96,10 @@ export interface ExportItem {
   icon?: ReactNode
 }
 
-/** The page's exports. One is a button; two or more share one Export menu. */
+/**
+ * The page's exports. One is a button; two or more share one Export menu. The one button is an icon under a mouse
+ * below a wide screen, its words in the tooltip; on a touch screen it always says what it does.
+ */
 export function ExportMenu({ items, busy }: { items: ExportItem[]; busy?: boolean }) {
   const anchor = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
@@ -92,9 +107,9 @@ export function ExportMenu({ items, busy }: { items: ExportItem[]; busy?: boolea
   if (items.length === 1) {
     const [only] = items
     return (
-      <button type="button" onClick={only.onClick} disabled={only.disabled || busy} aria-label={only.label} data-tip={only.label} className="btn-secondary h-10 min-h-0 gap-1.5 px-2.5 py-0 text-13">
-        <Download className="h-4 w-4" /> <span className="hidden 2xl:inline">{busy ? 'Building…' : only.label}</span>
-        {busy && <span className="2xl:hidden">…</span>}
+      <button type="button" onClick={only.onClick} disabled={only.disabled || busy} aria-label={only.label} data-tip={only.label} className="btn-secondary h-10 min-h-0 gap-1.5 whitespace-nowrap px-2.5 py-0 text-13 touch:h-11 touch:min-w-[44px] touch:px-3">
+        <Download className="h-4 w-4" /> <span className="hidden touch:inline 2xl:inline">{busy ? 'Building…' : only.label}</span>
+        {busy && <span className="touch:hidden 2xl:hidden">…</span>}
       </button>
     )
   }
@@ -116,7 +131,7 @@ export function ExportMenu({ items, busy }: { items: ExportItem[]; busy?: boolea
                 setOpen(false)
                 it.onClick()
               }}
-              className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-slate-100 disabled:opacity-50 dark:hover:bg-slate-800"
+              className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-slate-100 disabled:opacity-50 dark:hover:bg-slate-800 touch:h-11"
             >
               {it.icon}
               {it.label}
@@ -144,7 +159,7 @@ export function InfoTip({ text, label = 'About this' }: { text: string; label?: 
         aria-expanded={open}
         data-tip={open ? undefined : text}
         onClick={() => setOpen((o) => !o)}
-        className="print-hidden inline-grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-9 touch:w-9"
+        className="print-hidden inline-grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11"
       >
         <Info className="h-3.5 w-3.5" />
       </button>
@@ -164,7 +179,10 @@ export interface FilterChip {
   onRemove: () => void
 }
 
-/** A compact filter select for the filter row; its label is what a screen reader hears and what the chip says. */
+/**
+ * A compact filter select for the filter row; its label is what a screen reader hears and what the chip says. On a
+ * phone two share a row, and one left alone on its row fills it.
+ */
 export function FilterSelect({ label, value, onChange, children, className }: { label: string; value: string; onChange: (v: string) => void; children: ReactNode; className?: string }) {
   return (
     <select
@@ -172,7 +190,7 @@ export function FilterSelect({ label, value, onChange, children, className }: { 
       data-tip={label}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={cn('input h-10 truncate py-0 pl-3 pr-8 text-sm max-md:!w-[calc(50%-4px)] md:!w-auto md:min-w-[8rem] md:max-w-[12rem] touch:h-11', className)}
+      className={cn('input h-10 truncate py-0 pl-3 pr-8 text-sm max-md:!w-auto max-md:min-w-[calc(50%-4px)] max-md:flex-1 md:!w-auto md:min-w-[8rem] md:max-w-[12rem] touch:h-11', className)}
     >
       {children}
     </select>
@@ -190,6 +208,7 @@ export function FilterBar({
   trailing,
   leading,
   actions,
+  actionsInline = false,
   singleRow = false,
 }: {
   /** The search box; a page without one leaves it out. */
@@ -206,17 +225,22 @@ export function FilterBar({
   trailing?: ReactNode
   /** Before the search: the page's view switch (Sessions / PDI). */
   leading?: ReactNode
-  /** The page's own actions, at the row's right end; on a phone they head the bar. */
+  /** The page's own actions, at the row's right end; on a phone they head the bar, on a row of their own. */
   actions?: ReactNode
-  /** From a tablet up the row never wraps: a filter that runs long scrolls inside itself instead. */
+  /**
+   * On a phone the actions share the first row with `leading` (the view switch), at its right end, instead of taking
+   * a row of their own: for a page whose actions are one or two small buttons (History's Export and columns).
+   */
+  actionsInline?: boolean
+  /** From a wide screen (1280 px) up the row never wraps: a filter that runs long scrolls inside itself instead. */
   singleRow?: boolean
 }) {
   const anchor = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   return (
     <div className="z-30 -mx-4 space-y-1.5 bg-slate-100/90 px-4 py-1 backdrop-blur sm:-mx-6 sm:px-6 md:sticky md:top-16 lg:-mx-8 lg:px-8 dark:bg-slate-950/90">
-      <div className={cn('flex flex-wrap items-center gap-2', singleRow && 'md:flex-nowrap')}>
-        {leading}
+      <div className={cn('flex flex-wrap items-center gap-2', singleRow && 'xl:flex-nowrap')}>
+        {leading && actionsInline ? <div className="flex min-w-0 items-center gap-2 max-md:order-first">{leading}</div> : leading}
         {search && (
           <div className="relative w-full md:w-auto md:min-w-[11rem] md:flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
@@ -225,10 +249,10 @@ export function FilterBar({
               onChange={(e) => search.onChange(e.target.value)}
               placeholder={search.placeholder}
               aria-label={search.label}
-              className="input h-10 py-0 pl-9 pr-9 text-sm touch:h-11"
+              className="input h-10 py-0 pl-9 pr-9 text-sm touch:h-11 touch:pr-11"
             />
             {search.value && (
-              <button type="button" onClick={() => search.onChange('')} aria-label="Clear the search" data-tip="Clear the search" className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+              <button type="button" onClick={() => search.onChange('')} aria-label="Clear the search" data-tip="Clear the search" className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:right-1 touch:h-9 touch:w-9">
                 <X className="h-4 w-4" />
               </button>
             )}
@@ -237,7 +261,7 @@ export function FilterBar({
         {filters}
         {more && (
           <>
-            <button ref={anchor} type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="dialog" aria-expanded={open} className={cn('btn-secondary h-10 min-h-0 px-3 py-0 text-sm max-md:flex-1 touch:h-11', moreCount > 0 && 'text-brand-700 ring-brand-300 dark:text-brand-200 dark:ring-brand-500/50')}>
+            <button ref={anchor} type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="dialog" aria-expanded={open} className={cn('btn-secondary h-10 min-h-0 whitespace-nowrap px-3 py-0 text-sm max-md:flex-1 touch:h-11', moreCount > 0 && 'text-brand-700 ring-brand-300 dark:text-brand-200 dark:ring-brand-500/50')}>
               <SlidersHorizontal className="h-4 w-4" /> More filters
               {moreCount > 0 && <span className="rounded bg-brand-600 px-1.5 text-[11px] font-bold leading-[18px] text-white">{moreCount}</span>}
             </button>
@@ -253,12 +277,12 @@ export function FilterBar({
           aria-label="Reset all filters"
           data-tip="Reset all filters"
           // On a phone a reset with nothing to reset would take a row of its own: it shows once a filter is set.
-          className={cn('grid h-10 w-10 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-200/70 hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11', !canReset && 'max-md:hidden')}
+          className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-200/70 hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11', !canReset && 'max-md:hidden')}
         >
           <RotateCcw className="h-4 w-4" />
         </button>
         {trailing}
-        {actions && <div className="flex shrink-0 flex-wrap items-center gap-2 max-md:order-first max-md:w-full md:ml-auto">{actions}</div>}
+        {actions && <div className={cn('flex shrink-0 flex-wrap items-center gap-2 max-md:order-first md:ml-auto', actionsInline ? 'max-md:ml-auto' : 'max-md:w-full')}>{actions}</div>}
       </div>
       <FilterChips chips={chips} onReset={onReset} />
     </div>
@@ -276,14 +300,14 @@ export function FilterChips({ chips, onReset }: { chips: FilterChip[]; onReset: 
           type="button"
           onClick={c.onRemove}
           aria-label={`Remove the filter ${c.label}`}
-          className="inline-flex h-7 items-center gap-1 rounded-md bg-info-50 px-2 text-xs font-semibold text-info-700 ring-1 ring-inset ring-info-200 hover:bg-info-100 dark:bg-info-500/10 dark:text-info-300 dark:ring-info-500/25 dark:hover:bg-info-500/20"
+          className="inline-flex h-7 items-center gap-1 rounded-md bg-info-50 px-2 text-xs font-semibold text-info-700 ring-1 ring-inset ring-info-200 hover:bg-info-100 dark:bg-info-500/10 dark:text-info-300 dark:ring-info-500/25 dark:hover:bg-info-500/20 touch:h-9 touch:px-2.5"
         >
           <span className="max-w-[16rem] truncate">{c.label}</span>
           <X className="h-3.5 w-3.5" />
         </button>
       ))}
       {chips.length > 1 && (
-        <button type="button" onClick={onReset} className="h-7 rounded-md px-2 text-xs font-semibold text-muted hover:text-slate-700 hover:underline dark:hover:text-slate-200">
+        <button type="button" onClick={onReset} className="h-7 rounded-md px-2 text-xs font-semibold text-muted hover:text-slate-700 hover:underline dark:hover:text-slate-200 touch:h-9 touch:px-3">
           Clear all
         </button>
       )}

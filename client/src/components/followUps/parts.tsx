@@ -30,16 +30,28 @@ export function DueText({ followUp: f, timeZone, stacked = false, className }: {
 
 /**
  * A session with follow-ups not done: "Needs review" until they are closed.
- * `compact`: the flag alone, its words in the tooltip (and to a screen
- * reader) — for a one-line table cell, where the words would push the
- * session's own status out of sight.
+ * `compact`: the flag alone, its words in the tooltip and in the image's
+ * name for a screen reader — for a one-line table cell under a mouse, where
+ * the words would push the session's own status out of sight. The words are
+ * a label, not hidden text: an absolutely placed `sr-only` span inside a
+ * scrolling table is laid out against the page and can stretch it.
  */
 export function NeedsReviewBadge({ count, compact = false }: { count: number; compact?: boolean }) {
   if (count <= 0) return null
-  const tip = `${compact ? 'Needs review: ' : ''}${count} open follow-up${count === 1 ? '' : 's'}: it reads “Needs review” until ${count === 1 ? 'it is' : 'they are'} closed`
+  const open = `${count} open follow-up${count === 1 ? '' : 's'}`
+  const tip = `${compact ? 'Needs review: ' : ''}${open}: it reads “Needs review” until ${count === 1 ? 'it is' : 'they are'} closed`
+  if (compact) {
+    return (
+      <span role="img" aria-label={`Needs review: ${open}`} className="inline-flex shrink-0">
+        <Badge tone="amber" icon={<Flag className="h-3 w-3" aria-hidden />} tip={tip}>
+          {null}
+        </Badge>
+      </span>
+    )
+  }
   return (
     <Badge tone="amber" icon={<Flag className="h-3 w-3" aria-hidden />} tip={tip}>
-      {compact ? <span className="sr-only">Needs review</span> : 'Needs review'}
+      Needs review
     </Badge>
   )
 }

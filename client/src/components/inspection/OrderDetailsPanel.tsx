@@ -76,30 +76,37 @@ export function OrderDetailsPanel({
       icon={<Package2 className="h-5 w-5" />}
       title={stock ? (session?.order?.item ?? 'Stock item') : (session?.order?.orderNumber ?? 'Order')}
       subtitle={
+        // The item, then its code under it: two lines, never a dot left alone at the end of a wrapped name.
         session && (
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span dir="auto" className="font-semibold text-slate-700 dark:text-slate-200">
+          <span className="block">
+            <span dir="auto" className="block break-words text-start font-semibold text-slate-700 dark:text-slate-200">
               {session.order?.item ?? '—'}
             </span>
-            <span className="text-muted">·</span>
-            <span className="font-mono text-xs">{session.order?.itemCode ?? '—'}</span>
+            <span className="block break-all font-mono text-xs">{session.order?.itemCode ?? '—'}</span>
           </span>
         )
       }
       footer={
         session && (
           <>
+            {/* Closing the session first, continuing (the one most often wanted) last, under the thumb. The dismissing
+                Close sits apart at the left from a small tablet up; on a phone, where the sheet's X and the dim area
+                around it already close it, it is left out while there is anything else to do, so "Close session…"
+                never stands beside a plain "Close". On a phone both labels fit half the width on one line. */}
             {session.status === 'Open' && canRecord && (
-              <Button variant="primary" className="min-h-[48px]" onClick={() => onContinue(session)}>
-                <Play className="h-4 w-4" /> Continue inspection
+              <Button className="min-h-[48px] max-sm:px-3" onClick={() => onCloseSession(session)}>
+                <Lock className="h-4 w-4" /> Close session…
               </Button>
             )}
             {session.status === 'Open' && canRecord && (
-              <Button className="min-h-[48px]" onClick={() => onCloseSession(session)}>
-                <Lock className="h-4 w-4" /> Close session
+              <Button variant="primary" className="min-h-[48px] max-sm:px-3" onClick={() => onContinue(session)}>
+                <Play className="h-4 w-4" />{' '}
+                <span>
+                  Continue<span className="max-sm:hidden"> inspection</span>
+                </span>
               </Button>
             )}
-            <Button className="min-h-[48px]" onClick={onClose}>
+            <Button className={cn('min-h-[48px] sm:order-first sm:mr-auto', session.status === 'Open' && canRecord && 'max-sm:hidden')} onClick={onClose}>
               Close
             </Button>
           </>
@@ -203,7 +210,7 @@ export function OrderDetailsPanel({
                         key={sm.id}
                         type="button"
                         onClick={() => onOpenSample(session, sm)}
-                        className={cn('min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors', sampleChipClass(sm))}
+                        className={cn('min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors touch:min-h-[44px] touch:min-w-[44px]', sampleChipClass(sm))}
                         data-tip={sampleChipTitle(sm) || undefined}
                         aria-label={`Open sample ${session.seq}-${sm.index}${sampleChipTitle(sm) ? `, ${sampleChipTitle(sm)}` : ''}`}
                       >
@@ -238,7 +245,7 @@ export function OrderDetailsPanel({
                         <button
                           type="button"
                           onClick={() => !current && setOpenSessions((prev) => { const next = new Set(prev); if (next.has(s.id)) next.delete(s.id); else next.add(s.id); return next })}
-                          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 text-left"
+                          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 text-left touch:min-h-[44px]"
                           aria-expanded={expanded}
                         >
                           <span className="font-bold tabular-nums">#{s.seq}</span>
@@ -264,7 +271,7 @@ export function OrderDetailsPanel({
                                   key={sm.id}
                                   type="button"
                                   onClick={() => onOpenSample({ ...s, order: session.order }, sm)}
-                                  className={cn('min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors', sampleChipClass(sm, true))}
+                                  className={cn('min-h-[36px] rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors touch:min-h-[44px]', sampleChipClass(sm, true))}
                                   data-tip={sampleChipTitle(sm) || undefined}
                                 >
                                   {s.seq}-{sm.index}
@@ -359,6 +366,7 @@ function Section({ icon, title, count, children }: { icon: ReactNode; title: str
   )
 }
 
+/** One attribute of the line, in full: a long customer or machine name wraps rather than hiding its end (a finger gets no tooltip). */
 function Attr({ icon, label, value, mono }: { icon?: ReactNode; label: string; value?: string | null; mono?: boolean }) {
   const empty = value === undefined || value === null || value.trim() === ''
   return (
@@ -367,7 +375,7 @@ function Attr({ icon, label, value, mono }: { icon?: ReactNode; label: string; v
         {icon}
         {label}
       </dt>
-      <dd dir="auto" className={cn('truncate font-semibold', mono && 'font-mono text-sm', empty && 'text-muted')}>
+      <dd dir="auto" className={cn('break-words text-start font-semibold', mono && 'font-mono text-sm', empty && 'text-muted')}>
         {empty ? '—' : value}
       </dd>
     </div>
