@@ -2,11 +2,15 @@
 // One conversation open: the header, the messages by day, the composer.
 // Polls quietly while open, marks itself read when the tab is visible, and
 // loads older pages as the reader scrolls up.
+//
+// §21 — the automations sender's conversation ("QC Automations") only
+// delivers: no composer (a reply would be refused and nobody reads it), and
+// the addresses in its messages open in place.
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ChevronDown, Info, Loader2, Trash2, UserPlus } from 'lucide-react'
+import { ArrowLeft, BellOff, ChevronDown, Info, Loader2, Trash2, UserPlus } from 'lucide-react'
 import type { ChatConversation, ChatMessage } from '@qc/shared/types'
 import { Button, Modal } from '@/components/ui'
 import { useChatMessages } from '@/services/queries'
@@ -15,7 +19,7 @@ import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn, formatDate } from '@/lib/utils'
 import { UserAvatar } from '@/components/ui/UserAvatar'
-import { Avatar } from './ConversationList'
+import { Avatar, conversationTitle } from './ConversationList'
 import { Composer } from './Composer'
 import { ConversationInfoModal } from './ConversationInfoModal'
 import { EmojiPicker } from './EmojiPicker'
@@ -168,7 +172,8 @@ export function ChatThread({
   }
 
   const canModerate = role === 'admin' && c.kind !== 'direct'
-  const subtitle = c.kind === 'direct' ? c.members.find((m) => m.id !== myId)?.role ?? '' : `${c.members.length} members`
+  const automated = c.automated === true
+  const subtitle = automated ? 'Automated messages' : c.kind === 'direct' ? c.members.find((m) => m.id !== myId)?.role ?? '' : `${c.members.length} members`
 
   let lastDay = ''
   return (
@@ -182,8 +187,8 @@ export function ChatThread({
         <button type="button" onClick={() => setInfo('members')} className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-1 py-1 text-left hover:bg-slate-50 dark:hover:bg-slate-800">
           <Avatar conversation={c} myId={myId} size="sm" />
           <span className="min-w-0">
-            <span className="block truncate text-sm font-bold">{c.title}</span>
-            <span className={cn('block truncate text-xs text-muted', c.kind === 'direct' && 'capitalize')}>{subtitle}</span>
+            <span className="block truncate text-sm font-bold">{conversationTitle(c)}</span>
+            <span className={cn('block truncate text-xs text-muted', c.kind === 'direct' && !automated && 'capitalize')}>{subtitle}</span>
           </span>
         </button>
         {/* An administrator adds people to a group from here, after it was made. */}
@@ -210,7 +215,7 @@ export function ChatThread({
             </button>
           </div>
         )}
-        {!isLoading && messages.length === 0 && <p className="py-16 text-center text-sm text-muted">No messages yet. Say hello.</p>}
+        {!isLoading && messages.length === 0 && <p className="py-16 text-center text-sm text-muted">{automated ? 'No automated messages yet.' : 'No messages yet. Say hello.'}</p>}
         <div className="space-y-1.5">
           {messages.map((m, i) => {
             const day = dayLabel(m.createdAt)
@@ -232,6 +237,7 @@ export function ChatThread({
                   lead={c.kind !== 'direct' && m.senderId !== myId ? (grouped ? <span className="w-7 shrink-0" aria-hidden /> : <UserAvatar userId={m.senderId} name={m.senderName} size={28} className="mt-0.5" />) : undefined}
                   showSender={c.kind !== 'direct' && !grouped}
                   canModerate={canModerate}
+                  automated={automated && m.senderId !== myId}
                   highlighted={highlight === m.id}
                   actions={{ onReply: setReplyTo, onEdit: setEditing, onDelete: (mm, scope) => setConfirm({ m: mm, scope }), onReact: react, onMention, onJumpTo: jumpTo }}
                 />
@@ -246,7 +252,13 @@ export function ChatThread({
         )}
       </div>
 
-      <Composer conversationId={c.id} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} editing={editing} onCancelEdit={() => setEditing(null)} onSend={send} onSaveEdit={saveEdit} />
+      {automated ? (
+        <p className="flex items-center justify-center gap-2 border-t border-slate-200 bg-white/95 px-4 py-3 text-center text-sm text-muted dark:border-slate-800 dark:bg-slate-900/95 safe-bottom">
+          <BellOff className="h-4 w-4 shrink-0" aria-hidden /> Automated messages — replies are not read.
+        </p>
+      ) : (
+        <Composer conversationId={c.id} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} editing={editing} onCancelEdit={() => setEditing(null)} onSend={send} onSaveEdit={saveEdit} />
+      )}
 
       {reactFor && (
         <div className="fixed inset-0 z-40 flex items-end justify-center sm:items-center" onClick={() => setReactFor(null)}>

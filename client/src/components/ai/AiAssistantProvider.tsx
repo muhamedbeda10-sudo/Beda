@@ -17,6 +17,10 @@
 // the full page at /ai (./workspace). Expand and Dock move between them with
 // the conversation, the draft and the answer being written as they are — the
 // stream never notices. On /ai the panel steps aside.
+//
+// Another page may start a new conversation with the question box filled in
+// (compose: §21's "Edit in chat" on the Automations page), for the person to
+// finish and send.
 // ============================================================================
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
@@ -36,6 +40,8 @@ export interface AiControls {
   enabled: boolean
   /** The signed-in person controls the assistant: the settings page is theirs. */
   owner: boolean
+  /** §21 — the signed-in person may create automations (/ai/me): the Automations page is theirs. */
+  automations: boolean
   /** It was given and has been taken away since: an open panel says so until it is closed. */
   revoked: boolean
   open: boolean
@@ -53,6 +59,14 @@ export interface AiControls {
   stop: () => void
   /** The composer's unsent text, kept while the panel is closed; a ref, so typing redraws nothing up here. */
   draft: MutableRefObject<string>
+  /**
+   * A new conversation with the question box holding `text`, to finish and
+   * send — the panel opens on it (the full page, when on screen, shows it).
+   * §21: "Edit in chat" on the Automations page.
+   */
+  compose: (text: string) => void
+  /** Counts compose()'s calls: a question box on screen takes the new text when it moves (useComposerDraft). */
+  composed: number
   /** The full page (/ai) is on screen: the panel steps aside for it. */
   workspace: boolean
   /** From the panel to the full page: the conversation on screen, or the report (`report`) or list (`list`) the panel shows. */
@@ -91,6 +105,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   const { data: me } = useAiMe()
   const enabled = me?.granted ?? false
   const owner = me?.owner ?? false
+  const automations = me?.automations ?? false
   const docked = useMediaQuery('(min-width: 1024px)')
   const [open, setOpenState] = useState(false)
   const [revoked, setRevoked] = useState(false)
@@ -102,6 +117,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   const active = useRef<string | null>(null)
   const controller = useRef<AbortController | null>(null)
   const draft = useRef('')
+  const [composed, setComposed] = useState(0)
   // The last answer stopped here, and when: a question right after it may meet that answer still winding down.
   const lastStop = useRef<{ conversationId: string; at: number } | null>(null)
 
@@ -125,6 +141,17 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
     setConversationId(id)
   }, [])
   const stop = useCallback(() => controller.current?.abort(), [])
+  const compose = useCallback(
+    (text: string) => {
+      draft.current = text
+      active.current = null
+      setConversationId(null)
+      setComposed((n) => n + 1)
+      // On the full page the box is on screen already; anywhere else the panel opens on it.
+      if (!workspace) setOpenState(true)
+    },
+    [workspace],
+  )
   const expand = useCallback(
     (target?: { report?: AiOpenReport; list?: AiWorkspaceList }) => {
       setOpenState(false)
@@ -300,6 +327,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
     () => ({
       enabled,
       owner,
+      automations,
       revoked,
       open: (enabled || revoked) && open,
       setOpen,
@@ -311,12 +339,14 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       send,
       stop,
       draft,
+      compose,
+      composed,
       workspace,
       expand,
       dock,
       handoff,
     }),
-    [enabled, owner, revoked, open, setOpen, toggle, docked, conversationId, openConversation, busy, send, stop, workspace, expand, dock],
+    [enabled, owner, automations, revoked, open, setOpen, toggle, docked, conversationId, openConversation, busy, send, stop, compose, composed, workspace, expand, dock],
   )
 
   return (

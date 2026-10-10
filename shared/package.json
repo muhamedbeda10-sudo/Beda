@@ -13,7 +13,8 @@
     "./kpi": "./src/kpi.ts",
     "./releases": "./src/releases.ts",
     "./orderImport": "./src/orderImport.ts",
-    "./ai": "./src/ai.ts"
+    "./ai": "./src/ai.ts",
+    "./automation": "./src/automation.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",

@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { AiQueryPart } from '@qc/shared/ai'
+import type { AiAutomationPart } from '@qc/shared/automation'
 import { answerBlocks } from './answerLayout'
 import type { LivePart, PendingQuery } from './liveTurn'
 
 const q = (id: string): AiQueryPart => ({ type: 'query', queryId: id, purpose: id, sql: 'SELECT 1', ok: true, columns: ['n'], rows: [[1]], rowCount: 1, truncated: false, ms: 1 })
 const running = (id: string): PendingQuery => ({ type: 'pending-query', queryId: id, purpose: id, sql: 'SELECT 1', state: 'running' })
 const t = (text: string): LivePart => ({ type: 'text', text })
+const a = (id: string): AiAutomationPart => ({ type: 'automation', proposalId: id, ok: true, state: 'proposed' })
 const NONE = new Set<string>()
-const shape = (blocks: ReturnType<typeof answerBlocks>) => blocks.map((b) => (b.kind === 'text' ? `text:${b.text}` : b.kind === 'figure' ? `figure:${b.queryId}` : b.kind === 'queries' ? `queries:${b.queries.map((x) => x.queryId).join(',')}` : 'kpis'))
+const shape = (blocks: ReturnType<typeof answerBlocks>) => blocks.map((b) => (b.kind === 'text' ? `text:${b.text}` : b.kind === 'figure' ? `figure:${b.queryId}` : b.kind === 'queries' ? `queries:${b.queries.map((x) => x.queryId).join(',')}` : b.kind === 'automation' ? `automation:${b.part.proposalId}` : 'kpis'))
 
 describe('the layout of an answer', () => {
   it('reads in the order it comes while it is written: the queries as one open group where the first ran', () => {
@@ -39,5 +41,15 @@ describe('the layout of an answer', () => {
   it('draws an answer without queries as its text alone', () => {
     expect(shape(answerBlocks([t('Hello.')], { settled: true, kpis: false, charted: NONE }))).toEqual(['text:Hello.'])
     expect(answerBlocks([], { settled: false, kpis: false, charted: NONE })).toEqual([])
+  })
+
+  it('keeps a proposed automation’s card in its place among the text, written and settled, out of the queries', () => {
+    const parts = [t('Checking.'), q('q1'), t('Here is the watch.'), a('p1'), t('Press Activate.')]
+    expect(shape(answerBlocks(parts, { settled: false, kpis: false, charted: NONE }))).toEqual(['text:Checking.', 'queries:q1', 'text:Here is the watch.', 'automation:p1', 'text:Press Activate.'])
+    expect(shape(answerBlocks(parts, { settled: true, kpis: false, charted: NONE }))).toEqual(['text:Checking.', 'text:Here is the watch.', 'automation:p1', 'text:Press Activate.', 'queries:q1'])
+    // Keyed by its proposal, the same written and settled.
+    expect(answerBlocks(parts, { settled: true, kpis: false, charted: NONE }).find((b) => b.kind === 'automation')?.key).toBe('automation:p1')
+    // A card after the last query is part of the answer itself: the figures head it.
+    expect(shape(answerBlocks([q('q1'), a('p1'), t('Done.')], { settled: true, kpis: true, charted: NONE }))).toEqual(['kpis', 'automation:p1', 'text:Done.', 'queries:q1'])
   })
 })

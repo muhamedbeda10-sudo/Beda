@@ -82,6 +82,13 @@ const schema = z
       .string()
       .optional()
       .transform((v) => (v && v.trim() ? v.trim() : 'beda')),
+    /**
+     * §21 — whether this instance runs the automations engine (watches,
+     * scheduled reports, follow-up escalation). On by default; several
+     * instances may all run it, a database lease keeps each run to one.
+     * Switched off, automations stay as they are and wait.
+     */
+    AUTOMATIONS_ENABLED: bool.default(true),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.IMAGE_STORAGE_DRIVER === 'azure-blob' && !cfg.AZURE_STORAGE_CONNECTION_STRING) {

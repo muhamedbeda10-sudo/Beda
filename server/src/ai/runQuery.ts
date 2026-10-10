@@ -70,6 +70,14 @@ export interface RunOptions {
   signal?: AbortSignal
 }
 
+/**
+ * Why a run failed, for words other than the model's (an automation's run
+ * history, a delivered report): the text was refused before it ran, there was
+ * no reader to run it, the caller stopped it, it took too long, a row or the
+ * database's reply was too large, or PostgreSQL itself refused or failed it.
+ */
+export type QueryFailure = 'rejected' | 'unavailable' | 'stopped' | 'timeout' | 'row-too-large' | 'reply-too-large' | 'database'
+
 /** What one run returned: the rows as read, before anything is cut for the model. */
 export interface QueryRun {
   ok: boolean
@@ -78,9 +86,14 @@ export interface QueryRun {
   /** Not every matching row was kept: more than `maxRows` matched, or the rows kept reached `maxChars`. */
   truncated: boolean
   ms: number
+  /** Why it failed, as a sentence the model can act on. */
   error?: string
+  /** Why it failed, by kind (with `error`). */
+  failure?: QueryFailure
   /** PostgreSQL's SQLSTATE when the database refused the query (42501: a view the role may not read). */
   code?: string
+  /** PostgreSQL's own message when it refused or failed the query (failure 'database'), as it said it: no position, hint or advice. */
+  dbMessage?: string
 }
 
 // ---- The text --------------------------------------------------------------------
@@ -274,11 +287,27 @@ function replyTooLarge(limitBytes: number): string {
   return `The query failed with an error message longer than ${Math.floor(limitBytes / 1024)} KB: it quotes a very long value (a cast or function applied to long text, say). Work on shorter values.`
 }
 
-/** The PostgreSQL error as a sentence the model can act on. `at`: where the query's own text starts in the statement that failed. */
-function describeError(err: unknown, timeoutMs: number, at: { prefix: number; chars: number }): string {
+/** What could not be had from the database (a dropped connection, a client timeout): nothing in it the model can fix. */
+const DATABASE_UNREACHABLE = 'The database could not run the query just now. Try again.'
+
+/** A failed run: the sentence for the model, and the rest for words of other kinds. */
+type Failed = Pick<QueryRun, 'error' | 'failure' | 'code' | 'dbMessage'> & { error: string; failure: QueryFailure }
+
+/**
+ * The PostgreSQL error as a sentence the model can act on, and what it was.
+ * `at`: where the query's own text starts in the statement that failed.
+ */
+function describeError(err: unknown, limits: { timeoutMs: number; maxRowBytes: number }, at: { prefix: number; chars: number }): Failed {
   // Anything but PostgreSQL's own answer (a dropped connection, a client timeout) says nothing useful.
-  if (!(err instanceof pg.DatabaseError)) return 'The database could not run the query just now. Try again.'
-  if (err.code === '57014') return tookTooLong(timeoutMs)
+  if (!(err instanceof pg.DatabaseError)) return { error: DATABASE_UNREACHABLE, failure: 'unavailable' }
+  if (err.code === '57014') return { error: tookTooLong(limits.timeoutMs), failure: 'timeout', code: err.code }
+  // ai.assert_row_size refusing a row (program_limit_exceeded, in its own words).
+  if (err.code === '54000' && err.message === rowTooLarge(limits.maxRowBytes)) return { error: err.message, failure: 'row-too-large', code: err.code }
+  return { error: errorText(err, at), failure: 'database', ...(err.code ? { code: err.code } : {}), ...(err.message ? { dbMessage: err.message } : {}) }
+}
+
+/** PostgreSQL's message, where in the query it points, its hint, and what the model may read. */
+function errorText(err: pg.DatabaseError, at: { prefix: number; chars: number }): string {
   let text = err.message || 'The query failed.'
   // Positions count from the start of the statement sent; give them back in the query's own terms.
   const position = Number(err.position) - at.prefix
@@ -403,25 +432,26 @@ function watchMessageSizes(client: pg.PoolClient, limit: number, onTooLarge: (ty
  */
 export async function runReadOnlyQuery(pool: pg.Pool | null, rawSql: string, opts: RunOptions): Promise<QueryRun> {
   const started = Date.now()
-  const fail = (error: string, code?: string): QueryRun => ({ ok: false, columns: [], rows: [], truncated: false, ms: Date.now() - started, error, ...(code ? { code } : {}) })
+  const fail = (why: Failed): QueryRun => ({ ok: false, columns: [], rows: [], truncated: false, ms: Date.now() - started, ...why })
   const checked = precheckSql(rawSql)
-  if ('error' in checked) return fail(checked.error)
-  if (!pool) return fail("The assistant's database access is not available right now.")
+  if ('error' in checked) return fail({ error: checked.error, failure: 'rejected' })
+  if (!pool) return fail({ error: "The assistant's database access is not available right now.", failure: 'unavailable' })
+  const stopped: Failed = { error: AI_QUERY_STOPPED, failure: 'stopped' }
   const { signal } = opts
-  if (signal?.aborted) return fail(AI_QUERY_STOPPED)
+  if (signal?.aborted) return fail(stopped)
   const maxRowBytes = Math.max(1024, Math.floor(opts.maxRowBytes ?? AI_CHAT_LIMITS.maxRowBytes))
   const maxChars = Math.max(1, Math.floor(opts.maxChars ?? AI_CHAT_LIMITS.maxChars))
 
   const client = await connect(pool, signal)
-  if (client === 'stopped') return fail(AI_QUERY_STOPPED)
+  if (client === 'stopped') return fail(stopped)
   if (client instanceof Error) {
     // Not the query's fault, and nothing the model can fix: the reason is for the log.
     console.warn('[ai] the reader could not connect:', client.message)
-    return fail('The database could not run the query just now. Try again.')
+    return fail({ error: DATABASE_UNREACHABLE, failure: 'unavailable' })
   }
 
   // Why the run was cut short, when it was; the first reason wins.
-  let interrupted: string | null = null
+  let interrupted: Failed | null = null
   let closed = false
   const close = () => {
     if (closed) return
@@ -429,24 +459,26 @@ export async function runReadOnlyQuery(pool: pg.Pool | null, rawSql: string, opt
     client.release(true)
   }
   // Stop the statement inside PostgreSQL and stop waiting for it here: whatever is in flight fails at once.
-  const interrupt = (why: string) => {
+  const interrupt = (why: Failed) => {
     if (interrupted !== null || closed) return
     interrupted = why
     cancelBackend(client)
     close()
   }
-  const onAbort = () => interrupt(AI_QUERY_STOPPED)
+  const onAbort = () => interrupt(stopped)
   signal?.addEventListener('abort', onAbort, { once: true })
   if (signal?.aborted) onAbort()
   // The whole run, not each statement, keeps to the time allowed; the statement timeout stays as the database's own guard.
-  const timer = setTimeout(() => interrupt(tookTooLong(opts.timeoutMs)), opts.timeoutMs)
+  const timer = setTimeout(() => interrupt({ error: tookTooLong(opts.timeoutMs), failure: 'timeout' }), opts.timeoutMs)
   let unwatch = () => {}
   const sql = checked.sql
   const at = { prefix: 0, chars: Array.from(sql).length }
   // No message, and so no row, longer than this reaches pg.
   const wireLimit = maxRowBytes + WIRE_SLACK_BYTES
   try {
-    unwatch = watchMessageSizes(client, wireLimit, (type) => interrupt(type === 'D' ? rowTooLarge(maxRowBytes) : replyTooLarge(wireLimit)))
+    unwatch = watchMessageSizes(client, wireLimit, (type) =>
+      interrupt(type === 'D' ? { error: rowTooLarge(maxRowBytes), failure: 'row-too-large' } : { error: replyTooLarge(wireLimit), failure: 'reply-too-large' }),
+    )
     await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
     await client.query(`SET LOCAL TIME ZONE ${pg.escapeLiteral(opts.timeZone)}`)
     await client.query(`SET LOCAL statement_timeout = ${pg.escapeLiteral(`${Math.max(1, Math.round(opts.timeoutMs))}ms`)}`)
@@ -486,7 +518,7 @@ export async function runReadOnlyQuery(pool: pg.Pool | null, rawSql: string, opt
     return { ok: true, columns, rows, truncated, ms: Date.now() - started }
   } catch (e) {
     if (interrupted !== null) return fail(interrupted)
-    return fail(describeError(e, opts.timeoutMs, at), e instanceof pg.DatabaseError ? e.code : undefined)
+    return fail(describeError(e, { timeoutMs: opts.timeoutMs, maxRowBytes }, at))
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener('abort', onAbort)

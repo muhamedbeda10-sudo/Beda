@@ -126,7 +126,7 @@ export async function pinAiOwner(db: Db, config: Config): Promise<string | null>
 
 async function findCandidate(q: Queryable, username: string): Promise<{ id: string; name: string; username: string } | null> {
   const { rows } = await q.query<{ id: string; name: string; username: string }>(
-    `SELECT id, name, username FROM users WHERE lower(username) = lower($1) AND is_active AND deleted_at IS NULL`,
+    `SELECT id, name, username FROM users WHERE lower(username) = lower($1) AND is_active AND deleted_at IS NULL AND NOT is_system`,
     [username],
   )
   // Usernames are unique among live accounts: at most one.

@@ -52,8 +52,8 @@ function auditColumns(tz: string): SqlColumns {
   }
 }
 
-/** The assistant's own entries, which only its owner sees. */
-const AI_ENTRIES = `(entity IN ('AiAssistant', 'AiAccess', 'AiReport') OR (entity = 'AppSettings' AND entity_id LIKE 'ai%'))`
+/** The assistant's own entries, its automations' included (§21), which only its owner sees. */
+const AI_ENTRIES = `(entity IN ('AiAssistant', 'AiAccess', 'AiReport', 'Automation') OR (entity = 'AppSettings' AND entity_id LIKE 'ai%'))`
 
 /** The entries a reader of the log may see: everything but the assistant's own, unless they own it. */
 const visible = (aiOwner: boolean) => (aiOwner ? 'deleted_at IS NULL' : `deleted_at IS NULL AND NOT ${AI_ENTRIES}`)
@@ -142,7 +142,12 @@ export function auditRoutes(ctx: AppContext): Router {
   r.get('/options', async (req, res) => {
     const where = visible(await ownsAi(requireUser(req).id))
     const [users, entities] = await Promise.all([
-      ctx.db.query<{ name: string }>(`SELECT DISTINCT user_name AS name FROM audit_log WHERE ${where} ORDER BY name`),
+      // The system sender (§21) writes entries (a follow-up opened, escalated) but is nobody to filter by.
+      ctx.db.query<{ name: string }>(
+        `SELECT DISTINCT user_name AS name FROM audit_log
+          WHERE ${where} AND user_id IS DISTINCT FROM (SELECT id FROM users WHERE is_system)
+          ORDER BY name`,
+      ),
       ctx.db.query<{ entity: string }>(`SELECT DISTINCT entity FROM audit_log WHERE ${where} ORDER BY entity`),
     ])
     const body: AuditOptionsResponse = { users: users.rows.map((u) => u.name), entities: entities.rows.map((e) => e.entity) }

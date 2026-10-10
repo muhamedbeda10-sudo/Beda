@@ -1,8 +1,8 @@
 // ============================================================================
 // §20 — the answer being written. The stream's events (start, text, progress,
-// query_start, query_end, done, error) are folded into one value the thread
-// draws, and the saved conversation takes over once it holds the same answer.
-// Pure functions, so the folding is tested without a browser.
+// query_start, query_end, automation, done, error) are folded into one value
+// the thread draws, and the saved conversation takes over once it holds the
+// same answer. Pure functions, so the folding is tested without a browser.
 // ============================================================================
 
 import type { ApiErrorCode } from '@qc/shared/api'
@@ -71,6 +71,12 @@ export function applyEvent(t: LiveTurn, e: AiStreamEvent): LiveTurn {
       const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
       return { ...t, phase: 'streaming', progress: null, parts }
     }
+    case 'automation': {
+      // §21 — a proposal's card, where it came; the same proposal again (sent twice) takes its place.
+      const at = t.parts.findIndex((p) => p.type === 'automation' && p.proposalId === e.part.proposalId)
+      const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
+      return { ...t, phase: 'streaming', progress: null, parts }
+    }
     case 'done':
       return { ...t, phase: 'done', progress: null, message: e.message, parts: interrupt(t.parts) }
     case 'error':
@@ -106,7 +112,7 @@ export function parseStreamEvent(event: string, data: string): AiStreamEvent | n
   return value as AiStreamEvent
 }
 
-const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'done', 'error'])
+const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'automation', 'done', 'error'])
 
 /**
  * What a question is sent after (LiveTurn.after): the last message this device

@@ -24,6 +24,11 @@
 //     API no longer does), and a query only ever runs through the sandbox. A
 //     chart asked for with it is checked against the result (charts.ts); one
 //     that does not fit is left out, with a word on why in the result.
+//   • a conversation given more tools than run_sql (§21: the automations'
+//     tools, for people allowed to create them) has them run by name, by the
+//     handlers the request hands in; what they keep (a proposal) is stored in
+//     the same transaction as the call and its result. A tool the
+//     conversation was never given is answered as unknown.
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'
@@ -41,7 +46,7 @@ import {
 } from '@qc/shared/ai'
 import type { ApiErrorCode } from '@qc/shared/api'
 import type { Config } from '../config'
-import { withTransaction, type Db } from '../db/pool'
+import { withTransaction, type Db, type Queryable } from '../db/pool'
 import { ACCESS_NOTICE, checkCall, isGranted, loadAccess } from './access'
 import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
@@ -108,6 +113,18 @@ export interface Readers {
   poolFor(domains: readonly AiDomain[]): pg.Pool | null
 }
 
+/** What a tool other than run_sql did (§21): its result, and what to keep with the answer. */
+export interface ToolOutcome {
+  result: ToolResult
+  /** Stored in the transaction that stores the call and its result, so neither is ever kept without the other. */
+  store?: (tx: Queryable) => Promise<void>
+}
+
+/** A tool other than run_sql, run by its name for a conversation that was given it. */
+export interface ToolHandler {
+  run(tu: ToolUse, signal: AbortSignal): Promise<ToolOutcome>
+}
+
 export interface Question {
   db: Db
   /** The asker's queries run as their domains as they stand when each runs: a domain the owner takes away is gone for the next query. */
@@ -130,6 +147,8 @@ export interface Question {
   signal: AbortSignal
   /** How long the answer may take; 5 minutes unless a test needs it shorter. */
   deadlineMs?: number
+  /** Handlers of the conversation's tools besides run_sql, by name; one the conversation was not given never runs. */
+  tools?: Record<string, ToolHandler>
 }
 
 export interface Outcome {
@@ -414,6 +433,7 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
     // Every call is answered, in one message, in order; once the answer is cut short the rest are not run.
     const results: ToolResult[] = []
     const queries: QueryRecord[] = []
+    const stores: ((tx: Queryable) => Promise<void>)[] = []
     let withdrawn = false
     for (const tu of toolUses) {
       if (signal.aborted) {
@@ -428,11 +448,23 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
         results.push(notRun(tu, WITHDRAWN_NOT_RUN))
         continue
       }
-      results.push(await runToolUse(qn, qn.readers.poolFor(access.domains), tu, queries, signal, cause))
+      const handler = toolHandler(qn, tu.name)
+      if (!handler) {
+        results.push(await runToolUse(qn, qn.readers.poolFor(access.domains), tu, queries, signal, cause))
+        continue
+      }
+      const outcome = await handler.run(tu, signal)
+      // Cut short while it ran: what it found is not kept, and the replay says why.
+      if (signal.aborted) results.push(notRun(tu, INTERRUPTED[cause()].running))
+      else {
+        results.push(outcome.result)
+        if (outcome.store) stores.push(outcome.store)
+      }
     }
     const stored = await withTransaction(qn.db, async (tx) => {
       const appended = await appendMessages(tx, qn.conversation.id, qn.turnId, [answerMessage(), { role: 'user', kind: 'tool_results', content: results }])
       await insertQueries(tx, qn.conversation.id, qn.turnId, queries)
+      for (const store of stores) await store(tx)
       return appended
     })
     // Kept whole, results included, so the conversation can go on should the owner give it back.
@@ -442,6 +474,15 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
 }
 
 const notRun = (tu: ToolUse, why: string): ToolResult => ({ type: 'tool_result', tool_use_id: tu.id, is_error: true, content: why })
+
+/** The conversation's own tools, by name, as it was given them. */
+const toolNames = (qn: Question): string[] => qn.conversation.tools.flatMap((t) => ('name' in t && typeof t.name === 'string' ? [t.name] : []))
+
+/** The handler of a tool other than run_sql, when the conversation was given that tool and the request handles it. */
+function toolHandler(qn: Question, name: string): ToolHandler | null {
+  if (name === RUN_SQL_TOOL_NAME || !toolNames(qn).includes(name)) return null
+  return qn.tools?.[name] ?? null
+}
 
 /** Whether a reply wrote anything the asker can read. */
 const hasText = (content: ContentBlockParam[]) => content.some((b) => b.type === 'text' && b.text.trim() !== '')
@@ -466,9 +507,12 @@ async function runToolUse(
   signal: AbortSignal,
   cause: () => Cause,
 ): Promise<ToolResult> {
-  // A near-miss of the name (Run_SQL) is still the one tool.
+  // A near-miss of the name (Run_SQL) is still the query tool.
   if (tu.name.toLowerCase() !== RUN_SQL_TOOL_NAME) {
-    return { type: 'tool_result', tool_use_id: tu.id, is_error: true, content: `Unknown tool "${tu.name}". The only tool is "${RUN_SQL_TOOL_NAME}".` }
+    const names = toolNames(qn)
+    // Worded as ever for a conversation with run_sql alone.
+    const known = names.length > 1 ? `The tools are ${names.map((n) => `"${n}"`).join(', ')}.` : `The only tool is "${RUN_SQL_TOOL_NAME}".`
+    return { type: 'tool_result', tool_use_id: tu.id, is_error: true, content: `Unknown tool "${tu.name}". ${known}` }
   }
   const parsed = RunSqlInput.safeParse(tu.input)
   if (!parsed.success) {
@@ -560,7 +604,7 @@ export function watchStream(stream: ModelStream, emit?: (e: AiStreamEvent) => vo
  */
 export async function recordCutOffUsage(
   db: Db,
-  owner: Pick<UsageRecord, 'userId' | 'conversationId' | 'turnId'>,
+  owner: Pick<UsageRecord, 'userId' | 'conversationId' | 'turnId' | 'automationId'>,
   stream: ModelStream,
   watch: StreamWatch,
   request: Pick<ModelParams, 'model' | 'max_tokens'>,

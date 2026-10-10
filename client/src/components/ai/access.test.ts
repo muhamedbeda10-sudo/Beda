@@ -26,7 +26,7 @@ import {
 } from './access'
 import { STOP_TEXT } from './format'
 
-const me = (over: Partial<AiMeResponse>): AiMeResponse => ({ granted: true, owner: false, available: true, ...over })
+const me = (over: Partial<AiMeResponse>): AiMeResponse => ({ granted: true, owner: false, available: true, automations: false, ...over })
 
 const row = (over: Partial<AiAccess>): AiAccess => ({
   userId: 'u1',
@@ -41,6 +41,7 @@ const row = (over: Partial<AiAccess>): AiAccess => ({
   monthlyCapUsd: 10,
   spentUsd: 1.25,
   owner: false,
+  automations: false,
   ...over,
 })
 
@@ -141,8 +142,8 @@ describe('the owner’s draft of one person’s access', () => {
     for (const bad of ['', '-1', '1.234', '2000.01', 'abc', '1e3', '10$']) expect(parseCapUsd(bad)).toBeNull()
   })
 
-  it('starts a newcomer narrow: on, the inspection record, Sonnet at medium effort, a small cap within the app’s', () => {
-    expect(newAccessDraft(50)).toEqual({ enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', cap: '10' })
+  it('starts a newcomer narrow: on, the inspection record, Sonnet at medium effort, a small cap within the app’s, no automations', () => {
+    expect(newAccessDraft(50)).toEqual({ enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', cap: '10', automations: false })
     expect(newAccessDraft(4).cap).toBe('4')
     // Never a cap they could not ask with, even under a tiny app-wide cap (the drawer names that one).
     expect(newAccessDraft(0.1).cap).toBe('0.64')
@@ -173,13 +174,20 @@ describe('the owner’s draft of one person’s access', () => {
   })
 
   it('sends the draft as the server takes it, domains in order', () => {
-    expect(accessRequest({ enabled: false, domains: ['audit', 'inspection'], model: 'claude-haiku-5-5', effort: 'low', cap: '12.50' })).toEqual({
+    expect(accessRequest({ enabled: false, domains: ['audit', 'inspection'], model: 'claude-haiku-5-5', effort: 'low', cap: '12.50', automations: true })).toEqual({
       enabled: false,
       domains: ['inspection', 'audit'],
       model: 'claude-haiku-5-5',
       effort: 'low',
       monthlyCapUsd: 12.5,
+      automations: true,
     })
+  })
+
+  it('reads the automations permission back, the owner’s always on', () => {
+    expect(draftFromAccess(row({ automations: true })).automations).toBe(true)
+    expect(draftFromAccess(row({})).automations).toBe(false)
+    expect(draftFromAccess(row({ owner: true, automations: false })).automations).toBe(true)
   })
 
   it('knows when the draft says something new', () => {
@@ -194,6 +202,7 @@ describe('the owner’s draft of one person’s access', () => {
     expect(accessChanged(saved, { ...d, domains: ['inspection'] })).toBe(true)
     expect(accessChanged(saved, { ...d, model: 'claude-opus-5-5' })).toBe(true)
     expect(accessChanged(saved, { ...d, effort: 'max' })).toBe(true)
+    expect(accessChanged(saved, { ...d, automations: true })).toBe(true)
   })
 })
 

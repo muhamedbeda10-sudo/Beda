@@ -9,6 +9,7 @@
 import type { AiCell } from '@qc/shared/ai'
 import type { CellValue, SheetSpec } from '@/lib/xlsxWrite'
 import { EXCEL_CELL_MAX } from './exportAiResult'
+import { letterDirection, textDirection } from '@/lib/direction'
 
 /** A cell as text: blank for NULL, JSON for a structured value (a json column arrives parsed). */
 export function cellText(v: AiCell | unknown): string {
@@ -99,30 +100,7 @@ export function numericColumns(columns: readonly string[], rows: readonly (reado
 
 // ---- Direction -------------------------------------------------------------------------
 
-/** Letters that set a text right to left: Hebrew, Arabic and their presentation forms — not the Arabic digits, which are weak. */
-const RTL_CHAR = /[֐-׿؀-ٟ٭-ۯۺ-ࣿיִ-﷿ﹰ-ﻼ]/
-/** Letters that set it left to right: Latin, Greek, Cyrillic. */
-const LTR_CHAR = /[A-Za-zÀ-ɏͰ-ϿЀ-ӿ]/
-
-/** Which way a text reads, by its first strong letter (as dir="auto" decides); null when it has none. */
-export function textDirection(text: string): 'rtl' | 'ltr' | null {
-  for (const ch of text) {
-    if (RTL_CHAR.test(ch)) return 'rtl'
-    if (LTR_CHAR.test(ch)) return 'ltr'
-  }
-  return null
-}
-
-/** Which way most of a text's letters read; null when it has none. */
-export function letterDirection(text: string): 'rtl' | 'ltr' | null {
-  let rtl = 0
-  let ltr = 0
-  for (const ch of text) {
-    if (RTL_CHAR.test(ch)) rtl++
-    else if (LTR_CHAR.test(ch)) ltr++
-  }
-  return rtl === 0 && ltr === 0 ? null : rtl > ltr ? 'rtl' : 'ltr'
-}
+export { letterDirection, textDirection } from '@/lib/direction'
 
 /** A markdown text's prose: without its code (a fence still open too, while it streams), link addresses and web addresses. */
 function markdownProse(markdown: string): string {

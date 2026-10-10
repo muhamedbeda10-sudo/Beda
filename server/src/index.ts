@@ -16,6 +16,7 @@ import type { AppContext } from './context'
 import { AnthropicModelClient } from './ai/model'
 import { AiReader } from './ai/reader'
 import { aiOwner } from './ai/owner'
+import { AutomationEngine } from './automations/engine'
 
 function readVersion(): string {
   try {
@@ -84,12 +85,26 @@ const server = app.listen(config.PORT, () => {
   console.log(`[api] listening on :${config.PORT} (${config.NODE_ENV}, images=${config.IMAGE_STORAGE_DRIVER})`)
 })
 
+// §21 — the automations engine: watches, scheduled reports and follow-up
+// escalation, on every instance (a database lease keeps each run to one).
+// Never in tests, which drive it themselves; off with AUTOMATIONS_ENABLED=false.
+const automations = config.AUTOMATIONS_ENABLED && config.NODE_ENV !== 'test' ? new AutomationEngine({ db, config, readers: aiReader, model: ctx.ai }) : null
+if (automations) {
+  automations.start()
+  console.log('[automations] engine started')
+}
+
 // App Service sends SIGTERM on restart/scale-in: stop accepting, finish
 // in-flight requests, then release the pools.
 function shutdown(signal: string) {
   console.log(`[api] ${signal} received, shutting down`)
+  // The engine first, while requests drain: it takes nothing more, and the runs under
+  // way are cut short and handed back at once, so another instance takes them.
+  const engineStopped = automations?.stop() ?? Promise.resolve()
   server.close(() => {
-    Promise.allSettled([db.end(), aiReader.end()]).finally(() => process.exit(0))
+    Promise.allSettled([engineStopped])
+      .then(() => Promise.allSettled([db.end(), aiReader.end()]))
+      .finally(() => process.exit(0))
   })
   setTimeout(() => process.exit(1), 10_000).unref()
 }

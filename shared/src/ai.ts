@@ -9,6 +9,7 @@
 // ============================================================================
 
 import type { ApiErrorCode } from './api'
+import type { AiAutomationPart } from './automation'
 
 /** The model the assistant runs on. */
 export const AI_MODEL = 'claude-sonnet-5-5'
@@ -176,6 +177,8 @@ export interface AiAccess {
   spentUsd: number
   /** The owner's own row. */
   owner: boolean
+  /** May create automations (§21); always true for the owner. */
+  automations: boolean
   updatedAt?: string
   updatedByName?: string
 }
@@ -190,6 +193,8 @@ export interface AiAccessRequest {
   model: AiModelId
   effort: AiEffort
   monthlyCapUsd: number
+  /** May create automations (§21). Absent: unchanged (false for a new row). */
+  automations?: boolean
 }
 
 /** What anyone signed in learns about the assistant: no amounts, no models, no settings. */
@@ -203,6 +208,8 @@ export interface AiMeResponse {
   /** It can answer now. */
   available: boolean
   reason?: AiMeReason
+  /** May create automations (§21): the owner, and people the owner allowed. */
+  automations: boolean
 }
 
 // ---- Settings ----------------------------------------------------------------
@@ -315,7 +322,8 @@ export interface AiKpi {
   trend?: AiKpiTrend
 }
 
-export type AiPart = { type: 'text'; text: string } | AiQueryPart
+/** An answer's pieces in order. An automation proposal (§21) is a card the person activates or discards. */
+export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart
 
 /** How an answer ended. */
 export type AiStopReason =
@@ -374,6 +382,8 @@ export type AiStreamEvent =
   | { type: 'progress'; text: string }
   | { type: 'query_start'; queryId: string; purpose: string; sql: string }
   | { type: 'query_end'; part: AiQueryPart }
+  /** A proposed automation (§21), checked and tried once. */
+  | { type: 'automation'; part: AiAutomationPart }
   | { type: 'done'; message: AiMessage; status: AiStatusResponse }
   | { type: 'error'; code: ApiErrorCode; message: string }
 
@@ -402,6 +412,8 @@ export interface AiUsageResponse {
   cacheWriteTokens: number
   byDay: { day: string; costUsd: number; calls: number }[]
   byUser: { userId: string; userName: string; costUsd: number; questions: number }[]
+  /** Scheduled reports' summaries (§21), by automation. Also counted in byDay and in their creator's byUser. */
+  byAutomation: { automationId: string; name: string; creatorName: string; costUsd: number; runs: number }[]
 }
 
 // ---- Saved reports -------------------------------------------------------------------

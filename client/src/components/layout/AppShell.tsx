@@ -15,6 +15,8 @@ import { AiAssistantProvider, useAi } from '@/components/ai/AiAssistantProvider'
 import { AiBusyDot, AiButton } from '@/components/ai/AiButton'
 import { AiPanelHost } from '@/components/ai/AiPanelHost'
 import { isAiWorkspacePath } from '@/components/ai/workspace'
+import { useFollowUpCounts } from '@/services/followUps'
+import { useNavFit } from '@/components/layout/navFit'
 
 function ToastHost() {
   const { toasts, dismissToast } = useApp()
@@ -74,6 +76,22 @@ function ChatButton() {
         </span>
       )}
     </button>
+  )
+}
+
+/** §21 — the count on Follow-ups: the reader's open ones, red once one of them is overdue. */
+function NavCount({ count, overdue }: { count: number; overdue: number }) {
+  if (count <= 0) return null
+  return (
+    <span
+      className={cn(
+        'grid min-w-[18px] shrink-0 place-items-center rounded-full px-1 text-[10px] font-bold leading-[18px] tabular-nums',
+        overdue > 0 ? 'bg-rose-600 text-white' : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-100',
+      )}
+    >
+      <span aria-hidden>{count > 99 ? '99+' : count}</span>
+      <span className="sr-only">{`, ${count} open${overdue > 0 ? `, ${overdue} overdue` : ''}`}</span>
+    </span>
   )
 }
 
@@ -169,7 +187,16 @@ function Shell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
 
-  const nav = visibleNav(NAV, role, false)
+  // §21 — Automations is in the bar for the people who may create them, whatever their role; Follow-ups for
+  // whoever has some or may see everyone's, with the count of their own open ones (polled like the bell).
+  const { data: followUps } = useFollowUpCounts(!!profile)
+  const nav = visibleNav(NAV, role, false, ai.automations, followUps?.visible ?? false)
+  const navCount = (n: NavItem) => (n.followUps && followUps ? { count: followUps.mineOpen, overdue: followUps.mineOverdue } : null)
+  // The tabs keep their names while those fit beside the brand and the icons; then tighter padding; then icons alone, the
+  // names in tooltips. Measured on this bar, for these tabs and this window (navFit), not guessed from how many there are.
+  const barRef = useRef<HTMLDivElement>(null)
+  const navRef = useRef<HTMLElement>(null)
+  const fit = useNavFit(barRef, navRef, `${nav.map((n) => n.to).join(' ')}${followUps?.mineOpen ? ' #' : ''}`)
   const admin = visibleNav(ADMIN_NAV, role, ai.owner)
   const displayName = profile?.name || user
 
@@ -177,36 +204,42 @@ function Shell({ children }: { children: ReactNode }) {
   // §20 — the assistant's full page fills the window under the header, edge to edge; its own addresses (a
   // conversation, a report) are one page, not a new entrance each.
   const fullPage = isAiWorkspacePath(location.pathname)
-  const pageKey = fullPage ? '/ai' : location.pathname
+  // §21 — a follow-up opens in a drawer over the list: /follow-ups and /follow-ups/<id> are one page as well.
+  const pageKey = fullPage ? '/ai' : location.pathname.startsWith('/follow-ups') ? '/follow-ups' : location.pathname
 
   return (
     <div className="min-h-full">
       <header className="print:hidden sticky top-0 z-40 border-b border-slate-200/80 bg-white/85 shadow-[0_1px_0_rgba(255,255,255,.6)_inset] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/85 safe-top">
         {/* A desktop centres the tabs and shows the gear and the account; a tablet or phone keeps all of that behind the menu button. */}
-        <div className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:px-8">
+        <div ref={barRef} className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:px-8">
           {/* Left — brand */}
           <button type="button" onClick={() => navigate('/')} className="shrink-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 lg:justify-self-start" aria-label="Home">
             <Brand />
           </button>
 
           {/* The inspector's tabs, centred — desktop only */}
-          <nav className="hidden items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 lg:flex lg:justify-self-center dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
+          <nav ref={navRef} className="hidden items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 lg:flex lg:justify-self-center dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
             {nav.map((n) => {
               const active = isActive(n)
+              const count = navCount(n)
               return (
                 <NavLink
                   key={n.to}
                   to={n.to}
                   end={n.end}
+                  data-tip={fit === 'icons' ? n.label : undefined}
                   className={cn(
-                    'group relative flex min-h-[40px] items-center gap-2 rounded-xl px-4 text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
+                    // On one line: a name that wrapped would hide that the tabs no longer fit.
+                    'group relative flex min-h-[40px] items-center gap-2 whitespace-nowrap rounded-xl text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
+                    fit === 'full' ? 'px-4' : 'px-3',
                     active
                       ? 'bg-white text-brand-800 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:text-white dark:ring-slate-700'
                       : 'text-slate-600 hover:text-brand-700 dark:text-slate-300 dark:hover:text-white',
                   )}
                 >
                   <n.icon className={cn('h-4 w-4 transition-transform duration-200 group-hover:-translate-y-0.5', active && 'text-accent-500')} />
-                  {n.label}
+                  <span className={cn(fit === 'icons' && 'sr-only')}>{n.label}</span>
+                  {count && <NavCount count={count.count} overdue={count.overdue} />}
                 </NavLink>
               )
             })}
@@ -216,7 +249,8 @@ function Shell({ children }: { children: ReactNode }) {
           <div className="ml-auto flex shrink-0 items-center gap-1 lg:ml-0 lg:justify-self-end">
             {ai.enabled && <AiButton />}
             {can(role, 'use-chat') && <ChatButton />}
-            {can(role, 'read-notices') && <NoticeBell />}
+            {/* §21 — everyone has the bell for their alerts; the notices in it are for the roles that receive them. */}
+            <NoticeBell notices={can(role, 'read-notices')} />
             <button onClick={toggleTheme} className="icon-btn" aria-label="Toggle light or dark theme" data-tip={theme === 'dark' ? 'Light theme' : 'Dark theme'}>
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
@@ -254,7 +288,7 @@ function Shell({ children }: { children: ReactNode }) {
             </div>
             <nav className="flex flex-col gap-1 p-3">
               {nav.map((n) => (
-                <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
+                <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} count={navCount(n)} />
               ))}
               {ai.enabled && (
                 <button
@@ -317,7 +351,7 @@ function Shell({ children }: { children: ReactNode }) {
   )
 }
 
-function DrawerLink({ item, active, onClick }: { item: NavItem; active: boolean; onClick: () => void }) {
+function DrawerLink({ item, active, onClick, count }: { item: NavItem; active: boolean; onClick: () => void; count?: { count: number; overdue: number } | null }) {
   return (
     <NavLink
       to={item.to}
@@ -329,7 +363,8 @@ function DrawerLink({ item, active, onClick }: { item: NavItem; active: boolean;
       )}
     >
       <item.icon className="h-5 w-5" />
-      {item.label}
+      <span className="flex-1">{item.label}</span>
+      {count && <NavCount count={count.count} overdue={count.overdue} />}
     </NavLink>
   )
 }

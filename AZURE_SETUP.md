@@ -121,11 +121,20 @@ The owner is the account whose username is `AI_OWNER_USERNAME` (default
 app afterwards. Nobody else — not other administrators — sees the assistant's
 settings, key, access list or costs.
 
+Automations (watches, scheduled reports, follow-ups) run inside the Web App
+itself, every 30 seconds; nothing extra is needed in Azure. If you ever scale
+out to several instances they share the work safely. To switch them off in an
+instance, add the Application setting `AUTOMATIONS_ENABLED=false`.
+
 مفتاح Anthropic بتاع المساعد الذكي (AI assistant) مش لازم يتحط هنا: صاحب
 المساعد بيحطه من جوه البرنامج من Administration → AI assistant، وبيتخزن متشفر. لو
 حطيت `ANTHROPIC_API_KEY` في الـ Application settings هو اللي بيتاخد بيه. صاحب
 المساعد هو الحساب اللي اسم المستخدم بتاعه `AI_OWNER_USERNAME` (الافتراضي `beda`)،
 ومحدش غيره يقدر يشوف إعداداته أو تكلفته.
+
+الأتمتة (المراقبة والتقارير المجدولة والمتابعات) بتشتغل جوه الـ Web App نفسه كل 30
+ثانية، ومش محتاجة أي حاجة زيادة في Azure. لو عايز توقفها حط
+`AUTOMATIONS_ENABLED=false` في الـ Application settings.
 
 ## 3. Connect GitHub to the Web App · ربط GitHub بالـ Web App
 

@@ -1,0 +1,369 @@
+// ============================================================================
+// §21 — an automation as the assistant writes it (AutomationDraft), and the
+// changes a person makes outside the chat (AutomationEdits). The tool's input
+// schema below guides the model; it is not strict, and with eager input
+// streaming the API does not check it, so the same shape is read here with zod,
+// leniently where the model's habits are harmless (null for a field left
+// out) and strictly everywhere else. What a draft means — that its queries
+// run, its columns exist, its people are real — is validate.ts's to check.
+// ============================================================================
+
+import { z } from 'zod'
+import { ROLES } from '@qc/shared/types'
+import type { AiReportPeriod } from '@qc/shared/ai'
+import type {
+  AutomationActions,
+  AutomationDraft,
+  AutomationRecipient,
+  AutomationScheduleSpec,
+  AutomationWatchSpec,
+  AutomationWeekday,
+} from '@qc/shared/automation'
+import { PERIOD_KINDS, WEEK_STARTS, toPeriod } from '../ai/reports'
+
+// ---- The tool's input schema --------------------------------------------------------
+
+const PERIOD_INPUT_SCHEMA = {
+  type: 'object',
+  description:
+    'The days the sections cover, counted from the factory day the report runs on. kind: today, yesterday, last_days (with days), this_week or last_week (with weekStart: saturday, sunday or monday), this_month, last_month, this_year, last_year, or fixed (with from and to, YYYY-MM-DD).',
+  properties: {
+    kind: { type: 'string', enum: [...PERIOD_KINDS] },
+    days: { type: 'integer', description: 'last_days only: how many days, today included.' },
+    from: { type: 'string', description: 'fixed only: the first day, YYYY-MM-DD.' },
+    to: { type: 'string', description: 'fixed only: the last day, YYYY-MM-DD.' },
+    weekStart: { type: 'string', enum: [...WEEK_STARTS], description: 'this_week and last_week only.' },
+  },
+  required: ['kind'],
+  additionalProperties: false,
+}
+
+const USER_SCHEMA = (what: string) => ({
+  type: 'object',
+  properties: { kind: { type: 'string', enum: ['user'] }, userId: { type: 'string', description: `The ${what}'s user id (a uuid).` } },
+  required: ['kind', 'userId'],
+  additionalProperties: false,
+})
+
+const COLUMN_SCHEMA = (what: string) => ({
+  type: 'object',
+  properties: {
+    kind: { type: 'string', enum: ['column'] },
+    column: { type: 'string', description: `A column of the watch's result holding user ids: the ${what} of each case.` },
+  },
+  required: ['kind', 'column'],
+  additionalProperties: false,
+})
+
+/**
+ * propose_automation's input: an AutomationDraft. The schema guides the
+ * model but is not strict (see tools.ts); the reader below and validate.ts
+ * hold the draft to its shape, lengths, ranges and counts.
+ */
+export const DRAFT_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    kind: { type: 'string', enum: ['watch', 'report'], description: 'watch: tell people about new cases as they appear. report: a scheduled report.' },
+    name: { type: 'string', description: "A short name, in the person's language." },
+    description: { type: 'string', description: "In plain words, in the person's language: what it watches or reports, and what it does." },
+    language: { type: 'string', enum: ['ar', 'en'], description: 'The language the person wrote in: the name, templates and summaries are in it.' },
+    watch: {
+      type: 'object',
+      description: 'kind watch only.',
+      properties: {
+        sql: { type: 'string', description: 'One SELECT over ai.* views returning one row per case that needs attention now.' },
+        keyColumn: { type: 'string', description: 'The result column whose value names a case: unique per row, never empty, the same for that case on every run.' },
+        everyMinutes: { type: 'integer', description: 'How often it runs, in minutes: 5 to 1440.' },
+        titleTemplate: { type: 'string', description: 'The message title, with {{column}} placeholders filled from the case.' },
+        bodyTemplate: { type: 'string', description: 'Optional. A line or two more, with {{column}} placeholders.' },
+        sessionColumn: { type: 'string', description: "Optional. The column holding the case's inspection session id." },
+        sampleColumn: { type: 'string', description: "Optional. The column holding the case's sample id." },
+        orderColumn: { type: 'string', description: "Optional. The column holding the case's order number." },
+      },
+      required: ['sql', 'keyColumn', 'everyMinutes', 'titleTemplate'],
+      additionalProperties: false,
+    },
+    schedule: {
+      type: 'object',
+      description: 'kind report only.',
+      properties: {
+        cadence: { type: 'string', enum: ['daily', 'weekly', 'monthly'] },
+        time: { type: 'string', description: 'HH:MM, 24-hour, factory time.' },
+        weekdays: { type: 'array', items: { type: 'integer' }, description: 'daily only, optional: the days it runs, 0 = Sunday ... 6 = Saturday. Left out: every day.' },
+        weekday: { type: 'integer', description: 'weekly only: the day it runs, 0 = Sunday ... 6 = Saturday.' },
+        monthDay: { type: 'integer', description: 'monthly only: the day of the month it runs, 1 to 28.' },
+        period: PERIOD_INPUT_SCHEMA,
+        sections: {
+          type: 'array',
+          description: '1 to 8 sections, each a titled query. With a period, a query takes its days as {{from}} and {{to}}.',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: "The section's title, in the person's language." },
+              sql: { type: 'string', description: 'One SELECT over ai.* views.' },
+            },
+            required: ['title', 'sql'],
+            additionalProperties: false,
+          },
+        },
+        summary: { type: 'boolean', description: 'Write a short summary on top of the report each time it runs.' },
+      },
+      required: ['cadence', 'time', 'sections', 'summary'],
+      additionalProperties: false,
+    },
+    recipients: {
+      type: 'array',
+      description: 'Who is told: people by user id, every active account of a role, or (a watch) the people a column of the result names.',
+      items: {
+        anyOf: [
+          USER_SCHEMA('person'),
+          {
+            type: 'object',
+            properties: { kind: { type: 'string', enum: ['role'] }, role: { type: 'string', enum: [...ROLES] } },
+            required: ['kind', 'role'],
+            additionalProperties: false,
+          },
+          COLUMN_SCHEMA('person to tell'),
+        ],
+      },
+    },
+    channels: {
+      type: 'object',
+      description: "Where they are told: the app's bell, the chat, or both.",
+      properties: { bell: { type: 'boolean' }, chat: { type: 'boolean' } },
+      required: ['bell', 'chat'],
+      additionalProperties: false,
+    },
+    actions: {
+      type: 'object',
+      description: 'What a watch does with each new case. A report: notify true, followUp null.',
+      properties: {
+        notify: { type: 'boolean', description: 'Tell the recipients.' },
+        followUp: {
+          anyOf: [
+            {
+              type: 'object',
+              description: 'Open a follow-up for each new case, with an assignee and a deadline.',
+              properties: {
+                assignee: {
+                  anyOf: [
+                    USER_SCHEMA('assignee'),
+                    COLUMN_SCHEMA('assignee'),
+                    { type: 'object', properties: { kind: { type: 'string', enum: ['creator'] } }, required: ['kind'], additionalProperties: false },
+                  ],
+                },
+                dueHours: { type: 'integer', description: 'The deadline, in hours from the case: 1 to 720.' },
+              },
+              required: ['assignee', 'dueHours'],
+              additionalProperties: false,
+            },
+            { type: 'null' },
+          ],
+        },
+      },
+      required: ['notify', 'followUp'],
+      additionalProperties: false,
+    },
+    replacesAutomationId: { type: 'string', description: 'Optional. The id of one of the person\'s automations (from my_automations) that this proposal changes.' },
+  },
+  required: ['kind', 'name', 'description', 'language', 'recipients', 'channels', 'actions'],
+  additionalProperties: false,
+}
+
+// ---- Reading it back ------------------------------------------------------------------
+
+/** A field the model may leave out or send as null. */
+const optional = <T extends z.ZodTypeAny>(schema: T) => schema.nullish().transform((v) => v ?? undefined)
+
+const recipientInput = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('user'), userId: z.string() }).strict(),
+  z.object({ kind: z.literal('role'), role: z.enum(ROLES as [string, ...string[]]) }).strict(),
+  z.object({ kind: z.literal('column'), column: z.string() }).strict(),
+])
+
+const assigneeInput = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('user'), userId: z.string() }).strict(),
+  z.object({ kind: z.literal('column'), column: z.string() }).strict(),
+  z.object({ kind: z.literal('creator') }).strict(),
+])
+
+const periodInput = z
+  .object({
+    kind: z.enum(PERIOD_KINDS),
+    days: z.number().int().nullish(),
+    from: z.string().nullish(),
+    to: z.string().nullish(),
+    weekStart: z.enum(WEEK_STARTS).nullish(),
+  })
+  .strict()
+
+const watchInput = z
+  .object({
+    sql: z.string(),
+    keyColumn: z.string(),
+    everyMinutes: z.number().int(),
+    titleTemplate: z.string(),
+    bodyTemplate: optional(z.string()),
+    sessionColumn: optional(z.string()),
+    sampleColumn: optional(z.string()),
+    orderColumn: optional(z.string()),
+  })
+  .strict()
+
+const scheduleInput = z
+  .object({
+    cadence: z.enum(['daily', 'weekly', 'monthly']),
+    time: z.string(),
+    weekdays: optional(z.array(z.number().int())),
+    weekday: optional(z.number().int()),
+    monthDay: optional(z.number().int()),
+    period: optional(periodInput),
+    sections: z.array(z.object({ title: z.string(), sql: z.string() }).strict()),
+    summary: z.boolean(),
+  })
+  .strict()
+
+const actionsInput = z
+  .object({
+    notify: z.boolean(),
+    followUp: z.object({ assignee: assigneeInput, dueHours: z.number().int() }).strict().nullable(),
+  })
+  .strict()
+
+const channelsInput = z.object({ bell: z.boolean(), chat: z.boolean() }).strict()
+
+export const DraftInput = z
+  .object({
+    kind: z.enum(['watch', 'report']),
+    name: z.string(),
+    description: z.string(),
+    language: z.enum(['ar', 'en']),
+    watch: optional(watchInput),
+    schedule: optional(scheduleInput),
+    recipients: z.array(recipientInput),
+    channels: channelsInput,
+    actions: actionsInput,
+    replacesAutomationId: optional(z.string()),
+  })
+  .strict()
+
+/** zod's complaints, one line each, naming where: what the model reads to fix its call. */
+export function describeIssues(error: z.ZodError, prefix = ''): string[] {
+  return error.issues.map((i) => {
+    const where = [prefix, ...i.path.map(String)].filter(Boolean).join('.')
+    return where ? `${where}: ${i.message}` : i.message
+  })
+}
+
+/** What the model wrote, read as a draft; or what is wrong with its shape. The period is resolved to the shared type. */
+export function readDraft(input: unknown): { draft: AutomationDraft } | { errors: string[] } {
+  const parsed = DraftInput.safeParse(input)
+  if (!parsed.success) return { errors: describeIssues(parsed.error) }
+  const d = parsed.data
+  const errors: string[] = []
+  const draft: AutomationDraft = {
+    kind: d.kind,
+    name: d.name,
+    description: d.description,
+    language: d.language,
+    recipients: d.recipients as AutomationRecipient[],
+    channels: d.channels,
+    actions: d.actions as AutomationActions,
+  }
+  if (d.watch) draft.watch = stripUndefined(d.watch) as AutomationWatchSpec
+  if (d.schedule) {
+    const { period, ...rest } = d.schedule
+    const schedule = stripUndefined(rest) as Omit<AutomationScheduleSpec, 'weekdays' | 'weekday'> & { weekdays?: number[]; weekday?: number }
+    let resolved: AiReportPeriod | null = null
+    if (period) {
+      resolved = toPeriod(period)
+      if (!resolved) errors.push(`schedule.period: ${JSON.stringify(period)} is not a period a report can have (last_days needs days 1 to 3660; fixed needs from and to, YYYY-MM-DD, in order).`)
+    }
+    draft.schedule = { ...(schedule as AutomationScheduleSpec), ...(resolved ? { period: resolved } : {}) }
+  }
+  if (d.replacesAutomationId) draft.replacesAutomationId = d.replacesAutomationId
+  return errors.length > 0 ? { errors } : { draft }
+}
+
+/** An object without its undefined fields: what is stored and replayed reads the same however it was built. */
+function stripUndefined<T extends object>(o: T): T {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T
+}
+
+// ---- Changes outside the chat ---------------------------------------------------------
+
+const weekday = z.number().int().min(0, 'A weekday is 0 (Sunday) to 6 (Saturday).').max(6, 'A weekday is 0 (Sunday) to 6 (Saturday).')
+
+/**
+ * AutomationEdits as a request carries them; a period may come as the model
+ * writes one (unused fields null). The queries are not among them: they
+ * change only through the assistant.
+ */
+export const EditsInput = z
+  .object({
+    name: z.string().optional(),
+    description: z.string().optional(),
+    recipients: z.array(recipientInput).optional(),
+    channels: channelsInput.optional(),
+    actions: actionsInput.optional(),
+    everyMinutes: z.number().int().optional(),
+    cadence: z.enum(['daily', 'weekly', 'monthly']).optional(),
+    time: z.string().optional(),
+    weekdays: z.array(weekday).nullable().optional(),
+    weekday: weekday.nullable().optional(),
+    monthDay: z.number().int().nullable().optional(),
+    period: periodInput.nullable().optional(),
+    summary: z.boolean().optional(),
+  })
+  .strict()
+
+export type EditsInputType = z.infer<typeof EditsInput>
+
+/**
+ * A definition with a person's changes on top: the result is a draft again,
+ * for the same checks a proposal gets. A change that does not fit the kind
+ * (an interval for a report) is an error, not silently dropped.
+ */
+export function applyEdits(draft: AutomationDraft, edits: EditsInputType): { draft: AutomationDraft } | { errors: string[] } {
+  const errors: string[] = []
+  const next: AutomationDraft = structuredClone(draft)
+  if (edits.name !== undefined) next.name = edits.name
+  if (edits.description !== undefined) next.description = edits.description
+  if (edits.recipients !== undefined) next.recipients = edits.recipients as AutomationRecipient[]
+  if (edits.channels !== undefined) next.channels = edits.channels
+  if (edits.actions !== undefined) next.actions = edits.actions as AutomationActions
+  const scheduleEdits = ['cadence', 'time', 'weekdays', 'weekday', 'monthDay', 'period', 'summary'] as const
+  if (next.kind === 'watch') {
+    if (edits.everyMinutes !== undefined && next.watch) next.watch.everyMinutes = edits.everyMinutes
+    for (const k of scheduleEdits) if (edits[k] !== undefined) errors.push(`${k}: only a scheduled report has one; this is a watch.`)
+  } else if (next.schedule) {
+    if (edits.everyMinutes !== undefined) errors.push('everyMinutes: only a watch has an interval; this is a scheduled report.')
+    const s: AutomationScheduleSpec = next.schedule
+    if (edits.cadence !== undefined) s.cadence = edits.cadence
+    if (edits.time !== undefined) s.time = edits.time
+    if (edits.weekdays !== undefined) setOrDrop(s, 'weekdays', edits.weekdays as AutomationWeekday[] | null)
+    if (edits.weekday !== undefined) setOrDrop(s, 'weekday', edits.weekday as AutomationWeekday | null)
+    if (edits.monthDay !== undefined) setOrDrop(s, 'monthDay', edits.monthDay)
+    if (edits.summary !== undefined) s.summary = edits.summary
+    if (edits.period !== undefined) {
+      if (edits.period === null) delete s.period
+      else {
+        const period = toPeriod(edits.period)
+        if (period) s.period = period
+        else errors.push(`period: ${JSON.stringify(edits.period)} is not a period a report can have.`)
+      }
+    }
+    // A change of cadence takes the fields the old one used away with it, unless they were given anew.
+    if (edits.cadence !== undefined) {
+      if (s.cadence !== 'daily' && edits.weekdays === undefined) delete s.weekdays
+      if (s.cadence !== 'weekly' && edits.weekday === undefined) delete s.weekday
+      if (s.cadence !== 'monthly' && edits.monthDay === undefined) delete s.monthDay
+    }
+  }
+  return errors.length > 0 ? { errors } : { draft: next }
+}
+
+function setOrDrop<K extends 'weekdays' | 'weekday' | 'monthDay'>(s: AutomationScheduleSpec, key: K, value: AutomationScheduleSpec[K] | null): void {
+  if (value === null) delete s[key]
+  else s[key] = value
+}

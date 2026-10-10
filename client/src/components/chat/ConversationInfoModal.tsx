@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Loader2, Pencil, Trash2, UserMinus, UserPlus, Users } from 'lucide-react'
+import { Loader2, Pencil, Trash2, UserMinus, UserPlus, Users, Zap } from 'lucide-react'
 import type { ChatConversation } from '@qc/shared/types'
 import { Badge, Button, Input, Modal } from '@/components/ui'
 import { useChatUsers } from '@/services/queries'
@@ -58,6 +58,18 @@ export function ConversationInfoModal({
       toast(e instanceof Error ? e.message : 'Could not delete the group.', 'error')
       setBusy(false)
     }
+  }
+
+  // §21 — the automations sender is not a person to list or write to: its conversation says what it is.
+  if (c.automated) {
+    return (
+      <Modal open onClose={onClose} size="sm" icon={<Zap className="h-5 w-5" />} title="QC Automations">
+        <div className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
+          <p>The app writes here when an automation you are a recipient of finds a case, opens a follow-up for you, or delivers a scheduled report.</p>
+          <p>It is not a person: replies are not read. The links in its messages open the follow-up, the session or the report.</p>
+        </div>
+      </Modal>
+    )
   }
 
   if (confirmDelete) {

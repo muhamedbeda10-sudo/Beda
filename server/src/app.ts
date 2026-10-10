@@ -31,6 +31,9 @@ import { noticesRoutes } from './modules/notices.routes'
 import { chatRoutes } from './modules/chat.routes'
 import { releasesRoutes } from './modules/releases.routes'
 import { aiRoutes } from './modules/ai.routes'
+import { notificationsRoutes } from './modules/notifications.routes'
+import { followUpsRoutes } from './modules/followUps.routes'
+import { automationsRoutes } from './modules/automations.routes'
 
 export function createApp(ctx: AppContext): Express {
   const app = express()
@@ -94,6 +97,9 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/chat', guard, chatRoutes(ctx))
   app.use('/api/releases', guard, releasesRoutes(ctx))
   app.use('/api/ai', guard, aiRoutes(ctx))
+  app.use('/api/notifications', guard, notificationsRoutes(ctx))
+  app.use('/api/follow-ups', guard, followUpsRoutes(ctx))
+  app.use('/api/automations', guard, automationsRoutes(ctx))
 
   app.all('/api/{*rest}', (_req, res) => {
     const body: ApiErrorBody = { error: { code: 'not_found', message: 'No such endpoint.' } }

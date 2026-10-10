@@ -30,9 +30,14 @@ function caretAtEnd(el: HTMLTextAreaElement) {
  * unsent text — kept in the provider's ref too, so it survives the surface
  * closing and follows Expand and Dock — and the requests to put the caret in
  * it. `focusComposer(always)`: see ComposerFocus.
+ *
+ * A new conversation composed elsewhere (§21, "Edit in chat": the provider's
+ * compose) reaches a box already on screen too: it takes the text with the
+ * caret, and `onComposed` lets the surface show the conversation. A surface
+ * that opens afterwards starts from the kept text anyway.
  */
-export function useComposerDraft() {
-  const { draft: kept } = useAi()
+export function useComposerDraft(onComposed?: () => void) {
+  const { draft: kept, composed } = useAi()
   const [draft, setDraftState] = useState(() => kept.current)
   const [focus, setFocus] = useState<ComposerFocus>({ key: 0, always: false })
   const setDraft = useCallback(
@@ -44,6 +49,17 @@ export function useComposerDraft() {
   )
   const focusComposer = useCallback((always: boolean) => setFocus((f) => ({ key: f.key + 1, always })), [])
   const focusUsed = useCallback(() => setFocus(spentFocus), [])
+  // What was composed before this surface opened is in the kept text already; only a later one is taken here.
+  const seen = useRef(composed)
+  const onComposedRef = useRef(onComposed)
+  onComposedRef.current = onComposed
+  useEffect(() => {
+    if (seen.current === composed) return
+    seen.current = composed
+    setDraftState(kept.current)
+    focusComposer(true)
+    onComposedRef.current?.()
+  }, [composed, kept, focusComposer])
   return { draft, setDraft, focus, focusComposer, focusUsed }
 }
 

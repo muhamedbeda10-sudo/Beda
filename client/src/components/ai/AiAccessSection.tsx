@@ -2,14 +2,15 @@
 // §20 — Who can use it, on the owner's page: the people the owner gave the
 // assistant to, each with the data they may ask about, the model and effort
 // their questions use, and their own monthly cap against what they spent of
-// it this month. Add a person (any active account, any role), change what one
-// has, or take it away. Nobody but the owner ever sees this: the server
-// answers anyone else 404, and the page is not even listed for them.
+// it this month, and whether they may create automations (§21). Add a person
+// (any active account, any role), change what one has, or take it away.
+// Nobody but the owner ever sees this: the server answers anyone else 404,
+// and the page is not even listed for them.
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Loader2, Pencil, Save, Trash2, UserPlus, UsersRound } from 'lucide-react'
+import { Loader2, Pencil, Save, Trash2, UserPlus, UsersRound, Zap } from 'lucide-react'
 import { AI_DOMAINS, AI_EFFORTS, AI_MAX_MONTHLY_CAP_USD, AI_MODELS, type AiAccess } from '@qc/shared/ai'
 import { Badge, Button, Card, Drawer, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { ApiError } from '@/lib/api'
@@ -111,14 +112,16 @@ export function AiAccessSection({ appCapUsd }: { appCapUsd: number | undefined }
 /** The table alone, drawn from the people as sorted (sortAccess). */
 export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; onEdit: (row: AiAccess) => void; onRemove: (row: AiAccess) => void }) {
   const th = 'px-3 py-2.5 font-bold'
+  // Positioned, so the screen-reader-only header (absolutely placed) stays inside the scroller instead of widening the page on a phone.
   return (
-    <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
+    <div className="relative overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
       <table className="w-full min-w-[60rem] text-sm">
         <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
           <tr>
             <th className={th}>Person</th>
             <th className={th}>Role</th>
             <th className={th}>Access</th>
+            <th className={th}>Automations</th>
             <th className={th}>Data</th>
             <th className={th}>Model</th>
             <th className={th}>Effort</th>
@@ -167,6 +170,15 @@ function AccessRow({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => voi
       </td>
       <td className="px-3 py-2.5">
         <Badge tone={row.enabled ? 'green' : 'neutral'}>{row.enabled ? 'On' : 'Off'}</Badge>
+      </td>
+      <td className="px-3 py-2.5">
+        {row.owner || row.automations ? (
+          <Badge tone="blue" icon={<Zap className="h-3 w-3" />} tip={row.owner ? 'You always can, as the assistant’s owner' : 'May ask the assistant to set up watches and scheduled reports'}>
+            Can create
+          </Badge>
+        ) : (
+          <span className="text-xs text-muted">No</span>
+        )}
       </td>
       <td className="px-3 py-2.5">
         {domains.length > 0 ? (
@@ -360,6 +372,20 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
             <p className="mt-0.5 text-xs text-muted">Off: its button disappears for them at once. Their conversations and reports stay, out of reach until it is back on.</p>
           </div>
           <AiSwitch on={draft.enabled} onChange={(on) => patch({ enabled: on })} labelledBy="ai-access-enabled" disabled={saving} />
+        </div>
+
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+          <div className="min-w-0">
+            <p id="ai-access-automations" className="font-semibold">
+              Can create automations
+            </p>
+            <p className="mt-0.5 text-xs text-muted">
+              {row?.owner
+                ? 'You always can, as the assistant’s owner.'
+                : 'They may ask the assistant to watch for cases and send scheduled reports: alerts, chat messages and follow-ups only, never a change to the record. Nothing runs until they press Activate, and each runs with the data they have then; a report’s summary counts toward their cap. Off: theirs stop until it is back on.'}
+            </p>
+          </div>
+          <AiSwitch on={draft.automations} onChange={(on) => patch({ automations: on })} labelledBy="ai-access-automations" disabled={saving || !!row?.owner} />
         </div>
 
         <fieldset className="space-y-2" disabled={saving}>

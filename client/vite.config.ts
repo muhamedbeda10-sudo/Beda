@@ -10,11 +10,13 @@ const API_PROXY_TARGET = process.env.VITE_API_PROXY ?? 'http://localhost:8080'
 
 /**
  * A chunk only the AI assistant loads — its panel, its owner's settings page
- * and what those two share. Named `ai-…`, so the service worker leaves it out
- * of the precache: it is fetched the first time someone given the assistant
- * opens it, never downloaded by every phone on install and on each deploy.
+ * and what those two share; and its automations' pages (§21), for the few
+ * who create them and the people a report is delivered to. Named `ai-…`, so
+ * the service worker leaves it out of the precache: it is fetched the first
+ * time someone opens it, never downloaded by every phone on install and on
+ * each deploy.
  */
-const AI_MODULE = /\/src\/components\/ai\/|\/src\/pages\/admin\/AiAssistantPage\./
+const AI_MODULE = /\/src\/components\/(ai|automations)\/|\/src\/pages\/admin\/AiAssistantPage\.|\/src\/pages\/Automation[A-Za-z]*Page\.|\/src\/services\/automations\./
 const isAiChunk = (chunk: { moduleIds: readonly string[] }) => chunk.moduleIds.some((id) => AI_MODULE.test(id))
 
 export default defineConfig({

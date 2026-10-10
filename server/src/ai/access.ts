@@ -40,6 +40,8 @@ export interface AccessRecord {
   model: AiModelId
   effort: AiEffort
   monthlyCapUsd: number
+  /** May create automations (§21); the owner may whatever this says. */
+  automations: boolean
   /** The account is active and not removed. */
   active: boolean
 }
@@ -51,6 +53,7 @@ interface AccessRow {
   model: string
   effort: string
   monthlyCapUsd: number
+  automations: boolean
   active: boolean
 }
 
@@ -63,12 +66,13 @@ function toRecord(r: AccessRow): AccessRecord {
     model: isAiModel(r.model) ? r.model : AI_MODEL,
     effort: isAiEffort(r.effort) ? r.effort : 'medium',
     monthlyCapUsd: Number(r.monthlyCapUsd),
+    automations: r.automations,
     active: r.active,
   }
 }
 
 const ACCESS_COLUMNS = `a.user_id AS "userId", a.enabled, a.domains, a.model, a.effort, a.monthly_cap_usd AS "monthlyCapUsd",
-       (u.is_active AND u.deleted_at IS NULL) AS active`
+       a.automations, (u.is_active AND u.deleted_at IS NULL) AS active`
 
 /** A person's row, or null when the owner never gave them the assistant. */
 export async function loadAccess(q: Queryable, userId: string): Promise<AccessRecord | null> {
@@ -78,6 +82,13 @@ export async function loadAccess(q: Queryable, userId: string): Promise<AccessRe
 
 /** Whether the person may use the assistant at all: an active account, a row switched on, something to ask about. */
 export const isGranted = (a: AccessRecord | null): a is AccessRecord => !!a && a.active && a.enabled && a.domains.length > 0
+
+/**
+ * Whether the person may create automations (§21): given the assistant, and
+ * its owner or allowed by the owner. Read again wherever it matters, like the
+ * access itself: a permission taken away stops the tools and the routes at once.
+ */
+export const mayAutomate = (a: AccessRecord | null, owner: boolean): a is AccessRecord => isGranted(a) && (owner || a.automations)
 
 // ---- The owner's list ----------------------------------------------------------------
 
@@ -118,6 +129,8 @@ export async function listAccess(q: Queryable, ownerId: string | null, userId?: 
       monthlyCapUsd: a.monthlyCapUsd,
       spentUsd: Number(r.spentUsd),
       owner: a.userId === ownerId,
+      // The owner may create automations whatever their row says (§21).
+      automations: a.automations || a.userId === ownerId,
       updatedAt: r.updatedAt,
     }
     if (r.updatedByName) out.updatedByName = r.updatedByName
@@ -125,11 +138,11 @@ export async function listAccess(q: Queryable, ownerId: string | null, userId?: 
   })
 }
 
-/** Active accounts the owner has not listed yet: whom "Add person" offers. */
+/** Active accounts the owner has not listed yet: whom "Add person" offers. Never the automations' system sender (§21). */
 export async function unlistedPeople(q: Queryable): Promise<{ id: string; name: string; username: string; role: string }[]> {
   const { rows } = await q.query<{ id: string; name: string; username: string; role: string }>(
     `SELECT u.id, u.name, u.username, u.role::text AS role FROM users u
-      WHERE u.is_active AND u.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM ai_access a WHERE a.user_id = u.id)
+      WHERE u.is_active AND u.deleted_at IS NULL AND NOT u.is_system AND NOT EXISTS (SELECT 1 FROM ai_access a WHERE a.user_id = u.id)
       ORDER BY lower(u.name), u.username`,
   )
   return rows
@@ -149,13 +162,14 @@ function auditSnapshot(a: Omit<AccessRecord, 'userId' | 'active'>): Record<strin
     model: MODEL_NAMES.get(a.model) ?? a.model,
     effort: EFFORT_NAMES.get(a.effort) ?? a.effort,
     monthlyCapUsd: a.monthlyCapUsd.toFixed(2),
+    automations: a.automations ? 'may create' : 'may not create',
   }
 }
 
-/** The whole row in one line, for the audit entry of its creation or removal. */
+/** The whole row in one line, for the audit entry of its creation or removal; the automations permission only when given. */
 const auditLine = (who: { name: string; username: string }, a: Omit<AccessRecord, 'userId' | 'active'>) => {
   const s = auditSnapshot(a)
-  return `${who.name} (${who.username}): ${s.enabled}; ${s.domains}; ${s.model}; ${s.effort}; $${s.monthlyCapUsd} a month`
+  return `${who.name} (${who.username}): ${s.enabled}; ${s.domains}; ${s.model}; ${s.effort}; $${s.monthlyCapUsd} a month${a.automations ? '; may create automations' : ''}`
 }
 
 export interface Editor {
@@ -165,7 +179,8 @@ export interface Editor {
 
 /**
  * Create or change a person's row, in the caller's transaction, and audit
- * it: its creation in one line, a change field by field.
+ * it: its creation in one line, a change field by field. The automations
+ * permission left out of `next` stays as it is (off for a new row).
  */
 export async function saveAccess(
   tx: Queryable,
@@ -178,21 +193,24 @@ export async function saveAccess(
     [person.id],
   )
   const ctx = { userId: by.id, userName: by.name, entity: 'AiAccess', entityId: person.id }
-  const values = [person.id, next.enabled, next.domains, next.model, next.effort, next.monthlyCapUsd, by.id, by.name]
+  const automations = next.automations ?? before.rows[0]?.automations ?? false
+  const wanted = { ...next, automations }
+  const values = [person.id, next.enabled, next.domains, next.model, next.effort, next.monthlyCapUsd, by.id, by.name, automations]
   if (!before.rows[0]) {
     await tx.query(
-      `INSERT INTO ai_access (user_id, enabled, domains, model, effort, monthly_cap_usd, updated_by_id, updated_by_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO ai_access (user_id, enabled, domains, model, effort, monthly_cap_usd, updated_by_id, updated_by_name, automations)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       values,
     )
-    await writeAudit(tx, [auditEvent('create', ctx, new Date().toISOString(), { field: 'access', newValue: auditLine(person, next) })])
+    await writeAudit(tx, [auditEvent('create', ctx, new Date().toISOString(), { field: 'access', newValue: auditLine(person, wanted) })])
     return 'created'
   }
   const old = toRecord(before.rows[0])
-  const changed = await auditChanges(tx, ctx, auditSnapshot(old), auditSnapshot(next))
+  const changed = await auditChanges(tx, ctx, auditSnapshot(old), auditSnapshot(wanted))
   if (changed === 0) return 'unchanged'
   await tx.query(
-    `UPDATE ai_access SET enabled = $2, domains = $3, model = $4, effort = $5, monthly_cap_usd = $6, updated_by_id = $7, updated_by_name = $8
+    `UPDATE ai_access SET enabled = $2, domains = $3, model = $4, effort = $5, monthly_cap_usd = $6, updated_by_id = $7, updated_by_name = $8,
+            automations = $9
       WHERE user_id = $1`,
     values,
   )
@@ -281,7 +299,8 @@ export async function personAvailability(
   const access = known !== undefined ? known : await loadAccess(q, userId)
   const model = access?.model ?? AI_MODEL
   const app = await loadAvailability(q, config, readerReady, model)
-  const me: AiMeResponse = { granted: isGranted(access), owner: ownerId !== null && ownerId === userId, available: false }
+  const owner = ownerId !== null && ownerId === userId
+  const me: AiMeResponse = { granted: isGranted(access), owner, available: false, automations: mayAutomate(access, owner) }
   if (!isGranted(access)) me.reason = 'not-granted'
   else if (app.status.reason === 'cap-reached') me.reason = 'cap-reached'
   else if (app.status.reason) me.reason = 'unavailable'

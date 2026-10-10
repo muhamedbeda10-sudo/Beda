@@ -3,7 +3,8 @@
 // elements, never as HTML. Hardened because the model's words can echo text
 // people typed into the record: raw HTML is skipped, images are unwrapped to
 // their words (no remote beacons), and a link is followed only when it is a
-// page of this application or a plain web address (./links). Styled here,
+// page of this application or a plain web address (./links) — a page of the
+// application alone in text sent beyond the person who asked. Styled here,
 // with logical properties, so an Arabic answer lays out right to left: the
 // text as a whole and each list and quote take the direction most of their
 // words read in, set explicitly (./tables: proseDirection), each paragraph,
@@ -21,7 +22,7 @@ import { useApp } from '@/store/AppContext'
 import { useAi } from './AiAssistantProvider'
 import { AiCode } from './AiCode'
 import { AiMarkdownTable, TBODY_CLASS, TR_CLASS, tdClass, thClass } from './AiTable'
-import { aiUrlTransform, classifyAiLink } from './links'
+import { aiAppUrlTransform, aiUrlTransform, classifyAiLink } from './links'
 import { DIR_ATTR, NUMERIC_ATTR, codeLanguage, hastDirection, hastRawText, proseDirection, rehypeAiTables, type HastNode } from './tables'
 import { isAiWorkspacePath } from './workspace'
 
@@ -30,11 +31,12 @@ const REHYPE = [rehypeAiTables]
 const DISALLOWED = ['img']
 const LINK = 'font-semibold text-brand-700 underline decoration-brand-300 underline-offset-2 hover:decoration-brand-600 dark:text-brand-300 dark:decoration-brand-500/50'
 
-function MdLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement> & { children?: ReactNode }) {
+/** `appOnly`: a web address is not followed, only a page of the application (text read beyond the person who asked). */
+function MdLink({ href, children, appOnly = false }: AnchorHTMLAttributes<HTMLAnchorElement> & { children?: ReactNode; appOnly?: boolean }) {
   const navigate = useNavigate()
   const { docked, setOpen, workspace } = useAi()
   const link = classifyAiLink(href)
-  if (!link) return <span>{children}</span>
+  if (!link || (appOnly && link.kind !== 'app')) return <span>{children}</span>
   if (link.kind === 'external') {
     return (
       <a href={link.href} target="_blank" rel="noopener noreferrer" className={LINK}>
@@ -135,16 +137,23 @@ const components: Components = {
   td: ({ node: _node, ...props }) => <MdCell header={false} props={props} />,
 }
 
+/** The same, with only the application's own pages as links. */
+const appOnlyComponents: Components = { ...components, a: ({ node: _node, ...props }) => <MdLink {...props} appOnly /> }
+
 /**
  * Markdown text, drawn safely. Memoised: a finished answer is parsed once,
  * not on every frame of the next one. `caret`: the text is still being
- * written — a caret blinks after its last word.
+ * written — a caret blinks after its last word. `links`: 'app' when the text
+ * reaches more people than the one who asked (a delivered scheduled report:
+ * whole roles, people without the assistant) — a web address in it, which
+ * may echo what someone typed into the record, stays words, never a link.
  */
-export const AiMarkdown = memo(function AiMarkdown({ text, caret = false }: { text: string; caret?: boolean }) {
+export const AiMarkdown = memo(function AiMarkdown({ text, caret = false, links = 'any' }: { text: string; caret?: boolean; links?: 'any' | 'app' }) {
   const dir = useMemo(() => proseDirection(text), [text])
+  const appOnly = links === 'app'
   return (
     <div dir={dir} className={cn('ai-prose break-words text-sm text-slate-800 dark:text-slate-100', caret && 'ai-caret')}>
-      <Markdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={components} disallowedElements={DISALLOWED} unwrapDisallowed skipHtml urlTransform={aiUrlTransform}>
+      <Markdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={appOnly ? appOnlyComponents : components} disallowedElements={DISALLOWED} unwrapDisallowed skipHtml urlTransform={appOnly ? aiAppUrlTransform : aiUrlTransform}>
         {text}
       </Markdown>
     </div>

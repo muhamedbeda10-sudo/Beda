@@ -7,15 +7,17 @@
 //     answer was built on ever changes under it.
 //   • the display: per question, the asker's words and one answer made of the
 //     text the model wrote and the cards of the queries it ran (each with its
-//     chart, when it has one), the blocks the model wrote for the app (its
-//     headline figures, its follow-up questions) taken out of the text and
-//     handed over on their own. Thinking and the tool plumbing stay out of
-//     sight.
+//     chart, when it has one) and of the automations it proposed (§21, each
+//     as it stands now: proposed, activated or discarded), the blocks the
+//     model wrote for the app (its headline figures, its follow-up questions)
+//     taken out of the text and handed over on their own. Thinking and the
+//     tool plumbing stay out of sight.
 // ============================================================================
 
 import type Anthropic from '@anthropic-ai/sdk'
 import type { AiCell, AiChartSpec, AiConversation, AiKpi, AiMessage, AiPart, AiQueryPart, AiStopReason, AiTokenUsage } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
+import { loadProposalParts } from '../automations/proposals'
 import { stripBlocks } from './blocks'
 import { KPIS_BLOCK, parseKpis } from './kpis'
 import { SUGGESTIONS_BLOCK, parseSuggestions } from './suggestions'
@@ -201,8 +203,11 @@ export const queryPart = (r: QueryRecord): AiQueryPart => {
 
 export interface UsageRecord {
   userId: string
-  conversationId: string
-  turnId: string
+  /** The answer the call was for; null for a call that served no conversation (a scheduled report's summary). */
+  conversationId: string | null
+  turnId: string | null
+  /** §21 — the automation whose report the call summarised. */
+  automationId?: string | null
   model: string
   tokens: AiTokenUsage
   costUsd: number
@@ -234,8 +239,8 @@ export async function personalMonthSpend(q: Queryable, userId: string): Promise<
 export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
   await q.query(
     `INSERT INTO ai_usage (user_id, conversation_id, turn_id, model, input_tokens, output_tokens, cache_write_5m_tokens,
-                           cache_write_1h_tokens, cache_read_tokens, cost_usd, request_id, partial)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+                           cache_write_1h_tokens, cache_read_tokens, cost_usd, request_id, partial, automation_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       u.userId,
       u.conversationId,
@@ -249,6 +254,7 @@ export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
       u.costUsd,
       u.requestId ?? null,
       u.partial ?? false,
+      u.automationId ?? null,
     ],
   )
 }
@@ -290,10 +296,11 @@ interface MessageRow {
 
 /**
  * The conversation as the panel shows it: each question, then its answer —
- * the model's text with the cards of the queries it ran, in the order they
- * came; the headline figures it opened with and the follow-up questions it
- * closed with taken out of its text and handed over on their own; and the
- * report it was saved as, if it was. One turn only, when `turnId` is given.
+ * the model's text with the cards of the queries it ran and the automations
+ * it proposed, in the order they came; the headline figures it opened with
+ * and the follow-up questions it closed with taken out of its text and
+ * handed over on their own; and the report it was saved as, if it was. One
+ * turn only, when `turnId` is given.
  */
 export async function loadDisplayMessages(q: Queryable, conversationId: string, turnId?: string): Promise<AiMessage[]> {
   const params = [conversationId, turnId ?? null]
@@ -322,6 +329,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
   )
   const reportByTurn = new Map(reports.rows.map((r) => [r.turnId, r.id]))
   const queryByToolUse = new Map(queries.rows.map((r) => [r.toolUseId, r]))
+  const proposalByToolUse = await loadProposalParts(q, conversationId, turnId)
   const byTurn = new Map<string, MessageRow[]>()
   for (const m of messages.rows) {
     const list = byTurn.get(m.turnId)
@@ -348,7 +356,9 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
           else parts.push({ type: 'text', text: block.text })
         } else if (block.type === 'tool_use' && block.id) {
           const run = queryByToolUse.get(block.id)
+          const proposal = proposalByToolUse.get(block.id)
           if (run) parts.push(queryPart(run))
+          else if (proposal) parts.push(proposal)
         }
       }
     }

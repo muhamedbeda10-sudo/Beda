@@ -55,7 +55,8 @@ describe('§20 a query’s size', () => {
       [{ ...exporting, timeoutMs: 60_000 }, 1024],
     ] as const) {
       const res = await run(HUGE_CELL, opts)
-      expect(res).toMatchObject({ ok: false, rows: [], error: `A row of the result is larger than ${kb} KB. Select fewer or shorter columns, or aggregate.` })
+      expect(res).toMatchObject({ ok: false, rows: [], error: `A row of the result is larger than ${kb} KB. Select fewer or shorter columns, or aggregate.`, failure: 'row-too-large' })
+      expect(res).not.toHaveProperty('dbMessage')
       const many = await run(MANY_LONG_ROWS, opts)
       expect(many.error).toBe(`A row of the result is larger than ${kb} KB. Select fewer or shorter columns, or aggregate.`)
     }
@@ -89,9 +90,13 @@ describe('§20 a query’s size', () => {
     const res = await run(`SELECT repeat('x', 2000000)::int AS n`)
     expect(res).toMatchObject({ ok: false })
     expect(res.error).toMatch(/^The query failed with an error message longer than 320 KB: it quotes a very long value/)
+    expect(res.failure).toBe('reply-too-large')
     await waitFor(async () => (await readerRunning()) === 0, 'the cut statement to end')
     // A short error is still the database's own sentence.
-    expect((await run(`SELECT 'abc'::int AS n`)).error).toMatch(/invalid input syntax for type integer: "abc"/)
+    const short = await run(`SELECT 'abc'::int AS n`)
+    expect(short.error).toMatch(/invalid input syntax for type integer: "abc"/)
+    // And PostgreSQL's own words, as it said them, for words other than the model's.
+    expect(short).toMatchObject({ failure: 'database', code: '22P02', dbMessage: 'invalid input syntax for type integer: "abc"' })
   })
 
   it('cuts the connection at a row whose text outgrows its stored size, before pg reads it', async () => {
@@ -108,7 +113,10 @@ describe('§20 a query’s size', () => {
       expect((await run(`SELECT work_centre_name FROM ai.machines`, opts)).error).toBe(`A row of the result is larger than ${kb} KB. Select fewer or shorter columns, or aggregate.`)
     }
     // A bit string's text is eight times its stored size.
-    expect((await run(`SELECT lpad('', 2100000, '1')::varbit AS bits`)).error).toBe('A row of the result is larger than 256 KB. Select fewer or shorter columns, or aggregate.')
+    expect(await run(`SELECT lpad('', 2100000, '1')::varbit AS bits`)).toMatchObject({
+      error: 'A row of the result is larger than 256 KB. Select fewer or shorter columns, or aggregate.',
+      failure: 'row-too-large',
+    })
     await waitFor(async () => (await readerRunning()) === 0, 'the cut statements to end')
     expect((await run(`SELECT length(work_centre_name) AS n FROM ai.machines`)).rows).toEqual([[5_000_000]])
     await app.db.query(`UPDATE machines SET name = 'Welding' WHERE code = '58'`)
@@ -117,6 +125,8 @@ describe('§20 a query’s size', () => {
   it('names the failing spot in the query itself, not in the wrapper around it', async () => {
     const res = await run('SELECT (1 AS n')
     expect(res.error).toMatch(/^syntax error at or near "AS" \(at character 11\)/)
+    // The database's own message stays as it was: no position, no advice.
+    expect(res).toMatchObject({ failure: 'database', code: '42601', dbMessage: 'syntax error at or near "AS"' })
     expect((await run('SELECT (1')).error).toBe('syntax error at end of input (at character 10)')
     const trailing = await run('SELECT machine_code FROM ai.machines -- the register')
     expect(trailing).toMatchObject({ ok: true, columns: ['machine_code'] })
@@ -135,7 +145,7 @@ describe('§20 stopping a query', () => {
     const stoppedAt = Date.now()
     ac.abort()
     const res = await pending
-    expect(res).toMatchObject({ ok: false, error: AI_QUERY_STOPPED, rows: [] })
+    expect(res).toMatchObject({ ok: false, error: AI_QUERY_STOPPED, failure: 'stopped', rows: [] })
     expect(Date.now() - stoppedAt).toBeLessThan(1000)
     // Cancelled there too, long before its 10 s timeout.
     await waitFor(async () => (await readerRunning()) === 0, 'the cancelled statement to end')
@@ -166,7 +176,7 @@ describe('§20 stopping a query', () => {
     // About 15 ms a row: each batch well inside a second, all 201 rows several seconds.
     const started = Date.now()
     const res = await run(`SELECT g, (SELECT count(*) FROM generate_series(1, 200000 + g)) AS n FROM generate_series(1, 400) g`, { ...chat, timeoutMs: 1000 })
-    expect(res).toMatchObject({ ok: false, error: 'The query took too long (1 s). Narrow it or aggregate.' })
+    expect(res).toMatchObject({ ok: false, error: 'The query took too long (1 s). Narrow it or aggregate.', failure: 'timeout' })
     expect(Date.now() - started).toBeLessThan(2500)
     await waitFor(async () => (await readerRunning()) === 0, 'the timed-out statement to end')
   })

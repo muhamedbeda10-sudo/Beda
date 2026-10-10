@@ -28,6 +28,7 @@ export function MessageBubble({
   actions,
   highlighted,
   lead,
+  automated = false,
 }: {
   message: ChatMessage
   mine: boolean
@@ -38,6 +39,8 @@ export function MessageBubble({
   highlighted?: boolean
   /** Before someone else's bubble: their circle, or the space it takes. */
   lead?: ReactNode
+  /** §21 — from the automations sender: its addresses open in place, and nothing is answered to it. */
+  automated?: boolean
 }) {
   const [menu, setMenu] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -94,7 +97,7 @@ export function MessageBubble({
                   ))}
                 </div>
               )}
-              {m.body && <MessageBody body={m.body} mine={mine} onMention={actions.onMention} />}
+              {m.body && <MessageBody body={m.body} mine={mine} onMention={actions.onMention} appLinks={automated} />}
             </>
           )}
           <span className={cn('mt-1 flex items-center justify-end gap-1 text-[10px] tabular-nums', mine ? 'text-white/70' : 'text-muted')}>
@@ -138,15 +141,19 @@ export function MessageBubble({
 
         {menu && (
           <div className={cn('absolute z-20 mt-1 w-56 rounded-2xl bg-white p-1.5 shadow-lift ring-1 ring-slate-200 animate-scale-in dark:bg-slate-900 dark:ring-slate-700', mine ? 'right-0' : 'left-0')}>
-            <div className="mb-1 flex justify-between px-1">
-              {QUICK_REACTIONS.map((e) => (
-                <button key={e} type="button" onClick={() => { actions.onReact(m, e); setMenu(false) }} className="rounded-lg p-1 text-lg hover:bg-slate-100 dark:hover:bg-slate-800">
-                  {e}
-                </button>
-              ))}
-            </div>
-            <MenuItem icon={<CornerUpLeft className="h-4 w-4" />} label="Reply" onClick={() => { actions.onReply(m); setMenu(false) }} />
-            <MenuItem icon={<SmilePlus className="h-4 w-4" />} label="React…" onClick={() => { actions.onReact(m, ''); setMenu(false) }} />
+            {!automated && (
+              <>
+                <div className="mb-1 flex justify-between px-1">
+                  {QUICK_REACTIONS.map((e) => (
+                    <button key={e} type="button" onClick={() => { actions.onReact(m, e); setMenu(false) }} className="rounded-lg p-1 text-lg hover:bg-slate-100 dark:hover:bg-slate-800">
+                      {e}
+                    </button>
+                  ))}
+                </div>
+                <MenuItem icon={<CornerUpLeft className="h-4 w-4" />} label="Reply" onClick={() => { actions.onReply(m); setMenu(false) }} />
+                <MenuItem icon={<SmilePlus className="h-4 w-4" />} label="React…" onClick={() => { actions.onReact(m, ''); setMenu(false) }} />
+              </>
+            )}
             <MenuItem icon={<Copy className="h-4 w-4" />} label="Copy text" onClick={() => { void navigator.clipboard?.writeText(plainText(m.body)); setMenu(false) }} />
             {mine && withinWindow && m.body && <MenuItem icon={<Pencil className="h-4 w-4" />} label="Edit" onClick={() => { actions.onEdit(m); setMenu(false) }} />}
             <MenuItem icon={<Trash2 className="h-4 w-4" />} label="Delete for me" onClick={() => { actions.onDelete(m, 'me'); setMenu(false) }} />

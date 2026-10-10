@@ -148,6 +148,7 @@ The important ones:
 | `SEED_DEMO_DATA`                  | Seed demo master data into an empty database on first admin sign-in.  |
 | `ANTHROPIC_API_KEY`               | Optional. The AI assistant's key — normally set in the app instead (Administration → AI assistant), stored encrypted. Set here, it wins. |
 | `AI_OWNER_USERNAME`               | Optional, default `beda`. The account that owns the AI assistant, pinned once (see below). |
+| `AUTOMATIONS_ENABLED`             | Optional, default `true`. Runs the automations engine (watches, scheduled reports, follow-up deadlines) in this instance. Several instances may all run it: a run is claimed in the database, so none runs twice. |
 
 ## Database
 
@@ -182,6 +183,23 @@ asker's combination; every query runs read-only and is rolled back. The
 assistant's own records are the `ai_*` tables (conversations, usage for the
 caps, the encrypted API key, the owner and the access list), which no reader
 role can read.
+
+**Automations.** The owner, and the people the owner allows
+(`ai_access.automations`), can ask the assistant in plain words to keep an eye
+on something or to send a report regularly. The assistant writes it as a
+proposal, tried once against the data; nothing runs until a person presses
+Activate. A watch is a read-only query the API runs every few minutes (at
+least five), without the model, under its creator's current domains: each row
+is a case, and each case fires once (`ai_automation_hits`). A scheduled report
+runs its queries at a factory-time hour and the model writes a short summary
+on top, counted against its creator's cap. An automation can only tell people
+— an alert in the bell (`user_notifications`) and a message from the "QC
+Automations" account, which cannot sign in (`users.is_system`) — and open
+follow-ups (`follow_ups`, with an assignee, a deadline, comments and one
+escalation when overdue); a session with an open follow-up shows "Needs
+review" in History. It never changes the record. Runs are claimed with
+`FOR UPDATE SKIP LOCKED`, so several instances never run one twice; one that
+fails five times in a row stops itself and tells its creator and the owner.
 
 ## API
 
