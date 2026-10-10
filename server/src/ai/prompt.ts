@@ -137,8 +137,9 @@ export function conversationTools(
  * and — when they may create automations (§21) — who they are, so the same
  * person gets the same bytes (and the prompt cache) conversation after
  * conversation. Without automations it is the same prompt, byte for byte,
- * less the Automations section. Without `notices` it has no Notices section
- * (as before §23); the chat always passes it.
+ * less the Automations section. Without `notices` it is the prompt as before
+ * §23: no Notices section, and no word of notices in the general rules; the
+ * chat always passes it.
  */
 export function renderSystemPrompt(
   factoryTimeZone: string,

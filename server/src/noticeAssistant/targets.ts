@@ -137,7 +137,7 @@ export async function findTargets(q: Queryable, kind: NoticeTargetKind, query?: 
 }
 
 /** The longest label a target is saved with: the Notices page's rule (noticeTargetSchema), counted as it counts, in UTF-16 units. */
-export const MAX_TARGET_LABEL = 300
+const MAX_TARGET_LABEL = 300
 
 /** `text` within `max` UTF-16 units, cut at a whole character with an ellipsis when it is longer. */
 function fitUnits(text: string, max: number): string {
