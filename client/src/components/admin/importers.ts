@@ -5,6 +5,7 @@
 
 import { type ImportTarget } from '@/services/mutations'
 import { ORDER_IMPORT_FIELDS, deriveOrderValues, gradeFromMaterial, normaliseHeader } from '@qc/shared/orderImport'
+import { PRODUCTION_RECORD_FIELDS, PRODUCTION_RECORD_KEYS } from '@qc/shared/productionImport'
 
 export { gradeFromMaterial, normaliseHeader }
 
@@ -36,6 +37,11 @@ export interface Importer {
   /** Fills in fields the sheet does not carry as columns but implies — run on
    *  each row after its mapped cells are read and before it is validated. */
   derive?: (values: Record<string, CellValue>) => Record<string, CellValue>
+  /** The header the CSV template writes for a field instead of its key: the
+   *  ERP's own column name, so the template reads like the export it stands
+   *  in for. A field left out keeps its key. Every one must map back to its
+   *  field through the aliases, or the template would not import itself. */
+  templateHeaders?: Readonly<Record<string, string>>
 }
 
 /** Rows sent per request. The API merges each batch in one transaction. */

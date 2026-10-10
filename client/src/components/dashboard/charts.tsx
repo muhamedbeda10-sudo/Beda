@@ -29,6 +29,9 @@ const MIN_FILL_HEIGHT = 140
 /** Narrower than this a day's bar is drawn as a week's, where the chart has the weeks. */
 const MIN_DAY_SLOT = 6
 
+/** Measured before the first paint in a browser; in a server render (a test's), where there is nothing to measure, an effect that never runs. */
+const useMeasureEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
+
 /** A figure on a chart is outlined in the card's own colour so it reads over a line beneath it. */
 const LABEL_HALO = 'stroke-white dark:stroke-slate-900'
 
@@ -40,7 +43,7 @@ const OPEN_BUTTON = 'print-hidden inline-flex min-h-[32px] items-center rounded-
 
 /**
  * The size a chart is drawn at. Given a `width` (the assistant's, which picks
- * its own), that and `height`. Otherwise as wide as the chart is shown —
+ * its own; every chart takes one), that and `height`. Otherwise as wide as the chart is shown —
  * measured, and again whenever its card changes width — and, on a board, as
  * tall as its box leaves above the legend. A chart drawn on a fixed 720-wide
  * canvas and scaled to its card wrote its words at 4 px on a phone and 6 in a
@@ -55,7 +58,7 @@ function useDrawing(given: number | undefined, height: number) {
   const legend = useRef<HTMLDivElement>(null)
   const [box, setBox] = useState<{ w: number; h: number } | null>(null)
   const measured = given === undefined
-  useLayoutEffect(() => {
+  useMeasureEffect(() => {
     if (!figure || !measured) return
     const read = () => {
       const w = Math.floor(figure.clientWidth)
@@ -286,8 +289,8 @@ export interface TrendPoint {
  * to the next known point. On a phone the rate's axis is left out: its figures
  * are on the points while they fit, and in the read-out of the one tapped.
  */
-export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height = 220, lines = [], connectGaps = false }: { points: TrendPoint[]; barLabel: string; lineLabel: string; lineUnit?: string; height?: number; lines?: LineSeries[]; connectGaps?: boolean }) {
-  const d = useDrawing(undefined, height)
+export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height = 220, lines = [], connectGaps = false, width }: { points: TrendPoint[]; barLabel: string; lineLabel: string; lineUnit?: string; height?: number; lines?: LineSeries[]; connectGaps?: boolean; width?: number }) {
+  const d = useDrawing(width, height)
   const readout = useReadout(d.figure)
   const hover = readout.at
   const id = useId()
@@ -317,18 +320,17 @@ export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height
     } else current.push(`${xAt(i)},${yLine(p.line)}`)
   })
   if (current.length) segments.push(current.join(' '))
-  // A figure on every mark only while each has the room: the bar's centred in its column, the rate's beside the bar.
+  // A figure on every mark only while each has the room: the bar's centred in its column, the rate's beside the bar
+  // (over the next bar, outlined, but clear of the next point's own figure).
   const barText = longestOf(points.map((p) => fmt(p.bar))) * CHAR_WIDTH_BOLD
   const rateText = longestOf(points.flatMap((p) => (p.line === null ? [] : [`${fmt(p.line)}${lineUnit}`]))) * CHAR_WIDTH_BOLD
-  const labelled = n <= 16 && barText + 2 <= slot && rateText + bw + 4 <= slot
+  const labelled = n <= 16 && barText + 2 <= slot && rateText + 4 <= slot
   const every = labelEvery(n, x1 - x0, longestOf(points.map((p) => p.label)))
   const h = hover !== null ? points[hover] : null
   return (
     <figure ref={d.figureRef} className={d.figureClass}>
       <svg viewBox={`0 0 ${W} ${H}`} height={H} className={d.svgClass} role="img" aria-labelledby={`${id}-t`} {...readout.svg}>
-        <title id={`${id}-t`}>
-          {barLabel} and {lineLabel} by day
-        </title>
+        <title id={`${id}-t`}>{`${barLabel} and ${lineLabel} over time`}</title>
         <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={barMax} fontSize={TEXT} />
         {!narrow && (
           <g className="text-muted" fontSize={TEXT}>
@@ -446,8 +448,8 @@ export interface ParetoBar {
  * listed under the chart against their numbers, and the share's axis gives
  * way to a mark on its 80% line.
  */
-export function ParetoChart({ bars, height = 240, onPick }: { bars: ParetoBar[]; height?: number; onPick?: (label: string) => void }) {
-  const d = useDrawing(undefined, height)
+export function ParetoChart({ bars, height = 240, onPick, width }: { bars: ParetoBar[]; height?: number; onPick?: (label: string) => void; width?: number }) {
+  const d = useDrawing(width, height)
   const coarse = useCoarsePointer()
   const readout = useReadout(d.figure)
   const hover = readout.at
@@ -671,7 +673,7 @@ export function PieChart({ slices, centerLabel, unit = '', onPick, format = fmt 
   const [svg, setSvg] = useState<SVGSVGElement | null>(null)
   const readout = useReadout(wrap)
   const [shown, setShown] = useState(0)
-  useLayoutEffect(() => {
+  useMeasureEffect(() => {
     if (!svg) return
     const read = () => setShown(Math.round(svg.getBoundingClientRect().width))
     read()
@@ -858,8 +860,8 @@ export interface PairedPoint {
  * With `weekly` (the same points a week each), a chart too narrow for a bar a
  * day — a long period on a phone — draws a bar a week instead.
  */
-export function PairedBarChart({ points: days, totalLabel, partLabel, height = 220, weekly }: { points: PairedPoint[]; totalLabel: string; partLabel: string; height?: number; weekly?: PairedPoint[] }) {
-  const d = useDrawing(undefined, height)
+export function PairedBarChart({ points: days, totalLabel, partLabel, height = 220, weekly, width }: { points: PairedPoint[]; totalLabel: string; partLabel: string; height?: number; weekly?: PairedPoint[]; width?: number }) {
+  const d = useDrawing(width, height)
   const readout = useReadout(d.figure)
   const hover = readout.at
   const id = useId()
@@ -904,9 +906,7 @@ export function PairedBarChart({ points: days, totalLabel, partLabel, height = 2
   return (
     <figure ref={d.figureRef} className={d.figureClass}>
       <svg viewBox={`0 0 ${W} ${H}`} height={H} className={d.svgClass} role="img" aria-labelledby={`${id}-t`} {...readout.svg}>
-        <title id={`${id}-t`}>
-          {totalLabel} and {partLabel} by {byWeek ? 'week' : 'day'}
-        </title>
+        <title id={`${id}-t`}>{`${totalLabel} and ${partLabel} by ${byWeek ? 'week' : 'day'}`}</title>
         <Grid x0={x0} x1={x1} y0={y0} y1={y1} max={max} fontSize={TEXT} />
         {points.map((p, i) => (
           <g key={p.label} {...readout.mark(i)} className={cn('transition-opacity', hover !== null && hover !== i && 'opacity-50')}>
@@ -954,8 +954,8 @@ export interface Column {
  * column clicked opens what it stands for; tapped, it is first read out under
  * the chart with an Open button, and a second tap on it opens it too.
  */
-export function ColumnChart({ columns, height = 200, unit = '', onPick }: { columns: Column[]; height?: number; unit?: string; onPick?: (index: number) => void }) {
-  const d = useDrawing(undefined, height)
+export function ColumnChart({ columns, height = 200, unit = '', onPick, width }: { columns: Column[]; height?: number; unit?: string; onPick?: (index: number) => void; width?: number }) {
+  const d = useDrawing(width, height)
   const readout = useReadout(d.figure)
   const hover = readout.at
   const id = useId()

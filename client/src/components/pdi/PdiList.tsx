@@ -77,14 +77,17 @@ function ItemsCell({ doc, max = 3 }: { doc: PDIWithOrder; max?: number }) {
   )
 }
 
-/** The items of a PDI on one line, for a table row: the first item and its drawings, then how many more; the whole list in the tooltip. */
+/**
+ * The items of a PDI on one line, for a table row: the first item and its drawings, then how many more; the whole list
+ * in the tooltip. The line starts under its header whatever the name's script; the name keeps its own direction.
+ */
 function ItemsLine({ doc }: { doc: PDIWithOrder }) {
   const [first] = doc.items
   if (!first) return <span className="text-muted">—</span>
   const all = doc.items.map((i) => (i.drawings.length ? `${i.item} · ${i.drawings.join(', ')}` : i.item)).join('\n')
   return (
-    <span className="flex min-w-0 items-baseline gap-1.5" data-tip={all} dir="auto">
-      <span className="truncate font-medium">{first.item}</span>
+    <span className="flex min-w-0 items-baseline gap-1.5" data-tip={all}>
+      <bdi className="truncate font-medium">{first.item}</bdi>
       {first.drawings.length > 0 && <span className="shrink truncate text-xs text-muted">· {first.drawings.join(', ')}</span>}
       {doc.items.length > 1 && <span className="shrink-0 text-xs font-semibold text-muted">+{doc.items.length - 1}</span>}
     </span>
@@ -347,7 +350,7 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
                   <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                     {PDI_COLUMNS.map((c) => (
                       <th key={c.key} className={`px-3 py-2 align-bottom font-semibold ${c.right ? 'text-right' : ''}`}>
-                        <span className={`inline-flex max-w-full items-end gap-1 ${c.right ? 'flex-row-reverse' : ''}`}>
+                        <span className={`flex max-w-full items-end gap-1 ${c.right ? 'flex-row-reverse' : ''}`}>
                           {/* Wraps between words, never cut: a header says what its column holds. */}
                           <span className="min-w-0 whitespace-normal leading-tight [overflow-wrap:normal] [word-break:keep-all]">{c.label}</span>
                           {columnsView.menu(c.key, c.label, (search) => loadPdiValues(filters, c.key, search), {
