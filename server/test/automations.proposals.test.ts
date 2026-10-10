@@ -82,7 +82,9 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
     await ask(app, p.creator, 'Hello')
     const creator = lastCall()
     expect(toolsOf(creator)).toEqual(['run_sql', 'propose_automation', 'my_automations'])
-    expect(creator.params.tools![1]).toMatchObject({ strict: true, eager_input_streaming: true, input_schema: { additionalProperties: false } })
+    expect(creator.params.tools![1]).toMatchObject({ eager_input_streaming: true, input_schema: { additionalProperties: false } })
+    // Not strict: together with run_sql's, its alternatives compile to a grammar the API refuses as too large.
+    expect(creator.params.tools![1]).not.toHaveProperty('strict')
     await ask(app, p.owner, 'Hello')
     expect(toolsOf()).toEqual(['run_sql', 'propose_automation', 'my_automations'])
 
@@ -90,11 +92,15 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
     const tz = app.config.FACTORY_TIMEZONE
     const schema = await describeAiSchema(app.db, ['inspection'])
     expect(systemOf(plain)).toBe(renderSystemPrompt(tz, schema, ['inspection']))
-    const withSection = renderSystemPrompt(tz, schema, ['inspection'], { automations: true })
+    const asker = { id: p.creator.user.id, name: p.creator.user.name, role: p.creator.user.role }
+    const withSection = renderSystemPrompt(tz, schema, ['inspection'], { automations: asker })
     expect(systemOf(creator)).toBe(withSection)
     const section = withSection.slice(withSection.indexOf('# Automations'), withSection.indexOf('# Read-only'))
     expect(section).toContain('Nothing runs until the person presses Activate')
     expect(section).toContain('never changes any data')
+    // "Me" in a request is the person asking: the section names them, so the model never has to ask.
+    expect(section).toContain(`The person asking is ${JSON.stringify(asker.name)} (user id ${asker.id}, role ${asker.role})`)
+    expect(section).toContain(`{"kind": "user", "userId": "${asker.id}"}`)
     expect(withSection.replace(section, '')).toBe(systemOf(plain))
   })
 

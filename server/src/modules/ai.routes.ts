@@ -515,7 +515,7 @@ export function aiRoutes(ctx: AppContext): Router {
 
     // A new conversation's prompt carries the data dictionary of the person's domains as the catalog has it now, for good,
     // and — for a person who may create automations as it starts — how to propose one, with the tools to do it (§21).
-    const automations = avail.me.automations
+    const automations = avail.me.automations ? { id: user.id, name: user.name, role: user.role } : null
     const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains, { automations })
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return

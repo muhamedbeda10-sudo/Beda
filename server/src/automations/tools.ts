@@ -42,8 +42,9 @@ export const PROPOSE_AUTOMATION_TOOL: Anthropic.Beta.BetaTool = {
     'Propose an automation the person asked for: a watch that tells people about each new case its query returns, or a scheduled report. ' +
     'The app checks the proposal, runs it once and shows it to the person as a card with Activate, Edit and Discard: nothing runs until they press Activate. ' +
     'Returns what the run found (cases matching now, sample cases, or each section\'s rows), or the exact problems to fix before calling again.',
-  // A strict schema cannot carry lengths, ranges or counts; the server checks them and says what to fix.
-  strict: true,
+  // Not strict: with run_sql's, this schema's alternatives compile to a grammar larger than the API
+  // accepts ("compiled grammar is too large"). draft.ts reads the input with zod and validate.ts
+  // holds it to every limit, saying what to fix, so nothing unchecked gets through.
   eager_input_streaming: true,
   input_schema: DRAFT_INPUT_SCHEMA as Anthropic.Beta.BetaTool.InputSchema,
 }

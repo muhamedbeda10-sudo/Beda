@@ -1,8 +1,8 @@
 // ============================================================================
 // §21 — an automation as the assistant writes it (AutomationDraft), and the
 // changes a person makes outside the chat (AutomationEdits). The tool's input
-// schema below is what the model is held to; with eager input streaming the
-// API no longer checks it, so the same shape is read again here with zod,
+// schema below guides the model; it is not strict, and with eager input
+// streaming the API does not check it, so the same shape is read here with zod,
 // leniently where the model's habits are harmless (null for a field left
 // out) and strictly everywhere else. What a draft means — that its queries
 // run, its columns exist, its people are real — is validate.ts's to check.
@@ -56,8 +56,9 @@ const COLUMN_SCHEMA = (what: string) => ({
 })
 
 /**
- * propose_automation's input: an AutomationDraft. A strict schema cannot
- * carry lengths, ranges or counts; validate.ts holds the draft to them.
+ * propose_automation's input: an AutomationDraft. The schema guides the
+ * model but is not strict (see tools.ts); the reader below and validate.ts
+ * hold the draft to its shape, lengths, ranges and counts.
  */
 export const DRAFT_INPUT_SCHEMA = {
   type: 'object',
