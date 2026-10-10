@@ -13,6 +13,12 @@
 //   • my_automations — the person's automations, compactly, so the model can
 //     explain, list or change them (a change is a new proposal that names
 //     the one it replaces).
+//
+// §22 — a proposal comes after the plan was agreed in words: the call carries
+// the person's words of agreement, checked against their message before the
+// draft is looked at (confirmation.ts), and a call that fails the check keeps
+// nothing and shows no card. A new version of a proposal of the conversation
+// names it (revisesProposalId) and supersedes it once stored.
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'
@@ -25,8 +31,9 @@ import { loadAccess, mayAutomate } from '../ai/access'
 import type { ToolHandler, ToolOutcome } from '../ai/assistant'
 import { currentAiOwner } from '../ai/owner'
 import { cutChars } from '../ai/blocks'
-import { readDraft, DRAFT_INPUT_SCHEMA } from './draft'
-import { insertProposals, proposalPart, type ProposalRecord, type StoredProposal } from './proposals'
+import { checkAgreement, loadAgreementTurn } from './confirmation'
+import { readConfirmation, readDraft, DRAFT_INPUT_SCHEMA } from './draft'
+import { checkRevision, insertProposals, proposalPart, supersedeProposal, type ProposalRecord, type StoredProposal } from './proposals'
 import { withoutIsolates } from './text'
 import { validateDraft, type AutomationReaders } from './validate'
 import { AUTOMATION_COLUMNS, AUTOMATION_FROM, appState, blockedReason, creatorStates, type AutomationRow } from './views'
@@ -40,6 +47,7 @@ export const PROPOSE_AUTOMATION_TOOL: Anthropic.Beta.BetaTool = {
   name: PROPOSE_AUTOMATION_TOOL_NAME,
   description:
     'Propose an automation the person asked for: a watch that tells people about each new case its query returns, or a scheduled report. ' +
+    'Call it only after you described the plan in words and the person agreed to it in a later message, passing their words of agreement as confirmation. ' +
     'The app checks the proposal, runs it once and shows it to the person as a card with Activate, Edit and Discard: nothing runs until they press Activate. ' +
     'Returns what the run found (cases matching now, sample cases, or each section\'s rows), or the exact problems to fix before calling again.',
   // Not strict: with run_sql's, this schema's alternatives compile to a grammar larger than the API
@@ -74,6 +82,12 @@ export interface AutomationToolContext {
   userId: string
   conversationId: string
   turnId: string
+  /**
+   * §22 — the conversation's propose_automation asks for the person's words of
+   * agreement (asksForConfirmation), so a call is held to them. False for a
+   * conversation begun before, whose tool never asked.
+   */
+  confirmFirst: boolean
   emit: (event: AiStreamEvent) => void
 }
 
@@ -97,33 +111,55 @@ const failed = (tu: ToolUse, content: string): ToolOutcome => ({ result: { type:
 async function propose(ctx: AutomationToolContext, tu: ToolUse, signal: AbortSignal): Promise<ToolOutcome> {
   const access = await allowed(ctx)
   if (!access) return failed(tu, NOT_ALLOWED)
+  // Agreed in words first (§22): a call that was not is refused before anything is checked, kept or shown.
+  let confirmation: string | null = null
+  if (ctx.confirmFirst) {
+    const turn = await loadAgreementTurn(ctx.db, ctx.turnId)
+    const agreed = checkAgreement(readConfirmation(tu.input), turn ?? { question: '', answeredBefore: false })
+    if (!agreed.ok) return failed(tu, agreed.refusal)
+    confirmation = agreed.confirmation
+  }
   const now = new Date()
   const id = randomUUID()
   const read = readDraft(tu.input)
   let record: ProposalRecord
   let errors: string[] = []
+  // The earlier version this one supersedes once stored, if it passes.
+  let supersedes: string | null = null
   if ('errors' in read) {
     errors = read.errors
-    record = { id, userId: ctx.userId, toolUseId: tu.id, ok: false, error: errors.join('\n'), draft: null, backtest: null }
+    record = { id, userId: ctx.userId, toolUseId: tu.id, ok: false, error: errors.join('\n'), draft: null, backtest: null, confirmation }
   } else {
     const checked = await validateDraft(
       { db: ctx.db, readers: ctx.readers, timeZone: ctx.config.FACTORY_TIMEZONE, creatorId: ctx.userId, domains: access.domains, now, runQueries: true, signal },
       read.draft,
     )
     if (!checked.ok) errors = checked.errors
+    const revises = checked.draft.revisesProposalId
+    if (revises) {
+      const revision = await checkRevision(ctx.db, ctx.conversationId, ctx.userId, revises)
+      errors = [...errors, ...revision.errors]
+      supersedes = revision.supersedes
+    }
+    const ok = errors.length === 0
     record = {
       id,
       userId: ctx.userId,
       toolUseId: tu.id,
-      ok: checked.ok,
-      error: checked.ok ? null : checked.errors.join('\n'),
+      ok,
+      error: ok ? null : errors.join('\n'),
       draft: checked.draft,
       backtest: checked.backtest,
+      confirmation,
     }
   }
   const stored = await asStored(ctx, record)
   ctx.emit({ type: 'automation', part: await proposalPart(ctx.db, stored) })
-  const store = (tx: Parameters<NonNullable<ToolOutcome['store']>>[0]) => insertProposals(tx, ctx.conversationId, ctx.turnId, [record])
+  const store = async (tx: Parameters<NonNullable<ToolOutcome['store']>>[0]) => {
+    await insertProposals(tx, ctx.conversationId, ctx.turnId, [record])
+    // Only a version that passed replaces the one before it: a failed one leaves that card as it was.
+    if (record.ok && supersedes) await supersedeProposal(tx, supersedes, ctx.userId)
+  }
   if (!record.ok) {
     const lines = ['Not proposed. Fix these and call propose_automation again:', ...errors.map((e) => `- ${e}`)]
     if (record.backtest) lines.push(`What it found when run: ${JSON.stringify(backtestForModel(record.backtest))}`)
@@ -138,7 +174,8 @@ async function propose(ctx: AutomationToolContext, tu: ToolUse, signal: AbortSig
         ? ''
         : record.backtest?.keepsCases
           ? " This change keeps the automation's query and key column, so its cases carry on: those already told are not told again, and those not told yet (casesNotToldYet) fire on its next run."
-          : ' On activation the cases matching now are recorded as already seen (unless the person asks to be told about them too); only new cases fire.'),
+          : ' On activation the cases matching now are recorded as already seen (unless the person asks to be told about them too); only new cases fire.') +
+      (supersedes ? ' The card of the version it revises is marked as replaced by this one.' : ''),
     backtest: record.backtest ? backtestForModel(record.backtest) : null,
   }
   return { result: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(content) }, store }

@@ -8,10 +8,11 @@
 //   • the display: per question, the asker's words and one answer made of the
 //     text the model wrote and the cards of the queries it ran (each with its
 //     chart, when it has one) and of the automations it proposed (§21, each
-//     as it stands now: proposed, activated or discarded), the blocks the
-//     model wrote for the app (its headline figures, its follow-up questions)
-//     taken out of the text and handed over on their own. Thinking and the
-//     tool plumbing stay out of sight.
+//     as it stands now: proposed, activated, discarded, or superseded by a
+//     newer version of it — §22), the blocks the model wrote for the app (its
+//     headline figures, its follow-up questions) taken out of the text and
+//     handed over on their own. Thinking and the tool plumbing stay out of
+//     sight.
 // ============================================================================
 
 import type Anthropic from '@anthropic-ai/sdk'

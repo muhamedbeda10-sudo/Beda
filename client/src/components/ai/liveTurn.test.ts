@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AiConversation, AiMessage, AiMessagesResponse, AiQueryPart, AiStatusResponse } from '@qc/shared/ai'
-import type { AiAutomationPart } from '@qc/shared/automation'
+import type { AiAutomationPart, AutomationDraft } from '@qc/shared/automation'
 import { answerText, applyEvent, endTurn, isInFlight, latestAnswerKey, liveAnnouncement, liveView, parseStreamEvent, sentAfter, settleMessages, startTurn, threadItems, type LiveTurn } from './liveTurn'
 
 const conversation: AiConversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z' }
@@ -68,6 +68,20 @@ describe('the answer being written', () => {
     const second: AiAutomationPart = { ...fixed, proposalId: 'p2' }
     expect(applyEvent(applyEvent(t, { type: 'text', delta: 'Here it is.' }), { type: 'automation', part: second }).parts).toEqual([card, { type: 'text', text: 'Here it is.' }, second])
     expect(parseStreamEvent('automation', JSON.stringify({ type: 'automation', part: card }))).toEqual({ type: 'automation', part: card })
+  })
+
+  it('marks a card of the answer replaced the moment its newer version arrives, and only one the server accepted', () => {
+    const draft: AutomationDraft = { kind: 'report', name: 'Daily rejects', description: 'd', language: 'en', recipients: [], channels: { bell: true, chat: false }, actions: { notify: true, followUp: null } }
+    const first: AiAutomationPart = { type: 'automation', proposalId: 'p1', ok: true, state: 'proposed', draft }
+    const revision: AiAutomationPart = { type: 'automation', proposalId: 'p2', ok: true, state: 'proposed', draft: { ...draft, revisesProposalId: 'p1' } }
+    const t = run([{ type: 'start', conversation, userMessageId: 'u1' }, { type: 'automation', part: first }, { type: 'text', delta: 'Or daily at 7:00:' }])
+    expect(applyEvent(t, { type: 'automation', part: revision }).parts).toEqual([{ ...first, state: 'superseded' }, { type: 'text', text: 'Or daily at 7:00:' }, revision])
+    // Refused, it replaces nothing: the first card is still the one to decide.
+    const refused: AiAutomationPart = { ...revision, ok: false, error: 'revisesProposalId: no such proposal' }
+    expect(applyEvent(t, { type: 'automation', part: refused }).parts).toEqual([first, { type: 'text', text: 'Or daily at 7:00:' }, refused])
+    // A card of an earlier answer is not in this one: the parts are left as they came.
+    const other: AiAutomationPart = { ...revision, draft: { ...draft, revisesProposalId: 'p0' } }
+    expect(applyEvent(t, { type: 'automation', part: other }).parts).toEqual([first, { type: 'text', text: 'Or daily at 7:00:' }, other])
   })
 
   it('reads only the events it knows, and only when the name matches the type', () => {

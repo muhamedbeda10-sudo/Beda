@@ -1,6 +1,7 @@
 // ============================================================================
 // §21 — automations through the cache: activating or discarding a proposal
-// changes its card in every cached conversation that holds it; a change, a
+// changes its card in every cached conversation that holds it, and one
+// refused as decided or replaced elsewhere has them fetched again; a change, a
 // pause or a deletion reaches the automation's page and every list at once;
 // a 404 makes /ai/me be asked again (the permission may be gone).
 // ============================================================================
@@ -69,6 +70,21 @@ describe('automations through the cache', () => {
     await expect(activateProposal(qc, 'p1', {})).rejects.toThrow(/recipients/)
     expect(qc.getQueryData<AiMessagesResponse>(keys.aiMessages('c1'))?.messages[0].parts[1]).toBe(card)
     expect(qc.getQueryState(automationKeys.list(null))?.isInvalidated).toBe(false)
+    expect(qc.getQueryState(keys.aiMessages('c1'))?.isInvalidated).toBe(false)
+  })
+
+  it('a card decided or replaced elsewhere has the conversations fetched again, and the refusal goes on to the card', async () => {
+    apiMock.mockRejectedValueOnce(new ApiError(409, 'conflict', 'A newer version of this proposal was made below; activate that one.'))
+    await expect(activateProposal(qc, 'p1', {})).rejects.toThrow(/newer version/)
+    for (const id of ['c1', 'c2']) expect(qc.getQueryState(keys.aiMessages(id))?.isInvalidated).toBe(true)
+    // Nothing is put in its place: the server's answer, fetched again, says how it stands.
+    expect(qc.getQueryData<AiMessagesResponse>(keys.aiMessages('c1'))?.messages[0].parts[1]).toBe(card)
+    expect(qc.getQueryState(automationKeys.list(null))?.isInvalidated).toBe(false)
+
+    qc.setQueryData(keys.aiMessages('c1'), conversation('c1'))
+    apiMock.mockRejectedValueOnce(new ApiError(409, 'conflict', 'This proposal was already activated.'))
+    await expect(discardProposal(qc, 'p1')).rejects.toThrow(/already activated/)
+    expect(qc.getQueryState(keys.aiMessages('c1'))?.isInvalidated).toBe(true)
   })
 
   it('discarding marks the card discarded wherever it is', async () => {

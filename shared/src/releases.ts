@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-10.2',
+    date: '2026-10-10',
+    title: 'AI assistant: asks, explains and agrees first',
+    items: [
+      { text: 'When a question could mean different things that would change the answer, the assistant asks first — at most three short questions, each with the choice it would make. When something cannot be done as asked, it explains why in terms of what the system records, offers two or three ways forward (any that would need a change in the app are marked as needing development) and recommends one.' },
+      { text: 'Automations are agreed in words first: the assistant describes what it would watch or report, when, who is told and what it finds today, and shows the card with Activate only after you agree. Ask for a change and the new card marks the older one "Replaced".' },
+      { text: 'The buttons under an answer are now called "Suggestions": when the assistant has asked you something, they are likely replies. Tap one to put it in the box, change it if you like, then send.' },
+    ],
+  },
+  {
     id: '2026-10-10.1',
     date: '2026-10-10',
     title: 'Automations, follow-ups and alerts',

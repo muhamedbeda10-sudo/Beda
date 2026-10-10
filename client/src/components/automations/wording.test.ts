@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { AiMessagesResponse } from '@qc/shared/ai'
 import type { AiAutomationPart, Automation, AutomationDraft, AutomationRun, AutomationTestResponse } from '@qc/shared/automation'
 import {
+  PROPOSAL_STATE_LABEL,
+  PROPOSAL_STATE_TONE,
   applyEdits,
   assigneePhrase,
   assigneeView,
@@ -28,10 +30,13 @@ import {
   recipientPhrase,
   recipientViews,
   replaceAutomationPart,
+  revisedProposalId,
   runFigures,
   runOutcome,
   runToast,
   stoppedText,
+  supersedeAutomationPart,
+  supersedeParts,
   testSummary,
   whenText,
 } from './wording'
@@ -418,6 +423,53 @@ describe('the card in the cached conversation', () => {
     // Another proposal's card changes nothing at all.
     expect(replaceAutomationPart(old, { ...activated, proposalId: 'p9' })).toBe(old)
     expect(replaceAutomationPart(undefined, activated)).toBeUndefined()
+  })
+
+  it('names the proposal a newer version replaces only when the server accepted it', () => {
+    const revision: AiAutomationPart = { type: 'automation', proposalId: 'p2', ok: true, state: 'proposed', draft: { ...watch, revisesProposalId: 'p1' } }
+    expect(revisedProposalId(revision)).toBe('p1')
+    // Refused: the server marked nothing, so neither does the thread.
+    expect(revisedProposalId({ ...revision, ok: false, error: 'revisesProposalId: no such proposal' })).toBeNull()
+    expect(revisedProposalId({ ...revision, draft: watch })).toBeNull()
+    expect(revisedProposalId({ ...revision, draft: undefined })).toBeNull()
+    // A draft naming itself replaces nothing.
+    expect(revisedProposalId({ ...revision, draft: { ...watch, revisesProposalId: 'p2' } })).toBeNull()
+  })
+
+  it('marks the card a newer version replaces, wherever it is, while it is still to be decided', () => {
+    const first: AiAutomationPart = { type: 'automation', proposalId: 'p1', ok: true, state: 'proposed', draft: watch }
+    const old: AiMessagesResponse = {
+      conversation: { id: 'c1', title: 'Holds', createdAt: '2026-10-10T05:00:00Z', lastMessageAt: '2026-10-10T05:00:00Z' },
+      messages: [
+        { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Watch holds' }], createdAt: '2026-10-10T05:00:00Z' },
+        { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'Here it is.' }, first], createdAt: '2026-10-10T05:00:05Z' },
+        { id: 'u2', role: 'user', parts: [{ type: 'text', text: 'Make it every 10 minutes' }], createdAt: '2026-10-10T05:01:00Z' },
+      ],
+    }
+    const next = supersedeAutomationPart(old, 'p1')
+    expect(next?.messages[1].parts[1]).toEqual({ ...first, state: 'superseded' })
+    expect(next?.messages[1].parts[0]).toBe(old.messages[1].parts[0])
+    expect(next?.messages[0]).toBe(old.messages[0])
+    expect(next?.messages[2]).toBe(old.messages[2])
+    // What was cached is left as it was.
+    expect(first.state).toBe('proposed')
+    // Already replaced, decided, refused, or another proposal's: nothing changes at all.
+    expect(supersedeAutomationPart(next, 'p1')).toBe(next)
+    for (const card of [{ ...first, state: 'activated' as const, automationId: 'a1' }, { ...first, state: 'discarded' as const }, { ...first, ok: false, error: 'not a column' }]) {
+      const held: AiMessagesResponse = { ...old, messages: [{ ...old.messages[1], parts: [card] }] }
+      expect(supersedeAutomationPart(held, 'p1')).toBe(held)
+    }
+    expect(supersedeAutomationPart(old, 'p9')).toBe(old)
+    expect(supersedeAutomationPart(undefined, 'p1')).toBeUndefined()
+    // An answer's own parts the same way: an untouched list is the same list.
+    const parts = [{ type: 'text' as const, text: 'Here it is.' }, first]
+    expect(supersedeParts(parts, 'p1')).toEqual([parts[0], { ...first, state: 'superseded' }])
+    expect(supersedeParts(parts, 'p9')).toBe(parts)
+  })
+
+  it('names the replaced state on the card', () => {
+    expect(PROPOSAL_STATE_LABEL.superseded).toBe('Replaced')
+    expect(PROPOSAL_STATE_TONE.superseded).toBe('neutral')
   })
 
   it('is typed against the automation the page shows, too', () => {

@@ -6,7 +6,9 @@
 // a query's SQL — a changed query reads as a changed fingerprint.
 //
 // Activation is the only way anything starts to run. A proposal activates
-// once, by the person who asked for it, while they may create automations,
+// once, by the person who asked for it, while they may create automations
+// and until a newer version of it is proposed (§22: it is superseded then;
+// and a newer version never activates beside an older one already active),
 // and only after the draft (with any changes made on the card) passes the
 // same checks again, its queries run as the person's domains now. A watch
 // records the cases matching at that moment as already seen, so only cases
@@ -156,6 +158,12 @@ export async function activateProposal(
     const locked = await findProposal(tx, proposalId, by.id, true)
     if (!locked) throw notFound('That proposal')
     assertUndecided(locked)
+    // One activation at a time per person: two at once can neither pass the limit together nor both
+    // make an automation of two versions of one proposal. NO KEY UPDATE, never FOR UPDATE: an
+    // answer's store holds a key share on this row (its proposals' foreign key) while it marks an
+    // older version superseded, and waiting for that while holding the proposal would deadlock.
+    await tx.query(`SELECT 1 FROM users WHERE id = $1 FOR NO KEY UPDATE`, [by.id])
+    await assertRevisedStillOpen(tx, d, by.id)
     const replaces = d.replacesAutomationId ?? null
     let id: string
     // A change keeping its query and key column keeps its cases as they are: those not told yet still fire, as they would have.
@@ -198,8 +206,6 @@ export async function activateProposal(
       if (before.status !== status) await auditChanges(tx, auditContext(by, replaces), { status: before.status }, { status })
       id = replaces
     } else {
-      // One activation at a time per person, so two at once cannot pass the limit together.
-      await tx.query(`SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, [by.id])
       const held = await tx.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_automations WHERE creator_id = $1 AND deleted_at IS NULL`, [by.id])
       if (held.rows[0].n >= AUTOMATION_MAX_PER_CREATOR) throw conflict(`You already have ${AUTOMATION_MAX_PER_CREATOR} automations, the most allowed. Delete one first.`)
       const { rows } = await tx.query<{ id: string }>(
@@ -245,10 +251,37 @@ export async function activateProposal(
   return { automation, part }
 }
 
+/** What a person pressing Activate or Discard on a card that a newer version replaced is told (§22). */
+const SUPERSEDED = 'A newer version of this proposal was made below; activate that one.'
+
 function assertUndecided(p: { ok: boolean; draft: AutomationDraft | null; state: string }): void {
   if (p.state === 'activated') throw conflict('This proposal was already activated.')
   if (p.state === 'discarded') throw conflict('This proposal was discarded. Ask the assistant to propose it again.')
+  if (p.state === 'superseded') throw conflict(SUPERSEDED)
   if (!p.ok || !p.draft) throw conflict('This proposal did not pass its checks, so it cannot be activated. Ask the assistant to fix it.')
+}
+
+/**
+ * A new version activates in place of the one it revises, never beside it
+ * (§22). The older one is superseded when the new one is stored, unless it was
+ * activated first — its card pressed while the assistant was still writing the
+ * new version. Then the new version would make a second automation of the
+ * same request, telling the same cases twice: refused, unless it changes the
+ * very automation the older one became. Called under the person's lock, so an
+ * activation of the older version running at the same time has committed.
+ */
+async function assertRevisedStillOpen(tx: Queryable, d: AutomationDraft, userId: string): Promise<void> {
+  if (!d.revisesProposalId) return
+  const { rows } = await tx.query<{ automationId: string }>(
+    `SELECT p.automation_id AS "automationId"
+       FROM ai_automation_proposals p JOIN ai_automations a ON a.id = p.automation_id AND a.deleted_at IS NULL
+      WHERE p.id = $1 AND p.user_id = $2 AND p.state = 'activated'`,
+    [d.revisesProposalId, userId],
+  )
+  const became = rows[0]?.automationId
+  if (became && became !== d.replacesAutomationId?.toLowerCase()) {
+    throw conflict('The earlier version this proposal revises was activated meanwhile. Ask the assistant to change that automation instead.')
+  }
 }
 
 /** When a new (or changed) automation first runs: a watch at once, a report at its next time. */
@@ -276,6 +309,7 @@ export async function discardProposal(deps: EngineDeps, proposalId: string, by: 
     const p = await findProposal(tx, proposalId, by.id, true)
     if (!p) throw notFound('That proposal')
     if (p.state === 'activated') throw conflict('This proposal was activated: pause or delete the automation on the Automations page instead.')
+    if (p.state === 'superseded') throw conflict(SUPERSEDED)
     if (p.state === 'discarded') return
     if (!p.ok) throw conflict('This proposal did not pass its checks; there is nothing to discard.')
     await tx.query(`UPDATE ai_automation_proposals SET state = 'discarded', decided_by_id = $2, decided_at = $3 WHERE id = $1`, [proposalId, by.id, now.toISOString()])

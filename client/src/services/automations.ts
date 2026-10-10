@@ -3,7 +3,9 @@
 // automation's page and a delivered report show, and the writes behind
 // their buttons and the proposal card's. Each write puts what the server
 // answered into the cache, so every screen showing it follows at once —
-// the card in the conversation included, wherever the conversation is open.
+// the card in the conversation included, wherever the conversation is open;
+// a card refused as decided or replaced elsewhere has its conversation
+// fetched again.
 //
 // The Automations routes exist only for people who may create automations;
 // to anyone else they answer 404 (a delivered report answers its recipients
@@ -112,9 +114,24 @@ function settleProposal(qc: QueryClient, part: AiAutomationPart): void {
   qc.setQueriesData<AiMessagesResponse>({ queryKey: ['ai', 'messages'] }, (old) => replaceAutomationPart(old, part))
 }
 
+/**
+ * A decision on a card. Refused as a conflict, the proposal was decided
+ * elsewhere (another tab) or a newer version replaced it (§22): every cached
+ * conversation is fetched again, so the card shows how it stands. The
+ * refusal goes on to the card, which says why.
+ */
+async function decide<T>(qc: QueryClient, request: () => Promise<T>): Promise<T> {
+  try {
+    return await request()
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) void qc.invalidateQueries({ queryKey: ['ai', 'messages'] })
+    throw e
+  }
+}
+
 /** Activate a proposal (the person who asked for it only), with the changes made on its card. */
 export async function activateProposal(qc: QueryClient, proposalId: string, body: AutomationActivateRequest): Promise<AutomationActivateResponse> {
-  const res = await api<AutomationActivateResponse>(`/ai/automation-proposals/${encodeURIComponent(proposalId)}/activate`, { method: 'POST', body })
+  const res = await decide(qc, () => api<AutomationActivateResponse>(`/ai/automation-proposals/${encodeURIComponent(proposalId)}/activate`, { method: 'POST', body }))
   settleProposal(qc, res.part)
   qc.setQueryData(automationKeys.one(res.automation.id), res.automation)
   void qc.invalidateQueries({ queryKey: automationKeys.lists })
@@ -124,7 +141,7 @@ export async function activateProposal(qc: QueryClient, proposalId: string, body
 }
 
 export async function discardProposal(qc: QueryClient, proposalId: string): Promise<AutomationDiscardResponse> {
-  const res = await api<AutomationDiscardResponse>(`/ai/automation-proposals/${encodeURIComponent(proposalId)}/discard`, { method: 'POST' })
+  const res = await decide(qc, () => api<AutomationDiscardResponse>(`/ai/automation-proposals/${encodeURIComponent(proposalId)}/discard`, { method: 'POST' }))
   settleProposal(qc, res.part)
   return res
 }
