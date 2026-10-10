@@ -3,9 +3,10 @@
 // whom it tells, in plain words; its state on the Automations page (active,
 // paused, failed, or blocked — and why); times in the factory's clock; the
 // edit form's fields, whether they can be saved and the AutomationEdits they
-// come to; and the proposal card's state in the cached conversation. Pure,
-// so it is tested without a browser. Never a cost: what an automation costs
-// is the AI owner's to see on the assistant's settings page, nowhere else.
+// come to; and the proposal card's state in the cached conversation (decided,
+// or replaced by a newer version, §22). Pure, so it is tested without a
+// browser. Never a cost: what an automation costs is the AI owner's to see on
+// the assistant's settings page, nowhere else.
 // ============================================================================
 
 import { AI_REPORT_MAX_DAYS, describeAiPeriod, type AiMessagesResponse, type AiReportPeriod, type AiWeekStart } from '@qc/shared/ai'
@@ -233,8 +234,8 @@ export function automationSummary(d: SummaryInput): string {
 
 // ---- A proposal on its card --------------------------------------------------------------
 
-export const PROPOSAL_STATE_LABEL: Record<AutomationProposalState, string> = { proposed: 'Not active yet', activated: 'Active', discarded: 'Discarded' }
-export const PROPOSAL_STATE_TONE: Record<AutomationProposalState, BadgeTone> = { proposed: 'amber', activated: 'green', discarded: 'neutral' }
+export const PROPOSAL_STATE_LABEL: Record<AutomationProposalState, string> = { proposed: 'Not active yet', activated: 'Active', discarded: 'Discarded', superseded: 'Replaced' }
+export const PROPOSAL_STATE_TONE: Record<AutomationProposalState, BadgeTone> = { proposed: 'amber', activated: 'green', discarded: 'neutral', superseded: 'neutral' }
 
 /** What the card's trial run found (its time is said over it: a card can be read days later). */
 export function matchedText(matched: number, truncated: boolean): string {
@@ -335,6 +336,48 @@ export function replaceAutomationPart(old: AiMessagesResponse | undefined, part:
     if (!m.parts.some((p) => p.type === 'automation' && p.proposalId === part.proposalId)) return m
     changed = true
     return { ...m, parts: m.parts.map((p) => (p.type === 'automation' && p.proposalId === part.proposalId ? part : p)) }
+  })
+  return changed ? { ...old, messages } : old
+}
+
+/**
+ * The proposal a card is a newer version of (§22: its draft's
+ * revisesProposalId), when the server accepted it — the server marks that
+ * one replaced as it keeps the new one. Null for a first version, and for a
+ * draft it refused (nothing was marked then).
+ */
+export function revisedProposalId(part: AiAutomationPart): string | null {
+  const id = part.ok ? part.draft?.revisesProposalId : undefined
+  return id && id !== part.proposalId ? id : null
+}
+
+/** A card of this proposal still to be decided: only those are marked replaced (one activated or discarded stays as it was). */
+function isOpenCard(p: { type: string }, proposalId: string): p is AiAutomationPart {
+  if (p.type !== 'automation') return false
+  const card = p as AiAutomationPart
+  return card.proposalId === proposalId && card.ok && card.state === 'proposed'
+}
+
+/** An answer's parts with the proposal's card marked replaced by a newer version; the same list when there is none to mark. */
+export function supersedeParts<P extends { type: string }>(parts: P[], proposalId: string): P[] {
+  if (!parts.some((p) => isOpenCard(p, proposalId))) return parts
+  return parts.map((p) => (isOpenCard(p, proposalId) ? { ...p, state: 'superseded' as const } : p))
+}
+
+/**
+ * The conversation as cached, with the card a newer version replaces marked
+ * so at once, while the newer one is still being written (the server is
+ * authoritative: the conversation fetched again says the same). Nothing else
+ * changes, and an untouched list is the same object.
+ */
+export function supersedeAutomationPart(old: AiMessagesResponse | undefined, proposalId: string): AiMessagesResponse | undefined {
+  if (!old) return old
+  let changed = false
+  const messages = old.messages.map((m) => {
+    const parts = supersedeParts(m.parts, proposalId)
+    if (parts === m.parts) return m
+    changed = true
+    return { ...m, parts }
   })
   return changed ? { ...old, messages } : old
 }

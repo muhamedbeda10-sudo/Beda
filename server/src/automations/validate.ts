@@ -234,6 +234,8 @@ function normalise(d: AutomationDraft): AutomationDraft {
     out.schedule = s
   }
   if (d.replacesAutomationId) out.replacesAutomationId = d.replacesAutomationId.trim()
+  // Which proposal it revises is checked against its conversation when it is proposed (proposals.ts: checkRevision).
+  if (d.revisesProposalId?.trim()) out.revisesProposalId = d.revisesProposalId.trim().toLowerCase()
   return out
 }
 

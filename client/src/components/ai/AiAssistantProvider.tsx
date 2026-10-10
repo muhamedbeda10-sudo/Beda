@@ -31,6 +31,7 @@ import { ApiError, apiStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
 import { newSubmissionId } from '@/lib/utils'
 import { keys, useAiMe } from '@/services/queries'
+import { revisedProposalId, supersedeAutomationPart } from '@/components/automations/wording'
 import { applyEvent, endTurn, isInFlight, parseStreamEvent, sentAfter, settleMessages, startTurn, type LiveTurn } from './liveTurn'
 import { STOP_SETTLE_MS, retryAfterStop } from './retryAfterStop'
 import { aiWorkspaceHref, isAiWorkspacePath, type AiOpenReport, type AiWorkspaceList, type AiWorkspaceState } from './workspace'
@@ -257,6 +258,12 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
               setConversationId(id)
             }
             void qc.invalidateQueries({ queryKey: keys.aiConversations })
+          } else if (e.type === 'automation') {
+            // §22 — a newer version of a card of an earlier answer: that card says at once it was replaced (the server
+            // marked it so as it kept this one, and the conversation fetched once the answer ends says the same).
+            const replaced = revisedProposalId(e.part)
+            const id = conversation?.id ?? from
+            if (replaced && id) qc.setQueryData<AiMessagesResponse>(keys.aiMessages(id), (old) => supersedeAutomationPart(old, replaced))
           } else if (e.type === 'done') {
             // The event also carries the month's figures: the chat shows no amounts, so they are left where they are.
             ended = true

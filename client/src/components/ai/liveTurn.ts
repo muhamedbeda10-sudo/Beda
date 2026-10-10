@@ -7,6 +7,7 @@
 
 import type { ApiErrorCode } from '@qc/shared/api'
 import type { AiConversation, AiMessage, AiMessagesResponse, AiPart, AiStreamEvent } from '@qc/shared/ai'
+import { revisedProposalId, supersedeParts } from '@/components/automations/wording'
 
 /** A query the model asked for that has not come back: running, or cut off when the answer ended. */
 export interface PendingQuery {
@@ -75,7 +76,10 @@ export function applyEvent(t: LiveTurn, e: AiStreamEvent): LiveTurn {
       // §21 — a proposal's card, where it came; the same proposal again (sent twice) takes its place.
       const at = t.parts.findIndex((p) => p.type === 'automation' && p.proposalId === e.part.proposalId)
       const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
-      return { ...t, phase: 'streaming', progress: null, parts }
+      // §22 — a newer version of a card earlier in this answer: that one says at once it was replaced. A card of an
+      // earlier answer is marked in the saved conversation (supersedeAutomationPart).
+      const replaced = revisedProposalId(e.part)
+      return { ...t, phase: 'streaming', progress: null, parts: replaced ? supersedeParts(parts, replaced) : parts }
     }
     case 'done':
       return { ...t, phase: 'done', progress: null, message: e.message, parts: interrupt(t.parts) }

@@ -15,6 +15,12 @@
 // conversation is open; an activated one opened later keeps what was proposed
 // folded away, since its page may have changed it since.
 //
+// §22 — a newer version proposed later in the conversation replaces it: the
+// card turns muted, says so, offers nothing to decide, and keeps what it
+// proposed folded away (still there to read). It turns so the moment the
+// newer card arrives, and on every reload after. Pressing a button of a card
+// decided or replaced elsewhere fetches the conversation again and says why.
+//
 // A draft the server did not accept shows compactly, like a failed query:
 // the assistant was told why and usually tries again in the same answer.
 // ============================================================================
@@ -22,7 +28,7 @@
 import { memo, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, Ban, CheckCircle2, ChevronDown, Loader2, OctagonX, Pencil, Undo2, X, Zap } from 'lucide-react'
+import { ArrowDown, ArrowRight, Ban, CheckCircle2, ChevronDown, Loader2, OctagonX, Pencil, Undo2, X, Zap } from 'lucide-react'
 import type { AiAutomationPart, AutomationDraft, AutomationEdits } from '@qc/shared/automation'
 import { Badge, Button } from '@/components/ui'
 import { cn } from '@/lib/utils'
@@ -76,10 +82,17 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
   const [problems, setProblems] = useState<string[] | null>(null)
   // Activated before this card was drawn: what was proposed stays folded — the automation may have been changed on its page since.
   const [showProposal, setShowProposal] = useState(part.state !== 'activated')
+  // Replaced by a newer version, before it was drawn or while in view: folded, the newer card below is the one to read.
+  const [showReplaced, setShowReplaced] = useState(false)
 
   const proposed = part.state === 'proposed'
   const activated = part.state === 'activated'
-  const folded = activated && !showProposal
+  const superseded = part.state === 'superseded'
+  const shownOpen = superseded ? showReplaced : showProposal
+  const toggleShown = () => (superseded ? setShowReplaced((o) => !o) : setShowProposal((o) => !o))
+  const folded = (activated || superseded) && !shownOpen
+  // Changes made here count while it can still be activated; decided or replaced, it shows what was proposed.
+  const changes = proposed ? edits : null
   const bt = part.backtest
   const watch = draft.kind === 'watch'
   const creatorName = profile?.name ?? 'You'
@@ -87,12 +100,12 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
   const columns = useMemo(() => (watch ? (bt?.ok && bt.columns ? bt.columns : knownWatchColumns(draft)) : []), [watch, bt, draft])
 
   // Changes made here show at once; names for people added come from the list the editor loaded.
-  const people = useAutomationPeople(edits !== null)
+  const people = useAutomationPeople(changes !== null)
   const peopleMap = useMemo(() => (people.data ? new Map<string, AutomationPerson>(people.data.people.map((p) => [p.id, p])) : null), [people.data])
-  const def = useMemo(() => (edits ? applyEdits(draft, edits) : draft), [draft, edits])
-  const recipients = edits?.recipients ? recipientViews(def.recipients, peopleMap, part.recipients ?? [], watch ? columns : null) : (part.recipients ?? recipientViews(def.recipients, null))
+  const def = useMemo(() => (changes ? applyEdits(draft, changes) : draft), [draft, changes])
+  const recipients = changes?.recipients ? recipientViews(def.recipients, peopleMap, part.recipients ?? [], watch ? columns : null) : (part.recipients ?? recipientViews(def.recipients, null))
   const f = def.actions.followUp
-  const assignee = f ? (edits?.actions ? assigneeView(f.assignee, peopleMap, creatorName, part.assignee, watch ? columns : null) : (part.assignee ?? assigneeView(f.assignee, null, creatorName))) : undefined
+  const assignee = f ? (changes?.actions ? assigneeView(f.assignee, peopleMap, creatorName, part.assignee, watch ? columns : null) : (part.assignee ?? assigneeView(f.assignee, null, creatorName))) : undefined
   const summary = automationSummary({ ...def, recipients, assignee })
   const matched = bt?.matched ?? 0
   // What becomes of the cases matching now: a change of a watch says how many its automation has not seen yet, and whether they carry on.
@@ -102,7 +115,9 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
 
   /**
    * A refusal, said on the card. Not found: the permission may be gone (or the proposal), and /ai/me says which.
-   * A conflict: it was decided elsewhere (another tab), so the conversation is fetched again to show how.
+   * A conflict: it was decided elsewhere (another tab), or a newer version replaced it — the conversation is being
+   * fetched again to show how it stands (activateProposal, discardProposal), and a toast says why; the card says
+   * it too while it is still offered.
    */
   const refused = (e: unknown, fallback: string) => {
     if (e instanceof ApiError && e.status === 404) {
@@ -110,7 +125,7 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
       setProblems(['It can no longer be decided here: you may no longer create automations, or the proposal is gone.'])
       return
     }
-    if (e instanceof ApiError && e.status === 409) void qc.invalidateQueries({ queryKey: ['ai', 'messages'] })
+    if (e instanceof ApiError && e.status === 409) toast(e.message || fallback, 'warning')
     setProblems(errorLines(e, fallback))
   }
 
@@ -154,7 +169,7 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
       aria-label={`Proposed automation: ${def.name}`}
       className={cn(
         'my-2 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 dark:bg-slate-900',
-        part.state === 'activated' ? 'ring-emerald-200 dark:ring-emerald-500/30' : part.state === 'discarded' ? 'ring-slate-200 opacity-80 dark:ring-slate-800' : 'ring-brand-200 dark:ring-brand-500/30',
+        activated ? 'ring-emerald-200 dark:ring-emerald-500/30' : proposed ? 'ring-brand-200 dark:ring-brand-500/30' : 'ring-slate-200 opacity-80 dark:ring-slate-800',
       )}
     >
       <header className="flex items-start gap-3 border-b border-slate-100 bg-gradient-to-b from-brand-50/70 to-transparent px-3 py-2.5 dark:border-slate-800 dark:from-brand-500/10">
@@ -165,7 +180,7 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
           <div className="flex flex-wrap items-center gap-1.5">
             <KindBadge kind={def.kind} />
             <Badge tone={PROPOSAL_STATE_TONE[part.state]}>{PROPOSAL_STATE_LABEL[part.state]}</Badge>
-            {hasEdits(edits) && <Badge tone="violet">Changed here</Badge>}
+            {hasEdits(changes) && <Badge tone="violet">Changed here</Badge>}
           </div>
           <h4 dir="auto" className="mt-1 break-words text-sm font-bold text-slate-900 dark:text-slate-50">
             {def.name}
@@ -179,16 +194,22 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
       </header>
 
       <div className="space-y-3 px-3 py-3">
-        {activated && (
+        {(activated || superseded) && (
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-            {folded ? 'It runs on its own now. Its page shows it as it is, with every change and run since.' : 'As proposed: it may have been changed on its page since.'}
+            {superseded
+              ? folded
+                ? 'Nothing of it runs: the newer version below is the one to activate.'
+                : 'As it was proposed, before the newer version below.'
+              : folded
+                ? 'It runs on its own now. Its page shows it as it is, with every change and run since.'
+                : 'As proposed: it may have been changed on its page since.'}
             <button
               type="button"
-              onClick={() => setShowProposal((o) => !o)}
-              aria-expanded={showProposal}
+              onClick={toggleShown}
+              aria-expanded={shownOpen}
               className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]"
             >
-              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform duration-200', showProposal && 'rotate-180')} /> {showProposal ? 'Hide what was proposed' : 'Show what was proposed'}
+              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform duration-200', shownOpen && 'rotate-180')} /> {shownOpen ? 'Hide what was proposed' : 'Show what was proposed'}
             </button>
           </p>
         )}
@@ -240,7 +261,7 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
           </>
         )}
 
-        {hasEdits(edits) && proposed && (
+        {hasEdits(changes) && (
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
             Your changes apply when you activate it, and are checked again then; the trial run above is of the proposal as written.
             <button type="button" onClick={() => setEdits(null)} className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
@@ -261,7 +282,7 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
           </div>
         )}
 
-        <ErrorList lines={problems} />
+        {proposed && <ErrorList lines={problems} />}
       </div>
 
       <footer className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-3 py-2.5 dark:border-slate-800">
@@ -284,6 +305,10 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
         ) : part.state === 'discarded' ? (
           <p className="inline-flex items-center gap-1 text-13 text-muted">
             <Ban className="h-4 w-4" /> Discarded — nothing runs. Ask the assistant again any time.
+          </p>
+        ) : superseded ? (
+          <p className="inline-flex items-center gap-1 text-13 text-muted">
+            <ArrowDown className="h-4 w-4" /> Replaced by a newer version below
           </p>
         ) : confirmDiscard ? (
           <>
@@ -317,7 +342,7 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
         )}
       </footer>
 
-      {editing && (
+      {editing && proposed && (
         <AutomationEditor
           base={draft}
           initialEdits={edits}

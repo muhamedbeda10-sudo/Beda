@@ -123,6 +123,25 @@ describe('the proposal card', () => {
     expect(t).not.toContain('Activate Edit')
   })
 
+  it('once replaced by a newer version, turns muted, offers nothing to decide, and keeps what it proposed folded', () => {
+    const replaced: AiAutomationPart = { ...proposed, state: 'superseded' }
+    const h = html(replaced)
+    expect(h).toContain('opacity-80')
+    expect(h).toMatch(/aria-expanded="false"[^>]*>.*Show what was proposed/)
+    const t = text(replaced)
+    expect(t).toContain('Watch Replaced Holds on line 3')
+    expect(t).toContain('Nothing of it runs: the newer version below is the one to activate.')
+    expect(t).toContain('Replaced by a newer version below')
+    expect(t).not.toContain('Every 5 minutes it looks for new cases.')
+    expect(t).not.toContain('Tried ')
+    expect(t).not.toContain('Also alert on')
+    expect(t).not.toContain('Activate')
+    expect(t).not.toContain('Edit')
+    expect(t).not.toContain('Discard')
+    // A change of an automation whose automation is gone: the card that replaced it is the one to read, so it says nothing of it.
+    expect(text({ ...replaced, draft: { ...draft, replacesAutomationId: 'a1' } })).not.toContain('no longer there')
+  })
+
   it('names the automation a change would replace', () => {
     expect(text({ ...proposed, replacesName: 'Old holds' })).toContain('Changes “Old holds” when activated; the cases it has already fired stay fired.')
   })

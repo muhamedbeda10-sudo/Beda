@@ -20,16 +20,22 @@ import {
   MINUTE,
   type People,
 } from './automationsKit'
-import { renderSystemPrompt } from '../src/ai/prompt'
+import { RUN_SQL_TOOL, conversationTools, renderSystemPrompt } from '../src/ai/prompt'
 import { describeAiSchema } from '../src/ai/schemaDoc'
-import { readDraft } from '../src/automations/draft'
+import { asksForConfirmation, checkAgreement, normalizeQuote } from '../src/automations/confirmation'
+import { readConfirmation, readDraft } from '../src/automations/draft'
 import { isolate } from '../src/automations/text'
+import { AUTOMATION_TOOLS, PROPOSE_AUTOMATION_TOOL_NAME, automationToolHandlers } from '../src/automations/tools'
 import { queryErrorForPeople, validateDraft, type QueryFailed, type ValidationContext } from '../src/automations/validate'
+import { withTransaction } from '../src/db/pool'
 
 // §21 — an automation is proposed in the assistant's chat and nothing runs
 // until the person who asked presses Activate. The tools exist only in new
 // conversations of people allowed to automate; what a conversation was sent
 // is never changed. Every draft is checked (and run once) before it is kept.
+// §22 — the plan is agreed in words first: a proposal carries the person's
+// words of agreement from their latest message, never in a conversation's
+// first answer; a new version of a proposal supersedes the one it revises.
 // The model is the scripted stand-in.
 
 const app = new TestApp()
@@ -50,10 +56,32 @@ const resultsOf = (call = lastCall()) => {
 }
 const automationEvents = (events: AiStreamEvent[]) => events.filter((e): e is AutomationEvent => e.type === 'automation').map((e) => e.part)
 
-/** The creator proposes a draft in a new conversation (or the one given); the stream and the conversation. */
-async function proposeInChat(draft: unknown, as = p.creator, conversationId?: string) {
-  app.model.reply({ content: [text('Let me set that up.'), propose(`toolu_${Math.random().toString(36).slice(2, 10)}`, draft)] }, { content: [text('Proposed: press Activate to start it.')] })
-  const res = await ask(app, as, 'Tell the supervisors about every new machine.', conversationId)
+const toolUseId = () => `toolu_${Math.random().toString(36).slice(2, 10)}`
+
+/** What the person writes to agree to the plan, and the words of it the model quotes. */
+const AGREED = 'Yes, go ahead.'
+const AGREEMENT = 'Yes, go ahead'
+
+/** The person asks for an automation in a new conversation and the assistant describes the plan, asking them to confirm it (§22). */
+async function describePlan(as = p.creator, request = 'Tell the supervisors about every new machine.') {
+  app.model.reply({
+    content: [text('The plan: a watch on the machine register every 5 minutes, telling every supervisor in the bell about each new machine. Shall I propose it?')],
+  })
+  const res = await ask(app, as, request)
+  expect(res.status, JSON.stringify(res.error)).toBe(200)
+  return res
+}
+
+/**
+ * The creator agrees to a plan the assistant described and it proposes the
+ * draft, quoting their words: in a new conversation that describes the plan
+ * first, or in the one given (after its own plan). The stream and the conversation.
+ */
+async function proposeInChat(draft: unknown, as = p.creator, conversationId?: string, agreed = AGREED, confirmation: string | null = AGREEMENT) {
+  const conversation = conversationId ?? (await describePlan(as)).conversationId
+  const input = confirmation === null ? draft : { confirmation, ...(draft as object) }
+  app.model.reply({ content: [text('Let me set that up.'), propose(toolUseId(), input)] }, { content: [text('Proposed: press Activate to start it.')] })
+  const res = await ask(app, as, agreed, conversation)
   expect(res.status, JSON.stringify(res.error)).toBe(200)
   return res
 }
@@ -102,6 +130,38 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
     expect(section).toContain(`The person asking is ${JSON.stringify(asker.name)} (user id ${asker.id}, role ${asker.role})`)
     expect(section).toContain(`{"kind": "user", "userId": "${asker.id}"}`)
     expect(withSection.replace(section, '')).toBe(systemOf(plain))
+
+    // §22 — everyone's assistant works as a consultant (asks, explains, offers ways forward) and suggests likely replies.
+    for (const prompt of [systemOf(plain), withSection]) {
+      const consult = prompt.indexOf('# When a request is unclear or cannot be met as asked')
+      expect(consult).toBeGreaterThan(prompt.indexOf('# How you work'))
+      expect(consult).toBeLessThan(prompt.indexOf('# Time'))
+      expect(prompt).toContain('ask instead of guessing: at most three short questions, each with the choice you would make')
+      expect(prompt).toContain('offer two or three ways forward, each with what it gives and what it misses')
+      expect(prompt).toContain('marked clearly as needing development - something the assistant cannot do or arrange itself')
+      expect(prompt).toContain('Recommend one and say why')
+      expect(prompt).toContain('the suggestions are their likely replies, written as they would type them')
+      // A clear question is answered: a detail left out with a usual reading is no reason to ask, nor to query the catalog first.
+      expect(prompt).toContain('a detail left out that has a usual reading is not an ambiguity')
+      expect(prompt).toContain('A clear question needs no queries beyond the ones that answer it.')
+      expect(prompt).toContain('close with your questions instead')
+      // Nothing reaches the developers; what the person was not given is not "needs development".
+      expect(prompt).toContain('nothing in this chat reaches the people who develop the app')
+      expect(prompt).toContain('the assistant\'s owner decides what each person gets. Never call it something that needs development.')
+    }
+    // Automations are agreed in words before any card, with the person's words passed along; a revision names what it revises.
+    expect(section).toContain('Agree on the plan in words before any card.')
+    expect(section).toContain('Ask them to confirm it or change it, and stop there: no propose_automation call in that answer.')
+    expect(section).toContain('Choosing one of several options you offered is agreement only when you described that option as a full plan')
+    expect(section).toContain('Call propose_automation only after they agree, in a later message, and pass their words of agreement as confirmation, exactly as they wrote them')
+    expect(section).toContain('set revisesProposalId to its proposalId: its card is marked as replaced by the new one. Keep everything they did not ask to change, replacesAutomationId included.')
+    // The tool asks for the person's words first, as the prompt does.
+    const input = (creator.params.tools![1] as { input_schema: { properties: Record<string, { description?: string }>; required: string[] } }).input_schema
+    expect(Object.keys(input.properties)[0]).toBe('confirmation')
+    expect(input.required).toContain('confirmation')
+    expect(input.properties.confirmation.description).toContain('copied exactly as they wrote them in their latest message')
+    expect(input.properties.revisesProposalId.description).toMatch(/^Optional\. The proposalId \(from its propose_automation result\) of an earlier proposal of this conversation .* Keep that proposal's replacesAutomationId\./)
+    expect(input.required).not.toContain('revisesProposalId')
   })
 
   it('keeps what a conversation was sent: tools given later reach new conversations only, and taken away they answer "not allowed"', async () => {
@@ -592,6 +652,15 @@ describe('§21 checking a draft', () => {
     const read = readDraft({ ...reportDraft(), replacesAutomationId: null, schedule: { ...reportDraft().schedule, weekdays: null, period: { kind: 'last_days', days: 7, from: null, to: null, weekStart: null } } })
     expect(read).toEqual({ draft: expect.objectContaining({ schedule: expect.objectContaining({ period: { kind: 'last_days', days: 7 } }) }) })
     expect('draft' in read && read.draft.schedule).not.toHaveProperty('weekdays')
+    // §22 — the person's words are read on their own, whatever the draft's shape, and never kept in it; the version it revises is.
+    const revised = '6f1c1b2e-3d4a-4b5c-8d6e-7f8091a2b3c4'
+    const withWords = readDraft({ confirmation: 'Yes, go ahead', ...watchDraft(), revisesProposalId: revised })
+    expect(withWords).toEqual({ draft: { ...watchDraft(), revisesProposalId: revised } })
+    expect(readDraft({ ...watchDraft(), confirmation: 7 })).toEqual({ errors: [expect.stringMatching(/^confirmation: Expected string/)] })
+    expect(readConfirmation({ confirmation: 'Yes, go ahead', kind: 'alarm' })).toBe('Yes, go ahead')
+    expect(readConfirmation({ confirmation: 7, ...watchDraft() })).toBeNull()
+    expect(readConfirmation(watchDraft())).toBeNull()
+    expect(readConfirmation(null)).toBeNull()
   })
 
   it('backtests: a watch counts what matches now; a report runs its sections over its period as of today', async () => {
@@ -619,5 +688,346 @@ describe('§21 checking a draft', () => {
         { title: 'Registered this week', ok: true, columns: ['machine_code'], rows: codes.map((c) => [c]), rowCount: codes.length },
       ],
     })
+  })
+})
+
+describe('§22 agreed in words before the card', () => {
+  const proposalsOf = async (conversationId: string) =>
+    (
+      await app.db.query<{ id: string; ok: boolean; state: string; confirmation: string | null; draft: Record<string, unknown> | null }>(
+        `SELECT id, ok, state, confirmation, draft FROM ai_automation_proposals WHERE conversation_id = $1 ORDER BY created_at, id`,
+        [conversationId],
+      )
+    ).rows
+  /** The result the tool call of the `i`th request of this test got. */
+  const resultAt = (i: number) => resultsOf(app.model.calls[i])[0]
+
+  it('refuses a proposal in the first answer of a conversation, even quoting words of the question: nothing kept, no card', async () => {
+    app.model.reply(
+      { content: [text('Setting it up.'), propose('toolu_first', { confirmation: 'go ahead', ...watchDraft() })] },
+      { content: [text('The plan: a watch on the machine register every 5 minutes, telling every supervisor. Shall I propose it?')] },
+    )
+    const res = await ask(app, p.creator, 'Tell the supervisors about every new machine, go ahead.')
+    expect(res.status).toBe(200)
+    const refused = resultsOf()
+    expect(refused).toEqual([
+      {
+        type: 'tool_result',
+        tool_use_id: 'toolu_first',
+        is_error: true,
+        content: expect.stringMatching(/^Not proposed: this is the first answer of the conversation, so the person has not agreed to a plan yet\. Instead, describe the plan to the person in words/),
+      },
+    ])
+    expect(refused[0].content).toContain('Call propose_automation again only after they agree, in a later message, with confirmation set to their words of agreement exactly as they wrote them.')
+    expect(automationEvents(res.events)).toEqual([])
+    expect(res.done!.message.parts.some((x) => x.type === 'automation')).toBe(false)
+    expect(await proposalsOf(res.conversationId)).toEqual([])
+
+    // The refusal stays in the replay byte for byte; once the person agrees, the proposal goes through.
+    const before = lastCall()
+    const agreed = await proposeInChat(watchDraft({ name: 'After the plan' }), p.creator, res.conversationId)
+    const next = app.model.calls[app.model.calls.length - 2]
+    expect(JSON.stringify(next.params.messages.slice(0, before.params.messages.length))).toBe(JSON.stringify(before.params.messages))
+    expect(automationEvents(agreed.events)).toEqual([expect.objectContaining({ ok: true, state: 'proposed' })])
+  })
+
+  it('refuses words that are not in the person’s latest message, none, or too few; quoted again exactly, the proposal goes through', async () => {
+    const plan = await describePlan()
+    app.model.reply(
+      // Words of the first message, not of this one.
+      { content: [propose('toolu_old_words', { confirmation: 'Tell the supervisors', ...watchDraft() })] },
+      { content: [propose('toolu_no_words', watchDraft())] },
+      { content: [propose('toolu_few_words', { confirmation: '!', ...watchDraft() })] },
+      { content: [propose('toolu_words', { confirmation: 'sounds good, DO IT', ...watchDraft({ name: 'Quoted again' }) })] },
+      { content: [text('Proposed: press Activate to start it.')] },
+    )
+    const res = await ask(app, p.creator, 'Sounds good, do it.', plan.conversationId)
+    expect(res.status).toBe(200)
+    const retry = "The confirmation must be the person's words of agreement, copied exactly from their latest message. If that message agrees to the plan you described, call again with confirmation set to its words exactly as they wrote them. If it does not, describe the plan to the person in words"
+    expect(resultAt(2)).toMatchObject({ tool_use_id: 'toolu_old_words', is_error: true })
+    expect(resultAt(2).content).toMatch(/^Not proposed: the confirmation "Tell the supervisors" is not in the person's latest message\. /)
+    expect(resultAt(2).content).toContain(retry)
+    expect(resultAt(2).content).toMatch(/Call propose_automation again only after they agree, in a later message, with confirmation set to their words of agreement exactly as they wrote them\.$/)
+    expect(resultAt(3)).toMatchObject({ tool_use_id: 'toolu_no_words', is_error: true, content: expect.stringContaining(`Not proposed: the call has no confirmation. ${retry}`) })
+    // Too short to be words: quote the words the message has, or ask for words when it has none - never the same call again.
+    expect(resultAt(4)).toMatchObject({
+      tool_use_id: 'toolu_few_words',
+      is_error: true,
+      content:
+        'Not proposed: the confirmation "!" is too short to be words of agreement. ' +
+        "If the person's latest message has words agreeing to the plan you described, call again with confirmation set to those words exactly as they wrote them. " +
+        'If it has no words (an emoji or a single letter), ask them to confirm the plan in words, briefly and without describing it again, and stop there; call propose_automation again only after they do.',
+    })
+    expect(resultAt(5)).toMatchObject({ tool_use_id: 'toolu_words' })
+    expect(resultAt(5).is_error).toBeUndefined()
+    // Only the call that passed left a proposal and a card; the words are kept as quoted, never in the draft.
+    const parts = automationEvents(res.events)
+    expect(parts).toEqual([expect.objectContaining({ ok: true, state: 'proposed', draft: expect.objectContaining({ name: 'Quoted again' }) })])
+    expect(parts[0].draft).not.toHaveProperty('confirmation')
+    const stored = await proposalsOf(plan.conversationId)
+    expect(stored).toEqual([expect.objectContaining({ id: parts[0].proposalId, ok: true, confirmation: 'sounds good, DO IT' })])
+    expect(stored[0].draft).not.toHaveProperty('confirmation')
+  })
+
+  it('keeps the words of a proposal that does not pass too: they were agreed all the same', async () => {
+    const res = await proposeInChat(watchDraft({}, { keyColumn: 'machine_id_typo' }))
+    expect(await proposalsOf(res.conversationId)).toEqual([expect.objectContaining({ ok: false, confirmation: AGREEMENT })])
+  })
+
+  it('finds the person’s words however they were spelled: diacritics, tatweel, alef, yaa and taa marbuta forms, spacing, case, quotes', async () => {
+    const turn = (question: string) => ({ question, answeredBefore: true })
+    const cases: [string, string][] = [
+      // The person wrote harakat and hamzas; the model quoted bare letters, spaced otherwise.
+      ['مُوافِقٌ، أَنشِئْ التَّنبيهَ يا مُديرُ', 'موافق، انشئ  التنبيه'],
+      // Alef maqsura and taa marbuta written as yaa and haa; a stretched word.
+      ['تمـــام على بركة الله', 'تمام علي بركه الله'],
+      // Alef with hamza below and with madda; the lines run together.
+      ['  إبدأ\n\nالآن ', 'ابدا الان'],
+      // Quotes and punctuation around the words, another case; a presentation form (NFKC) and a direction mark.
+      ['Yes, GO ahead!', '"yes, go ahead"'],
+      ['‏ﻻ مانع، ابدأ', '«لا مانع»'],
+      ['Ｙｅｓ please', 'yes'],
+      // Punctuation of another form or spacing inside the words, as keyboards and the model write it.
+      ['Yes, let’s go', "Yes, let's go"],
+      ['“ok” do it', '"ok" do it'],
+      ['تمام، ابدأ', 'تمام, ابدأ'],
+      ['موافق? ايوه', 'موافق؟ ايوه'],
+      ['yes – go', 'yes - go'],
+      ['yes,go ahead', 'yes, go ahead'],
+      ['تمام؛ كمل', 'تمام; كمل'],
+      // Arabic-Indic (and Persian) digits and the Arabic percent sign, for the change the person asked for.
+      ['خليها ٢٠٪', 'خليها 20%'],
+      ['make it ۱۵ minutes', 'make it 15 minutes'],
+    ]
+    for (const [question, quote] of cases) expect(checkAgreement(quote, turn(question)), `${quote} in ${question}`).toEqual({ ok: true, confirmation: quote.trim() })
+    expect(normalizeQuote(' «مُوافِقٌ»‏ ')).toBe('موافق')
+    expect(normalizeQuote('«Ｙｅｓ،   GO»')).toBe('yes go')
+    expect(normalizeQuote('خليها ٢٠٪ أو ۳۰٪')).toBe('خليها 20 او 30')
+    // Other words are other words; nothing before a plan was described.
+    expect(checkAgreement('لا', turn('نعم ابدأ'))).toMatchObject({ ok: false, refusal: expect.stringContaining('is not in the person\'s latest message') })
+    expect(checkAgreement('yes, start', turn('Yes, go ahead'))).toMatchObject({ ok: false })
+    expect(checkAgreement('ـ', turn('ـــ'))).toMatchObject({ ok: false, refusal: expect.stringContaining('too short') })
+    // A lone emoji or letter is no words, whatever its code points: a thumbs-up with a skin tone is one character as people see it.
+    for (const quote of ['👍', '👍🏻', '✅', 'k', '"y"']) {
+      expect(checkAgreement(quote, turn(quote)), quote).toMatchObject({ ok: false, refusal: expect.stringContaining('If it has no words (an emoji or a single letter), ask them to confirm the plan in words') })
+    }
+    expect(checkAgreement('ok 👍', turn('ok 👍'))).toEqual({ ok: true, confirmation: 'ok 👍' })
+    expect(checkAgreement('yes', { question: 'yes', answeredBefore: false })).toMatchObject({ ok: false, refusal: expect.stringMatching(/^Not proposed: this is the first answer/) })
+    // A refused quote is shown back short.
+    const long = checkAgreement('x'.repeat(500), turn('yes'))
+    expect(!long.ok && long.refusal).toContain(`"${'x'.repeat(79)}…"`)
+
+    // Through the chat: written with harakat, quoted without.
+    const plan = await describePlan(p.creator, 'نبّه المشرفين بكل ماكينة جديدة')
+    const res = await proposeInChat(watchDraft({ name: 'ماكينات جديدة', language: 'ar' }), p.creator, plan.conversationId, 'مُوافِقٌ، أَنشِئْهُ', 'موافق، انشئه')
+    const [part] = automationEvents(res.events)
+    expect(part).toMatchObject({ ok: true, state: 'proposed' })
+    expect(await proposalsOf(plan.conversationId)).toEqual([expect.objectContaining({ id: part.proposalId, confirmation: 'موافق، انشئه' })])
+  })
+
+  it('goes on without the check in a conversation begun before it, whose tool asks for no confirmation, sent as it was', async () => {
+    type Schema = { properties: Record<string, unknown>; required: string[] }
+    const earlier = conversationTools(AUTOMATION_TOOLS).map((t) => {
+      if (t.name !== PROPOSE_AUTOMATION_TOOL_NAME) return t
+      const schema = t.input_schema as unknown as Schema
+      const { confirmation: _words, revisesProposalId: _revision, ...properties } = schema.properties
+      return { ...t, input_schema: { ...schema, properties, required: schema.required.filter((r) => r !== 'confirmation') } }
+    })
+    expect(asksForConfirmation(conversationTools(AUTOMATION_TOOLS), PROPOSE_AUTOMATION_TOOL_NAME)).toBe(true)
+    expect(asksForConfirmation(earlier as Anthropic.Beta.BetaTool[], PROPOSE_AUTOMATION_TOOL_NAME)).toBe(false)
+    expect(asksForConfirmation([RUN_SQL_TOOL], PROPOSE_AUTOMATION_TOOL_NAME)).toBe(false)
+    const { rows } = await app.db.query<{ id: string; tools: string }>(
+      `INSERT INTO ai_conversations (user_id, title, model, system_prompt, tools) VALUES ($1, 'Before §22', 'claude-sonnet-5-5', 'An earlier prompt.', $2::json)
+       RETURNING id, tools::text AS tools`,
+      [p.creator.user.id, JSON.stringify(earlier)],
+    )
+    app.model.reply({ content: [propose('toolu_before', watchDraft({ name: 'Before §22' }))] }, { content: [text('Proposed: press Activate to start it.')] })
+    // Its first question, and a proposal with no words of agreement: as its tool and prompt have it.
+    const res = await ask(app, p.creator, 'Tell the supervisors about every new machine.', rows[0].id)
+    expect(JSON.stringify(lastCall().params.tools)).toBe(rows[0].tools)
+    expect(systemOf()).toBe('An earlier prompt.')
+    const [part] = automationEvents(res.events)
+    expect(part).toMatchObject({ ok: true, state: 'proposed', draft: { name: 'Before §22' } })
+    expect(await proposalsOf(rows[0].id)).toEqual([expect.objectContaining({ ok: true, confirmation: null })])
+  })
+})
+
+describe('§22 a new version of a proposal', () => {
+  const stateOf = async (proposalId: string) =>
+    (await app.db.query<{ state: string; decidedBy: string | null; decided: boolean }>(
+      `SELECT state, decided_by_id AS "decidedBy", decided_at IS NOT NULL AS decided FROM ai_automation_proposals WHERE id = $1`,
+      [proposalId],
+    )).rows[0]
+  const discard = (proposalId: string, as = p.creator) =>
+    app.api<AutomationDiscardResponse | ApiErrorBody>('POST', `/api/ai/automation-proposals/${proposalId}/discard`, { token: as.token })
+  /** The person asks for a change of the plan: that request is their agreement to it, and the model quotes it. */
+  const revise = (conversationId: string, draft: AutomationDraft, request = 'Make it every 15 minutes instead.', words = 'every 15 minutes') =>
+    proposeInChat(draft, p.creator, conversationId, request, words)
+  /**
+   * A propose_automation call in the latest question of a conversation, after the person agreed, run by
+   * its handler as an answer runs it: its outcome, whose store (the answer's transaction) is left to the test.
+   */
+  const callPropose = async (conversationId: string, draft: AutomationDraft) => {
+    const turn = await app.db.query<{ id: string }>(`SELECT id FROM ai_turns WHERE conversation_id = $1 ORDER BY created_at DESC, id LIMIT 1`, [conversationId])
+    const handlers = automationToolHandlers({
+      db: app.db,
+      config: app.config,
+      readers: app.aiReader,
+      userId: p.creator.user.id,
+      conversationId,
+      turnId: turn.rows[0].id,
+      confirmFirst: true,
+      emit: () => undefined,
+    })
+    const tu = { type: 'tool_use', id: toolUseId(), name: PROPOSE_AUTOMATION_TOOL_NAME, input: { confirmation: AGREEMENT, ...draft } } as Anthropic.Beta.BetaToolUseBlock
+    const outcome = await handlers[PROPOSE_AUTOMATION_TOOL_NAME].run(tu, new AbortController().signal)
+    const told = JSON.parse(outcome.result.content as string) as { proposalId: string; note: string }
+    return { ...outcome, told }
+  }
+  afterAll(async () => {
+    await app.db.query(`UPDATE ai_automations SET status = 'paused', next_run_at = NULL`)
+  })
+
+  it('supersedes the version it revises once it passes: the older card says so, and can no longer be activated or discarded', async () => {
+    const first = await proposeInChat(watchDraft({ name: 'Machines, every 5 minutes' }))
+    const old = automationEvents(first.events)[0]
+    const res = await revise(first.conversationId, watchDraft({ name: 'Machines, every 15 minutes', revisesProposalId: old.proposalId }, { everyMinutes: 15 }))
+    const [revision] = automationEvents(res.events)
+    // The card names what it revises, so the open chat marks the older card at once.
+    expect(revision).toMatchObject({ ok: true, state: 'proposed', draft: { revisesProposalId: old.proposalId, watch: { everyMinutes: 15 } } })
+    expect(JSON.parse(resultsOf()[0].content as string).note).toContain('The card of the version it revises is marked as replaced by this one.')
+    expect(await stateOf(old.proposalId)).toEqual({ state: 'superseded', decidedBy: p.creator.user.id, decided: true })
+    // Opened again, the conversation shows each card as it stands.
+    const shown = await app.api<AiMessagesResponse>('GET', `/api/ai/conversations/${first.conversationId}/messages`, { token: p.creator.token })
+    const cards = shown.body.messages.flatMap((m) => m.parts).filter((x): x is AiAutomationPart => x.type === 'automation')
+    expect(cards.map((c) => [c.proposalId, c.state])).toEqual([
+      [old.proposalId, 'superseded'],
+      [revision.proposalId, 'proposed'],
+    ])
+    expect(cards[0]).toMatchObject({ ok: true, draft: { name: 'Machines, every 5 minutes' } })
+    for (const pressed of [await activate(old.proposalId), await discard(old.proposalId)]) {
+      expect(pressed.status).toBe(409)
+      expect((pressed.body as ApiErrorBody).error.message).toBe('A newer version of this proposal was made below; activate that one.')
+    }
+    // The new version activates, and only it becomes an automation.
+    const activated = await activate(revision.proposalId)
+    expect(activated.status, JSON.stringify(activated.body)).toBe(200)
+    expect((activated.body as AutomationActivateResponse).automation).toMatchObject({ name: 'Machines, every 15 minutes', watch: { everyMinutes: 15 } })
+    expect((await app.db.query(`SELECT 1 FROM ai_automations WHERE name LIKE 'Machines, every %'`)).rowCount).toBe(1)
+    expect(await stateOf(old.proposalId)).toMatchObject({ state: 'superseded' })
+  })
+
+  it('leaves the older card as it is when the new version does not pass, or when the older one is no longer open', async () => {
+    const first = await proposeInChat(watchDraft({ name: 'Still open' }))
+    const open = automationEvents(first.events)[0]
+    // A new version that fails its checks replaces nothing.
+    const failed = automationEvents((await revise(first.conversationId, watchDraft({ revisesProposalId: open.proposalId }, { keyColumn: 'machine_id_typo' }))).events)[0]
+    expect(failed).toMatchObject({ ok: false, draft: { revisesProposalId: open.proposalId } })
+    expect(await stateOf(open.proposalId)).toMatchObject({ state: 'proposed' })
+    // Discarded, it stays discarded; a version of it is a proposal of its own.
+    expect((await discard(open.proposalId)).status).toBe(200)
+    const afterDiscard = automationEvents((await revise(first.conversationId, watchDraft({ name: 'After the discard', revisesProposalId: open.proposalId }))).events)[0]
+    expect(afterDiscard).toMatchObject({ ok: true, state: 'proposed' })
+    expect(await stateOf(open.proposalId)).toMatchObject({ state: 'discarded' })
+    // A version of one that did not pass, or of one superseded already, marks nothing.
+    const ofFailed = automationEvents((await revise(first.conversationId, watchDraft({ name: 'Fixed', revisesProposalId: failed.proposalId }))).events)[0]
+    expect(ofFailed).toMatchObject({ ok: true })
+    expect(await stateOf(failed.proposalId)).toMatchObject({ state: 'proposed', decided: false })
+    const newer = automationEvents((await revise(first.conversationId, watchDraft({ name: 'Newer', revisesProposalId: ofFailed.proposalId }))).events)[0]
+    expect(await stateOf(ofFailed.proposalId)).toMatchObject({ state: 'superseded' })
+    const again = automationEvents((await revise(first.conversationId, watchDraft({ name: 'Newer still', revisesProposalId: ofFailed.proposalId }))).events)[0]
+    expect(again).toMatchObject({ ok: true })
+    expect(await stateOf(newer.proposalId)).toMatchObject({ state: 'proposed' })
+    expect(await stateOf(ofFailed.proposalId)).toMatchObject({ state: 'superseded' })
+  })
+
+  it('tells the model to change the automation instead when the version it revises was activated', async () => {
+    const first = await proposeInChat(watchDraft({ name: 'Activated first' }))
+    const old = automationEvents(first.events)[0]
+    const automation = ((await activate(old.proposalId)).body as AutomationActivateResponse).automation
+    const res = await revise(first.conversationId, watchDraft({ name: 'Activated first, every 15 minutes', revisesProposalId: old.proposalId }, { everyMinutes: 15 }))
+    const [card] = automationEvents(res.events)
+    const said = `revisesProposalId: that proposal was activated and is now the automation ${automation.id}. To change it, set replacesAutomationId to "${automation.id}" and leave revisesProposalId out.`
+    expect(card).toMatchObject({ ok: false, error: said })
+    expect(resultsOf()[0]).toMatchObject({ is_error: true, content: expect.stringContaining(`- ${said}`) })
+    expect(await stateOf(old.proposalId)).toMatchObject({ state: 'activated' })
+    // Its automation deleted since: nothing to change, a new one to propose.
+    expect((await app.api('DELETE', `/api/automations/${automation.id}`, { token: p.creator.token })).status).toBe(204)
+    const gone = automationEvents((await revise(first.conversationId, watchDraft({ revisesProposalId: old.proposalId }))).events)[0]
+    expect(gone).toMatchObject({ ok: false, error: expect.stringContaining('the automation it became has since been deleted. Propose this as a new automation') })
+  })
+
+  it('never makes a second automation when the older version is activated while the new one is being stored, nor waits on that answer to activate', async () => {
+    const first = await proposeInChat(watchDraft({ name: 'Raced, every 5 minutes' }))
+    const old = automationEvents(first.events)[0]
+    // The model proposes a new version while the older card is open: the model is told it replaces that card.
+    const revision = await callPropose(first.conversationId, watchDraft({ name: 'Raced, every 15 minutes', revisesProposalId: old.proposalId }, { everyMinutes: 15 }))
+    expect(revision.told.note).toContain('The card of the version it revises is marked as replaced by this one.')
+    // The answer's store begins with another proposal of the same step: it holds a key share on the person's row.
+    const other = await callPropose(first.conversationId, watchDraft({ name: 'Raced, alongside' }))
+    const tx = await app.db.connect()
+    try {
+      await tx.query('BEGIN')
+      await other.store!(tx)
+      // Meanwhile the person presses Activate on the older card: it goes through at once, never waiting on the answer
+      // (which would deadlock when the answer then marks that card).
+      const pressed = await Promise.race([activate(old.proposalId), new Promise<'still waiting'>((resolve) => setTimeout(() => resolve('still waiting'), 5_000))])
+      expect(pressed === 'still waiting' ? pressed : pressed.status).toBe(200)
+      // The new version is stored after it: the older card keeps what the person decided.
+      await revision.store!(tx)
+      await tx.query('COMMIT')
+    } catch (e) {
+      await tx.query('ROLLBACK')
+      throw e
+    } finally {
+      tx.release()
+    }
+    expect(await stateOf(old.proposalId)).toMatchObject({ state: 'activated' })
+    expect(await stateOf(revision.told.proposalId)).toMatchObject({ state: 'proposed', decided: false })
+    // Activating the new version would tell the same cases twice, from a second automation: refused, saying what to do.
+    const second = await activate(revision.told.proposalId)
+    expect(second.status).toBe(409)
+    expect((second.body as ApiErrorBody).error.message).toBe('The earlier version this proposal revises was activated meanwhile. Ask the assistant to change that automation instead.')
+    expect(await stateOf(revision.told.proposalId)).toMatchObject({ state: 'proposed' })
+    expect((await app.db.query(`SELECT 1 FROM ai_automations WHERE name LIKE 'Raced, every %' AND deleted_at IS NULL`)).rowCount).toBe(1)
+    // A proposal of its own in that answer is not held back.
+    expect((await activate(other.told.proposalId)).status).toBe(200)
+  })
+
+  it('activates a new version that changes the very automation the older one became, as that change', async () => {
+    const made = automationEvents((await proposeInChat(watchDraft({ name: 'Changed twice' }))).events)[0]
+    const automationId = ((await activate(made.proposalId)).body as AutomationActivateResponse).automation.id
+    // A change of it is proposed, then a new version of that change, keeping what it changes; the change is activated in between.
+    const change = await proposeInChat(watchDraft({ name: 'Changed twice, every 10 minutes', replacesAutomationId: automationId }, { everyMinutes: 10 }))
+    const older = automationEvents(change.events)[0]
+    const revision = await callPropose(
+      change.conversationId,
+      watchDraft({ name: 'Changed twice, every 15 minutes', replacesAutomationId: automationId, revisesProposalId: older.proposalId }, { everyMinutes: 15 }),
+    )
+    expect((await activate(older.proposalId)).status).toBe(200)
+    await withTransaction(app.db, (tx) => revision.store!(tx))
+    expect(await stateOf(older.proposalId)).toMatchObject({ state: 'activated' })
+    const activated = await activate(revision.told.proposalId)
+    expect(activated.status, JSON.stringify(activated.body)).toBe(200)
+    expect((activated.body as AutomationActivateResponse).automation).toMatchObject({ id: automationId, name: 'Changed twice, every 15 minutes', watch: { everyMinutes: 15 } })
+    expect((await app.db.query(`SELECT 1 FROM ai_automations WHERE name LIKE 'Changed twice%' AND deleted_at IS NULL`)).rowCount).toBe(1)
+  })
+
+  it('names a revision that is no proposal id, or no proposal of this conversation and person', async () => {
+    const elsewhere = automationEvents((await proposeInChat(watchDraft({ name: 'Elsewhere' }))).events)[0]
+    const theirs = automationEvents((await proposeInChat(watchDraft({ name: 'Theirs' }), p.creator2)).events)[0]
+    const plan = await describePlan()
+    const notOne = 'revisesProposalId: no proposal of this conversation has that id (each propose_automation result names its proposalId).'
+    for (const [id, error] of [
+      ['card-1', 'revisesProposalId: "card-1" is not a proposal id.'],
+      ['00000000-0000-4000-8000-000000000000', notOne],
+      [elsewhere.proposalId, notOne],
+      [theirs.proposalId, notOne],
+    ]) {
+      const card = automationEvents((await proposeInChat(watchDraft({ revisesProposalId: id }), p.creator, plan.conversationId)).events)[0]
+      expect(card, id).toMatchObject({ ok: false, error })
+    }
+    expect(await stateOf(elsewhere.proposalId)).toMatchObject({ state: 'proposed' })
+    expect(await stateOf(theirs.proposalId)).toMatchObject({ state: 'proposed' })
   })
 })

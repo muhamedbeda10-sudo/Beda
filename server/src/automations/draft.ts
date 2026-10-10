@@ -56,13 +56,22 @@ const COLUMN_SCHEMA = (what: string) => ({
 })
 
 /**
- * propose_automation's input: an AutomationDraft. The schema guides the
- * model but is not strict (see tools.ts); the reader below and validate.ts
- * hold the draft to its shape, lengths, ranges and counts.
+ * propose_automation's input: an AutomationDraft, after the person's words of
+ * agreement (§22: confirmation, first, so the model quotes them before it
+ * writes the draft; the draft never keeps them). The schema guides the model
+ * but is not strict (see tools.ts); the reader below and validate.ts hold the
+ * draft to its shape, lengths, ranges and counts, and confirmation.ts the
+ * confirmation to the person's message.
  */
 export const DRAFT_INPUT_SCHEMA = {
   type: 'object',
   properties: {
+    confirmation: {
+      type: 'string',
+      description:
+        "The person's words of agreement to the plan you described, copied exactly as they wrote them in their latest message (for example \"yes, go ahead\", or the change they asked for, such as \"make it 20%\"). " +
+        'Call this tool only after you described the plan in words and the person agreed in a later message.',
+    },
     kind: { type: 'string', enum: ['watch', 'report'], description: 'watch: tell people about new cases as they appear. report: a scheduled report.' },
     name: { type: 'string', description: "A short name, in the person's language." },
     description: { type: 'string', description: "In plain words, in the person's language: what it watches or reports, and what it does." },
@@ -165,8 +174,13 @@ export const DRAFT_INPUT_SCHEMA = {
       additionalProperties: false,
     },
     replacesAutomationId: { type: 'string', description: 'Optional. The id of one of the person\'s automations (from my_automations) that this proposal changes.' },
+    revisesProposalId: {
+      type: 'string',
+      description:
+        "Optional. The proposalId (from its propose_automation result) of an earlier proposal of this conversation that this one is a new version of: its card is marked as replaced by this one. Keep that proposal's replacesAutomationId. If it was activated, the call says so and names the automation to set as replacesAutomationId instead.",
+    },
   },
-  required: ['kind', 'name', 'description', 'language', 'recipients', 'channels', 'actions'],
+  required: ['confirmation', 'kind', 'name', 'description', 'language', 'recipients', 'channels', 'actions'],
   additionalProperties: false,
 }
 
@@ -234,6 +248,9 @@ const channelsInput = z.object({ bell: z.boolean(), chat: z.boolean() }).strict(
 
 export const DraftInput = z
   .object({
+    // Read on its own (readConfirmation) and checked before the draft is: never part of it. Optional here, as a
+    // conversation begun before §22 was given a tool that asks for none.
+    confirmation: optional(z.string()),
     kind: z.enum(['watch', 'report']),
     name: z.string(),
     description: z.string(),
@@ -244,8 +261,19 @@ export const DraftInput = z
     channels: channelsInput,
     actions: actionsInput,
     replacesAutomationId: optional(z.string()),
+    revisesProposalId: optional(z.string()),
   })
   .strict()
+
+/**
+ * The person's words of agreement the model passed with its call (§22), or
+ * null when it passed none: read whatever the draft's own shape, so a call
+ * without them is refused before the draft is looked at.
+ */
+export function readConfirmation(input: unknown): string | null {
+  const parsed = z.object({ confirmation: z.string() }).passthrough().safeParse(input)
+  return parsed.success ? parsed.data.confirmation : null
+}
 
 /** zod's complaints, one line each, naming where: what the model reads to fix its call. */
 export function describeIssues(error: z.ZodError, prefix = ''): string[] {
@@ -255,7 +283,11 @@ export function describeIssues(error: z.ZodError, prefix = ''): string[] {
   })
 }
 
-/** What the model wrote, read as a draft; or what is wrong with its shape. The period is resolved to the shared type. */
+/**
+ * What the model wrote, read as a draft; or what is wrong with its shape. The
+ * period is resolved to the shared type. The confirmation is not the draft's:
+ * it is left out of it.
+ */
 export function readDraft(input: unknown): { draft: AutomationDraft } | { errors: string[] } {
   const parsed = DraftInput.safeParse(input)
   if (!parsed.success) return { errors: describeIssues(parsed.error) }
@@ -282,6 +314,7 @@ export function readDraft(input: unknown): { draft: AutomationDraft } | { errors
     draft.schedule = { ...(schedule as AutomationScheduleSpec), ...(resolved ? { period: resolved } : {}) }
   }
   if (d.replacesAutomationId) draft.replacesAutomationId = d.replacesAutomationId
+  if (d.revisesProposalId) draft.revisesProposalId = d.revisesProposalId
   return errors.length > 0 ? { errors } : { draft }
 }
 

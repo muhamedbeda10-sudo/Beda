@@ -115,9 +115,10 @@ import { AI_EXPORT_LIMITS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
 import { describeAiSchema } from '../ai/schemaDoc'
 import { AI_SETTINGS_KEY, loadAiSettings, loadAvailability } from '../ai/settings'
 import { SseStream } from '../ai/sse'
+import { asksForConfirmation } from '../automations/confirmation'
 import { EditsInput } from '../automations/draft'
 import { activateProposal, discardProposal } from '../automations/lifecycle'
-import { AUTOMATION_TOOLS, automationToolHandlers } from '../automations/tools'
+import { AUTOMATION_TOOLS, PROPOSE_AUTOMATION_TOOL_NAME, automationToolHandlers } from '../automations/tools'
 import {
   appendMessages,
   createConversation,
@@ -597,6 +598,8 @@ export function aiRoutes(ctx: AppContext): Router {
           userId: user.id,
           conversationId: conversation.id,
           turnId,
+          // Held to the person's words of agreement when its tool asks for them (§22): conversations begun before go on as they were sent.
+          confirmFirst: asksForConfirmation(conversation.tools, PROPOSE_AUTOMATION_TOOL_NAME),
           emit: (event) => sse.send(event),
         }),
       })
