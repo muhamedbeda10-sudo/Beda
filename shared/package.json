@@ -14,7 +14,8 @@
     "./releases": "./src/releases.ts",
     "./orderImport": "./src/orderImport.ts",
     "./ai": "./src/ai.ts",
-    "./automation": "./src/automation.ts"
+    "./automation": "./src/automation.ts",
+    "./noticeAssistant": "./src/noticeAssistant.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",
