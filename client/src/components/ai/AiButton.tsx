@@ -12,8 +12,8 @@ export function AiButton() {
     <button
       type="button"
       onClick={workspace ? () => dock() : toggle}
-      // A phone has no room for a fifth icon: there the assistant is in the menu.
-      className={cn('icon-btn relative hidden sm:grid', on && 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200')}
+      // On every screen: the theme moved to the account panel, so a phone has room for it beside chat and the bell.
+      className={cn('icon-btn relative', on && 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200')}
       aria-label={busy ? 'AI assistant, answering' : 'AI assistant'}
       aria-haspopup={workspace ? undefined : 'dialog'}
       aria-expanded={workspace ? undefined : open}

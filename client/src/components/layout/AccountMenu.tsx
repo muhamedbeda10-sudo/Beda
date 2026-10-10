@@ -1,12 +1,13 @@
 // ============================================================================
 // The account circle at the top right: the person's photo, or their initials
 // until they add one. Their name is not written beside it; a tap opens a small
-// panel with the name, the role, and the photo to add, change or remove.
+// panel with the name, the role, the photo to add, change or remove, and the
+// light or dark look of the app (on a phone, the same sits in the menu).
 // ============================================================================
 
 import { useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Camera, Trash2 } from 'lucide-react'
+import { Camera, Moon, Sun, Trash2 } from 'lucide-react'
 import { FloatingPanel } from '@/components/dashboard/filters'
 import { useMyAvatar } from '@/services/queries'
 import { removeMyAvatar, setMyAvatar } from '@/services/mutations'
@@ -15,6 +16,40 @@ import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { cn } from '@/lib/utils'
 import { Avatar } from '@/components/ui/UserAvatar'
+
+/** Light or dark, chosen in the account panel and in the phone's menu; kept on this device. */
+export function ThemeSwitch() {
+  const { theme, toggleTheme } = useApp()
+  const options = [
+    { id: 'light', label: 'Light', icon: Sun },
+    { id: 'dark', label: 'Dark', icon: Moon },
+  ] as const
+  return (
+    <div role="radiogroup" aria-label="Theme" className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+      {options.map((o) => {
+        const on = theme === o.id
+        return (
+          <button
+            key={o.id}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            onClick={() => {
+              if (!on) toggleTheme()
+            }}
+            className={cn(
+              'flex min-h-[40px] items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors',
+              on ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white' : 'text-muted hover:text-slate-800 dark:hover:text-slate-100',
+            )}
+          >
+            <o.icon className="h-4 w-4" aria-hidden />
+            {o.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 /** Add, change or remove one's own photo; used in the panel and in the phone's menu. */
 export function AvatarEditor({ name, size = 64 }: { name: string; size?: number }) {
@@ -105,6 +140,7 @@ export function AccountMenu({ name, role, username }: { name: string; role: stri
             </p>
           </div>
           <AvatarEditor name={name} />
+          <ThemeSwitch />
         </div>
       </FloatingPanel>
     </>

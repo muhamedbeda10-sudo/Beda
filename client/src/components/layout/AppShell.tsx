@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { AlertCircle, AlertTriangle, Bot, CheckCircle2, ChevronRight, Info, LogOut, Menu, MessagesSquare, Moon, Settings, Sun, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Bot, CheckCircle2, ChevronRight, Info, LogOut, Menu, MessagesSquare, Settings, X } from 'lucide-react'
 import { WhatsNewPrompt } from '@/components/releases/WhatsNew'
 import { NoticeBell } from '@/components/notices/NoticeBell'
 import { useChatUnread } from '@/services/queries'
@@ -9,10 +9,10 @@ import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
 import { can } from '@qc/shared/rules'
-import { AccountMenu, AvatarEditor } from '@/components/layout/AccountMenu'
+import { AccountMenu, AvatarEditor, ThemeSwitch } from '@/components/layout/AccountMenu'
 import { ADMIN_NAV, NAV, visibleNav, type NavItem } from '@/components/layout/navItems'
 import { AiAssistantProvider, useAi } from '@/components/ai/AiAssistantProvider'
-import { AiBusyDot, AiButton } from '@/components/ai/AiButton'
+import { AiButton } from '@/components/ai/AiButton'
 import { AiPanelHost } from '@/components/ai/AiPanelHost'
 import { isAiWorkspacePath } from '@/components/ai/workspace'
 import { useFollowUpCounts } from '@/services/followUps'
@@ -180,7 +180,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 function Shell({ children }: { children: ReactNode }) {
-  const { theme, toggleTheme, user } = useApp()
+  const { user } = useApp()
   const { role, signOutUser, profile } = useAuth()
   const ai = useAi()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -245,15 +245,12 @@ function Shell({ children }: { children: ReactNode }) {
             })}
           </nav>
 
-          {/* Right — theme, administration, account */}
+          {/* Right — the assistant, chat, the bell, administration, account (the theme is in the account panel / the menu) */}
           <div className="ml-auto flex shrink-0 items-center gap-1 lg:ml-0 lg:justify-self-end">
             {ai.enabled && <AiButton />}
             {can(role, 'use-chat') && <ChatButton />}
             {/* §21 — everyone has the bell for their alerts; the notices in it are for the roles that receive them. */}
             <NoticeBell notices={can(role, 'read-notices')} />
-            <button onClick={toggleTheme} className="icon-btn" aria-label="Toggle light or dark theme" data-tip={theme === 'dark' ? 'Light theme' : 'Dark theme'}>
-              {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-            </button>
             {admin.length > 0 && (
               <div className="hidden lg:block">
                 <AdminMenu items={admin} />
@@ -269,8 +266,6 @@ function Shell({ children }: { children: ReactNode }) {
             </div>
             <button onClick={() => setMenuOpen(true)} className="icon-btn relative lg:hidden" aria-label="Open menu">
               <Menu className="h-6 w-6" />
-              {/* A phone keeps the assistant in the menu: the menu shows an answer being written. */}
-              {ai.busy && <AiBusyDot className="sm:hidden" />}
             </button>
           </div>
         </div>
@@ -321,6 +316,9 @@ function Shell({ children }: { children: ReactNode }) {
               <p className="mt-0.5 text-xs capitalize text-muted">Role: {role}</p>
               <div className="mt-3">
                 <AvatarEditor name={displayName ?? ''} size={56} />
+              </div>
+              <div className="mt-3">
+                <ThemeSwitch />
               </div>
               <button
                 onClick={() => {
