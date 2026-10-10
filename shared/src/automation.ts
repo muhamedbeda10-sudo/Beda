@@ -163,6 +163,8 @@ export interface AutomationDraft {
   actions: AutomationActions
   /** A change to one of the person's automations: activating it updates that one (its fired cases are kept). */
   replacesAutomationId?: string
+  /** A new version of a proposal of the same conversation not yet activated: that card is marked as replaced. */
+  revisesProposalId?: string
 }
 
 // ---- Proposal (in the assistant's answer) ---------------------------------------------
@@ -195,7 +197,8 @@ export interface AutomationBacktest {
   sections?: AiReportSectionRun[]
 }
 
-export type AutomationProposalState = 'proposed' | 'activated' | 'discarded'
+/** 'superseded': a newer version of it was proposed in the same conversation (revisesProposalId); it can no longer be activated. */
+export type AutomationProposalState = 'proposed' | 'activated' | 'discarded' | 'superseded'
 
 /** A proposal card in an answer. */
 export interface AiAutomationPart {
