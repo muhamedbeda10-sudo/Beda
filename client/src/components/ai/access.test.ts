@@ -20,6 +20,7 @@ import {
   modelName,
   newAccessDraft,
   noticesAccessView,
+  noticesSwitchHint,
   orderDomains,
   parseCapUsd,
   roleLabel,
@@ -235,6 +236,14 @@ describe('notices through the assistant, on the owner’s page', () => {
     expect(held.key).toBe('held')
     expect(held.tip).toMatch(/only administrators manage notices/)
     expect(noticesAccessView({ owner: false, notices: false, role: 'inspector' }).tip).toMatch(/can still ask about the ones they see/)
+  })
+
+  it('says under the switch why it cannot be turned on, or what it allows', () => {
+    expect(noticesSwitchHint({ admin: true, owner: false, stored: false })).toMatch(/^They may have the assistant write a notice.*nothing changes until they press its button/)
+    expect(noticesSwitchHint({ admin: false, owner: false, stored: false })).toBe('Only administrators manage notices. Like everyone with the assistant, they can still ask about the notices they see.')
+    expect(noticesSwitchHint({ admin: false, owner: false, stored: true })).toMatch(/not in effect .* Turn it off to drop it\.$/)
+    expect(noticesSwitchHint({ admin: true, owner: true, stored: false })).toBe('You always can, as the assistant’s owner, while you are an administrator.')
+    expect(noticesSwitchHint({ admin: false, owner: true, stored: true })).toMatch(/^Only administrators manage notices: as the owner/)
   })
 })
 

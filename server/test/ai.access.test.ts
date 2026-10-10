@@ -159,6 +159,7 @@ describe('§20 the owner gives the assistant, person by person', () => {
       spentUsd: 0,
       owner: false,
       automations: false,
+      notices: false,
       updatedAt: expect.any(String),
       updatedByName: 'Owner Admin',
     })
@@ -299,7 +300,8 @@ describe('§20 a person asks on the model and effort the owner set', () => {
     expect(prompt).toContain('# Meanings that are easy to get wrong')
     expect(prompt).toContain('- inspection records: sessions, samples, defects')
     expect(prompt).not.toContain('the coil register, suppliers and master data')
-    expect(prompt).not.toMatch(/administrator/i)
+    // Notices (§23) are put out by administrators, and the person is told so; nothing else of the prompt is about them.
+    expect(prompt.slice(0, prompt.indexOf('# Notices')) + prompt.slice(prompt.indexOf('# Read-only'))).not.toMatch(/administrator/i)
 
     // Coils and master data only: none of the meanings or links that concern other data.
     await grant(viewer, { domains: ['materials'], model: 'claude-sonnet-5-5', effort: 'low', monthlyCapUsd: 5 })

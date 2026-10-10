@@ -32,6 +32,7 @@ import { readSse } from '@/lib/sse'
 import { newSubmissionId } from '@/lib/utils'
 import { keys, useAiMe } from '@/services/queries'
 import { revisedProposalId, supersedeAutomationPart } from '@/components/automations/wording'
+import { hasOpenNoticeCard } from './noticeProposal'
 import { applyEvent, endTurn, isInFlight, parseStreamEvent, sentAfter, settleMessages, startTurn, type LiveTurn } from './liveTurn'
 import { STOP_SETTLE_MS, retryAfterStop } from './retryAfterStop'
 import { aiWorkspaceHref, isAiWorkspacePath, type AiOpenReport, type AiWorkspaceList, type AiWorkspaceState } from './workspace'
@@ -264,6 +265,13 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
             const replaced = revisedProposalId(e.part)
             const id = conversation?.id ?? from
             if (replaced && id) qc.setQueryData<AiMessagesResponse>(keys.aiMessages(id), (old) => supersedeAutomationPart(old, replaced))
+          } else if (e.type === 'notice') {
+            // §23 — a newer notice card may replace one of an earlier answer still waiting for its button (the server
+            // marks it so as it keeps this one): with such a card on screen, the conversation is fetched again now.
+            const id = conversation?.id ?? from
+            if (e.part.ok && id && hasOpenNoticeCard(qc.getQueryData<AiMessagesResponse>(keys.aiMessages(id)), e.part.proposalId)) {
+              void qc.invalidateQueries({ queryKey: keys.aiMessages(id) })
+            }
           } else if (e.type === 'done') {
             // The event also carries the month's figures: the chat shows no amounts, so they are left where they are.
             ended = true

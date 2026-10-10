@@ -36,8 +36,10 @@ CREATE TABLE ai_notice_proposals (
   notice_updated_at   timestamptz,
   -- AiNoticeReach: whom the notice reaches.
   reach               json,
-  -- The earlier card of the conversation this one is a new version of.
-  revises_proposal_id uuid REFERENCES ai_notice_proposals (id),
+  -- The earlier card of the conversation this one is a new version of, checked when it is stored (cards are never
+  -- deleted). No foreign key: storing a new version must take no lock on the card it revises, whose button may be
+  -- being pressed at that very moment — the press never waits on an answer.
+  revises_proposal_id uuid,
   -- The card passed the checks; when not, `error` says why (the assistant was told too).
   ok                  boolean NOT NULL,
   error               text,

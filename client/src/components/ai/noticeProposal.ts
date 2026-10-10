@@ -27,6 +27,8 @@ export const NOTICE_ACTION_TITLE: Record<AiNoticeAction, string> = {
 /** Its button, and the button while it works. */
 export const NOTICE_ACTION_BUTTON: Record<AiNoticeAction, string> = { create: 'Publish', update: 'Apply changes', withdraw: 'Withdraw', delete: 'Delete' }
 export const NOTICE_ACTION_BUSY: Record<AiNoticeAction, string> = { create: 'Publishing…', update: 'Applying…', withdraw: 'Withdrawing…', delete: 'Deleting…' }
+/** Said when the button failed and the server gave no reason of its own. */
+export const NOTICE_ACTION_FAILED: Record<AiNoticeAction, string> = { create: 'Could not publish it.', update: 'Could not apply the changes.', withdraw: 'Could not withdraw it.', delete: 'Could not delete it.' }
 
 /** Said beside the buttons while the card waits: the card is the confirmation, so it says what the button does. */
 export const NOTICE_ACTION_HINT: Record<AiNoticeAction, string> = {
@@ -34,6 +36,14 @@ export const NOTICE_ACTION_HINT: Record<AiNoticeAction, string> = {
   update: 'Nothing changes until you press Apply changes.',
   withdraw: 'It keeps showing until you press Withdraw.',
   delete: 'Nothing is deleted until you press Delete and confirm.',
+}
+
+/** A card the server did not accept, by what it was for. */
+export const NOTICE_REFUSED: Record<AiNoticeAction, string> = {
+  create: 'Notice draft not accepted',
+  update: 'Change not accepted',
+  withdraw: 'Withdrawal not accepted',
+  delete: 'Deletion not accepted',
 }
 
 /** What pressing the button did, once it was pressed. */
@@ -58,6 +68,16 @@ export function noticeStateLabel(action: AiNoticeAction, state: AiNoticeProposal
 }
 
 export const NOTICE_STATE_TONE: Record<AiNoticeProposalState, BadgeTone> = { proposed: 'amber', applied: 'green', discarded: 'neutral', superseded: 'neutral', stale: 'neutral' }
+
+/**
+ * Why a card out of date can no longer be applied. A change, a withdrawal or
+ * a deletion: the notice changed (or went) after the card was made. A new
+ * notice: an earlier version of the card was published meanwhile, so this
+ * one would publish it twice.
+ */
+export function staleText(action: AiNoticeAction): string {
+  return action === 'create' ? 'An earlier version was published meanwhile; ask the assistant to change that notice instead.' : 'The notice changed since; ask the assistant again.'
+}
 
 /** The toast once the button worked: the notice by its title, and where the change is recorded. */
 export function appliedToast(action: AiNoticeAction, title: string): string {

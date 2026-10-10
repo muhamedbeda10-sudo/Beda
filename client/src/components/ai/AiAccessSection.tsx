@@ -39,6 +39,7 @@ import {
   modelName,
   newAccessDraft,
   noticesAccessView,
+  noticesSwitchHint,
   orderDomains,
   parseCapUsd,
   roleLabel,
@@ -422,15 +423,7 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
             <p id="ai-access-notices" className={cn('font-semibold', !admin && 'text-muted')}>
               Can manage notices
             </p>
-            <p className="mt-0.5 text-xs text-muted">
-              {!admin
-                ? row?.notices
-                  ? `${NOTICES_ADMIN_ONLY}: this is not in effect while their role is ${row.role || 'not one'}, and applies again if it becomes administrator. Turn it off to drop it.`
-                  : `${NOTICES_ADMIN_ONLY}. Like everyone with the assistant, they can still ask about the notices they see.`
-                : row?.owner
-                  ? 'You always can, as the assistant’s owner, while you are an administrator.'
-                  : 'They may have the assistant write a notice, or change, withdraw or delete one. Each comes as a card showing exactly what goes out and to whom, and nothing changes until they press its button. Only while they are an administrator; photos and files are still added on the Notices page.'}
-            </p>
+            <p className="mt-0.5 text-xs text-muted">{noticesSwitchHint({ admin, owner: !!row?.owner, stored: !!row?.notices })}</p>
           </div>
           <span data-tip={!admin && !row?.notices ? NOTICES_ADMIN_ONLY : undefined}>
             <AiSwitch on={draft.notices} onChange={(on) => patch({ notices: on })} labelledBy="ai-access-notices" disabled={noticesLocked} />

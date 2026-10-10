@@ -9,16 +9,18 @@
 //     text the model wrote and the cards of the queries it ran (each with its
 //     chart, when it has one) and of the automations it proposed (§21, each
 //     as it stands now: proposed, activated, discarded, or superseded by a
-//     newer version of it — §22), the blocks the model wrote for the app (its
-//     headline figures, its follow-up questions) taken out of the text and
-//     handed over on their own. Thinking and the tool plumbing stay out of
-//     sight.
+//     newer version of it — §22) and of the notice cards it made (§23, each as
+//     it stands now too: proposed, applied, discarded, superseded or stale),
+//     the blocks the model wrote for the app (its headline figures, its
+//     follow-up questions) taken out of the text and handed over on their
+//     own. Thinking and the tool plumbing stay out of sight.
 // ============================================================================
 
 import type Anthropic from '@anthropic-ai/sdk'
 import type { AiCell, AiChartSpec, AiConversation, AiKpi, AiMessage, AiPart, AiQueryPart, AiStopReason, AiTokenUsage } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
 import { loadProposalParts } from '../automations/proposals'
+import { loadNoticeParts } from '../noticeAssistant/proposals'
 import { stripBlocks } from './blocks'
 import { KPIS_BLOCK, parseKpis } from './kpis'
 import { SUGGESTIONS_BLOCK, parseSuggestions } from './suggestions'
@@ -297,8 +299,8 @@ interface MessageRow {
 
 /**
  * The conversation as the panel shows it: each question, then its answer —
- * the model's text with the cards of the queries it ran and the automations
- * it proposed, in the order they came; the headline figures it opened with
+ * the model's text with the cards of the queries it ran, the automations it
+ * proposed and the notice cards it made, in the order they came; the headline figures it opened with
  * and the follow-up questions it closed with taken out of its text and
  * handed over on their own; and the report it was saved as, if it was. One
  * turn only, when `turnId` is given.
@@ -331,6 +333,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
   const reportByTurn = new Map(reports.rows.map((r) => [r.turnId, r.id]))
   const queryByToolUse = new Map(queries.rows.map((r) => [r.toolUseId, r]))
   const proposalByToolUse = await loadProposalParts(q, conversationId, turnId)
+  const noticeByToolUse = await loadNoticeParts(q, conversationId, turnId)
   const byTurn = new Map<string, MessageRow[]>()
   for (const m of messages.rows) {
     const list = byTurn.get(m.turnId)
@@ -358,8 +361,10 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
         } else if (block.type === 'tool_use' && block.id) {
           const run = queryByToolUse.get(block.id)
           const proposal = proposalByToolUse.get(block.id)
+          const notice = noticeByToolUse.get(block.id)
           if (run) parts.push(queryPart(run))
           else if (proposal) parts.push(proposal)
+          else if (notice) parts.push(notice)
         }
       }
     }

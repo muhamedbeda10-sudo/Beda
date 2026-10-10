@@ -236,6 +236,22 @@ export function noticesAccessView(a: Pick<AiAccess, 'owner' | 'notices' | 'role'
     : { key: 'held', tip: `Allowed, but not in effect: ${NOTICES_ADMIN_ONLY.toLowerCase()}. It applies again if their role becomes administrator.` }
 }
 
+/**
+ * What the notices switch says under its name, for the person being edited:
+ * `admin`, their role is an administrator's; `stored`, the permission saved
+ * for them now (it can be turned off whatever their role, never on unless
+ * they are an administrator).
+ */
+export function noticesSwitchHint(p: { admin: boolean; owner: boolean; stored: boolean }): string {
+  if (p.owner) return p.admin ? 'You always can, as the assistant’s owner, while you are an administrator.' : `${NOTICES_ADMIN_ONLY}: as the owner, you can again once your role is administrator.`
+  if (!p.admin) {
+    return p.stored
+      ? `${NOTICES_ADMIN_ONLY}: this is not in effect while their role is not administrator, and applies again if it becomes one. Turn it off to drop it.`
+      : `${NOTICES_ADMIN_ONLY}. Like everyone with the assistant, they can still ask about the notices they see.`
+  }
+  return 'They may have the assistant write a notice, or change, withdraw or delete one. Each comes as a card showing exactly what goes out and to whom, and nothing changes until they press its button. Only while they are an administrator; photos and files are still added on the Notices page.'
+}
+
 /** One domain ticked or unticked, the rest kept in order. */
 export function toggleDomain(domains: readonly AiDomain[], domain: AiDomain, on: boolean): AiDomain[] {
   return orderDomains(on ? [...domains, domain] : domains.filter((d) => d !== domain))

@@ -8,6 +8,9 @@
 //             GET  /files/:id/content
 //   Admins:   GET  /admin, POST /, PUT /:id, POST /:id/withdraw, DELETE /:id,
 //             GET  /:id/acknowledgements, POST /files
+//
+// The writes are noticesService.ts's, which the assistant's notice cards
+// (§23) write through too: one set of checks, one audit trail.
 // ============================================================================
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -208,37 +211,16 @@ export function noticesRoutes(ctx: AppContext): Router {
 
   r.post('/', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
-    const body = parse(saveSchema, req.body) as SaveNoticeRequest
-    const created = await withTransaction(ctx.db, async (tx) => {
-      const { rows } = await tx.query<{ id: string }>(
-        `INSERT INTO notices (title, body, severity, requires_ack, valid_from, valid_to, created_by_id, created_by_name, match_mode)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-        [body.title, body.body, body.severity, body.requiresAck, body.validFrom, body.validTo, user.id, user.name, body.matchMode ?? 'all'],
-      )
-      const id = rows[0].id
-      await writeParts(tx, id, body)
-      await auditCreate(tx, { userId: user.id, userName: user.name, entity: 'Notice', entityId: id })
-      return (await loadNotice(tx, tz, id))!
-    })
+    const body = parse(noticeSaveSchema, req.body) as SaveNoticeRequest
+    const created = await withTransaction(ctx.db, (tx) => createNotice(tx, tz, user, body))
     res.status(201).json(created)
   })
 
   r.put('/:id', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
-    const body = parse(saveSchema, req.body) as SaveNoticeRequest
-    const after = await withTransaction(ctx.db, async (tx) => {
-      const before = await loadNotice(tx, tz, id)
-      if (!before) throw notFound('That notice')
-      await tx.query(
-        `UPDATE notices SET title = $2, body = $3, severity = $4, requires_ack = $5, valid_from = $6, valid_to = $7, match_mode = $8 WHERE id = $1`,
-        [id, body.title, body.body, body.severity, body.requiresAck, body.validFrom, body.validTo, body.matchMode ?? 'all'],
-      )
-      await writeParts(tx, id, body)
-      const next = (await loadNotice(tx, tz, id))!
-      await auditChanges(tx, { userId: user.id, userName: user.name, entity: 'Notice', entityId: id }, pick(before), pick(next))
-      return next
-    })
+    const body = parse(noticeSaveSchema, req.body) as SaveNoticeRequest
+    const after = await withTransaction(ctx.db, (tx) => updateNotice(tx, tz, user, id, body))
     res.json(after)
   })
 
@@ -246,26 +228,14 @@ export function noticesRoutes(ctx: AppContext): Router {
   r.post('/:id/withdraw', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
-    const after = await withTransaction(ctx.db, async (tx) => {
-      const { rowCount } = await tx.query(
-        `UPDATE notices SET withdrawn_at = now(), withdrawn_by_id = $2, withdrawn_by_name = $3 WHERE id = $1 AND deleted_at IS NULL AND withdrawn_at IS NULL`,
-        [id, user.id, user.name],
-      )
-      if (!rowCount) throw notFound('That notice')
-      await writeAudit(tx, [auditEvent('update', { userId: user.id, userName: user.name, entity: 'Notice', entityId: id }, new Date().toISOString(), { field: 'withdrawn', newValue: 'yes' })])
-      return (await loadNotice(tx, tz, id))!
-    })
+    const after = await withTransaction(ctx.db, (tx) => withdrawNotice(tx, tz, user, id))
     res.json(after)
   })
 
   r.delete('/:id', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
-    await withTransaction(ctx.db, async (tx) => {
-      const { rowCount } = await tx.query(`UPDATE notices SET deleted_at = now(), deleted_by_id = $2 WHERE id = $1 AND deleted_at IS NULL`, [id, user.id])
-      if (!rowCount) throw notFound('That notice')
-      await auditDelete(tx, { userId: user.id, userName: user.name, entity: 'Notice', entityId: id })
-    })
+    await withTransaction(ctx.db, (tx) => deleteNotice(tx, user, id))
     res.status(204).end()
   })
 
