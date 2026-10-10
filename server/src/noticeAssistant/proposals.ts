@@ -125,8 +125,12 @@ export async function noticeVersions(q: Queryable, conversationId: string, propo
  * instead — as when another version of it published its notice already
  * (pressed while a later version was being written, say).
  */
-export async function checkNoticeRevision(q: Queryable, conversationId: string, userId: string, revisesProposalId: string): Promise<NoticeRevision> {
+export async function checkNoticeRevision(q: Queryable, conversationId: string, userId: string, revisesProposalId: string, action: AiNoticeAction): Promise<NoticeRevision> {
   const none = (error: string): NoticeRevision => ({ errors: [error], revises: null, supersedes: null })
+  // A change, a withdrawal or a deletion names its notice: a link to a card already done leaves nothing to replace
+  // and nothing it could do twice, so it is let go rather than shown as a card that did not pass. Only a new notice
+  // after a published version would be the same notice twice.
+  const unlinked: NoticeRevision = { errors: [], revises: null, supersedes: null }
   if (!isUuid(revisesProposalId)) return none(`revisesProposalId: ${quotedId(revisesProposalId)} is not a proposal id.`)
   const { rows } = await q.query<{ id: string; ok: boolean; state: AiNoticeProposalState; action: AiNoticeAction; noticeId: string | null; noticeLive: boolean }>(
     `SELECT p.id, p.ok, p.state, p.action, p.notice_id AS "noticeId",
@@ -138,6 +142,7 @@ export async function checkNoticeRevision(q: Queryable, conversationId: string, 
   const revised = rows[0]
   if (!revised) return none('revisesProposalId: no card of this conversation has that id (each propose_notice_change result names its proposalId).')
   if (revised.state === 'applied') {
+    if (action !== 'create') return unlinked
     const what =
       revised.action === 'create'
         ? revised.noticeLive
@@ -150,6 +155,7 @@ export async function checkNoticeRevision(q: Queryable, conversationId: string, 
   }
   const { published } = await noticeVersions(q, conversationId, revised.id)
   if (published) {
+    if (action !== 'create') return unlinked
     return none(
       published.noticeLive
         ? `revisesProposalId: another version of that card was published: it is the notice ${published.noticeId} now. To change it, propose an update with noticeId "${published.noticeId}" and leave revisesProposalId out.`

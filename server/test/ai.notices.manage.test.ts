@@ -567,6 +567,23 @@ describe('§23 one notice from every version of its card', () => {
     expect([await noticeCount('Chain v1'), await noticeCount('Chain v2'), await noticeCount('Chain v3')]).toEqual([1, 0, 0])
   })
 
+  it('lets a change, a withdrawal or a deletion that names a card already done go through, unlinked, instead of failing', async () => {
+    // The model often links the next card to the last one even after it was pressed: "withdraw it", then "delete it".
+    const made = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Linked after done' }) })
+    const notice = await applied(p.boss, made.part!.proposalId)
+    const withdraw = await proposeInChat(p.boss, { action: 'withdraw', noticeId: notice.noticeId, revisesProposalId: made.part!.proposalId }, made.conversationId)
+    expect(withdraw.part).toMatchObject({ ok: true, action: 'withdraw', state: 'proposed' })
+    await applied(p.boss, withdraw.part!.proposalId)
+    const del = await proposeInChat(p.boss, { action: 'delete', noticeId: notice.noticeId, revisesProposalId: withdraw.part!.proposalId }, made.conversationId)
+    expect(del.part).toMatchObject({ ok: true, action: 'delete', state: 'proposed' })
+    await applied(p.boss, del.part!.proposalId)
+    // Nothing earlier was marked replaced: what was pressed stays as it was.
+    expect((await historyCards(p.boss, made.conversationId)).map((c) => c.state)).toEqual(['applied', 'applied', 'applied'])
+    // A new notice linked to the published one is still refused: it would be the same notice twice.
+    const again = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Linked after done, again' }), revisesProposalId: made.part!.proposalId }, made.conversationId)
+    expect(again.part).toMatchObject({ ok: false })
+  })
+
   it('refuses any version of a new notice once another one of them is out: an earlier one, a later one, or one beside it', async () => {
     // A version that failed leaves its card as it was, so the first and the third are both live.
     const first = await proposeInChat(p.boss, { action: 'create', draft: draft({ title: 'Family v1' }) })

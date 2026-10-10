@@ -215,7 +215,7 @@ async function propose(ctx: NoticeToolContext, tu: ToolUse): Promise<ToolOutcome
   let supersedes: string | null = null
   const asked = readRevises(tu.input)
   if (asked) {
-    const revision = await checkNoticeRevision(ctx.db, ctx.conversationId, ctx.userId, asked)
+    const revision = await checkNoticeRevision(ctx.db, ctx.conversationId, ctx.userId, asked, action)
     errors.push(...revision.errors)
     revises = revision.revises
     supersedes = revision.supersedes

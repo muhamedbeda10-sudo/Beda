@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-10.3',
+    date: '2026-10-10',
+    title: 'Notices through the AI assistant, and a tidier header',
+    items: [
+      { text: 'Ask the assistant about notices: everyone about the ones in their own bell, administrators about every notice and who has read or acknowledged it.' },
+      { text: 'Administrators who are allowed can have the assistant write a notice in plain words — what it says, who sees it and when — or change, withdraw or delete one. It shows a card with the notice exactly as it will look, who it reaches and its days; nothing changes until Publish (or Apply, Withdraw, Delete) is pressed. Photos and files are still added on the Notices page.' },
+      { text: 'Light or dark is now chosen under your photo (on a phone, at the bottom of the menu), and the AI assistant has its button on phones too.' },
+    ],
+  },
+  {
     id: '2026-10-10.2',
     date: '2026-10-10',
     title: 'AI assistant: asks, explains and agrees first',
