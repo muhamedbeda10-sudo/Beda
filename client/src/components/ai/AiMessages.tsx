@@ -8,7 +8,8 @@
 // queries folded under "How I got this"; then how it ended, when, Save as
 // report and a Copy; the latest answer also offers the questions the model
 // suggests asking next. An automation it proposed (§21) is a card in its
-// place, to activate, edit or discard. A saved message changes only when it is saved as a
+// place, to activate, edit or discard; so is a notice it drafted (§23), to
+// publish, change, withdraw or delete, or discard. A saved message changes only when it is saved as a
 // report, so it is memoised; the answer being written redraws once per frame.
 // ============================================================================
 
@@ -25,6 +26,7 @@ import { Notice, StopNotice } from './AiNotice'
 import { useSaveAsReport } from './AiSaveReport'
 import { AiSuggestions } from './AiSuggestions'
 import { AutomationProposalCard } from '@/components/automations/AutomationProposalCard'
+import { AiNoticeProposalCard } from './AiNoticeProposalCard'
 import { answerBlocks, type AnswerBlock } from './answerLayout'
 import { queryChart, type ChartModel } from './chartData'
 import { kpiCards, liveKpis } from './kpis'
@@ -175,6 +177,8 @@ const NO_CHARTS: ReadonlyMap<string, ChartModel> = new Map()
  * its filters. `question` is the question it replies to, for its exports and
  * Ask again. `latest`: the conversation's last answer, the one that offers
  * its follow-up questions (`onSuggestion` puts one in the box).
+ * `noticesWait`: a later answer, still being written, drafted a notice card
+ * that may replace one of this answer's (noticeCardsWait), so they wait.
  */
 export const Answer = memo(function Answer({
   message,
@@ -184,6 +188,7 @@ export const Answer = memo(function Answer({
   latest = false,
   onSuggestion,
   onOpenReport,
+  noticesWait = false,
 }: {
   message?: AiMessage
   turn?: LiveTurn
@@ -192,6 +197,7 @@ export const Answer = memo(function Answer({
   latest?: boolean
   onSuggestion?: (q: string) => void
   onOpenReport?: (reportId: string) => void
+  noticesWait?: boolean
 }) {
   const writing = !!turn && isInFlight(turn)
   // The answer as it ended: the saved one, or the turn's once done; until then, the parts as streamed,
@@ -242,6 +248,8 @@ export const Answer = memo(function Answer({
             return <HowIGotThis key={b.key} queries={b.queries} writing={writing} question={question} />
           case 'automation':
             return <AutomationProposalCard key={b.key} part={b.part} writing={writing} />
+          case 'notice':
+            return <AiNoticeProposalCard key={b.key} part={b.part} writing={writing || noticesWait} />
         }
       })}
       {working && <Working text={working} />}

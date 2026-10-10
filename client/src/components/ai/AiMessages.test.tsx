@@ -3,10 +3,18 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { AiMessage, AiQueryPart } from '@qc/shared/ai'
+import type { AiNoticePart } from '@qc/shared/noticeAssistant'
+import { PROPOSAL_WAIT } from '@/components/automations/AutomationProposalCard'
 import { AppProvider } from '@/store/AppContext'
 import { AiAssistantProvider } from './AiAssistantProvider'
 import { Answer } from './AiMessages'
 import { startTurn, type LivePart, type LiveTurn } from './liveTurn'
+
+// A notice card asks the signed-in person's role (its link to the Notices page is an administrator's).
+vi.mock('@/store/AuthContext', async (original) => ({
+  ...(await original<typeof import('@/store/AuthContext')>()),
+  useAuth: () => ({ role: 'admin', profile: null, factoryTimeZone: 'Africa/Cairo' }),
+}))
 
 // An answer drawn to a string, as on a server: the layout effects (a chart reading its width) say they do nothing
 // there, which is all the test needs.
@@ -24,7 +32,7 @@ afterAll(() => {
   vi.unstubAllGlobals()
 })
 
-function render(props: { message?: AiMessage; turn?: LiveTurn }): string {
+function render(props: { message?: AiMessage; turn?: LiveTurn; noticesWait?: boolean }): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>
       <AppProvider>
@@ -158,5 +166,23 @@ describe('an answer being written', () => {
     expect(whole).toContain('Headline figures')
     expect(whole).toContain('There were 19')
     expect(whole).toContain('ai-caret')
+  })
+})
+
+describe('a saved answer’s notice card while a later answer is written', () => {
+  const card: AiNoticePart = {
+    type: 'notice',
+    proposalId: 'n1',
+    ok: true,
+    action: 'create',
+    state: 'proposed',
+    draft: { title: 'Check the coating', body: 'Measure every coil.', severity: 'warning', requiresAck: true, matchMode: 'all', validFrom: '2026-10-10', validTo: null, targets: [] },
+    reach: { everyone: true, people: 12, placeBound: false },
+  }
+  const drafted: AiMessage = { ...saved, parts: [{ type: 'text', text: 'Here is the notice.' }, card], kpis: undefined }
+
+  it('waits, Publish and Discard alike, when that answer drafted a notice card that may replace it', () => {
+    expect(render({ message: drafted, noticesWait: true }).match(new RegExp(`disabled="" data-tip="${PROPOSAL_WAIT}"`, 'g'))).toHaveLength(2)
+    expect(render({ message: drafted })).not.toContain(PROPOSAL_WAIT)
   })
 })

@@ -31,6 +31,14 @@
 // from its card here, by the person who asked, while they still may (404 to
 // anyone else). The Automations page has its own routes
 // (automations.routes.ts).
+//
+// §23 — every NEW conversation can read notices as the app shows them to the
+// person (their bell; every notice for an administrator). An administrator
+// the owner allows (the owner implicitly) also gets the tools to draft a
+// notice, a change, a withdrawal or a deletion as a card, applied or
+// discarded here by the person who asked, while they still may — their role
+// read again at the press (403 to a person who may not, 404 for a card not
+// theirs).
 // ============================================================================
 
 import { Router, type Request, type RequestHandler, type Response } from 'express'
@@ -64,6 +72,7 @@ import {
 } from '@qc/shared/ai'
 import { auditEvent } from '@qc/shared/audit'
 import type { AutomationActivateResponse, AutomationDiscardResponse } from '@qc/shared/automation'
+import type { AiNoticeApplyResponse, AiNoticeDiscardResponse } from '@qc/shared/noticeAssistant'
 import type { AppContext } from '../context'
 import { PG, pgCode, withTransaction } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
@@ -75,6 +84,7 @@ import {
   listAccess,
   loadAccess,
   mayAutomate,
+  mayManageNotices,
   personAvailability,
   removeAccess,
   saveAccess,
@@ -119,6 +129,9 @@ import { asksForConfirmation } from '../automations/confirmation'
 import { EditsInput } from '../automations/draft'
 import { activateProposal, discardProposal } from '../automations/lifecycle'
 import { AUTOMATION_TOOLS, PROPOSE_AUTOMATION_TOOL_NAME, automationToolHandlers } from '../automations/tools'
+import { applyNoticeProposal, discardNoticeProposal } from '../noticeAssistant/lifecycle'
+import { noticeManager, noticePromptMode } from '../noticeAssistant/scope'
+import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS, noticeToolHandlers } from '../noticeAssistant/tools'
 import {
   appendMessages,
   createConversation,
@@ -174,6 +187,11 @@ const accessSchema = z
     monthlyCapUsd: capUsd,
     /** §21 — may create automations; left out, unchanged (off for a new row). */
     automations: z.boolean().optional(),
+    /**
+     * §23 — may have the assistant write notices; left out, unchanged (off for a new row). Kept for anyone, it
+     * takes effect only while the account is an administrator (the owner's page greys it out for the others).
+     */
+    notices: z.boolean().optional(),
   })
   .strict()
 
@@ -515,9 +533,13 @@ export function aiRoutes(ctx: AppContext): Router {
     const apiKey = avail.app.apiKey
 
     // A new conversation's prompt carries the data dictionary of the person's domains as the catalog has it now, for good,
-    // and — for a person who may create automations as it starts — how to propose one, with the tools to do it (§21).
+    // and — for a person who may create automations as it starts — how to propose one, with the tools to do it (§21);
+    // and what the person sees of notices, with the tools to read them, and — for an administrator the owner allows —
+    // how to draft one as a card, with the tools to do it (§23). Their role is the one this request was signed in with.
     const automations = avail.me.automations ? { id: user.id, name: user.name, role: user.role } : null
-    const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains, { automations })
+    const managesNotices = mayManageNotices(access, owner, user.role)
+    const notices = noticePromptMode(user.role, managesNotices)
+    const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains, { automations, notices })
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return
     const askedAt = new Date()
@@ -541,7 +563,7 @@ export function aiRoutes(ctx: AppContext): Router {
           title: conversationTitle(body.message),
           model: access.model,
           systemPrompt: systemPrompt!,
-          tools: conversationTools(automations ? AUTOMATION_TOOLS : null),
+          tools: conversationTools(automations ? AUTOMATION_TOOLS : null, managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS),
         })
       }
       // The model and effort the owner set for the person now: an earlier conversation goes on with them too.
@@ -591,17 +613,21 @@ export function aiRoutes(ctx: AppContext): Router {
         emit: (event) => sse.send(event),
         signal: ac.signal,
         // Run only for a conversation that was given these tools; each checks the person may still use them.
-        tools: automationToolHandlers({
-          db,
-          config: ctx.config,
-          readers: ctx.aiReader,
-          userId: user.id,
-          conversationId: conversation.id,
-          turnId,
-          // Held to the person's words of agreement when its tool asks for them (§22): conversations begun before go on as they were sent.
-          confirmFirst: asksForConfirmation(conversation.tools, PROPOSE_AUTOMATION_TOOL_NAME),
-          emit: (event) => sse.send(event),
-        }),
+        tools: {
+          ...automationToolHandlers({
+            db,
+            config: ctx.config,
+            readers: ctx.aiReader,
+            userId: user.id,
+            conversationId: conversation.id,
+            turnId,
+            // Held to the person's words of agreement when its tool asks for them (§22): conversations begun before go on as they were sent.
+            confirmFirst: asksForConfirmation(conversation.tools, PROPOSE_AUTOMATION_TOOL_NAME),
+            emit: (event) => sse.send(event),
+          }),
+          // §23 — each reads the person's role again: what they see, and whether they may still have a notice written.
+          ...noticeToolHandlers({ db, config: ctx.config, userId: user.id, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
+        },
       })
       await finishTurn(db, turnId, outcome.stopReason, outcome.notice)
       const answer = (await loadDisplayMessages(db, conversation.id, turnId)).find((m) => m.role === 'assistant')!
@@ -740,6 +766,37 @@ export function aiRoutes(ctx: AppContext): Router {
     const { user } = await automator(req)
     const id = parse(uuid, req.params.id)
     const reply: AutomationDiscardResponse = await discardProposal(automationDeps, id, { id: user.id, name: user.name })
+    res.json(reply)
+  })
+
+  // ---- Notice cards (§23) -----------------------------------------------------------------------
+
+  /**
+   * The person asking, while they may have the assistant write notices: given
+   * the assistant, an administrator by their role now, and allowed by the owner
+   * (or the owner). A card is pressed by the person who asked only: someone
+   * else's is "not found".
+   */
+  async function noticeWriter(req: Request): Promise<AuthUser> {
+    const user = requireUser(req)
+    if (!(await noticeManager(db, ctx.config, user.id))) {
+      throw new HttpError(403, 'forbidden', "Only an administrator the assistant's owner allows can manage notices through the assistant.")
+    }
+    return user
+  }
+
+  /** Apply a card: the notice written exactly as the Notices page writes it, as the person pressing the button. */
+  r.post('/notice-proposals/:id/apply', async (req, res) => {
+    const user = await noticeWriter(req)
+    const id = parse(uuid, req.params.id)
+    const reply: AiNoticeApplyResponse = await applyNoticeProposal(db, tz, id, { id: user.id, name: user.name })
+    res.json(reply)
+  })
+
+  r.post('/notice-proposals/:id/discard', async (req, res) => {
+    const user = await noticeWriter(req)
+    const id = parse(uuid, req.params.id)
+    const reply: AiNoticeDiscardResponse = await discardNoticeProposal(db, id, { id: user.id, name: user.name })
     res.json(reply)
   })
 

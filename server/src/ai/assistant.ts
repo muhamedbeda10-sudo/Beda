@@ -25,10 +25,11 @@
 //     chart asked for with it is checked against the result (charts.ts); one
 //     that does not fit is left out, with a word on why in the result.
 //   • a conversation given more tools than run_sql (§21: the automations'
-//     tools, for people allowed to create them) has them run by name, by the
-//     handlers the request hands in; what they keep (a proposal) is stored in
-//     the same transaction as the call and its result. A tool the
-//     conversation was never given is answered as unknown.
+//     tools, for people allowed to create them; §23: the notices' tools) has
+//     them run by name, by the handlers the request hands in; what they keep
+//     (a proposal, a notice card) is stored in the same transaction as the
+//     call and its result. A tool the conversation was never given is
+//     answered as unknown.
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'

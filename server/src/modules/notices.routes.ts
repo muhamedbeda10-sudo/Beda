@@ -8,6 +8,9 @@
 //             GET  /files/:id/content
 //   Admins:   GET  /admin, POST /, PUT /:id, POST /:id/withdraw, DELETE /:id,
 //             GET  /:id/acknowledgements, POST /files
+//
+// The writes are noticesService.ts's, which the assistant's notice cards
+// (§23) write through too: one set of checks, one audit trail.
 // ============================================================================
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -15,53 +18,20 @@ import { Router, type Request, type Response } from 'express'
 import multer from 'multer'
 import { z } from 'zod'
 import type { AcknowledgeNoticeRequest, MatchNoticesResponse, NoticeInboxResponse, SaveNoticeRequest } from '@qc/shared/api'
-import { NOTICE_SEVERITIES, NOTICE_TARGET_KINDS, PROCESSES, ROLES, type Notice, type NoticeAcknowledgement, type NoticeAdminRow, type NoticeFile, type Process } from '@qc/shared/types'
+import type { NoticeAcknowledgement, NoticeAdminRow, NoticeFile, Process } from '@qc/shared/types'
 import { deriveShift, processForMachine, stockProductionOf } from '@qc/shared/rules'
 import type { AppContext } from '../context'
-import { withTransaction, type Queryable } from '../db/pool'
+import { withTransaction } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { requireCapability, requireUser } from '../auth/middleware'
-import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
-import { auditEvent } from '@qc/shared/audit'
 import { dropNulls } from '../lib/rows'
 import { NOTICE_FILE_TYPES, buildNoticeFileStorageKey } from '../images/storage'
 import { isPdf } from './workInstructions.routes'
 import { NOTICE_SELECT, attachNoticeParts, loadInbox, loadPending, type NoticeContext, type NoticeRow } from './notices'
+import { createNotice, deleteNotice, noticeSaveSchema, updateNotice, withdrawNotice } from './noticesService'
 
 const uuid = z.string().uuid()
-const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date as YYYY-MM-DD.')
-
-const targetSchema = z.object({
-  kind: z.enum(NOTICE_TARGET_KINDS as unknown as [string, ...string[]]),
-  value: z.string().trim().min(1).max(200),
-  label: z.string().trim().max(300).default(''),
-})
-
-const saveSchema = z
-  .object({
-    title: z.string().trim().min(1).max(200),
-    body: z.string().trim().max(4000).default(''),
-    severity: z.enum(NOTICE_SEVERITIES as unknown as [string, ...string[]]),
-    requiresAck: z.boolean().default(true),
-    matchMode: z.enum(['all', 'any']).default('all'),
-    validFrom: day,
-    validTo: day.nullable().default(null),
-    targets: z.array(targetSchema).max(100).default([]),
-    imageIds: z.array(uuid).max(20).default([]),
-    fileIds: z.array(uuid).max(10).default([]),
-  })
-  .superRefine((b, ctx) => {
-    if (b.validTo && b.validTo < b.validFrom) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['validTo'], message: 'The end is before the start.' })
-    for (const [i, t] of b.targets.entries()) {
-      const bad =
-        (t.kind === 'process' && !(PROCESSES as readonly string[]).includes(t.value)) ||
-        (t.kind === 'role' && !(ROLES as readonly string[]).includes(t.value)) ||
-        (t.kind === 'shift' && !['A', 'B', 'C'].includes(t.value)) ||
-        ((t.kind === 'user' || t.kind === 'order-line') && !uuid.safeParse(t.value).success)
-      if (bad) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targets', i, 'value'], message: `Not a valid ${t.kind}.` })
-    }
-  })
 
 const matchSchema = z.union([z.object({ sessionId: uuid }), z.object({ workCenterCode: z.string().trim().min(1).max(40), orderId: uuid.optional() })])
 
@@ -81,50 +51,6 @@ export function sniffNoticeFile(name: string, bytes: Buffer): keyof typeof NOTIC
   if (ext === 'xlsx' && bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) return 'xlsx'
   if (ext === 'xls' && bytes.length > 8 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) return 'xls'
   throw badRequest('Only PDF and Excel files (.pdf, .xlsx, .xls) are accepted.')
-}
-
-async function loadNotice(q: Queryable, tz: string, id: string): Promise<(NoticeRow & Pick<Notice, 'targets' | 'imageIds' | 'files'>) | null> {
-  const { rows } = await q.query<NoticeRow>(`SELECT ${NOTICE_SELECT} FROM notices n WHERE n.id = $2 AND n.deleted_at IS NULL`, [tz, id])
-  if (!rows[0]) return null
-  return (await attachNoticeParts(q, rows))[0]
-}
-
-/** Replace the targets, images and files of a notice with the request's. */
-async function writeParts(tx: Queryable, noticeId: string, body: SaveNoticeRequest): Promise<void> {
-  await tx.query(`DELETE FROM notice_targets WHERE notice_id = $1`, [noticeId])
-  for (const t of body.targets) {
-    await tx.query(`INSERT INTO notice_targets (notice_id, kind, value, label) VALUES ($1, $2, $3, $4)`, [noticeId, t.kind, t.value, t.label])
-  }
-  await tx.query(`DELETE FROM notice_images WHERE notice_id = $1`, [noticeId])
-  for (const [i, imageId] of body.imageIds.entries()) {
-    const { rowCount } = await tx.query(`SELECT 1 FROM images WHERE id = $1 AND deleted_at IS NULL`, [imageId])
-    if (!rowCount) throw badRequest('An attached image was not found.')
-    await tx.query(`INSERT INTO notice_images (notice_id, image_id, position) VALUES ($1, $2, $3)`, [noticeId, imageId, i])
-  }
-  // A file belongs to at most one notice; the ones dropped from this notice are marked deleted, not moved.
-  await tx.query(`UPDATE notice_files SET deleted_at = now() WHERE notice_id = $1 AND deleted_at IS NULL AND NOT (id = ANY($2::uuid[]))`, [noticeId, body.fileIds])
-  for (const fileId of body.fileIds) {
-    const { rowCount } = await tx.query(
-      `UPDATE notice_files SET notice_id = $1 WHERE id = $2 AND deleted_at IS NULL AND (notice_id IS NULL OR notice_id = $1)`,
-      [noticeId, fileId],
-    )
-    if (!rowCount) throw badRequest('An attached file was not found.')
-  }
-}
-
-function pick(n: SaveNoticeRequest | Notice) {
-  return {
-    title: n.title,
-    body: n.body,
-    severity: n.severity,
-    requiresAck: n.requiresAck,
-    matchMode: n.matchMode ?? 'all',
-    validFrom: n.validFrom,
-    validTo: n.validTo ?? null,
-    targets: n.targets.map((t) => `${t.kind}:${t.value}`).sort().join(', '),
-    images: n.imageIds.length,
-    files: 'fileIds' in n ? n.fileIds.length : n.files.length,
-  }
 }
 
 export function noticesRoutes(ctx: AppContext): Router {
@@ -285,37 +211,16 @@ export function noticesRoutes(ctx: AppContext): Router {
 
   r.post('/', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
-    const body = parse(saveSchema, req.body) as SaveNoticeRequest
-    const created = await withTransaction(ctx.db, async (tx) => {
-      const { rows } = await tx.query<{ id: string }>(
-        `INSERT INTO notices (title, body, severity, requires_ack, valid_from, valid_to, created_by_id, created_by_name, match_mode)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-        [body.title, body.body, body.severity, body.requiresAck, body.validFrom, body.validTo, user.id, user.name, body.matchMode ?? 'all'],
-      )
-      const id = rows[0].id
-      await writeParts(tx, id, body)
-      await auditCreate(tx, { userId: user.id, userName: user.name, entity: 'Notice', entityId: id })
-      return (await loadNotice(tx, tz, id))!
-    })
+    const body = parse(noticeSaveSchema, req.body) as SaveNoticeRequest
+    const created = await withTransaction(ctx.db, (tx) => createNotice(tx, tz, user, body))
     res.status(201).json(created)
   })
 
   r.put('/:id', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
-    const body = parse(saveSchema, req.body) as SaveNoticeRequest
-    const after = await withTransaction(ctx.db, async (tx) => {
-      const before = await loadNotice(tx, tz, id)
-      if (!before) throw notFound('That notice')
-      await tx.query(
-        `UPDATE notices SET title = $2, body = $3, severity = $4, requires_ack = $5, valid_from = $6, valid_to = $7, match_mode = $8 WHERE id = $1`,
-        [id, body.title, body.body, body.severity, body.requiresAck, body.validFrom, body.validTo, body.matchMode ?? 'all'],
-      )
-      await writeParts(tx, id, body)
-      const next = (await loadNotice(tx, tz, id))!
-      await auditChanges(tx, { userId: user.id, userName: user.name, entity: 'Notice', entityId: id }, pick(before), pick(next))
-      return next
-    })
+    const body = parse(noticeSaveSchema, req.body) as SaveNoticeRequest
+    const after = await withTransaction(ctx.db, (tx) => updateNotice(tx, tz, user, id, body))
     res.json(after)
   })
 
@@ -323,26 +228,14 @@ export function noticesRoutes(ctx: AppContext): Router {
   r.post('/:id/withdraw', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
-    const after = await withTransaction(ctx.db, async (tx) => {
-      const { rowCount } = await tx.query(
-        `UPDATE notices SET withdrawn_at = now(), withdrawn_by_id = $2, withdrawn_by_name = $3 WHERE id = $1 AND deleted_at IS NULL AND withdrawn_at IS NULL`,
-        [id, user.id, user.name],
-      )
-      if (!rowCount) throw notFound('That notice')
-      await writeAudit(tx, [auditEvent('update', { userId: user.id, userName: user.name, entity: 'Notice', entityId: id }, new Date().toISOString(), { field: 'withdrawn', newValue: 'yes' })])
-      return (await loadNotice(tx, tz, id))!
-    })
+    const after = await withTransaction(ctx.db, (tx) => withdrawNotice(tx, tz, user, id))
     res.json(after)
   })
 
   r.delete('/:id', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
-    await withTransaction(ctx.db, async (tx) => {
-      const { rowCount } = await tx.query(`UPDATE notices SET deleted_at = now(), deleted_by_id = $2 WHERE id = $1 AND deleted_at IS NULL`, [id, user.id])
-      if (!rowCount) throw notFound('That notice')
-      await auditDelete(tx, { userId: user.id, userName: user.name, entity: 'Notice', entityId: id })
-    })
+    await withTransaction(ctx.db, (tx) => deleteNotice(tx, user, id))
     res.status(204).end()
   })
 

@@ -126,7 +126,7 @@ describe('§20 follow-up questions in a conversation', () => {
     expect(system).toContain('End every answer with two or three short suggestions, as the very last thing you write, in exactly this form:\n<suggestions>\n- first suggestion\n- second suggestion\n</suggestions>')
     // §22 — an answer that asks the person something suggests their likely replies; any other, the next questions.
     expect(system).toContain('When your answer asks the person something (to choose an option, to answer a question, to confirm a plan), the suggestions are their likely replies, written as they would type them.')
-    expect(system).toContain('Otherwise they are questions the person might ask next, each answerable from the ai.* views you can read and none repeating what you just answered.')
+    expect(system).toContain('Otherwise they are questions the person might ask next, each answerable from the ai.* views you can read or from the notices and none repeating what you just answered.')
     expect(system).toContain('The app shows them as buttons that put the text in the message box and takes the block out of your answer, so never mention it.')
   })
 

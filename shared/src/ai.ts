@@ -10,6 +10,7 @@
 
 import type { ApiErrorCode } from './api'
 import type { AiAutomationPart } from './automation'
+import type { AiNoticePart } from './noticeAssistant'
 
 /** The model the assistant runs on. */
 export const AI_MODEL = 'claude-sonnet-5-5'
@@ -179,6 +180,8 @@ export interface AiAccess {
   owner: boolean
   /** May create automations (§21); always true for the owner. */
   automations: boolean
+  /** May have the assistant add, change, withdraw and delete notices (§23). Takes effect only while the account is an administrator. */
+  notices: boolean
   updatedAt?: string
   updatedByName?: string
 }
@@ -195,6 +198,8 @@ export interface AiAccessRequest {
   monthlyCapUsd: number
   /** May create automations (§21). Absent: unchanged (false for a new row). */
   automations?: boolean
+  /** May manage notices through the assistant (§23), while an administrator. Absent: unchanged (false for a new row). */
+  notices?: boolean
 }
 
 /** What anyone signed in learns about the assistant: no amounts, no models, no settings. */
@@ -322,8 +327,8 @@ export interface AiKpi {
   trend?: AiKpiTrend
 }
 
-/** An answer's pieces in order. An automation proposal (§21) is a card the person activates or discards. */
-export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart
+/** An answer's pieces in order. An automation proposal (§21) and a notice card (§23) are cards the person applies or discards. */
+export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart | AiNoticePart
 
 /** How an answer ended. */
 export type AiStopReason =
@@ -384,6 +389,8 @@ export type AiStreamEvent =
   | { type: 'query_end'; part: AiQueryPart }
   /** A proposed automation (§21), checked and tried once. */
   | { type: 'automation'; part: AiAutomationPart }
+  /** A notice card (§23): a new notice, a change, a withdrawal or a deletion, waiting for its button. */
+  | { type: 'notice'; part: AiNoticePart }
   | { type: 'done'; message: AiMessage; status: AiStatusResponse }
   | { type: 'error'; code: ApiErrorCode; message: string }
 

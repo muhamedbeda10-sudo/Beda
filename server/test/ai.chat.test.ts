@@ -202,12 +202,19 @@ describe('§20 asking a question', () => {
     const system = (p.system as { text: string }[])[0].text
     expect(system).toContain('The factory\'s time zone is Africa/Cairo.')
     expect(system).not.toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
-    // The owner may create automations (§21): their new conversations also get the automations' two tools.
+    // The owner may create automations (§21): their new conversations also get the automations' two tools; and,
+    // an administrator, the notices' four (§23): reading them, as everyone does, and having them written.
     expect(p.tools).toEqual([
       expect.objectContaining({ name: 'run_sql', strict: true, eager_input_streaming: true, input_schema: expect.objectContaining({ additionalProperties: false, required: ['purpose', 'sql'] }) }),
       expect.objectContaining({ name: 'propose_automation', eager_input_streaming: true }),
       expect.objectContaining({ name: 'my_automations', strict: true }),
+      expect.objectContaining({ name: 'list_notices', eager_input_streaming: true }),
+      expect.objectContaining({ name: 'notice_details', eager_input_streaming: true }),
+      expect.objectContaining({ name: 'find_notice_targets', eager_input_streaming: true }),
+      expect.objectContaining({ name: 'propose_notice_change', eager_input_streaming: true }),
     ])
+    // None of the notices' tools is strict: each strict schema adds to one grammar, and the server reads their input itself.
+    for (const tool of p.tools!.slice(3)) expect(tool).not.toHaveProperty('strict')
     // Not strict: with run_sql's, its alternatives compile to a grammar larger than the API accepts; the server checks the input itself.
     expect(p.tools![1]).not.toHaveProperty('strict')
     expect(p.messages).toHaveLength(1)
@@ -537,7 +544,13 @@ describe('§20 how answers end', () => {
     const results = last(app.model.calls).params.messages[2].content as Anthropic.Beta.BetaToolResultBlockParam[]
     expect(results).toEqual([
       { type: 'tool_result', tool_use_id: 'toolu_bad', is_error: true, content: JSON.stringify({ INVALID_JSON: JSON.stringify({ purpose: 'No SQL' }) }) },
-      { type: 'tool_result', tool_use_id: 'toolu_other', is_error: true, content: 'Unknown tool "drop_everything". The tools are "run_sql", "propose_automation", "my_automations".' },
+      {
+        type: 'tool_result',
+        tool_use_id: 'toolu_other',
+        is_error: true,
+        content:
+          'Unknown tool "drop_everything". The tools are "run_sql", "propose_automation", "my_automations", "list_notices", "notice_details", "find_notice_targets", "propose_notice_change".',
+      },
       { type: 'tool_result', tool_use_id: 'toolu_case', is_error: true, content: expect.stringMatching(/permission denied/) },
     ])
     const parts = res.done!.message.parts.filter((p): p is AiQueryPart => p.type === 'query')

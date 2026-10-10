@@ -9,6 +9,7 @@ import { CHART_INPUT_SCHEMA, checkChart } from '../src/ai/charts'
 import { KPIS_BLOCK, MAX_KPIS, parseKpis } from '../src/ai/kpis'
 import { RUN_SQL_TOOL } from '../src/ai/prompt'
 import { AUTOMATION_TOOLS } from '../src/automations/tools'
+import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS } from '../src/noticeAssistant/tools'
 import type { QueryPreview } from '../src/ai/runQuery'
 import { SUGGESTIONS_BLOCK } from '../src/ai/suggestions'
 
@@ -293,8 +294,9 @@ describe('§20 a professional answer in a conversation', () => {
     expect(system).toMatch(/never chart a single number/i)
     // The figures open the answer; the questions still close it.
     expect(system.indexOf('# Headline figures')).toBeLessThan(system.indexOf('# Follow-up questions'))
-    // The owner asks here, who may create automations (§21): the automations' tools follow run_sql.
-    expect(p.tools).toEqual([RUN_SQL_TOOL, ...AUTOMATION_TOOLS])
+    // The owner asks here, who may create automations (§21): the automations' tools follow run_sql; then the
+    // notices' (§23), the owner being an administrator who may have them written.
+    expect(p.tools).toEqual([RUN_SQL_TOOL, ...AUTOMATION_TOOLS, ...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS])
   })
 
   it('draws the charts that fit their results, live and in the history, and tells the model about the rest', async () => {

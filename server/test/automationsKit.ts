@@ -49,6 +49,8 @@ export interface Grant {
   effort?: AiEffort
   monthlyCapUsd?: number
   automations?: boolean
+  /** §23 — may have the assistant write notices (while an administrator). */
+  notices?: boolean
 }
 
 export async function grant(app: TestApp, owner: Session, person: Session, g: Grant = {}): Promise<AiAccess> {

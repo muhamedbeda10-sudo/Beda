@@ -8,16 +8,23 @@
 // queries themselves. Each block keeps its key from one to the other, so the
 // query group (and the cards in it) moves rather than being drawn anew.
 //
-// An automation the assistant proposed (§21) is a card of its own, in its
-// place among the text, written or settled: it is what the answer is for.
+// An automation the assistant proposed (§21) or a notice card (§23) is a
+// card of its own, in its place among the text, written or settled: it is
+// what the answer is for.
 // ============================================================================
 
 import type { AiAutomationPart } from '@qc/shared/automation'
+import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import type { LivePart } from './liveTurn'
 
 type QueryLike = Extract<LivePart, { type: 'query' | 'pending-query' }>
 
 const isQuery = (p: LivePart): p is QueryLike => p.type === 'query' || p.type === 'pending-query'
+
+type InlinePart = Extract<LivePart, { type: 'text' | 'automation' | 'notice' }>
+
+/** What reads in its place among the text: the text itself and the cards. */
+const isInline = (p: LivePart): p is InlinePart => p.type === 'text' || p.type === 'automation' || p.type === 'notice'
 
 export type AnswerBlock =
   | { kind: 'text'; key: string; text: string }
@@ -25,6 +32,7 @@ export type AnswerBlock =
   | { kind: 'figure'; key: string; queryId: string }
   | { kind: 'queries'; key: 'queries'; queries: QueryLike[] }
   | { kind: 'automation'; key: string; part: AiAutomationPart }
+  | { kind: 'notice'; key: string; part: AiNoticePart }
 
 const QUERIES = 'queries' as const
 const KPIS = 'kpis' as const
@@ -41,6 +49,8 @@ export function answerBlocks(parts: readonly LivePart[], opts: { settled: boolea
   let textIndex = 0
   const text = (p: Extract<LivePart, { type: 'text' }>): AnswerBlock => ({ kind: 'text', key: `text:${textIndex++}`, text: p.text })
   const automation = (p: AiAutomationPart): AnswerBlock => ({ kind: 'automation', key: `automation:${p.proposalId}`, part: p })
+  const notice = (p: AiNoticePart): AnswerBlock => ({ kind: 'notice', key: `notice:${p.proposalId}`, part: p })
+  const inline = (p: InlinePart): AnswerBlock => (p.type === 'text' ? text(p) : p.type === 'automation' ? automation(p) : notice(p))
 
   const blocks: AnswerBlock[] = []
   let kpisPlaced = !opts.kpis
@@ -53,10 +63,10 @@ export function answerBlocks(parts: readonly LivePart[], opts: { settled: boolea
   if (!opts.settled) {
     let grouped = false
     parts.forEach((p, i) => {
-      if (p.type === 'text' || p.type === 'automation') {
+      if (isInline(p)) {
         // The figures head what was written after the last query (the answer itself).
         if (i > lastQuery) placeKpis()
-        blocks.push(p.type === 'text' ? text(p) : automation(p))
+        blocks.push(inline(p))
       } else if (!grouped) {
         grouped = true
         blocks.push({ kind: QUERIES, key: QUERIES, queries })
@@ -67,9 +77,9 @@ export function answerBlocks(parts: readonly LivePart[], opts: { settled: boolea
   }
 
   parts.forEach((p, i) => {
-    if (p.type !== 'text' && p.type !== 'automation') return
+    if (!isInline(p)) return
     if (i > lastQuery) placeKpis()
-    blocks.push(p.type === 'text' ? text(p) : automation(p))
+    blocks.push(inline(p))
   })
   placeKpis()
   for (const q of queries) if (q.type === 'query' && opts.charted.has(q.queryId)) blocks.push({ kind: 'figure', key: `figure:${q.queryId}`, queryId: q.queryId })
