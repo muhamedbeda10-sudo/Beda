@@ -14,6 +14,7 @@ import { Button, EmptyState } from '@/components/ui'
 import { markAllNotificationsRead, markNotificationRead, useNotifications } from '@/services/notifications'
 import { useApp } from '@/store/AppContext'
 import { cn, formatFullTimestamp, timeAgo } from '@/lib/utils'
+import { textDirection } from '@/lib/direction'
 import { SEVERITY_META } from './NoticeCard'
 import { ALERT_KIND_LABEL, alertTarget, alertsOf, splitAlerts, unreadAlerts } from './alerts'
 
@@ -28,11 +29,13 @@ function AlertRow({ alert: n, onOpen, onLeave }: { alert: UserNotification; onOp
         <m.icon className="h-4 w-4" />
       </span>
       <span className="min-w-0 flex-1">
-        <span dir="auto" className={cn('block text-sm', unread ? 'font-bold' : 'font-semibold text-slate-600 dark:text-slate-300', !expanded && 'line-clamp-2')}>
+        {/* line-clamp sets its own display: `block` only while expanded, or it would undo the clamp. The direction
+            comes from the letters: the values automations write are set apart with isolates, which dir="auto" skips. */}
+        <span dir={textDirection(n.title) ?? 'auto'} className={cn('text-sm', unread ? 'font-bold' : 'font-semibold text-slate-600 dark:text-slate-300', expanded ? 'block' : 'line-clamp-2')}>
           {n.title}
         </span>
         {n.body && (
-          <span dir="auto" className={cn('mt-0.5 block whitespace-pre-line break-words text-xs text-slate-600 dark:text-slate-300', !expanded && 'line-clamp-3')}>
+          <span dir={textDirection(n.body) ?? 'auto'} className={cn('mt-0.5 whitespace-pre-line break-words text-xs text-slate-600 dark:text-slate-300', expanded ? 'block' : 'line-clamp-3')}>
             {n.body}
           </span>
         )}

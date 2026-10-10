@@ -10,6 +10,7 @@ import { Section } from '@/components/inspection/SampleDetail'
 import { useFollowUpCounts, useSessionFollowUps } from '@/services/followUps'
 import { useAuth } from '@/store/AuthContext'
 import { DueText, FollowUpStatusBadge } from './parts'
+import { textDirection } from '@/lib/direction'
 
 export function SessionFollowUps({ sessionId, openCount }: { sessionId: string; openCount: number }) {
   const { factoryTimeZone: tz } = useAuth()
@@ -43,7 +44,7 @@ export function SessionFollowUps({ sessionId, openCount }: { sessionId: string; 
                       className="flex min-h-[44px] flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-white px-3 py-2 ring-1 ring-amber-200/80 transition-colors hover:bg-amber-50 dark:bg-slate-900 dark:ring-amber-500/25 dark:hover:bg-slate-800"
                     >
                       {/* A phone gives the title its own line; the rest follows under it. */}
-                      <span dir="auto" className="w-full min-w-0 truncate text-sm font-semibold text-slate-800 dark:text-slate-100 sm:w-auto sm:flex-1">
+                      <span dir={textDirection(f.title) ?? 'auto'} className="w-full min-w-0 truncate text-sm font-semibold text-slate-800 dark:text-slate-100 sm:w-auto sm:flex-1">
                         {f.title}
                       </span>
                       <FollowUpStatusBadge status={f.status} />

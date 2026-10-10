@@ -31,6 +31,7 @@ import { Section } from '@/components/inspection/SampleDetail'
 import { useAi } from '@/components/ai/AiAssistantProvider'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { textDirection } from '@/lib/direction'
 import { commentOnFollowUp, updateFollowUp, useAssignablePeople, useFollowUp, useOwnAutomationIds } from '@/services/followUps'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
@@ -188,7 +189,7 @@ function FollowUpBody({ followUp: f }: { followUp: FollowUpDetail }) {
   return (
     <div className="ai-type space-y-5">
       <div className="space-y-2">
-        <h3 dir="auto" className="break-words text-lg font-bold leading-snug">
+        <h3 dir={textDirection(f.title) ?? 'auto'} className="break-words text-lg font-bold leading-snug">
           {f.title}
         </h3>
         <div className="flex flex-wrap items-center gap-1.5">

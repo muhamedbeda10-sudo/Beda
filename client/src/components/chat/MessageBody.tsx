@@ -4,21 +4,19 @@ import type { ChatMention } from '@qc/shared/types'
 import { cn } from '@/lib/utils'
 import { segments } from './mentions'
 import { appLinkSegments } from './appLinks'
+import { textDirection } from '@/lib/direction'
 
 /**
  * A message body with its mentions as chips. Tapping a chip opens the thing it names.
- * §21 — with `appLinks` (the automations sender's messages), the app's addresses in the text open in place too.
+ * §21 — with `appLinks` (the automations sender's messages): line by line, the app's addresses in the text opening in place.
  */
 export function MessageBody({ body, mine, onMention, className, appLinks = false }: { body: string; mine: boolean; onMention: (m: ChatMention) => void; className?: string; appLinks?: boolean }) {
+  if (appLinks) return <AutomatedBody body={body} mine={mine} className={className} />
   return (
     <span className={cn('whitespace-pre-wrap break-words', className)}>
       {segments(body).map((s, i) =>
         s.type === 'text' ? (
-          appLinks ? (
-            <AppLinkedText key={i} text={s.text} mine={mine} />
-          ) : (
-            <span key={i}>{s.text}</span>
-          )
+          <span key={i}>{s.text}</span>
         ) : (
           <button
             key={i}
@@ -34,6 +32,24 @@ export function MessageBody({ body, mine, onMention, className, appLinks = false
           </button>
         ),
       )}
+    </span>
+  )
+}
+
+/**
+ * An automated message (no mentions): one line per case or bullet, each set
+ * its own way — an Arabic case reads right to left in an English message and
+ * the other way round. Its values are set apart with Unicode isolates, which
+ * dir="auto" passes over, so the direction is decided from the letters.
+ */
+function AutomatedBody({ body, mine, className }: { body: string; mine: boolean; className?: string }) {
+  return (
+    <span className={cn('block whitespace-pre-wrap break-words', className)}>
+      {body.split('\n').map((line, i) => (
+        <span key={i} dir={textDirection(line) ?? 'auto'} className="block text-start">
+          {line ? <AppLinkedText text={line} mine={mine} /> : '\u00a0'}
+        </span>
+      ))}
     </span>
   )
 }

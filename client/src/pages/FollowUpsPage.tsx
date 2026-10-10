@@ -35,6 +35,7 @@ import {
 } from '@/components/followUps/wording'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn } from '@/lib/utils'
+import { textDirection } from '@/lib/direction'
 import { useFollowUpCounts, useFollowUps } from '@/services/followUps'
 import { useAuth } from '@/store/AuthContext'
 
@@ -277,7 +278,7 @@ export function FollowUpsPage() {
                         to={`/follow-ups/${encodeURIComponent(f.id)}`}
                         state={FROM_LIST}
                         onClick={(e) => e.stopPropagation()}
-                        dir="auto"
+                        dir={textDirection(f.title) ?? 'auto'}
                         data-tip={f.body || f.title}
                         className="block truncate font-semibold text-slate-800 hover:text-brand-700 hover:underline dark:text-slate-100 dark:hover:text-brand-300"
                       >
@@ -389,7 +390,7 @@ function FollowUpCard({ f, active, timeZone }: { f: FollowUp; active: boolean; t
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <StatusChips f={f} />
-          <p dir="auto" className="mt-1.5 break-words font-bold">
+          <p dir={textDirection(f.title) ?? 'auto'} className="mt-1.5 break-words text-start font-bold">
             {f.title}
           </p>
         </div>

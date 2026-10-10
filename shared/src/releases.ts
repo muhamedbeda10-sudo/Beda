@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-10.1',
+    date: '2026-10-10',
+    title: 'Automations, follow-ups and alerts',
+    items: [
+      { text: 'People allowed to automate can ask the AI assistant in their own words to watch for something ("tell me when a sample has a Hold defect") or to send a report every day, week or month. It answers with a card showing what it would do and what it finds today; nothing runs until Activate is pressed. Automations only send alerts and open follow-ups — they never change a record.' },
+      { text: 'Follow-ups: a new page with the follow-ups assigned to you (or everyone\'s, for supervisors and administrators), their deadlines, comments and status. An overdue follow-up is escalated once. Sessions with an open follow-up show a "Needs review" flag in History.' },
+      { text: 'The bell has a new Alerts tab next to Notices, and automated messages arrive in the chat from "QC Automations". Scheduled reports open on their own page, with the assistant\'s summary and Excel export.' },
+    ],
+  },
+  {
     id: '2026-10-09.4',
     date: '2026-10-09',
     title: 'AI assistant: clearer answers, charts, and a full page',

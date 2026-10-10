@@ -349,7 +349,7 @@ function FailedDraft({ part }: { part: AiAutomationPart }) {
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-start gap-2.5 px-3 py-2 text-start transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60 touch:min-h-[44px]">
         <OctagonX className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
         <span className="min-w-0 flex-1">
-          <span className="line-clamp-2 block text-13 font-semibold text-slate-800 dark:text-slate-100">
+          <span className="line-clamp-2 text-13 font-semibold text-slate-800 dark:text-slate-100">
             <span className="font-medium text-rose-700 dark:text-rose-300">Automation draft not accepted</span>
             {name && (
               <>
