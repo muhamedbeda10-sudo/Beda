@@ -86,6 +86,8 @@ describe('where an alert leads', () => {
     expect(alertTarget({ link: '/follow-ups/f1' })).toBe('/follow-ups/f1')
     expect(alertTarget({ link: '/history?session=s1' })).toBe('/history?session=s1')
     expect(alertTarget({ link: '/automations/deliveries/d1#top' })).toBe('/automations/deliveries/d1#top')
+    // A digest of follow-ups given at once: the follow-ups list, narrowed to its automation.
+    expect(alertTarget({ link: '/follow-ups?automationId=a1' })).toBe('/follow-ups?automationId=a1')
   })
 
   it('follows nothing that would leave the app', () => {

@@ -13,7 +13,7 @@ import {
   describeDueHours,
   editInChatText,
   editsFromForm,
-  existingCasesText,
+  existingCases,
   factoryMoment,
   factoryTimestamp,
   formFromDefinition,
@@ -160,9 +160,59 @@ describe('an automation in words', () => {
     expect(matchedText(0, false)).toBe('No case matched.')
     expect(matchedText(1, false)).toBe('1 case matched.')
     expect(matchedText(500, true)).toBe('500+ cases matched.')
-    expect(existingCasesText(0, false)).toBe('Only cases that appear after you activate it will fire.')
-    expect(existingCasesText(3, false)).toBe('The 3 cases matching now are recorded as already seen; only cases that appear later will fire.')
-    expect(existingCasesText(1, true)).toBe('The case matching now will fire on its first run, then each new one as it appears.')
+    expect(existingCases({ matched: 0 }, false)).toEqual({ offer: null, text: 'Only cases that appear after you activate it will fire.' })
+    expect(existingCases({ matched: 3 }, false)).toEqual({
+      offer: 'Also alert on the 3 cases that match now',
+      text: 'The 3 cases matching now are recorded as already seen; only cases that appear later will fire.',
+    })
+    expect(existingCases({ matched: 1 }, true).text).toBe('The case matching now will fire on its first run, then each new one as it appears.')
+    expect(existingCases({ matched: 500, truncated: true }, false)).toEqual({
+      offer: 'Also alert on the 500+ cases that match now',
+      text: 'The 500+ cases matching now are recorded as already seen; only cases that appear later will fire.',
+    })
+  })
+
+  it('says, for a change of a watch keeping its query and key column, that its cases carry on — with nothing to choose', () => {
+    const carry = 'Its query and key column stay the same, so its cases carry on'
+    expect(existingCases({ matched: 0, newCases: 0, keepsCases: true }, false)).toEqual({ offer: null, text: `${carry}; none matches now. Each new case will fire as it appears.` })
+    expect(existingCases({ matched: 3, newCases: 0, keepsCases: true }, false)).toEqual({
+      offer: null,
+      text: `${carry}: the 3 cases matching now were already seen and will not fire again. Each new case will fire as it appears.`,
+    })
+    expect(existingCases({ matched: 1, newCases: 1, keepsCases: true }, false)).toEqual({ offer: null, text: `${carry}: the case matching now was not seen yet and will fire on its next run.` })
+    // The choice does not count for it: the words stay the same whatever it holds.
+    for (const notify of [false, true]) {
+      expect(existingCases({ matched: 5, newCases: 2, keepsCases: true }, notify)).toEqual({
+        offer: null,
+        text: `${carry}: of the 5 cases matching now, 2 not seen yet will fire on its next run; the others were already seen and will not fire again.`,
+      })
+    }
+  })
+
+  it('says, for a change of a watch with another query or key column, which of the cases matching now it has not seen yet', () => {
+    expect(existingCases({ matched: 0, newCases: 0, keepsCases: false }, false)).toEqual({ offer: null, text: 'Only cases that appear after you activate it will fire.' })
+    // Seen already, every one: nothing to alert on, so nothing to choose.
+    expect(existingCases({ matched: 4, newCases: 0, keepsCases: false }, false)).toEqual({
+      offer: null,
+      text: 'It has already seen the 4 cases matching now: they will not fire again, and only cases that appear later will fire.',
+    })
+    expect(existingCases({ matched: 1, newCases: 0, keepsCases: false }, false).text).toBe('It has already seen the case matching now: it will not fire again, and only cases that appear later will fire.')
+    // None seen yet: as a new watch, but on its next run.
+    expect(existingCases({ matched: 3, newCases: 3, keepsCases: false }, false)).toEqual({
+      offer: 'Also alert on the 3 cases that match now',
+      text: 'The 3 cases matching now are recorded as already seen; only cases that appear later will fire.',
+    })
+    expect(existingCases({ matched: 3, newCases: 3, keepsCases: false }, true).text).toBe('The 3 cases matching now will fire on its next run, then each new one as it appears.')
+    // Some seen, some not: the choice is about those not seen yet.
+    expect(existingCases({ matched: 5, newCases: 2, keepsCases: false }, false)).toEqual({
+      offer: 'Also alert on the 2 cases matching now that it has not seen yet',
+      text: 'Of the 5 cases matching now, 2 not seen yet are recorded as seen, like the others; only cases that appear later will fire.',
+    })
+    expect(existingCases({ matched: 5, newCases: 1, keepsCases: false }, true)).toEqual({
+      offer: 'Also alert on the case matching now that it has not seen yet',
+      text: 'Of the 5 cases matching now, 1 not seen yet will fire on its next run; the others were already seen and will not fire again. Then each new one fires as it appears.',
+    })
+    expect(existingCases({ matched: 5, newCases: 1, keepsCases: false }, false).text).toBe('Of the 5 cases matching now, 1 not seen yet is recorded as seen, like the others; only cases that appear later will fire.')
   })
 
   it('names the days a report covered as a sentence does', () => {

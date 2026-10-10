@@ -1,7 +1,8 @@
 // ============================================================================
 // §21 — follow-ups through the API: the navigation badge's counts, the list
-// page by page, one follow-up with its timeline, a session's open ones, and
-// the writes behind its buttons (status, assignee, deadline, a comment).
+// page by page, one follow-up with its timeline, a session's open ones, the
+// people one can be given to, and the writes behind its buttons (status,
+// assignee, deadline, a comment).
 // Each write puts what the server answered into every cached view of it,
 // then refreshes what it may have moved: the lists' filters, the badge, and
 // History's "Needs review" (a follow-up closed or reopened changes it).
@@ -13,16 +14,15 @@
 import { useMemo } from 'react'
 import { keepPreviousData, useInfiniteQuery, useQuery, type InfiniteData, type QueryClient } from '@tanstack/react-query'
 import type {
-  AutomationPeopleResponse,
   AutomationsResponse,
   FollowUp,
   FollowUpCommentRequest,
   FollowUpCountsResponse,
   FollowUpDetail,
+  FollowUpPeopleResponse,
   FollowUpsResponse,
   FollowUpUpdateRequest,
 } from '@qc/shared/automation'
-import type { ChatUser, Role, UserProfile } from '@qc/shared/types'
 import { ApiError, api } from '@/lib/api'
 import { followUpsQuery, type FollowUpFilters } from '@/components/followUps/wording'
 import { keys, NOTICE_POLL_MS } from './queries'
@@ -37,6 +37,8 @@ export const followUpKeys = {
   /** A session's follow-ups not done yet, as its page lists them. */
   sessions: ['follow-ups', 'session'] as const,
   session: (sessionId: string, scope: FollowUpFilters['scope']) => ['follow-ups', 'session', sessionId, scope] as const,
+  /** The people a follow-up can be given to. */
+  people: ['follow-ups', 'people'] as const,
 }
 
 const path = (id: string) => `/follow-ups/${encodeURIComponent(id)}`
@@ -94,39 +96,21 @@ export function useSessionFollowUps(sessionId: string | null, scope: FollowUpFil
   })
 }
 
-/** Someone a follow-up can be given to. */
-export interface AssignablePerson {
-  id: string
-  name: string
-  role: Role
-}
-
 /**
- * The people a follow-up can be reassigned to, from the list this person may
- * read: every active account for someone who may create automations (their
- * recipients' list), every account for an administrator, the chat's people
- * for a supervisor (viewers are not in the chat, so not offered there).
+ * The people a follow-up can be given to: every active account, viewers
+ * included. Only those who may reassign one are answered (supervisors,
+ * administrators, the assistant's owner, anyone who created an automation);
+ * to anyone else it is "not found". So it is asked for only once a
+ * follow-up offers to be reassigned.
  */
-export function useAssignablePeople(source: 'automations' | 'users' | 'chat' | null) {
-  // The Automations page's list of people (services/automations.ts, the same key), read here without its module.
-  const automations = useQuery({
-    queryKey: ['automations', 'people'] as const,
-    queryFn: () => api<AutomationPeopleResponse>('/automations/people'),
-    enabled: source === 'automations',
+export function useAssignablePeople(enabled: boolean) {
+  return useQuery({
+    queryKey: followUpKeys.people,
+    queryFn: async () => (await api<FollowUpPeopleResponse>('/follow-ups/people')).people,
+    enabled,
     staleTime: 5 * 60_000,
+    retry: retryUnlessGone,
   })
-  const users = useQuery({ queryKey: keys.users, queryFn: () => api<UserProfile[]>('/users'), enabled: source === 'users', staleTime: 5 * 60_000 })
-  const chat = useQuery({ queryKey: keys.chatUsers, queryFn: () => api<ChatUser[]>('/chat/users'), enabled: source === 'chat', staleTime: 5 * 60_000 })
-  const people: AssignablePerson[] =
-    source === 'automations'
-      ? (automations.data?.people ?? []).map(({ id, name, role }) => ({ id, name, role }))
-      : source === 'users'
-        ? (users.data ?? []).filter((u) => u.isActive).map(({ id, name, role }) => ({ id, name, role }))
-        : source === 'chat'
-          ? (chat.data ?? []).map(({ id, name, role }) => ({ id, name, role }))
-          : []
-  const current = source === 'automations' ? automations : source === 'users' ? users : chat
-  return { people: [...people].sort((a, b) => a.name.localeCompare(b.name)), isLoading: source !== null && current.isLoading, isError: source !== null && current.isError }
 }
 
 /**

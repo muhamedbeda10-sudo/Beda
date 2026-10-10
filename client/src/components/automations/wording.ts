@@ -28,6 +28,7 @@ import {
   type AutomationActions,
   type AutomationAssignee,
   type AutomationAssigneeView,
+  type AutomationBacktest,
   type AutomationBlockedReason,
   type AutomationCadence,
   type AutomationChannels,
@@ -253,12 +254,73 @@ export function periodPhrase(label: string, days: string): string {
   return `${/^last \d/.test(lower) ? `the ${lower}` : lower} (${days})`
 }
 
-/** What happens to the cases matching at activation, as the checkbox chooses. */
-export function existingCasesText(matched: number, notifyExisting: boolean): string {
-  if (matched === 0) return 'Only cases that appear after you activate it will fire.'
-  return notifyExisting
-    ? `The ${matched === 1 ? 'case' : `${matched.toLocaleString('en-US')} cases`} matching now will fire on its first run, then each new one as it appears.`
-    : `The ${matched === 1 ? 'case' : `${matched.toLocaleString('en-US')} cases`} matching now ${matched === 1 ? 'is' : 'are'} recorded as already seen; only cases that appear later will fire.`
+/** "the case", "the 3 cases", "the 500+ cases" (more than the run looks at). */
+const theCases = (n: number, truncated = false): string =>
+  n === 1 && !truncated ? 'the case' : `the ${n.toLocaleString('en-US')}${truncated ? '+' : ''} cases`
+
+const upperFirst = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
+
+/** What a watch's proposal card says of the cases matching now. */
+export interface ExistingCasesView {
+  /** The "Also alert on…" choice; null when there is nothing it would change. */
+  offer: string | null
+  /** What becomes of the cases matching now once it is activated, as the choice stands. */
+  text: string
+}
+
+/**
+ * What becomes of the cases a watch's trial run found matching now once it
+ * is activated. A new watch: they are recorded as already seen, unless the
+ * person asks to be alerted on them too. A change of one (`newCases`, the
+ * cases its automation has not seen yet, is known): those it has seen never
+ * fire again; keeping its query and key column (`keepsCases`), its cases
+ * carry on — those not seen yet fire on its next run, and there is nothing
+ * to choose; otherwise those not seen yet are recorded as seen, unless the
+ * person asks to be alerted on them.
+ */
+export function existingCases(bt: Pick<AutomationBacktest, 'matched' | 'truncated' | 'newCases' | 'keepsCases'>, notifyExisting: boolean): ExistingCasesView {
+  const matched = bt.matched ?? 0
+  const truncated = !!bt.truncated
+  const all = theCases(matched, truncated)
+  const later = 'only cases that appear later will fire.'
+  if (bt.newCases === undefined) {
+    if (matched === 0) return { offer: null, text: 'Only cases that appear after you activate it will fire.' }
+    return {
+      offer: `Also alert on ${all} that match now`,
+      text: notifyExisting
+        ? `${upperFirst(all)} matching now will fire on its first run, then each new one as it appears.`
+        : `${upperFirst(all)} matching now ${matched === 1 && !truncated ? 'is' : 'are'} recorded as already seen; ${later}`,
+    }
+  }
+  const fresh = Math.max(0, Math.min(bt.newCases, matched))
+  const one = matched === 1 && !truncated
+  // Every case matching now is one it has not seen: nothing to tell apart.
+  const allFresh = fresh === matched
+  const freshWords = fresh.toLocaleString('en-US')
+  if (bt.keepsCases) {
+    const carry = 'Its query and key column stay the same, so its cases carry on'
+    if (matched === 0) return { offer: null, text: `${carry}; none matches now. Each new case will fire as it appears.` }
+    if (fresh === 0) return { offer: null, text: `${carry}: ${all} matching now ${one ? 'was' : 'were'} already seen and will not fire again. Each new case will fire as it appears.` }
+    if (allFresh) return { offer: null, text: `${carry}: ${all} matching now ${one ? 'was' : 'were'} not seen yet and will fire on its next run.` }
+    return { offer: null, text: `${carry}: of ${all} matching now, ${freshWords} not seen yet will fire on its next run; the others were already seen and will not fire again.` }
+  }
+  if (matched === 0) return { offer: null, text: 'Only cases that appear after you activate it will fire.' }
+  if (fresh === 0) return { offer: null, text: `It has already seen ${all} matching now: ${one ? 'it' : 'they'} will not fire again, and ${later}` }
+  const freshCases = theCases(fresh)
+  if (allFresh) {
+    return {
+      offer: `Also alert on ${all} that match now`,
+      text: notifyExisting
+        ? `${upperFirst(all)} matching now will fire on its next run, then each new one as it appears.`
+        : `${upperFirst(all)} matching now ${one ? 'is' : 'are'} recorded as already seen; ${later}`,
+    }
+  }
+  return {
+    offer: `Also alert on ${freshCases} matching now that it has not seen yet`,
+    text: notifyExisting
+      ? `Of ${all} matching now, ${freshWords} not seen yet will fire on its next run; the others were already seen and will not fire again. Then each new one fires as it appears.`
+      : `Of ${all} matching now, ${freshWords} not seen yet ${fresh === 1 ? 'is' : 'are'} recorded as seen, like the others; ${later}`,
+  }
 }
 
 /**

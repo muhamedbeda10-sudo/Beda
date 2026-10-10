@@ -2,7 +2,7 @@ import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import type { ApiErrorBody, HistoryResponse, SaveSampleRequest, SessionWithOrder, StartWithSampleResponse } from '@qc/shared/api'
 import type { AuditListResponse } from '@qc/shared/api'
-import type { FollowUp, FollowUpCountsResponse, FollowUpDetail, FollowUpsResponse } from '@qc/shared/automation'
+import type { FollowUp, FollowUpCountsResponse, FollowUpDetail, FollowUpPeopleResponse, FollowUpsResponse } from '@qc/shared/automation'
 import type { ProductionOrder, UserProfile } from '@qc/shared/types'
 import { TestApp, type Session } from './harness'
 import { escalateOverdue, openFollowUps, type NewFollowUp } from '../src/automations/followUps'
@@ -65,6 +65,7 @@ const get = (s: Session, id: string) => app.api<FollowUpDetail>('GET', `/api/fol
 const listOf = (s: Session, query = '') => app.api<FollowUpsResponse>('GET', `/api/follow-ups${query}`, { token: s.token })
 const patch = (s: Session, id: string, body: unknown) => app.api<FollowUpDetail & ApiErrorBody>('PATCH', `/api/follow-ups/${id}`, { token: s.token, body })
 const counts = (s: Session) => app.api<FollowUpCountsResponse>('GET', '/api/follow-ups/counts', { token: s.token })
+const peopleFor = (s: Session) => app.api<FollowUpPeopleResponse>('GET', '/api/follow-ups/people', { token: s.token })
 /** A person's alerts of a kind, their words as they read (the isolates around values left out). */
 const alertsOf = async (userId: string, kind: string) =>
   (
@@ -504,6 +505,38 @@ describe('§21 — overdue follow-ups escalate once', () => {
   })
 })
 
+describe('§21 — whom a follow-up can be given to', () => {
+  it('lists every active account, viewers included, to those who may reassign one; to anyone else it does not exist', async () => {
+    // Someone whose automation opened nothing yet, and an account removed: one may ask, the other is not listed.
+    const maker = await addUser('dina', 'Dina Maker', 'inspector')
+    await automation(maker.user.id, 'Nothing opened yet')
+    const removed = await addUser('rami', 'Rami Removed', 'inspector')
+    expect((await app.api('DELETE', `/api/users/${removed.user.id}`, { token: admin.token })).status).toBe(204)
+
+    const res = await peopleFor(sup)
+    expect(res.status).toBe(200)
+    const { rows } = await app.db.query<{ id: string; name: string; username: string; role: string }>(
+      `SELECT id, name, username, role::text AS role FROM users WHERE is_active AND deleted_at IS NULL AND NOT is_system ORDER BY lower(name), username`,
+    )
+    expect(res.body).toEqual({ people: rows })
+    const ids = res.body.people.map((x) => x.id)
+    expect(ids).toEqual(expect.arrayContaining([viewer.user.id, assignee.user.id, sup.user.id, admin.user.id, maker.user.id]))
+    for (const gone of [goneId, removed.user.id, systemId]) expect(ids).not.toContain(gone)
+    expect(res.body.people.find((x) => x.id === viewer.user.id)).toEqual({ id: viewer.user.id, name: 'Vera Viewer', username: 'vera', role: 'viewer' })
+
+    // Supervisors, administrators, the owner, and anyone who created an automation — deleted ones too.
+    for (const s of [admin, creator, maker]) expect((await peopleFor(s)).body, s.user.name).toEqual(res.body)
+    await app.db.query(`UPDATE ai_automations SET deleted_at = now() WHERE creator_id = $1`, [maker.user.id])
+    expect((await peopleFor(maker)).status).toBe(200)
+    // An assignee, a viewer, anyone else: no such endpoint.
+    for (const s of [assignee, viewer, other]) {
+      const refused = await app.api<ApiErrorBody>('GET', '/api/follow-ups/people', { token: s.token })
+      expect(refused.status, s.user.name).toBe(404)
+      expect(refused.body.error.message).toBe('No such endpoint.')
+    }
+  })
+})
+
 describe('§21 — the assistant’s owner sees everyone’s, whatever their role', () => {
   it('keeps seeing all of them as an inspector', async () => {
     await addUser('admin2', 'Second Admin', 'admin')
@@ -513,6 +546,7 @@ describe('§21 — the assistant’s owner sees everyone’s, whatever their rol
     expect((await listOf(admin, '?scope=all&status=open,in_progress')).body.followUps.length).toBeGreaterThan(0)
     const f = (await get(admin, ids[2])).body
     expect([f.canEdit, f.canReassign]).toEqual([true, true])
+    expect((await peopleFor(admin)).status).toBe(200)
     // An inspector who is not the owner sees none of it.
     expect((await get(other, ids[1])).status).toBe(404)
   })

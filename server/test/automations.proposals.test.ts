@@ -24,7 +24,7 @@ import { renderSystemPrompt } from '../src/ai/prompt'
 import { describeAiSchema } from '../src/ai/schemaDoc'
 import { readDraft } from '../src/automations/draft'
 import { isolate } from '../src/automations/text'
-import { validateDraft, type ValidationContext } from '../src/automations/validate'
+import { queryErrorForPeople, validateDraft, type QueryFailed, type ValidationContext } from '../src/automations/validate'
 
 // §21 — an automation is proposed in the assistant's chat and nothing runs
 // until the person who asked presses Activate. The tools exist only in new
@@ -207,6 +207,18 @@ describe('§21 a proposal from the chat', () => {
     const rows = await app.db.query<{ ok: boolean }>(`SELECT ok FROM ai_automation_proposals WHERE conversation_id IN ($1, $2)`, [res.conversationId, bad.conversationId])
     expect(rows.rows).toEqual([{ ok: false }, { ok: false }])
     expect((await activate(part.proposalId)).status).toBe(409)
+  })
+
+  it('tells the model what to change in a query reading data the person cannot read, and the card says it plainly', async () => {
+    const res = await proposeInChat(watchDraft({}, { sql: 'SELECT user_id AS machine_code, name AS machine FROM ai.users' }))
+    const [part] = automationEvents(res.events)
+    expect(part.backtest).toMatchObject({ ok: false, error: 'It reads data you cannot read.' })
+    const [result] = resultsOf()
+    expect(result.is_error).toBe(true)
+    expect(result.content).toContain('- watch.sql: it reads data this person cannot read. Use only the views described in the system prompt.')
+    // The card's words are the person's, never in what the model reads.
+    expect(result.content).toContain('What it found when run: {"ok":false}')
+    expect(result.content).not.toContain('you cannot read')
   })
 
   it('shows each card in its current state when the conversation is opened again', async () => {
@@ -396,6 +408,21 @@ describe('§21 activation', () => {
     expect((await activate(part.proposalId)).status).toBe(200)
     await app.db.query(`UPDATE ai_automations SET status = 'paused', next_run_at = NULL`)
   })
+
+  it('says plainly why an activation fails when the person can no longer read what it reads', async () => {
+    await grant(app, p.owner, p.creator, { automations: true, domains: ['inspection', 'materials'] })
+    try {
+      const part = automationEvents((await proposeInChat(watchDraft({ name: 'Coils' }, { sql: `SELECT coil_id::text AS machine_code, 'x' AS machine FROM ai.coils` }))).events)[0]
+      expect(part).toMatchObject({ ok: true, state: 'proposed' })
+      // The coil register taken away before Activate is pressed.
+      await grant(app, p.owner, p.creator, { automations: true })
+      const res = await activate(part.proposalId)
+      expect(res.status).toBe(400)
+      expect((res.body as ApiErrorBody).error.message).toBe('watch.sql: It reads data you cannot read.')
+    } finally {
+      await grant(app, p.owner, p.creator, { automations: true })
+    }
+  })
 })
 
 describe('§21 checking a draft', () => {
@@ -502,6 +529,57 @@ describe('§21 checking a draft', () => {
     // A change takes no room.
     expect(await errorsOf(watchDraft({ replacesAutomationId: (await app.db.query<{ id: string }>(`SELECT id FROM ai_automations WHERE creator_id = $1 AND kind = 'watch' LIMIT 1`, [p.creator2.user.id])).rows[0].id }))).toEqual([])
     await app.db.query(`UPDATE ai_automations SET deleted_at = now() WHERE creator_id = $1`, [p.creator2.user.id])
+  })
+
+  it('tells the model what to change in a failing query, and people what went wrong in plain words', async () => {
+    const notTheirs = watchDraft({}, { sql: 'SELECT user_id AS machine_code FROM ai.users' })
+    const forModel = await validateDraft(ctx, notTheirs)
+    expect(forModel).toMatchObject({ ok: false, errors: ['watch.sql: it reads data this person cannot read. Use only the views described in the system prompt.'] })
+    // The card shows the trial run to the person who asked for it.
+    expect(forModel.backtest).toMatchObject({ ok: false, error: 'It reads data you cannot read.' })
+    // An activation: the person pressing Activate reads the errors.
+    expect(await errorsOf(notTheirs, { readBy: 'person' })).toEqual(['watch.sql: It reads data you cannot read.'])
+
+    const broken = await validateDraft(ctx, watchDraft({}, { sql: 'SELECT nope FROM ai.machines' }))
+    expect(broken.ok ? [] : broken.errors).toEqual([expect.stringMatching(/^watch\.sql: column "nope" does not exist \(at character 8\)/)])
+    expect(broken.backtest).toMatchObject({ ok: false, error: 'The query failed: column "nope" does not exist.' })
+
+    const section = reportDraft({}, { sections: [{ title: 'Users', sql: 'SELECT count(*) AS n FROM ai.users' }] })
+    const report = await validateDraft(ctx, section)
+    expect(report.ok ? [] : report.errors).toEqual(['schedule.sections[0] ("Users"): it reads data this person cannot read. Use only the views described in the system prompt.'])
+    expect(report.backtest?.sections).toEqual([expect.objectContaining({ title: 'Users', ok: false, error: 'It reads data you cannot read.' })])
+    expect(await errorsOf(section, { readBy: 'person' })).toEqual(['schedule.sections[0] ("Users"): It reads data you cannot read.'])
+
+    // What a change names, as the person reads it: no tool to look it up with.
+    expect(await errorsOf(watchDraft({ replacesAutomationId: '00000000-0000-4000-8000-000000000000' }), { readBy: 'person' })).toEqual([
+      'The automation this proposal changes no longer exists.',
+    ])
+  })
+
+  it('words every kind of query failure for people, never with the model’s instructions', () => {
+    const long = `invalid input syntax for type integer: "${'x'.repeat(500)}"`
+    const cases: [QueryFailed, 'creator' | 'asker', string | RegExp][] = [
+      [{ failure: 'database', code: '42501', error: 'permission denied for view coils Only the views and functions in schema ai can be read.' }, 'creator', 'It reads data its creator can no longer read.'],
+      [{ failure: 'database', code: '42501', dbMessage: 'permission denied for view coils' }, 'asker', 'It reads data you cannot read.'],
+      [{ failure: 'database', code: '22012', error: 'division by zero (at character 9)', dbMessage: 'division by zero' }, 'creator', 'The query failed: division by zero.'],
+      [{ failure: 'database', code: 'P0001', dbMessage: 'Already a sentence.' }, 'creator', 'The query failed: Already a sentence.'],
+      [{ failure: 'database', code: '22P02', dbMessage: long }, 'creator', /^The query failed: invalid input syntax for type integer: "x+…$/],
+      [{ failure: 'database', code: 'XX000' }, 'creator', 'The query failed.'],
+      [{ failure: 'timeout', code: '57014', error: 'The query took too long (10 s). Narrow it or aggregate.' }, 'creator', 'The query took too long and was stopped.'],
+      [{ failure: 'row-too-large', error: 'A row of the result is larger than 256 KB. Select fewer or shorter columns, or aggregate.' }, 'creator', 'A row of its result was too large to read.'],
+      [{ failure: 'reply-too-large', error: 'The query failed with an error message longer than 320 KB' }, 'creator', "The database's reply was too large to read."],
+      [{ failure: 'stopped', error: 'Stopped.' }, 'creator', 'The query was stopped before it finished.'],
+      [{ failure: 'unavailable', error: 'The database could not run the query just now. Try again.' }, 'creator', "The factory's data could not be reached just now."],
+      [{ failure: 'rejected', error: 'Only a single SELECT (or WITH … SELECT) is allowed: the assistant can only read the views in schema ai.' }, 'creator', 'The app no longer accepts this query.'],
+      [{ error: 'Something else.' }, 'creator', 'The query failed.'],
+    ]
+    for (const [run, reader, expected] of cases) {
+      const said = queryErrorForPeople(run, reader)
+      if (typeof expected === 'string') expect(said, JSON.stringify(run)).toBe(expected)
+      else expect(said, JSON.stringify(run)).toMatch(expected)
+      expect(said).not.toMatch(/prompt|views|schema|tool|model|aggregate|Narrow|character/i)
+    }
+    expect(Array.from(queryErrorForPeople({ failure: 'database', code: '22P02', dbMessage: long })).length).toBeLessThanOrEqual('The query failed: '.length + 200)
   })
 
   it('reads the tool input strictly, naming what is wrong', () => {

@@ -4,6 +4,10 @@
 // what it would do with each case — and what running it once found, and when
 // (a card is read again days later): the cases matching (a few of them, and
 // what a notification of the first would say), or each section of a report.
+// A change of one of the person's automations names it, and says what
+// becomes of the cases matching now: those it has already seen never fire
+// again, and those it has not either carry on (the same query and key
+// column) or are recorded as seen unless the person asks to be alerted.
 // Nothing runs until the person who asked presses Activate; Edit changes its
 // words, people, channels, actions and timing first (its queries change only
 // by asking the assistant), and Discard sets it aside. Once decided, the card
@@ -35,7 +39,7 @@ import {
   applyEdits,
   assigneeView,
   automationSummary,
-  existingCasesText,
+  existingCases,
   factoryMoment,
   factoryTimestamp,
   hasEdits,
@@ -91,6 +95,10 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
   const assignee = f ? (edits?.actions ? assigneeView(f.assignee, peopleMap, creatorName, part.assignee, watch ? columns : null) : (part.assignee ?? assigneeView(f.assignee, null, creatorName))) : undefined
   const summary = automationSummary({ ...def, recipients, assignee })
   const matched = bt?.matched ?? 0
+  // What becomes of the cases matching now: a change of a watch says how many its automation has not seen yet, and whether they carry on.
+  const cases = watch && bt?.ok ? existingCases(draft.replacesAutomationId ? bt : { ...bt, newCases: undefined, keepsCases: undefined }, notifyExisting) : null
+  // The automation it was to change was deleted since: activating it is refused, so it says so first.
+  const replacedGone = !!draft.replacesAutomationId && !part.replacesName
 
   /**
    * A refusal, said on the card. Not found: the permission may be gone (or the proposal), and /ai/me says which.
@@ -110,7 +118,8 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
     setBusy('activate')
     setProblems(null)
     try {
-      const res = await activateProposal(qc, part.proposalId, { ...(edits ? { edits } : {}), ...(watch ? { notifyExisting } : {}) })
+      // The choice counts only while it is offered: a change keeping its cases carries them on, whatever it says.
+      const res = await activateProposal(qc, part.proposalId, { ...(edits ? { edits } : {}), ...(watch ? { notifyExisting: notifyExisting && !!cases?.offer } : {}) })
       onDecided(res.part)
       setEdits(null)
       toast(part.replacesName ? `“${res.automation.name}” is changed. The change is in the audit log.` : `“${res.automation.name}” is active. The change is in the audit log.`, 'success')
@@ -191,6 +200,11 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
                 Changes <bdi dir="auto" className="font-semibold">“{part.replacesName}”</bdi> when activated; the cases it has already fired stay fired.
               </p>
             )}
+            {replacedGone && proposed && (
+              <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+                The automation this was to change is no longer there, so it cannot be activated. Ask the assistant to propose it again.
+              </p>
+            )}
 
             <p className="text-13 leading-relaxed text-slate-700 dark:text-slate-200">{summary}</p>
             <DefinitionFacts def={def} recipients={recipients} assignee={assignee} />
@@ -235,15 +249,15 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
           </p>
         )}
 
-        {proposed && watch && bt?.ok && (
+        {proposed && cases && (
           <div className="space-y-1">
-            {matched > 0 && (
+            {cases.offer && (
               <label className="flex cursor-pointer items-start gap-2 text-13 font-medium text-slate-700 dark:text-slate-200">
                 <input type="checkbox" checked={notifyExisting} onChange={(e) => setNotifyExisting(e.target.checked)} disabled={busy !== null} className="mt-0.5 h-4 w-4 shrink-0 accent-brand-600" />
-                Also alert on the {matched === 1 ? 'case' : `${matched.toLocaleString('en-US')}${bt.truncated ? '+' : ''} cases`} that match now
+                {cases.offer}
               </label>
             )}
-            <p className="text-xs text-muted">{existingCasesText(matched, notifyExisting)}</p>
+            <p className="text-xs text-muted">{cases.text}</p>
           </div>
         )}
 
@@ -283,7 +297,13 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
           </>
         ) : (
           <>
-            <Button variant="primary" className={ACTION_BTN} onClick={() => void activate()} disabled={writing || busy !== null} data-tip={writing ? PROPOSAL_WAIT : watch ? 'Starts it now: its first run is within a minute' : 'Starts it now: its first run is at its next time'}>
+            <Button
+              variant="primary"
+              className={ACTION_BTN}
+              onClick={() => void activate()}
+              disabled={writing || busy !== null || replacedGone}
+              data-tip={writing ? PROPOSAL_WAIT : replacedGone ? 'The automation it changes is no longer there' : watch ? 'Starts it now: its first run is within a minute' : 'Starts it now: its first run is at its next time'}
+            >
               {busy === 'activate' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />} {busy === 'activate' ? 'Activating…' : 'Activate'}
             </Button>
             <Button className={ACTION_BTN} onClick={() => setEditing(true)} disabled={writing || busy !== null} data-tip={writing ? PROPOSAL_WAIT : 'Change its words, people, actions or timing first'}>

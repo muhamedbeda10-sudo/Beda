@@ -4,7 +4,7 @@ import type { AutomationDelivery } from '@qc/shared/automation'
 import { TestApp, factoryDay } from './harness'
 import { apiError, text } from './aiFake'
 import { Clock, KEY, alertsOf, engineFor, grant, insertAutomation, reportDraft, runsOf, setUp, systemMessagesTo, type People } from './automationsKit'
-import { SUMMARY_MAX_TOKENS, SUMMARY_NOTE, SUMMARY_SYSTEM_PROMPT } from '../src/automations/report'
+import { SUMMARY_MAX_TOKENS, SUMMARY_NOTE, summarySystemPrompt } from '../src/automations/report'
 
 // §21 — scheduled reports: the sections run as the creator's domains over the
 // period as of the factory's day; the model writes a short summary when asked
@@ -63,14 +63,20 @@ describe('§21 a report delivered', () => {
     const call = app.model.calls[0].params
     expect(call).toMatchObject({ model: 'claude-haiku-5-5', max_tokens: SUMMARY_MAX_TOKENS, thinking: { type: 'adaptive' }, output_config: { effort: 'low' } })
     expect(call).not.toHaveProperty('tools')
-    expect(call.system).toEqual([{ type: 'text', text: SUMMARY_SYSTEM_PROMPT }])
+    // In the automation's language, on the factory's figures; nothing failed or was cut off, so neither is spoken of.
+    const system = (call.system as { type: string; text: string }[]).map((b) => b.text).join('\n')
+    expect(call.system).toEqual([{ type: 'text', text: summarySystemPrompt('en', []) }])
+    expect(system).toContain('Write 3 to 5 short bullets')
+    expect(system).toContain("about the factory's figures only")
+    expect(system).toContain('Write in English.')
+    expect(system).not.toMatch(/fail|truncat|cut off|Arabic/i)
     const input = JSON.parse(call.messages[0].content as string)
-    expect(input).toMatchObject({
+    expect(input).toEqual({
       report: 'Machine register',
-      language: 'English',
+      description: 'A test automation.',
       period: { from: factoryDay(-6), to: factoryDay(), label: 'Last 7 days' },
       sections: [
-        { title: 'Machines', columns: ['machines'], rows: [[2]], rowCount: 1, truncated: false },
+        { title: 'Machines', columns: ['machines'], rows: [[2]], rowCount: 1 },
         { title: 'Registered in the period', columns: ['machine_code'], rows: [['31'], ['58']], rowCount: 2 },
       ],
     })
@@ -171,15 +177,73 @@ describe('§21 a report delivered', () => {
 
   it('delivers what ran when a section fails (a failed run), and nothing when none ran', async () => {
     const some = await deliver({ summary: false, sections: [SECTIONS[0], { title: 'Coils', sql: 'SELECT count(*) AS coils FROM ai.coils' }] })
-    expect(some.run).toMatchObject({ ok: false, error: expect.stringMatching(/^“Coils” failed: it reads data this person cannot read/), note: '1 of 2 sections failed; the report went out with the rest.' })
+    // What went wrong in plain words, for the people who read the run and the report: nothing the model is told.
+    expect(some.run).toMatchObject({ ok: false, error: '“Coils”: It reads data its creator can no longer read.', note: '1 of 2 sections failed; the report went out with the rest.' })
     const shown = (await delivery(some.run.deliveryId!)).body
-    expect(shown.sections.map((s) => [s.title, s.ok])).toEqual([
-      ['Machines', true],
-      ['Coils', false],
+    expect(shown.sections.map((s) => [s.title, s.ok, s.error ?? null])).toEqual([
+      ['Machines', true, null],
+      ['Coils', false, 'It reads data its creator can no longer read.'],
     ])
     expect((await app.db.query<{ failures: number }>(`SELECT consecutive_failures AS failures FROM ai_automations WHERE id = $1`, [some.id])).rows[0].failures).toBe(1)
     const none = await deliver({ summary: false, sections: [{ title: 'Coils', sql: 'SELECT count(*) AS coils FROM ai.coils' }] })
-    expect(none.run).toMatchObject({ ok: false, deliveryId: null, error: expect.stringMatching(/^No section ran/) })
+    expect(none.run).toMatchObject({ ok: false, deliveryId: null, error: 'No section ran. “Coils”: It reads data its creator can no longer read.' })
+    // A query the database refuses for another reason: its own short message, no position, no advice.
+    const broken = await deliver({ summary: false, sections: [SECTIONS[0], { title: 'Broken', sql: 'SELECT nope FROM ai.machines' }] })
+    expect(broken.run.error).toBe('“Broken”: The query failed: column "nope" does not exist.')
+    for (const r of [some.run, none.run, broken.run]) expect(r.error).not.toMatch(/prompt|views|schema|tool|character|Hint/i)
+  })
+
+  it('asks for the summary in the automation’s language, speaking of failed or cut-off sections only when it has some', async () => {
+    app.model.reply({ content: [text('- في السجل ماكينتين.\n- قسم Coils ماشتغلش، وقسم Many اتقص.')] })
+    const clock = new Clock()
+    const id = await insertAutomation(app.db, {
+      creatorId: p.creator.user.id,
+      language: 'ar',
+      schedule: schedule({
+        period: undefined,
+        sections: [
+          { title: 'Machines', sql: 'SELECT count(*)::int AS machines FROM ai.machines' },
+          // Not the creator's data: it fails.
+          { title: 'Coils', sql: 'SELECT count(*) AS coils FROM ai.coils' },
+          // More rows than a delivery keeps: cut off.
+          { title: 'Many', sql: 'SELECT g FROM generate_series(1, 2500) g' },
+        ],
+      }),
+      nextRunAt: clock.now(),
+    })
+    await engineFor(app, clock).tick()
+    const [run] = await runsOf(app.db, id)
+    expect(run).toMatchObject({ ok: false, error: '“Coils”: It reads data its creator can no longer read.' })
+    expect(app.model.calls).toHaveLength(1)
+    const call = app.model.calls[0].params
+    const system = (call.system as { type: string; text: string }[]).map((b) => b.text).join('\n')
+    expect(system).toContain('Write in Arabic; Egyptian Arabic is welcome.')
+    expect(system).not.toContain('Write in English')
+    expect(system).toContain('Write 3 to 5 short bullets')
+    expect(system).toContain('Except this: some sections did not run (failed) and some were cut off (truncated). Say so in one short last bullet, naming them.')
+    expect(system).toContain("A cut-off section's rows and rowCount are not the whole: never give its figures as complete totals.")
+    const input = JSON.parse(call.messages[0].content as string)
+    expect(input.period).toBeNull()
+    expect(input.sections).toEqual([
+      { title: 'Machines', columns: ['machines'], rows: [[2]], rowCount: 1 },
+      { title: 'Coils', failed: true },
+      { title: 'Many', columns: ['g'], rows: Array.from({ length: 30 }, (_, i) => [i + 1]), rowCount: 2000, truncated: true },
+    ])
+    expect((await delivery(run.deliveryId!)).body).toMatchObject({ language: 'ar', summary: '- في السجل ماكينتين.\n- قسم Coils ماشتغلش، وقسم Many اتقص.' })
+
+    // Each on its own: only what there is, never that nothing went wrong.
+    const ok = { title: 'A', ok: true, columns: ['n'], rows: [[1]], rowCount: 1, truncated: false, ms: 1 }
+    const failedOnly = summarySystemPrompt('en', [ok, { ...ok, title: 'B', ok: false, error: 'It reads data its creator can no longer read.' }])
+    expect(failedOnly).toContain('Except this: some sections did not run (failed). Say so in one short last bullet, naming them.')
+    expect(failedOnly).toContain('A section that did not run has failed: true instead.')
+    expect(failedOnly).not.toMatch(/truncat|cut off|cut-off/)
+    const cutOnly = summarySystemPrompt('ar', [ok, { ...ok, title: 'C', truncated: true }])
+    expect(cutOnly).toContain('Except this: some sections were cut off (truncated).')
+    expect(cutOnly).toContain('truncated: true when it returned more rows than the report keeps')
+    expect(cutOnly).not.toMatch(/did not run|failed/)
+    const clean = summarySystemPrompt('ar', [ok, ok])
+    expect(clean).not.toMatch(/fail|truncat|cut off|cut-off|Except this/)
+    expect(clean).toContain('Write in Arabic; Egyptian Arabic is welcome.')
   })
 
   it('keeps at most AUTOMATION_DELIVERY_MAX_ROWS rows a section', async () => {

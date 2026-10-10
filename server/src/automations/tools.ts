@@ -158,16 +158,19 @@ async function asStored(ctx: AutomationToolContext, p: ProposalRecord): Promise<
 
 const modelCell = (c: AiCell): AiCell => (typeof c === 'string' ? cutChars(c, MODEL_CELL_CHARS, true) : c)
 
-/** What the model reads of a run: the figures and a few rows, not the whole card. */
+/**
+ * What the model reads of a run: the figures and a few rows, not the whole
+ * card. A query that failed is only marked so: the card words its failure for
+ * the person, and the problems listed with it tell the model what to change.
+ */
 function backtestForModel(b: AutomationBacktest): Record<string, unknown> {
-  if (!b.ok && !b.sections) return { ok: false, error: b.error }
+  if (!b.ok && !b.sections) return { ok: false }
   if (b.sections) {
     return {
       period: b.period ?? null,
       sections: b.sections.map((s) => ({
         title: s.title,
         ok: s.ok,
-        ...(s.error ? { error: s.error } : {}),
         columns: s.columns,
         rows: s.rows.slice(0, MODEL_SAMPLE_ROWS).map((r) => r.map(modelCell)),
         rowCount: s.rowCount,

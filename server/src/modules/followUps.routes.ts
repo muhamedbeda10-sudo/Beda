@@ -9,7 +9,9 @@
 // its deadline. Closing it ('done') takes a closing note. Every change is in
 // its timeline and in the audit log (entity 'FollowUp'), and the people it
 // concerns are told: a new assignee that it is theirs, the assignee and the
-// creator when someone else changes it or comments.
+// creator when someone else changes it or comments. Whom it can be given to
+// (/people) is answered to those who may reassign one; to anyone else that
+// endpoint does not exist.
 // ============================================================================
 
 import { Router } from 'express'
@@ -21,15 +23,17 @@ import {
   type FollowUpCountsResponse,
   type FollowUpDetail,
   type FollowUpEvent,
+  type FollowUpPeopleResponse,
   type FollowUpStatus,
   type FollowUpsResponse,
 } from '@qc/shared/automation'
 import type { AiCell } from '@qc/shared/ai'
 import { auditEvent } from '@qc/shared/audit'
 import { STOCK_ORDER_NUMBER } from '@qc/shared/rules'
+import type { Role } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
-import { badRequest, forbidden, notFound } from '../lib/errors'
+import { HttpError, badRequest, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { requireUser, type AuthUser } from '../auth/middleware'
 import { auditChanges, writeAudit } from '../audit/service'
@@ -123,6 +127,9 @@ interface Viewer {
 
 const sees = (f: Pick<FollowUpRow, 'assigneeId' | 'creatorId'>, v: Viewer) => v.all || f.assigneeId === v.id || f.creatorId === v.id
 const mayReassign = (f: Pick<FollowUpRow, 'creatorId'>, v: Viewer) => v.all || f.creatorId === v.id
+
+/** What anyone who may reassign no follow-up gets from the people list: what an endpoint that does not exist answers. */
+const noSuchEndpoint = () => new HttpError(404, 'not_found', 'No such endpoint.')
 
 function toFollowUp(r: FollowUpRow, v: Viewer): FollowUp {
   const out: FollowUp = {
@@ -248,6 +255,32 @@ export function followUpsRoutes(ctx: AppContext): Router {
     )
     const c = rows[0]
     const body: FollowUpCountsResponse = { visible: v.all || c.involved, all: v.all, mineOpen: c.mineOpen, mineOverdue: c.mineOverdue }
+    res.json(body)
+  })
+
+  /**
+   * Whom a follow-up can be given to: every active account, viewers included
+   * (never the system sender) — the same accounts a reassignment accepts.
+   * Only for people who may reassign some follow-up: supervisors,
+   * administrators, the owner, and anyone who created an automation (theirs
+   * are the follow-ups of their automations, deleted ones included).
+   */
+  r.get('/people', async (req, res) => {
+    const user = requireUser(req)
+    const v = await viewerOf(user)
+    if (!v.all) {
+      const { rows } = await db.query<{ reassigns: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM ai_automations WHERE creator_id = $1) OR EXISTS (SELECT 1 FROM follow_ups WHERE creator_id = $1) AS reassigns`,
+        [user.id],
+      )
+      if (!rows[0].reassigns) throw noSuchEndpoint()
+    }
+    const { rows } = await db.query<{ id: string; name: string; username: string; role: Role }>(
+      `SELECT u.id, u.name, u.username, u.role::text AS role FROM users u
+        WHERE ${LIVE_PERSON}
+        ORDER BY lower(u.name), u.username`,
+    )
+    const body: FollowUpPeopleResponse = { people: rows }
     res.json(body)
   })
 

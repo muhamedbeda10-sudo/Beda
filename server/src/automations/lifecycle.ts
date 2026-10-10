@@ -134,7 +134,19 @@ export async function activateProposal(
     draft = edited.draft
   }
   const checked: Validation = await validateDraft(
-    { db: deps.db, readers: deps.readers, timeZone: deps.config.FACTORY_TIMEZONE, creatorId: by.id, domains: access.domains, now, runQueries: true, stopEarly: true, signal },
+    {
+      db: deps.db,
+      readers: deps.readers,
+      timeZone: deps.config.FACTORY_TIMEZONE,
+      creatorId: by.id,
+      domains: access.domains,
+      now,
+      runQueries: true,
+      stopEarly: true,
+      // The person pressing Activate reads what is wrong.
+      readBy: 'person',
+      signal,
+    },
     draft,
   )
   if (!checked.ok) throw invalid(checked.errors)

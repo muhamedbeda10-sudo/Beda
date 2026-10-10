@@ -127,6 +127,42 @@ describe('the proposal card', () => {
     expect(text({ ...proposed, replacesName: 'Old holds' })).toContain('Changes “Old holds” when activated; the cases it has already fired stay fired.')
   })
 
+  describe('a change of a watch', () => {
+    const change = (backtest: Partial<NonNullable<AiAutomationPart['backtest']>>): AiAutomationPart => ({
+      ...proposed,
+      draft: { ...draft, replacesAutomationId: 'a1' },
+      replacesName: 'Old holds',
+      backtest: { ...proposed.backtest!, ...backtest },
+    })
+
+    it('keeping its query and key column, says its cases carry on, with nothing to choose', () => {
+      const t = text(change({ matched: 3, newCases: 1, keepsCases: true }))
+      expect(t).toContain('3 cases matched.')
+      expect(t).toContain('Its query and key column stay the same, so its cases carry on: of the 3 cases matching now, 1 not seen yet will fire on its next run; the others were already seen and will not fire again.')
+      expect(t).not.toContain('Also alert on')
+      expect(t).not.toContain('recorded as already seen')
+    })
+
+    it('with another query, offers to alert on the cases matching now that its automation has not seen yet', () => {
+      const t = text(change({ matched: 3, newCases: 2, keepsCases: false }))
+      expect(t).toContain('Also alert on the 2 cases matching now that it has not seen yet')
+      expect(t).toContain('Of the 3 cases matching now, 2 not seen yet are recorded as seen, like the others; only cases that appear later will fire.')
+    })
+
+    it('with every case matching now seen already, offers nothing to alert on', () => {
+      const t = text(change({ matched: 3, newCases: 0, keepsCases: false }))
+      expect(t).toContain('It has already seen the 3 cases matching now: they will not fire again, and only cases that appear later will fire.')
+      expect(t).not.toContain('Also alert on')
+    })
+
+    it('whose automation was deleted since, says it cannot be activated', () => {
+      const gone = { ...change({ newCases: 3, keepsCases: false }), replacesName: undefined }
+      expect(text(gone)).toContain('The automation this was to change is no longer there, so it cannot be activated. Ask the assistant to propose it again.')
+      expect(html(gone)).toContain('disabled="" data-tip="The automation it changes is no longer there"')
+      expect(text(proposed)).not.toContain('no longer there')
+    })
+  })
+
   it('shows a draft the server did not accept compactly, like a failed query', () => {
     const t = text({ type: 'automation', proposalId: 'p2', ok: false, error: 'watch.keyColumn: "id" is not a column of the result.', state: 'proposed', draft })
     expect(t).toContain('Automation draft not accepted : Holds on line 3')

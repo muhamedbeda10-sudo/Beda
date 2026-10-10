@@ -34,9 +34,8 @@ import { cn } from '@/lib/utils'
 import { commentOnFollowUp, updateFollowUp, useAssignablePeople, useFollowUp, useOwnAutomationIds } from '@/services/followUps'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
-import { can } from '@qc/shared/rules'
 import { CaseValues, DueText, FollowUpStatusBadge } from './parts'
-import { FOLLOW_UP_STATUS_LABEL, factoryInstant, factoryMoment, factoryTimestamp, factoryWallTime, followUpLinks, isOverdue, mayOpenAutomation } from './wording'
+import { FOLLOW_UP_STATUS_LABEL, assigneeChoices, factoryInstant, factoryMoment, factoryTimestamp, factoryWallTime, followUpLinks, isOverdue, mayOpenAutomation } from './wording'
 
 const EVENT_ICON: Record<FollowUpEventKind, typeof CircleDot> = {
   created: Sparkles,
@@ -111,7 +110,7 @@ function InAppLink({ to, children }: { to: string; children: ReactNode }) {
 function FollowUpBody({ followUp: f }: { followUp: FollowUpDetail }) {
   const qc = useQueryClient()
   const { toast } = useApp()
-  const { role, factoryTimeZone: tz } = useAuth()
+  const { factoryTimeZone: tz } = useAuth()
   const ai = useAi()
   const [busy, setBusy] = useState<'status' | 'assignee' | 'due' | 'comment' | null>(null)
   const [closing, setClosing] = useState(false)
@@ -132,15 +131,10 @@ function FollowUpBody({ followUp: f }: { followUp: FollowUpDetail }) {
     if (f.status === 'done') setClosing(false)
   }, [f.status])
 
-  // Whose list of people this person may read: the automations' (every active account), the accounts (an administrator), or the chat's.
-  const source = !f.canReassign ? null : ai.automations ? 'automations' : role === 'admin' ? 'users' : can(role, 'use-chat') ? 'chat' : null
-  const { people, isLoading: peopleLoading } = useAssignablePeople(source)
-  // The current assignee stays in the list even when the list does not hold them (a viewer, for a supervisor).
-  const options = useMemo(() => {
-    const list: { id: string; name: string }[] = people.map(({ id, name }) => ({ id, name }))
-    if (f.assignee && !list.some((p) => p.id === f.assignee?.id)) list.unshift({ id: f.assignee.id, name: f.assignee.name })
-    return list
-  }, [people, f.assignee])
+  // Everyone it can be given to, viewers too; asked for only when this person may give it to someone else (and it is not closed).
+  const mayReassign = f.canReassign && f.status !== 'done'
+  const { data: people, isLoading: peopleLoading, isError: peopleFailed, refetch: refetchPeople } = useAssignablePeople(mayReassign)
+  const choices = useMemo(() => assigneeChoices(people ?? [], f.assignee), [people, f.assignee])
 
   const change = async (what: 'status' | 'assignee' | 'due', body: FollowUpUpdateRequest, done: string) => {
     setBusy(what)
@@ -169,7 +163,8 @@ function FollowUpBody({ followUp: f }: { followUp: FollowUpDetail }) {
     if (!note.trim()) return
     if (await change('status', { status: 'done', closingNote: note.trim() }, 'Closed. The people it concerns are told.')) setNote('')
   }
-  const saveAssignee = () => void change('assignee', { assigneeId }, `Given to ${options.find((p) => p.id === assigneeId)?.name ?? 'them'}; they are told.`)
+  const assigneeName = (people ?? []).find((p) => p.id === assigneeId)?.name ?? 'them'
+  const saveAssignee = () => void change('assignee', { assigneeId }, `Given to ${assigneeName}; they are told.`)
   const dueIso = factoryInstant(dueWall, tz)
   // The field holds minutes: a deadline stored with seconds is the same deadline.
   const dueChanged = dueIso !== null && Math.floor(Date.parse(dueIso) / 60_000) !== Math.floor(Date.parse(f.dueAt) / 60_000)
@@ -320,24 +315,36 @@ function FollowUpBody({ followUp: f }: { followUp: FollowUpDetail }) {
       )}
 
       {/* A closed follow-up has no one to chase and no deadline to keep: reopened, it can be given and moved again. */}
-      {f.canReassign && f.status !== 'done' && (
+      {mayReassign && (
         <Section icon={<UserRound className="h-4 w-4" />} title="Assignee and deadline">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-2">
               <label className="block">
                 <span className="label">Assigned to</span>
-                <Select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} disabled={busy !== null || source === null} aria-label="Assigned to">
+                <Select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} disabled={busy !== null || !people} aria-label="Assigned to">
                   {!f.assignee && <option value="">Nobody</option>}
-                  {options.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
+                  {/* Whom it is given to now, though no longer among the people it can be given to (an account switched off since). */}
+                  {choices.current && <option value={choices.current.id}>{choices.current.name}</option>}
+                  {choices.groups.map((g) => (
+                    <optgroup key={g.role} label={g.label}>
+                      {g.people.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.username})
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </Select>
-                {peopleLoading && <span className="mt-1 block text-xs text-muted">Loading the people…</span>}
-                {/* The chat's people list is the one a supervisor may read, and viewers have no chat: said, not left to be found out. */}
-                {source === 'chat' && !peopleLoading && <span className="mt-1 block text-xs text-muted">Viewers are not in this list; an administrator can give it to one.</span>}
               </label>
+              {peopleLoading && <span className="block text-xs text-muted">Loading the people…</span>}
+              {peopleFailed && !people && (
+                <span className="flex flex-wrap items-center gap-x-2 text-xs text-rose-700 dark:text-rose-300">
+                  The people could not be loaded.
+                  <button type="button" onClick={() => void refetchPeople()} className="font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
+                    Try again
+                  </button>
+                </span>
+              )}
               <Button onClick={saveAssignee} disabled={busy !== null || !assigneeId || assigneeId === (f.assignee?.id ?? '')} className="min-h-[44px]">
                 {busy === 'assignee' ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserRound className="h-4 w-4" />} Reassign
               </Button>

@@ -205,9 +205,11 @@ describe('§20 asking a question', () => {
     // The owner may create automations (§21): their new conversations also get the automations' two tools.
     expect(p.tools).toEqual([
       expect.objectContaining({ name: 'run_sql', strict: true, eager_input_streaming: true, input_schema: expect.objectContaining({ additionalProperties: false, required: ['purpose', 'sql'] }) }),
-      expect.objectContaining({ name: 'propose_automation', strict: true, eager_input_streaming: true }),
+      expect.objectContaining({ name: 'propose_automation', eager_input_streaming: true }),
       expect.objectContaining({ name: 'my_automations', strict: true }),
     ])
+    // Not strict: with run_sql's, its alternatives compile to a grammar larger than the API accepts; the server checks the input itself.
+    expect(p.tools![1]).not.toHaveProperty('strict')
     expect(p.messages).toHaveLength(1)
     const question = p.messages[0]
     expect(question.role).toBe('user')

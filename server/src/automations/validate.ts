@@ -20,6 +20,10 @@
 //
 // The errors are written for the model as much as for a person: each names
 // the field and what to do, so the assistant can fix its call and try again.
+// A query's failure is the exception: the model is told what to change in its
+// query (queryErrorForModel); people — a card, an activation, a run's history,
+// the automation's status, the alert that it stopped, a delivered report —
+// read what went wrong in plain words (queryErrorForPeople).
 // ============================================================================
 
 import type pg from 'pg'
@@ -97,6 +101,8 @@ export interface ValidationContext {
   editing?: string | null
   /** Run no query for a draft that already fails its other checks (an activation: what to fix comes first, and costs the database nothing). */
   stopEarly?: boolean
+  /** Who reads the errors: the model (a proposal; the default), or the person who asked (an activation) — a query's failure then in plain words. */
+  readBy?: 'model' | 'person'
   signal?: AbortSignal
 }
 
@@ -125,6 +131,7 @@ export const caseKey = (cell: AiCell): string | null => (cell === null || cell =
 export async function validateDraft(ctx: ValidationContext, input: AutomationDraft): Promise<Validation> {
   const errors: string[] = []
   const draft = normalise(input)
+  const failedQuery = (run: QueryFailed) => (ctx.readBy === 'person' ? queryErrorForPeople(run, 'asker') : queryErrorForModel(run))
 
   // ---- Words
   if (!draft.name) errors.push('name: give the automation a name.')
@@ -164,16 +171,17 @@ export async function validateDraft(ctx: ValidationContext, input: AutomationDra
         signal: ctx.signal,
       })
       backtest = watchBacktest(draft.watch, watchRun, ctx.now)
-      if (!watchRun.ok) errors.push(`watch.sql: ${queryError(watchRun)}`)
+      if (!watchRun.ok) errors.push(`watch.sql: ${failedQuery(watchRun)}`)
       else {
         checkWatchResult(draft, watchRun, columnsNamed, errors)
         // Only for a change that passed everything (its automation the person's own, of this kind).
         if (errors.length === 0 && draft.replacesAutomationId) await describeChange(ctx, draft, watchRun, backtest)
       }
     } else if (draft.kind === 'report' && draft.schedule && sectionsOk) {
-      backtest = await reportBacktest(pool, draft.schedule, ctx)
-      backtest.sections?.forEach((s, i) => {
-        if (!s.ok) errors.push(`schedule.sections[${i}] (${quoted(s.title)}): ${s.error ?? 'the query failed.'}`)
+      const ran = await reportBacktest(pool, draft.schedule, ctx)
+      backtest = ran.backtest
+      ran.runs.forEach((run, i) => {
+        if (!run.ok) errors.push(`schedule.sections[${i}] (${quoted(draft.schedule!.sections[i].title)}): ${failedQuery(run)}`)
       })
     }
   } else if (draft.kind === 'watch' && draft.watch && ctx.knownColumns) {
@@ -376,15 +384,24 @@ async function checkOwnership(ctx: ValidationContext, d: AutomationDraft, errors
     if (!UUID.test(replaces)) errors.push(`replacesAutomationId: ${quoted(replaces)} is not an automation id.`)
     else {
       const { rows } = await ctx.db.query<{ kind: string }>(`SELECT kind FROM ai_automations WHERE id = $1 AND creator_id = $2 AND deleted_at IS NULL`, [replaces, ctx.creatorId])
-      if (!rows[0]) errors.push('replacesAutomationId: none of this person\'s automations has that id (my_automations lists them).')
-      else if (rows[0].kind !== d.kind) errors.push(`replacesAutomationId: that automation is a ${rows[0].kind}; a change keeps its kind.`)
+      if (!rows[0]) {
+        errors.push(
+          ctx.readBy === 'person'
+            ? 'The automation this proposal changes no longer exists.'
+            : "replacesAutomationId: none of this person's automations has that id (my_automations lists them).",
+        )
+      } else if (rows[0].kind !== d.kind) errors.push(`replacesAutomationId: that automation is a ${rows[0].kind}; a change keeps its kind.`)
     }
   }
   // A change of one already counted takes no room.
   if (replaces || ctx.editing) return
   const { rows } = await ctx.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_automations WHERE creator_id = $1 AND deleted_at IS NULL`, [ctx.creatorId])
   if (rows[0].n >= AUTOMATION_MAX_PER_CREATOR) {
-    errors.push(`This person already has ${AUTOMATION_MAX_PER_CREATOR} automations, the most allowed. Delete one, or change one of them instead.`)
+    errors.push(
+      ctx.readBy === 'person'
+        ? `You already have ${AUTOMATION_MAX_PER_CREATOR} automations, the most allowed. Delete one first.`
+        : `This person already has ${AUTOMATION_MAX_PER_CREATOR} automations, the most allowed. Delete one, or change one of them instead.`,
+    )
   }
 }
 
@@ -409,10 +426,49 @@ async function describeChange(ctx: ValidationContext, d: AutomationDraft, run: Q
   backtest.keepsCases = keepsCases(rows[0].watch, d.watch)
 }
 
+/** What a failed query run says about itself: the model's sentence, and what it was. */
+export type QueryFailed = Pick<QueryRun, 'error' | 'failure' | 'code' | 'dbMessage'>
+
+/** A database message quoted to people is cut here: it may quote a value. */
+const DB_MESSAGE_CHARS = 200
+
 /** A query's failure in the words the model needs: a grant refused is the person's data, not a typo. */
-export function queryError(run: Pick<QueryRun, 'error' | 'code'>): string {
+export function queryErrorForModel(run: QueryFailed): string {
   if (run.code === '42501') return 'it reads data this person cannot read. Use only the views described in the system prompt.'
   return run.error ?? 'the query failed.'
+}
+
+/**
+ * A query's failure as people read it — on a card, in a run's history, in
+ * the automation's status, in the alert that it stopped, in a delivered
+ * report: what went wrong, in a sentence, and never what the model is told
+ * to do about it. `reader`: an automation's (its creator's data), or the
+ * person who asked for it, reading their own card or activation.
+ */
+export function queryErrorForPeople(run: QueryFailed, reader: 'creator' | 'asker' = 'creator'): string {
+  switch (run.failure) {
+    case 'database': {
+      if (run.code === '42501') return reader === 'asker' ? 'It reads data you cannot read.' : 'It reads data its creator can no longer read.'
+      const said = oneLine(run.dbMessage ?? '')
+      if (!said) return 'The query failed.'
+      const short = cutChars(said, DB_MESSAGE_CHARS, true)
+      return `The query failed: ${/[.!?…]$/.test(short) ? short : `${short}.`}`
+    }
+    case 'timeout':
+      return 'The query took too long and was stopped.'
+    case 'row-too-large':
+      return 'A row of its result was too large to read.'
+    case 'reply-too-large':
+      return "The database's reply was too large to read."
+    case 'stopped':
+      return 'The query was stopped before it finished.'
+    case 'unavailable':
+      return "The factory's data could not be reached just now."
+    case 'rejected':
+      return 'The app no longer accepts this query.'
+    default:
+      return 'The query failed.'
+  }
 }
 
 /** Every column the draft names is in the result. */
@@ -467,7 +523,8 @@ const sampleCell = (c: AiCell): AiCell => (typeof c === 'string' ? cutChars(c, S
 
 /** A watch run once: how many cases match now, a few of them, and how the first reads as a message. */
 export function watchBacktest(w: AutomationWatchSpec, run: QueryRun, now: Date): AutomationBacktest {
-  if (!run.ok) return { ranAt: now.toISOString(), ok: false, error: queryError(run) }
+  // On the card of the person who asked for it.
+  if (!run.ok) return { ranAt: now.toISOString(), ok: false, error: queryErrorForPeople(run, 'asker') }
   const sampleRows = run.rows.slice(0, AUTOMATION_BACKTEST_SAMPLE_ROWS).map((r) => r.map(sampleCell))
   const bt: AutomationBacktest = { ranAt: now.toISOString(), ok: true, matched: run.rows.length, truncated: run.truncated, columns: run.columns, sampleRows }
   const first = run.rows[0]
@@ -490,10 +547,11 @@ export function sectionSql(sql: string, period: { from: string; to: string } | n
   return period && /\{\{(?:from|to)\}\}/.test(sql) ? fillTemplate(sql, period) : sql
 }
 
-/** A report run once over its period as of today: each section's first rows. No summary. */
-async function reportBacktest(pool: pg.Pool, s: AutomationScheduleSpec, ctx: ValidationContext): Promise<AutomationBacktest> {
+/** A report run once over its period as of today: each section's first rows (no summary), and each section's run as it went. */
+async function reportBacktest(pool: pg.Pool, s: AutomationScheduleSpec, ctx: ValidationContext): Promise<{ backtest: AutomationBacktest; runs: QueryRun[] }> {
   const period = reportPeriodAt(s, ctx.now, ctx.timeZone)
   const sections: AiReportSectionRun[] = []
+  const runs: QueryRun[] = []
   for (const section of s.sections) {
     const run = await runReadOnlyQuery(pool, sectionSql(section.sql, period), {
       maxRows: Math.min(BACKTEST_SECTION_ROWS, AI_PREVIEW_ROWS),
@@ -501,6 +559,7 @@ async function reportBacktest(pool: pg.Pool, s: AutomationScheduleSpec, ctx: Val
       timeZone: ctx.timeZone,
       signal: ctx.signal,
     })
+    runs.push(run)
     const preview = previewOf(run)
     const out: AiReportSectionRun = {
       title: section.title,
@@ -511,10 +570,11 @@ async function reportBacktest(pool: pg.Pool, s: AutomationScheduleSpec, ctx: Val
       truncated: preview.truncated,
       ms: Math.round(run.ms),
     }
-    if (!run.ok) out.error = queryError(run)
+    // On the card of the person who asked for it.
+    if (!run.ok) out.error = queryErrorForPeople(run, 'asker')
     sections.push(out)
   }
   const bt: AutomationBacktest = { ranAt: ctx.now.toISOString(), ok: sections.every((x) => x.ok), sections }
   if (period) bt.period = period
-  return bt
+  return { backtest: bt, runs }
 }

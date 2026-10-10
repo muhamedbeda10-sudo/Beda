@@ -1,5 +1,49 @@
 import { describe, expect, it } from 'vitest'
-import { automationLinkFilters, dueView, durationWords, emptyListWords, mayOpenAutomation, factoryInstant, factoryMoment, factoryTimestamp, factoryWallTime, followUpLinks, followUpsQuery, isOverdue, isStatusFilter } from './wording'
+import {
+  assigneeChoices,
+  automationLinkFilters,
+  dueView,
+  durationWords,
+  emptyListWords,
+  mayOpenAutomation,
+  factoryInstant,
+  factoryMoment,
+  factoryTimestamp,
+  factoryWallTime,
+  followUpLinks,
+  followUpsQuery,
+  isOverdue,
+  isStatusFilter,
+  type AssignablePerson,
+} from './wording'
+
+describe('whom a follow-up can be given to', () => {
+  const people: AssignablePerson[] = [
+    { id: 'u3', name: 'Omar', username: 'omar', role: 'inspector' },
+    { id: 'u1', name: 'Mona', username: 'mona', role: 'viewer' },
+    { id: 'u2', name: 'Hany', username: 'hany', role: 'supervisor' },
+    { id: 'u4', name: 'Aya', username: 'aya', role: 'inspector' },
+    { id: 'u5', name: 'Sara', username: 'sara', role: 'admin' },
+  ]
+
+  it('offers everyone the server lists — viewers too — by role, the widest rights first, each by name', () => {
+    const { current, groups } = assigneeChoices(people, { id: 'u3', name: 'Omar' })
+    expect(current).toBeNull()
+    expect(groups.map((g) => [g.label, g.people.map((p) => p.name)])).toEqual([
+      ['Admin', ['Sara']],
+      ['Supervisor', ['Hany']],
+      ['Inspector', ['Aya', 'Omar']],
+      ['Viewer', ['Mona']],
+    ])
+  })
+
+  it('keeps offering whom it is given to now when the list no longer has them', () => {
+    expect(assigneeChoices(people, { id: 'gone', name: 'Old account' }).current).toEqual({ id: 'gone', name: 'Old account' })
+    // Before the list is in, the field still reads who it is.
+    expect(assigneeChoices([], { id: 'u1', name: 'Mona' })).toEqual({ current: { id: 'u1', name: 'Mona' }, groups: [] })
+    expect(assigneeChoices(people, null).current).toBeNull()
+  })
+})
 
 describe('the follow-ups list as the API takes it', () => {
   it('sends the scope always and leaves out what is not set', () => {

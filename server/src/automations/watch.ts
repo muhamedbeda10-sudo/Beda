@@ -44,7 +44,7 @@ import { activeUserIds, distinctIds } from './people'
 import { factoryDayStart } from './schedule'
 import { sendSystemMessageBatch } from './systemChat'
 import { fillCaseTemplate, isolate } from './text'
-import { AUTOMATION_QUERY_TIMEOUT_MS, caseKey, queryError } from './validate'
+import { AUTOMATION_QUERY_TIMEOUT_MS, caseKey, queryErrorForPeople } from './validate'
 import type { AutomationRow } from './views'
 
 /** Why the engine aborts the runs under way when the server stops: each is handed back, to run again at once elsewhere. */
@@ -183,7 +183,7 @@ export async function runWatch(args: WatchRunArgs): Promise<RunResult> {
   const w = a.watch!
   const run = await runReadOnlyQuery(args.pool, w.sql, { maxRows: AUTOMATION_WATCH_MAX_ROWS, timeoutMs: AUTOMATION_QUERY_TIMEOUT_MS, timeZone: args.timeZone, signal: args.signal })
   const base: RunResult = { ok: false, notified: 0, casesNotified: 0, digest: false, notes: [] }
-  if (!run.ok) return { ...base, error: queryError(run) }
+  if (!run.ok) return { ...base, error: queryErrorForPeople(run) }
   const found = casesOf(w, run, a.name)
   if ('error' in found) return { ...base, matched: run.rows.length, error: found.error, resultColumns: run.columns }
   const notes: string[] = []

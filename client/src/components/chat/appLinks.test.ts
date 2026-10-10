@@ -24,6 +24,14 @@ describe('the paths in an automated message', () => {
     ])
   })
 
+  it('links where the rest of a long list can be seen, and leaves a line with nowhere to open as text', () => {
+    expect(appLinkSegments('Holds: 25 new cases\n• Sample 7 on hold\n…and 5 more: /follow-ups?automationId=a1')).toEqual([
+      { type: 'text', text: 'Holds: 25 new cases\n• Sample 7 on hold\n…and 5 more: ' },
+      { type: 'link', to: '/follow-ups?automationId=a1', label: 'Open follow-ups' },
+    ])
+    expect(appLinkSegments('Holds: 25 new cases\n• Sample 7 on hold\n…and 5 more.')).toEqual([{ type: 'text', text: 'Holds: 25 new cases\n• Sample 7 on hold\n…and 5 more.' }])
+  })
+
   it('finds a path at the very start of the text', () => {
     expect(appLinkSegments('/automations/deliveries/d1')).toEqual([{ type: 'link', to: '/automations/deliveries/d1', label: 'Open the report' }])
   })

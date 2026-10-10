@@ -321,7 +321,7 @@ export interface AutomationRun {
   matched?: number
   /** watch: cases seen for the first time. */
   fired?: number
-  /** People told (bell notifications and chat messages each count one per person). */
+  /** Bell alerts and chat messages the run sent, every one counted: a person may account for several (an alert per case, a digest, a chat message). Not people. */
   notified?: number
   followUps?: number
   /** The run's cases went out as one digest. */
@@ -456,6 +456,16 @@ export interface FollowUpUpdateRequest {
 
 export interface FollowUpCommentRequest {
   body: string
+}
+
+/**
+ * The people a follow-up can be given to: every active account, viewers
+ * included, never the system sender. Answered only to those who may reassign
+ * a follow-up (supervisors, administrators, the assistant's owner, and anyone
+ * who created an automation); to anyone else the endpoint does not exist.
+ */
+export interface FollowUpPeopleResponse {
+  people: { id: string; name: string; username: string; role: Role }[]
 }
 
 // ---- Notifications (the bell) --------------------------------------------------------

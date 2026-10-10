@@ -51,11 +51,11 @@ import { previewOf, runReadOnlyQuery } from '../ai/runQuery'
 import { escalateOverdue } from './followUps'
 import { createNotifications, purgeNotifications } from './notify'
 import { activeUserIds, distinctIds } from './people'
-import { runReport, runSections, type ReportReader } from './report'
+import { runReport, runSections, sectionError, type ReportReader } from './report'
 import { INTERRUPTED_ERROR, beginRun, closeLostRuns, findRun, skippedRun } from './runs'
 import { MISSED_RUN_GRACE_MS, nextReportRun, nextWatchRun, previousReportRun, reportRunsBetween } from './schedule'
 import { isolate } from './text'
-import { AUTOMATION_QUERY_TIMEOUT_MS, queryError, reportPeriodAt, watchBacktest, type AutomationReaders } from './validate'
+import { AUTOMATION_QUERY_TIMEOUT_MS, queryErrorForPeople, reportPeriodAt, watchBacktest, type AutomationReaders } from './validate'
 import { appState, blockedNote, blockedReason, creatorDomains, creatorStates, findAutomation, type AutomationRow } from './views'
 import { STOPPING, automationLink, casesOf, runWatch, type RunResult } from './watch'
 
@@ -362,7 +362,8 @@ async function finishRun(deps: EngineDeps, c: Claimed, r: RunResult, ms: number)
     )
     const now = rows[0]
     if (!counted || r.ok || !now || now.deleted || now.status !== 'active' || now.failures < AUTOMATION_FAILURES_BEFORE_STOP) return
-    const statusNote = `Stopped after ${now.failures} failed runs in a row. The last one: ${r.error ?? 'it failed.'}`
+    // In the words its runs' history uses: what went wrong, for the people who read it, never the model's instructions.
+    const statusNote = `Stopped after ${now.failures} failed runs in a row. ${r.error ?? 'The last one failed.'}`
     await tx.query(`UPDATE ai_automations SET status = 'failed', status_note = $2, next_run_at = NULL WHERE id = $1`, [a.id, statusNote])
     const owner = (await appState(tx, deps.config, deps.readers.ready)).ownerId
     await createNotifications(tx, [a.creatorId, ...(owner ? [owner] : [])], {
@@ -436,12 +437,12 @@ export async function testAutomation(deps: EngineDeps, a: AutomationRow, opts: {
       const out: AutomationTestResponse = { ranAt, ok: sections.every((s) => s.ok), sections, recipients }
       if (period) out.period = period
       const failed = sections.find((s) => !s.ok)
-      if (failed) out.error = `“${failed.title}” failed: ${failed.error ?? 'the query failed.'}`
+      if (failed) out.error = sectionError(failed)
       return out
     }
     const w = a.watch!
     const run = await runReadOnlyQuery(pool, w.sql, { maxRows: AUTOMATION_WATCH_MAX_ROWS, timeoutMs: AUTOMATION_QUERY_TIMEOUT_MS, timeZone: tz, signal: ac.signal })
-    if (!run.ok) return { ranAt, ok: false, error: queryError(run) }
+    if (!run.ok) return { ranAt, ok: false, error: queryErrorForPeople(run) }
     const found = casesOf(w, run, a.name)
     if ('error' in found) return { ranAt, ok: false, error: found.error }
     const { rows } = await deps.db.query<{ key: string }>(`SELECT case_key AS key FROM ai_automation_hits WHERE automation_id = $1 AND case_key = ANY($2::text[])`, [

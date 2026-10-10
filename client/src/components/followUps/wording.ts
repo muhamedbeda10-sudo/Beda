@@ -2,11 +2,11 @@
 // §21 — follow-ups in words: the statuses and how each reads, the filters as
 // the API takes them (and what an empty list says), a deadline as "in 3 h"
 // or "2 days overdue", where a follow-up's session, sample and order open in
-// the app, and a deadline typed on the factory's clock as the instant the
-// API stores.
+// the app, the people it can be given to, and a deadline typed on the
+// factory's clock as the instant the API stores.
 // ============================================================================
 
-import type { FollowUp, FollowUpScope, FollowUpStatus } from '@qc/shared/automation'
+import type { FollowUp, FollowUpPeopleResponse, FollowUpScope, FollowUpStatus } from '@qc/shared/automation'
 import type { BadgeTone } from '@/components/ui'
 import { orderHistoryPath, sampleDetailPath, sessionDetailPath } from '@/lib/links'
 import { dayInTimeZone } from '@/lib/utils'
@@ -158,6 +158,37 @@ export function mayOpenAutomation(id: string | null | undefined, who: { owner: b
   if (!id) return false
   if (who.owner) return true
   return who.automations && !!who.own?.has(id)
+}
+
+// ---- Whom it can be given to ---------------------------------------------------------
+
+/** Someone a follow-up can be given to, as GET /follow-ups/people lists them. */
+export type AssignablePerson = FollowUpPeopleResponse['people'][number]
+
+/** Roles from the widest rights down, as the list groups them. */
+const ROLE_ORDER: readonly string[] = ['admin', 'supervisor', 'inspector', 'viewer']
+
+const roleHeading = (role: string): string => (role ? role.charAt(0).toUpperCase() + role.slice(1) : 'No role')
+
+export interface AssigneeChoices {
+  /** Whom it is given to now, when the list does not hold them (an account switched off since): still offered, so the field reads who it is. */
+  current: { id: string; name: string } | null
+  /** Everyone it can be given to — viewers too — by role (the widest rights first, a role the app does not know last), each by name. */
+  groups: { role: string; label: string; people: AssignablePerson[] }[]
+}
+
+/** The reassign list: the people the server offers, and whom it is given to now. */
+export function assigneeChoices(people: readonly AssignablePerson[], assignee: { id: string; name: string } | null): AssigneeChoices {
+  const byRole = new Map<string, AssignablePerson[]>()
+  for (const p of people) byRole.set(p.role, [...(byRole.get(p.role) ?? []), p])
+  const rank = (role: string) => {
+    const i = ROLE_ORDER.indexOf(role)
+    return i < 0 ? ROLE_ORDER.length : i
+  }
+  const groups = [...byRole.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(([role, list]) => ({ role, label: roleHeading(role), people: [...list].sort((x, y) => x.name.localeCompare(y.name) || x.username.localeCompare(y.username)) }))
+  return { current: assignee && !people.some((p) => p.id === assignee.id) ? { id: assignee.id, name: assignee.name } : null, groups }
 }
 
 // ---- The factory's clock -------------------------------------------------------------

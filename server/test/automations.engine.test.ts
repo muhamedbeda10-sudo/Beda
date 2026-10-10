@@ -250,12 +250,19 @@ describe('§21 failing and blocked', () => {
     // A manual run is recorded and counts for nothing.
     const manual = await app.api<{ ok: boolean; trigger: string; error: string }>('POST', `/api/automations/${id}/run`, { token: p.creator.token })
     expect(manual.status).toBe(200)
-    expect(manual.body).toMatchObject({ ok: false, trigger: 'manual', error: 'division by zero' })
+    expect(manual.body).toMatchObject({ ok: false, trigger: 'manual', error: 'The query failed: division by zero.' })
     expect(await row(id)).toMatchObject({ status: 'active', failures: 4 })
     await engine.tick()
-    expect(await row(id)).toMatchObject({ status: 'failed', failures: 5, nextRunAt: null, statusNote: 'Stopped after 5 failed runs in a row. The last one: division by zero' })
+    expect(await row(id)).toMatchObject({ status: 'failed', failures: 5, nextRunAt: null, statusNote: 'Stopped after 5 failed runs in a row. The query failed: division by zero.' })
     const stopped = (userId: string) => alertsOf(app.db, userId).then((a) => a.filter((x) => x.kind === 'automation-stopped'))
-    expect(await stopped(p.creator.user.id)).toEqual([expect.objectContaining({ severity: 'critical', title: 'Automation stopped: New machines', link: `/automations/${id}` })])
+    expect(await stopped(p.creator.user.id)).toEqual([
+      expect.objectContaining({
+        severity: 'critical',
+        title: 'Automation stopped: New machines',
+        body: 'Stopped after 5 failed runs in a row. The query failed: division by zero. Fix it in the assistant, then resume it on the Automations page.',
+        link: `/automations/${id}`,
+      }),
+    ])
     expect(await stopped(p.owner.user.id)).toHaveLength(1)
     expect(await automation(id, p.creator)).toMatchObject({ status: 'failed', nextRunAt: null, consecutiveFailures: 5, lastRunOk: false })
     clock.advance(HOUR)
@@ -303,13 +310,30 @@ describe('§21 failing and blocked', () => {
     expect(await automation(id)).not.toHaveProperty('blockedReason')
   })
 
-  it('counts a domain taken away as a failure: the query is refused', async () => {
+  it('counts a domain taken away as a failure: the query is refused, and people read why in plain words', async () => {
     const clock = new Clock()
+    const engine = engineFor(app, clock)
     // A watch over the coil register: the materials domain.
     const id = await insertAutomation(app.db, { creatorId: p.creator2.user.id, watch: watch(`SELECT coil_id::text AS machine_code, 'x' AS machine FROM ai.coils`), nextRunAt: clock.now() })
-    await engineFor(app, clock).tick()
-    expect(await runsOf(app.db, id)).toEqual([expect.objectContaining({ ok: false, error: expect.stringMatching(/cannot read/) })])
+    await engine.tick()
+    const plain = 'It reads data its creator can no longer read.'
+    expect(await runsOf(app.db, id)).toEqual([expect.objectContaining({ ok: false, error: plain })])
     expect(await row(id)).toMatchObject({ failures: 1, blockedReason: null })
+    // The test on the Automations page says the same.
+    const tried = await app.api<{ ok: boolean; error: string }>('POST', `/api/automations/${id}/test`, { token: p.creator2.token })
+    expect(tried.body).toMatchObject({ ok: false, error: plain })
+    // Stopped after enough of them: its status and the alert say it as plainly, never what the model is told.
+    for (let i = 1; i < 5; i++) {
+      clock.advance(5 * MINUTE)
+      await engine.tick()
+    }
+    const note = `Stopped after 5 failed runs in a row. ${plain}`
+    expect(await row(id)).toMatchObject({ status: 'failed', statusNote: note })
+    expect((await automation(id, p.creator2)).statusNote).toBe(note)
+    const alert = (await alertsOf(app.db, p.creator2.user.id)).find((a) => a.kind === 'automation-stopped')!
+    expect(alert.body).toBe(`${note} Fix it in the assistant, then resume it on the Automations page.`)
+    const runs = await app.api<{ runs: { error?: string; note?: string }[] }>('GET', `/api/automations/${id}/runs`, { token: p.creator2.token })
+    for (const said of [note, alert.body, ...runs.body.runs.flatMap((r) => [r.error ?? '', r.note ?? ''])]) expect(said).not.toMatch(/prompt|views|schema|tool/i)
   })
 })
 
