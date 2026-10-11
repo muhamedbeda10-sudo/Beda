@@ -19,6 +19,30 @@ export function textDirection(text: string): 'rtl' | 'ltr' | null {
   return null
 }
 
+/** A text reads right to left when more than this share of its words do. */
+const RTL_WORD_SHARE = 0.4
+
+/**
+ * Which way a message people typed reads, by its words: right to left when
+ * more than 40% of its words start with a right-to-left letter (the estimate
+ * Google's Closure bidi library uses). An Arabic message naming English
+ * parts — "ضروري Connector welding wire في مكان اللحام" — has as many Latin
+ * letters as Arabic ones, yet reads right to left. Null when it has no word
+ * with a strong letter.
+ */
+export function messageDirection(text: string): 'rtl' | 'ltr' | null {
+  let rtl = 0
+  let total = 0
+  for (const word of text.split(/\s+/)) {
+    const first = textDirection(word)
+    if (!first) continue
+    total++
+    if (first === 'rtl') rtl++
+  }
+  if (total === 0) return null
+  return rtl / total > RTL_WORD_SHARE ? 'rtl' : 'ltr'
+}
+
 /** Which way most of a text's letters read; null when it has none. */
 export function letterDirection(text: string): 'rtl' | 'ltr' | null {
   let rtl = 0

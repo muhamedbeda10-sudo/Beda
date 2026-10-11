@@ -6,6 +6,7 @@ import { NoticeFileRow } from '@/components/notices/NoticeCard'
 import { cn, formatTime } from '@/lib/utils'
 import { QUICK_REACTIONS } from './emoji'
 import { MessageBody } from './MessageBody'
+import { messageDirection } from '@/lib/direction'
 import { plainText } from './mentions'
 
 const timeOf = (iso: string) => formatTime(iso)
@@ -75,8 +76,8 @@ export function MessageBubble({
               onClick={() => actions.onJumpTo(m.replyTo!.id)}
               className={cn('mb-1.5 block w-full rounded-lg border-l-4 px-2 py-1 text-left text-xs', mine ? 'border-white/60 bg-white/15' : 'border-brand-500 bg-slate-100 dark:bg-slate-700/60')}
             >
-              <span className="block font-bold">{m.replyTo.senderName}</span>
-              <span className="line-clamp-2 opacity-80">{m.replyTo.text || '…'}</span>
+              <span dir="auto" className="block font-bold">{m.replyTo.senderName}</span>
+              <span dir={messageDirection(m.replyTo.text) ?? 'auto'} className="line-clamp-2 text-start opacity-80">{m.replyTo.text || '…'}</span>
             </button>
           )}
           {m.deleted ? (
