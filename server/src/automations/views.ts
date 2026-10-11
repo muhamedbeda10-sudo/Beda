@@ -115,6 +115,8 @@ export interface AutomationRow {
   retryAt: string | null
   lastRunAt: string | null
   lastRunOk: boolean | null
+  /** Why the latest finished run failed; null when it worked (or none has run). */
+  lastRunError: string | null
   lastManualRunAt: string | null
   createdAt: string
   updatedAt: string
@@ -130,6 +132,7 @@ export const AUTOMATION_COLUMNS = `a.id, a.creator_id AS "creatorId", cu.name AS
        a.consecutive_failures AS "consecutiveFailures", a.next_run_at AS "nextRunAt", a.running_until AS "runningUntil",
        a.retry_at AS "retryAt", a.last_run_at AS "lastRunAt", a.last_run_ok AS "lastRunOk", a.last_manual_run_at AS "lastManualRunAt",
        a.created_at AS "createdAt", a.updated_at AS "updatedAt", a.updated_by_name AS "updatedByName",
+       (SELECT r.error FROM ai_automation_runs r WHERE r.automation_id = a.id AND r.finished_at IS NOT NULL ORDER BY r.started_at DESC, r.id DESC LIMIT 1) AS "lastRunError",
        (SELECT count(*)::int FROM follow_ups f WHERE f.automation_id = a.id AND f.status <> 'done') AS "openFollowUps"`
 
 export const AUTOMATION_FROM = `ai_automations a JOIN users cu ON cu.id = a.creator_id LEFT JOIN ai_conversations c ON c.id = a.conversation_id`
@@ -179,5 +182,6 @@ export function toAutomation(r: AutomationRow, viewerId: string, people: Map<str
   if (r.updatedByName) out.updatedByName = r.updatedByName
   if (r.lastRunAt) out.lastRunAt = r.lastRunAt
   if (r.lastRunOk !== null) out.lastRunOk = r.lastRunOk
+  if (r.lastRunOk === false && r.lastRunError) out.lastRunError = r.lastRunError
   return out
 }

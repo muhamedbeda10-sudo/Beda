@@ -4,7 +4,9 @@
 // proposal, and nothing runs until a person presses Activate.
 //
 //   • A watch is a read-only query the server runs every few minutes, without
-//     the model. Each row it returns is a case; each case fires once.
+//     the model — around the clock, or only in the hours and on the days it
+//     is given (factory time). Each row it returns is a case; each case
+//     fires once.
 //   • A scheduled report runs its queries at a factory-time hour and, when
 //     asked, the model writes a short summary on top.
 //
@@ -56,6 +58,17 @@ export type AutomationKind = 'watch' | 'report'
 export type AutomationLanguage = 'ar' | 'en'
 
 /**
+ * The hours of the factory day a watch runs in, HH:MM on the 24-hour clock:
+ * from `from` (included) to `to` (not included). A `to` at or before `from`
+ * crosses midnight — 22:00 to 06:00 is the night — and such a stretch
+ * counts as the day it starts on.
+ */
+export interface AutomationHours {
+  from: string
+  to: string
+}
+
+/**
  * A watch. Its query runs under its creator's current data domains, like
  * their chat. `titleTemplate` and `bodyTemplate` carry `{{column}}`
  * placeholders filled from the case's row.
@@ -64,7 +77,12 @@ export interface AutomationWatchSpec {
   sql: string
   /** The column that names a case: one value, one case, fired once. */
   keyColumn: string
+  /** How often it looks, within its hours. */
   everyMinutes: number
+  /** The hours it runs in (factory time); absent: around the clock. */
+  hours?: AutomationHours
+  /** The days it runs, 0 = Sunday … 6 = Saturday; absent: every day. */
+  weekdays?: AutomationWeekday[]
   titleTemplate: string
   bodyTemplate?: string
   /** Columns whose values link a case to the app: an inspection session id, a sample id, an order number. */
@@ -227,9 +245,12 @@ export interface AutomationEdits {
   actions?: AutomationActions
   /** watch */
   everyMinutes?: number
+  /** watch: the hours it runs in; null: around the clock. */
+  hours?: AutomationHours | null
   /** report */
   cadence?: AutomationCadence
   time?: string
+  /** watch, or a daily report: the days it runs; null: every day. */
   weekdays?: AutomationWeekday[] | null
   weekday?: AutomationWeekday | null
   monthDay?: number | null
@@ -296,6 +317,8 @@ export interface Automation {
   updatedByName?: string
   lastRunAt?: string
   lastRunOk?: boolean
+  /** Why its last run failed, when it did (lastRunOk false). */
+  lastRunError?: string
   /** When it runs next (null when it does not: paused, failed, blocked). */
   nextRunAt: string | null
   consecutiveFailures: number
@@ -508,6 +531,13 @@ export const isAutomationTime = (s: string): boolean => /^([01]\d|2[0-3]):[0-5]\
 
 export const isAutomationWeekday = (n: unknown): n is AutomationWeekday => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 6
 
+/** Two HH:MM times that differ: a stretch of the day (one crossing midnight when `to` comes first). */
+export const isAutomationHours = (h: unknown): h is AutomationHours => {
+  if (!h || typeof h !== 'object') return false
+  const { from, to } = h as { from?: unknown; to?: unknown }
+  return typeof from === 'string' && typeof to === 'string' && isAutomationTime(from) && isAutomationTime(to) && from !== to
+}
+
 export function weekdayName(d: AutomationWeekday): string {
   return WEEKDAY_NAMES[d]
 }
@@ -527,13 +557,17 @@ export function describeWatchInterval(everyMinutes: number): string {
   return `Every ${h} hour${h === 1 ? '' : 's'} ${m} minute${m === 1 ? '' : 's'}`
 }
 
-/** "Every day at 08:00", "Saturday to Thursday at 07:30", "Every Sunday at 09:00", "On the 1st of every month at 08:00". */
-export function describeSchedule(s: Pick<AutomationScheduleSpec, 'cadence' | 'time' | 'weekdays' | 'weekday' | 'monthDay'>): string {
-  if (s.cadence === 'weekly') return `Every ${weekdayName(s.weekday ?? 0)} at ${s.time}`
-  if (s.cadence === 'monthly') return `On the ${ordinal(s.monthDay ?? 1)} of every month at ${s.time}`
-  const days = [...new Set(s.weekdays ?? [])].sort((a, b) => a - b)
-  if (days.length === 0 || days.length === 7) return `Every day at ${s.time}`
-  if (days.length === 1) return `Every ${weekdayName(days[0])} at ${s.time}`
+/** Whether a list of days means every day: none given, or all seven. */
+export const isEveryDay = (weekdays: readonly AutomationWeekday[] | undefined | null): boolean => {
+  const n = new Set(weekdays ?? []).size
+  return n === 0 || n === 7
+}
+
+/** "Every day" (none or all seven given), "Every Sunday", "Saturday to Thursday" (a run of days, wrapping past Saturday), "Sunday, Tuesday, Thursday". */
+export function describeWeekdays(weekdays: readonly AutomationWeekday[] | undefined | null): string {
+  if (isEveryDay(weekdays)) return 'Every day'
+  const days = [...new Set(weekdays ?? [])].sort((a, b) => a - b)
+  if (days.length === 1) return `Every ${weekdayName(days[0])}`
   // A run of consecutive days, wrapping past Saturday (e.g. Saturday to Thursday), reads as a range.
   const set = new Set(days)
   const start = days.find((d) => !set.has(((d + 6) % 7) as AutomationWeekday))
@@ -544,9 +578,31 @@ export function describeSchedule(s: Pick<AutomationScheduleSpec, 'cadence' | 'ti
       end = ((end + 1) % 7) as AutomationWeekday
       count++
     }
-    if (count === days.length && count >= 3) return `${weekdayName(start)} to ${weekdayName(end)} at ${s.time}`
+    if (count === days.length && count >= 3) return `${weekdayName(start)} to ${weekdayName(end)}`
   }
-  return `${days.map((d) => weekdayName(d)).join(', ')} at ${s.time}`
+  return days.map((d) => weekdayName(d)).join(', ')
+}
+
+/** "05:00 to 10:00"; "22:00 to 06:00" (the night: it crosses midnight). */
+export const describeHours = (h: AutomationHours): string => `${h.from} to ${h.to}`
+
+/**
+ * When a watch looks: "Every 5 minutes", "Every 5 minutes from 05:00 to
+ * 10:00", "Every 5 minutes, Saturday to Thursday", "Every hour from 22:00 to
+ * 06:00, Monday to Friday". Times are the factory's.
+ */
+export function describeWatchTiming(w: Pick<AutomationWatchSpec, 'everyMinutes' | 'hours' | 'weekdays'>): string {
+  let out = describeWatchInterval(w.everyMinutes)
+  if (w.hours) out += ` from ${describeHours(w.hours)}`
+  if (!isEveryDay(w.weekdays)) out += `, ${describeWeekdays(w.weekdays)}`
+  return out
+}
+
+/** "Every day at 08:00", "Saturday to Thursday at 07:30", "Every Sunday at 09:00", "On the 1st of every month at 08:00". */
+export function describeSchedule(s: Pick<AutomationScheduleSpec, 'cadence' | 'time' | 'weekdays' | 'weekday' | 'monthDay'>): string {
+  if (s.cadence === 'weekly') return `Every ${weekdayName(s.weekday ?? 0)} at ${s.time}`
+  if (s.cadence === 'monthly') return `On the ${ordinal(s.monthDay ?? 1)} of every month at ${s.time}`
+  return `${describeWeekdays(s.weekdays)} at ${s.time}`
 }
 
 /** The column names a template refers to, in order, once each. */

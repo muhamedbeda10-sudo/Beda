@@ -1,8 +1,9 @@
 // ============================================================================
 // §21 — changing an automation outside the chat: its name and words, whom it
 // tells and where, what a watch does with each case (tell, open a follow-up
-// for someone with a deadline) and how often it runs, when a report runs and
-// over which days, and whether it has a summary. The queries are not here:
+// for someone with a deadline) and when it looks (how often, in which hours
+// of the factory day, on which days), when a report runs and over which
+// days, and whether it has a summary. The queries are not here:
 // they change only through the assistant ("Edit in chat"). The same form
 // edits a proposal on its card before it is activated and an automation on
 // its page; it is checked here as the server checks it, and the server
@@ -18,6 +19,7 @@ import {
   FOLLOW_UP_MAX_DUE_HOURS,
   FOLLOW_UP_MIN_DUE_HOURS,
   describeWatchInterval,
+  isAutomationTime,
   weekdayName,
   type AutomationAssignee,
   type AutomationAssigneeView,
@@ -59,6 +61,23 @@ const CADENCES: { value: AutomationCadence; label: string }[] = [
   { value: 'weekly', label: 'Weekly' },
   { value: 'monthly', label: 'Monthly' },
 ]
+
+const HOURS_CHOICES: { value: 'all' | 'some'; label: string }[] = [
+  { value: 'all', label: 'Around the clock' },
+  { value: 'some', label: 'Some hours only' },
+]
+
+/** The days with one of them ticked or unticked. */
+const toggledDays = (days: readonly AutomationWeekday[], d: AutomationWeekday): AutomationWeekday[] => (days.includes(d) ? days.filter((x) => x !== d) : [...days, d])
+
+/** What a watch's hours mean as typed: the night when the end comes first; what is wrong with them otherwise. */
+function hoursHint(f: AutomationForm): string {
+  if (!f.hoursOn) return 'It looks all day and all night.'
+  if (!isAutomationTime(f.hoursFrom) || !isAutomationTime(f.hoursTo)) return 'Both times on the 24-hour clock, HH:MM.'
+  if (f.hoursFrom === f.hoursTo) return 'The same time twice: choose a later end, or let it run around the clock.'
+  if (f.hoursTo < f.hoursFrom) return `From ${f.hoursFrom} to ${f.hoursTo} the next morning: the night counts as the day it starts on.`
+  return `From ${f.hoursFrom} to ${f.hoursTo}, ${describeWatchInterval(f.everyMinutes).toLowerCase()}; its last look is before ${f.hoursTo}.`
+}
 
 const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : n % 10 === 1 ? 'st' : n % 10 === 2 ? 'nd' : n % 10 === 3 ? 'rd' : 'th'}`
 
@@ -266,16 +285,37 @@ function WatchFields({
   const missingLabel = current.kind === 'user' ? `${known?.kind === 'user' && known.userId === current.userId ? known.label : 'Unknown account'} (no longer active)` : current.kind === 'column' ? `The person in "${current.column}"` : ''
   return (
     <>
-      <fieldset className="space-y-2" disabled={disabled}>
-        <legend className="label">How often it looks</legend>
-        <Select value={String(form.everyMinutes)} onChange={(e) => patch({ everyMinutes: Number(e.target.value) })} className="min-h-[44px] sm:max-w-xs">
-          {intervalOptions(form.everyMinutes).map((n) => (
-            <option key={n} value={n}>
-              {describeWatchInterval(n)}
-            </option>
-          ))}
-        </Select>
-        <p className="text-xs text-muted">Each run looks at what its query returns now; a case fires once, the first time it is seen.</p>
+      <fieldset className="space-y-3" disabled={disabled}>
+        <legend className="label">When it looks (factory time)</legend>
+        <Field label="How often">
+          <Select value={String(form.everyMinutes)} onChange={(e) => patch({ everyMinutes: Number(e.target.value) })} className="min-h-[44px] sm:max-w-xs">
+            {intervalOptions(form.everyMinutes).map((n) => (
+              <option key={n} value={n}>
+                {describeWatchInterval(n)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <div className="space-y-1.5">
+          <span className="label">In which hours</span>
+          <Segmented label="In which hours" value={form.hoursOn ? 'some' : 'all'} options={HOURS_CHOICES} onChange={(v) => patch({ hoursOn: v === 'some' })} />
+          {form.hoursOn && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Input type="time" aria-label="From" value={form.hoursFrom} onChange={(e) => patch({ hoursFrom: e.target.value })} className="min-h-[44px] w-[8.5rem] tabular-nums" step={60} />
+              <span aria-hidden className="text-sm text-muted">
+                to
+              </span>
+              <Input type="time" aria-label="To" value={form.hoursTo} onChange={(e) => patch({ hoursTo: e.target.value })} className="min-h-[44px] w-[8.5rem] tabular-nums" step={60} />
+            </div>
+          )}
+          <p className="text-xs text-muted">{hoursHint(form)}</p>
+        </div>
+        <div className="space-y-1.5">
+          <span className="label">On which days</span>
+          <WeekdayPicker weekdays={form.weekdays} onToggle={(d) => patch({ weekdays: toggledDays(form.weekdays, d) })} />
+          <p className="text-xs text-muted">All seven ticked: every day.</p>
+        </div>
+        <p className="text-xs text-muted">Each run looks at what its query returns now; a case fires once, the first time it is seen. Outside its hours it waits: a case appearing then is found at its next look.</p>
       </fieldset>
 
       <fieldset className="space-y-2" disabled={disabled}>
@@ -346,51 +386,64 @@ function WatchFields({
 
 // ---- A report --------------------------------------------------------------------------------------
 
+/** A row of choices, one pressed: the cadence of a report, the hours of a watch. */
+function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: readonly { value: T; label: string }[]; onChange: (value: T) => void }) {
+  return (
+    <div role="group" aria-label={label} className="inline-flex rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          aria-pressed={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={cn(
+            'inline-flex h-9 items-center rounded-md px-3 text-13 font-semibold transition-colors touch:h-11',
+            value === o.value ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-muted hover:text-slate-700 dark:hover:text-slate-200',
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** The days of the week, Saturday first, each ticked or not. */
+function WeekdayPicker({ weekdays, onToggle }: { weekdays: readonly AutomationWeekday[]; onToggle: (d: AutomationWeekday) => void }) {
+  return (
+    <div role="group" aria-label="The days it runs" className="flex flex-wrap gap-1.5">
+      {FORM_WEEKDAYS.map((d) => {
+        const on = weekdays.includes(d)
+        return (
+          <button
+            key={d}
+            type="button"
+            aria-pressed={on}
+            aria-label={weekdayName(d)}
+            onClick={() => onToggle(d)}
+            className={cn(
+              'h-10 min-w-[3.25rem] rounded-lg px-2 text-13 font-semibold ring-1 ring-inset transition-colors touch:h-11',
+              on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700',
+            )}
+          >
+            {weekdayShort(d)}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function ScheduleFields({ form, patch, disabled }: { form: AutomationForm; patch: (p: Partial<AutomationForm>) => void; disabled: boolean }) {
-  const toggleDay = (d: AutomationWeekday) => patch({ weekdays: form.weekdays.includes(d) ? form.weekdays.filter((x) => x !== d) : [...form.weekdays, d] })
   return (
     <>
       <fieldset className="space-y-3" disabled={disabled}>
         <legend className="label">When it runs (factory time)</legend>
-        <div role="group" aria-label="How often" className="inline-flex rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800">
-          {CADENCES.map((c) => (
-            <button
-              key={c.value}
-              type="button"
-              aria-pressed={form.cadence === c.value}
-              onClick={() => patch({ cadence: c.value })}
-              className={cn(
-                'inline-flex h-9 items-center rounded-md px-3 text-13 font-semibold transition-colors touch:h-11',
-                form.cadence === c.value ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-muted hover:text-slate-700 dark:hover:text-slate-200',
-              )}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
+        <Segmented label="How often" value={form.cadence} options={CADENCES} onChange={(cadence) => patch({ cadence })} />
 
         {form.cadence === 'daily' && (
           <div className="space-y-1.5">
-            <div role="group" aria-label="The days it runs" className="flex flex-wrap gap-1.5">
-              {FORM_WEEKDAYS.map((d) => {
-                const on = form.weekdays.includes(d)
-                return (
-                  <button
-                    key={d}
-                    type="button"
-                    aria-pressed={on}
-                    aria-label={weekdayName(d)}
-                    onClick={() => toggleDay(d)}
-                    className={cn(
-                      'h-10 min-w-[3.25rem] rounded-lg px-2 text-13 font-semibold ring-1 ring-inset transition-colors touch:h-11',
-                      on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700',
-                    )}
-                  >
-                    {weekdayShort(d)}
-                  </button>
-                )
-              })}
-            </div>
+            <WeekdayPicker weekdays={form.weekdays} onToggle={(d) => patch({ weekdays: toggledDays(form.weekdays, d) })} />
             <p className="text-xs text-muted">All seven ticked: every day.</p>
           </div>
         )}

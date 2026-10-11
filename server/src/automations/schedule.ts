@@ -1,10 +1,14 @@
 // ============================================================================
 // §21 — when an automation runs next. A watch runs every few minutes, so it
-// is simply due again that long after it last started. A scheduled report
-// runs at a time of day where the factory sits (FACTORY_TIMEZONE): every day
-// (or on chosen weekdays), on one weekday, or on a day of the month (1–28, so
-// every month has it). The wall-clock time is turned into an instant through
-// Intl, which knows the zone's daylight-saving rules:
+// is due again that long after it last started — around the clock, or only
+// within the hours of the factory day it was given (from one HH:MM to
+// another, a stretch crossing midnight counting as the day it starts on) and
+// on the days it was given: a time outside them waits for the next time
+// they open. A scheduled report runs at a time of day where the factory sits
+// (FACTORY_TIMEZONE): every day (or on chosen weekdays), on one weekday, or
+// on a day of the month (1–28, so every month has it). The wall-clock time
+// is turned into an instant through Intl, which knows the zone's
+// daylight-saving rules:
 //
 //   • a time that happens twice (clocks going back) runs at its first
 //     occurrence;
@@ -15,7 +19,7 @@
 // tests can stand on any day in any zone.
 // ============================================================================
 
-import type { AutomationScheduleSpec, AutomationWeekday } from '@qc/shared/automation'
+import type { AutomationScheduleSpec, AutomationWatchSpec, AutomationWeekday } from '@qc/shared/automation'
 
 const MINUTE_MS = 60_000
 const DAY_MS = 86_400_000
@@ -159,9 +163,63 @@ export function reportRunsBetween(
   return n
 }
 
-/** When a watch runs next: its interval after the run that just started. */
-export function nextWatchRun(everyMinutes: number, startedAt: Date): Date {
-  return new Date(startedAt.getTime() + everyMinutes * MINUTE_MS)
+// ---- Watches ---------------------------------------------------------------------------
+
+/** When a watch looks: how often, in which hours, on which days. */
+export type WatchTiming = Pick<AutomationWatchSpec, 'everyMinutes' | 'hours' | 'weekdays'>
+
+/** How long a watch's hours may be searched ahead for their next opening: a week of days it may run on, and a day either side. */
+const WATCH_SEARCH_DAYS = 9
+
+const minutesOf = (hhmm: string): number => {
+  const [hh, mm] = hhmm.split(':').map(Number)
+  return hh * 60 + mm
+}
+
+/** Whether a watch of this timing runs on a day (a UTC midnight standing for the factory's date). */
+function watchRunsOn(w: WatchTiming, day: number): boolean {
+  return !w.weekdays || w.weekdays.length === 0 || w.weekdays.includes(new Date(day).getUTCDay() as AutomationWeekday)
+}
+
+/**
+ * Whether an instant falls within a watch's hours, on a day it runs. Hours
+ * that cross midnight (22:00 to 06:00) belong to the day they start on: the
+ * small hours of Monday are Sunday night's.
+ */
+export function inWatchHours(w: WatchTiming, at: Date, timeZone: string): boolean {
+  if (!w.hours && !w.weekdays?.length) return true
+  const wall = wallClock(at.getTime(), timeZone)
+  const day = wall - (wall % DAY_MS)
+  if (!w.hours) return watchRunsOn(w, day)
+  const minute = Math.floor((wall - day) / MINUTE_MS)
+  const from = minutesOf(w.hours.from)
+  const to = minutesOf(w.hours.to)
+  if (from < to) return watchRunsOn(w, day) && minute >= from && minute < to
+  return (minute >= from && watchRunsOn(w, day)) || (minute < to && watchRunsOn(w, day - DAY_MS))
+}
+
+/**
+ * The first moment at or after `at` a watch of this timing may run: `at`
+ * itself within its hours on a day it runs, otherwise the next time its hours
+ * open (midnight, when it has no hours and the day is not one it runs on).
+ */
+export function watchRunAt(w: WatchTiming, at: Date, timeZone: string): Date {
+  if (inWatchHours(w, at, timeZone)) return at
+  const open = w.hours ? minutesOf(w.hours.from) : 0
+  // From the day before: hours crossing midnight may have opened on the factory's previous date.
+  const first = localDay(at, timeZone) - DAY_MS
+  for (let i = 0; i <= WATCH_SEARCH_DAYS; i++) {
+    const day = first + i * DAY_MS
+    if (!watchRunsOn(w, day)) continue
+    const t = zonedInstant(day + open * MINUTE_MS, timeZone)
+    if (t.getTime() >= at.getTime()) return t
+  }
+  throw new Error(`No time found for the watch timing ${JSON.stringify(w)} after ${at.toISOString()}`)
+}
+
+/** When a watch runs next: its interval after the run that just started, or when its hours next open if that falls outside them. */
+export function nextWatchRun(w: WatchTiming, startedAt: Date, timeZone: string): Date {
+  return watchRunAt(w, new Date(startedAt.getTime() + w.everyMinutes * MINUTE_MS), timeZone)
 }
 
 /** The first instant of the factory day an instant falls on: where a day's limit starts counting. */

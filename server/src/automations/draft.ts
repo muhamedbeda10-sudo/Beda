@@ -82,7 +82,19 @@ export const DRAFT_INPUT_SCHEMA = {
       properties: {
         sql: { type: 'string', description: 'One SELECT over ai.* views returning one row per case that needs attention now.' },
         keyColumn: { type: 'string', description: 'The result column whose value names a case: unique per row, never empty, the same for that case on every run.' },
-        everyMinutes: { type: 'integer', description: 'How often it runs, in minutes: 5 to 1440.' },
+        everyMinutes: { type: 'integer', description: 'How often it runs, in minutes: 5 to 1440 (within its hours, when it has them).' },
+        hours: {
+          type: 'object',
+          description:
+            'Optional. The hours of the factory day it runs in; left out, it runs around the clock. A to at or before from crosses midnight (22:00 to 06:00 is the night, counted as the day it starts on).',
+          properties: {
+            from: { type: 'string', description: 'HH:MM, 24-hour, factory time: the first minute it runs.' },
+            to: { type: 'string', description: 'HH:MM, 24-hour, factory time: the minute it stops (not included).' },
+          },
+          required: ['from', 'to'],
+          additionalProperties: false,
+        },
+        weekdays: { type: 'array', items: { type: 'integer' }, description: 'Optional: the days it runs, 0 = Sunday ... 6 = Saturday. Left out: every day.' },
         titleTemplate: { type: 'string', description: 'The message title, with {{column}} placeholders filled from the case.' },
         bodyTemplate: { type: 'string', description: 'Optional. A line or two more, with {{column}} placeholders.' },
         sessionColumn: { type: 'string', description: "Optional. The column holding the case's inspection session id." },
@@ -211,11 +223,15 @@ const periodInput = z
   })
   .strict()
 
+const hoursInput = z.object({ from: z.string(), to: z.string() }).strict()
+
 const watchInput = z
   .object({
     sql: z.string(),
     keyColumn: z.string(),
     everyMinutes: z.number().int(),
+    hours: optional(hoursInput),
+    weekdays: optional(z.array(z.number().int())),
     titleTemplate: z.string(),
     bodyTemplate: optional(z.string()),
     sessionColumn: optional(z.string()),
@@ -340,6 +356,7 @@ export const EditsInput = z
     channels: channelsInput.optional(),
     actions: actionsInput.optional(),
     everyMinutes: z.number().int().optional(),
+    hours: hoursInput.nullable().optional(),
     cadence: z.enum(['daily', 'weekly', 'monthly']).optional(),
     time: z.string().optional(),
     weekdays: z.array(weekday).nullable().optional(),
@@ -355,7 +372,8 @@ export type EditsInputType = z.infer<typeof EditsInput>
 /**
  * A definition with a person's changes on top: the result is a draft again,
  * for the same checks a proposal gets. A change that does not fit the kind
- * (an interval for a report) is an error, not silently dropped.
+ * (an interval for a report, a cadence for a watch) is an error, not silently
+ * dropped; the days (weekdays) belong to a watch and to a daily report alike.
  */
 export function applyEdits(draft: AutomationDraft, edits: EditsInputType): { draft: AutomationDraft } | { errors: string[] } {
   const errors: string[] = []
@@ -365,12 +383,24 @@ export function applyEdits(draft: AutomationDraft, edits: EditsInputType): { dra
   if (edits.recipients !== undefined) next.recipients = edits.recipients as AutomationRecipient[]
   if (edits.channels !== undefined) next.channels = edits.channels
   if (edits.actions !== undefined) next.actions = edits.actions as AutomationActions
-  const scheduleEdits = ['cadence', 'time', 'weekdays', 'weekday', 'monthDay', 'period', 'summary'] as const
+  const scheduleEdits = ['cadence', 'time', 'weekday', 'monthDay', 'period', 'summary'] as const
   if (next.kind === 'watch') {
-    if (edits.everyMinutes !== undefined && next.watch) next.watch.everyMinutes = edits.everyMinutes
+    const w = next.watch
+    if (w) {
+      if (edits.everyMinutes !== undefined) w.everyMinutes = edits.everyMinutes
+      if (edits.hours !== undefined) {
+        if (edits.hours === null) delete w.hours
+        else w.hours = edits.hours
+      }
+      if (edits.weekdays !== undefined) {
+        if (edits.weekdays === null) delete w.weekdays
+        else w.weekdays = edits.weekdays as AutomationWeekday[]
+      }
+    }
     for (const k of scheduleEdits) if (edits[k] !== undefined) errors.push(`${k}: only a scheduled report has one; this is a watch.`)
   } else if (next.schedule) {
     if (edits.everyMinutes !== undefined) errors.push('everyMinutes: only a watch has an interval; this is a scheduled report.')
+    if (edits.hours !== undefined) errors.push('hours: only a watch has hours it runs in; this is a scheduled report, which runs at its time.')
     const s: AutomationScheduleSpec = next.schedule
     if (edits.cadence !== undefined) s.cadence = edits.cadence
     if (edits.time !== undefined) s.time = edits.time
