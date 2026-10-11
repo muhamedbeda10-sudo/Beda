@@ -277,6 +277,15 @@ describe('save-time validation', () => {
     expect(validateSample({ ...base, process: 'welding', coils: [], pt: untyped })).toEqual([])
   })
 
+  it('requires the connector welding wire batch on a welding sample, pointing at the setup step', () => {
+    for (const missing of [undefined, '', '   ']) {
+      const issues = validateSample({ ...base, process: 'welding', coils: [], pt: { ...ptOk(), connectorWireBatch: missing } })
+      expect(issues).toEqual([{ step: 'setup', message: 'Connector welding wire batch number is required.', ref: 'connectorWire' }])
+    }
+    // Other processes have no welding wire at all.
+    expect(validateSample({ ...base, coils: [] })).toEqual([])
+  })
+
   it('requires every consumable lot number', () => {
     const issues = validateSample({
       ...base,
@@ -368,6 +377,7 @@ describe('save-time validation', () => {
     return {
       testFrequencyPct: 10,
       consumableLots: { Cleaner: 'L1', Penetrant: 'L2', Developer: 'L3' },
+      connectorWireBatch: 'CW-1' as string | undefined,
       testedLengths: [{ lengthMm: 150, verdict: 'Accept' as const }],
     }
   }

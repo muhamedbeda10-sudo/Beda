@@ -59,6 +59,8 @@ export interface DraftPT {
   consumableLots: Partial<Record<PTConsumableKind, string>>
   /** Entered on the setup step of a welding machine. */
   weldingWireBatch?: string
+  /** Entered under the welding wire on the setup step: required. */
+  connectorWireBatch?: string
   testedLengths: DraftTestedLength[]
   notes?: string
   imageIds: string[]

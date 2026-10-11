@@ -61,6 +61,7 @@ function weldSample(submissionId: string, overrides: Partial<SaveSampleRequest> 
       testFrequencyPct: 10,
       consumableLots: { Cleaner: 'B24-0388', Penetrant: 'B24-0417', Developer: 'B24-0511' },
       weldingWireBatch: 'WW-2401',
+      connectorWireBatch: 'CW-2401',
       testedLengths: [
         { lengthMm: 150, verdict: 'Accept' },
         { lengthMm: 90, verdict: 'Reject / Repair' },
@@ -196,11 +197,25 @@ describe('the atomic sample save', () => {
 
   it('rejects a sample that breaks a business rule, writing nothing', async () => {
     const noLots = weldSample('22222222-2222-4222-8222-222222222222', {
-      pt: { testFrequencyPct: 3, consumableLots: { Cleaner: '', Penetrant: 'x', Developer: 'y' }, testedLengths: [], imageIds: [] },
+      pt: { testFrequencyPct: 3, consumableLots: { Cleaner: '', Penetrant: 'x', Developer: 'y' }, connectorWireBatch: 'CW-1', testedLengths: [], imageIds: [] },
     })
     const res = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/samples`, { token: inspector.token, body: noLots })
     expect(res.status).toBe(400)
     expect(res.body.error.message).toMatch(/Cleaner lot/)
+    const { rows } = await app.db.query('SELECT count(*)::int AS n FROM inspection_samples')
+    expect(rows[0].n).toBe(0)
+  })
+
+  it('rejects a welding sample without its connector welding wire batch, writing nothing', async () => {
+    for (const connectorWireBatch of [undefined, '   ']) {
+      const base = weldSample('44444444-4444-4444-8444-444444444445')
+      const res = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/samples`, {
+        token: inspector.token,
+        body: { ...base, pt: { ...base.pt!, connectorWireBatch } },
+      })
+      expect(res.status).toBe(400)
+      expect(res.body.error.message).toBe('Connector welding wire batch number is required.')
+    }
     const { rows } = await app.db.query('SELECT count(*)::int AS n FROM inspection_samples')
     expect(rows[0].n).toBe(0)
   })
@@ -289,6 +304,7 @@ describe('the atomic sample save', () => {
     expect(coils[0].coilId).toBe(catalogueCoil.id)
     expect(pt?.consumableLots).toEqual({ Cleaner: 'B24-0388', Penetrant: 'B24-0417', Developer: 'B24-0511' })
     expect(pt?.weldingWireBatch).toBe('WW-2401')
+    expect(pt?.connectorWireBatch).toBe('CW-2401')
     expect(pt?.testedLengths.map((l) => [l.seq, l.lengthMm, l.verdict])).toEqual([
       [1, 150, 'Accept'],
       [2, 90, 'Reject / Repair'],
@@ -377,6 +393,9 @@ describe('the atomic sample save', () => {
     ])
     // Setup is entered once per session: the latest sample's is offered to the next one.
     expect(ctx.body.previousSetup?.drawing).toBe('BS9059/58')
+    // Both wires too: typed once per spool.
+    expect(ctx.body.previousWeldingWireBatch).toBe('WW-2401')
+    expect(ctx.body.previousConnectorWireBatch).toBe('CW-2401')
     expect(ctx.body.previousSetup?.coils.map((c) => c.coilNumber)).toEqual(['C10021'])
     // Sample 2 carried a matching grade, so there is no acknowledgement to carry.
     expect(ctx.body.previousSetup?.gradeAcknowledgement).toBeNull()

@@ -34,6 +34,7 @@ function defects(qty: number, disposition: 'Repair' | 'Hold' = 'Repair'): SaveSa
 const PT: SaveSampleRequest['pt'] = {
   consumableLots: { Cleaner: 'C-1', Penetrant: 'P-1', Developer: 'D-1' },
   weldingWireBatch: 'WW-1',
+  connectorWireBatch: 'CW-1',
   testedLengths: [{ lengthMm: 150, verdict: 'Accept' }],
   imageIds: [],
 }
@@ -191,6 +192,8 @@ describe('§20 the ai views read like the screens', () => {
     // 21:30 UTC is 23:30 in Cairo in January; 22:30 UTC is already the next day there.
     await app.db.query(`UPDATE inspection_samples SET created_at = '2026-01-15 21:30:00+00' WHERE session_id = $1`, [ids.welding])
     expect(await read(`SELECT recorded_day::text FROM ai.inspection_samples WHERE session_id = '${ids.welding}'`)).toEqual([['2026-01-15']])
+    // The penetrant test keeps both wires: the welding wire and the connector welding wire.
+    expect(await read(`SELECT welding_wire_batch, connector_wire_batch FROM ai.pt_records WHERE session_id = '${ids.welding}'`)).toEqual([['WW-1', 'CW-1']])
     await app.db.query(`UPDATE inspection_samples SET created_at = '2026-01-15 22:30:00+00' WHERE session_id = $1`, [ids.welding])
     expect(await read(`SELECT recorded_day::text, recorded_at FROM ai.inspection_samples WHERE session_id = '${ids.welding}'`)).toEqual([['2026-01-16', '2026-01-16 00:30:00+02']])
   })
