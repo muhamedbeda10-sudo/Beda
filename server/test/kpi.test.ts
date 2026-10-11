@@ -24,6 +24,7 @@ function sample(overrides: Partial<SaveSampleRequest> = {}): SaveSampleRequest {
       testFrequencyPct: 10,
       consumableLots: { Cleaner: 'B24-0388', Penetrant: 'B24-0417', Developer: 'B24-0511' },
       weldingWireBatch: 'WW-2401',
+      connectorWireBatch: 'CW-2401',
       testedLengths: [
         { lengthMm: 150, verdict: 'Accept' },
         { lengthMm: 90, verdict: 'Reject / Repair' },

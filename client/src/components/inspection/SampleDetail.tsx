@@ -295,6 +295,7 @@ export function SampleDetail({
                 <Attr label="Developer lot" value={pt.consumableLots.Developer} />
                 {pt.testFrequencyPct !== null && pt.testFrequencyPct !== undefined && <Attr label="Test frequency (typed)" value={`${pt.testFrequencyPct}%`} />}
                 <Attr label="Welding wire batch" value={pt.weldingWireBatch} />
+                <Attr label="Connector welding wire batch" value={pt.connectorWireBatch} />
                 <div>
                   <dt className="text-xs font-semibold uppercase text-muted">PT verdict</dt>
                   <dd className="mt-0.5">

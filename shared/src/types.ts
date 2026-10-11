@@ -401,6 +401,8 @@ export interface PTRecord {
   indicationType?: string
   indicationSize?: string
   weldingWireBatch?: string
+  /** The connector welding wire's batch; required on welding samples saved since it was added, absent on older ones. */
+  connectorWireBatch?: string
   /** Every tested length with its verdict; the record's verdict is Reject / Repair when any length is. */
   testedLengths: PTTestedLength[]
   acceptOrRepair?: PTVerdict
