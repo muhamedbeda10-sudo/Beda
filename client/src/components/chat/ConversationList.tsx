@@ -3,6 +3,7 @@ import { AtSign, Hash, MessageSquarePlus, Search, Users, Zap } from 'lucide-reac
 import type { ChatConversation } from '@qc/shared/types'
 import { Input } from '@/components/ui'
 import { cn, formatDate, formatTime } from '@/lib/utils'
+import { messageDirection } from '@/lib/direction'
 import { UserAvatar } from '@/components/ui/UserAvatar'
 import { appLinkSegments } from './appLinks'
 
@@ -73,7 +74,17 @@ export function ConversationList({ conversations, activeId, onPick, onNew, myId 
                   </span>
                   <span className="flex items-center justify-between gap-2">
                     <span className={cn('truncate text-xs', c.unreadCount > 0 ? 'text-slate-700 dark:text-slate-200' : 'text-muted')}>
-                      {last ? `${last.senderId === myId ? 'You' : c.kind === 'direct' ? '' : last.senderName}${last.senderId === myId || c.kind !== 'direct' ? ': ' : ''}${previewOf(c, last.text)}` : c.kind === 'group' ? `${c.members.length} members` : 'No messages yet'}
+                      {last ? (
+                        <>
+                          {last.senderId === myId ? 'You' : c.kind === 'direct' ? '' : <bdi>{last.senderName}</bdi>}
+                          {last.senderId === myId || c.kind !== 'direct' ? ': ' : ''}
+                          <bdi dir={messageDirection(last.text) ?? 'auto'}>{previewOf(c, last.text)}</bdi>
+                        </>
+                      ) : c.kind === 'group' ? (
+                        `${c.members.length} members`
+                      ) : (
+                        'No messages yet'
+                      )}
                     </span>
                     {c.unreadCount > 0 && (
                       <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-brand-600 px-1.5 text-[10px] font-bold leading-[18px] text-white">
