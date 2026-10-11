@@ -455,9 +455,10 @@ function Table<T>({
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {visible.map((r) => (
             <tr key={rowKey(r)} onClick={onRowClick && (() => onRowClick(r))} className={cn('transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40', onRowClick && 'cursor-pointer')}>
-              {columns.map((c) => (
-                // A figure on one line; a word column wide enough to read without breaking every word onto its own line.
-                <td key={c.key} className={cn('px-2 py-1.5 align-top', c.className, c.className?.includes('text-right') ? 'whitespace-nowrap' : 'min-w-[7rem]')}>
+              {columns.map((c, i) => (
+                // A figure on one line; a word column wide enough to read without breaking every word onto its own line — the
+                // first (sticky, so what a row is about stays in view) a little narrower, to leave a phone room for the figures beside it.
+                <td key={c.key} className={cn('px-2 py-1.5 align-top', c.className, c.className?.includes('text-right') ? 'whitespace-nowrap' : i === 0 ? 'min-w-[8rem]' : 'min-w-[10rem]')}>
                   {c.render(r)}
                 </td>
               ))}
@@ -1718,8 +1719,9 @@ function scopeDetailWidgets({
           </div>
           <div>
             <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">By month</p>
+            {/* From the first month with a session to the last: This year read in October is not eight empty chips before September. */}
             <ul className="flex flex-wrap gap-2 text-xs">
-              {fp.months.map((m) => (
+              {trimmed(fp.months, (m) => m.sessions > 0).map((m) => (
                 <li key={m.month} className="rounded-lg bg-slate-50 px-2 py-1 dark:bg-slate-800/60">
                   <span className="font-semibold">{monthLabel(m.month, false)}</span>{' '}
                   {m.sessions > 0 ? <><span className={cn('font-semibold', TONE_TEXT[releasedTone(m.pct)])}>{pctStr(m.pct)}</span> <span className="text-muted">{num(m.clean)} ÷ {num(m.sessions)}</span></> : <span className="text-slate-300">—</span>}

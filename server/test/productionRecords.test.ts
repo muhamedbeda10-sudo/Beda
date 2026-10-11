@@ -17,8 +17,8 @@ import { runReadOnlyQuery } from '../src/ai/runQuery'
 import { describeAiSchema } from '../src/ai/schemaDoc'
 
 // §24 — the ERP's production task record: the child of the order sheet, one
-// row per order line per working day, imported by an administrator and read
-// by the assistant through the fifth data domain. The import reads the
+// row per day's work (a shift, or a stage) on an order line, imported by an
+// administrator and read by the assistant through the fifth data domain. The import reads the
 // export's own spellings (days, "Day3", "01/2026", the placeholder for an
 // unrecorded time), is idempotent on Order ID + Record ID, keeps rows a
 // later file leaves out, and can be undone and redone. The view joins the
@@ -105,11 +105,13 @@ describe('§24 the production task record import', () => {
       { ...DAY1, erpRecordId: '113291', dayNo: 'Day2', workDay: '27/12/2025', week: '01/2028', actualHours: 0.00001, producedQty: undefined, producedWeightKg: undefined, producedLengthM: undefined },
       // A staged line on the press, day 3 written as a bare number, a week that is not a week, a zero quantity.
       { lineKey: '486768', erpRecordId: '130184', week: 'wk 14', orderNumber: '19145-Ph14.23-EHF', item: 'XL Boxed Beam Connector : 5TA3 : X : LH', producedQty: 0, requiredQty: 3872, worker1: 'حسين صبرى', dayNo: 3, workDay: '2026-03-31', workCenterCode: '21', durationHours: 4.99, stageNo: 2, stageQty: 429, actualHours: 5, plannedHours: 4.99, shift: 'وردية مسائية 8 ساعات', resource: 'Press Line APY400-GLK4-400', weightKg: 3026 },
+      // The same line's next stage the day after, nothing finished yet, the machine's code written with a leading zero.
+      { lineKey: '486768', erpRecordId: '130185', week: '14/2026', orderNumber: '19145-Ph14.23-EHF', item: 'XL Boxed Beam Connector : 5TA3 : X : LH', producedQty: 0, requiredQty: 3872, dayNo: 'Day4', workDay: '2026-04-01', workCenterCode: '021', durationHours: 4.99, stageNo: 3, stageQty: 1000, actualHours: 0.00001, plannedHours: 4.99, resource: 'Press Line APY400-GLK4-400', weightKg: 3026 },
       // A line the sheet does not have, on a machine the register does not have, with no day.
       { lineKey: '999001', erpRecordId: '140000', orderNumber: '19999-X', item: 'Unknown Thing', producedQty: 10, requiredQty: 10, workCenterCode: '99', resource: 'Shear GPN840 4mt' },
     ])
     expect(res.status, JSON.stringify(res.body)).toBe(200)
-    expect(res.body).toEqual({ inserted: 4, updated: 0 })
+    expect(res.body).toEqual({ inserted: 5, updated: 0 })
 
     const { rows } = await app.db.query(
       `SELECT line_key, erp_record_id, week, week_no, week_year, produced_qty, required_qty, day_no, work_day::text AS work_day, actual_hours, planned_hours,
@@ -118,6 +120,7 @@ describe('§24 the production task record import', () => {
     )
     expect(rows).toMatchObject([
       { line_key: '486768', erp_record_id: '130184', week: 'wk 14', week_no: null, week_year: null, produced_qty: 0, required_qty: 3872, day_no: 3, work_day: '2026-03-31', actual_hours: 5, stage_no: 2, stage_qty: 429, worker_1: 'حسين صبرى' },
+      { line_key: '486768', erp_record_id: '130185', week: '14/2026', week_no: 14, week_year: 2026, produced_qty: 0, required_qty: 3872, day_no: 4, work_day: '2026-04-01', actual_hours: null, stage_no: 3, stage_qty: 1000, worker_1: '' },
       { line_key: '490226', erp_record_id: '113290', week: '01/2026', week_no: 1, week_year: 2026, produced_qty: 132, day_no: 1, work_day: '2025-12-26', actual_hours: 2, planned_hours: 1.76, duration_hours: 1.76, stage_no: null, stage_qty: 0, produced_weight_kg: 10485, produced_length_m: 1425.6, worker_1: 'مصطفى  محمود', shift: 'وردية صباحية 8 ساعات', deleted_at: null },
       { line_key: '490226', erp_record_id: '113291', week: '01/2028', week_no: 1, week_year: 2028, produced_qty: null, day_no: 2, work_day: '2025-12-27', actual_hours: null, produced_weight_kg: null, produced_length_m: null },
       { line_key: '999001', erp_record_id: '140000', week: '', week_no: null, produced_qty: 10, day_no: null, work_day: null, actual_hours: null, stage_no: null, stage_qty: null },
@@ -125,7 +128,7 @@ describe('§24 the production task record import', () => {
     for (const r of rows) expect(r.imported_at).toMatch(/^\d{4}-\d{2}-\d{2}T/)
 
     const audit = await app.api<AuditListResponse>('GET', '/api/audit', { token: owner.token })
-    expect(audit.body.entries.filter((e) => e.entity === 'ProductionTaskRecord')).toMatchObject([{ action: 'update', entityId: 'bulk-import', field: 'import', newValue: '4 inserted, 0 updated' }])
+    expect(audit.body.entries.filter((e) => e.entity === 'ProductionTaskRecord')).toMatchObject([{ action: 'update', entityId: 'bulk-import', field: 'import', newValue: '5 inserted, 0 updated' }])
   })
 
   it('refuses a day or a day number it cannot read, naming the row, and anything negative or blank', async () => {
@@ -134,6 +137,9 @@ describe('§24 the production task record import', () => {
       [{ ...DAY1, workDay: 'yesterday' }, /is not a day \(write it as 2026-01-05 or 05\/01\/2026\)/],
       [{ ...DAY1, erpRecordId: '7', dayNo: 'Dayx' }, /Order ID "490226", record 7: "Dayx" is not a day number/],
       [{ ...DAY1, dayNo: 1.5 }, /is not a day number/],
+      // A number the column cannot hold is refused like any other non-day, not left to the database.
+      [{ ...DAY1, dayNo: 40000 }, /Order ID "490226", record 113290: "40000" is not a day number/],
+      [{ ...DAY1, dayNo: 'Day40000' }, /is not a day number/],
       [{ ...DAY1, producedQty: -1 }, /producedQty/],
       [{ ...DAY1, stageNo: 1.5 }, /stageNo/],
       [{ ...DAY1, lineKey: '  ' }, /lineKey/],
@@ -146,8 +152,8 @@ describe('§24 the production task record import', () => {
     }
     expect((await app.api('POST', '/api/production-records/import', { token: owner.token, body: { rows: [] } })).status).toBe(400)
     expect((await importRows(Array.from({ length: 1001 }, (_, i) => ({ ...DAY1, erpRecordId: `r${i}` })))).status).toBe(400)
-    // A request refused writes nothing: still the four rows.
-    expect((await app.db.query('SELECT count(*)::int AS n FROM production_task_records')).rows[0].n).toBe(4)
+    // A request refused writes nothing: still the five rows.
+    expect((await app.db.query('SELECT count(*)::int AS n FROM production_task_records')).rows[0].n).toBe(5)
   })
 
   it('is idempotent: a re-import writes the row over and counts it, the same record id on another line is another row, and the last of a repeated key wins', async () => {
@@ -193,8 +199,8 @@ describe('§24 the production task record import', () => {
   it('summarises the record for the import page', async () => {
     const res = await app.api<ProductionRecordsSummary>('GET', '/api/production-records/summary', { token: owner.token })
     expect(res.status).toBe(200)
-    // Six rows over four lines (490226, 486768, 999001, l-abc), two of them on the order sheet.
-    expect(res.body).toMatchObject({ rows: 6, lines: 4, linesKnown: 2, firstDay: '2025-12-26', lastDay: '2026-03-31' })
+    // Seven rows over four lines (490226, 486768, 999001, l-abc), two of them on the order sheet.
+    expect(res.body).toMatchObject({ rows: 7, lines: 4, linesKnown: 2, firstDay: '2025-12-26', lastDay: '2026-04-01' })
     expect(res.body.lastImportAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
   })
 
@@ -215,11 +221,13 @@ describe('§24 what the assistant reads', () => {
               work_center_code, machine, factory, process, counts_on_dashboard, resource, work_day, work_month, day_no, week_no, week_year,
               produced_qty, required_qty, actual_hours, stage_no, stage_qty
          FROM ai.production_task_records
-        WHERE (line_key, erp_record_id) IN (('490226', '113290'), ('490226', '113291'), ('486768', '130184'), ('999001', '140000'))
+        WHERE (line_key, erp_record_id) IN (('490226', '113290'), ('490226', '113291'), ('486768', '130184'), ('486768', '130185'), ('999001', '140000'))
         ORDER BY line_key, erp_record_id`,
     )
+    // The machine is resolved once, by ai.machine_key: '021' is the register's '21', and its dashboard flag comes with its name.
     expect(rows).toEqual([
       ['486768', '130184', true, 'XBC-5TA3', 'Beta Storage', 3872, 3872, 'Active', '21', '21. Press 400 t', 'Factory 2', 'universal', false, 'Press Line APY400-GLK4-400', '2026-03-31', '2026-03', 3, null, null, 0, 3872, 5, 2, 429],
+      ['486768', '130185', true, 'XBC-5TA3', 'Beta Storage', 3872, 3872, 'Active', '021', '21. Press 400 t', 'Factory 2', 'universal', false, 'Press Line APY400-GLK4-400', '2026-04-01', '2026-04', 4, 14, 2026, 0, 3872, null, 3, 1000],
       ['490226', '113290', true, 'SR-218', 'Alpha Racking', 132, 100, 'Active', '40', '40. Roll Forming C2792015', 'Factory 1', 'forming', true, 'Roll Forming Line C2792015', '2025-12-26', '2025-12', 1, 1, 2026, 140, 132, 2.5, null, 0],
       ['490226', '113291', true, 'SR-218', 'Alpha Racking', 132, 100, 'Active', '40', '40. Roll Forming C2792015', 'Factory 1', 'forming', true, 'Roll Forming Line C2792015', '2025-12-27', '2025-12', 2, 1, 2028, null, 132, null, null, 0],
       ['999001', '140000', false, null, null, null, null, null, '99', 'Machine 99', '', null, true, 'Shear GPN840 4mt', null, null, null, null, null, 10, 10, null, null, null],
@@ -260,16 +268,16 @@ describe('§24 what the assistant reads', () => {
   })
 
   it('leaves out what was removed, and shows it again once re-imported', async () => {
-    expect((await read(`SELECT count(*) FROM ai.production_task_records`))[0]).toEqual([6])
+    expect((await read(`SELECT count(*) FROM ai.production_task_records`))[0]).toEqual([7])
     const cleared = await app.api<ClearProductionRecordsResult>('DELETE', '/api/production-records', { token: owner.token })
     expect(cleared.status).toBe(200)
-    expect(cleared.body).toEqual({ removed: 6 })
+    expect(cleared.body).toEqual({ removed: 7 })
     expect((await read(`SELECT count(*) FROM ai.production_task_records`))[0]).toEqual([0])
     expect((await app.api<ProductionRecordsSummary>('GET', '/api/production-records/summary', { token: owner.token })).body).toEqual({
       rows: 0, lines: 0, linesKnown: 0, firstDay: null, lastDay: null, lastImportAt: null,
     })
     const gone = await app.db.query(`SELECT count(*)::int AS n, count(deleted_by_id)::int AS by FROM production_task_records WHERE deleted_at IS NOT NULL`)
-    expect(gone.rows[0]).toEqual({ n: 6, by: 6 })
+    expect(gone.rows[0]).toEqual({ n: 7, by: 7 })
     expect((await app.api('DELETE', '/api/production-records', { token: owner.token })).body).toEqual({ removed: 0 })
 
     // The fresh export still carries the record: the upsert brings it back in place, as an update.
@@ -285,7 +293,7 @@ describe('§24 what the assistant reads', () => {
     expect(entries.slice(0, 3)).toEqual([
       ['update', 'bulk-import', '0 inserted, 1 updated'],
       ['delete', 'bulk-clear', '0 production records marked deleted before a fresh import'],
-      ['delete', 'bulk-clear', '6 production records marked deleted before a fresh import'],
+      ['delete', 'bulk-clear', '7 production records marked deleted before a fresh import'],
     ])
   })
 })
@@ -328,12 +336,28 @@ describe('§24 the production domain', () => {
     expect(own).toContain('- required_qty double precision: The task\'s required pieces, repeated on EVERY row of the line')
     expect(own).toContain('- workers text[]: The people on the machine that day')
     expect(own).toContain('# Meanings that are easy to get wrong')
-    expect(own).toContain('a row is one order line on one working day (line_key + day_no), the child of the order sheet')
+    expect(own).toContain("a row is one day's work on one order line (line_key + day_no; two rows may share a work_day: another shift or stage - count days with count(DISTINCT work_day)), the child of the order sheet")
     expect(own).toContain('take it once per line_key (max(required_qty) GROUP BY line_key)')
+    expect(own).toContain("Per TASK, repeated on every row of the line: required_qty, duration_hours (the task's planned hours) and weight_kg (the task's weight) - never sum them across days")
+    expect(own).toContain("the stage rows carry produced_qty 0 and the stage's pieces in stage_qty")
+    expect(own).toContain("week / week_no / week_year is the ERP's planning week of the task, the same on every row of the line, not the week the work was done")
+    expect(own).toContain("Periods of the task record are work_day (work_day >= '2026-09-01' AND work_day < '2026-10-01'), never imported_at")
     expect(own).toContain('actual_hours NULL = not recorded')
     expect(own).toContain('imported_at says how fresh a row is')
+    // The view's own comments tell the same story.
+    expect(own).toContain("One row = one day's work (a shift, or a stage) on one ORDER LINE (line_key), numbered day_no; a line often has two rows on the same work_day")
+    expect(own).toContain("for the rest join ai.order_lines on line_key when you can read it")
+    expect(own).toContain("week is the task's PLANNING week, not the week of the work: periods and weeks come from work_day")
+    expect(own).toContain("- duration_hours double precision: The ERP's planned hours for the WHOLE task")
+    expect(own).toContain("- weight_kg double precision: The WHOLE task's weight in kg")
+    expect(own).toContain("- stage_no smallint: Staged (universal) lines only: the stage this row's work was for, with stage_qty the pieces that passed it that day; such a row has produced_qty 0")
+    expect(own).toContain("- day_no smallint: Numbers the line's rows in the ERP's order (Day1, Day2 …); several may fall on the same work_day")
+    expect(own).toContain('never on imported_at; group days by work_day, months by work_month')
+    expect(own).not.toContain('join ai.order_lines on line_key for everything about the line')
     for (const view of ['inspection_sessions', 'order_lines', 'coils', 'audit_log']) expect(own).not.toContain(`### ai.${view}\n`)
+    // Alone, the record is the only production there is: not a word of the inspection record's figure.
     expect(own).not.toContain('production_between')
+    expect(own).not.toContain('Two records of production exist')
 
     // The prompt of anyone without the domain is as it was: not a word of the record, whatever else they have.
     for (const bits of AI_DOMAIN_COMBINATIONS) {
@@ -350,6 +374,16 @@ describe('§24 the production domain', () => {
     const old = renderSystemPrompt(tz, await describeAiSchema(app.db, OLD_DOMAINS), OLD_DOMAINS)
     expect(all.length).toBeGreaterThan(old.length)
     expect(all).toContain('It joins ai.order_lines on line_key when you can read both')
+
+    // Someone who reads both records is told which production is which; someone who reads one of them is not.
+    const RECONCILED = "- Two records of production exist: the inspection record's (closed inspection sessions: ai.production_between, the dashboard's figure) and the ERP's production task record (sum of produced_qty by work_day)."
+    expect(all).toContain(RECONCILED)
+    expect(all).toContain('Never add the two together.')
+    const both: AiDomain[] = ['inspection', 'production']
+    expect(renderSystemPrompt(tz, await describeAiSchema(app.db, both), both)).toContain(RECONCILED)
+    expect(renderSystemPrompt(tz, await describeAiSchema(app.db, ['inspection']), ['inspection'])).not.toContain('Two records of production')
+    expect(renderSystemPrompt(tz, await describeAiSchema(app.db, ['orders', 'production']), ['orders', 'production'])).not.toContain('Two records of production')
+    expect(own).not.toContain('Two records of production')
   })
 
   it('can be granted by the owner, on its own or with the rest; nobody has it until then', async () => {

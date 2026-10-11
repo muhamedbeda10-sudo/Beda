@@ -1,12 +1,13 @@
 -- ============================================================================
 -- 0039 — the ERP's production task record (§24): the production written
 -- against the order sheet, and the assistant's fifth data domain.
---   • production_task_records — one row per ORDER LINE on one WORKING DAY, as
---     the ERP's "Production Task Record" exports it. The order sheet
+--   • production_task_records — one row per DAY'S WORK (a shift, or a stage)
+--     on one ORDER LINE, as the ERP's "Production Task Record" exports it; a
+--     line often has two rows on the same day. The order sheet
 --     (production_orders, planning's table: one row per order line with its
 --     Order ID = line_key) is the MASTER; this record is its CHILD: the file's
---     ID column is that same Order ID, repeated once per day the line was
---     made on, and the two are joined on line_key, without regard to case,
+--     ID column is that same Order ID, repeated on every row of the line,
+--     and the two are joined on line_key, without regard to case,
 --     as the sheet itself is matched. No foreign key: a record may arrive
 --     before its line, or outlive a line removed from the sheet. The business
 --     key is (line_key, erp_record_id): the ERP's record id alone repeats
@@ -32,14 +33,16 @@ CREATE TABLE production_task_records (
   line_key           text NOT NULL,
   -- The ERP's own record id; it repeats across order lines, so only the pair names a row.
   erp_record_id      text NOT NULL,
-  -- The ERP's week as written ("01/2026" = week/year), and the two numbers when it parses.
+  -- The ERP's PLANNING week of the task as written ("01/2026" = week/year, the same on every row of
+  -- the line, not the week of the work), and the two numbers when it parses.
   week               text NOT NULL DEFAULT '',
   week_no            smallint,
   week_year          smallint,
   order_number       text NOT NULL DEFAULT '',
   item               text NOT NULL DEFAULT '',
   colour             text NOT NULL DEFAULT '',
-  -- Pieces made that day. required_qty is the task's whole requirement, repeated on every row of the line.
+  -- Finished pieces made that day (0 on a stage row of a staged line). required_qty is the task's whole
+  -- requirement, repeated on every row of the line.
   produced_qty       numeric(14, 3),
   required_qty       numeric(14, 3),
   -- Up to four people on the machine that day, as the ERP names them.
@@ -47,15 +50,18 @@ CREATE TABLE production_task_records (
   worker_2           text NOT NULL DEFAULT '',
   worker_3           text NOT NULL DEFAULT '',
   worker_4           text NOT NULL DEFAULT '',
-  -- "Day1", "Day2"… as a number, and the day itself when the ERP wrote one.
+  -- "Day1", "Day2"… as a number (the ERP's numbering of the line's rows; two may share a day), and the
+  -- day itself when the ERP wrote one.
   day_no             smallint,
   work_day           date,
   work_center_code   text NOT NULL DEFAULT '',
-  -- Hours: the ERP's planned duration, its "Planned time" (the same on most rows), and the time taken (null = not recorded).
+  -- Hours: the ERP's planned duration of the WHOLE task (repeated on every row of the line), its "Planned
+  -- time" for this row (duration × produced_qty / required_qty), and the time taken (null = not recorded).
   duration_hours     numeric(10, 3),
   planned_hours      numeric(10, 3),
   actual_hours       numeric(10, 3),
-  -- Staged (universal) lines: the stage and its quantity; blank or 0 elsewhere.
+  -- Staged (universal) lines: the stage and the pieces that passed it that day (such a row's produced_qty is 0);
+  -- blank or 0 elsewhere.
   stage_no           smallint,
   stage_qty          numeric(14, 3),
   remarks            text NOT NULL DEFAULT '',
@@ -65,6 +71,7 @@ CREATE TABLE production_task_records (
   shift              text NOT NULL DEFAULT '',
   -- The ERP's own name for the machine ("Roll Forming Line C2792015").
   resource           text NOT NULL DEFAULT '',
+  -- The WHOLE task's weight (repeated on every row of the line), then what this day made: its weight and length.
   weight_kg          numeric(14, 3),
   produced_weight_kg numeric(14, 3),
   produced_length_m  numeric(14, 3),
@@ -110,8 +117,10 @@ ALTER TABLE ai_access ADD CONSTRAINT ai_access_domains CHECK (
 
 -- ---- What the assistant reads --------------------------------------------------------
 -- One row per live record, with the order line it belongs to (when the sheet
--- has it) and its machine (when the register has it). Numbers come out as
--- float8, as in the other views; the record's own workers as an array too.
+-- has it) and its machine (when the register has it): the machine is resolved
+-- once, by ai.machine_key, and its name, factory, process and dashboard flag
+-- all come from that one row. Numbers come out as float8, as in the other
+-- views; the record's own workers as an array too.
 
 CREATE OR REPLACE VIEW ai.production_task_records AS
 SELECT btrim(r.line_key)                      AS line_key,
@@ -144,7 +153,7 @@ SELECT btrim(r.line_key)                      AS line_key,
             ELSE COALESCE(NULLIF(btrim(m.display_name), ''), 'Machine ' || btrim(r.work_center_code)) END AS machine,
        COALESCE(btrim(m.factory), '')         AS factory,
        m.process,
-       NOT EXISTS (SELECT 1 FROM machines d WHERE lower(d.code) = lower(r.work_center_code) AND d.deleted_at IS NULL AND d.on_dashboard = false) AS counts_on_dashboard,
+       m.on_dashboard IS NOT FALSE            AS counts_on_dashboard,
        btrim(r.resource)                      AS resource,
        r.duration_hours::float8               AS duration_hours,
        r.planned_hours::float8                AS planned_hours,
@@ -164,7 +173,7 @@ SELECT btrim(r.line_key)                      AS line_key,
   -- The line of the order sheet: its key is unique there whatever the case, so at most one row.
   LEFT JOIN production_orders o ON lower(o.line_key) = lower(r.line_key) AND o.deleted_at IS NULL
   LEFT JOIN LATERAL (
-    SELECT m.display_name, m.factory, m.process FROM machines m
+    SELECT m.display_name, m.factory, m.process, m.on_dashboard FROM machines m
      WHERE ai.machine_key(m.code) = ai.machine_key(r.work_center_code) AND m.deleted_at IS NULL
      ORDER BY m.created_at LIMIT 1) m ON true
   -- The four worker columns as one list: blanks left out, a name once, in their columns' order (shared workersOf).
@@ -176,8 +185,8 @@ SELECT btrim(r.line_key)                      AS line_key,
              WHERE n.name <> ''
              ORDER BY n.name, n.pos) x) w ON true
  WHERE r.deleted_at IS NULL;
-COMMENT ON VIEW ai.production_task_records IS 'The ERP''s production task record: what each machine made per day. One row = one ORDER LINE (line_key) on one WORKING DAY (day_no, work_day), the child of the order sheet: join ai.order_lines on line_key for everything about the line (the line''s item_code, customer and quantities are carried here already when the sheet has the line). To count production, sum produced_qty over any grouping (machine, day, week, worker, order). required_qty repeats on every row of a line: never sum it across days, take it once per line_key. Hours are per row; actual_hours NULL = not recorded. Imported by hand from the ERP (imported_at); retired rows are excluded.';
-COMMENT ON COLUMN ai.production_task_records.line_key IS 'The ERP''s Order ID of the order line this row belongs to = ai.order_lines.line_key (matched without regard to case). Several rows per line: one per working day.';
+COMMENT ON VIEW ai.production_task_records IS 'The ERP''s production task record: what each machine made per day. One row = one day''s work (a shift, or a stage) on one ORDER LINE (line_key), numbered day_no; a line often has two rows on the same work_day. The child of the order sheet: the line''s item_code, customer, order_required_qty, order_finished_qty and erp_status are carried here when the sheet has the line (order_line_known); for the rest join ai.order_lines on line_key when you can read it. Per row (this day''s work): produced_qty, planned_hours, actual_hours, produced_weight_kg, produced_length_m - sum them over any grouping (machine, work_day, work_month, worker, order). Per task, repeated on every row of the line: required_qty, duration_hours (the task''s planned hours) and weight_kg (the task''s weight) - take each once per line_key, never sum them across days. week is the task''s PLANNING week, not the week of the work: periods and weeks come from work_day. actual_hours NULL = not recorded. Imported by hand from the ERP (imported_at says how fresh, never when the work was done); retired rows are excluded.';
+COMMENT ON COLUMN ai.production_task_records.line_key IS 'The ERP''s Order ID of the order line this row belongs to = ai.order_lines.line_key (matched without regard to case). Several rows per line: one per day''s work (shift or stage), two or more may share a work_day.';
 COMMENT ON COLUMN ai.production_task_records.erp_record_id IS 'The ERP''s record id. It repeats across order lines; (line_key, erp_record_id) names a row.';
 COMMENT ON COLUMN ai.production_task_records.order_line_id IS 'ai.order_lines.order_line_id of the line when the order sheet has it; NULL when it does not.';
 COMMENT ON COLUMN ai.production_task_records.order_line_known IS 'true = the order sheet still has this line (ai.order_lines has a row with this line_key). false = the record arrived before its line, or the line was removed from the sheet.';
@@ -186,16 +195,16 @@ COMMENT ON COLUMN ai.production_task_records.customer IS 'The line''s customer f
 COMMENT ON COLUMN ai.production_task_records.order_required_qty IS 'The line''s required_qty on the order sheet; NULL when the line is not known. The record''s own figure is required_qty.';
 COMMENT ON COLUMN ai.production_task_records.order_finished_qty IS 'The line''s finished_qty on the order sheet (ERP); NULL when the line is not known.';
 COMMENT ON COLUMN ai.production_task_records.erp_status IS 'The line''s status on the order sheet (Active | Hold | Stock | Cancel…); NULL when the line is not known.';
-COMMENT ON COLUMN ai.production_task_records.week IS 'The ERP''s week as written, "week/year" (e.g. "01/2026"); kept as given, typos included.';
-COMMENT ON COLUMN ai.production_task_records.week_no IS 'The week number of week (1–53), when it parses; week_year its year.';
+COMMENT ON COLUMN ai.production_task_records.week IS 'The ERP''s PLANNING week of the task, "week/year" as written (e.g. "01/2026"), the same on every row of the line: NOT the week the work was done (most lines were made weeks or months later). Production by week or "this week" comes from work_day (date_trunc(''week'', work_day)); kept as given, typos included.';
+COMMENT ON COLUMN ai.production_task_records.week_no IS 'The week number of week (1–53) when it parses, week_year its year: the task''s planning week, not the work_day''s.';
 COMMENT ON COLUMN ai.production_task_records.order_number IS 'The order number as the ERP wrote it on the record; an order_number repeats across its lines and days.';
 COMMENT ON COLUMN ai.production_task_records.item IS 'The item as the ERP names it on the record ("Shuttle Rail : 218-RO-SP : 10800-LH-T1 : 27").';
-COMMENT ON COLUMN ai.production_task_records.produced_qty IS 'Pieces made on this day. Sum it over any grouping for production; NULL when the ERP left it blank.';
+COMMENT ON COLUMN ai.production_task_records.produced_qty IS 'Finished pieces made on this day. Sum it over any grouping for production; NULL when the ERP left it blank; 0 on a stage row of a staged line (its work is in stage_qty).';
 COMMENT ON COLUMN ai.production_task_records.required_qty IS 'The task''s required pieces, repeated on EVERY row of the line: never sum it across days; take it once per line_key (max(required_qty) GROUP BY line_key).';
 COMMENT ON COLUMN ai.production_task_records.worker_1 IS 'First of up to four people on the machine that day (worker_1 … worker_4, Arabic names, blank when fewer); workers has them as a list.';
 COMMENT ON COLUMN ai.production_task_records.workers IS 'The people on the machine that day: the non-blank worker_1 … worker_4, each once, in order. unnest(workers) to count by person.';
-COMMENT ON COLUMN ai.production_task_records.day_no IS 'Which working day of the line this is (1 = the first day it was made on, 2 the next…).';
-COMMENT ON COLUMN ai.production_task_records.work_day IS 'The day the production was made (a date, no time); NULL on a few rows the ERP wrote without one. Group days and months by work_day and work_month.';
+COMMENT ON COLUMN ai.production_task_records.day_no IS 'Numbers the line''s rows in the ERP''s order (Day1, Day2 …); several may fall on the same work_day (another shift, a stage) and the order is not always by date. Count days with count(DISTINCT work_day), order by work_day.';
+COMMENT ON COLUMN ai.production_task_records.work_day IS 'The day the work was done (a date, no time); NULL on a few rows the ERP wrote without one. Periods are filtered on it (work_day >= ''2026-09-01'' AND work_day < ''2026-10-01''), never on imported_at; group days by work_day, months by work_month.';
 COMMENT ON COLUMN ai.production_task_records.work_month IS '''YYYY-MM'' of work_day; NULL when work_day is.';
 COMMENT ON COLUMN ai.production_task_records.work_center_code IS 'The machine''s code as the ERP wrote it = machine_code of ai.machines and ai.order_lines where the register has it.';
 COMMENT ON COLUMN ai.production_task_records.machine IS 'The machine''s display name from the register when the code is known, else "Machine <code>"; resource is the ERP''s own name for it.';
@@ -203,15 +212,15 @@ COMMENT ON COLUMN ai.production_task_records.factory IS 'The machine''s factory 
 COMMENT ON COLUMN ai.production_task_records.process IS 'Process of the machine: forming | welding | paint | universal; NULL when the code is not in the register.';
 COMMENT ON COLUMN ai.production_task_records.counts_on_dashboard IS 'false = the machine is left out of every dashboard figure (machines.on_dashboard).';
 COMMENT ON COLUMN ai.production_task_records.resource IS 'The ERP''s name of the machine or line ("Roll Forming Line C2792015"); the only name when the code is not in the register.';
-COMMENT ON COLUMN ai.production_task_records.duration_hours IS 'The ERP''s planned hours for this row; planned_hours is its "Planned time", the same on most rows.';
-COMMENT ON COLUMN ai.production_task_records.planned_hours IS 'The ERP''s "Planned time" in hours for this row.';
+COMMENT ON COLUMN ai.production_task_records.duration_hours IS 'The ERP''s planned hours for the WHOLE task (its required_qty), repeated on every row of the line like required_qty: never sum it across days; take it once per line_key. planned_hours is this row''s share of it.';
+COMMENT ON COLUMN ai.production_task_records.planned_hours IS 'The ERP''s "Planned time" for this row = duration_hours × produced_qty / required_qty, the planned hours of what this day made. Sum it over any grouping; compare it with actual_hours.';
 COMMENT ON COLUMN ai.production_task_records.actual_hours IS 'Hours actually taken on this day; NULL = not recorded (the ERP writes a placeholder, read as nothing). Average or sum over the rows that have it.';
-COMMENT ON COLUMN ai.production_task_records.stage_no IS 'Staged (universal) lines: the stage this row is for; NULL elsewhere. stage_qty its pieces (0 or NULL elsewhere).';
+COMMENT ON COLUMN ai.production_task_records.stage_no IS 'Staged (universal) lines only: the stage this row''s work was for, with stage_qty the pieces that passed it that day; such a row has produced_qty 0 - the line''s finished pieces are on its last row (stage_no NULL). NULL on every other row (stage_qty 0 or NULL).';
 COMMENT ON COLUMN ai.production_task_records.remarks IS 'Free text written on the record (mostly Arabic); '''' on most rows.';
 COMMENT ON COLUMN ai.production_task_records.length_mm IS 'The item''s length in mm; width_mm and thickness_mm likewise (0 when the ERP has none).';
 COMMENT ON COLUMN ai.production_task_records.shift IS 'The shift category as the ERP names it (Arabic: morning 8 h, morning overtime 3 h, extended morning 11 h, evening 8 h, extended evening 12 h); '''' when none.';
-COMMENT ON COLUMN ai.production_task_records.weight_kg IS 'The task''s weight in kg as the ERP computes it; produced_weight_kg the weight of what this day made; produced_length_m its length in metres (≈ produced_qty × length_mm / 1000).';
-COMMENT ON COLUMN ai.production_task_records.imported_at IS 'When the last import touched this row: the record is imported by hand, so this says how fresh it is.';
+COMMENT ON COLUMN ai.production_task_records.weight_kg IS 'The WHOLE task''s weight in kg (required_qty × the piece weight), repeated on every row of the line: never sum it across days; take it once per line_key. produced_weight_kg is the weight of what this day made and produced_length_m its length in metres (≈ produced_qty × length_mm / 1000): sum those over any grouping.';
+COMMENT ON COLUMN ai.production_task_records.imported_at IS 'When the last import touched this row: the record is imported by hand, so this says how fresh it is. Not the day of the work (work_day); never use it to pick a period.';
 
 -- ---- The domain role, and the retirement of the four-bit combinations ----------------
 -- As 0033: one role without LOGIN holding exactly the domain's views. The

@@ -28,6 +28,8 @@ const NARROW = 480
 const MIN_FILL_HEIGHT = 140
 /** Narrower than this a day's bar is drawn as a week's, where the chart has the weeks. */
 const MIN_DAY_SLOT = 6
+/** Narrower than this a pie's legend goes under the pie rather than beside it: beside, its names would break mid-word. */
+const LEGEND_BESIDE = 400
 
 /** Measured before the first paint in a browser; in a server render (a test's), where there is nothing to measure, an effect that never runs. */
 const useMeasureEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
@@ -660,8 +662,9 @@ export function slicesOf(rows: { key?: string; label: string; sub?: string; valu
 
 /**
  * A pie with the share written on every slice wide enough to carry it, the
- * total in the middle, and the legend beside it: each slice's pieces and
- * share. On a board it fills its box; the legend scrolls when it is long. Its
+ * total in the middle, and the legend beside it — under it where the chart is
+ * too narrow for both (a phone's card, a small board box): each slice's pieces
+ * and share. On a board it fills its box; the legend scrolls when it is long. Its
  * words are sized for the size it is shown at, never under 10 px. A slice
  * clicked opens what it stands for; a slice tapped is first picked out in the
  * legend, with an Open button there — a second tap on it opens it too. A
@@ -673,15 +676,24 @@ export function PieChart({ slices, centerLabel, unit = '', onPick, format = fmt 
   const [svg, setSvg] = useState<SVGSVGElement | null>(null)
   const readout = useReadout(wrap)
   const [shown, setShown] = useState(0)
+  /** How wide the chart is shown: narrower than a legend beside the pie can name its rows, the legend goes under it. */
+  const [room, setRoom] = useState(0)
   useMeasureEffect(() => {
-    if (!svg) return
-    const read = () => setShown(Math.round(svg.getBoundingClientRect().width))
+    if (!svg || !wrap) return
+    const read = () => {
+      setShown(Math.round(svg.getBoundingClientRect().width))
+      setRoom(Math.round(wrap.clientWidth))
+    }
     read()
     if (typeof ResizeObserver === 'undefined') return
     const watch = new ResizeObserver(read)
     watch.observe(svg)
+    watch.observe(wrap)
     return () => watch.disconnect()
-  }, [svg])
+  }, [svg, wrap])
+  // Side by side only where the legend's half holds a name ("(no factory)"), its pieces and its share: a three-column board box at
+  // 1180 does not, and a phone's card does not hold the pie and the legend on one row either, so the pie is centred over the legend.
+  const beside = room === 0 || room >= LEGEND_BESIDE
   // The drawing is 200 across, shown at `shown` px (176 by default): its words are sized in the drawing's units so they keep their px.
   const k = 200 / (shown > 0 ? shown : 176)
   const total = slices.reduce((n, s) => n + s.value, 0)
@@ -715,8 +727,8 @@ export function PieChart({ slices, centerLabel, unit = '', onPick, format = fmt 
   const picked = readout.at
   const open = (s: PieSlice) => onPick && (() => onPick(s))
   return (
-    <div ref={setWrap} className={cn('flex gap-4', fill ? 'h-full min-h-0 flex-col sm:flex-row' : 'flex-wrap items-center')}>
-      <svg ref={setSvg} viewBox="0 0 200 200" className={cn(fill ? 'mx-auto h-auto max-h-full min-h-0 w-auto flex-1 sm:mx-0' : 'h-44 w-44')} role="img" aria-label={`${centerLabel}: ${format(total)}${unit}`} {...readout.svg}>
+    <div ref={setWrap} className={cn('flex gap-4', fill ? 'h-full min-h-0' : 'flex-wrap items-center', fill && (beside ? 'flex-row' : 'flex-col'), !fill && !beside && 'justify-center')}>
+      <svg ref={setSvg} viewBox="0 0 200 200" className={cn(fill ? 'h-auto max-h-full min-h-0 w-auto flex-1' : 'h-44 w-44', fill && !beside && 'mx-auto')} role="img" aria-label={`${centerLabel}: ${format(total)}${unit}`} {...readout.svg}>
         {drawn.length === 1 ? (
           <circle cx={cx} cy={cy} r={(r + hole) / 2} fill="none" strokeWidth={r - hole} className={drawn[0].className.replace(/fill-/g, 'stroke-')} {...readout.mark(0, drawn[0].label, open(drawn[0]))} />
         ) : (
@@ -742,7 +754,8 @@ export function PieChart({ slices, centerLabel, unit = '', onPick, format = fmt 
           {centerLabel}
         </text>
       </svg>
-      <ul className={cn('min-w-0 space-y-1 text-sm', fill ? 'max-h-full shrink-0 overflow-auto sm:w-[46%]' : 'min-w-[10rem] flex-1')}>
+      {/* Under the pie, a long legend (ten machines) scrolls in the lower half of the box rather than leaving the pie no height. */}
+      <ul className={cn('min-w-0 space-y-1 text-sm', fill ? 'shrink-0 overflow-auto' : 'min-w-[10rem] flex-1', fill && (beside ? 'max-h-full w-[46%]' : 'max-h-[55%]'))}>
         {drawn.map((s, i) => (
           <li
             key={s.label}

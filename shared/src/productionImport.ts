@@ -2,11 +2,12 @@
 // §24 — the ERP's production task record ("Production Task Record" in Access):
 // the production written against the order sheet. The order sheet is the
 // master, planning's table: one row per ORDER LINE with its Order ID. This
-// record hangs off it: its ID column is that same Order ID, repeated once per
-// working day the line was made on — what the machine made of it that day,
-// who stood at it, in which shift, the hours planned and taken, the weights
-// and lengths. An administrator imports the export (CSV or .xlsx) like the
-// order sheet; the assistant reads it, and nothing in the app writes to it.
+// record hangs off it: its ID column is that same Order ID, repeated on every
+// row of the line, one per day's work on it (a shift, or a stage; two may
+// share a day) — what the machine made of it that day, who stood at it, in
+// which shift, the hours planned and taken, the weights and lengths. An
+// administrator imports the export (CSV or .xlsx) like the order sheet; the
+// assistant reads it, and nothing in the app writes to it.
 //
 // The columns are read by name, as the export writes them, so the file maps
 // itself. Each field below carries the names the ERP gives its column.

@@ -2,8 +2,9 @@
 // §24 — the ERP's production task record: the production written against the
 // order sheet. The order sheet (production_orders) is the master, one row per
 // order line with its Order ID (line_key); this record is its child, one row
-// per order line per WORKING DAY, named by that same Order ID and the ERP's
-// record id together (the record id alone repeats across lines). An
+// per DAY'S WORK on an order line (a shift, or a stage; two may share a day),
+// named by that same Order ID and the ERP's record id together (the record id
+// alone repeats across lines). An
 // administrator imports the ERP's export in batches, idempotently: a row seen
 // before is written over, one retired comes back, none is ever deleted by an
 // import. Nothing else in the app writes a row; the assistant reads it
@@ -35,6 +36,7 @@ const QTY_MAX = 99_999_999_999 // numeric(14, 3)
 const HOURS_MAX = 9_999_999 // numeric(10, 3)
 const SIZE_MAX = 999_999_999 // numeric(12, 3)
 const THICKNESS_MAX = 99_999 // numeric(8, 3)
+const DAY_NO_MAX = 32_767 // smallint: "Day40000" is a typo, not a day number
 
 /** One row as the importer sends it (shared PRODUCTION_RECORD_FIELDS); the day and the day number are read below. */
 export const importRow = z.object({
@@ -49,7 +51,7 @@ export const importRow = z.object({
   worker2: text(200),
   worker3: text(200),
   worker4: text(200),
-  dayNo: z.union([z.string().trim().max(20), z.number()]).optional(),
+  dayNo: z.union([z.string().trim().max(20), z.number().finite()]).optional(),
   workDay: text(40),
   workCenterCode: text(40),
   durationHours: amount(HOURS_MAX),
@@ -116,8 +118,8 @@ const recordKey = (lineKey: string, erpRecordId: string): string => `${normalise
  * A row read: the day as a day (ISO or day-first, never shifted by a time
  * zone), "Day3" as 3, the week's two numbers when "01/2026" parses (the text
  * is kept as given either way), the ERP's placeholder for an unrecorded time
- * as null. A day or a day number that cannot be read refuses the request,
- * naming the row.
+ * as null. A day or a day number that cannot be read (or, sent as a number,
+ * does not fit the column) refuses the request, naming the row.
  */
 function toRecord(row: ProductionRecordRow): RecordValues {
   const who = `Order ID "${row.lineKey}", record ${row.erpRecordId}`
@@ -129,7 +131,7 @@ function toRecord(row: ProductionRecordRow): RecordValues {
   let dayNo: number | null = null
   if (row.dayNo !== undefined && row.dayNo !== '') {
     dayNo = parseDayNo(row.dayNo)
-    if (dayNo === null) throw badRequest(`${who}: "${row.dayNo}" is not a day number (Day1, Day2…).`)
+    if (dayNo === null || dayNo > DAY_NO_MAX) throw badRequest(`${who}: "${row.dayNo}" is not a day number (Day1, Day2…).`)
   }
   const week = parseWeek(row.week)
   return {
