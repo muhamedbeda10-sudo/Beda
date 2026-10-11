@@ -81,7 +81,7 @@ async function loadSampleDetail(q: Queryable, id: string): Promise<SampleDetail 
       `SELECT p.id, p.sample_id AS "sampleId", p.test_frequency_pct AS "testFrequencyPct", p.cleaner_lot AS "cleanerLot",
               p.penetrant_lot AS "penetrantLot", p.developer_lot AS "developerLot", p.sample_size AS "sampleSize",
               p.tested_weld_length AS "testedWeldLength", p.indication_type AS "indicationType", p.indication_size AS "indicationSize",
-              p.welding_wire_batch AS "weldingWireBatch", p.connector_wire_batch AS "connectorWireBatch", p.accept_or_repair AS "acceptOrRepair", p.final_result AS "finalResult", p.notes,
+              p.welding_wire_batch AS "weldingWireBatch", p.connector_coil_number AS "connectorCoilNumber", p.accept_or_repair AS "acceptOrRepair", p.final_result AS "finalResult", p.notes,
               COALESCE((SELECT array_agg(pi.image_id ORDER BY pi.position) FROM pt_record_images pi WHERE pi.pt_record_id = p.id), '{}') AS "imageIds"
          FROM pt_records p WHERE p.sample_id = $1 AND p.deleted_at IS NULL`,
       [id],
@@ -107,7 +107,7 @@ async function loadSampleDetail(q: Queryable, id: string): Promise<SampleDetail 
         indicationType: ptRow.indicationType,
         indicationSize: ptRow.indicationSize,
         weldingWireBatch: ptRow.weldingWireBatch,
-        connectorWireBatch: ptRow.connectorWireBatch,
+        connectorCoilNumber: ptRow.connectorCoilNumber,
         testedLengths: lengths.rows,
         acceptOrRepair: ptRow.acceptOrRepair,
         finalResult: ptRow.finalResult,

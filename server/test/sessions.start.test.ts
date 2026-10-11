@@ -18,7 +18,7 @@ function sample(overrides: Partial<SaveSampleRequest> = {}): SaveSampleRequest {
     dimensions: [{ name: 'Width', sequence: 1, nominal: 125, tolPlus: 0.5, tolMinus: 0.5, actual: 125.1, unit: 'mm', source: 'item-order' }],
     defects: [],
     coils: [{ coilNumber: 'C10021', grade: 'S355JR', supplier: 'Ezz Steel', thickness: 2.5 }],
-    pt: { testFrequencyPct: 10, consumableLots: { Cleaner: 'B24-0388', Penetrant: 'B24-0417', Developer: 'B24-0511' }, weldingWireBatch: 'WW-2401', connectorWireBatch: 'CW-2401', testedLengths: [{ lengthMm: 150, verdict: 'Accept' }], imageIds: [] },
+    pt: { testFrequencyPct: 10, consumableLots: { Cleaner: 'B24-0388', Penetrant: 'B24-0417', Developer: 'B24-0511' }, weldingWireBatch: 'WW-2401', connectorCoilNumber: 'CC-2401', testedLengths: [{ lengthMm: 150, verdict: 'Accept' }], imageIds: [] },
     ...overrides,
   }
 }
