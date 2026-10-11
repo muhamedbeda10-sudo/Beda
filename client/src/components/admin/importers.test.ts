@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { ORDERS_IMPORTER, gradeFromMaterial, normaliseHeader } from './importers'
+import { PRODUCTION_RECORD_FIELDS, PRODUCTION_RECORD_KEYS } from '@qc/shared/productionImport'
+import { ORDERS_IMPORTER, PRODUCTION_RECORDS_IMPORTER, PRODUCTION_RECORD_TEMPLATE_HEADERS, gradeFromMaterial, normaliseHeader, type Importer } from './importers'
+
+/** The column each field would be read from, the way CsvImporter's autoMap picks it: the first of key, label and aliases that names a header. */
+function autoMap(importer: Importer, headers: string[]): Record<string, string | undefined> {
+  const byNorm = new Map<string, string>()
+  for (const h of headers) {
+    const n = normaliseHeader(h)
+    if (n && !byNorm.has(n)) byNorm.set(n, h)
+  }
+  const mapped: Record<string, string | undefined> = {}
+  for (const f of importer.fields) mapped[f.key] = [f.key, f.label, ...(f.aliases ?? [])].map(normaliseHeader).map((c) => byNorm.get(c)).find(Boolean)
+  return mapped
+}
 
 describe('order sheet from the ERP', () => {
   it('reads the grade out of the raw-material description', () => {
@@ -40,6 +53,60 @@ describe('order sheet from the ERP', () => {
     expect(mapped.erpStatus).toBe('cr863_accessstatus')
     expect(mapped.date).toBe('cr863_releasedate')
     expect(mapped.expectedGrade).toBeUndefined()
+  })
+})
+
+describe('the production task record from the ERP (§24)', () => {
+  /** The export's header row, as "Production Task Record" writes it (30 columns). */
+  const EXPORT_HEADERS = [
+    'ID', 'Pivot', 'Order', 'Item', 'Color', 'Qty', 'Worker1', 'Worker2', 'Worker3', 'Worker4', 'DayNo', 'Day', 'Work Center', 'Duration',
+    'Stage (N)', 'Stage (Qty)', 'Remarks', 'L (mm)', 'W (mm)', 'T (mm)', 'Req_Q', 'Actual Time', 'Planned time', 'Productivity',
+    'Shift Category', 'Resource', 'Weight (KG)', 'Produced Weight (KG)', 'Produced Length (Meter)', 'Record ID',
+  ]
+
+  it('is the shared contract, sent to its own importer and matched on Order ID + Record ID', () => {
+    expect(PRODUCTION_RECORDS_IMPORTER.target).toBe('production-records')
+    expect(PRODUCTION_RECORDS_IMPORTER.businessKeys).toEqual([...PRODUCTION_RECORD_KEYS])
+    expect(PRODUCTION_RECORDS_IMPORTER.businessKeys).toEqual(['lineKey', 'erpRecordId'])
+    expect(PRODUCTION_RECORDS_IMPORTER.optionalKeys).toBeUndefined()
+    expect(PRODUCTION_RECORDS_IMPORTER.fields).toEqual([...PRODUCTION_RECORD_FIELDS])
+    // The day is read by the API, as a day: the browser must not turn it into a timestamp in its own time zone.
+    expect(PRODUCTION_RECORDS_IMPORTER.fields.find((f) => f.key === 'workDay')?.kind).toBe('text')
+  })
+
+  it("maps the export's own column names without renaming, every column to its field", () => {
+    const mapped = autoMap(PRODUCTION_RECORDS_IMPORTER, EXPORT_HEADERS)
+    const expected: Record<string, string> = {
+      lineKey: 'ID', erpRecordId: 'Record ID', week: 'Pivot', orderNumber: 'Order', item: 'Item', colour: 'Color', producedQty: 'Qty',
+      worker1: 'Worker1', worker2: 'Worker2', worker3: 'Worker3', worker4: 'Worker4', dayNo: 'DayNo', workDay: 'Day', workCenterCode: 'Work Center',
+      durationHours: 'Duration', stageNo: 'Stage (N)', stageQty: 'Stage (Qty)', remarks: 'Remarks', lengthMm: 'L (mm)', widthMm: 'W (mm)',
+      thicknessMm: 'T (mm)', requiredQty: 'Req_Q', actualHours: 'Actual Time', plannedHours: 'Planned time', shift: 'Shift Category',
+      resource: 'Resource', weightKg: 'Weight (KG)', producedWeightKg: 'Produced Weight (KG)', producedLengthM: 'Produced Length (Meter)',
+    }
+    expect(mapped).toEqual(expected)
+    // Every field has a column, no column is read by two fields, and Productivity (always 0 in the ERP) is read by none.
+    const columns = Object.values(mapped)
+    expect(new Set(columns).size).toBe(PRODUCTION_RECORDS_IMPORTER.fields.length)
+    expect(columns).not.toContain('Productivity')
+  })
+
+  it("writes the export's column names on its template, and the template imports itself", () => {
+    expect(PRODUCTION_RECORDS_IMPORTER.templateHeaders).toBe(PRODUCTION_RECORD_TEMPLATE_HEADERS)
+    const keys = PRODUCTION_RECORDS_IMPORTER.fields.map((f) => f.key)
+    expect(Object.keys(PRODUCTION_RECORD_TEMPLATE_HEADERS).sort()).toEqual([...keys].sort())
+    const headers = keys.map((k) => PRODUCTION_RECORD_TEMPLATE_HEADERS[k])
+    expect(headers.every((h) => EXPORT_HEADERS.includes(h))).toBe(true)
+    const mapped = autoMap(PRODUCTION_RECORDS_IMPORTER, headers)
+    for (const k of keys) expect(mapped[k], k).toBe(PRODUCTION_RECORD_TEMPLATE_HEADERS[k])
+  })
+
+  it('maps the same column names the order sheet is keyed on, so the two imports join on one Order ID', () => {
+    const orders = autoMap(ORDERS_IMPORTER, ['Order ID', 'Order', 'Item'])
+    const records = autoMap(PRODUCTION_RECORDS_IMPORTER, ['Order ID', 'Order', 'Item', 'Record ID'])
+    expect(orders.lineKey).toBe('Order ID')
+    expect(records.lineKey).toBe('Order ID')
+    expect(records.orderNumber).toBe('Order')
+    expect(records.erpRecordId).toBe('Record ID')
   })
 })
 

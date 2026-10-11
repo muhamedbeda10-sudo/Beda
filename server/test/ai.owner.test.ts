@@ -57,7 +57,7 @@ describe('§20 pinning the owner', () => {
       [owner],
     )
     expect(access.rows).toEqual([
-      { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit'], model: AI_MODEL, effort: 'medium', cap: AI_DEFAULT_MONTHLY_CAP_USD, by: 'Mohamed Beda' },
+      { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit', 'production'], model: AI_MODEL, effort: 'medium', cap: AI_DEFAULT_MONTHLY_CAP_USD, by: 'Mohamed Beda' },
     ])
     const audit = await app.db.query(`SELECT entity, entity_id AS "entityId", action, field, new_value AS "newValue" FROM audit_log WHERE entity LIKE 'Ai%' ORDER BY id`)
     expect(audit.rows).toEqual([
@@ -67,7 +67,7 @@ describe('§20 pinning the owner', () => {
         entityId: owner,
         action: 'create',
         field: 'access',
-        newValue: 'Mohamed Beda (mo.beda): on; Inspections, Orders and PDI, Coils, suppliers and master data, Audit log and accounts; Claude Sonnet 5.5; Medium; $50.00 a month',
+        newValue: 'Mohamed Beda (mo.beda): on; Inspections, Orders and PDI, Coils, suppliers and master data, Audit log and accounts, Production record; Claude Sonnet 5.5; Medium; $50.00 a month',
       },
     ])
   })

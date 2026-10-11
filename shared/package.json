@@ -15,7 +15,8 @@
     "./orderImport": "./src/orderImport.ts",
     "./ai": "./src/ai.ts",
     "./automation": "./src/automation.ts",
-    "./noticeAssistant": "./src/noticeAssistant.ts"
+    "./noticeAssistant": "./src/noticeAssistant.ts",
+    "./productionImport": "./src/productionImport.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",

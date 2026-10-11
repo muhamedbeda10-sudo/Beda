@@ -1,23 +1,26 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Layers, Loader2, RefreshCw, Table2, Trash2 } from 'lucide-react'
+import { Factory, Layers, Loader2, RefreshCw, Table2, Trash2 } from 'lucide-react'
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { CsvImporter } from '@/components/admin/CsvImporter'
 import { AccessSyncPanel } from '@/components/admin/AccessSyncPanel'
-import { COILS_IMPORTER, ORDERS_IMPORTER } from '@/components/admin/importers'
+import { ProductionRecordsSource } from '@/components/admin/ProductionRecordsSource'
+import { COILS_IMPORTER, ORDERS_IMPORTER, PRODUCTION_RECORDS_IMPORTER } from '@/components/admin/importers'
 import { Button, Modal } from '@/components/ui'
 import { clearOrders } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { cn } from '@/lib/utils'
 
 /**
- * §7.7 — the two ERP exports that change every day: production order lines
- * and the coil register, and the orders synced from Access on their own.
+ * §7.7 — the ERP exports that change every day: production order lines, the
+ * coil register and the production task record written against those lines
+ * (§24), and the orders synced from Access on their own.
  * Configuration sheets live with their sections.
  */
 const SOURCES = [
   { key: 'orders', label: 'Production orders', icon: Layers, importer: ORDERS_IMPORTER },
   { key: 'coils', label: 'Coils', icon: Table2, importer: COILS_IMPORTER },
+  { key: 'production-records', label: 'Production record', icon: Factory, importer: PRODUCTION_RECORDS_IMPORTER },
   { key: 'access', label: 'Access sync', icon: RefreshCw, importer: null },
 ] as const
 
@@ -78,7 +81,13 @@ export function DataImportPage() {
           })}
         </div>
         <div key={source.key} className="animate-page-in">
-          {source.importer ? <CsvImporter importer={source.importer} /> : <AccessSyncPanel />}
+          {source.key === 'production-records' ? (
+            <ProductionRecordsSource importer={PRODUCTION_RECORDS_IMPORTER} />
+          ) : source.importer ? (
+            <CsvImporter importer={source.importer} />
+          ) : (
+            <AccessSyncPanel />
+          )}
         </div>
       </div>
 

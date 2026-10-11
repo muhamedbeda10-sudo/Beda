@@ -2,6 +2,7 @@ import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import pg from 'pg'
 import { AI_PREVIEW_ROWS } from '@qc/shared/ai'
 import { TestApp } from './harness'
+import { AI_DOMAIN_COMBINATIONS } from '../src/ai/domains'
 import { AiReader, readerPassword, scramVerifier } from '../src/ai/reader'
 import { codeOnly, precheckSql, previewJson, previewOf, runReadOnlyQuery, type RunOptions } from '../src/ai/runQuery'
 import { describeAiSchema } from '../src/ai/schemaDoc'
@@ -19,9 +20,14 @@ const run = (sql: string, opts: Partial<RunOptions> = {}) => runReadOnlyQuery(ap
 
 beforeAll(async () => {
   await app.start()
+  database = new URL(app.config.DATABASE_URL).pathname.slice(1)
+  // Two of the four-bit combination roles of the four-domain days, as a database that ran then would still hold them.
+  for (const bits of ['0101', '1111']) {
+    await app.db.query(`DROP ROLE IF EXISTS ${pg.escapeIdentifier(`${database}_ai_r_${bits}`)}`)
+    await app.db.query(`CREATE ROLE ${pg.escapeIdentifier(`${database}_ai_r_${bits}`)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS`)
+  }
   await app.resetDatabase()
   role = app.aiReader.role!
-  database = new URL(app.config.DATABASE_URL).pathname.slice(1)
   // Something to read: two machines and an account.
   const admin = await app.register('admin', 'Admin')
   for (const [code, name] of [['58', 'Welding Line-LM4'], ['21', 'Press 400 t']]) {
@@ -33,12 +39,15 @@ afterAll(() => app.stop())
 describe('§20 the reader roles', () => {
   it('are per database and per combination of domains, provisioned with LOGIN, a SCRAM verifier and the factory time zone', async () => {
     expect(app.aiReader.ready).toBe(true)
-    expect(role).toBe(`${database}_ai_r_1111`)
+    expect(role).toBe(`${database}_ai_r_11111`)
     const { rows } = await app.db.query<{ rolname: string; rolcanlogin: boolean; rolsuper: boolean; rolcreaterole: boolean; rolcreatedb: boolean; rolinherit: boolean; rolconnlimit: number; rolconfig: string[] }>(
       `SELECT rolname, rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolinherit, rolconnlimit, rolconfig FROM pg_roles WHERE rolname LIKE $1 ORDER BY rolname`,
       [`${database}\\_ai\\_r\\_%`],
     )
-    expect(rows.map((r) => r.rolname.slice(-4))).toEqual(['0001', '0010', '0011', '0100', '0101', '0110', '0111', '1000', '1001', '1010', '1011', '1100', '1101', '1110', '1111'])
+    // Five bits, one per domain, every combination but none: the four-bit roles of the four-domain days (0040) are gone.
+    expect(AI_DOMAIN_COMBINATIONS).toHaveLength(31)
+    expect(rows.map((r) => r.rolname.slice(`${database}_ai_r_`.length))).toEqual([...AI_DOMAIN_COMBINATIONS])
+    expect(rows.map((r) => r.rolname)).toEqual(expect.arrayContaining([`${database}_ai_r_00001`, `${database}_ai_r_10101`, `${database}_ai_r_11111`]))
     for (const r of rows) {
       expect(r, r.rolname).toMatchObject({ rolcanlogin: true, rolsuper: false, rolcreaterole: false, rolcreatedb: false, rolinherit: true, rolconnlimit: 3 })
       expect(r.rolconfig).toEqual(
@@ -61,10 +70,10 @@ describe('§20 the reader roles', () => {
   })
 
   it('derives a different password for every role, database and secret, and sends a verifier in RFC 5803 form', () => {
-    const a = readerPassword(app.config.JWT_SECRET, 'qc_test_ai_r_1111')
-    expect(readerPassword(app.config.JWT_SECRET, 'qc_dev_ai_r_1111')).not.toBe(a)
-    expect(readerPassword(app.config.JWT_SECRET, 'qc_test_ai_r_1010')).not.toBe(a)
-    expect(readerPassword('another-secret-another-secret-another', 'qc_test_ai_r_1111')).not.toBe(a)
+    const a = readerPassword(app.config.JWT_SECRET, 'qc_test_ai_r_11111')
+    expect(readerPassword(app.config.JWT_SECRET, 'qc_dev_ai_r_11111')).not.toBe(a)
+    expect(readerPassword(app.config.JWT_SECRET, 'qc_test_ai_r_10100')).not.toBe(a)
+    expect(readerPassword('another-secret-another-secret-another', 'qc_test_ai_r_11111')).not.toBe(a)
     expect(a).toMatch(/^[A-Za-z0-9_-]{43}$/)
     // The verifier for the RFC 7677 example: user's password "pencil" with its salt.
     const salt = Buffer.from('W22ZaJ0SNY7soEsUEjb6gQ==', 'base64')
@@ -101,7 +110,7 @@ describe('§20 the reader roles', () => {
 
   it('can read every view and run every function in schema ai', async () => {
     const { rows } = await app.db.query<{ name: string }>(`SELECT viewname AS name FROM pg_views WHERE schemaname = 'ai' ORDER BY 1`)
-    expect(rows.length).toBe(23)
+    expect(rows.length).toBe(24)
     for (const { name } of rows) {
       const res = await run(`SELECT * FROM ai.${name} LIMIT 5`)
       expect(res.ok, `${name}: ${res.error}`).toBe(true)
@@ -145,7 +154,7 @@ describe('§20 the reader roles', () => {
     expect(doc).not.toContain('assert_row_size')
     const views = [...doc.matchAll(/^### ai\.(\w+)$/gm)].map((m) => m[1])
     expect(views).toEqual([...views].sort())
-    expect(views).toHaveLength(23)
+    expect(views).toHaveLength(24)
   })
 })
 

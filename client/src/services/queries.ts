@@ -50,7 +50,7 @@ import type {
 } from '@qc/shared/api'
 import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiGrainChoice, KpiMaterials, MaterialKind, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
 import { loadAvatar } from '@/lib/avatarLoader'
-import type { AvatarResponse, ColumnValuesResponse, DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
+import type { AvatarResponse, ColumnValuesResponse, DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ProductionRecordsSummary, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import type {
   AiAccessListResponse,
@@ -117,6 +117,8 @@ export const keys = {
   orderList: (filters: OrderListFilters) => ['orders', 'list', filters] as const,
   sessionImages: (id: string) => ['sessions', id, 'images'] as const,
   orderListOptions: ['orders', 'list', 'options'] as const,
+  /** §24 — what the production record holds now: its counts, the days it spans, the last import. */
+  productionRecordsSummary: ['production-records', 'summary'] as const,
   /** What the signed-in person may do with the assistant: whether it is theirs, whether they own it, whether it can answer. */
   aiMe: ['ai', 'me'] as const,
   aiSettings: ['ai', 'settings'] as const,
@@ -799,6 +801,13 @@ export function useLinesOfMachines(codes: string[], enabled = true) {
 /** §7.7 — the Access order sync: its runs, a waiting "Sync now", the keys. Refreshed while it is on screen, so a run shows as it finishes. */
 export function useOrderSync() {
   return useQuery({ queryKey: ['integrations', 'order-sync'] as const, queryFn: () => api<OrderSyncStatusResponse>('/integrations/order-sync'), refetchInterval: 15_000 })
+}
+
+// ---- §24 Production record ---------------------------------------------------
+
+/** The import page's one line about the production record: it follows every batch an import writes, and the "Remove all". */
+export function useProductionRecordsSummary(enabled = true) {
+  return useQuery({ queryKey: keys.productionRecordsSummary, queryFn: () => api<ProductionRecordsSummary>('/production-records/summary'), enabled })
 }
 
 // ---- §20 AI assistant --------------------------------------------------------

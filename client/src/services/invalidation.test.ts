@@ -57,6 +57,13 @@ describe('a write to the inspection record refreshes the dashboard too', () => {
     expect(keysInvalidated()).toEqual(expect.arrayContaining(['["orders"]', '["kpi"]']))
   })
 
+  it('a production record import (§24) goes to its own importer and refreshes its summary', async () => {
+    apiMock.mockResolvedValue({ inserted: 1, updated: 0 })
+    await mutations.importRows(qc, 'production-records', [{ lineKey: '490226', erpRecordId: '113290' }])
+    expect(apiMock.mock.calls.at(-1)?.[0]).toBe('/production-records/import')
+    expect(keysInvalidated()).toEqual(expect.arrayContaining(['["production-records"]']))
+  })
+
   it('a machine edited in Configuration refreshes the dashboard', async () => {
     apiMock.mockResolvedValue({ id: 'm1' })
     await mutations.updateMaster(qc, 'machines', 'm1', {

@@ -70,7 +70,8 @@ describe('§20 — what the owner can give a person', () => {
     expect(isAiModel('gpt-5')).toBe(false)
     expect(isAiEffort('xhigh')).toBe(true)
     expect(isAiEffort('extreme')).toBe(false)
-    expect([...AI_DOMAIN_IDS]).toEqual(['inspection', 'orders', 'materials', 'audit'])
+    // The order is fixed: a set of domains is stored as bits in it, so a new domain goes last.
+    expect([...AI_DOMAIN_IDS]).toEqual(['inspection', 'orders', 'materials', 'audit', 'production'])
     expect(isAiDomain('chat')).toBe(false)
   })
 })

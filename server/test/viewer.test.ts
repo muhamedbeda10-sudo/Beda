@@ -39,6 +39,8 @@ describe('§14 — the viewer role', () => {
       ['POST', '/api/pdi', {}],
       ['POST', '/api/master/machines', { code: '9', name: 'x' }],
       ['POST', '/api/orders/import', {}],
+      ['POST', '/api/production-records/import', {}],
+      ['GET', '/api/production-records/summary'],
       ['PUT', '/api/kpi/thresholds', {}],
       ['GET', '/api/users'],
       ['GET', '/api/audit'],

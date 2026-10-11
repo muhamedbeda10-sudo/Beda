@@ -19,7 +19,7 @@ export function canonicalDomains(domains: readonly string[]): AiDomain[] {
   return AI_DOMAIN_IDS.filter((d) => domains.includes(d))
 }
 
-/** A set of domains as bits in the fixed order (inspection, orders, materials, audit): "1010". */
+/** A set of domains as bits in the fixed order (inspection, orders, materials, audit, production): "10100". */
 export function domainBits(domains: readonly AiDomain[]): string {
   return AI_DOMAIN_IDS.map((d) => (domains.includes(d) ? '1' : '0')).join('')
 }
@@ -32,7 +32,7 @@ export function domainsOfBits(bits: string): AiDomain[] {
 /** The role that signs in for a set of domains: <database>_ai_r_<bits>. */
 export const combinationRole = (database: string, bits: string): string => `${database}_ai_r_${bits}`
 
-/** Every non-empty set of domains, as bits: the fifteen roles the API signs in as. */
+/** Every non-empty set of domains, as bits: the thirty-one roles the API signs in as (2^domains - 1; a new domain doubles them). */
 export const AI_DOMAIN_COMBINATIONS: readonly string[] = Array.from({ length: (1 << AI_DOMAIN_IDS.length) - 1 }, (_, i) =>
   (i + 1).toString(2).padStart(AI_DOMAIN_IDS.length, '0'),
 )

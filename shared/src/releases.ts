@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-11.1',
+    date: '2026-10-11',
+    title: "The ERP's production record: import it, ask the assistant about it",
+    items: [
+      { text: "Administration → Data import has a new tab, Production record: load the ERP's production task record export (CSV or Excel) as it is. Each row is an order line on one working day — what the machine made, who stood at it, the shift, the hours and the weights — linked to the order sheet by its Order ID. Importing again updates and adds; rows missing from a later file are kept." },
+      { text: 'The AI assistant can read it as a new data area, Production record, which is given to each person separately. It answers questions such as what a machine made last month and who worked it, or which order lines are behind what was required.' },
+    ],
+  },
+  {
     id: '2026-10-10.3',
     date: '2026-10-10',
     title: 'Notices through the AI assistant, and a tidier header',
