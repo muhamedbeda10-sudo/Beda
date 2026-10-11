@@ -126,7 +126,7 @@ export function ReferenceImageBulkUpload({ open, onClose }: { open: boolean; onC
         >
           <p className="text-sm text-muted">
             Drop the photos here, or{' '}
-            <button type="button" className="font-semibold text-brand-600 underline-offset-2 hover:underline" onClick={() => fileRef.current?.click()}>
+            <button type="button" className="-my-3 inline-flex min-h-[44px] items-center font-semibold text-brand-600 underline-offset-2 hover:underline" onClick={() => fileRef.current?.click()}>
               choose files
             </button>
             . The item code is read from each file name (

@@ -33,6 +33,14 @@ export interface Column<T> {
   hideBelow?: 'xl'
 }
 
+/**
+ * The sticky Actions header cell (.table-sticky-last paints the column opaque,
+ * so it needs the header's own colour): slate-50 in the light theme, and in
+ * the dark one the colour the thead's translucent slate-800/60 makes over the
+ * slate-900 card — opaque, or the column scrolled under it would show through.
+ */
+export const STICKY_TH = 'bg-slate-50 dark:bg-[#182234]'
+
 /** The row's actions, Edit and Delete: 44 px each. */
 const ROW_BTN = 'grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors'
 
@@ -270,7 +278,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
                 <ViewTh key={c.key} view={view} column={c.key} label={c.label} className={cn('px-3 py-2.5 font-bold', c.hideBelow && 'hidden xl:table-cell', c.className)} />
               ),
             )}
-            <th className="bg-slate-50 px-3 py-2.5 text-right font-bold dark:bg-slate-800/60">Actions</th>
+            <th className={cn(STICKY_TH, 'px-3 py-2.5 text-right font-bold')}>Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">

@@ -16,7 +16,7 @@ import { BellRing, Loader2, Pencil, Save, Trash2, UserPlus, UsersRound, Zap } fr
 import { AI_DOMAINS, AI_EFFORTS, AI_MAX_MONTHLY_CAP_USD, AI_MODELS, type AiAccess } from '@qc/shared/ai'
 import { Badge, Button, Card, Drawer, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { ScrollX } from '@/components/ui/ScrollX'
-import { clickedControl } from '@/components/admin/MasterDataPanel'
+import { STICKY_TH, clickedControl } from '@/components/admin/MasterDataPanel'
 import { ApiError } from '@/lib/api'
 import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn, formatDateTime } from '@/lib/utils'
@@ -150,7 +150,7 @@ export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; 
             <th className={cn(th, 'hidden xl:table-cell')}>Model</th>
             <th className={cn(th, 'hidden xl:table-cell')}>Effort</th>
             <th className={th}>This month</th>
-            <th className={cn(th, 'bg-slate-50 text-right dark:bg-slate-800/60')}>
+            <th className={cn(th, STICKY_TH, 'text-right')}>
               <span className="sr-only">Actions</span>
             </th>
           </tr>

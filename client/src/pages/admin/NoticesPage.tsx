@@ -135,7 +135,7 @@ function PickList({
           const on = locked || picked.has(c.value)
           return (
             <li key={c.value}>
-              <label className={cn('flex min-h-[40px] cursor-pointer items-center gap-3 rounded-lg px-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800', locked && 'cursor-default opacity-60')}>
+              <label className={cn('flex min-h-[40px] cursor-pointer items-center gap-3 rounded-lg px-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 touch:min-h-[44px]', locked && 'cursor-default opacity-60')}>
                 <input type="checkbox" checked={on} disabled={locked} onChange={() => toggle(c.value)} className="h-4 w-4 accent-brand-600" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{c.label}</span>

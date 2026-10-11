@@ -8,7 +8,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { KeyRound, Loader2, Pencil, Trash2, UserCheck, UserCog, UserPlus, UserX } from 'lucide-react'
 import { Badge, Button, Card, Field, Input, Modal, Select } from '@/components/ui'
 import { ScrollX } from '@/components/ui/ScrollX'
-import { clickedControl } from '@/components/admin/MasterDataPanel'
+import { STICKY_TH, clickedControl } from '@/components/admin/MasterDataPanel'
 import { useUsers } from '@/services/queries'
 import { createUser, deleteUser, updateUser } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
@@ -218,7 +218,7 @@ export function UsersPanel() {
                   <ViewTh view={view} column="username" label="Username" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="role" label="Role" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="status" label="Status" className="px-3 py-2.5 font-bold" />
-                  <th className="bg-slate-50 px-3 py-2.5 text-right font-bold dark:bg-slate-800/60">Actions</th>
+                  <th className={cn(STICKY_TH, 'px-3 py-2.5 text-right font-bold')}>Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">

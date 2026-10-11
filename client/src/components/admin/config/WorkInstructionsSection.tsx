@@ -9,7 +9,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { BookOpen, Eye, FileText, History, Loader2, Pencil, Trash2, UploadCloud } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
 import { ScrollX } from '@/components/ui/ScrollX'
-import { clickedControl } from '@/components/admin/MasterDataPanel'
+import { STICKY_TH, clickedControl } from '@/components/admin/MasterDataPanel'
 import { WorkInstructionViewer } from '@/components/documents/WorkInstructionViewer'
 import { useWorkInstructions } from '@/services/queries'
 import { deleteWorkInstruction, updateWorkInstruction, uploadWorkInstruction } from '@/services/mutations'
@@ -260,7 +260,7 @@ export function WorkInstructionsSection() {
                   <ViewTh view={view} column="scope" label="Applies to" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="step" label="Step" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="file" label="File" className="hidden px-3 py-2.5 font-bold xl:table-cell" />
-                  <th className="bg-slate-50 px-3 py-2.5 text-right font-bold dark:bg-slate-800/60">Actions</th>
+                  <th className={cn(STICKY_TH, 'px-3 py-2.5 text-right font-bold')}>Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
