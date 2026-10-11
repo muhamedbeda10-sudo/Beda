@@ -95,10 +95,12 @@ export function sessionToneClass(session: Signals, kind: 'block' | 'row', fallba
   return tone ? STYLE[tone][kind] : fallback
 }
 
-/** The badge that says why a session is coloured; nothing when it is not. */
 /**
+ * The badge that says why a session is coloured; nothing when it is not.
  * `compact` is the table's form: one short badge ("Hold ×2", "3"), the whole
  * sentence in its tooltip, so the status column stays on one line.
+ * `className` goes on the outermost element — the button, when the badge is
+ * one — so a class that hides it on some screens hides all of it.
  */
 export function SessionToneBadge({ session, className, onHold, compact = false }: { session: Signals; className?: string; onHold?: () => void; compact?: boolean }) {
   const tone = sessionTone(session)
@@ -108,11 +110,12 @@ export function SessionToneBadge({ session, className, onHold, compact = false }
   if (tone === 'hold') {
     const full = `Hold ${holds > 1 ? `×${holds}` : ''}${defects > holds ? ` · ${defects} defect${defects === 1 ? '' : 's'}` : ''}`
     const badge = (
-      <Badge tone="amber" className={cn(className, onHold && 'ring-1 ring-amber-400/60')} icon={<PauseCircle className="h-3 w-3" />} tip={compact && !onHold ? `On ${full.trim()}` : undefined}>
+      <Badge tone="amber" className={cn(!onHold && className, onHold && 'ring-1 ring-amber-400/60')} icon={<PauseCircle className="h-3 w-3" />} tip={compact && !onHold ? `On ${full.trim()}` : undefined}>
         {compact ? `Hold${holds > 1 ? ` ×${holds}` : ''}` : full}
       </Badge>
     )
-    // Where a decision may be made from here, the badge is the way in.
+    // Where a decision may be made from here, the badge is the way in. It keeps its 32 px row; an invisible strip 6 px
+    // above and below makes it a 44 px target for a gloved finger.
     return onHold ? (
       <button
         type="button"
@@ -121,8 +124,11 @@ export function SessionToneBadge({ session, className, onHold, compact = false }
           onHold()
         }}
         data-tip="Decide the Hold"
-        aria-label="Decide the Hold"
-        className="inline-flex min-h-[32px] items-center rounded-full transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-amber-400"
+        aria-label={compact ? `Decide the Hold (${full.trim()})` : 'Decide the Hold'}
+        className={cn(
+          "relative inline-flex min-h-[32px] shrink-0 items-center rounded-full transition-transform before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-[''] hover:scale-105 focus:outline-none focus:ring-2 focus:ring-amber-400",
+          className,
+        )}
       >
         {badge}
       </button>

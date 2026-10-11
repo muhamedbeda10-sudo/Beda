@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -20,12 +20,18 @@ import {
   Gauge,
   Cable,
   MessageSquareText,
+  Pencil,
+  BookOpen,
+  ChevronDown,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, resultTone } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { CoilPicker } from '@/components/inspection/CoilPicker'
 import { WorkInstructionLinks } from '@/components/documents/WorkInstructionLinks'
+import { WorkInstructionViewer } from '@/components/documents/WorkInstructionViewer'
+import { EdgeShadows, useScrollEdges } from '@/components/ui/ScrollX'
+import { UndoStrip, insertAt, useUndo } from '@/components/inspection/UndoStrip'
 import { useSampleDetail, useWizardContext, useWizardPreview } from '@/services/queries'
 import { discardSession, matchNotices, reRecordSample, saveSample, startSessionWithSample } from '@/services/mutations'
 import { NoticeGate } from '@/components/notices/NoticeGate'
@@ -35,6 +41,8 @@ import { OrderNoteList } from '@/components/inspection/OrderNotes'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn, uid, newSubmissionId } from '@/lib/utils'
+import { PHONE, isCoarsePointer, matchesMedia, useMediaQuery } from '@/lib/media'
+import { SHORT_LANDSCAPE, isBlankLength, keptLengths, keyboardLikelyOpen, opensKeyboard, renumberLengthIssues } from './wizardHelpers'
 import {
   DISPOSITIONS,
   type Disposition,
@@ -72,17 +80,33 @@ import {
   type WizardStep,
 } from '@qc/shared/rules'
 
-const STEP_META: Record<WizardStep, { label: string; icon: typeof Ruler }> = {
-  setup: { label: 'Setup', icon: ClipboardList },
-  dimensions: { label: 'Dimensions', icon: Ruler },
-  defects: { label: 'Defects', icon: AlertTriangle },
-  paint: { label: 'Paint sample', icon: Camera },
-  paintThickness: { label: 'Paint thickness', icon: Gauge },
-  pt: { label: 'PT / Weld', icon: FlaskConical },
-  review: { label: 'Review & Save', icon: Check },
+/** Each step's name, the shorter one its chip carries where only the open step is named, and its icon. */
+const STEP_META: Record<WizardStep, { label: string; short: string; icon: typeof Ruler }> = {
+  setup: { label: 'Setup', short: 'Setup', icon: ClipboardList },
+  dimensions: { label: 'Dimensions', short: 'Dimensions', icon: Ruler },
+  defects: { label: 'Defects', short: 'Defects', icon: AlertTriangle },
+  paint: { label: 'Paint sample', short: 'Paint', icon: Camera },
+  paintThickness: { label: 'Paint thickness', short: 'Thickness', icon: Gauge },
+  pt: { label: 'PT / Weld', short: 'PT / Weld', icon: FlaskConical },
+  review: { label: 'Review & Save', short: 'Review', icon: Check },
 }
 
 const CONSUMABLE_KINDS: PTConsumableKind[] = ['Cleaner', 'Penetrant', 'Developer']
+
+/** The card that holds the open step: a step opened from further down the page is scrolled to its top. */
+const STEP_CARD_ID = 'wizard-step'
+
+/**
+ * The rail (or, on a short landscape screen, the strip around it): stuck under
+ * the app header — 4rem, its 1px rule and the safe area above it. While it is
+ * stuck it takes the page's colour and a hairline like the header's, so the
+ * step being filled in scrolls away beneath it; at rest it is part of the page.
+ */
+const STICKY = 'top-[calc(4rem+1px+env(safe-area-inset-top))] z-20 py-2 transition-[background-color,box-shadow] duration-150'
+const STUCK = 'bg-slate-100/95 shadow-[0_1px_0_theme(colors.slate.200)] backdrop-blur dark:bg-slate-950/95 dark:shadow-[0_1px_0_theme(colors.slate.800)]'
+
+/** A row's delete control: a 44 px target, grey until it is pointed at (AA against white and the tinted rows). */
+const REMOVE = 'icon-btn shrink-0 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 dark:hover:text-rose-400'
 
 export function WizardPage() {
   const { sessionId = '', sampleId: editingSampleId } = useParams()
@@ -283,7 +307,10 @@ export function WizardPage() {
 
   const issues = useMemo(() => {
     if (!draft) return []
-    return validateSample({
+    // A tested-length row left blank is not saved, so it is not checked either; an issue about a later row keeps that
+    // row's number on the screen.
+    const lengths = keptLengths(draft.pt?.testedLengths ?? [])
+    const found = validateSample({
       process: draft.process,
       // A stock item has no order drawing to pick.
       drawingRequired: !isStockOrder(order),
@@ -306,11 +333,41 @@ export function WizardPage() {
         ? {
             consumableLots: draft.pt.consumableLots,
             connectorCoilNumber: draft.pt.connectorCoilNumber,
-            testedLengths: draft.pt.testedLengths.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict ?? null })),
+            testedLengths: lengths.kept.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict ?? null })),
           }
         : undefined,
     })
+    return renumberLengthIssues(found, lengths.rowOf)
   }, [draft])
+
+  // ---- Layout: the rail, the keyboard, a short landscape screen ------------
+  const short = useMediaQuery(SHORT_LANDSCAPE)
+  const keyboard = useKeyboardOpen()
+  const stickyRef = useRef<HTMLDivElement>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+  useScrollPadding(stickyRef, barRef, `${!!draft} ${short} ${keyboard}`, keyboard)
+  const stuck = useStuck(stickyRef, `${!!draft} ${short} ${keyboard}`)
+  /** Set when a save is refused for the sample quantity: the review step then puts the cursor in it. */
+  const [focusQty, setFocusQty] = useState(false)
+  /** The same for the connector coil number, which lives on Setup: the save lands there with the cursor in it. */
+  const [focusConnector, setFocusConnector] = useState(false)
+  const connectorFocused = useCallback(() => setFocusConnector(false), [])
+  /** A save was refused while the connector coil number was blank: Setup marks the field until it is filled. */
+  const [connectorRefused, setConnectorRefused] = useState(false)
+
+  // A step opened from further down the page — Next at the foot of a long step, a chip on the stuck rail — starts at
+  // its top, just under the rail. One opened with the top of the page in view stays where it is.
+  const shownStep = draft?.step
+  const lastStep = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (!shownStep) return
+    const previous = lastStep.current
+    lastStep.current = shownStep
+    if (previous === undefined || previous === shownStep) return
+    const card = document.getElementById(STEP_CARD_ID)
+    const clear = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0
+    if (card && card.getBoundingClientRect().top < clear) card.scrollIntoView({ block: 'start' })
+  }, [shownStep])
 
   if (sessionsLoading || (editingSampleId && editingLoading)) return <Card className="p-10 text-center text-sm text-muted">Loading…</Card>
   if (!order || (!session && !pending) || loadError) {
@@ -396,8 +453,8 @@ export function WizardPage() {
                 weldingWireBatch: draft.pt.weldingWireBatch?.trim() || undefined,
                 // validateSample has already refused a missing connector coil number.
                 connectorCoilNumber: draft.pt.connectorCoilNumber?.trim() || undefined,
-                // validateSample has already refused a missing verdict or length.
-                testedLengths: draft.pt.testedLengths.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict as PTVerdict })),
+                // validateSample has already refused a missing verdict or length; a blank row is not saved.
+                testedLengths: keptLengths(draft.pt.testedLengths).kept.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict as PTVerdict })),
                 notes: draft.pt.notes || undefined,
                 imageIds: draft.pt.imageIds,
               }
@@ -472,6 +529,12 @@ export function WizardPage() {
     if (issues.length > 0) {
       goto(issues[0].step)
       toast(issues[0].message, 'error')
+      // The quantity is the one thing asked on the review step itself: the cursor goes to it.
+      if (issues[0].step === 'review') setFocusQty(true)
+      // The connector coil number sits low on Setup, where a phone's Back / Next bar can cover it: the cursor goes to it,
+      // and the field is marked, so the field the message names is the one in view.
+      if (issues.some((i) => i.ref === 'connectorCoil')) setConnectorRefused(true)
+      if (issues[0].ref === 'connectorCoil') setFocusConnector(true)
       return
     }
     // §8.4 — block on a grade mismatch unless it was explicitly acknowledged.
@@ -484,6 +547,22 @@ export function WizardPage() {
   }
 
   const StepIcon = STEP_META[current].icon
+  const backLabel = draft.editingSampleId ? 'History' : 'Inspections'
+  const leave = () => {
+    if (draft.editingSampleId) navigate('/history')
+    else if (priorSamples.length === 0) setLeaving(true)
+    else navigate('/')
+  }
+  const sampleBadge =
+    draft.editingSampleId && editing && session ? (
+      <Badge tone="amber">Re-recording sample {session.seq}-{editing.sample.index}</Badge>
+    ) : session ? (
+      <Badge tone="neutral">Sample {session.seq}-{priorSamples.length + 1}</Badge>
+    ) : (
+      <Badge tone="violet">New session · opens with this sample</Badge>
+    )
+  const itemLine = `${order.itemCode}${order.item ? ` · ${order.item}` : ''} · Order ID ${order.lineKey}`
+  const navHeight = keyboard ? 'min-h-[44px]' : short ? 'min-h-[48px]' : 'min-h-[52px]'
 
   return (
     // Forms read best at a bounded width, so the wizard is centred even on a
@@ -500,16 +579,6 @@ export function WizardPage() {
           }}
         />
       )}
-      <button
-        onClick={() => {
-          if (draft.editingSampleId) navigate('/history')
-          else if (priorSamples.length === 0) setLeaving(true)
-          else navigate('/')
-        }}
-        className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-semibold text-muted hover:text-brand-600"
-      >
-        <ArrowLeft className="h-4 w-4" /> {draft.editingSampleId ? 'History' : 'Inspections'}
-      </button>
 
       <Modal
         open={leaving}
@@ -519,7 +588,7 @@ export function WizardPage() {
         size="sm"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setLeaving(false)}>
+            <Button variant="secondary" onClick={() => setLeaving(false)}>
               Stay
             </Button>
             <Button
@@ -528,7 +597,8 @@ export function WizardPage() {
                 navigate('/')
               }}
             >
-              {session ? 'Leave, keep the session' : 'Leave, keep the entries'}
+              <span className="sm:hidden">Leave, keep it</span>
+              <span className="hidden sm:inline">{session ? 'Leave, keep the session' : 'Leave, keep the entries'}</span>
             </Button>
             <Button
               variant="danger"
@@ -566,112 +636,145 @@ export function WizardPage() {
         </p>
       </Modal>
 
-      <Card className="p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{order.orderNumber}</span>}
-          <Badge tone="blue">{machine?.displayName ?? `Machine ${wc}`}</Badge>
-          <Badge tone="neutral">
-            Shift {shift} · {shiftName(shift)}
-          </Badge>
-          {draft.editingSampleId && editing && session ? (
-            <Badge tone="amber">Re-recording sample {session.seq}-{editing.sample.index}</Badge>
-          ) : session ? (
-            <Badge tone="neutral">Sample {session.seq}-{priorSamples.length + 1}</Badge>
-          ) : (
-            <Badge tone="violet">New session · opens with this sample</Badge>
-          )}
-          {!online && (
-            <Badge tone="amber" icon={<CloudOff className="h-3 w-3" />}>
-              Offline — your work is saved on this device
-            </Badge>
-          )}
-        </div>
-        <p className="mt-1 text-sm text-muted">
-          {order.itemCode}
-          {order.item ? ` · ${order.item}` : ''} · Order ID {order.lineKey}
-        </p>
-      </Card>
-
-      {/* Step rail */}
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {steps.map((s, i) => {
-          const Icon = STEP_META[s].icon
-          const done = i < stepIndex
-          const active = i === stepIndex
-          return (
-            <button
-              key={s}
-              onClick={() => goto(s)}
-              className={cn(
-                'flex min-h-[48px] shrink-0 items-center gap-2 rounded-xl px-3.5 text-sm font-bold transition-colors',
-                active
-                  ? 'bg-brand-600 text-white shadow-sm'
-                  : done
-                    ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20'
-                    : 'bg-white text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700',
+      {/* One slot either way, so the step below keeps its place in the tree — and what was typed into it — when a
+          tablet is turned between the two layouts. */}
+      {short ? (
+        // A wide screen with little height: the way back, the order and the rail fold into one strip that stays in
+        // view, so the step's first field is on the first screen.
+        <div ref={stickyRef} className={cn(STICKY, '-mx-8 flex items-center gap-3 px-8', keyboard ? 'static' : 'sticky', stuck && STUCK)}>
+          <button type="button" onClick={leave} className="icon-btn -ms-2" aria-label={`Back to ${backLabel}`} data-tip={`Back to ${backLabel}`}>
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : <span className="min-w-0 truncate font-bold">{order.orderNumber}</span>}
+              <Badge tone="blue">{machine?.displayName ?? `Machine ${wc}`}</Badge>
+              {sampleBadge}
+              {!online && (
+                <Badge tone="amber" icon={<CloudOff className="h-3 w-3" />} tip="Offline — your work is saved on this device">
+                  Offline
+                </Badge>
               )}
-            >
-              {done ? <CheckCircle2 className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
-              {STEP_META[s].label}
-            </button>
-          )
-        })}
-      </div>
+            </div>
+            <p className="mt-0.5 truncate text-xs text-muted">{itemLine}</p>
+          </div>
+          <StepRail steps={steps} stepIndex={stepIndex} onGo={goto} compact className="max-w-[55%] shrink-0" />
+        </div>
+      ) : (
+        <>
+          <button onClick={leave} className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-semibold text-muted hover:text-brand-600">
+            <ArrowLeft className="h-4 w-4" /> {backLabel}
+          </button>
 
-      <Card className="space-y-5 p-4">
-        <h2 className="flex items-center gap-2 text-lg font-extrabold">
-          <StepIcon className="h-5 w-5 text-brand-600" /> {STEP_META[current].label}
-        </h2>
+          <Card className="p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              {isStockOrder(order) ? <Badge tone="violet">For stock</Badge> : <span className="font-bold">{order.orderNumber}</span>}
+              <Badge tone="blue">{machine?.displayName ?? `Machine ${wc}`}</Badge>
+              <Badge tone="neutral">
+                Shift {shift} · {shiftName(shift)}
+              </Badge>
+              {sampleBadge}
+              {!online && (
+                <Badge tone="amber" icon={<CloudOff className="h-3 w-3" />}>
+                  Offline — your work is saved on this device
+                </Badge>
+              )}
+            </div>
+            <p className="mt-1 text-sm text-muted">{itemLine}</p>
+          </Card>
+
+          {/* The rail stays under the header while a long step scrolls, so another step is a tap away from anywhere. It
+              spans the page's side margins, so nothing of the step shows beside it as it passes underneath. */}
+          <div ref={stickyRef} className={cn(STICKY, '!mt-2 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8', keyboard ? 'static' : 'sticky', stuck && STUCK)}>
+            <StepRail steps={steps} stepIndex={stepIndex} onGo={goto} />
+          </div>
+        </>
+      )}
+
+      <Card id={STEP_CARD_ID} className={cn('space-y-5 p-4', !short && '!mt-2')}>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="min-w-0">
+            {/* On a phone the rail names only this step; here it says how far along it is. */}
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted sm:hidden">
+              Step {stepIndex + 1} of {steps.length}
+            </p>
+            <h2 className="flex items-center gap-2 text-lg font-extrabold">
+              <StepIcon className="h-5 w-5 text-brand-600" /> {STEP_META[current].label}
+            </h2>
+          </div>
+          {short && <InstructionChips instructions={instructions} step={current} />}
+        </div>
 
         {current === 'setup' && (
-          <SetupStep draft={draft} order={order} update={update} shift={shift} gradeIndex={gradeIndex} instructions={instructions} />
+          <SetupStep
+            draft={draft}
+            order={order}
+            update={update}
+            shift={shift}
+            gradeIndex={gradeIndex}
+            instructions={short ? [] : instructions}
+            connectorRefused={connectorRefused}
+            focusConnector={focusConnector}
+            onConnectorFocused={connectorFocused}
+          />
         )}
         {current !== 'setup' && current !== 'review' && steps.includes('setup') && (
           <SetupSummary draft={draft} onEdit={() => update({ step: 'setup' })} />
         )}
         {current === 'dimensions' && (
           <>
-            <WorkInstructionLinks instructions={instructions} step="dimensions" />
+            {!short && <WorkInstructionLinks instructions={instructions} step="dimensions" />}
             <DimensionsStep draft={draft} update={update} order={order} refImages={refImages} typedByInspector={!takesConfiguredDimensions(process, machine)} />
           </>
         )}
         {current === 'defects' && (
           <>
-            <WorkInstructionLinks instructions={instructions} step="defects" />
+            {!short && <WorkInstructionLinks instructions={instructions} step="defects" />}
             <DefectsStep draft={draft} update={update} options={defectOptions} sessionId={session?.id} orderId={order.id} />
           </>
         )}
         {current === 'paint' && (
           <>
-            <WorkInstructionLinks instructions={instructions} step="paint" />
+            {!short && <WorkInstructionLinks instructions={instructions} step="paint" />}
             <PaintStep draft={draft} update={update} sessionId={session?.id} orderId={order.id} />
           </>
         )}
         {current === 'paintThickness' && (
           <>
-            <WorkInstructionLinks instructions={instructions} step="paintThickness" />
+            {!short && <WorkInstructionLinks instructions={instructions} step="paintThickness" />}
             <PaintThicknessStep draft={draft} update={update} />
           </>
         )}
         {current === 'pt' && (
           <>
-            <WorkInstructionLinks instructions={instructions} step="pt" />
-            <PTStep draft={draft} update={update} consumables={consumables} sessionId={session?.id} orderId={order.id} />
+            {!short && <WorkInstructionLinks instructions={instructions} step="pt" />}
+            <PTStep draft={draft} update={update} consumables={consumables} sessionId={session?.id} orderId={order.id} short={short} />
           </>
         )}
         {current === 'review' && (
-          <ReviewStep draft={draft} order={order} issues={issues} update={update} orderNotes={orderNotes} sessionId={session?.id} orderId={order.id} />
+          <ReviewStep
+            draft={draft}
+            order={order}
+            issues={issues}
+            update={update}
+            orderNotes={orderNotes}
+            sessionId={session?.id}
+            orderId={order.id}
+            focusQty={focusQty}
+            onQtyFocused={() => setFocusQty(false)}
+          />
         )}
       </Card>
 
-      {/* Sticky navigation */}
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 safe-bottom">
-        <div className="mx-auto flex max-w-5xl items-center gap-2 px-4 py-3">
-          <Button variant="secondary" className="min-h-[52px] flex-1 sm:flex-none" disabled={stepIndex === 0} onClick={back}>
+      {/* Sticky navigation. With the keyboard up it shrinks to a strip just tall enough for a finger, so the field being
+          typed in stays in sight above it; on a short landscape screen it is a little lower than on a tall one. */}
+      <div ref={barRef} className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 safe-bottom">
+        <div className={cn('mx-auto flex max-w-5xl items-center gap-2 px-4', keyboard ? 'py-1' : short ? 'py-2' : 'py-3')}>
+          <Button variant="secondary" className={cn(navHeight, 'flex-1 sm:flex-none')} disabled={stepIndex === 0} onClick={back}>
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>
           {current === 'review' ? (
-            <Button variant="primary" className="min-h-[52px] flex-1" disabled={saving} onClick={attemptSave}>
+            <Button variant="primary" className={cn(navHeight, 'flex-1')} disabled={saving} onClick={attemptSave}>
               {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
               {saving ? (
                 'Saving…'
@@ -683,7 +786,7 @@ export function WizardPage() {
               )}
             </Button>
           ) : (
-            <Button variant="primary" className="min-h-[52px] flex-1" onClick={next}>
+            <Button variant="primary" className={cn(navHeight, 'flex-1')} onClick={next}>
               Next <ArrowRight className="h-4 w-4" />
             </Button>
           )}
@@ -698,7 +801,7 @@ export function WizardPage() {
           icon={<AlertTriangle className="h-5 w-5" />}
           footer={
             <>
-              <Button variant="ghost" onClick={() => setGradePrompt(null)}>
+              <Button variant="secondary" onClick={() => setGradePrompt(null)}>
                 Go back and fix
               </Button>
               <Button
@@ -714,7 +817,8 @@ export function WizardPage() {
                   void performSave(ack)
                 }}
               >
-                Acknowledge & continue
+                <span className="sm:hidden">Acknowledge</span>
+                <span className="hidden sm:inline">Acknowledge & continue</span>
               </Button>
             </>
           }
@@ -746,6 +850,241 @@ export function WizardPage() {
   )
 }
 
+// ---- Layout ----------------------------------------------------------------
+
+/**
+ * The steps in order, as chips: done ones green, the open one solid. On a
+ * phone — and in the short landscape strip — only the open step keeps its
+ * name; the others show their icon and number, so a whole process fits across
+ * (the name is the chip's accessible name and its tooltip). The open chip is
+ * scrolled to the middle whenever the step changes, and a soft edge says when
+ * more chips are off to one side.
+ */
+function StepRail({
+  steps,
+  stepIndex,
+  onGo,
+  compact = false,
+  className,
+}: {
+  steps: WizardStep[]
+  stepIndex: number
+  onGo: (s: WizardStep) => void
+  /** Name only the open step, whatever the width. */
+  compact?: boolean
+  className?: string
+}) {
+  const strip = useRef<HTMLDivElement>(null)
+  const chips = useRef<(HTMLButtonElement | null)[]>([])
+  const edges = useScrollEdges(strip)
+  const terse = useMediaQuery(PHONE) || compact
+  const centred = useRef(false)
+
+  useEffect(() => {
+    const frame = strip.current
+    const chip = chips.current[stepIndex]
+    if (!frame || !chip) return
+    // Only the strip moves, never the page: measured on screen, so it holds in either direction of text.
+    const f = frame.getBoundingClientRect()
+    const c = chip.getBoundingClientRect()
+    const by = c.left + c.width / 2 - (f.left + f.width / 2)
+    // The page opens with the open step in view at once; a change of step glides there.
+    const glide = centred.current && !matchesMedia('(prefers-reduced-motion: reduce)')
+    centred.current = true
+    if (Math.abs(by) > 1) frame.scrollBy({ left: by, behavior: glide ? 'smooth' : 'auto' })
+  }, [stepIndex, terse])
+
+  return (
+    <div className={cn('relative min-w-0', className)}>
+      <div ref={strip} className={cn('relative flex overflow-x-auto overscroll-x-contain scrollbar-none', terse ? 'gap-1' : 'gap-2')}>
+        {steps.map((s, i) => {
+          const meta = STEP_META[s]
+          const Icon = meta.icon
+          const done = i < stepIndex
+          const active = i === stepIndex
+          const named = active || !terse
+          return (
+            <button
+              key={s}
+              ref={(el) => {
+                chips.current[i] = el
+              }}
+              type="button"
+              onClick={() => onGo(s)}
+              aria-label={`${meta.label}, step ${i + 1} of ${steps.length}${done ? ', done' : ''}`}
+              aria-current={active ? 'step' : undefined}
+              data-tip={named ? undefined : meta.label}
+              className={cn(
+                'flex min-h-[44px] shrink-0 items-center rounded-xl text-sm font-bold transition-colors',
+                named ? 'gap-2 px-3.5' : 'min-w-[44px] justify-center gap-1 px-2',
+                !terse && 'sm:min-h-[48px]',
+                active
+                  ? 'bg-brand-600 text-white shadow-sm'
+                  : done
+                    ? 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20'
+                    : 'bg-white text-slate-600 ring-1 ring-inset ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700',
+              )}
+            >
+              {done ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <Icon className="h-4 w-4 shrink-0" />}
+              {named ? <span className="whitespace-nowrap">{terse ? meta.short : meta.label}</span> : <span className="tabular-nums">{i + 1}</span>}
+            </button>
+          )
+        })}
+      </div>
+      <EdgeShadows {...edges} />
+    </div>
+  )
+}
+
+/**
+ * On a short landscape screen, the step's controlled documents as chips beside
+ * its title, where the box of buttons would push the first field off the
+ * screen. The viewer is the same.
+ */
+function InstructionChips({ instructions, step }: { instructions: WorkInstruction[]; step: WizardStep }) {
+  const [open, setOpen] = useState<WorkInstruction | null>(null)
+  const here = instructions.filter((w) => w.step === step)
+  if (here.length === 0) return null
+  return (
+    <div className="flex min-w-0 flex-wrap justify-end gap-2">
+      {here.map((w) => (
+        <button
+          key={w.id}
+          type="button"
+          onClick={() => setOpen(w)}
+          data-tip={w.title}
+          className="inline-flex min-h-[44px] max-w-[20rem] items-center gap-2 rounded-full bg-brand-50 px-3.5 text-sm font-semibold text-brand-800 ring-1 ring-inset ring-brand-200 transition-colors hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-100 dark:ring-brand-500/30 dark:hover:bg-brand-500/20"
+        >
+          <BookOpen className="h-4 w-4 shrink-0" />
+          <span className="truncate">{w.title}</span>
+          <span className="shrink-0 text-xs font-medium text-muted">{w.code}</span>
+        </button>
+      ))}
+      {open && <WorkInstructionViewer instruction={open} onClose={() => setOpen(null)} />}
+    </div>
+  )
+}
+
+/**
+ * Whether the on-screen keyboard is up (wizardHelpers.keyboardLikelyOpen),
+ * followed as the visible area changes size and focus moves between fields.
+ */
+function useKeyboardOpen(): boolean {
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    const vv = window.visualViewport
+    let width = window.innerWidth
+    let tallest = window.innerHeight
+    let frame = 0
+    const check = () => {
+      frame = 0
+      // A turn, or a window resized sideways, starts over: the tallest is measured again at the new width.
+      if (window.innerWidth !== width) {
+        width = window.innerWidth
+        tallest = window.innerHeight
+      }
+      tallest = Math.max(tallest, window.innerHeight)
+      const focused = document.activeElement as (HTMLElement & { type?: string; readOnly?: boolean }) | null
+      setOpen(keyboardLikelyOpen({ visible: vv?.height ?? window.innerHeight, tallest, editing: opensKeyboard(focused), coarse: isCoarsePointer() }))
+    }
+    // Focus moving from one field to the next passes through the page for an instant: judged a frame later, the bar
+    // does not jump between them.
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(check)
+    }
+    vv?.addEventListener('resize', schedule)
+    window.addEventListener('resize', schedule)
+    document.addEventListener('focusin', schedule)
+    document.addEventListener('focusout', schedule)
+    return () => {
+      if (frame) cancelAnimationFrame(frame)
+      vv?.removeEventListener('resize', schedule)
+      window.removeEventListener('resize', schedule)
+      document.removeEventListener('focusin', schedule)
+      document.removeEventListener('focusout', schedule)
+    }
+  }, [])
+  return open
+}
+
+/** Whether a sticky element is stuck now: at its `top`, with the page scrolled under it. */
+function useStuck(ref: RefObject<HTMLElement>, layout: string): boolean {
+  const [stuck, setStuck] = useState(false)
+  useEffect(() => {
+    let frame = 0
+    const check = () => {
+      frame = 0
+      const el = ref.current
+      const style = el ? getComputedStyle(el) : null
+      setStuck(!!el && style?.position === 'sticky' && el.getBoundingClientRect().top <= (parseFloat(style.top) || 0) + 0.5)
+    }
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(check)
+    }
+    check()
+    window.addEventListener('scroll', schedule, { passive: true })
+    window.addEventListener('resize', schedule)
+    return () => {
+      if (frame) cancelAnimationFrame(frame)
+      window.removeEventListener('scroll', schedule)
+      window.removeEventListener('resize', schedule)
+    }
+  }, [ref, layout])
+  return stuck
+}
+
+/** Room left between a field brought into view and what is fixed over the page. */
+const SCROLL_GAP = 8
+
+/**
+ * Keeps a field the browser brings into view — on focus, or with the keyboard
+ * coming up — clear of what is fixed over the page: the header and the stuck
+ * rail above it, the Back / Next bar below. Focus scrolling and scrollIntoView
+ * honour the document's scroll padding, so it is set from their measured
+ * heights while the wizard is open and put back as it was on leaving. With the
+ * keyboard up the rail no longer sticks, and the focused field is brought back
+ * into view above the shrunken bar.
+ */
+function useScrollPadding(sticky: RefObject<HTMLElement>, bar: RefObject<HTMLElement>, layout: string, keyboard: boolean) {
+  useEffect(() => {
+    const html = document.documentElement
+    const before = { top: html.style.scrollPaddingTop, bottom: html.style.scrollPaddingBottom }
+    return () => {
+      html.style.scrollPaddingTop = before.top
+      html.style.scrollPaddingBottom = before.bottom
+    }
+  }, [])
+
+  useEffect(() => {
+    const html = document.documentElement
+    const measure = () => {
+      const s = sticky.current
+      if (!s) return
+      // The rail's `top` is the header's height, safe area included (it resolves to pixels even while the rail does
+      // not stick); while it sticks, the rail's own height is added.
+      const header = parseFloat(getComputedStyle(s).top) || 0
+      const top = header + (getComputedStyle(s).position === 'sticky' ? s.offsetHeight : 0)
+      html.style.scrollPaddingTop = `${Math.round(top + SCROLL_GAP)}px`
+      html.style.scrollPaddingBottom = `${Math.round((bar.current?.offsetHeight ?? 0) + SCROLL_GAP)}px`
+    }
+    measure()
+    const resize = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    if (sticky.current) resize?.observe(sticky.current)
+    if (bar.current) resize?.observe(bar.current)
+    window.addEventListener('resize', measure)
+    return () => {
+      resize?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [sticky, bar, layout])
+
+  useEffect(() => {
+    if (!keyboard) return
+    const frame = requestAnimationFrame(() => (document.activeElement as HTMLElement | null)?.scrollIntoView?.({ block: 'nearest' }))
+    return () => cancelAnimationFrame(frame)
+  }, [keyboard])
+}
+
 // ---- Steps -----------------------------------------------------------------
 
 type Updater = (patch: Partial<SampleDraft> | ((d: SampleDraft) => SampleDraft)) => void
@@ -757,6 +1096,9 @@ function SetupStep({
   shift,
   gradeIndex,
   instructions,
+  connectorRefused,
+  focusConnector,
+  onConnectorFocused,
 }: {
   draft: SampleDraft
   order: ProductionOrder
@@ -764,6 +1106,11 @@ function SetupStep({
   shift: 'A' | 'B' | 'C'
   gradeIndex: Map<string, string>
   instructions: WorkInstruction[]
+  /** A save was refused while the connector coil number was blank: the field is marked until it is filled. */
+  connectorRefused: boolean
+  /** A save was refused for the connector coil number: put the cursor in it. */
+  focusConnector: boolean
+  onConnectorFocused: () => void
 }) {
   const { toast } = useApp()
   const [picking, setPicking] = useState(false)
@@ -777,6 +1124,23 @@ function SetupStep({
     if (litTimer.current) clearTimeout(litTimer.current)
     litTimer.current = setTimeout(() => setLitCoil(null), 2500)
   }
+  const connectorMissing = !draft.pt?.connectorCoilNumber?.trim()
+  const connectorBad = connectorRefused && connectorMissing
+  // A refused save lands here for the connector coil number: the cursor goes to it, centred clear of the Back / Next
+  // bar. On the next frame, as the wizard first brings a newly opened step's card to the top of the page.
+  const connectorRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (!focusConnector) return
+    const frame = requestAnimationFrame(() => {
+      const el = connectorRef.current
+      if (el) {
+        el.focus({ preventScroll: true })
+        el.scrollIntoView({ block: 'center' })
+      }
+      onConnectorFocused()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [focusConnector, onConnectorFocused])
   // A welding machine records the wire, not the coil (§5.2).
   const welding = draft.process === 'welding'
 
@@ -866,14 +1230,17 @@ function SetupStep({
             <Field label="Connector coil number *" hint="Required. Remembered from the previous sample of this session; change it when a new connector coil goes on.">
               <div className="relative">
                 <Cable className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-                <Input
+                <input
+                  ref={connectorRef}
+                  id="wizard-connector-coil"
                   value={draft.pt?.connectorCoilNumber ?? ''}
                   onChange={(e) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), connectorCoilNumber: e.target.value } }))}
-                  className="min-h-[48px] pl-9"
+                  className={cn('input min-h-[48px] pl-9', connectorBad && 'border-rose-400 focus:border-rose-400 focus:ring-rose-400/40 dark:border-rose-400 dark:focus:border-rose-400')}
                   placeholder="e.g. C10021"
                   autoCapitalize="characters"
                   required
                   aria-required="true"
+                  aria-invalid={connectorBad || undefined}
                 />
               </div>
             </Field>
@@ -989,34 +1356,61 @@ function CoilFact({ label, value, unit }: { label: string; value?: string; unit?
 }
 
 /**
- * What Setup holds, shown above the later steps: the drawing and the coils
- * running now. A second coil often goes on mid-session, so adding one is a
- * tap away without hunting for the Setup step on the rail.
+ * What Setup holds, shown above the later steps: the drawing, and the coils
+ * running now — or, on a welding machine, which records the wire and not the
+ * coil, the wire batch and the connector coil (required, so a blank one is
+ * seen before Save is refused for it). A second coil often goes on mid-session, so adding one
+ * is a tap away without hunting for the Setup step on the rail. On a phone the
+ * button is an icon at the end of the line, so the summary stays one short
+ * strip instead of a box with a button wrapped under it.
  */
 function SetupSummary({ draft, onEdit }: { draft: SampleDraft; onEdit: () => void }) {
+  const welding = draft.process === 'welding'
   const coils = draft.coils.map((c) => c.coilNumber).filter(Boolean)
+  const wire = draft.pt?.weldingWireBatch?.trim() ?? ''
+  const connector = draft.pt?.connectorCoilNumber?.trim() ?? ''
+  const action = welding ? 'Change setup' : coils.length === 0 ? 'Add coil' : 'Add coil / change setup'
+  const ActionIcon = welding ? Pencil : Plus
+  const phone = useMediaQuery(PHONE)
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl bg-slate-50 px-3 py-2 text-sm dark:bg-slate-800/50">
-      <span className="text-xs font-bold uppercase tracking-wide text-muted">Setup</span>
-      {draft.drawing && (
-        <span>
-          <span className="text-muted">Drawing</span> <span className="font-semibold">{draft.drawing}</span>
-        </span>
-      )}
-      <span className="flex flex-wrap items-center gap-1.5">
-        <span className="text-muted">Coils</span>
-        {coils.length === 0 ? (
-          <span className="font-semibold text-amber-600 dark:text-amber-400">none yet</span>
-        ) : (
-          coils.map((n) => (
-            <span key={n} className="rounded-md bg-white px-2 py-0.5 font-mono text-xs font-semibold ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
-              {n}
-            </span>
-          ))
+    <div className="flex items-center gap-2 rounded-xl bg-slate-50 py-1 pe-1 ps-3 text-sm dark:bg-slate-800/50">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 py-1">
+        <span className="text-xs font-bold uppercase tracking-wide text-muted">Setup</span>
+        {draft.drawing && (
+          <span className="min-w-0 break-words">
+            <span className="text-muted">Drawing</span> <span className="font-semibold">{draft.drawing}</span>
+          </span>
         )}
-      </span>
-      <Button variant="ghost" className="ml-auto min-h-[40px]" onClick={onEdit}>
-        <Plus className="h-4 w-4" /> {coils.length === 0 ? 'Add coil' : 'Add coil / change setup'}
+        {welding ? (
+          // Both carried from the previous sample, so usually there; amber only when one is not.
+          <>
+            <span className="min-w-0 break-words">
+              <span className="text-muted">Wire batch</span>{' '}
+              {wire ? <span className="font-mono text-xs font-semibold">{wire}</span> : <span className="font-semibold text-amber-600 dark:text-amber-400">not set</span>}
+            </span>
+            <span className="min-w-0 break-words">
+              <span className="text-muted">Connector coil</span>{' '}
+              {connector ? <span className="font-mono text-xs font-semibold">{connector}</span> : <span className="font-semibold text-amber-600 dark:text-amber-400">not set</span>}
+            </span>
+          </>
+        ) : (
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="text-muted">Coils</span>
+            {coils.length === 0 ? (
+              <span className="font-semibold text-amber-600 dark:text-amber-400">none yet</span>
+            ) : (
+              coils.map((n) => (
+                <span key={n} className="rounded-md bg-white px-2 py-0.5 font-mono text-xs font-semibold ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
+                  {n}
+                </span>
+              ))
+            )}
+          </span>
+        )}
+      </div>
+      <Button variant="ghost" className="min-h-[44px] shrink-0 max-sm:w-11 max-sm:px-0" onClick={onEdit} data-tip={phone ? action : undefined}>
+        <ActionIcon className="h-4 w-4" />
+        <span className="max-sm:sr-only">{action}</span>
       </Button>
     </div>
   )
@@ -1043,20 +1437,82 @@ function DimensionsStep({
       return { ...d, dimensions }
     })
 
+  // A row the inspector added goes at once, with an Undo where it stood. A configured row is part of what this item
+  // is checked for, so leaving it out of the sample is asked first, and is then final.
+  const undo = useUndo<DraftDimension>()
+  const [confirming, setConfirming] = useState<{ row: DraftDimension; index: number } | null>(null)
+  const dropRow = (index: number) => update((d) => ({ ...d, dimensions: d.dimensions.filter((_, j) => j !== index) }))
+  const removeRow = (index: number) => {
+    const row = draft.dimensions[index]
+    if (!row) return
+    if (row.source === 'item-order') {
+      setConfirming({ row, index })
+      return
+    }
+    dropRow(index)
+    undo.offer(
+      <>
+        <bdi>{row.name}</bdi> removed
+      </>,
+      row,
+      index,
+    )
+  }
+  const putBack = () => {
+    const r = undo.removed
+    if (!r) return
+    undo.clear()
+    update((d) => ({ ...d, dimensions: insertAt(d.dimensions, r.item, r.index) }))
+  }
+  const strip = (key: string) => (undo.removed ? <UndoStrip key={`${key}-${undo.removed.id}`} label={undo.removed.label} onUndo={putBack} /> : null)
+
   // The approved photo of the item sits next to the measurements, so the
-  // inspector compares the part in front of them while measuring it.
+  // inspector compares the part in front of them while measuring it — drawn
+  // large, to be compared at arm's length.
   const reference =
     refImages.length > 0 ? (
       <div>
         <span className="label">Reference photos for {order.itemCode}</span>
-        <ImagePicker imageIds={refImages.map((r) => r.imageId)} onChange={() => {}} readOnly />
+        <ImagePicker imageIds={refImages.map((r) => r.imageId)} onChange={() => {}} readOnly size="lg" />
       </div>
     ) : null
+
+  const confirm = (
+    <Modal
+      open={confirming !== null}
+      onClose={() => setConfirming(null)}
+      title="Leave this dimension out?"
+      icon={<Ruler className="h-5 w-5" />}
+      size="sm"
+      footer={
+        <>
+          <Button variant="secondary" onClick={() => setConfirming(null)}>
+            Keep it
+          </Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              if (confirming) dropRow(confirming.index)
+              setConfirming(null)
+            }}
+          >
+            Leave it out
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-slate-600 dark:text-slate-300">
+        <bdi className="font-semibold text-slate-900 dark:text-white">{confirming?.row.name}</bdi> is set up for {order.itemCode} on this machine. Left out, it
+        is not measured on this sample and is not saved with it.
+      </p>
+    </Modal>
+  )
 
   if (draft.dimensions.length === 0) {
     return (
       <div className="space-y-3">
         {reference}
+        {strip('empty')}
         <EmptyState
           icon={<Ruler className="h-10 w-10" />}
           title={typedByInspector ? 'This machine takes dimensions from you' : 'No dimensions configured for this item on this machine'}
@@ -1067,89 +1523,160 @@ function DimensionsStep({
           }
         />
         <AddDimensionButton update={update} label={typedByInspector ? 'Add a dimension' : undefined} />
+        {confirm}
       </div>
     )
   }
 
+  const statusOf = (d: DraftDimension) =>
+    dimensionStatus({
+      nominal: Number(d.nominal),
+      tolPlus: Number(d.tolPlus),
+      tolMinus: Number(d.tolMinus),
+      actual: d.actual.trim() === '' ? null : Number(d.actual),
+    })
+
+  /** The phone card: one per dimension, with the measurement the inspector types made the biggest thing on it. */
+  const cards = draft.dimensions.map((d, i) => {
+    const status = statusOf(d)
+    const nominal = (
+      <label className="block">
+        <span className="label">Nominal</span>
+        <input value={d.nominal} onChange={(e) => setRow(i, { nominal: e.target.value })} inputMode="decimal" className="input min-h-[48px] text-right tabular-nums" />
+      </label>
+    )
+    const actual = (
+      <label className="block">
+        <span className="label">Actual</span>
+        <input
+          value={d.actual}
+          onChange={(e) => setRow(i, { actual: e.target.value })}
+          inputMode="decimal"
+          type="number"
+          step="any"
+          placeholder="—"
+          className={cn('input min-h-[52px] text-center text-lg font-bold tabular-nums', status === 'Fail' ? 'border-rose-400' : status === 'Warning' ? 'border-amber-400' : '')}
+        />
+      </label>
+    )
+    return (
+      <div
+        key={`${d.name}-${i}`}
+        className={cn(
+          'rounded-2xl border p-3',
+          status === 'Fail'
+            ? 'border-rose-300 bg-rose-50/60 dark:border-rose-500/40 dark:bg-rose-500/5'
+            : status === 'Warning'
+              ? 'border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-500/5'
+              : 'border-slate-200 dark:border-slate-700',
+        )}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <p dir="auto" className="min-w-0 break-words font-bold">
+            {d.name}
+          </p>
+          <span className="flex shrink-0 items-center gap-1">
+            <Badge tone={resultTone(status)}>{status}</Badge>
+            <button type="button" onClick={() => removeRow(i)} className={cn(REMOVE, '-my-2 -me-2')} aria-label={`Remove ${d.name}`}>
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </span>
+        </div>
+        {d.source === 'item-order' ? (
+          <div className="mt-2 grid grid-cols-[1fr_auto_1.4fr] items-end gap-2">
+            {nominal}
+            <span className="pb-3 text-xs tabular-nums text-muted">
+              +{d.tolPlus}/-{d.tolMinus}
+            </span>
+            {actual}
+          </div>
+        ) : (
+          <>
+            <div className="mt-2 grid grid-cols-[1fr_1.4fr] items-end gap-2">
+              {nominal}
+              {actual}
+            </div>
+            {/* Typed once, and they set Pass or Fail for every later sample: each with its own label, which stays
+                when a value is in the box. */}
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className="label">+ tolerance</span>
+                <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" placeholder="0" className="input min-h-[44px] text-right tabular-nums" />
+              </label>
+              <label className="block">
+                <span className="label">− tolerance</span>
+                <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" placeholder={d.tolPlus || '0'} className="input min-h-[44px] text-right tabular-nums" />
+              </label>
+            </div>
+          </>
+        )}
+      </div>
+    )
+  })
+
+  const rows = draft.dimensions.map((d, i) => {
+    const status = statusOf(d)
+    return (
+      <tr
+        key={`${d.name}-${i}`}
+        className={cn(
+          status === 'Fail' && 'bg-rose-50/60 dark:bg-rose-500/5',
+          status === 'Warning' && 'bg-amber-50/60 dark:bg-amber-500/5',
+        )}
+      >
+        {/* Arabic keeps its own word order and wrapping; the column keeps its header's alignment. */}
+        <td dir="auto" className="px-2 py-2 text-left font-semibold">
+          {d.name}
+        </td>
+        <td className="px-2 py-2 text-right tabular-nums">
+          <input value={d.nominal} onChange={(e) => setRow(i, { nominal: e.target.value })} inputMode="decimal" className="input-cell w-20 px-2 py-2 text-right touch:min-h-[44px]" />
+        </td>
+        <td className="whitespace-nowrap px-2 py-2 text-center text-xs text-muted">
+          {d.source === 'item-order' ? (
+            <>
+              +{d.tolPlus}/-{d.tolMinus}
+            </>
+          ) : (
+            <span className="inline-flex items-center gap-1">
+              +
+              <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" className="input-cell w-14 px-1.5 py-2 text-right text-sm touch:min-h-[44px]" />
+              / -
+              <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" className="input-cell w-14 px-1.5 py-2 text-right text-sm touch:min-h-[44px]" />
+            </span>
+          )}
+        </td>
+        <td className="px-2 py-2 text-center">
+          <input
+            value={d.actual}
+            onChange={(e) => setRow(i, { actual: e.target.value })}
+            inputMode="decimal"
+            type="number"
+            step="any"
+            placeholder="—"
+            className={cn(
+              'input-cell w-24 px-2 py-3 text-center text-base font-semibold',
+              status === 'Fail' ? 'border-rose-400 focus:ring-rose-400/40 dark:border-rose-400' : status === 'Warning' ? 'border-amber-400 focus:ring-amber-400/40 dark:border-amber-400' : '',
+            )}
+          />
+        </td>
+        <td className="px-2 py-2 text-center">
+          <Badge tone={resultTone(status)}>{status}</Badge>
+        </td>
+        <td className="px-1 py-1">
+          <button type="button" onClick={() => removeRow(i)} className={REMOVE} aria-label={`Remove ${d.name}`}>
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </td>
+      </tr>
+    )
+  })
+
   return (
     <div className="space-y-3">
       {reference}
-      {/* A phone has no room for a six-column table: one card per dimension,
-          with the measurement the inspector types made the biggest thing on it. */}
-      <div className="space-y-2 sm:hidden">
-        {draft.dimensions.map((d, i) => {
-          const status = dimensionStatus({
-            nominal: Number(d.nominal),
-            tolPlus: Number(d.tolPlus),
-            tolMinus: Number(d.tolMinus),
-            actual: d.actual.trim() === '' ? null : Number(d.actual),
-          })
-          return (
-            <div
-              key={`${d.name}-${i}`}
-              className={cn(
-                'rounded-2xl border p-3',
-                status === 'Fail'
-                  ? 'border-rose-300 bg-rose-50/60 dark:border-rose-500/40 dark:bg-rose-500/5'
-                  : status === 'Warning'
-                    ? 'border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-500/5'
-                    : 'border-slate-200 dark:border-slate-700',
-              )}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-bold">{d.name}</p>
-                <span className="flex items-center gap-1">
-                  <Badge tone={status === 'Pass' ? 'green' : status === 'Fail' ? 'red' : status === 'Warning' ? 'amber' : 'neutral'}>{status}</Badge>
-                  <button
-                    onClick={() => update((dd) => ({ ...dd, dimensions: dd.dimensions.filter((_, j) => j !== i) }))}
-                    className="rounded p-2 text-slate-300 hover:text-rose-500"
-                    aria-label={`Remove ${d.name}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </span>
-              </div>
-              <div className="mt-2 grid grid-cols-[1fr_auto_1.4fr] items-end gap-2">
-                <label className="block">
-                  <span className="label">Nominal</span>
-                  <input
-                    value={d.nominal}
-                    onChange={(e) => setRow(i, { nominal: e.target.value })}
-                    inputMode="decimal"
-                    className="input min-h-[48px] text-right tabular-nums"
-                  />
-                </label>
-                {d.source === 'item-order' ? (
-                  <span className="pb-3 text-xs tabular-nums text-muted">
-                    +{d.tolPlus}/-{d.tolMinus}
-                  </span>
-                ) : (
-                  <span className="flex flex-col gap-1">
-                    <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" placeholder="+tol" className="input-cell w-16 px-1.5 py-1 text-right text-xs" />
-                    <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" placeholder="-tol" className="input-cell w-16 px-1.5 py-1 text-right text-xs" />
-                  </span>
-                )}
-                <label className="block">
-                  <span className="label">Actual</span>
-                  <input
-                    value={d.actual}
-                    onChange={(e) => setRow(i, { actual: e.target.value })}
-                    inputMode="decimal"
-                    type="number"
-                    step="any"
-                    placeholder="—"
-                    className={cn(
-                      'input min-h-[52px] text-center text-lg font-bold tabular-nums',
-                      status === 'Fail' ? 'border-rose-400' : status === 'Warning' ? 'border-amber-400' : '',
-                    )}
-                  />
-                </label>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-      <div className="hidden overflow-x-auto sm:block">
+      {/* A phone has no room for a six-column table: one card per dimension. */}
+      <div className="space-y-2 sm:hidden">{undo.removed ? insertAt(cards, strip('card'), undo.removed.index) : cards}</div>
+      <div className="relative hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[560px] text-sm">
           <thead className="text-xs uppercase text-muted">
             <tr>
@@ -1158,85 +1685,28 @@ function DimensionsStep({
               <th className="px-2 py-2 text-center font-semibold">Tol ±</th>
               <th className="px-2 py-2 text-center font-semibold">Actual</th>
               <th className="px-2 py-2 text-center font-semibold">Status</th>
-              <th />
+              <th>
+                <span className="sr-only">Remove</span>
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {draft.dimensions.map((d, i) => {
-              const status = dimensionStatus({
-                nominal: Number(d.nominal),
-                tolPlus: Number(d.tolPlus),
-                tolMinus: Number(d.tolMinus),
-                actual: d.actual.trim() === '' ? null : Number(d.actual),
-              })
-              return (
-                <tr
-                  key={`${d.name}-${i}`}
-                  className={cn(
-                    status === 'Fail' && 'bg-rose-50/60 dark:bg-rose-500/5',
-                    status === 'Warning' && 'bg-amber-50/60 dark:bg-amber-500/5',
-                  )}
-                >
-                  <td className="px-2 py-2 font-semibold">{d.name}</td>
-                  <td className="px-2 py-2 text-right tabular-nums">
-                    <input
-                      value={d.nominal}
-                      onChange={(e) => setRow(i, { nominal: e.target.value })}
-                      inputMode="decimal"
-                      className="input-cell w-20 px-2 py-2 text-right"
-                    />
-                  </td>
-                  <td className="whitespace-nowrap px-2 py-2 text-center text-xs text-muted">
-                    {d.source === 'item-order' ? (
-                      <>
-                        +{d.tolPlus}/-{d.tolMinus}
-                      </>
-                    ) : (
-                      <span className="inline-flex items-center gap-1">
-                        +
-                        <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" className="input-cell w-14 px-1.5 py-2 text-right text-sm" />
-                        / -
-                        <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" className="input-cell w-14 px-1.5 py-2 text-right text-sm" />
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-2 py-2 text-center">
-                    <input
-                      value={d.actual}
-                      onChange={(e) => setRow(i, { actual: e.target.value })}
-                      inputMode="decimal"
-                      type="number"
-                      step="any"
-                      placeholder="—"
-                      className={cn(
-                        'input-cell w-24 px-2 py-3 text-center text-base font-semibold',
-                        status === 'Fail' ? 'border-rose-400 focus:ring-rose-400/40 dark:border-rose-400' : status === 'Warning' ? 'border-amber-400 focus:ring-amber-400/40 dark:border-amber-400' : '',
-                      )}
-                    />
-                  </td>
-                  <td className="px-2 py-2 text-center">
-                    <Badge
-                      tone={status === 'Pass' ? 'green' : status === 'Fail' ? 'red' : status === 'Warning' ? 'amber' : 'neutral'}
-                    >
-                      {status}
-                    </Badge>
-                  </td>
-                  <td className="px-1 py-2">
-                    <button
-                      onClick={() => update((dd) => ({ ...dd, dimensions: dd.dimensions.filter((_, j) => j !== i) }))}
-                      className="rounded p-2 text-slate-300 hover:text-rose-500"
-                      aria-label={`Remove ${d.name}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </td>
-                </tr>
-              )
-            })}
+            {undo.removed
+              ? insertAt(
+                  rows,
+                  <tr key={`undo-${undo.removed.id}`}>
+                    <td colSpan={6} className="px-1 py-1.5">
+                      {strip('row')}
+                    </td>
+                  </tr>,
+                  undo.removed.index,
+                )
+              : rows}
           </tbody>
         </table>
       </div>
       <AddDimensionButton update={update} label={typedByInspector ? 'Add a dimension' : undefined} />
+      {confirm}
     </div>
   )
 }
@@ -1352,6 +1822,113 @@ function DefectsStep({
       ...d,
       defects: [...d.defects, { key: uid('dk'), defectName, qty: '1', disposition: null, imageIds: [] }],
     }))
+  // A defect goes at once — its photos and notes with it — and can be taken back from where it stood for a few seconds.
+  const undo = useUndo<DraftDefect>()
+  const removeDefect = (key: string) => {
+    const index = draft.defects.findIndex((x) => x.key === key)
+    const gone = draft.defects[index]
+    if (!gone) return
+    update((d) => ({ ...d, defects: d.defects.filter((x) => x.key !== key) }))
+    undo.offer(
+      <>
+        <bdi>{gone.defectName}</bdi> removed
+      </>,
+      gone,
+      index,
+    )
+  }
+  const putBack = () => {
+    const r = undo.removed
+    if (!r) return
+    undo.clear()
+    update((d) => (d.defects.some((x) => x.key === r.item.key) ? d : { ...d, defects: insertAt(d.defects, r.item, r.index) }))
+  }
+  const strip = undo.removed ? <UndoStrip key={`undo-${undo.removed.id}`} label={undo.removed.label} onUndo={putBack} /> : null
+
+  const cards = draft.defects.map((d) => (
+    <div
+      key={d.key}
+      className={cn(
+        'rounded-2xl border p-3',
+        d.disposition
+          ? 'border-slate-200 dark:border-slate-700'
+          : 'border-rose-300 bg-rose-50/50 dark:border-rose-500/40 dark:bg-rose-500/5',
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <p dir="auto" className="flex min-w-0 flex-wrap items-center gap-2 break-words font-bold">
+          {d.defectName}
+          {isOtherDefect(d.defectName) && <Badge tone="amber">describe it</Badge>}
+        </p>
+        <button type="button" onClick={() => removeDefect(d.key)} className={cn(REMOVE, '-my-1.5 -me-1.5')} aria-label={`Remove defect ${d.defectName}`}>
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <Field label="Quantity">
+          <Input
+            type="number"
+            inputMode="numeric"
+            value={d.qty}
+            onChange={(e) => setDefect(d.key, { qty: e.target.value })}
+            className="min-h-[48px]"
+          />
+        </Field>
+        <Field label="Disposition *">
+          <Select
+            value={d.disposition ?? ''}
+            onChange={(e) => setDefect(d.key, { disposition: (e.target.value || null) as Disposition | null })}
+            className={cn('min-h-[48px]', !d.disposition && 'border-rose-400')}
+          >
+            <option value="">— choose —</option>
+            {DISPOSITIONS.map((x) => (
+              <option key={x} value={x}>
+                {x}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+
+      {!d.disposition && (
+        <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-rose-600 dark:text-rose-400">
+          <AlertTriangle className="h-4 w-4" /> This defect cannot be saved without a disposition.
+        </p>
+      )}
+
+      {isOtherDefect(d.defectName) ? (
+        <Field label="Describe the defect *">
+          <textarea
+            dir="auto"
+            value={d.notes ?? ''}
+            onChange={(e) => setDefect(d.key, { notes: e.target.value })}
+            placeholder="What was found, where on the part, how big…"
+            className={cn('input min-h-[88px]', !d.notes?.trim() && 'border-rose-400')}
+          />
+        </Field>
+      ) : (
+        <Field label="Notes">
+          <Input
+            dir="auto"
+            value={d.notes ?? ''}
+            onChange={(e) => setDefect(d.key, { notes: e.target.value })}
+            className="min-h-[48px]"
+          />
+        </Field>
+      )}
+
+      <div className="mt-2">
+        <span className="label">Photos</span>
+        <ImagePicker
+          imageIds={d.imageIds}
+          onChange={(ids) => setDefect(d.key, { imageIds: ids })}
+          sessionId={sessionId}
+          orderId={orderId}
+        />
+      </div>
+    </div>
+  ))
 
   return (
     <div className="space-y-4">
@@ -1362,7 +1939,7 @@ function DefectsStep({
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={options.length === 0 ? 'Type the defect name…' : "Search this machine's defects, or type a new name…"}
+            placeholder={options.length === 0 ? 'Type the defect name…' : 'Search or type a defect…'}
             className="min-h-[48px] pl-9"
           />
         </div>
@@ -1373,130 +1950,55 @@ function DefectsStep({
         )}
         <div className="mt-2 flex max-h-44 flex-wrap gap-2 overflow-y-auto">
           {/* A name the list does not carry is added as typed, so a machine without a list still gets named defects. */}
+          {/* The plus is drawn outside the name, so it leads every chip the same way whether the name is English or
+              Arabic; the name keeps its own direction inside a <bdi>. */}
           {typed && !options.some((o) => o.trim().toLowerCase() === typed.toLowerCase()) && (
             <button
-              dir="auto"
+              type="button"
               onClick={() => {
                 addDefect(typed)
                 setSearch('')
               }}
-              className="min-h-[44px] rounded-xl bg-brand-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-brand-700"
+              className="inline-flex min-h-[44px] max-w-full items-center gap-1 rounded-xl bg-brand-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-brand-700"
             >
-              + Add "{typed}"
+              <Plus className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 break-words">
+                Add “<bdi dir="auto">{typed}</bdi>”
+              </span>
             </button>
           )}
           {filtered.map((name) => (
             <button
               key={name}
-              dir="auto"
+              type="button"
               onClick={() => addDefect(name)}
-              className="min-h-[44px] rounded-xl bg-slate-100 px-3 text-sm font-semibold hover:bg-brand-100 hover:text-brand-700 dark:bg-slate-800 dark:hover:bg-brand-500/20"
+              className="inline-flex min-h-[44px] max-w-full items-center gap-1 rounded-xl bg-slate-100 px-3 text-sm font-semibold hover:bg-brand-100 hover:text-brand-700 dark:bg-slate-800 dark:hover:bg-brand-500/20"
             >
-              + {name}
+              <Plus className="h-4 w-4 shrink-0" />
+              <bdi dir="auto" className="min-w-0 break-words">
+                {name}
+              </bdi>
             </button>
           ))}
           {/* Anything the list does not name is recorded as "Other" and must be described. */}
           <button
+            type="button"
             onClick={() => addDefect(OTHER_DEFECT_NAME)}
-            className="min-h-[44px] rounded-xl border border-dashed border-amber-400 bg-amber-50 px-3 text-sm font-semibold text-amber-800 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20"
+            className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-dashed border-amber-400 bg-amber-50 px-3 text-sm font-semibold text-amber-800 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20"
           >
-            + Other (not in the list)
+            <Plus className="h-4 w-4 shrink-0" /> Other (not in the list)
           </button>
         </div>
       </div>
 
       {draft.defects.length === 0 ? (
-        <EmptyState icon={<AlertTriangle className="h-10 w-10" />} title="No defects recorded" hint="Pick one above if you found any." />
+        <>
+          {strip}
+          <EmptyState icon={<AlertTriangle className="h-10 w-10" />} title="No defects recorded" hint="Pick one above if you found any." />
+        </>
       ) : (
         <div className="space-y-3">
-          {draft.defects.map((d) => (
-            <div
-              key={d.key}
-              className={cn(
-                'rounded-2xl border p-3',
-                d.disposition
-                  ? 'border-slate-200 dark:border-slate-700'
-                  : 'border-rose-300 bg-rose-50/50 dark:border-rose-500/40 dark:bg-rose-500/5',
-              )}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <p dir="auto" className="flex items-center gap-2 font-bold">
-                  {d.defectName}
-                  {isOtherDefect(d.defectName) && <Badge tone="amber">describe it</Badge>}
-                </p>
-                <button
-                  onClick={() => update((dd) => ({ ...dd, defects: dd.defects.filter((x) => x.key !== d.key) }))}
-                  className="rounded p-2 text-slate-300 hover:text-rose-500"
-                  aria-label="Remove defect"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <Field label="Quantity">
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    value={d.qty}
-                    onChange={(e) => setDefect(d.key, { qty: e.target.value })}
-                    className="min-h-[48px]"
-                  />
-                </Field>
-                <Field label="Disposition *">
-                  <Select
-                    value={d.disposition ?? ''}
-                    onChange={(e) => setDefect(d.key, { disposition: (e.target.value || null) as Disposition | null })}
-                    className={cn('min-h-[48px]', !d.disposition && 'border-rose-400')}
-                  >
-                    <option value="">— choose —</option>
-                    {DISPOSITIONS.map((x) => (
-                      <option key={x} value={x}>
-                        {x}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </div>
-
-              {!d.disposition && (
-                <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-rose-600 dark:text-rose-400">
-                  <AlertTriangle className="h-4 w-4" /> This defect cannot be saved without a disposition.
-                </p>
-              )}
-
-              {isOtherDefect(d.defectName) ? (
-                <Field label="Describe the defect *">
-                  <textarea
-                    dir="auto"
-                    value={d.notes ?? ''}
-                    onChange={(e) => setDefect(d.key, { notes: e.target.value })}
-                    placeholder="What was found, where on the part, how big…"
-                    className={cn('input min-h-[88px]', !d.notes?.trim() && 'border-rose-400')}
-                  />
-                </Field>
-              ) : (
-                <Field label="Notes">
-                  <Input
-                    dir="auto"
-                    value={d.notes ?? ''}
-                    onChange={(e) => setDefect(d.key, { notes: e.target.value })}
-                    className="min-h-[48px]"
-                  />
-                </Field>
-              )}
-
-              <div className="mt-2">
-                <span className="label">Photos</span>
-                <ImagePicker
-                  imageIds={d.imageIds}
-                  onChange={(ids) => setDefect(d.key, { imageIds: ids })}
-                  sessionId={sessionId}
-                  orderId={orderId}
-                />
-              </div>
-            </div>
-          ))}
+          {undo.removed ? insertAt(cards, strip, undo.removed.index) : cards}
         </div>
       )}
     </div>
@@ -1641,14 +2143,73 @@ function PaintThicknessStep({ draft, update }: { draft: SampleDraft; update: Upd
       }))
       return { ...dd, dimensions: [...dd.dimensions, ...more] }
     })
-  const removeFrom = (index: number) =>
-    update((dd) => {
-      const dimensions = dd.dimensions.filter((_, i) => i !== index)
-      let seq = 0
-      return { ...dd, dimensions: dimensions.map((d) => (isPaintThicknessName(d.name) ? { ...d, sequence: ++seq } : d)) }
-    })
+  /** Readings numbered 1, 2, 3… again in the order they stand. */
+  const renumber = (dimensions: DraftDimension[]) => {
+    let seq = 0
+    return dimensions.map((d) => (isPaintThicknessName(d.name) ? { ...d, sequence: ++seq } : d))
+  }
+  // An extra reading goes at once and can be taken back for a few seconds, from where it stood.
+  const undo = useUndo<DraftDimension>()
+  // Each card is the label of its reading's box, named outright: a card that also holds a remove button would
+  // otherwise label that button, the first control in it, and a tap on "Reading 4" would remove the reading.
+  const idBase = useId()
+  const removeFrom = (index: number, n: number) => {
+    const gone = draft.dimensions[index]
+    if (!gone) return
+    update((dd) => ({ ...dd, dimensions: renumber(dd.dimensions.filter((_, i) => i !== index)) }))
+    undo.offer(`Reading ${n + 1} removed`, gone, index)
+  }
+  const putBack = () => {
+    const r = undo.removed
+    if (!r) return
+    undo.clear()
+    update((dd) => ({ ...dd, dimensions: renumber(insertAt(dd.dimensions, r.item, r.index)) }))
+  }
 
   if (readings.length === 0) return <Empty>No thickness readings on this draft.</Empty>
+
+  const cards = readings.map(({ d, i }, n) => {
+    const filled = d.actual.trim() !== ''
+    const required = n < PAINT_THICKNESS_READINGS
+    const badge = filled ? <Badge tone="green">Recorded</Badge> : required ? <Badge tone="neutral">Required</Badge> : <Badge tone="neutral">Optional</Badge>
+    return (
+      <label key={i} htmlFor={`${idBase}-${i}`} className={cn('relative block rounded-2xl border p-3', filled ? 'border-emerald-300 bg-emerald-50/40 dark:border-emerald-500/40 dark:bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700')}>
+        <span className="flex min-h-[28px] items-center justify-between gap-2">
+          <span className="text-sm font-bold">Reading {n + 1}</span>
+          <span className="flex items-center gap-1">
+            <span className="hidden sm:inline-flex">{badge}</span>
+            {!required && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault()
+                  removeFrom(i, n)
+                }}
+                className={cn(REMOVE, '-my-2 -me-2')}
+                aria-label={`Remove reading ${n + 1}`}
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+          </span>
+        </span>
+        <input
+          id={`${idBase}-${i}`}
+          value={d.actual}
+          onChange={(e) => setActual(i, e.target.value)}
+          inputMode="decimal"
+          type="number"
+          step="any"
+          placeholder="—"
+          className="input mt-2 min-h-[52px] text-center text-xl font-bold tabular-nums"
+        />
+        {/* Two readings share a phone's row: the state goes under the number, where the card has room for it. */}
+        <span className="mt-2 flex sm:hidden">{badge}</span>
+      </label>
+    )
+  })
+  // The strip takes a whole row where the reading stood: before the first reading that came after it.
+  const stripAt = undo.removed ? readings.findIndex(({ i }) => i >= undo.removed!.index) : -1
 
   return (
     <div className="space-y-4">
@@ -1656,35 +2217,16 @@ function PaintThicknessStep({ draft, update }: { draft: SampleDraft; update: Upd
         <span className="label">
           Thickness readings <span className="normal-case">({unit})</span>
         </span>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {readings.map(({ d, i }, n) => {
-            const filled = d.actual.trim() !== ''
-            const required = n < PAINT_THICKNESS_READINGS
-            return (
-              <label key={i} className={cn('relative block rounded-2xl border p-3', filled ? 'border-emerald-300 bg-emerald-50/40 dark:border-emerald-500/40 dark:bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700')}>
-                <span className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-bold">Reading {n + 1}</span>
-                  <span className="flex items-center gap-1">
-                    {filled ? <Badge tone="green">Recorded</Badge> : required ? <Badge tone="neutral">Required</Badge> : <Badge tone="neutral">Optional</Badge>}
-                    {!required && (
-                      <button type="button" onClick={(e) => { e.preventDefault(); removeFrom(i) }} className="grid h-7 w-7 place-items-center rounded-lg text-muted hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10" aria-label={`Remove reading ${n + 1}`}>
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    )}
-                  </span>
-                </span>
-                <input
-                  value={d.actual}
-                  onChange={(e) => setActual(i, e.target.value)}
-                  inputMode="decimal"
-                  type="number"
-                  step="any"
-                  placeholder="—"
-                  className="input mt-2 min-h-[56px] text-center text-2xl font-bold tabular-nums"
-                />
-              </label>
-            )
-          })}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {undo.removed
+            ? insertAt(
+                cards,
+                <div key={`undo-${undo.removed.id}`} className="col-span-full">
+                  <UndoStrip label={undo.removed.label} onUndo={putBack} />
+                </div>,
+                stripAt < 0 ? cards.length : stripAt,
+              )
+            : cards}
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <Button type="button" onClick={addThree} className="min-h-[44px]" disabled={readings.length >= 30}>
@@ -1705,39 +2247,144 @@ function PTStep({
   consumables,
   sessionId,
   orderId,
+  short,
 }: {
   draft: SampleDraft
   update: Updater
   consumables: PTConsumableProduct[]
   sessionId?: string
   orderId: string
+  /** A short landscape screen: the explanation folds to one line, so the materials are on the first screen. */
+  short: boolean
 }) {
   const pt = draft.pt ?? emptyPT()
   const setPT = (patch: Partial<DraftPT>) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), ...patch } }))
-  const testedHere = pt.testedLengths.length
+  // What is saved is what counts: a blank row neither adds to the count nor holds the verdict at "pending".
+  const kept = keptLengths(pt.testedLengths).kept
+  const testedHere = kept.length
   const setLength = (key: string, patch: Partial<DraftPT['testedLengths'][number]>) =>
     setPT({ testedLengths: pt.testedLengths.map((l) => (l.key === key ? { ...l, ...patch } : l)) })
-  const overall = ptOverallVerdict(pt.testedLengths.map((l) => ({ verdict: l.verdict })))
+  const overall = ptOverallVerdict(kept.map((l) => ({ verdict: l.verdict })))
+
+  // A length goes at once, at every width; one with something in it can be taken back for a few seconds. A blank
+  // row needs no Undo — and is not saved anyway.
+  const undo = useUndo<DraftPT['testedLengths'][number]>()
+  const removeLength = (key: string, n: number) => {
+    const index = pt.testedLengths.findIndex((l) => l.key === key)
+    const gone = pt.testedLengths[index]
+    if (!gone) return
+    update((d) => {
+      const cur = d.pt ?? emptyPT()
+      return { ...d, pt: { ...cur, testedLengths: cur.testedLengths.filter((l) => l.key !== key) } }
+    })
+    if (isBlankLength(gone)) undo.clear()
+    else undo.offer(`Length ${n + 1}${gone.lengthMm.trim() ? ` (${gone.lengthMm.trim()} mm)` : ''} removed`, gone, index)
+  }
+  const putBack = () => {
+    const r = undo.removed
+    if (!r) return
+    undo.clear()
+    update((d) => {
+      const cur = d.pt ?? emptyPT()
+      if (cur.testedLengths.some((l) => l.key === r.item.key)) return d
+      return { ...d, pt: { ...cur, testedLengths: insertAt(cur.testedLengths, r.item, r.index) } }
+    })
+  }
+
+  // The requirement is worked out, not typed: 5% of the final quantity, rounded up, once the session closes.
+  const coverTitle = `PT covers ${PT_MIN_TEST_FREQUENCY_PCT}% of the session's production`
+  const coverText = (
+    <>
+      The required count is {PT_MIN_TEST_FREQUENCY_PCT}% of the final quantity, rounded up to a whole piece, and is worked out when the session is closed.
+      Every tested length recorded here counts toward it{testedHere > 0 ? ` — ${testedHere} in this sample so far` : ''}.
+    </>
+  )
+
+  const rows = pt.testedLengths.map((l, n) => {
+    const bad = l.lengthMm.trim() !== '' && !(Number(l.lengthMm) > 0)
+    return (
+      // On a phone the remove button takes the free cell beside the length, so the verdict keeps a whole row; from
+      // sm everything is one row.
+      <div key={l.key} className="grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-slate-200 p-2.5 dark:border-slate-700 sm:grid-cols-[auto_1fr_auto_auto]">
+        <span className="grid h-10 w-10 place-items-center rounded-xl bg-slate-100 text-sm font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{n + 1}</span>
+        <label className="block">
+          <span className="sr-only">Length {n + 1} in mm</span>
+          <div className="relative">
+            <input
+              value={l.lengthMm}
+              onChange={(e) => setLength(l.key, { lengthMm: e.target.value })}
+              inputMode="decimal"
+              type="number"
+              step="any"
+              placeholder="Length"
+              className={cn('input min-h-[48px] pr-12 text-lg font-bold tabular-nums', bad && 'border-rose-400')}
+            />
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted">mm</span>
+          </div>
+        </label>
+        <div className="col-span-3 flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:col-span-1">
+          {(['Accept', 'Reject / Repair'] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setLength(l.key, { verdict: v })}
+              className={cn(
+                'min-h-[40px] flex-1 whitespace-nowrap rounded-lg px-3 text-sm font-semibold transition-colors touch:min-h-[44px]',
+                l.verdict === v
+                  ? v === 'Accept'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'bg-rose-600 text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-300',
+              )}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => removeLength(l.key, n)}
+          className={cn(REMOVE, 'max-sm:col-start-3 max-sm:row-start-1')}
+          aria-label={`Remove length ${n + 1}`}
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+    )
+  })
 
   return (
     <div className="space-y-4">
-      {/* The requirement is worked out, not typed: 5% of the final quantity, rounded up, once the session closes. */}
-      <div className="rounded-2xl border-l-4 border-l-brand-500 bg-brand-50/60 p-3 text-sm text-brand-900 dark:bg-brand-500/10 dark:text-brand-100">
-        <p className="font-bold">PT covers {PT_MIN_TEST_FREQUENCY_PCT}% of the session's production</p>
-        <p>
-          The required count is {PT_MIN_TEST_FREQUENCY_PCT}% of the final quantity, rounded up to a whole piece, and is worked out when the session is closed.
-          Every tested length recorded here counts toward it{testedHere > 0 ? ` — ${testedHere} in this sample so far` : ''}.
-        </p>
-      </div>
+      {short ? (
+        <details className="group rounded-2xl border-l-4 border-l-brand-500 bg-brand-50/60 text-sm text-brand-900 dark:bg-brand-500/10 dark:text-brand-100">
+          <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 rounded-e-2xl px-3 font-bold focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 [&::-webkit-details-marker]:hidden">
+            <span className="min-w-0 flex-1 truncate">
+              {coverTitle}
+              {testedHere > 0 && <span className="font-normal"> · {testedHere} tested in this sample</span>}
+            </span>
+            <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
+          </summary>
+          <p className="px-3 pb-3">{coverText}</p>
+        </details>
+      ) : (
+        <div className="rounded-2xl border-l-4 border-l-brand-500 bg-brand-50/60 p-3 text-sm text-brand-900 dark:bg-brand-500/10 dark:text-brand-100">
+          <p className="font-bold">{coverTitle}</p>
+          <p>{coverText}</p>
+        </div>
+      )}
 
       <div>
         <span className="label">PT materials — lot / batch is mandatory</span>
-        <div className="grid gap-2 sm:grid-cols-3">
+        {/* One under another until a large screen: three across, a tablet's selects cut off the lot — the very thing
+            asked for. The lot leads each option, so a narrow select drops the product name, and the one chosen is
+            written out in full under it. */}
+        <div className="grid gap-2 lg:grid-cols-3">
           {CONSUMABLE_KINDS.map((kind) => {
             const opts = consumables.filter((c) => c.kind === kind)
             const value = pt.consumableLots[kind] ?? ''
+            const chosen = value ? opts.find((o) => o.lotBatch === value) : undefined
             return (
-              <Field key={kind} label={kind}>
+              <Field key={kind} label={kind} hint={chosen ? `Lot ${chosen.lotBatch} · ${chosen.productName}` : undefined}>
                 <Select
                   value={value}
                   onChange={(e) => setPT({ consumableLots: { ...pt.consumableLots, [kind]: e.target.value } })}
@@ -1746,7 +2393,7 @@ function PTStep({
                   <option value="">— choose lot —</option>
                   {opts.map((o) => (
                     <option key={o.id} value={o.lotBatch}>
-                      {o.productName} · {o.lotBatch}
+                      {o.lotBatch} · {o.productName}
                     </option>
                   ))}
                 </Select>
@@ -1757,74 +2404,32 @@ function PTStep({
       </div>
 
       <div>
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex items-center justify-between gap-2">
           <span className="label !mb-0">
             Tested weld lengths {pt.testedLengths.length === 0 && <span className="text-rose-500">· at least one</span>}
           </span>
           <Button
             variant="secondary"
-            className="min-h-[44px]"
+            className="min-h-[44px] shrink-0"
             onClick={() => setPT({ testedLengths: [...pt.testedLengths, { key: uid(), lengthMm: '' }] })}
           >
             <Plus className="h-4 w-4" /> Add length
           </Button>
         </div>
         {pt.testedLengths.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-sm text-muted dark:border-slate-700">
-            Add each weld length you tested and give it a verdict.
-          </p>
+          <>
+            {undo.removed && (
+              <div className="mb-2">
+                <UndoStrip key={undo.removed.id} label={undo.removed.label} onUndo={putBack} />
+              </div>
+            )}
+            <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-sm text-muted dark:border-slate-700">
+              Add each weld length you tested and give it a verdict.
+            </p>
+          </>
         ) : (
           <div className="space-y-2">
-            {pt.testedLengths.map((l, n) => {
-              const bad = l.lengthMm.trim() !== '' && !(Number(l.lengthMm) > 0)
-              return (
-                <div key={l.key} className="grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-slate-200 p-2.5 dark:border-slate-700 sm:grid-cols-[auto_1fr_auto_auto]">
-                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-slate-100 text-sm font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{n + 1}</span>
-                  <label className="block">
-                    <span className="sr-only">Length {n + 1} in mm</span>
-                    <div className="relative">
-                      <input
-                        value={l.lengthMm}
-                        onChange={(e) => setLength(l.key, { lengthMm: e.target.value })}
-                        inputMode="decimal"
-                        type="number"
-                        step="any"
-                        placeholder="Length"
-                        className={cn('input min-h-[48px] pr-12 text-lg font-bold tabular-nums', bad && 'border-rose-400')}
-                      />
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted">mm</span>
-                    </div>
-                  </label>
-                  <div className="col-span-3 flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:col-span-1">
-                    {(['Accept', 'Reject / Repair'] as const).map((v) => (
-                      <button
-                        key={v}
-                        type="button"
-                        onClick={() => setLength(l.key, { verdict: v })}
-                        className={cn(
-                          'min-h-[40px] flex-1 rounded-lg px-3 text-sm font-semibold transition-colors',
-                          l.verdict === v
-                            ? v === 'Accept'
-                              ? 'bg-emerald-600 text-white shadow-sm'
-                              : 'bg-rose-600 text-white shadow-sm'
-                            : 'text-slate-600 dark:text-slate-300',
-                        )}
-                      >
-                        {v}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setPT({ testedLengths: pt.testedLengths.filter((x) => x.key !== l.key) })}
-                    className="hidden h-10 w-10 place-items-center rounded-xl text-slate-300 hover:text-rose-500 sm:grid"
-                    aria-label={`Remove length ${n + 1}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              )
-            })}
+            {undo.removed ? insertAt(rows, <UndoStrip key={`undo-${undo.removed.id}`} label={undo.removed.label} onUndo={putBack} />, undo.removed.index) : rows}
             <p className="flex items-center gap-2 text-sm">
               <span className="font-semibold text-muted">PT verdict:</span>
               {overall ? <Badge tone={overall === 'Accept' ? 'green' : 'red'}>{overall}</Badge> : <Badge tone="neutral">pending</Badge>}
@@ -1853,6 +2458,8 @@ function ReviewStep({
   orderNotes,
   sessionId,
   orderId,
+  focusQty,
+  onQtyFocused,
 }: {
   draft: SampleDraft
   order: ProductionOrder
@@ -1862,25 +2469,53 @@ function ReviewStep({
   orderNotes: SessionNote[]
   sessionId?: string
   orderId: string
+  /** A save was refused for the quantity: put the cursor in it. */
+  focusQty: boolean
+  onQtyFocused: () => void
 }) {
   const measured = draft.dimensions.filter((d) => d.actual.trim() !== '')
   const qty = Number(draft.sampleQty)
   const qtyBad = !(draft.sampleQty.trim() !== '' && qty > 0)
   const note: DraftNote = draft.note ?? { text: '', imageIds: [] }
   const setNote = (patch: Partial<DraftNote>) => update((d) => ({ ...d, note: { ...(d.note ?? { text: '', imageIds: [] }), ...patch } }))
+  const lengths = draft.pt ? keptLengths(draft.pt.testedLengths).kept : []
+
+  // The quantity is typed last, so a mouse finds the cursor in it. A touch screen opens the review to be read — the
+  // keyboard would cover it and the Save bar — and the box waits for a tap, unless a save was refused for it.
+  const qtyRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (!focusQty) return
+    const el = qtyRef.current
+    if (el) {
+      el.focus({ preventScroll: true })
+      el.scrollIntoView({ block: 'center' })
+    }
+    onQtyFocused()
+  }, [focusQty, onQtyFocused])
+
+  const spec = (d: DraftDimension) => (d.nominal.trim() === '' ? '— (no nominal)' : `${d.nominal} +${d.tolPlus || 0}/-${d.tolMinus || 0}`)
+  const statusOf = (d: DraftDimension) =>
+    dimensionStatus({
+      nominal: Number(d.nominal),
+      tolPlus: Number(d.tolPlus),
+      tolMinus: Number(d.tolMinus),
+      actual: Number(d.actual),
+    })
+
   return (
     <div className="space-y-4">
       {/* §5.7 — the quantity actually taken is known only once the inspection is done. */}
       <Field label="Sample quantity taken" hint="How many pieces this inspection covered.">
-        <Input
-          autoFocus
+        <input
+          ref={qtyRef}
+          autoFocus={!isCoarsePointer()}
           type="number"
           inputMode="numeric"
           min={1}
           value={draft.sampleQty}
           onChange={(e) => update({ sampleQty: e.target.value })}
           placeholder="e.g. 5"
-          className={cn('min-h-[52px] text-lg', qtyBad && 'border-rose-400')}
+          className={cn('input min-h-[52px] text-lg', qtyBad && 'border-rose-400')}
         />
       </Field>
 
@@ -1943,32 +2578,47 @@ function ReviewStep({
             ))}
           </ul>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[420px] text-sm">
+          <>
+            {/* A phone: one entry per dimension, the verdict beside the name and the figures in full under it. */}
+            <ul className="space-y-1.5 text-sm sm:hidden">
+              {measured.map((d, i) => {
+                const status = statusOf(d)
+                return (
+                  <li key={i} className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/50">
+                    <div className="flex items-start justify-between gap-2">
+                      <span dir="auto" className="min-w-0 break-words font-semibold">
+                        {d.name}
+                      </span>
+                      <Badge tone={status === 'Pass' ? 'green' : status === 'Fail' ? 'red' : 'amber'}>{status}</Badge>
+                    </div>
+                    <p className="mt-0.5 tabular-nums text-muted">
+                      {spec(d)} → <span className="font-bold text-slate-900 dark:text-white">{d.actual}</span>
+                    </p>
+                  </li>
+                )
+              })}
+            </ul>
+            {/* From a tablet up, the table: the verdict first, so it reads down the left edge. */}
+            <table className="hidden w-full text-sm sm:table">
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {measured.map((d, i) => {
-                  const status = dimensionStatus({
-                    nominal: Number(d.nominal),
-                    tolPlus: Number(d.tolPlus),
-                    tolMinus: Number(d.tolMinus),
-                    actual: Number(d.actual),
-                  })
+                  const status = statusOf(d)
                   return (
                     <tr key={i}>
-                      <td className="py-2 font-semibold">{d.name}</td>
-                      <td className="py-2 text-right tabular-nums text-muted">
-                        {d.nominal.trim() === '' ? '— (no nominal)' : `${d.nominal} +${d.tolPlus || 0}/-${d.tolMinus || 0}`}
-                      </td>
-                      <td className="py-2 text-right font-bold tabular-nums">{d.actual}</td>
-                      <td className="py-2 pl-3 text-right">
+                      <td className="w-px py-2 pr-3">
                         <Badge tone={status === 'Pass' ? 'green' : status === 'Fail' ? 'red' : 'amber'}>{status}</Badge>
                       </td>
+                      <td dir="auto" className="break-words py-2 text-left font-semibold">
+                        {d.name}
+                      </td>
+                      <td className="whitespace-nowrap py-2 pl-3 text-right tabular-nums text-muted">{spec(d)}</td>
+                      <td className="whitespace-nowrap py-2 pl-3 text-right font-bold tabular-nums">{d.actual}</td>
                     </tr>
                   )
                 })}
               </tbody>
             </table>
-          </div>
+          </>
         )}
       </Section>
 
@@ -1979,11 +2629,11 @@ function ReviewStep({
           <ul className="space-y-1.5 text-sm">
             {draft.defects.map((d) => (
               <li key={d.key} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/50">
-                <span dir="auto" className="min-w-0 font-semibold">
+                <span dir="auto" className="min-w-0 break-words font-semibold">
                   {d.defectName}
-                  {isOtherDefect(d.defectName) && d.notes && <span className="block truncate text-xs font-normal text-muted">{d.notes}</span>}
+                  {isOtherDefect(d.defectName) && d.notes && <span className="block break-words text-xs font-normal text-muted">{d.notes}</span>}
                 </span>
-                <span className="flex items-center gap-2">
+                <span className="flex flex-wrap items-center justify-end gap-2">
                   <Badge tone="neutral">Qty {d.qty}</Badge>
                   {d.disposition ? (
                     <Badge tone={d.disposition === 'Rejected' ? 'red' : d.disposition === 'Hold' ? 'amber' : 'green'}>
@@ -2014,9 +2664,21 @@ function ReviewStep({
             <Row label="Developer lot" value={draft.pt.consumableLots.Developer ?? '—'} />
             <Row
               label="Tested lengths"
-              value={draft.pt.testedLengths.map((l) => `${l.lengthMm || '?'} mm ${l.verdict === 'Reject / Repair' ? '✕' : l.verdict === 'Accept' ? '✓' : '?'}`).join(', ') || '—'}
+              value={
+                lengths.length === 0 ? (
+                  '—'
+                ) : (
+                  <ul>
+                    {lengths.map((l) => (
+                      <li key={l.key} className="tabular-nums">
+                        {l.lengthMm || '?'} mm {l.verdict === 'Reject / Repair' ? '✕' : l.verdict === 'Accept' ? '✓' : '?'}
+                      </li>
+                    ))}
+                  </ul>
+                )
+              }
             />
-            <Row label="PT verdict" value={ptOverallVerdict(draft.pt.testedLengths.map((l) => ({ verdict: l.verdict }))) ?? 'pending'} />
+            <Row label="PT verdict" value={ptOverallVerdict(lengths.map((l) => ({ verdict: l.verdict }))) ?? 'pending'} />
           </dl>
         </Section>
       )}
@@ -2064,11 +2726,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     </div>
   )
 }
-function Row({ label, value }: { label: string; value: string }) {
+/** A fact on the review. A long one wraps rather than being cut off: this is the last look before saving. */
+function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div>
+    <div className="min-w-0">
       <dt className="text-xs font-semibold uppercase text-muted">{label}</dt>
-      <dd className="truncate font-semibold">{value}</dd>
+      <dd dir="auto" className="break-words font-semibold">
+        {value}
+      </dd>
     </div>
   )
 }

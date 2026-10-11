@@ -160,7 +160,8 @@ export function AiReportView({
           <ReportTitleEditor initial={report.title} onSave={rename} onCancel={() => setRenaming(false)} />
         ) : (
           <>
-            <h3 dir="auto" className="min-w-0 flex-1 truncate px-1 text-sm font-bold" data-tip={report?.title}>
+            {/* Two lines, then cut: one line cut short splits a figure in an Arabic title ("آخر 30 يوم" read as "آخر 0…"). */}
+            <h3 dir="auto" className="line-clamp-2 min-w-0 flex-1 break-words px-1 text-start text-sm font-bold leading-snug" data-tip={report?.title}>
               {report?.title ?? 'Report'}
             </h3>
             {report && !gone && (

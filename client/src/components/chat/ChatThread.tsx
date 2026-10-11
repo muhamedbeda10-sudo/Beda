@@ -9,6 +9,7 @@
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, BellOff, ChevronDown, Info, Loader2, Trash2, UserPlus } from 'lucide-react'
 import type { ChatConversation, ChatMessage } from '@qc/shared/types'
@@ -17,8 +18,11 @@ import { useChatMessages } from '@/services/queries'
 import { deleteChatMessage, editChatMessage, loadOlderMessages, markConversationRead, sendChatMessage, toggleReaction } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
+import { matchesMedia } from '@/lib/media'
 import { cn, formatDate } from '@/lib/utils'
 import { UserAvatar } from '@/components/ui/UserAvatar'
+import { ACTIONS_AS_SHEET } from './bubbleMenu'
+import { ChatSheet } from './ChatSheet'
 import { Avatar, conversationTitle } from './ConversationList'
 import { Composer } from './Composer'
 import { ConversationInfoModal } from './ConversationInfoModal'
@@ -59,7 +63,8 @@ export function ChatThread({
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null)
   const [editing, setEditing] = useState<ChatMessage | null>(null)
   const [confirm, setConfirm] = useState<{ m: ChatMessage; scope: 'me' | 'everyone' } | null>(null)
-  const [reactFor, setReactFor] = useState<ChatMessage | null>(null)
+  // The message an emoji is being picked for, and how the picker shows: a sheet as the message's actions do, or centred.
+  const [reactFor, setReactFor] = useState<{ m: ChatMessage; sheet: boolean } | null>(null)
   const [info, setInfo] = useState<false | 'members' | 'add'>(false)
   const [highlight, setHighlight] = useState<string | null>(null)
   const [atBottom, setAtBottom] = useState(true)
@@ -149,7 +154,7 @@ export function ChatThread({
 
   const react = async (m: ChatMessage, emoji: string) => {
     if (!emoji) {
-      setReactFor(m)
+      setReactFor({ m, sheet: matchesMedia(ACTIONS_AS_SHEET) })
       return
     }
     try {
@@ -180,7 +185,7 @@ export function ChatThread({
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-2 border-b border-slate-200 bg-white/95 px-2 py-2 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 sm:px-3">
         {onBack && (
-          <button type="button" onClick={onBack} className="icon-btn h-10 w-10 lg:hidden" aria-label="Back">
+          <button type="button" onClick={onBack} className="icon-btn h-10 w-10 touch:h-11 touch:w-11 md:hidden" aria-label="Back">
             <ArrowLeft className="h-5 w-5" />
           </button>
         )}
@@ -193,61 +198,70 @@ export function ChatThread({
         </button>
         {/* An administrator adds people to a group from here, after it was made. */}
         {role === 'admin' && c.kind === 'group' && (
-          <button type="button" onClick={() => setInfo('add')} className="icon-btn h-10 w-10" aria-label="Add people" data-tip="Add people to this group">
+          <button type="button" onClick={() => setInfo('add')} className="icon-btn h-10 w-10 touch:h-11 touch:w-11" aria-label="Add people" data-tip="Add people to this group">
             <UserPlus className="h-5 w-5" />
           </button>
         )}
-        <button type="button" onClick={() => setInfo('members')} className="icon-btn h-10 w-10" aria-label="Conversation info">
+        <button type="button" onClick={() => setInfo('members')} className="icon-btn h-10 w-10 touch:h-11 touch:w-11" aria-label="Conversation info">
           <Info className="h-5 w-5" />
         </button>
       </header>
 
-      <div ref={scroller} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,rgba(15,23,42,.06)_1px,transparent_0)] [background-size:18px_18px] px-3 py-3 dark:bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,.05)_1px,transparent_0)] sm:px-6">
-        {isLoading && (
-          <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-          </p>
-        )}
-        {hasMore && (
-          <div className="flex justify-center pb-2">
-            <button type="button" onClick={() => void loadMore()} disabled={loadingOlder} className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-muted shadow ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
-              {loadingOlder ? 'Loading…' : 'Earlier messages'}
-            </button>
+      {/* The scroller sits in a frame of its own, so "Latest" floats over the thread's foot, centred, clear of the
+          lines' starts (an Arabic line starts at the right edge). */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div ref={scroller} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,rgba(15,23,42,.06)_1px,transparent_0)] [background-size:18px_18px] px-3 py-3 dark:bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,.05)_1px,transparent_0)] sm:px-6">
+          {isLoading && (
+            <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            </p>
+          )}
+          {hasMore && (
+            <div className="flex justify-center pb-2">
+              <button type="button" onClick={() => void loadMore()} disabled={loadingOlder} className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-muted shadow ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700 touch:min-h-[40px] touch:px-4">
+                {loadingOlder ? 'Loading…' : 'Earlier messages'}
+              </button>
+            </div>
+          )}
+          {!isLoading && messages.length === 0 && <p className="py-16 text-center text-sm text-muted">{automated ? 'No automated messages yet.' : 'No messages yet. Say hello.'}</p>}
+          <div className="space-y-1.5">
+            {messages.map((m, i) => {
+              const day = dayLabel(m.createdAt)
+              const sep = day !== lastDay
+              lastDay = day
+              const prev = messages[i - 1]
+              const grouped = !!prev && prev.senderId === m.senderId && !sep && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000
+              return (
+                <div key={m.id} className={cn(grouped ? 'mt-0.5' : 'mt-3')}>
+                  {sep && (
+                    <div className="my-3 flex justify-center">
+                      <span className="rounded-full bg-white px-3 py-0.5 text-[11px] font-semibold text-muted shadow-sm ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700">{day}</span>
+                    </div>
+                  )}
+                  <MessageBubble
+                    message={m}
+                    mine={m.senderId === myId}
+                    // In a group or the channel, the sender's circle heads each run of their messages; the rest keep its place.
+                    lead={c.kind !== 'direct' && m.senderId !== myId ? (grouped ? <span className="w-7 shrink-0" aria-hidden /> : <UserAvatar userId={m.senderId} name={m.senderName} size={28} className="mt-0.5" />) : undefined}
+                    showSender={c.kind !== 'direct' && !grouped}
+                    canModerate={canModerate}
+                    automated={automated && m.senderId !== myId}
+                    highlighted={highlight === m.id}
+                    actions={{ onReply: setReplyTo, onEdit: setEditing, onDelete: (mm, scope) => setConfirm({ m: mm, scope }), onReact: react, onMention, onJumpTo: jumpTo }}
+                  />
+                </div>
+              )
+            })}
           </div>
-        )}
-        {!isLoading && messages.length === 0 && <p className="py-16 text-center text-sm text-muted">{automated ? 'No automated messages yet.' : 'No messages yet. Say hello.'}</p>}
-        <div className="space-y-1.5">
-          {messages.map((m, i) => {
-            const day = dayLabel(m.createdAt)
-            const sep = day !== lastDay
-            lastDay = day
-            const prev = messages[i - 1]
-            const grouped = !!prev && prev.senderId === m.senderId && !sep && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000
-            return (
-              <div key={m.id} className={cn(grouped ? 'mt-0.5' : 'mt-3')}>
-                {sep && (
-                  <div className="my-3 flex justify-center">
-                    <span className="rounded-full bg-white px-3 py-0.5 text-[11px] font-semibold text-muted shadow-sm ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700">{day}</span>
-                  </div>
-                )}
-                <MessageBubble
-                  message={m}
-                  mine={m.senderId === myId}
-                  // In a group or the channel, the sender's circle heads each run of their messages; the rest keep its place.
-                  lead={c.kind !== 'direct' && m.senderId !== myId ? (grouped ? <span className="w-7 shrink-0" aria-hidden /> : <UserAvatar userId={m.senderId} name={m.senderName} size={28} className="mt-0.5" />) : undefined}
-                  showSender={c.kind !== 'direct' && !grouped}
-                  canModerate={canModerate}
-                  automated={automated && m.senderId !== myId}
-                  highlighted={highlight === m.id}
-                  actions={{ onReply: setReplyTo, onEdit: setEditing, onDelete: (mm, scope) => setConfirm({ m: mm, scope }), onReact: react, onMention, onJumpTo: jumpTo }}
-                />
-              </div>
-            )
-          })}
         </div>
         {!atBottom && (
-          <button type="button" onClick={() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })} className="sticky bottom-2 left-full grid h-9 w-9 place-items-center rounded-full bg-white text-slate-600 shadow-lift ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700" aria-label="Jump to latest">
-            <ChevronDown className="h-5 w-5" />
+          <button
+            type="button"
+            onClick={() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })}
+            className="absolute inset-x-0 bottom-3 z-10 mx-auto inline-flex h-9 w-fit items-center gap-1 rounded-full bg-white pe-3.5 ps-2.5 text-xs font-semibold text-slate-600 shadow-lift ring-1 ring-slate-200 animate-fade-in hover:text-brand-700 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700 dark:hover:text-white touch:h-11 touch:pe-4 touch:ps-3"
+            aria-label="Jump to latest"
+          >
+            <ChevronDown className="h-4 w-4" aria-hidden /> Latest
           </button>
         )}
       </div>
@@ -260,13 +274,20 @@ export function ChatThread({
         <Composer conversationId={c.id} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} editing={editing} onCancelEdit={() => setEditing(null)} onSend={send} onSaveEdit={saveEdit} />
       )}
 
-      {reactFor && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center sm:items-center" onClick={() => setReactFor(null)}>
-          <div onClick={(e) => e.stopPropagation()}>
-            <EmojiPicker onPick={(e) => { void react(reactFor, e); setReactFor(null) }} onClose={() => setReactFor(null)} className="mb-4 sm:mb-0" />
-          </div>
-        </div>
-      )}
+      {reactFor &&
+        (reactFor.sheet ? (
+          <ChatSheet label="React" onClose={() => setReactFor(null)}>
+            <EmojiPicker sheet onPick={(e) => { void react(reactFor.m, e); setReactFor(null) }} onClose={() => setReactFor(null)} />
+          </ChatSheet>
+        ) : (
+          // Over the page (a portal: no frame of the thread clips it), centred; a press outside it or Escape closes it.
+          createPortal(
+            <div className="fixed inset-0 z-50 grid place-items-center p-4">
+              <EmojiPicker onPick={(e) => { void react(reactFor.m, e); setReactFor(null) }} onClose={() => setReactFor(null)} />
+            </div>,
+            document.body,
+          )
+        ))}
       {info && <ConversationInfoModal key={info} conversation={c} startAdding={info === 'add'} onClose={() => setInfo(false)} onOpenDirect={(id) => { setInfo(false); onOpenDirect(id) }} onDeleted={() => { setInfo(false); onDeleted() }} />}
       {confirm && (
         <Modal

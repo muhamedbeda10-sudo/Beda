@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { chartFigure } from '@/components/ai/chartData'
-import { GroupedBarChart, LineChart, StackedColumnChart, niceBounds } from './charts'
+import { ColumnChart, GroupedBarChart, LineChart, PairedBarChart, ParetoChart, StackedColumnChart, TrendChart, niceBounds } from './charts'
 
 /** The figures written along a chart's value axis, bottom to top (the grid's labels: anchored at their end, left of the plot). */
 const axisFigures = (html: string) => [...html.matchAll(/<text x="[\d.]+" y="[\d.-]+" text-anchor="end" fill="currentColor">([^<]*)<\/text>/g)].map((m) => m[1])
@@ -113,5 +113,73 @@ describe('the assistant’s stacked columns', () => {
     const legend = [{ label: 'a', className: 'fill-brand-500' }, { label: 'b', className: 'fill-rose-500' }]
     expect(axisFigures(renderToStaticMarkup(<StackedColumnChart columns={columns} legend={legend} fitted format={chartFigure} />))).toEqual(['0', '100', '200', '300'])
     expect(axisFigures(renderToStaticMarkup(<StackedColumnChart columns={columns} legend={legend} />))).toEqual(['0', '125', '250', '375', '500'])
+  })
+})
+
+/** Every type size a drawing writes in (its texts' and their groups'). */
+const typeSizes = (html: string) => [...html.matchAll(/font-size="([\d.]+)"/g)].map((m) => Number(m[1]))
+/** The drawing's own width, from its viewBox. */
+const drawnWidth = (html: string) => Number(/viewBox="0 0 ([\d.]+) /.exec(html)?.[1])
+
+describe('the dashboard’s charts, drawn at the size they are shown', () => {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const trend = months.map((label, i) => ({ label, bar: 400 + i * 130, line: 1 + (i % 4) * 0.37 }))
+  const pareto = ['Burr', 'Wavy', 'Scratch', 'Edge', 'زوائد قص', 'Dent', 'Others (3)'].map((label, i) => ({ label, value: 40 - i * 5, cumulativePct: Math.min(100, 30 + i * 12) }))
+  const days = Array.from({ length: 283 }, (_, i) => ({ label: `D${i + 1}`, total: i > 250 ? 30 + (i % 7) : 0, part: i > 250 ? i % 5 : 0 }))
+  const weeks = Array.from({ length: 41 }, (_, i) => ({ label: `W${i + 1}`, total: i > 35 ? 210 : 0, part: i > 35 ? 12 : 0 }))
+  // A 360 px phone's card, a board box at 1180, a desktop card.
+  const widths = [296, 416, 720]
+  const charts = (width: number) => [
+    renderToStaticMarkup(<TrendChart points={trend} barLabel="Pieces made" lineLabel="Reject rate" width={width} />),
+    renderToStaticMarkup(<ParetoChart bars={pareto} onPick={() => {}} width={width} />),
+    renderToStaticMarkup(<PairedBarChart points={days} weekly={weeks} totalLabel="Pieces inspected" partLabel="Defect pieces" width={width} />),
+    renderToStaticMarkup(<LineChart labels={months} series={[{ label: 'Factory 1', values: trend.map((p) => p.line), className: 'stroke-brand-500' }]} width={width} />),
+    renderToStaticMarkup(<StackedColumnChart columns={['31-Roll Forming-LM2 long name', '34-Gasparini Long Roll Forming Machine'].map((label) => ({ label, segments: [{ label: 'Burr', value: 20, className: 'fill-brand-500' }] }))} legend={[{ label: 'Burr', className: 'fill-brand-500' }]} width={width} />),
+    renderToStaticMarkup(<ColumnChart columns={[{ label: '1 pc', value: 4, sub: '40%' }, { label: '2 pcs', value: 6, sub: '60%' }]} width={width} />),
+  ]
+
+  it('draws at the width given, so a word keeps its size: never under 10 px', () => {
+    for (const width of widths) {
+      for (const html of charts(width)) {
+        expect(drawnWidth(html)).toBe(width)
+        expect(Math.min(...typeSizes(html))).toBeGreaterThanOrEqual(10)
+      }
+    }
+  })
+
+  it('leaves the rate’s axis out on a phone, where the read-out says the rate', () => {
+    const wide = renderToStaticMarkup(<TrendChart points={trend} barLabel="Pieces made" lineLabel="Reject rate" width={720} />)
+    const narrow = renderToStaticMarkup(<TrendChart points={trend} barLabel="Pieces made" lineLabel="Reject rate" width={296} />)
+    expect(wide).toContain('>0%</text>')
+    expect(narrow).not.toContain('>0%</text>')
+  })
+
+  it('writes as many month names as have room: all twelve on a desktop card, fewer on a phone', () => {
+    const named = (html: string) => months.filter((m) => html.includes(`>${m}</text>`)).length
+    expect(named(renderToStaticMarkup(<TrendChart points={trend} barLabel="Pieces made" lineLabel="Reject rate" width={720} />))).toBe(12)
+    const phone = named(renderToStaticMarkup(<TrendChart points={trend} barLabel="Pieces made" lineLabel="Reject rate" width={296} />))
+    expect(phone).toBeGreaterThan(2)
+    expect(phone).toBeLessThan(12)
+  })
+
+  it('numbers a Pareto’s bars on a phone and lists their names under it; slants the names on a wider card', () => {
+    const narrow = renderToStaticMarkup(<ParetoChart bars={pareto} onPick={() => {}} width={296} />)
+    expect(narrow).not.toContain('rotate(-28)')
+    expect(narrow).toContain('<ol')
+    expect(narrow).toContain('>زوائد قص</span>')
+    // The 80% line keeps its mark where the share's axis was.
+    expect(narrow).toContain('>80%</text>')
+    const wide = renderToStaticMarkup(<ParetoChart bars={pareto} onPick={() => {}} width={720} />)
+    expect(wide).toContain('rotate(-28)')
+    expect(wide).not.toContain('<ol')
+  })
+
+  it('draws a bar a week where a day would be too narrow to see, and a bar a day where there is room', () => {
+    const phone = renderToStaticMarkup(<PairedBarChart points={days} weekly={weeks} totalLabel="Pieces inspected" partLabel="Defect pieces" width={296} />)
+    expect(phone).toContain('by week</title>')
+    expect(phone).toContain('A bar a week')
+    const month = days.slice(250)
+    const card = renderToStaticMarkup(<PairedBarChart points={month} weekly={weeks} totalLabel="Pieces inspected" partLabel="Defect pieces" width={296} />)
+    expect(card).toContain('by day</title>')
   })
 })

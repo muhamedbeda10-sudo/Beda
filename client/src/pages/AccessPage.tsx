@@ -13,26 +13,33 @@ import type { OrderListFilters, OrderListRow } from '@qc/shared/api'
 import { Badge, Button, Card, EmptyState, Field, Input, Select } from '@/components/ui'
 import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
 import { FilterBar, FilterSelect, type FilterChip } from '@/components/ui/PageShell'
-import { ColumnPicker, GridFrame, GridHead, SkeletonRows, TableFooter, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
+import { ColumnPicker, GridFrame, GridHead, SkeletonRows, TableFooter, TABLE_QUERY, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { loadMoreOrders, loadOrderListValues, useDebounced, useMaster, useOrderList, useOrderListOptions } from '@/services/queries'
 import { useServerColumns } from '@/components/ui/ColumnFilter'
+import { matchesMedia, useCoarsePointer, useMediaQuery } from '@/lib/media'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useApp } from '@/store/AppContext'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import { sessionDetailPath } from '@/lib/links'
 
+/**
+ * The sheet's columns. A screen narrower than 1180 px starts with the lean set — the order, the item, its ERP status,
+ * what remains to produce, the customer and the order's date — so a tablet held upright sees Remaining without
+ * scrolling; the Columns button adds the rest. From 1180 px (an iPad Air on its side) the everyday set fits the frame
+ * up to Remaining.
+ */
 const ACCESS_COLUMNS: ColumnDef[] = [
-  { key: 'orderNumber', label: 'Order', width: 150, min: 90 },
+  { key: 'orderNumber', label: 'Order', width: 150, min: 90, lean: true },
   { key: 'lineKey', label: 'Line key', width: 110, min: 70, defaultHidden: true },
-  { key: 'item', label: 'Item', width: 220, min: 100, flex: true },
-  { key: 'itemCode', label: 'Item code', width: 130, min: 80 },
-  { key: 'machine', label: 'Machine', width: 160, min: 80 },
+  { key: 'item', label: 'Item', width: 200, min: 100, flex: true, lean: true },
+  { key: 'itemCode', label: 'Item code', width: 120, min: 80 },
+  { key: 'machine', label: 'Machine', width: 150, min: 80 },
   { key: 'factory', label: 'Factory', width: 110, min: 80, defaultHidden: true },
-  { key: 'erpStatus', label: 'ERP status', width: 100, min: 80 },
+  { key: 'erpStatus', label: 'ERP status', width: 100, min: 80, lean: true },
   { key: 'requiredQty', label: 'Required', width: 124, min: 96, align: 'right' },
   { key: 'finishedQty', label: 'Finished', width: 124, min: 96, align: 'right' },
-  { key: 'remainingQty', label: 'Remaining', width: 124, min: 96, align: 'right' },
-  { key: 'customer', label: 'Customer', width: 170, min: 90 },
+  { key: 'remainingQty', label: 'Remaining', width: 124, min: 96, align: 'right', lean: true },
+  { key: 'customer', label: 'Customer', width: 170, min: 90, lean: true },
   { key: 'expectedGrade', label: 'Expected grade', width: 120, min: 80 },
   { key: 'drawing', label: 'Drawing', width: 130, min: 80, defaultHidden: true },
   { key: 'drawingAlt', label: 'Drawing (alt)', width: 130, min: 80, defaultHidden: true },
@@ -40,7 +47,7 @@ const ACCESS_COLUMNS: ColumnDef[] = [
   { key: 'material', label: 'Material', width: 120, min: 80, defaultHidden: true },
   { key: 'type', label: 'Type', width: 100, min: 64, defaultHidden: true },
   { key: 'colour', label: 'Colour', width: 100, min: 64, defaultHidden: true },
-  { key: 'date', label: 'Order date', width: 120, min: 90 },
+  { key: 'date', label: 'Order date', width: 120, min: 90, lean: true },
   { key: 'sessions', label: 'Sessions', width: 116, min: 96, align: 'right', defaultHidden: true },
   { key: 'samples', label: 'Samples', width: 116, min: 96, align: 'right', defaultHidden: true },
   { key: 'defectPieces', label: 'Defect pcs', width: 104, min: 80, align: 'right', defaultHidden: true },
@@ -51,6 +58,19 @@ const ACCESS_COLUMNS: ColumnDef[] = [
 /** The columns that hold figures, and those that hold days: they sort as such, and a day reads "Oct 6" in its menu. */
 const ACCESS_FIGURES = new Set(['requiredQty', 'finishedQty', 'remainingQty', 'sessions', 'samples', 'defectPieces'])
 const ACCESS_DAYS = new Set(['date', 'lastInspected'])
+
+/**
+ * Below a tablet the sheet is cards and the column menus are out of reach: the sorts a phone wants most, sent as a
+ * column's menu would send them. No pick is the sheet's own order, by order number.
+ */
+const PHONE_SORTS: { value: string; label: string }[] = [
+  { value: 'remainingQty:desc', label: 'Most remaining' },
+  { value: 'date:desc', label: 'Newest order date' },
+  { value: 'date:asc', label: 'Oldest order date' },
+]
+
+/** Below a tablet: the phone's cards, 50 to a page unless the person chose otherwise. */
+const PHONE = `not all and ${TABLE_QUERY}`
 
 const num = (v: number | null | undefined) => (v === null || v === undefined || Number.isNaN(v) ? '—' : String(v))
 
@@ -68,16 +88,24 @@ function statusTone(s: string): 'green' | 'amber' | 'violet' | 'neutral' | 'red'
   return 'neutral'
 }
 
-/** What a cell opens: the order, the line, the item or the machine, laid on their sessions. */
+/**
+ * What a cell opens: the order, the line, the item or the machine, laid on their sessions. `links` is false on a touch
+ * screen: a cell's text is then plain, and the whole row opens the order's sessions.
+ */
 interface Opens {
   order: (o: OrderListRow) => void
   line: (o: OrderListRow) => void
   item: (o: OrderListRow) => void
   machine: (o: OrderListRow) => void
+  links: boolean
 }
 
-/** A cell's text as a link to a grouped view; the row's own click is not triggered. */
-function Opener({ onOpen, title, children }: { onOpen: () => void; title: string; children: ReactNode }) {
+/**
+ * A cell's text as a link to a grouped view; the row's own click is not triggered. `plain` on a touch screen: the
+ * text alone, so a tap anywhere on the row does the one thing the row does, as nothing on screen marks a link apart.
+ */
+function Opener({ onOpen, title, children, plain = false }: { onOpen: () => void; title: string; children: ReactNode; plain?: boolean }) {
+  if (plain) return <>{children}</>
   return (
     <button
       type="button"
@@ -124,7 +152,9 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
         <td key={key} className={cn('px-3 py-3 font-bold', clip)} data-tip={problems.length ? undefined : o.orderNumber}>
           <span className="flex min-w-0 items-center gap-1.5">
             {problems.length > 0 && <ProblemMark problems={problems} />}
-            <Opener title="Every session of this order" onOpen={() => opens.order(o)}>{o.orderNumber}</Opener>
+            <Opener title="Every session of this order" plain={!opens.links} onOpen={() => opens.order(o)}>
+              {o.orderNumber}
+            </Opener>
           </span>
         </td>
       )
@@ -134,21 +164,31 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
     case 'item':
       return (
         <td key={key} className={cn('px-3 py-3', fixed ? 'truncate' : 'max-w-[240px] truncate')} data-tip={o.item}>
-          {o.item ? <Opener title="Every session of this item" onOpen={() => opens.item(o)}>{o.item}</Opener> : '—'}
+          {o.item ? (
+            <Opener title="Every session of this item" plain={!opens.links} onOpen={() => opens.item(o)}>
+              {o.item}
+            </Opener>
+          ) : (
+            '—'
+          )}
         </td>
       )
     case 'itemCode':
       return o.itemCode ? (
         <td key={key} className={cn('px-3 py-3 font-mono text-xs', clip)} data-tip={o.itemCode}>
-          <Opener title="Every session of this item" onOpen={() => opens.item(o)}>{o.itemCode}</Opener>
+          <Opener title="Every session of this item" plain={!opens.links} onOpen={() => opens.item(o)}>
+            {o.itemCode}
+          </Opener>
         </td>
       ) : (
         text('', 'font-mono text-xs')
       )
     case 'machine':
       return o.workCenterCode ? (
-        <td key={key} className={cn('px-3 py-3', clip)} data-tip={machineName(o.workCenterCode)}>
-          <Opener title="The latest sessions on this machine" onOpen={() => opens.machine(o)}>{machineName(o.workCenterCode)}</Opener>
+        <td key={key} className={cn('px-3 py-3', fixed ? 'truncate' : 'max-w-[200px] truncate')} data-tip={machineName(o.workCenterCode)}>
+          <Opener title="The latest sessions on this machine" plain={!opens.links} onOpen={() => opens.machine(o)}>
+            {machineName(o.workCenterCode)}
+          </Opener>
         </td>
       ) : (
         text('')
@@ -188,7 +228,9 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
     case 'sessions':
       return o.sessions > 0 ? (
         <td key={key} className="px-3 py-3 text-right font-semibold tabular-nums">
-          <Opener title="This line's sessions" onOpen={() => opens.line(o)}>{num(o.sessions)}</Opener>
+          <Opener title="This line's sessions" plain={!opens.links} onOpen={() => opens.line(o)}>
+            {num(o.sessions)}
+          </Opener>
         </td>
       ) : (
         number(o.sessions, 'text-muted')
@@ -198,7 +240,9 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
     case 'defectPieces':
       return o.defectPieces > 0 ? (
         <td key={key} className="px-3 py-3 text-right font-bold tabular-nums text-rose-600 dark:text-rose-400">
-          <Opener title="This line's sessions" onOpen={() => opens.line(o)}>{num(o.defectPieces)}</Opener>
+          <Opener title="This line's sessions" plain={!opens.links} onOpen={() => opens.line(o)}>
+            {num(o.defectPieces)}
+          </Opener>
         </td>
       ) : (
         number(o.defectPieces, 'text-muted')
@@ -232,8 +276,17 @@ export function AccessPage() {
   const baseFiltersSet = term !== '' || machine !== 'all' || factory !== 'all' || erpStatus !== 'all' || item !== '' || remaining !== 'all' || inspected !== 'all'
   // Excel's filter and sort on every column, answered over the whole sheet.
   const columnsView = useServerColumns()
+  /** A phone's pick from Sort by (PHONE_SORTS), in place of a column's sort it cannot reach; the latest of the two wins. */
+  const [phoneSort, setPhoneSort] = useState<string | null>(null)
+  useEffect(() => {
+    if (columnsView.sortParam) setPhoneSort(null)
+  }, [columnsView.sortParam])
+  const sortParam = columnsView.sortParam ?? phoneSort ?? undefined
+  const coarse = useCoarsePointer()
+  const wide = useMediaQuery('(min-width: 1280px)')
   const resetFilters = () => {
     columnsView.clear()
+    setPhoneSort(null)
     setTerm('')
     setMachine('all')
     setFactory('all')
@@ -253,14 +306,14 @@ export function AccessPage() {
       remaining: remaining === 'all' ? undefined : remaining,
       inspected: inspected === 'all' ? undefined : inspected,
       cf: columnsView.cf,
-      sort: columnsView.sortParam,
+      sort: sortParam,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [debounced, machine, factory, erpStatus, settledItem, remaining, inspected, columnsView.cf, columnsView.sortParam],
+    [debounced, machine, factory, erpStatus, settledItem, remaining, inspected, columnsView.cf, sortParam],
   )
-  const filtersSet = baseFiltersSet || columnsView.active
-  /** Rows a page brings; kept on this device. */
-  const [pageSize, setPageSize] = usePersistedState<number>('qc-access:page-size', 100)
+  const filtersSet = baseFiltersSet || columnsView.active || phoneSort !== null
+  /** Rows a page brings; kept on this device. A phone starts at 50: a hundred cards make a page too long to reach the paging. */
+  const [pageSize, setPageSize] = usePersistedState<number>('qc-access:page-size', matchesMedia(PHONE) ? 50 : 100)
   const { data, isLoading, isError, refetch } = useOrderList(filters, pageSize)
   const { data: options } = useOrderListOptions()
   const { data: machines = [] } = useMaster('machines')
@@ -327,6 +380,7 @@ export function AccessPage() {
       setGroupOrder(null)
       setGroupSpec({ title: machineName(o.workCenterCode), subtitle: 'The latest sessions on the machine', query: { workCenterCode: o.workCenterCode } })
     },
+    links: !coarse,
   }
   /** A line that has been inspected opens its order's sessions. */
   const open = (o: OrderListRow) => {
@@ -334,6 +388,14 @@ export function AccessPage() {
   }
 
   const machineLabel = (code: string) => machineName(code) || code
+  const columnChips = columnsView.chips((key) => ACCESS_COLUMNS.find((c) => c.key === key)?.label ?? key)
+  /** The column sort in force, set with the table on screen (a tablet, a phone on its side): the Sort by select shows it. */
+  const columnSortChip = columnChips.find((c) => c.key === 'sort')
+  const pickSort = (value: string) => {
+    // A column's sort gives way to the pick, as a pick gives way to a column's sort.
+    columnSortChip?.onRemove()
+    setPhoneSort(value || null)
+  }
   const chips: FilterChip[] = [
     ...(machine !== 'all' ? [{ key: 'machine', label: `Machine: ${machineLabel(machine)}`, onRemove: () => setMachine('all') }] : []),
     ...(erpStatus !== 'all' ? [{ key: 'status', label: `ERP status: ${erpStatus}`, onRemove: () => setErpStatus('all') }] : []),
@@ -341,7 +403,8 @@ export function AccessPage() {
     ...(factory !== 'all' ? [{ key: 'factory', label: `Factory: ${factory}`, onRemove: () => setFactory('all') }] : []),
     ...(item.trim() ? [{ key: 'item', label: `Item: ${item.trim()}`, onRemove: () => setItem('') }] : []),
     ...(inspected !== 'all' ? [{ key: 'inspected', label: inspected === 'yes' ? 'Inspected' : 'Not inspected yet', onRemove: () => setInspected('all') }] : []),
-    ...columnsView.chips((key) => ACCESS_COLUMNS.find((c) => c.key === key)?.label ?? key),
+    ...columnChips,
+    ...(phoneSort ? [{ key: 'phone-sort', label: `Sorted: ${PHONE_SORTS.find((o) => o.value === phoneSort)?.label ?? phoneSort}`, onRemove: () => setPhoneSort(null) }] : []),
   ]
   /** A column's Excel menu: its values over the whole sheet under every other filter. */
   const columnMenu = (c: ColumnDef) =>
@@ -363,7 +426,7 @@ export function AccessPage() {
             <ColumnPicker grid={grid} />
           </span>
         }
-        search={{ value: term, onChange: setTerm, placeholder: 'Order, line key, item, item code, customer, drawing or machine…', label: 'Search orders' }}
+        search={{ value: term, onChange: setTerm, placeholder: wide ? 'Order, line key, item, item code, customer, drawing or machine…' : 'Search orders, items, customers…', label: 'Search orders' }}
         filters={
           <>
             <FilterSelect label="Machine" value={machine} onChange={setMachine}>
@@ -386,6 +449,16 @@ export function AccessPage() {
               <option value="all">All lines</option>
               <option value="open">Still to produce</option>
               <option value="done">Finished</option>
+            </FilterSelect>
+            {/* A phone has no column menus (the sheet is cards): the sorts it needs most, here. */}
+            <FilterSelect label="Sort by" value={sortParam ?? ''} onChange={pickSort} className="md:hidden">
+              <option value="">Order number</option>
+              {PHONE_SORTS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+              {columnsView.sortParam && !PHONE_SORTS.some((o) => o.value === columnsView.sortParam) && <option value={columnsView.sortParam}>{columnSortChip?.label ?? 'Sorted by a column'}</option>}
             </FilterSelect>
           </>
         }
@@ -450,40 +523,51 @@ export function AccessPage() {
         </Card>
       ) : (
         <>
-          {/* Phone: one card per line. */}
+          {/* Phone: one card per line. A line with inspections is a button that opens them, with a chevron to say so; one
+              without is plain text that says it was not inspected yet, since a finger gets no hover to tell them apart. */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:hidden">
-            {rows.map((o) => (
-              <button
-                key={o.id}
-                type="button"
-                onClick={() => open(o)}
-                className={cn('card p-4 text-left', o.sessions > 0 ? 'card-hover' : 'cursor-default')}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <span className="min-w-0">
-                    <span className="flex items-center gap-1.5 truncate font-bold">
-                      {orderLineProblems(o).length > 0 && <ProblemMark problems={orderLineProblems(o)} />}
-                      {o.orderNumber}
+            {rows.map((o) => {
+              const problems = orderLineProblems(o)
+              const body = (
+                <>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-1.5 truncate font-bold">
+                        {problems.length > 0 && <ProblemMark problems={problems} />}
+                        {o.orderNumber}
+                      </span>
+                      <span className="block truncate text-sm text-brand-600 dark:text-brand-400">{o.item || '—'}</span>
                     </span>
-                    <span className="block truncate text-sm text-brand-600 dark:text-brand-400">{o.item || '—'}</span>
-                  </span>
-                  {o.erpStatus && <Badge tone={statusTone(o.erpStatus)}>{o.erpStatus}</Badge>}
+                    {o.erpStatus && <Badge tone={statusTone(o.erpStatus)}>{o.erpStatus}</Badge>}
+                  </div>
+                  <p className="mt-1 truncate text-xs text-muted">
+                    {o.itemCode || '—'} · {machineName(o.workCenterCode) || '—'} · {o.customer || '—'}
+                  </p>
+                  <div className="mt-2 flex items-end gap-2">
+                    <p className="min-w-0 flex-1 text-xs tabular-nums text-muted">
+                      Required {num(o.requiredQty)} · Finished {num(o.finishedQty)} · <span className={cn(o.remainingQty > 0 && 'font-semibold text-brand-700 dark:text-brand-300')}>Remaining {num(o.remainingQty)}</span>
+                      {o.sessions > 0 ? ` · ${o.sessions} inspection${o.sessions === 1 ? '' : 's'}` : <span className="block pt-0.5">Not inspected yet</span>}
+                    </p>
+                    {o.sessions > 0 && <ChevronRight className="h-5 w-5 shrink-0 text-muted" aria-hidden />}
+                  </div>
+                  {problems.length > 0 && <p className="mt-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400">{problems.join(' ')} Check it on the order sheet.</p>}
+                </>
+              )
+              return o.sessions > 0 ? (
+                <button key={o.id} type="button" onClick={() => open(o)} className="card-hover min-w-0 p-4 text-left">
+                  {body}
+                </button>
+              ) : (
+                <div key={o.id} className="card min-w-0 p-4">
+                  {body}
                 </div>
-                <p className="mt-1 truncate text-xs text-muted">
-                  {o.itemCode || '—'} · {machineName(o.workCenterCode) || '—'} · {o.customer || '—'}
-                </p>
-                <p className="mt-2 text-xs tabular-nums text-muted">
-                  Required {num(o.requiredQty)} · Finished {num(o.finishedQty)} · <span className={cn(o.remainingQty > 0 && 'font-semibold text-brand-700 dark:text-brand-300')}>Remaining {num(o.remainingQty)}</span>
-                  {o.sessions > 0 ? ` · ${o.sessions} inspection${o.sessions === 1 ? '' : 's'}` : ''}
-                </p>
-                {orderLineProblems(o).length > 0 && <p className="mt-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400">{orderLineProblems(o).join(' ')} Check it on the order sheet.</p>}
-              </button>
-            ))}
+              )
+            })}
           </div>
 
           {/* md+ — the sheet as a table; the columns are the reader's to choose and, on a desktop, to size. */}
           <Card className="hidden overflow-hidden md:block">
-            <GridFrame reserve={44}>
+            <GridFrame>
               <table ref={grid.tableRef} className={cn('sticky-first w-full text-sm', !grid.enabled && 'min-w-[900px]')} style={grid.tableStyle}>
                 {grid.colgroup}
                 <GridHead grid={grid} menu={columnMenu} />
@@ -512,21 +596,19 @@ export function AccessPage() {
           <TableFooter
             shown={rows.length}
             total={data?.total ?? null}
-            noun={data?.total === 1 ? 'line' : 'lines'}
+            // The phrase reads on from the count, in one run: "1–50 of 1,224 lines on the sheet".
+            noun={`${data?.total === 1 ? 'line' : 'lines'} ${filtering ? (data?.total === 1 ? 'matches the filters' : 'match the filters') : 'on the sheet'}`}
             hasMore={hasMore}
             loadingMore={loadingMore}
             onMore={() => void showMore()}
             pageSize={pageSize}
             onPageSize={setPageSize}
             extra={
-              <>
-                <span>{filtering ? (data?.total === 1 ? 'matches the filters' : 'match the filters') : 'on the sheet'}</span>
-                {toCheck > 0 && (
-                  <span className="inline-flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-400" data-tip="Lines the order sheet got wrong: an order numbered 0, or no item name or code. They are marked in the table; correct them on the sheet.">
-                    · <AlertTriangle className="h-3.5 w-3.5" /> {toCheck} on screen to check on the sheet
-                  </span>
-                )}
-              </>
+              toCheck > 0 ? (
+                <span className="inline-flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-400" data-tip="Lines the order sheet got wrong: an order numbered 0, or no item name or code. They are marked in the table; correct them on the sheet.">
+                  <AlertTriangle className="h-3.5 w-3.5" /> {toCheck} on screen to check on the sheet
+                </span>
+              ) : undefined
             }
           />
         </>

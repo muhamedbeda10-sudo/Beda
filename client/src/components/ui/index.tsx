@@ -1,6 +1,9 @@
 import {
   useEffect,
+  useRef,
   type ReactNode,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
   type InputHTMLAttributes,
@@ -134,9 +137,39 @@ export function Field({ label, children, hint }: { label: string; children: Reac
  * buttons wrapped into a ragged stack, so there it is a grid of two even
  * columns, each button filling its cell; from a tablet up it is the row, and
  * `mr-auto` on a button still parts it from the rest.
+ *
+ * On a phone: a label that wraps stays centred and compact; an odd button out
+ * at the end (a lone Close after a pair) takes the whole last row rather than
+ * half of it; and a ghost button (Cancel, Back, Stay) gets a thin ring, so the
+ * safe choice reads as a button beside a solid one, not as stray text. The
+ * page keeps its own labels short enough for half a phone's width.
  */
 const FOOTER =
-  'grid grid-cols-2 gap-2 border-t border-slate-100 px-4 py-3 dark:border-slate-800 safe-bottom [&>*]:min-h-[48px] [&>*]:justify-center [&>*:only-child]:col-span-2 sm:flex sm:flex-wrap sm:justify-end sm:px-5 sm:py-3.5'
+  'grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 px-4 py-3 dark:border-slate-800 safe-bottom [&>*]:min-h-[48px] [&>*]:justify-center max-sm:[&>*]:text-center max-sm:[&>*]:leading-tight max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 max-sm:[&>.btn-ghost:not(:focus-visible)]:ring-1 max-sm:[&>.btn-ghost:not(:focus-visible)]:ring-inset max-sm:[&>.btn-ghost:not(:focus-visible)]:ring-slate-200 dark:max-sm:[&>.btn-ghost:not(:focus-visible)]:ring-slate-700 sm:flex sm:flex-wrap sm:justify-end sm:px-5 sm:py-3.5'
+
+/** The close button in a dialog's header: a 44 px target whose margins keep the header as low as its title. */
+const CLOSE = 'icon-btn -my-2 -me-2 shrink-0'
+
+/**
+ * A dialog's backdrop closes it on a click that began on the backdrop — not
+ * on one that ends there after a drag from inside the dialog, and not on the
+ * tap that closes a pick list opened in the dialog (a FloatingPanel): that tap
+ * is meant for the list alone. The press is judged as it begins, before the
+ * list (closing on the same press) is gone.
+ */
+function useBackdrop(onClose: () => void) {
+  const armed = useRef(false)
+  return {
+    onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => {
+      armed.current = e.target === e.currentTarget && !document.querySelector('[data-floating-panel]')
+    },
+    onClick: (e: ReactMouseEvent<HTMLDivElement>) => {
+      const close = armed.current && e.target === e.currentTarget
+      armed.current = false
+      if (close) onClose()
+    },
+  }
+}
 
 export function Modal({
   open,
@@ -165,38 +198,39 @@ export function Modal({
       unlock()
     }
   }, [open, onClose])
+  const backdrop = useBackdrop(onClose)
 
   if (!open) return null
   const sizes = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' }
+  // The whole dialog fits the window (.max-h-dialog: a phone turned on its side, the keyboard open); its header and
+  // footer stay in view and the body between them scrolls.
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in" onClick={onClose} />
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in" {...backdrop} />
       <div
         role="dialog"
         aria-modal="true"
         className={cn(
-          'relative z-10 w-full rounded-t-3xl bg-white shadow-lift ring-1 ring-slate-200 animate-slide-up dark:bg-slate-900 dark:ring-slate-800 sm:rounded-3xl sm:animate-scale-in',
+          'relative z-10 flex max-h-dialog w-full flex-col rounded-t-3xl bg-white shadow-lift ring-1 ring-slate-200 animate-slide-up dark:bg-slate-900 dark:ring-slate-800 sm:rounded-3xl sm:animate-scale-in',
           sizes[size],
         )}
       >
         {(title || icon) && (
-          <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+          <div className="flex shrink-0 items-center gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
             {icon && (
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white">
                 {icon}
               </span>
             )}
-            <h2 className="flex-1 text-lg font-bold">{title}</h2>
-            <button
-              onClick={onClose}
-              className="rounded-lg p-1.5 text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
-              aria-label="Close"
-            >
+            <h2 dir="auto" className="min-w-0 flex-1 break-words text-start text-lg font-bold">
+              {title}
+            </h2>
+            <button type="button" onClick={onClose} className={CLOSE} aria-label="Close">
               <X className="h-5 w-5" />
             </button>
           </div>
         )}
-        <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">{children}</div>
         {footer && (
           <div className={FOOTER}>
             {footer}
@@ -241,31 +275,31 @@ export function Drawer({
       unlock()
     }
   }, [open, onClose])
+  const backdrop = useBackdrop(onClose)
 
   if (!open) return null
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-end sm:items-stretch">
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in" onClick={onClose} />
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in" {...backdrop} />
       <div
         role="dialog"
         aria-modal="true"
-        className="relative z-10 flex max-h-[92vh] w-full flex-col rounded-t-3xl bg-white shadow-lift ring-1 ring-slate-200 animate-slide-up dark:bg-slate-900 dark:ring-slate-800 sm:h-full sm:max-h-none sm:max-w-2xl sm:rounded-none sm:rounded-l-3xl sm:animate-slide-in-right"
+        className="relative z-10 flex max-h-sheet w-full flex-col rounded-t-3xl bg-white shadow-lift ring-1 ring-slate-200 animate-slide-up dark:bg-slate-900 dark:ring-slate-800 sm:h-full sm:max-h-none sm:max-w-2xl sm:rounded-none sm:rounded-l-3xl sm:animate-slide-in-right"
       >
-        <div className="flex items-start gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+        <div className="flex shrink-0 items-start gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
           {icon && <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-brand-600 text-white shadow-glow">{icon}</span>}
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-xl font-extrabold leading-tight">{title}</h2>
+            {/* A record's name in full, over two lines at most, in its own direction: an Arabic name keeps its start. */}
+            <h2 dir="auto" className="line-clamp-2 break-words text-start text-xl font-extrabold leading-tight">
+              {title}
+            </h2>
             {subtitle && <div className="mt-0.5 text-sm text-muted">{subtitle}</div>}
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
-            aria-label="Close"
-          >
+          <button type="button" onClick={onClose} className={CLOSE} aria-label="Close">
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">{children}</div>
         {footer && (
           <div className={FOOTER}>
             {footer}

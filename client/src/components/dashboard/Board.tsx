@@ -2,7 +2,9 @@
 // §15 — the board: the dashboard's charts on a 12-column grid an administrator
 // can rearrange. Each widget keeps its own scroll inside its box, so a small
 // box still shows a whole chart. On a narrow screen the grid gives way to a
-// stack in the layout's reading order: nothing to drag on a tablet.
+// stack in the layout's reading order: nothing to drag on a tablet, and no box
+// either — each widget is as tall as it is, so the page has one scroll and a
+// finger on a table moves the page, not a box inside it.
 // ============================================================================
 
 import { createContext, useContext, useMemo, useState, type ReactNode, type RefObject } from 'react'
@@ -39,7 +41,25 @@ export interface BoardState {
 export const BoardContext = createContext<BoardState>({ layouts: { general: [], details: [], comparisons: [] }, editing: false, setLayout: () => {}, setLabel: () => {}, setHidden: () => {} })
 
 /** Below this width the grid is a stack: phones and tablets read, they do not arrange. */
-const GRID_MIN_WIDTH = 1024
+export const BOARD_GRID_MIN_WIDTH = 1024
+
+/**
+ * Whether the boards of a page are stacked: measured on the page's own
+ * column (the boards are as wide as it), for what lives outside any board —
+ * the Arrange button, offered only where there is a grid to arrange.
+ */
+export function useBoardsStacked(): { ref: RefObject<HTMLDivElement>; stacked: boolean } {
+  const { width, containerRef, mounted } = useContainerWidth()
+  return { ref: containerRef as unknown as RefObject<HTMLDivElement>, stacked: mounted && width < BOARD_GRID_MIN_WIDTH }
+}
+
+/**
+ * The grid's own touch sizes, for a finger arranging on a tablet turned
+ * landscape: the resize corner (the library's is 20 px and shows only under a
+ * hovering mouse) 40 px and always shown, its mark larger.
+ */
+const GRID_TOUCH =
+  'touch:[&_.react-resizable-handle]:h-10 touch:[&_.react-resizable-handle]:w-10 touch:[&_.react-resizable-handle]:opacity-100 touch:[&_.react-resizable-handle::after]:bottom-1.5 touch:[&_.react-resizable-handle::after]:right-1.5 touch:[&_.react-resizable-handle::after]:h-3 touch:[&_.react-resizable-handle::after]:w-3 touch:[&_.react-resizable-handle::after]:border-b-[3px] touch:[&_.react-resizable-handle::after]:border-r-[3px]'
 
 export function Board({ page, widgets, className }: { page: DashboardPage; widgets: BoardWidget[]; className?: string }) {
   const { layouts, editing, setLayout, setLabel, setHidden } = useContext(BoardContext)
@@ -56,7 +76,7 @@ export function Board({ page, widgets, className }: { page: DashboardPage; widge
   const hiddenCount = useMemo(() => normaliseDashboardLayout(page, layouts[page]).filter((it) => it.hidden).length, [layouts, page])
   const order = useMemo(() => [...layout].sort((a, b) => a.y - b.y || a.x - b.x).map((it) => it.i), [layout])
   const byId = new Map(widgets.map((w) => [w.id, w]))
-  const stacked = mounted && width < GRID_MIN_WIDTH
+  const stacked = mounted && width < BOARD_GRID_MIN_WIDTH
 
   if (layout.length === 0 && hiddenCount > 0) {
     return (
@@ -72,9 +92,9 @@ export function Board({ page, widgets, className }: { page: DashboardPage; widge
         {order.map((id) => {
           const w = byId.get(id)
           const it = layout.find((x) => x.i === id)
-          // One scroll per widget here too: the box caps the height and the section body scrolls inside it.
+          // No box: the widget is as tall as it is, its long lists cut short by their own "Show all".
           return w ? (
-            <div key={id} className="flex max-h-[36rem] flex-col">
+            <div key={id} className="min-w-0">
               <WidgetLabelContext.Provider value={{ title: it?.title, hint: it?.hint }}>
                 {w.labelled === false && it?.title && <p className="mb-1 text-sm font-bold">{it.title}</p>}
                 {w.node}
@@ -86,7 +106,7 @@ export function Board({ page, widgets, className }: { page: DashboardPage; widge
     )
   }
   return (
-    <div ref={ref} className={cn('-mx-2', className)}>
+    <div ref={ref} className={cn('-mx-2', GRID_TOUCH, className)}>
       {mounted && (
         <GridLayout
           width={width}
@@ -104,7 +124,7 @@ export function Board({ page, widgets, className }: { page: DashboardPage; widge
             return (
               <div key={it.i} className={cn('flex min-h-0 flex-col', editing && 'rounded-2xl ring-2 ring-dashed ring-brand-300 dark:ring-brand-500/50')}>
                 {editing && (
-                  <div className="board-handle flex shrink-0 cursor-move items-center gap-1.5 rounded-t-2xl bg-brand-600 px-3 py-1 text-xs font-semibold text-white">
+                  <div className="board-handle flex shrink-0 cursor-move items-center gap-1.5 rounded-t-2xl bg-brand-600 px-3 py-1 text-xs font-semibold text-white touch:min-h-[44px]">
                     <GripVertical className="h-3.5 w-3.5 shrink-0" /> <span className="min-w-0 truncate">{it.title || w?.title || it.i}</span>
                     <span className="ml-auto hidden truncate font-normal opacity-80 lg:inline">drag to move · pull the corner to size</span>
                     <button
@@ -114,7 +134,7 @@ export function Board({ page, widgets, className }: { page: DashboardPage; widge
                         e.stopPropagation()
                         setLabelling(it)
                       }}
-                      className="ml-2 inline-flex items-center gap-1 rounded-md bg-white/15 px-2 py-0.5 hover:bg-white/25"
+                      className="ml-2 inline-flex shrink-0 items-center gap-1 rounded-md bg-white/15 px-2 py-0.5 hover:bg-white/25 touch:min-h-[36px] touch:px-3"
                       aria-label={`Name and describe: ${w?.title ?? it.i}`}
                     >
                       <Pencil className="h-3 w-3" /> Name
@@ -126,7 +146,7 @@ export function Board({ page, widgets, className }: { page: DashboardPage; widge
                         e.stopPropagation()
                         setHidden(page, it.i, true)
                       }}
-                      className="inline-flex items-center gap-1 rounded-md bg-white/15 px-2 py-0.5 hover:bg-white/25"
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md bg-white/15 px-2 py-0.5 hover:bg-white/25 touch:min-h-[36px] touch:px-3"
                       aria-label={`Hide: ${it.title || w?.title || it.i}`}
                     >
                       <EyeOff className="h-3 w-3" /> Hide
@@ -221,10 +241,10 @@ export function ChartGallery({ open, onClose }: { open: boolean; onClose: () => 
                   {PAGE_NAME[page]} <span className="font-normal text-muted">· {shown} of {items.length} shown</span>
                 </h3>
                 <span className="flex gap-3 text-xs font-semibold">
-                  <button type="button" className="text-brand-700 hover:underline disabled:opacity-40 dark:text-brand-300" disabled={shown === items.length} onClick={() => items.forEach((it) => it.hidden && setHidden(page, it.i, false))}>
+                  <button type="button" className="text-brand-700 hover:underline disabled:opacity-40 dark:text-brand-300 touch:min-h-[44px] touch:px-2" disabled={shown === items.length} onClick={() => items.forEach((it) => it.hidden && setHidden(page, it.i, false))}>
                     Show all
                   </button>
-                  <button type="button" className="text-muted hover:underline disabled:opacity-40" disabled={shown === 0} onClick={() => items.forEach((it) => !it.hidden && setHidden(page, it.i, true))}>
+                  <button type="button" className="text-muted hover:underline disabled:opacity-40 touch:min-h-[44px] touch:px-2" disabled={shown === 0} onClick={() => items.forEach((it) => !it.hidden && setHidden(page, it.i, true))}>
                     Hide all
                   </button>
                 </span>

@@ -86,105 +86,109 @@ export function AiThread({
   }
 
   return (
-    <div
-      ref={scroller}
-      onScroll={onScroll}
-      className={cn(
-        'relative min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[radial-gradient(circle_at_1px_1px,rgba(15,23,42,.06)_1px,transparent_0)] [background-size:18px_18px] px-3 py-4 dark:bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,.05)_1px,transparent_0)] sm:px-4',
-        wide && 'sm:px-6 lg:px-8 lg:py-6',
-      )}
-    >
-      <div className={cn(wide && 'mx-auto w-full max-w-[1100px]')}>
-        {empty && (
-          <EmptyState
-            icon={<BotMark size="lg" />}
-            title="Ask about the factory's record"
-            hint="Whatever of the record you were given: inspections, orders and PDI, coils and suppliers, the audit log. Every figure comes from a query shown in the answer, which opens as a table and exports to Excel. The assistant only reads; it changes nothing."
-            action={
-              <div className={cn('grid w-full gap-2 px-3', wide && 'max-w-3xl sm:grid-cols-2')}>
-                {AI_STARTER_QUESTIONS.map((q) => (
-                  <button
-                    key={q}
-                    type="button"
-                    onClick={() => onExample(q)}
-                    dir="auto"
-                    className="rounded-xl bg-white px-3 py-2.5 text-start text-13 font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition-colors hover:bg-brand-50 hover:text-brand-800 hover:ring-brand-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700 dark:hover:bg-brand-500/15 dark:hover:text-white touch:min-h-[44px]"
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            }
-          />
+    // The scroller sits in a frame of its own, so "Latest" floats over the thread's foot, centred above the question
+    // box, clear of the lines' starts (an Arabic line starts at the right edge).
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={scroller}
+        onScroll={onScroll}
+        className={cn(
+          'relative min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[radial-gradient(circle_at_1px_1px,rgba(15,23,42,.06)_1px,transparent_0)] [background-size:18px_18px] px-3 py-4 dark:bg-[radial-gradient(circle_at_1px_1px,rgba(255,255,255,.05)_1px,transparent_0)] sm:px-4',
+          wide && 'sm:px-6 lg:px-8 lg:py-6',
         )}
+      >
+        <div className={cn(wide && 'mx-auto w-full max-w-[1100px]')}>
+          {empty && (
+            <EmptyState
+              icon={<BotMark size="lg" />}
+              title="Ask about the factory's record"
+              hint="Whatever of the record you were given: inspections, orders and PDI, coils and suppliers, the audit log. Every figure comes from a query shown in the answer, which opens as a table and exports to Excel. The assistant only reads; it changes nothing."
+              action={
+                <div className={cn('grid w-full gap-2 px-3', wide && 'max-w-3xl sm:grid-cols-2')}>
+                  {AI_STARTER_QUESTIONS.map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => onExample(q)}
+                      dir="auto"
+                      className="rounded-xl bg-white px-3 py-2.5 text-start text-13 font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition-colors hover:bg-brand-50 hover:text-brand-800 hover:ring-brand-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700 dark:hover:bg-brand-500/15 dark:hover:text-white touch:min-h-[44px]"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              }
+            />
+          )}
 
-        {conversationId !== null && isLoading && <ThreadSkeleton />}
-        {conversationId !== null && isError && !data && (
-          <Notice
-            tone="red"
-            action={
-              <>
-                <Button className="h-8 min-h-0 px-3 py-0 text-xs" onClick={() => void refetch()}>
-                  Try again
-                </Button>
-                <Button className="h-8 min-h-0 px-3 py-0 text-xs" onClick={() => openConversation(null)}>
-                  <MessageSquarePlus className="h-3.5 w-3.5" /> New chat
-                </Button>
-              </>
-            }
-          >
-            This conversation could not be loaded. It may have been deleted.
-          </Notice>
-        )}
+          {conversationId !== null && isLoading && <ThreadSkeleton />}
+          {conversationId !== null && isError && !data && (
+            <Notice
+              tone="red"
+              action={
+                <>
+                  <Button className="h-8 min-h-0 px-3 py-0 text-xs touch:h-11" onClick={() => void refetch()}>
+                    Try again
+                  </Button>
+                  <Button className="h-8 min-h-0 px-3 py-0 text-xs touch:h-11" onClick={() => openConversation(null)}>
+                    <MessageSquarePlus className="h-3.5 w-3.5" /> New chat
+                  </Button>
+                </>
+              }
+            >
+              This conversation could not be loaded. It may have been deleted.
+            </Notice>
+          )}
 
-        {/* One keyed list, saved and live alike: an answer keeps its key, and so its cards' state, as it is saved. */}
-        <div className="space-y-4">
-          {items.map((item) =>
-            item.kind === 'saved' ? (
-              item.message.role === 'user' ? (
-                <UserBubble key={item.key} text={answerText(item.message.parts)} at={item.message.createdAt} />
+          {/* One keyed list, saved and live alike: an answer keeps its key, and so its cards' state, as it is saved. */}
+          <div className="space-y-4">
+            {items.map((item) =>
+              item.kind === 'saved' ? (
+                item.message.role === 'user' ? (
+                  <UserBubble key={item.key} text={answerText(item.message.parts)} at={item.message.createdAt} />
+                ) : (
+                  <Answer
+                    key={item.key}
+                    message={item.message}
+                    question={questions.get(item.message.id)}
+                    onAskAgain={onAskAgain}
+                    latest={item.key === latestAnswer}
+                    onSuggestion={onSuggestion}
+                    onOpenReport={onOpenReport}
+                    noticesWait={noticesWait}
+                  />
+                )
+              ) : item.kind === 'question' ? (
+                <UserBubble key={item.key} text={live!.question} />
               ) : (
                 <Answer
                   key={item.key}
-                  message={item.message}
-                  question={questions.get(item.message.id)}
+                  turn={live!}
+                  question={live!.question}
                   onAskAgain={onAskAgain}
                   latest={item.key === latestAnswer}
                   onSuggestion={onSuggestion}
                   onOpenReport={onOpenReport}
-                  noticesWait={noticesWait}
                 />
-              )
-            ) : item.kind === 'question' ? (
-              <UserBubble key={item.key} text={live!.question} />
-            ) : (
-              <Answer
-                key={item.key}
-                turn={live!}
-                question={live!.question}
-                onAskAgain={onAskAgain}
-                latest={item.key === latestAnswer}
-                onSuggestion={onSuggestion}
-                onOpenReport={onOpenReport}
-              />
-            ),
-          )}
+              ),
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Mounted with the thread, so a change is heard; remounted with the conversation, so opening one is not. */}
-      <p key={conversationId ?? 'new'} role="status" aria-live="polite" className="sr-only">
-        {announcement}
-      </p>
+        {/* Mounted with the thread, so a change is heard; remounted with the conversation, so opening one is not. */}
+        <p key={conversationId ?? 'new'} role="status" aria-live="polite" className="sr-only">
+          {announcement}
+        </p>
+      </div>
 
       {!atBottom && (
         <button
           type="button"
           onClick={() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })}
-          className="sticky bottom-2 left-full grid h-9 w-9 place-items-center rounded-full bg-white text-slate-600 shadow-lift ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700"
+          className="absolute inset-x-0 bottom-3 z-10 mx-auto inline-flex h-9 w-fit items-center gap-1 rounded-full bg-white pe-3.5 ps-2.5 text-xs font-semibold text-slate-600 shadow-lift ring-1 ring-slate-200 animate-fade-in hover:text-brand-700 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700 dark:hover:text-white touch:h-11 touch:pe-4 touch:ps-3"
           aria-label="Jump to the latest"
         >
-          <ChevronDown className="h-5 w-5" />
+          <ChevronDown className="h-4 w-4" aria-hidden /> Latest
         </button>
       )}
     </div>

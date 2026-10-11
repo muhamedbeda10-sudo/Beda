@@ -155,6 +155,35 @@ export function DefinitionFacts({
 
 // ---- What a run found --------------------------------------------------------------------------
 
+/** The shape of a UUID, as the record's ids are written. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * The columns in the order a person reads them: the ids last. A watch's
+ * query often starts with the ids it matches cases by (SAMPLE_ID,
+ * SESSION_ID — 36 characters each), and on a phone those alone fill the
+ * frame, with what the case is about scrolled out of sight. A column is an
+ * id by its name (`id`, `*_id`) or by holding nothing but UUIDs; the rest
+ * keep their order, and so do the ids among themselves.
+ */
+export function idColumnsLast(columns: readonly string[], rows: readonly (readonly AiCell[])[]): number[] {
+  const isId = (name: string, c: number) => {
+    if (/(^|_)id$/i.test(name.trim())) return true
+    let uuids = 0
+    for (const r of rows) {
+      const v = r[c]
+      if (v === null || v === undefined || v === '') continue
+      if (typeof v !== 'string' || !UUID.test(v.trim())) return false
+      uuids++
+    }
+    return uuids > 0
+  }
+  const first: number[] = []
+  const last: number[] = []
+  columns.forEach((name, c) => (isId(name, c) ? last : first).push(c))
+  return [...first, ...last]
+}
+
 /** A run's rows in the shape the assistant's tables take. */
 export function rowsAsQuery(id: string, title: string, columns: string[], rows: AiCell[][], more = false): AiQueryPart {
   return { type: 'query', queryId: id, purpose: title, sql: '', ok: true, columns, rows, rowCount: rows.length, truncated: more, ms: 0 }
@@ -163,11 +192,16 @@ export function rowsAsQuery(id: string, title: string, columns: string[], rows: 
 /**
  * Some of a run's rows, in the assistant's table, opening large with Excel's
  * filters; Export Excel saves the rows on screen (a run's rows are not run
- * again for it).
+ * again for it). The id columns come last, on screen and in the workbook
+ * alike, so the two read the same.
  */
-export function CasesTable({ title, columns, rows, more = false }: { title: string; columns: string[]; rows: AiCell[][]; more?: boolean }) {
+export function CasesTable({ title, columns: given, rows: givenRows, more = false }: { title: string; columns: string[]; rows: AiCell[][]; more?: boolean }) {
   const { toast } = useApp()
   const [open, setOpen] = useState(false)
+  const { columns, rows } = useMemo(() => {
+    const order = idColumnsLast(given, givenRows)
+    return { columns: order.map((c) => given[c]), rows: givenRows.map((r) => order.map((c) => r[c] ?? null)) }
+  }, [given, givenRows])
   const part = useMemo(() => rowsAsQuery('cases', title, columns, rows, more), [title, columns, rows, more])
   const exportRows = () => {
     downloadWorkbook(aiTableFilename(), [{ name: sheetName(title || 'Rows', new Set()), header: columns, rows: rows.map((r) => r.map(aiCellValue)) }])

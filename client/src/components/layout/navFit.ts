@@ -5,6 +5,11 @@
 // not. Measured, not counted: what fits depends on the tabs this person has
 // (four for an inspector, six for the assistant's owner), the icons beside
 // them and the window.
+//
+// A touch screen shows no tooltip, so there icons alone would be glyphs to
+// learn by trial: the shell keeps the menu button instead (AppShell), with the
+// tabs still laid out, out of sight and out of the row, so this hook keeps
+// measuring them and brings the names back once the window has their room.
 // ============================================================================
 
 import { useLayoutEffect, useState, type RefObject } from 'react'

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ADMIN_NAV, NAV, visibleNav } from './navItems'
+import { ADMIN_NAV, NAV, TOOLS_NAV, visibleNav } from './navItems'
 
 const paths = (items: { to: string }[]) => items.map((n) => n.to)
 
@@ -30,5 +30,15 @@ describe('the sections each person sees', () => {
     expect(paths(visibleNav(NAV, 'inspector', false, false, true))).toEqual(['/', '/history', '/follow-ups'])
     expect(paths(visibleNav(NAV, 'admin', false, false, false))).not.toContain('/follow-ups')
     expect(paths(visibleNav(NAV, 'inspector', false, true, true))).toEqual(['/', '/history', '/follow-ups', '/automations'])
+  })
+
+  it('lists Coil search and New PDI in the menu for whoever records inspections, and for nobody else', () => {
+    expect(TOOLS_NAV.map((n) => n.label)).toEqual(['Coil search', 'New PDI'])
+    expect(paths(visibleNav(TOOLS_NAV, 'inspector', false))).toEqual(['/coils', '/pdi'])
+    expect(paths(visibleNav(TOOLS_NAV, 'supervisor', false))).toEqual(['/coils', '/pdi'])
+    expect(paths(visibleNav(TOOLS_NAV, 'admin', false))).toEqual(['/coils', '/pdi'])
+    // A viewer reads the board; the tools record, so the menu does not offer them.
+    expect(visibleNav(TOOLS_NAV, 'viewer', false)).toEqual([])
+    expect(visibleNav(TOOLS_NAV, undefined, false)).toEqual([])
   })
 })

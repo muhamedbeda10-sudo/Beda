@@ -31,4 +31,19 @@ describe('how the bar’s tabs fit', () => {
   it('reads a pixel of rounding as fitting', () => {
     expect(nextNavFit('full', none, 1, 1302).fit).toBe('full')
   })
+
+  it('waits out of the row for the room the names needed: the menu on a touch screen keeps the tabs measured, never overflowing', () => {
+    // A landscape tablet: six names do not fit at 1024, so the bar goes to icons, and a finger gets the menu instead.
+    const compact = nextNavFit('full', none, 180, 960)
+    const icons = nextNavFit('compact', compact.needs, 110, 960)
+    expect(icons.fit).toBe('icons')
+    const needs = icons.needs
+    expect(needs.compact).toBe(960 + 110 + NAV_FIT_SLACK)
+    // Out of the row the tabs push nothing past it, so the overflow reads 0; that alone does not bring the names back.
+    const stay = nextNavFit('icons', needs, 0, needs.compact - 1)
+    expect(stay.fit).toBe('icons')
+    expect(stay.needs).toBe(needs)
+    // Turned or widened to the room the tighter names needed, they come back (and the menu button goes).
+    expect(nextNavFit('icons', needs, 0, needs.compact)).toEqual({ fit: 'compact', needs })
+  })
 })

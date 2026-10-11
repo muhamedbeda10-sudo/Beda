@@ -3,14 +3,16 @@
 // configuration section is this panel with its own columns and form.
 // ============================================================================
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { CheckSquare, Loader2, Pencil, Plus, Search, Square, Trash2, X } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Input, Modal, Select } from '@/components/ui'
+import { ScrollX } from '@/components/ui/ScrollX'
 import { useMaster } from '@/services/queries'
 import { createMaster, deleteManyMaster, deleteMaster, updateMaster } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
-import { can } from '@/domain'
+import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn } from '@/lib/utils'
 import { useTableView, ViewTh } from '@/components/ui/ColumnFilter'
 import type { MasterKind, MasterRecordByKind } from '@qc/shared/api'
@@ -27,6 +29,28 @@ export interface Column<T> {
   sortNum?: (row: T) => number | null
   /** A column with nothing to filter (a picture, a sign). */
   filterable?: false
+  /** A column of little value on a narrow table: shown from a wide screen (1280 px) only, and left off the phone's cards. */
+  hideBelow?: 'xl'
+}
+
+/**
+ * The sticky Actions header cell (.table-sticky-last paints the column opaque,
+ * so it needs the header's own colour): slate-50 in the light theme, and in
+ * the dark one the colour the thead's translucent slate-800/60 makes over the
+ * slate-900 card — opaque, or the column scrolled under it would show through.
+ */
+export const STICKY_TH = 'bg-slate-50 dark:bg-[#182234]'
+
+/** The row's actions, Edit and Delete: 44 px each. */
+const ROW_BTN = 'grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors'
+
+/**
+ * Whether a click on a row landed on something of its own — a checkbox, an
+ * action, a thumbnail that opens — rather than on the row itself. A row that
+ * opens on a tap asks this first, so its buttons keep their own meaning.
+ */
+export function clickedControl(e: ReactMouseEvent<HTMLElement>): boolean {
+  return !!(e.target as HTMLElement).closest('button, a, input, select, textarea, [role="button"]')
 }
 
 /** A row's own field under a column's key, as text: what a column with no `text` filters on. */
@@ -82,6 +106,10 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
   const [confirmingMany, setConfirmingMany] = useState(false)
 
   const { rows, sort, groupBy, searchText } = props
+  // On a phone each record is a card (its first column as the title, the rest as label and value, Edit and Delete
+  // at the end): a table of 54 rem has no place on a 360 px screen. From 640 px the table, its Actions column
+  // kept in view while the rest scrolls under it, and a tap on a row opens its edit dialog.
+  const phone = useMediaQuery(PHONE)
 
   // The filter narrows what is shown, sorted and grouped; a code typed here
   // finds the rows of one item, one machine, one defect name.
@@ -200,81 +228,143 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
       aria-checked={checked}
       aria-label={label}
       onClick={onClick}
-      className={cn('grid h-11 w-11 place-items-center rounded-xl transition-colors', checked ? 'text-brand-600' : 'text-slate-300 hover:text-slate-500')}
+      className={cn('grid h-11 w-11 shrink-0 place-items-center rounded-xl transition-colors', checked ? 'text-brand-600' : 'text-slate-300 hover:text-slate-500')}
     >
       {checked ? <CheckSquare className="h-5 w-5" /> : <Square className="h-5 w-5" />}
     </button>
   )
 
+  const edit = (row: T) => setEditing({ id: row.id, draft: props.toDraft(row) })
+
+  const actions = (row: T) => (
+    <>
+      <button type="button" onClick={() => edit(row)} aria-label={`Edit ${props.describe(row)}`} className={cn(ROW_BTN, 'hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800')}>
+        <Pencil className="h-4 w-4" />
+      </button>
+      <button type="button" onClick={() => setConfirming(row)} aria-label={`Delete ${props.describe(row)}`} className={cn(ROW_BTN, 'hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10')}>
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </>
+  )
+
+  /** Ticks every row of one group, or unticks them all when they all are. */
+  const toggleGroup = (visible: T[]) =>
+    setSelected((cur) => {
+      const next = new Set(cur)
+      const all = visible.every((r) => next.has(r.id))
+      for (const r of visible) if (all) next.delete(r.id)
+      else next.add(r.id)
+      return next
+    })
+
   const table = (visible: T[]) => (
-    <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
-      <table className={cn('w-full text-sm', props.minTableWidth ?? 'min-w-[40rem]')}>
+    <ScrollX className="rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800" innerClassName="rounded-2xl" shadows="start">
+      <table className={cn('table-sticky-last w-full text-sm', props.minTableWidth ?? 'min-w-[40rem]')}>
         <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
           <tr>
             <th className="w-12 px-1 py-1">
               {checkbox(
                 visible.length > 0 && visible.every((r) => selected.has(r.id)),
-                () =>
-                  setSelected((cur) => {
-                    const next = new Set(cur)
-                    const all = visible.every((r) => next.has(r.id))
-                    for (const r of visible) if (all) next.delete(r.id)
-                    else next.add(r.id)
-                    return next
-                  }),
+                () => toggleGroup(visible),
                 'Select every row in this group',
               )}
             </th>
             {props.columns.map((c) =>
               c.filterable === false ? (
-                <th key={c.key} className={cn('px-3 py-2.5 font-bold', c.className)}>
+                <th key={c.key} className={cn('px-3 py-2.5 font-bold', c.hideBelow && 'hidden xl:table-cell', c.className)}>
                   {c.label}
                 </th>
               ) : (
-                <ViewTh key={c.key} view={view} column={c.key} label={c.label} className={cn('px-3 py-2.5 font-bold', c.className)} />
+                <ViewTh key={c.key} view={view} column={c.key} label={c.label} className={cn('px-3 py-2.5 font-bold', c.hideBelow && 'hidden xl:table-cell', c.className)} />
               ),
             )}
-            <th className="px-3 py-2.5 text-right font-bold">Actions</th>
+            <th className={cn(STICKY_TH, 'px-3 py-2.5 text-right font-bold')}>Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {visible.map((row) => (
-            <tr key={row.id} className={cn('hover:bg-slate-50/70 dark:hover:bg-slate-800/40', selected.has(row.id) && 'bg-brand-50/60 dark:bg-brand-500/10')}>
+            <tr
+              key={row.id}
+              onClick={(e) => {
+                if (!clickedControl(e)) edit(row)
+              }}
+              className={cn('cursor-pointer hover:bg-slate-50/70 dark:hover:bg-slate-800/40', selected.has(row.id) && 'bg-brand-50/60 dark:bg-brand-500/10')}
+            >
               <td className="px-1 py-1">{checkbox(selected.has(row.id), () => toggle(row.id), `Select ${props.describe(row)}`)}</td>
               {props.columns.map((c) => (
-                <td key={c.key} className={cn('px-3 py-2.5 align-middle', c.className)}>
+                <td key={c.key} className={cn('px-3 py-2.5 align-middle', c.hideBelow && 'hidden xl:table-cell', c.className)}>
                   {c.render(row)}
                 </td>
               ))}
-              <td className="px-3 py-2 text-right">
-                <div className="inline-flex gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setEditing({ id: row.id, draft: props.toDraft(row) })}
-                    aria-label={`Edit ${props.describe(row)}`}
-                    className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirming(row)}
-                    aria-label={`Delete ${props.describe(row)}`}
-                    className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
+              {/* The sticky column paints its own background, so a selected row's tint is given to it again. */}
+              <td className={cn('px-2 py-1 text-right', selected.has(row.id) && 'bg-brand-50 dark:bg-slate-800')}>
+                <div className="inline-flex gap-0.5">{actions(row)}</div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
+    </ScrollX>
   )
 
+  // A phone's card: the tick and the title line with Edit and Delete at its end, and under the title the other
+  // columns, label and value, across the rest of the card, so a value is not squeezed beside the buttons.
+  const cards = (visible: T[]) => {
+    const [title, ...others] = props.columns
+    const rest = others.filter((c) => !c.hideBelow)
+    return (
+      <ul className="space-y-2">
+        {visible.map((row) => (
+          <li
+            key={row.id}
+            className={cn('grid grid-cols-[auto_1fr] items-start gap-x-1 rounded-2xl p-2 ring-1 ring-slate-200 dark:ring-slate-800', selected.has(row.id) && 'bg-brand-50/60 dark:bg-brand-500/10')}
+          >
+            {checkbox(selected.has(row.id), () => toggle(row.id), `Select ${props.describe(row)}`)}
+            <div className="flex min-w-0 items-start gap-1">
+              <button type="button" onClick={() => edit(row)} aria-label={`Edit ${props.describe(row)}`} className="flex min-h-[44px] min-w-0 flex-1 items-center break-words text-left text-sm font-semibold">
+                {title.render(row)}
+              </button>
+              <div className="flex shrink-0 gap-0.5">{actions(row)}</div>
+            </div>
+            {rest.length > 0 && (
+              <dl className="col-start-2 mb-1.5 mt-1 grid min-w-0 grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 text-xs">
+                {rest.map((c) => (
+                  <div key={c.key} className="contents">
+                    <dt className="text-muted">{c.label || ''}</dt>
+                    <dd className="min-w-0 break-words">{c.render(row)}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </li>
+        ))}
+      </ul>
+    )
+  }
+
+  const list = phone ? cards : table
+
   return (
-    <div className="space-y-4">
+    <div className={cn('space-y-4', phone && selectedVisible.length > 0 && 'pb-20')}>
+      {/* On a phone the rows ticked may be far down a long list: what to do with them stays in view at the foot of the screen. */}
+      {phone &&
+        selectedVisible.length > 0 &&
+        createPortal(
+          <div
+            role="toolbar"
+            aria-label="Selected records"
+            className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-slate-200 bg-white/95 px-4 py-2 backdrop-blur safe-bottom dark:border-slate-800 dark:bg-slate-900/95"
+          >
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold">{selectedVisible.length} selected</span>
+            <Button className="min-h-[44px]" onClick={() => setSelected(new Set())}>
+              Clear
+            </Button>
+            <Button variant="danger" className="min-h-[44px]" onClick={() => setConfirmingMany(true)}>
+              <Trash2 className="h-4 w-4" /> Delete
+            </Button>
+          </div>,
+          document.body,
+        )}
       <Card className="space-y-4 p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
@@ -324,10 +414,10 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
             {selectedVisible.length > 0 && (
               <>
                 <Badge tone="blue">{selectedVisible.length} selected</Badge>
-                <Button variant="danger" className="min-h-[48px]" onClick={() => setConfirmingMany(true)}>
+                <Button variant="danger" className="min-h-[48px] max-sm:hidden" onClick={() => setConfirmingMany(true)}>
                   <Trash2 className="h-4 w-4" /> Delete selected
                 </Button>
-                <Button className="min-h-[48px]" onClick={() => setSelected(new Set())}>
+                <Button className="min-h-[48px] max-sm:hidden" onClick={() => setSelected(new Set())}>
                   Clear
                 </Button>
               </>
@@ -367,12 +457,12 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
                     {groupRows.length} {groupRows.length === 1 ? 'entry' : 'entries'}
                   </span>
                 </div>
-                {table(groupRows)}
+                {list(groupRows)}
               </div>
             ))}
           </div>
         ) : (
-          table(shown)
+          list(shown)
         )}
 
         {!props.loading && shown.length > 0 && (

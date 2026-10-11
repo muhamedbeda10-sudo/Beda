@@ -19,10 +19,10 @@ import type { FollowUp, FollowUpScope } from '@qc/shared/automation'
 import { Badge, Button, Card, EmptyState } from '@/components/ui'
 import { FilterBar, FilterSelect, HeaderStat, InfoTip, Segmented, StatDot, type FilterChip } from '@/components/ui/PageShell'
 import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
+import { ScrollX } from '@/components/ui/ScrollX'
 import { FollowUpDrawer } from '@/components/followUps/FollowUpDrawer'
 import { DueText, FollowUpStatusBadge } from '@/components/followUps/parts'
 import {
-  FOLLOW_UP_STATUS_LABEL,
   STATUS_FILTER_LABEL,
   automationLinkFilters,
   emptyListWords,
@@ -44,8 +44,6 @@ interface AutomationPick {
   id: string
   name: string
 }
-
-const STATUS_ORDER = { open: 0, in_progress: 1, done: 2 } as const
 
 /** A follow-up opened from the list says so, so closing it steps back to the list instead of adding a step. */
 const FROM_LIST = { fromList: true } as const
@@ -128,14 +126,12 @@ export function FollowUpsPage() {
     )
   }, [loaded, term])
 
+  // The table's columns: its status and automation sit under the title (the Status and Automation selects sift those).
   const view = useTableView(searched, [
     { key: 'title', value: (f) => f.title, noValues: true },
-    { key: 'automation', value: (f) => f.automationName },
     { key: 'assignee', value: (f) => f.assignee?.name ?? 'Nobody' },
     { key: 'due', value: (f) => factoryMoment(f.dueAt, tz), sortValue: (f) => Date.parse(f.dueAt), numeric: true },
-    { key: 'status', value: (f) => (isOverdue(f) ? 'Overdue' : FOLLOW_UP_STATUS_LABEL[f.status]), sortValue: (f) => (isOverdue(f) ? -1 : STATUS_ORDER[f.status]) },
     { key: 'linked', value: (f) => f.sessionLabel ?? f.orderNumber ?? '' },
-    { key: 'updated', value: (f) => factoryMoment(f.updatedAt, tz), sortValue: (f) => Date.parse(f.updatedAt), numeric: true },
     { key: 'comments', value: (f) => String(f.commentCount), sortValue: (f) => f.commentCount, numeric: true },
   ])
 
@@ -243,69 +239,74 @@ export function FollowUpsPage() {
         />
       ) : (
         <>
-          {/* Phone: a card each. */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:hidden">
+          {/* Phones and tablets: a card each — two across from 640 px, three from 1024. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:hidden">
             {view.rows.map((f) => (
               <FollowUpCard key={f.id} f={f} active={f.id === id} timeZone={tz} />
             ))}
           </div>
 
-          {/* md+: one line each; what does not fit is in the tooltips. Sized so the columns fit a 1366 px laptop. */}
-          <Card className="hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[64rem] text-sm">
-              <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-muted dark:bg-slate-800/60">
-                <tr>
-                  <ViewTh view={view} column="title" label="Follow-up" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="automation" label="Automation" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="assignee" label="Assigned to" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="due" label="Deadline" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="status" label="Status" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="linked" label="Session or order" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="updated" label="Updated" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="comments" label="Comments" className="px-3 py-2 text-right font-semibold" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {view.rows.map((f) => (
-                  <tr
-                    key={f.id}
-                    onClick={() => open(f)}
-                    aria-selected={f.id === id}
-                    className={cn('data-row cursor-pointer', f.id === id ? 'bg-info-50 dark:bg-[#16233f]' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60')}
-                  >
-                    <td className="max-w-[18rem] px-3 py-2">
-                      <Link
-                        to={`/follow-ups/${encodeURIComponent(f.id)}`}
-                        state={FROM_LIST}
-                        onClick={(e) => e.stopPropagation()}
-                        dir={textDirection(f.title) ?? 'auto'}
-                        data-tip={f.body || f.title}
-                        className="block truncate font-semibold text-slate-800 hover:text-brand-700 hover:underline dark:text-slate-100 dark:hover:text-brand-300"
-                      >
-                        {f.title}
-                      </Link>
-                    </td>
-                    <td className="max-w-[11rem] truncate px-3" dir="auto" data-tip={f.automationName}>
-                      {f.automationName}
-                    </td>
-                    <td className="max-w-[9rem] truncate px-3" dir="auto">
-                      {f.assignee?.name ?? <span className="text-muted">Nobody</span>}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2">
-                      <DueText followUp={f} timeZone={tz} stacked />
-                    </td>
-                    <td className="whitespace-nowrap px-3">
-                      <StatusChips f={f} />
-                    </td>
-                    <td className="max-w-[11rem] px-3">
-                      <LinkedRecord f={f} />
-                    </td>
-                    <td className="whitespace-nowrap px-3 tabular-nums text-slate-600 dark:text-slate-300">{factoryMoment(f.updatedAt, tz)}</td>
-                    <td className={cn('px-3 text-right tabular-nums', f.commentCount === 0 && 'text-muted')}>{f.commentCount}</td>
+          {/* From xl (1280 px): one line each, slim enough to fit a laptop beside the docked assistant — its status and
+              automation under the title, which stays in view while the rest scrolls under it; what does not fit is in
+              the tooltips. */}
+          <Card className="hidden overflow-hidden xl:block">
+            <ScrollX shadows="end" label="Follow-ups">
+              <table className="table-sticky-first w-full min-w-[56rem] text-sm">
+                <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-muted dark:bg-slate-800/60">
+                  <tr>
+                    <ViewTh view={view} column="title" label="Follow-up" className="bg-slate-50 px-3 py-2 font-semibold dark:bg-slate-800/60" />
+                    <ViewTh view={view} column="assignee" label="Assigned to" className="px-3 py-2 font-semibold" />
+                    <ViewTh view={view} column="due" label="Deadline" className="px-3 py-2 font-semibold" />
+                    <ViewTh view={view} column="linked" label="Session or order" className="px-3 py-2 font-semibold" />
+                    <ViewTh view={view} column="comments" label="Comments" className="px-3 py-2 text-right font-semibold" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {view.rows.map((f) => {
+                    const chosen = f.id === id
+                    return (
+                      <tr
+                        key={f.id}
+                        onClick={() => open(f)}
+                        aria-selected={chosen}
+                        className={cn('data-row cursor-pointer align-top', chosen ? 'bg-info-50 dark:bg-[#16233f]' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60')}
+                      >
+                        {/* The sticky cell paints its own background, so the chosen row's colour is given to it too. */}
+                        <td className={cn('w-[24rem] max-w-[24rem] px-3 py-2', chosen && 'bg-info-50 dark:bg-[#16233f]')}>
+                          {/* With a finger the title is plain text: the whole 55 px row opens the follow-up, as the link does. */}
+                          <Link
+                            to={`/follow-ups/${encodeURIComponent(f.id)}`}
+                            state={FROM_LIST}
+                            onClick={(e) => e.stopPropagation()}
+                            dir={textDirection(f.title) ?? 'auto'}
+                            data-tip={f.body || f.title}
+                            className="block truncate font-semibold text-slate-800 hover:text-brand-700 hover:underline dark:text-slate-100 dark:hover:text-brand-300 touch:pointer-events-none"
+                          >
+                            {f.title}
+                          </Link>
+                          <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <StatusChips f={f} />
+                            <span dir="auto" className="min-w-0 truncate text-xs text-muted" data-tip={f.automationName}>
+                              {f.automationName}
+                            </span>
+                          </span>
+                        </td>
+                        <td className="max-w-[9rem] truncate px-3 py-2" dir="auto">
+                          {f.assignee?.name ?? <span className="text-muted">Nobody</span>}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2">
+                          <DueText followUp={f} timeZone={tz} stacked />
+                        </td>
+                        <td className="max-w-[11rem] px-3 py-2">
+                          <LinkedRecord f={f} />
+                        </td>
+                        <td className={cn('px-3 py-2 text-right tabular-nums', f.commentCount === 0 && 'text-muted')}>{f.commentCount}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </ScrollX>
             <ViewNote view={view} total={searched.length} />
           </Card>
 
@@ -324,7 +325,7 @@ export function FollowUpsPage() {
             {counts && counts.mineOverdue > 0 && (
               <>
                 <StatDot />
-                <button type="button" onClick={showMineOverdue} className="rounded font-semibold text-rose-600 underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-rose-400" data-tip="Show your overdue ones">
+                <button type="button" onClick={showMineOverdue} className="inline-flex items-center rounded font-semibold text-rose-600 underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-rose-400 touch:min-h-[44px]" data-tip="Show your overdue ones">
                   {counts.mineOverdue} overdue
                 </button>
               </>
@@ -344,22 +345,22 @@ export function FollowUpsPage() {
   )
 }
 
-/** Its status, and what is wrong with it: overdue — escalated, as the overdue mark's sign. */
+/** Its status, and what is wrong with it: overdue, escalated — each a word, not a sign with a hover tooltip. */
 function StatusChips({ f }: { f: FollowUp }) {
   const overdue = isOverdue(f)
   const escalated = !!f.escalatedAt && f.status !== 'done'
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex flex-wrap items-center gap-1.5">
       <FollowUpStatusBadge status={f.status} />
       {overdue && (
         <Badge tone="red" icon={escalated ? <AlertTriangle className="h-3 w-3" aria-hidden /> : undefined} tip={escalated ? 'Past its deadline, and escalated to the automation’s creator' : undefined}>
-          Overdue{escalated && <span className="sr-only"> and escalated</span>}
+          {escalated ? 'Overdue, escalated' : 'Overdue'}
         </Badge>
       )}
       {escalated && !overdue && (
-        <span data-tip="Escalated to the automation’s creator" className="text-rose-600 dark:text-rose-400">
-          <AlertTriangle className="h-3.5 w-3.5" aria-label="Escalated" />
-        </span>
+        <Badge tone="red" icon={<AlertTriangle className="h-3 w-3" aria-hidden />} tip="Escalated to the automation’s creator">
+          Escalated
+        </Badge>
       )}
     </span>
   )
@@ -377,7 +378,8 @@ function LinkedRecord({ f }: { f: FollowUp }) {
       onClick={(e) => e.stopPropagation()}
       dir="auto"
       data-tip={links.session ? 'Open the session in History' : 'This order’s sessions in History'}
-      className="block truncate text-brand-700 underline-offset-4 hover:underline dark:text-brand-300"
+      // With a finger, 44 px tall inside the row (its padding taken back from the cell's), as it opens History, not the row's follow-up.
+      className="block truncate text-brand-700 underline-offset-4 hover:underline dark:text-brand-300 touch:-my-2 touch:py-3"
     >
       {label}
     </Link>

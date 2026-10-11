@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CHAR_WIDTH, axisNames, slantRoom, spreadLabels } from './labels'
+import { CHAR_WIDTH, CHAR_WIDTH_WIDE, axisNames, dataSpan, labelEvery, runsOf, slantRoom, spreadLabels } from './labels'
 
 describe('labels that never overlap', () => {
   it('leaves labels already apart where they are', () => {
@@ -76,5 +76,64 @@ describe('names along a line chart', () => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']
     const s = (x1 - x0) / months.length
     expect(axisNames(months, (i) => x0 + s * i + s / 2, s, 760, 1).map((a) => [a.i, a.anchor])).toEqual(months.map((_, i) => [i, 'middle']))
+  })
+})
+
+describe('how many names an axis writes', () => {
+  it('writes every month on a desktop card, and as many as have room on a phone', () => {
+    // Twelve months across the 636 px a 720-wide drawing plots on: every one.
+    expect(labelEvery(12, 636, 3)).toBe(1)
+    // Across the 244 px of a 360 px phone's card: every other one at most.
+    const k = labelEvery(12, 244, 3)
+    expect(k).toBeGreaterThan(1)
+    expect(Math.ceil(12 / k) * 32).toBeLessThanOrEqual(244)
+  })
+
+  it('gives a long name the room of its letters', () => {
+    // "Sep 1 – Sep 7", 13 letters at 11 px: about 93 px a name.
+    const k = labelEvery(30, 600, 13)
+    expect(Math.ceil(30 / k) * (13 * CHAR_WIDTH_WIDE + 12)).toBeLessThanOrEqual(600)
+    expect(labelEvery(30, 600, 13, CHAR_WIDTH_WIDE)).toBeGreaterThan(labelEvery(30, 600, 3, CHAR_WIDTH_WIDE))
+  })
+
+  it('writes the one name of a one-point axis, and one name at least however narrow', () => {
+    expect(labelEvery(1, 10, 20)).toBe(1)
+    expect(labelEvery(5, 10, 20)).toBe(5)
+  })
+})
+
+describe('the run of an axis worth drawing', () => {
+  it('leaves out the empty points before the first and after the last that hold anything', () => {
+    // This year on the 10th of October, production from September: Sep and Oct.
+    const made = [0, 0, 0, 0, 0, 0, 0, 0, 1815, 760]
+    expect(dataSpan(made.length, (i) => made[i] > 0)).toEqual({ from: 8, to: 10 })
+    expect(dataSpan(4, (i) => [0, 3, 0, 0][i] > 0)).toEqual({ from: 1, to: 2 })
+  })
+
+  it('keeps an empty point between two that hold something: a gap is part of the story', () => {
+    const made = [0, 4, 0, 0, 7, 0]
+    expect(dataSpan(made.length, (i) => made[i] > 0)).toEqual({ from: 1, to: 5 })
+  })
+
+  it('keeps the whole axis when nothing holds anything', () => {
+    expect(dataSpan(3, () => false)).toEqual({ from: 0, to: 3 })
+    expect(dataSpan(0, () => true)).toEqual({ from: 0, to: 0 })
+  })
+})
+
+describe('points gathered into runs', () => {
+  it('starts a run at the first point and at each point that starts one', () => {
+    // Ten days from a Thursday: Thu–Sun, then a week from Monday, then Mon again.
+    const weekday = [4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1]
+    expect(runsOf(weekday.length, (i) => weekday[i] === 1)).toEqual([
+      { from: 0, to: 4 },
+      { from: 4, to: 11 },
+      { from: 11, to: 12 },
+    ])
+  })
+
+  it('is one run when nothing starts another, and none for no points', () => {
+    expect(runsOf(3, () => false)).toEqual([{ from: 0, to: 3 }])
+    expect(runsOf(0, () => true)).toEqual([])
   })
 })

@@ -8,12 +8,16 @@ import { useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { BookOpen, Eye, FileText, History, Loader2, Pencil, Trash2, UploadCloud } from 'lucide-react'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
+import { ScrollX } from '@/components/ui/ScrollX'
+import { STICKY_TH, clickedControl } from '@/components/admin/MasterDataPanel'
 import { WorkInstructionViewer } from '@/components/documents/WorkInstructionViewer'
 import { useWorkInstructions } from '@/services/queries'
 import { deleteWorkInstruction, updateWorkInstruction, uploadWorkInstruction } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
+import { PHONE, useMediaQuery } from '@/lib/media'
+import { cn } from '@/lib/utils'
 import {
   PROCESSES,
   PROCESS_LABEL,
@@ -24,7 +28,7 @@ import {
   type WorkInstructionStep,
 } from '@qc/shared/types'
 import { When } from '@/components/ui/Tooltip'
-import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
+import { useTableView, ViewTh } from '@/components/ui/ColumnFilter'
 
 interface UploadDraft {
   code: string
@@ -44,6 +48,14 @@ function sizeLabel(bytes: number): string {
   return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
+/** The tone of the scope badge: welding amber, paint violet, forming and universal blue, every machine neutral. */
+function scopeTone(scope: WorkInstructionScope): 'neutral' | 'amber' | 'violet' | 'blue' {
+  return scope === 'all' ? 'neutral' : scope === 'welding' ? 'amber' : scope === 'paint' ? 'violet' : 'blue'
+}
+
+/** A row's icon actions: 44 px each. */
+const ROW_BTN = 'grid h-11 w-11 shrink-0 place-items-center rounded-xl text-muted transition-colors'
+
 export function WorkInstructionsSection() {
   const queryClient = useQueryClient()
   const { role } = useAuth()
@@ -58,6 +70,9 @@ export function WorkInstructionsSection() {
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const canManage = can(role, 'manage-admin-data')
+  // On a phone each document is a card; from 640 px the table, its Actions column kept in view while the rest
+  // scrolls under it, and a tap on a row opens the document.
+  const phone = useMediaQuery(PHONE)
 
   const sorted = useMemo(
     () =>
@@ -75,6 +90,45 @@ export function WorkInstructionsSection() {
     { key: 'step', value: (w) => WORK_INSTRUCTION_STEP_LABEL[w.step] },
     { key: 'file', value: (w) => w.uploadedByName, noValues: false },
   ])
+
+  const openEdit = (w: WorkInstruction) => {
+    setEditing(w)
+    setEditDraft({ title: w.title, issueNo: w.issueNo, issueDate: w.issueDate?.slice(0, 10) ?? '', process: w.process, step: w.step })
+  }
+
+  /** Open, then for a document in force that may be managed: Edit, a new issue, Remove. */
+  const actions = (w: WorkInstruction, superseded: boolean) => (
+    <>
+      <button type="button" onClick={() => setViewing(w)} aria-label={`Open ${w.code}`} className={cn(ROW_BTN, 'hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800')}>
+        <Eye className="h-4 w-4" />
+      </button>
+      {canManage && !superseded && (
+        <>
+          <button type="button" onClick={() => openEdit(w)} aria-label={`Edit ${w.code}`} className={cn(ROW_BTN, 'hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800')}>
+            <Pencil className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setUpload({ ...emptyDraft(), code: w.code, title: w.title, process: w.process, step: w.step })}
+            aria-label={`Upload a new issue of ${w.code}`}
+            className={cn(ROW_BTN, 'hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800')}
+          >
+            <UploadCloud className="h-4 w-4" />
+          </button>
+          <button type="button" disabled={busy} onClick={() => setRemoving(w)} aria-label={`Remove ${w.code}`} className={cn(ROW_BTN, 'hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10')}>
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </>
+      )}
+    </>
+  )
+
+  /** The file, by whom and when: a column of its own on a wide screen, a line under the title elsewhere. */
+  const fileLine = (w: WorkInstruction) => (
+    <>
+      {sizeLabel(w.byteSize)} · {w.uploadedByName} · <When iso={w.uploadedAt} />
+    </>
+  )
 
   async function submitUpload() {
     if (!upload) return
@@ -164,9 +218,40 @@ export function WorkInstructionsSection() {
           </div>
         ) : sorted.length === 0 ? (
           <EmptyState icon={<FileText className="h-10 w-10" />} title="No work instructions yet" hint="Upload a PDF and choose the process and step it belongs to." />
+        ) : phone ? (
+          <ul className="space-y-2">
+            {view.rows.map((w) => {
+              const superseded = !!w.supersededAt
+              return (
+                <li key={w.id} className={cn('rounded-2xl p-3 ring-1 ring-slate-200 dark:ring-slate-800', superseded && 'opacity-70')}>
+                  <button type="button" onClick={() => setViewing(w)} aria-label={`Open ${w.code}`} className="block min-h-[44px] w-full text-left">
+                    <span className="block font-mono text-[13px] font-semibold">{w.code}</span>
+                    <span className="block text-sm font-semibold" dir="auto">
+                      {w.title}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-muted">{fileLine(w)}</span>
+                  </button>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+                    <Badge tone={scopeTone(w.process)}>{SCOPE_LABEL[w.process]}</Badge>
+                    <Badge tone="neutral">{WORK_INSTRUCTION_STEP_LABEL[w.step]}</Badge>
+                    <span className="tabular-nums text-muted">
+                      Issue {w.issueNo || '—'}
+                      {w.issueDate && ` · ${w.issueDate.slice(0, 10)}`}
+                    </span>
+                    {superseded && (
+                      <Badge tone="neutral">
+                        Superseded <When iso={w.supersededAt ?? undefined} />
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-1 flex justify-end gap-0.5">{actions(w, superseded)}</div>
+                </li>
+              )
+            })}
+          </ul>
         ) : (
-          <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
-            <table className="w-full min-w-[60rem] text-sm">
+          <ScrollX className="rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800" innerClassName="rounded-2xl" shadows="start">
+            <table className="table-sticky-last w-full min-w-[52rem] text-sm xl:min-w-[64rem]">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
                 <tr>
                   <ViewTh view={view} column="code" label="Code" className="px-3 py-2.5 font-bold" />
@@ -174,72 +259,52 @@ export function WorkInstructionsSection() {
                   <ViewTh view={view} column="issue" label="Issue" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="scope" label="Applies to" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="step" label="Step" className="px-3 py-2.5 font-bold" />
-                  <ViewTh view={view} column="file" label="File" className="px-3 py-2.5 font-bold" />
-                  <th className="px-3 py-2.5 text-right font-bold">Actions</th>
+                  <ViewTh view={view} column="file" label="File" className="hidden px-3 py-2.5 font-bold xl:table-cell" />
+                  <th className={cn(STICKY_TH, 'px-3 py-2.5 text-right font-bold')}>Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {view.rows.map((w) => {
                   const superseded = !!w.supersededAt
                   return (
-                    <tr key={w.id} className={superseded ? 'opacity-60' : 'hover:bg-slate-50/70 dark:hover:bg-slate-800/40'}>
-                      <td className="px-3 py-2.5 font-mono text-[13px] font-semibold">{w.code}</td>
-                      <td className="max-w-[24rem] px-3 py-2.5">
-                        <span className="block truncate font-semibold" data-tip={w.title}>
+                    <tr
+                      key={w.id}
+                      onClick={(e) => {
+                        if (!clickedControl(e)) setViewing(w)
+                      }}
+                      className={cn('cursor-pointer', superseded ? 'opacity-60' : 'hover:bg-slate-50/70 dark:hover:bg-slate-800/40')}
+                    >
+                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[13px] font-semibold">{w.code}</td>
+                      <td className="min-w-[16rem] max-w-[26rem] px-3 py-2.5">
+                        {/* Two lines at most, in full: a title cut to one line was only readable under a mouse. */}
+                        <span className="line-clamp-2 font-semibold" dir="auto">
                           {w.title}
                         </span>
-                        {superseded && <Badge tone="neutral">Superseded <When iso={w.supersededAt ?? undefined} /></Badge>}
+                        <span className="block text-xs text-muted xl:hidden">{fileLine(w)}</span>
+                        {superseded && (
+                          <Badge tone="neutral" className="mt-1">
+                            Superseded <When iso={w.supersededAt ?? undefined} />
+                          </Badge>
+                        )}
                       </td>
-                      <td className="px-3 py-2.5 tabular-nums">
+                      <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">
                         {w.issueNo || '—'}
                         {w.issueDate && <span className="block text-xs text-muted">{w.issueDate.slice(0, 10)}</span>}
                       </td>
                       <td className="px-3 py-2.5">
-                        <Badge tone={w.process === 'all' ? 'neutral' : w.process === 'welding' ? 'amber' : w.process === 'paint' ? 'violet' : 'blue'}>{SCOPE_LABEL[w.process]}</Badge>
+                        <Badge tone={scopeTone(w.process)}>{SCOPE_LABEL[w.process]}</Badge>
                       </td>
-                      <td className="px-3 py-2.5">{WORK_INSTRUCTION_STEP_LABEL[w.step]}</td>
-                      <td className="px-3 py-2.5 text-xs text-muted">
-                        {sizeLabel(w.byteSize)} · {w.uploadedByName} · <When iso={w.uploadedAt} />
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <div className="inline-flex gap-1">
-                          <button type="button" onClick={() => setViewing(w)} aria-label={`Open ${w.code}`} className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800">
-                            <Eye className="h-4 w-4" />
-                          </button>
-                          {canManage && !superseded && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditing(w)
-                                  setEditDraft({ title: w.title, issueNo: w.issueNo, issueDate: w.issueDate?.slice(0, 10) ?? '', process: w.process, step: w.step })
-                                }}
-                                aria-label={`Edit ${w.code}`}
-                                className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setUpload({ ...emptyDraft(), code: w.code, title: w.title, process: w.process, step: w.step })}
-                                aria-label={`Upload a new issue of ${w.code}`}
-                                className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
-                              >
-                                <UploadCloud className="h-4 w-4" />
-                              </button>
-                              <button type="button" disabled={busy} onClick={() => setRemoving(w)} aria-label={`Remove ${w.code}`} className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10">
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </>
-                          )}
-                        </div>
+                      <td className="whitespace-nowrap px-3 py-2.5">{WORK_INSTRUCTION_STEP_LABEL[w.step]}</td>
+                      <td className="hidden whitespace-nowrap px-3 py-2.5 text-xs text-muted xl:table-cell">{fileLine(w)}</td>
+                      <td className="px-2 py-1 text-right">
+                        <div className="inline-flex gap-0.5">{actions(w, superseded)}</div>
                       </td>
                     </tr>
                   )
                 })}
               </tbody>
             </table>
-          </div>
+          </ScrollX>
         )}
       </Card>
 

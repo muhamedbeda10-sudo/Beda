@@ -3,7 +3,11 @@
 
 import { cn } from '@/lib/utils'
 
-/** Named by the element `labelledBy` points at, or by `label` where no such element is on screen. `tip`: its tooltip. */
+/**
+ * Named by the element `labelledBy` points at, or by `label` where no such element is on screen. `tip`: its tooltip.
+ * Drawn 28 px tall, as a switch is; the invisible `before:` box around it takes a tap 8 px further out, so a finger
+ * has a 44 px target. A row that holds the switch inside a <label> toggles it from anywhere on the row as well.
+ */
 export function AiSwitch({
   on,
   onChange,
@@ -30,7 +34,7 @@ export function AiSwitch({
       disabled={disabled}
       onClick={() => onChange(!on)}
       className={cn(
-        'relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:opacity-50 dark:focus-visible:ring-offset-slate-900',
+        "relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors before:absolute before:-inset-2 before:content-[''] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:opacity-50 dark:focus-visible:ring-offset-slate-900",
         on ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-600',
       )}
     >

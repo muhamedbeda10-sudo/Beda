@@ -587,7 +587,13 @@ function RecipientsField({
                 <span dir="auto" className={cn('truncate', r.invalid && 'line-through decoration-rose-400')}>
                   {r.label}
                 </span>
-                <button type="button" onClick={() => remove(key)} aria-label={`Remove ${r.label}`} className="grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-black/5 dark:hover:bg-white/10 touch:h-9 touch:w-9">
+                {/* 28 px under a mouse; with a finger 36 px drawn and a 44 px target around it. */}
+                <button
+                  type="button"
+                  onClick={() => remove(key)}
+                  aria-label={`Remove ${r.label}`}
+                  className="relative grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-black/5 dark:hover:bg-white/10 touch:h-9 touch:w-9 touch:before:absolute touch:before:-inset-1"
+                >
                   <X className="h-3.5 w-3.5" />
                 </button>
               </li>

@@ -86,7 +86,7 @@ export default function AiPanel() {
 
   return (
     <>
-      <header className="flex shrink-0 items-center gap-1.5 border-b border-slate-100 px-3 py-2.5 dark:border-slate-800">
+      <header className="flex shrink-0 items-center gap-1 border-b border-slate-100 px-3 py-2.5 dark:border-slate-800 sm:gap-1.5">
         <BotMark size="md" className="me-1 hidden sm:grid" />
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-bold leading-tight">AI assistant</h2>
@@ -104,7 +104,8 @@ export default function AiPanel() {
         <button type="button" onClick={toReports} className={cn(HEAD_BTN, view === 'reports' && HEAD_ON)} aria-label="My reports" aria-pressed={view === 'reports'} data-tip="My reports">
           <FileChartColumn className="h-5 w-5" />
         </button>
-        <button type="button" onClick={toPage} className={cn(HEAD_BTN, 'hidden sm:grid')} aria-label="Expand to a full page" data-tip="Expand to a full page">
+        {/* On a phone too: the full page has a phone's shape (the list, then the conversation). */}
+        <button type="button" onClick={toPage} className={HEAD_BTN} aria-label="Expand to a full page" data-tip="Expand to a full page">
           <Maximize2 className="h-[18px] w-[18px]" />
         </button>
         <button type="button" onClick={() => setOpen(false)} className={HEAD_BTN} aria-label="Close the assistant" data-tip="Close (Esc)">

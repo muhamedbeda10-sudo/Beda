@@ -1,10 +1,10 @@
-// The app's sections: the work an inspector does, and administration behind
-// the gear. Each is shown only to someone who may use it — by role, or, for
-// the AI assistant's settings, to the one person who owns the assistant, and
-// for automations (§21), to the people who may create them; follow-ups (§21)
-// to whoever has some, or may see everyone's.
+// The app's sections: the work an inspector does, the inspector's tools, and
+// administration behind the gear. Each is shown only to someone who may use it
+// — by role, or, for the AI assistant's settings, to the one person who owns
+// the assistant, and for automations (§21), to the people who may create them;
+// follow-ups (§21) to whoever has some, or may see everyone's.
 
-import { BellRing, Bot, ClipboardCheck, History, LayoutDashboard, ListChecks, ScrollText, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users, Zap } from 'lucide-react'
+import { BellRing, Bot, ClipboardCheck, FileText, History, LayoutDashboard, ListChecks, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users, Zap } from 'lucide-react'
 import { can, type Capability } from '@qc/shared/rules'
 import type { Role } from '@qc/shared/types'
 
@@ -32,6 +32,16 @@ export const NAV: NavItem[] = [
   { to: '/follow-ups', label: 'Follow-ups', icon: ListChecks, followUps: true },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
   { to: '/automations', label: 'Automations', icon: Zap, automations: true },
+]
+
+/**
+ * The tools an inspector opens from the board (its Coil search and New PDI
+ * buttons), named again in the menu: on a tablet or phone the menu is where
+ * someone looks for a place to go, and a button on one page is easy to miss.
+ */
+export const TOOLS_NAV: NavItem[] = [
+  { to: '/coils', label: 'Coil search', icon: Search, needs: 'record-inspection' },
+  { to: '/pdi', label: 'New PDI', icon: FileText, needs: 'record-inspection' },
 ]
 
 /** Administration, behind the gear. */

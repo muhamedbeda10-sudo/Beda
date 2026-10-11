@@ -3,12 +3,13 @@
 // be examined: pinch or wheel to zoom, drag to move, double-tap to fill the
 // screen, swipe sideways between photos and down to put them away. Touch and
 // mouse go through the same pointer events, so a tablet on the floor and a
-// desktop in the office behave alike.
+// desktop in the office behave alike. Where the photos can be changed, the
+// viewer also offers to remove the one on screen.
 // ============================================================================
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronLeft, ChevronRight, RotateCw, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RotateCw, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { lockBodyScroll } from '@/lib/utils'
 
 /** Minimal shape the viewer needs — decoupled from any storage model. */
@@ -35,12 +36,23 @@ export function Lightbox({
   images,
   startIndex = 0,
   onClose,
+  onRemove,
 }: {
   images: ViewableImage[]
   startIndex?: number
   onClose: () => void
+  /**
+   * Given where the photos can be changed: a "Remove photo" button, which
+   * passes the index of the photo on screen. The caller removes it, and
+   * decides whether the viewer stays open on the rest.
+   */
+  onRemove?: (index: number) => void
 }) {
   const [idx, setIdx] = useState(startIndex)
+  // A photo removed from under the viewer shortens the list: stay on the last one rather than past the end.
+  useEffect(() => {
+    if (images.length > 0 && idx > images.length - 1) setIdx(images.length - 1)
+  }, [idx, images.length])
   const [zoom, setZoom] = useState(1)
   const [rot, setRot] = useState(0)
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
@@ -248,7 +260,7 @@ export function Lightbox({
   }
 
   if (images.length === 0) return null
-  const img = images[idx]
+  const img = images[Math.min(idx, images.length - 1)]
   // Black behind the photo while it is being read; swiping it away at full
   // view fades that black with the movement, so the page reappears underneath.
   const backdrop = zoom === 1 ? Math.max(0, 1 - Math.abs(pan.y) / 420) : 1
@@ -361,23 +373,36 @@ export function Lightbox({
         )}
       </div>
 
-      {/* Thumbnails */}
-      {images.length > 1 && (
-        <div className="flex gap-2 overflow-x-auto px-3 py-2 safe-bottom">
-          {images.map((im, i) => (
+      {/* Thumbnails, and the way to remove the photo on screen */}
+      {(images.length > 1 || onRemove) && (
+        <div className="flex items-center gap-2 px-3 py-2 safe-bottom">
+          {images.length > 1 && (
+            <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+              {images.map((im, i) => (
+                <button
+                  key={im.id}
+                  onClick={() => {
+                    setSmooth(false)
+                    setIdx(i)
+                    reset()
+                  }}
+                  className={`h-14 w-14 shrink-0 overflow-hidden rounded-lg ring-2 transition-opacity ${i === idx ? 'ring-brand-500' : 'opacity-60 ring-transparent'}`}
+                  aria-label={`Photo ${i + 1}`}
+                >
+                  <img src={im.dataUrl} alt="" className="h-full w-full object-cover" />
+                </button>
+              ))}
+            </div>
+          )}
+          {onRemove && (
             <button
-              key={im.id}
-              onClick={() => {
-                setSmooth(false)
-                setIdx(i)
-                reset()
-              }}
-              className={`h-14 w-14 shrink-0 overflow-hidden rounded-lg ring-2 transition-opacity ${i === idx ? 'ring-brand-500' : 'opacity-60 ring-transparent'}`}
-              aria-label={`Photo ${i + 1}`}
+              type="button"
+              onClick={() => onRemove(Math.min(idx, images.length - 1))}
+              className="ms-auto inline-flex min-h-[44px] shrink-0 items-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-semibold text-white transition-colors hover:bg-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-white active:bg-rose-700"
             >
-              <img src={im.dataUrl} alt="" className="h-full w-full object-cover" />
+              <Trash2 className="h-4 w-4" /> Remove photo
             </button>
-          ))}
+          )}
         </div>
       )}
     </div>,

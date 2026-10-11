@@ -2,13 +2,17 @@
 // A table the person shapes like a spreadsheet: columns dragged wider on a
 // desktop so a long item name can be read in the row, and columns hidden
 // so the ones that matter today get the width. Both are remembered on this
-// device per table. A tablet or phone never sees the drag handles (no fine
-// pointer to drag them with; the table keeps its automatic layout there)
-// but can still choose which columns to show.
+// device per table. Wherever the table shows (a tablet held upright and
+// wider) it keeps its fixed layout at the declared widths, so a long machine
+// name is cut to its column instead of pushing the status and the figures off
+// the screen; only the drag handles want a mouse and a desktop's room. A
+// narrower screen starts with a lean set of columns, and anyone can choose
+// which columns to show.
 // ============================================================================
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from 'react'
 import { Check, Columns3, RotateCcw, Scaling } from 'lucide-react'
+import { useMediaQuery } from '@/lib/media'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn } from '@/lib/utils'
 
@@ -28,9 +32,16 @@ export interface ColumnDef {
   defaultHidden?: boolean
   /** The flexible text column (the item): it takes the width the others leave, so the table has no gaps between columns. */
   flex?: boolean
+  /**
+   * In the lean set a screen narrower than 1180 px starts with — a tablet held upright, a small window: the columns a
+   * glance needs, few enough that the row's status is in view without scrolling. A table with no lean column shows its
+   * everyday set at every width.
+   */
+  lean?: boolean
 }
 
-interface Stored {
+/** What a table keeps on this device: the widths dragged, and the columns shown or hidden by choice. */
+export interface Stored {
   widths: Record<string, number>
   /** Only the columns the person changed from their default: true shown, false hidden. */
   shown: Record<string, boolean>
@@ -38,29 +49,34 @@ interface Stored {
 
 const DEFAULT_MIN = 56
 const MAX_WIDTH = 1200
-const DESKTOP = '(min-width: 1024px) and (pointer: fine)'
+/** Where the pages show the table rather than their phone cards (`md:`): from here it keeps its fixed layout. */
+export const TABLE_QUERY = '(min-width: 768px)'
+/** Dragging a column's edge wants a mouse and a desktop's room: a finger has no edge to grab, and a tablet no width to spare. */
+export const HANDLES_QUERY = '(min-width: 1024px) and (pointer: fine)'
+/** Narrower than an iPad Air on its side (1180 px): the table starts with its lean set. */
+export const LEAN_QUERY = 'not all and (min-width: 1180px)'
 
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => typeof window !== 'undefined' && window.matchMedia?.(query).matches)
-  useEffect(() => {
-    const mq = window.matchMedia?.(query)
-    if (!mq) return
-    const onChange = () => setMatches(mq.matches)
-    onChange()
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
-  }, [query])
-  return matches
+/** Whether a column shows until the person says otherwise: the everyday set, or the lean set on a narrower screen. */
+export function shownByDefault(c: ColumnDef, lean = false): boolean {
+  if (c.hideable === false) return true
+  return lean ? !!c.lean : !c.defaultHidden
 }
 
-const shownByDefault = (c: ColumnDef) => c.hideable === false || !c.defaultHidden
+/** The columns on screen: each as the person set it, otherwise as its default for the width. */
+export function visibleWith(columns: ColumnDef[], shown: Record<string, boolean>, lean = false): ColumnDef[] {
+  return columns.filter((c) => (c.hideable === false ? true : (shown[c.key] ?? shownByDefault(c, lean))))
+}
 
-function visibleWith(columns: ColumnDef[], shown: Record<string, boolean>): ColumnDef[] {
-  return columns.filter((c) => (c.hideable === false ? true : (shown[c.key] ?? shownByDefault(c))))
+/**
+ * Whether a choice for a column is worth keeping: it differs from the column's default at some width. A choice is
+ * kept as made, so a column ticked on a tablet held upright is still there when it turns on its side.
+ */
+function matters(c: ColumnDef, value: boolean, columns: ColumnDef[]): boolean {
+  return value !== shownByDefault(c) || (columns.some((x) => x.lean) && value !== shownByDefault(c, true))
 }
 
 /** Whatever was saved, made safe: unknown keys dropped, widths clamped, at least one column left visible. */
-function sanitise(raw: unknown, columns: ColumnDef[]): Stored {
+export function sanitise(raw: unknown, columns: ColumnDef[], lean = false): Stored {
   const out: Stored = { widths: {}, shown: {} }
   if (!raw || typeof raw !== 'object') return out
   const r = raw as Partial<Stored> & { hidden?: unknown }
@@ -73,17 +89,22 @@ function sanitise(raw: unknown, columns: ColumnDef[]): Stored {
   for (const c of columns) {
     if (c.hideable === false) continue
     const v = shown[c.key]
-    if (typeof v === 'boolean' && v !== shownByDefault(c)) out.shown[c.key] = v
+    if (typeof v === 'boolean' && matters(c, v, columns)) out.shown[c.key] = v
   }
   // An earlier save kept a list of hidden keys; read it once, the same way.
   if (Array.isArray(r.hidden)) for (const k of r.hidden) if (typeof k === 'string' && columns.some((c) => c.key === k && c.hideable !== false && shownByDefault(c))) out.shown[k] = false
-  if (visibleWith(columns, out.shown).every((c) => c.hideable === false)) out.shown = {}
+  if (visibleWith(columns, out.shown, lean).every((c) => c.hideable === false)) out.shown = {}
   return out
 }
 
 export interface ResizableColumns {
-  /** True on a desktop with a mouse: fixed layout and handles. False elsewhere: the table lays itself out. */
+  /**
+   * True wherever the table shows (a tablet held upright and wider, any pointer): fixed layout at the declared
+   * widths, each cell cut to its column. False below, where the page shows its cards instead.
+   */
   enabled: boolean
+  /** True on a desktop with a mouse: the drag handles and "Fit columns to content". */
+  handles: boolean
   /** The columns on screen, in order. */
   visible: ColumnDef[]
   /** Every column, for the picker. */
@@ -111,10 +132,13 @@ export interface ResizableColumns {
 }
 
 export function useResizableColumns(storageKey: string, columns: ColumnDef[]): ResizableColumns {
-  const enabled = useMediaQuery(DESKTOP)
+  const enabled = useMediaQuery(TABLE_QUERY)
+  const handles = useMediaQuery(HANDLES_QUERY)
+  const narrow = useMediaQuery(LEAN_QUERY)
+  const lean = narrow && columns.some((c) => c.lean)
   const [raw, setRaw] = usePersistedState<Partial<Stored>>(storageKey, { widths: {}, shown: {} })
-  const stored = useMemo(() => sanitise(raw, columns), [raw, columns])
-  const setStored = useCallback((fn: (prev: Stored) => Stored) => setRaw((prev) => fn(sanitise(prev, columns))), [setRaw, columns])
+  const stored = useMemo(() => sanitise(raw, columns, lean), [raw, columns, lean])
+  const setStored = useCallback((fn: (prev: Stored) => Stored) => setRaw((prev) => fn(sanitise(prev, columns, lean))), [setRaw, columns, lean])
   const [dragging, setDragging] = useState<string | null>(null)
   const drag = useRef<{ key: string; startX: number; startWidth: number; min: number } | null>(null)
   const table = useRef<HTMLTableElement | null>(null)
@@ -123,7 +147,7 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
   }, [])
   const [fitting, setFitting] = useState(false)
 
-  const visible = useMemo(() => visibleWith(columns, stored.shown), [columns, stored.shown])
+  const visible = useMemo(() => visibleWith(columns, stored.shown, lean), [columns, stored.shown, lean])
   const visibleKeys = useMemo(() => new Set(visible.map((c) => c.key)), [visible])
   const isVisible = useCallback((key: string) => visibleKeys.has(key), [visibleKeys])
 
@@ -157,7 +181,7 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
 
   const start = useCallback(
     (key: string, e: ReactPointerEvent<HTMLSpanElement>) => {
-      if (!widths || e.button !== 0) return
+      if (!widths || !handles || e.button !== 0) return
       e.preventDefault()
       e.stopPropagation()
       const col = columns.find((c) => c.key === key)
@@ -169,7 +193,7 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
       window.addEventListener('pointerup', onPointerUp)
       window.addEventListener('pointercancel', onPointerUp)
     },
-    [widths, columns, onPointerMove, onPointerUp],
+    [widths, handles, columns, onPointerMove, onPointerUp],
   )
 
   /** Back to the starting width for one column. */
@@ -188,22 +212,23 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
       setStored((prev) => {
         const col = columns.find((c) => c.key === key)
         if (!col || col.hideable === false) return prev
-        const now = visibleWith(columns, prev.shown).some((c) => c.key === key)
+        const now = visibleWith(columns, prev.shown, lean).some((c) => c.key === key)
         const shown = { ...prev.shown }
-        if (!now === shownByDefault(col)) delete shown[key]
-        else shown[key] = !now
+        // Kept as chosen, at every width; a choice that changes nothing at any width is not kept at all.
+        if (matters(col, !now, columns)) shown[key] = !now
+        else delete shown[key]
         // The last visible column stays: an empty table says nothing.
-        if (visibleWith(columns, shown).every((c) => c.hideable === false)) return prev
+        if (visibleWith(columns, shown, lean).every((c) => c.hideable === false)) return prev
         return { ...prev, shown }
       }),
-    [setStored, columns],
+    [setStored, columns, lean],
   )
   const resetAll = useCallback(() => setStored(() => ({ widths: {}, shown: {} })), [setStored])
 
   // Fit: one render with the table's own layout, then every header's width is read and kept.
   const autoFit = useCallback(() => {
-    if (enabled) setFitting(true)
-  }, [enabled])
+    if (enabled && handles) setFitting(true)
+  }, [enabled, handles])
   useLayoutEffect(() => {
     if (!fitting) return
     const el = table.current
@@ -249,7 +274,7 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
 
   const handle = useCallback(
     (key: string) =>
-      widths ? (
+      widths && handles ? (
         <span
           role="separator"
           aria-orientation="vertical"
@@ -268,15 +293,15 @@ export function useResizableColumns(storageKey: string, columns: ColumnDef[]): R
           )}
         />
       ) : null,
-    [widths, start, resetWidth, dragging],
+    [widths, handles, start, resetWidth, dragging],
   )
 
-  return { enabled, visible, columns, isVisible, toggle, resetAll, customised, tableStyle, colgroup, handle, dragging, tableRef, autoFit, fitting }
+  return { enabled, handles, visible, columns, isVisible, toggle, resetAll, customised, tableStyle, colgroup, handle, dragging, tableRef, autoFit, fitting }
 }
 
 /** Sizes every column to its content; a desktop control, beside the picker. */
 export function FitColumnsButton({ grid, className }: { grid: ResizableColumns; className?: string }) {
-  if (!grid.enabled) return null
+  if (!grid.handles) return null
   return (
     <button type="button" onClick={grid.autoFit} className={cn('btn-secondary min-h-[40px] px-3 text-xs', className)} data-tip="Size every column to what is in it">
       <Scaling className="h-4 w-4" /> Fit columns
@@ -285,13 +310,41 @@ export function FitColumnsButton({ grid, className }: { grid: ResizableColumns; 
 }
 
 /**
- * The frame a wide table scrolls in. Its height runs from where it sits on
- * the page to the bottom of the window, so the header stays put and both
- * scrollbars are on screen however many columns are shown, rather than
- * under the end of the page.
+ * The room what follows `el` takes on the page, down to the end of <main>: at each level, from the box's own bottom
+ * to the bottom of its last sibling below it (a list's footer and the gap above it), then the padding and border that
+ * close the box around it — main's bottom padding and a phone's safe area among them. None of it depends on how tall
+ * `el` is, so a frame can be sized to leave exactly that room under it.
  */
-/** `reserve` keeps room under the frame for what follows it on screen (the list's footer). */
-export function GridFrame({ children, className, reserve = 0 }: { children: ReactNode; className?: string; reserve?: number }) {
+export function spaceAfter(el: Element): number {
+  let total = 0
+  let node: Element = el
+  while (node.parentElement && node !== document.body) {
+    const parent: Element = node.parentElement
+    const from = node.getBoundingClientRect().bottom
+    let to = from
+    for (let sib = node.nextElementSibling; sib; sib = sib.nextElementSibling) {
+      // Nothing drawn (display: none, the phone cards on a tablet), or out of the flow (a portal's anchor, a popover).
+      if (sib.getClientRects().length === 0) continue
+      const position = getComputedStyle(sib).position
+      if (position === 'absolute' || position === 'fixed') continue
+      to = Math.max(to, sib.getBoundingClientRect().bottom)
+    }
+    const box = getComputedStyle(parent)
+    total += to - from + (parseFloat(box.paddingBottom) || 0) + (parseFloat(box.borderBottomWidth) || 0)
+    if (parent.tagName === 'MAIN') break
+    node = parent
+  }
+  return total
+}
+
+/**
+ * The frame a wide table scrolls in. Its height runs from where it sits on
+ * the page to the bottom of the window, less what follows it (the list's
+ * footer, the page's bottom padding), so the header stays put, both
+ * scrollbars are on screen however many columns are shown, and the page
+ * itself ends with the window instead of scrolling a little further.
+ */
+export function GridFrame({ children, className }: { children: ReactNode; className?: string }) {
   const ref = useRef<HTMLDivElement>(null)
   const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined)
   useLayoutEffect(() => {
@@ -300,17 +353,19 @@ export function GridFrame({ children, className, reserve = 0 }: { children: Reac
     const measure = () => {
       // Where the frame starts when the page is at its top, whatever the page is scrolled to now.
       const top = el.getBoundingClientRect().top + window.scrollY
-      setMaxHeight(Math.max(256, Math.round(window.innerHeight - top - 24 - reserve)))
+      setMaxHeight(Math.max(256, Math.floor(window.innerHeight - top - spaceAfter(el))))
     }
     measure()
     window.addEventListener('resize', measure)
+    // The page's content, not the window: a row of filter chips above the frame, or a footer that wraps below it,
+    // moves the room the frame has.
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
-    ro?.observe(document.body)
+    ro?.observe(el.closest('main') ?? document.body)
     return () => {
       window.removeEventListener('resize', measure)
       ro?.disconnect()
     }
-  }, [reserve])
+  }, [])
   return (
     <div ref={ref} className={cn('grid-scroll', className)} style={{ maxHeight }}>
       {children}
@@ -379,7 +434,7 @@ export function ColumnPicker({ grid, className }: { grid: ResizableColumns; clas
             })}
           </ul>
           <div className="mt-1 border-t border-slate-100 pt-1 dark:border-slate-800">
-            {grid.enabled && (
+            {grid.handles && (
               <button
                 type="button"
                 role="menuitem"
@@ -486,7 +541,7 @@ export function TableFooter({
   onMore: () => void
   pageSize: number
   onPageSize: (n: number) => void
-  /** More figures beside the count ("· 2 open · 24 closed"). */
+  /** More figures beside the count ("2 open  25 closed"), set apart by space rather than dots, which a wrapped line would start with. */
   extra?: ReactNode
 }) {
   const of = total ?? shown
@@ -502,15 +557,16 @@ export function TableFooter({
           </>
         )}
       </span>
-      {extra && <span className="flex flex-wrap items-center gap-x-1.5">{extra}</span>}
+      {extra && <span className="flex flex-wrap items-center gap-x-3 gap-y-2">{extra}</span>}
+      {/* A finger gets 44 px for the next page and the page size, as on the PDI list. */}
       {hasMore && (
-        <button type="button" onClick={onMore} disabled={loadingMore} className="btn-secondary h-8 min-h-0 px-3 py-0 text-13">
+        <button type="button" onClick={onMore} disabled={loadingMore} className="btn-secondary h-8 min-h-0 px-3 py-0 text-13 touch:h-11">
           {loadingMore ? 'Loading…' : `Show the next ${Math.min(pageSize, Math.max(0, of - shown) || pageSize).toLocaleString()}`}
         </button>
       )}
       <label className="ml-auto inline-flex items-center gap-2">
         Rows per page
-        <select value={pageSize} onChange={(e) => onPageSize(Number(e.target.value))} className="input h-8 !w-auto py-0 pl-2 pr-7 text-13" aria-label="Rows per page">
+        <select value={pageSize} onChange={(e) => onPageSize(Number(e.target.value))} className="input h-8 !w-auto py-0 pl-2 pr-7 text-13 touch:h-11" aria-label="Rows per page">
           {PAGE_SIZES.map((n) => (
             <option key={n} value={n}>
               {n}

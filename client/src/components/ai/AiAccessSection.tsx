@@ -15,7 +15,10 @@ import { useQueryClient } from '@tanstack/react-query'
 import { BellRing, Loader2, Pencil, Save, Trash2, UserPlus, UsersRound, Zap } from 'lucide-react'
 import { AI_DOMAINS, AI_EFFORTS, AI_MAX_MONTHLY_CAP_USD, AI_MODELS, type AiAccess } from '@qc/shared/ai'
 import { Badge, Button, Card, Drawer, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
+import { ScrollX } from '@/components/ui/ScrollX'
+import { STICKY_TH, clickedControl } from '@/components/admin/MasterDataPanel'
 import { ApiError } from '@/lib/api'
+import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn, formatDateTime } from '@/lib/utils'
 import { removeAiAccess, saveAiAccess } from '@/services/mutations'
 import { useAiAccess, useAiPeople } from '@/services/queries'
@@ -115,13 +118,27 @@ export function AiAccessSection({ appCapUsd }: { appCapUsd: number | undefined }
 
 // ---- The table -----------------------------------------------------------------------
 
-/** The table alone, drawn from the people as sorted (sortAccess). */
+/**
+ * The list alone, drawn from the people as sorted (sortAccess). On a phone a
+ * card per person; from 640 px the table, its actions kept in view while the
+ * rest scrolls under them, Model and Effort shown from a wide screen only
+ * (the editor names them), and a tap on a row opening the editor.
+ */
 export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; onEdit: (row: AiAccess) => void; onRemove: (row: AiAccess) => void }) {
   const th = 'px-3 py-2.5 font-bold'
-  // Positioned, so the screen-reader-only header (absolutely placed) stays inside the scroller instead of widening the page on a phone.
+  const phone = useMediaQuery(PHONE)
+  if (phone) {
+    return (
+      <ul className="space-y-2">
+        {people.map((p) => (
+          <AccessCard key={p.userId} row={p} onEdit={() => onEdit(p)} onRemove={() => onRemove(p)} />
+        ))}
+      </ul>
+    )
+  }
   return (
-    <div className="relative overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
-      <table className="w-full min-w-[66rem] text-sm">
+    <ScrollX className="rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800" innerClassName="rounded-2xl" shadows="start">
+      <table className="table-sticky-last w-full min-w-[52rem] text-sm xl:min-w-[66rem]">
         <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
           <tr>
             <th className={th}>Person</th>
@@ -130,10 +147,10 @@ export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; 
             <th className={th}>Automations</th>
             <th className={th}>Notices</th>
             <th className={th}>Data</th>
-            <th className={th}>Model</th>
-            <th className={th}>Effort</th>
+            <th className={cn(th, 'hidden xl:table-cell')}>Model</th>
+            <th className={cn(th, 'hidden xl:table-cell')}>Effort</th>
             <th className={th}>This month</th>
-            <th className={cn(th, 'text-right')}>
+            <th className={cn(th, STICKY_TH, 'text-right')}>
               <span className="sr-only">Actions</span>
             </th>
           </tr>
@@ -144,7 +161,102 @@ export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; 
           ))}
         </tbody>
       </table>
-    </div>
+    </ScrollX>
+  )
+}
+
+/** Change and Remove for one person: 44 px each. */
+function RowActions({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => void; onRemove: () => void }) {
+  return (
+    <>
+      <button type="button" onClick={onEdit} aria-label={`Change ${row.name}'s access`} data-tip="Change" className={cn(ROW_BTN, 'hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800')}>
+        <Pencil className="h-4 w-4" />
+      </button>
+      <button type="button" onClick={onRemove} aria-label={`Take the assistant from ${row.name}`} data-tip="Remove" className={cn(ROW_BTN, 'hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10')}>
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </>
+  )
+}
+
+/** The person's name, with their standing (the owner, an account that cannot sign in) beside it. */
+function PersonName({ row }: { row: AiAccess }) {
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <span dir="auto" className="font-semibold text-slate-800 dark:text-slate-100">
+        {row.name}
+      </span>
+      {row.owner && (
+        <Badge tone="blue" tip="You: the assistant's owner">
+          You
+        </Badge>
+      )}
+      {!row.active && (
+        <Badge tone="red" tip="This account cannot sign in, so it cannot ask, whatever is set here">
+          Account off
+        </Badge>
+      )}
+    </span>
+  )
+}
+
+/** What the person may ask about, as badges; or that they cannot ask at all. */
+function DomainBadges({ domains }: { domains: AiAccess['domains'] }) {
+  if (domains.length === 0) return <span className="text-xs text-muted">None: cannot ask</span>
+  return (
+    <span className="flex max-w-[16rem] flex-wrap gap-1">
+      {domains.map((d) => (
+        <Badge key={d} tone="neutral" tip={domainTip(d)}>
+          {AI_DOMAIN_SHORT[d]}
+        </Badge>
+      ))}
+    </span>
+  )
+}
+
+function AccessCard({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => void; onRemove: () => void }) {
+  const domains = orderDomains(row.domains)
+  const live = accessLive(row)
+  const notices = noticesAccessView(row)
+  return (
+    <li className={cn('rounded-2xl p-3 ring-1 ring-slate-200 dark:ring-slate-800', !live && 'opacity-70')}>
+      <button type="button" onClick={onEdit} aria-label={`Change ${row.name}'s access`} className="-my-1 flex min-h-[44px] w-full flex-col justify-center text-left">
+        <PersonName row={row} />
+        <span className="block font-mono text-xs text-muted">{row.username}</span>
+      </button>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <Badge tone={ROLE_TONE[row.role] ?? 'neutral'}>{row.role}</Badge>
+        <Badge tone={row.enabled ? 'green' : 'neutral'}>{row.enabled ? 'On' : 'Off'}</Badge>
+        {(row.owner || row.automations) && (
+          <Badge tone="blue" icon={<Zap className="h-3 w-3" />}>
+            Automations
+          </Badge>
+        )}
+        {notices.key === 'can' && (
+          <Badge tone="blue" icon={<BellRing className="h-3 w-3" />}>
+            Notices
+          </Badge>
+        )}
+        {notices.key === 'held' && <span className="text-xs font-medium text-amber-700 dark:text-amber-300">Notices allowed, not in effect</span>}
+      </div>
+      <div className="mt-2">
+        <DomainBadges domains={domains} />
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        {modelName(row.model)} · {effortName(row.effort)} effort
+      </p>
+      <div className="mt-2 flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <SpendBar spent={row.spentUsd} cap={row.monthlyCapUsd} />
+          {!capFitsModel(row.monthlyCapUsd, row.model) && (
+            <span className="mt-1 block text-xs font-medium text-rose-700 dark:text-rose-300">Under the {formatCap(minCapUsd(row.model))} one call may cost: cannot ask</span>
+          )}
+        </div>
+        <span className="flex shrink-0 gap-0.5">
+          <RowActions row={row} onEdit={onEdit} onRemove={onRemove} />
+        </span>
+      </div>
+    </li>
   )
 }
 
@@ -154,23 +266,14 @@ function AccessRow({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => voi
   const live = accessLive(row)
   const notices = noticesAccessView(row)
   return (
-    <tr className={cn('align-top hover:bg-slate-50/70 dark:hover:bg-slate-800/40', !live && 'opacity-70')}>
+    <tr
+      onClick={(e) => {
+        if (!clickedControl(e)) onEdit()
+      }}
+      className={cn('cursor-pointer align-top hover:bg-slate-50/70 dark:hover:bg-slate-800/40', !live && 'opacity-70')}
+    >
       <td className="px-3 py-2.5">
-        <span className="flex flex-wrap items-center gap-1.5">
-          <span dir="auto" className="font-semibold text-slate-800 dark:text-slate-100">
-            {row.name}
-          </span>
-          {row.owner && (
-            <Badge tone="blue" tip="You: the assistant's owner">
-              You
-            </Badge>
-          )}
-          {!row.active && (
-            <Badge tone="red" tip="This account cannot sign in, so it cannot ask, whatever is set here">
-              Account off
-            </Badge>
-          )}
-        </span>
+        <PersonName row={row} />
         <span className="block font-mono text-xs text-muted">{row.username}</span>
       </td>
       <td className="px-3 py-2.5">
@@ -204,22 +307,12 @@ function AccessRow({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => voi
         )}
       </td>
       <td className="px-3 py-2.5">
-        {domains.length > 0 ? (
-          <span className="flex max-w-[16rem] flex-wrap gap-1">
-            {domains.map((d) => (
-              <Badge key={d} tone="neutral" tip={domainTip(d)}>
-                {AI_DOMAIN_SHORT[d]}
-              </Badge>
-            ))}
-          </span>
-        ) : (
-          <span className="text-xs text-muted">None: cannot ask</span>
-        )}
+        <DomainBadges domains={domains} />
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5" data-tip={describeModelPrice(row.model)}>
+      <td className="hidden whitespace-nowrap px-3 py-2.5 xl:table-cell" data-tip={describeModelPrice(row.model)}>
         {modelName(row.model)}
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5">{effortName(row.effort)}</td>
+      <td className="hidden whitespace-nowrap px-3 py-2.5 xl:table-cell">{effortName(row.effort)}</td>
       <td className="px-3 py-2.5">
         <SpendBar spent={row.spentUsd} cap={row.monthlyCapUsd} />
         {/* Below one call's cost they are told every month that the month's limit is reached: say why here. */}
@@ -229,14 +322,9 @@ function AccessRow({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => voi
           </span>
         )}
       </td>
-      <td className="whitespace-nowrap px-3 py-1.5 text-right">
-        <span className="inline-flex gap-1">
-          <button type="button" onClick={onEdit} aria-label={`Change ${row.name}'s access`} data-tip="Change" className={cn(ROW_BTN, 'hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800')}>
-            <Pencil className="h-4 w-4" />
-          </button>
-          <button type="button" onClick={onRemove} aria-label={`Take the assistant from ${row.name}`} data-tip="Remove" className={cn(ROW_BTN, 'hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10')}>
-            <Trash2 className="h-4 w-4" />
-          </button>
+      <td className="whitespace-nowrap px-2 py-1.5 text-right">
+        <span className="inline-flex gap-0.5">
+          <RowActions row={row} onEdit={onEdit} onRemove={onRemove} />
         </span>
       </td>
     </tr>
@@ -261,6 +349,8 @@ function SpendBar({ spent, cap }: { spent: number; cap: number }) {
 // ---- Adding a person, or changing what one has ------------------------------------------
 
 const OPTION = 'flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors has-[:disabled]:cursor-default'
+/** A row with a switch at its end: the whole row is the switch's label, so a tap on its words toggles it too. */
+const SWITCH_ROW = 'flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-slate-200 p-4 dark:border-slate-800 has-[:disabled]:cursor-default'
 const optionTone = (on: boolean) =>
   on ? 'border-brand-300 bg-brand-50/60 dark:border-brand-500/40 dark:bg-brand-500/10' : 'border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50'
 
@@ -394,7 +484,8 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+        {/* Each switch sits in a label: a tap anywhere on its row toggles it, not only on the 48 px switch. */}
+        <label className={SWITCH_ROW}>
           <div className="min-w-0">
             <p id="ai-access-enabled" className="font-semibold">
               Can use the assistant
@@ -402,9 +493,9 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
             <p className="mt-0.5 text-xs text-muted">Off: its button disappears for them at once. Their conversations and reports stay, out of reach until it is back on.</p>
           </div>
           <AiSwitch on={draft.enabled} onChange={(on) => patch({ enabled: on })} labelledBy="ai-access-enabled" disabled={saving} />
-        </div>
+        </label>
 
-        <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+        <label className={SWITCH_ROW}>
           <div className="min-w-0">
             <p id="ai-access-automations" className="font-semibold">
               Can create automations
@@ -416,9 +507,9 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
             </p>
           </div>
           <AiSwitch on={draft.automations} onChange={(on) => patch({ automations: on })} labelledBy="ai-access-automations" disabled={saving || !!row?.owner} />
-        </div>
+        </label>
 
-        <div className={cn('flex items-center justify-between gap-4 rounded-xl border border-slate-200 p-4 dark:border-slate-800', !admin && 'bg-slate-50/70 dark:bg-slate-800/30')}>
+        <label className={cn(SWITCH_ROW, !admin && 'bg-slate-50/70 dark:bg-slate-800/30')}>
           <div className="min-w-0">
             <p id="ai-access-notices" className={cn('font-semibold', !admin && 'text-muted')}>
               Can manage notices
@@ -428,7 +519,7 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
           <span data-tip={!admin && !row?.notices ? NOTICES_ADMIN_ONLY : undefined}>
             <AiSwitch on={draft.notices} onChange={(on) => patch({ notices: on })} labelledBy="ai-access-notices" disabled={noticesLocked} />
           </span>
-        </div>
+        </label>
 
         <fieldset className="space-y-2" disabled={saving}>
           <legend className="label">Data they may ask about</legend>
@@ -440,7 +531,7 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
             {AI_DOMAINS.map((d) => {
               const on = draft.domains.includes(d.id)
               return (
-                <label key={d.id} className={cn(OPTION, optionTone(on))}>
+                <label key={d.id} className={cn(OPTION, 'min-h-[44px]', optionTone(on))}>
                   <input
                     type="checkbox"
                     checked={on}
@@ -502,7 +593,7 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
         <div className="space-y-2">
           <Field
             label="Their monthly cap (USD)"
-            hint={`Theirs alone, per calendar month (UTC), from ${formatCap(minCap)} to ${formatCap(AI_MAX_MONTHLY_CAP_USD)}: one call to ${modelName(draft.model)} may cost up to ${formatCap(minCap)}, and a question goes ahead only while that much is left. Once reached, they are told this month's limit is reached, without an amount.${row ? ` Spent so far this month: ${formatUsd(row.spentUsd)}.` : ''}`}
+            hint={`Theirs alone, per calendar month (UTC), from ${formatCap(minCap)} to ${formatCap(AI_MAX_MONTHLY_CAP_USD)}: one call to ${modelName(draft.model)} may cost up to ${formatCap(minCap)}, and a question goes ahead only while that much is left. Once reached, they are told this month's limit is reached, without an amount.${row ? ` Spent so far this month: ${formatUsd(row.spentUsd)}, ${Math.round(spendShare(row.spentUsd, row.monthlyCapUsd) * 100)}% of the cap set now.` : ''}`}
           >
             <Input
               type="number"

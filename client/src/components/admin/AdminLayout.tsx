@@ -12,6 +12,11 @@ import { cn } from '@/lib/utils'
  * The frame every administration page sits in: a heading, the section
  * switcher on the left, the page on the right. A role that may not use the
  * page sees why instead of an empty screen.
+ *
+ * The switcher is a sidebar from lg (1024 px) only: below that the shell's
+ * menu lists Administration already, and a row of seven pills wrapped into
+ * four lines at the top of every page on a phone, before any content. With
+ * one section alone there is nothing to switch to, so it is left out.
  */
 export function AdminLayout({
   title,
@@ -46,27 +51,29 @@ export function AdminLayout({
       </div>
 
       <div className="lg:flex lg:items-start lg:gap-6">
-        <nav aria-label="Administration sections" className="flex flex-wrap gap-2 pb-2 lg:w-60 lg:shrink-0 lg:flex-col lg:pb-0">
-          {sections.map((s) => (
-            <NavLink
-              key={s.to}
-              to={s.to}
-              className={({ isActive }) =>
-                cn(
-                  'group inline-flex min-h-[48px] shrink-0 items-center gap-3 rounded-2xl px-4 text-sm font-semibold transition-[background-color,color,box-shadow,transform] duration-200 lg:w-full lg:justify-start',
+        {sections.length > 1 && (
+          <nav aria-label="Administration sections" className="hidden w-60 shrink-0 flex-col gap-2 lg:flex">
+            {sections.map((s) => (
+              <NavLink
+                key={s.to}
+                to={s.to}
+                className={({ isActive }) =>
+                  cn(
+                    'group inline-flex min-h-[48px] w-full shrink-0 items-center justify-start gap-3 rounded-2xl px-4 text-sm font-semibold transition-[background-color,color,box-shadow,transform] duration-200',
                   isActive
                     ? 'bg-brand-700 text-white shadow-hover'
-                    : 'bg-white text-slate-600 ring-1 ring-slate-200/80 hover:-translate-y-0.5 hover:text-brand-700 hover:shadow-hover dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-800',
-                )
-              }
-            >
-              <s.icon className="h-4 w-4 shrink-0 transition-transform duration-200 group-hover:scale-110" />
-              <span className="whitespace-nowrap">{s.label}</span>
-            </NavLink>
-          ))}
-        </nav>
+                      : 'bg-white text-slate-600 ring-1 ring-slate-200/80 hover:-translate-y-0.5 hover:text-brand-700 hover:shadow-hover dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-800',
+                  )
+                }
+              >
+                <s.icon className="h-4 w-4 shrink-0 transition-transform duration-200 group-hover:scale-110" />
+                <span className="whitespace-nowrap">{s.label}</span>
+              </NavLink>
+            ))}
+          </nav>
+        )}
 
-        <div className="mt-2 min-w-0 flex-1 lg:mt-0">
+        <div className="min-w-0 flex-1">
           {may ? (
             children
           ) : (

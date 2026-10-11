@@ -248,7 +248,7 @@ function AutomationView({ a }: { a: Automation }) {
           </Figure>
           <Figure label="Open follow-ups" icon={<ListChecks className="h-4 w-4" />}>
             {a.openFollowUps > 0 ? (
-              <Link to={`/follow-ups?automationId=${encodeURIComponent(a.id)}`} className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
+              <Link to={`/follow-ups?automationId=${encodeURIComponent(a.id)}`} className="inline-flex items-center font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
                 {a.openFollowUps.toLocaleString()} open
               </Link>
             ) : (

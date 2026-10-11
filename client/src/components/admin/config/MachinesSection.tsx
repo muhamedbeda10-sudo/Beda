@@ -69,6 +69,8 @@ export function MachinesSection() {
         {
           key: 'displayName',
           label: 'Shown as',
+          // Code and name again, joined: worth a column only where there is room for one.
+          hideBelow: 'xl',
           render: (r) => <span className="font-semibold">{r.displayName}</span>,
         },
       ]}

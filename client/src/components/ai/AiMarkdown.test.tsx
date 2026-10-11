@@ -99,8 +99,9 @@ describe('an answer’s markdown', () => {
     const html = render('| Machine | Pieces |\n|---|---|\n| RF-01 | 12 |\n| RF-02 | 7 |\n\n```sql\nSELECT 1\n```')
     expect(html).toMatch(/<table dir="ltr"/)
     expect(html).toContain('2 rows')
-    expect(html).toContain('Copy table')
-    expect(html).toContain('Export Excel')
+    // "Copy table" and "Export Excel", the second word of each left out in a narrow frame (a container query).
+    expect(html).toMatch(/Copy<span class="[^"]*hidden"> table<\/span><\/button>/)
+    expect(html).toMatch(/<span class="[^"]*hidden">Export <\/span>Excel<\/button>/)
     expect(html).toContain('aria-label="Copy the code"')
     // Copy sits in a strip over the code, naming its language — never over a line of it.
     expect(html).toMatch(/>sql<\/span><button type="button" aria-label="Copy the code"[^>]*>.*Copy<\/button><\/div><pre dir="ltr"/)

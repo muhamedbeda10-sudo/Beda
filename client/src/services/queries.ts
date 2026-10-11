@@ -257,6 +257,14 @@ export function useSampleDetail(sampleId: string | null) {
   return useQuery({ queryKey: keys.sample(sampleId ?? ''), queryFn: () => api<SampleDetail>(`/samples/${sampleId}`), enabled: !!sampleId })
 }
 
+/**
+ * One sample's full record, from the cache or the API, for a link that knows the sample but not its session (a coil's
+ * "Used in"). Cached under the key History's sample view reads, so the view it opens is already filled.
+ */
+export function fetchSampleDetail(qc: QueryClient, sampleId: string): Promise<SampleDetail> {
+  return qc.fetchQuery({ queryKey: keys.sample(sampleId), queryFn: () => api<SampleDetail>(`/samples/${sampleId}`) })
+}
+
 // ---- Orders & coils --------------------------------------------------------
 
 export function useOrderSearch(term: string, limit = 40, enabled = true) {

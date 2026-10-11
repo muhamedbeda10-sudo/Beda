@@ -54,7 +54,7 @@ export function LoginPage() {
                     key={m}
                     type="button"
                     onClick={() => setMode(m)}
-                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-colors touch:min-h-[44px] ${
                       mode === m ? 'bg-white text-brand-600 shadow-sm dark:bg-slate-700 dark:text-white' : 'text-muted'
                     }`}
                   >

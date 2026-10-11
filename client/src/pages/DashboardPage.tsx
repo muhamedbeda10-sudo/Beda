@@ -4,7 +4,7 @@
 // manager would say about them. Administrators only.
 // ============================================================================
 
-import { Fragment, createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -33,6 +33,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  SlidersHorizontal,
   Undo2,
   Ruler,
   ShieldAlert,
@@ -51,12 +52,13 @@ import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
-import { ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, StackedColumnChart, TrendChart, slicesOf, PIE_CLASSES, PIE_STROKES, SERIES_STROKES, type HBar, type PieSlice } from '@/components/dashboard/charts'
-import { Board, BoardContext, ChartGallery, WidgetLabelContext, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
+import { ChartFillContext, ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, StackedColumnChart, TrendChart, slicesOf, PIE_CLASSES, PIE_STROKES, SERIES_STROKES, type HBar, type PieSlice } from '@/components/dashboard/charts'
+import { Board, BoardContext, ChartGallery, WidgetLabelContext, useBoardsStacked, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
 import { DrillModal, type DrillSpec } from '@/components/dashboard/DrillModal'
-import { FilterNote, FilterTh, MultiSelectMenu, byName, useColumnFilters } from '@/components/dashboard/filters'
+import { FilterNote, FilterTh, FloatingPanel, MultiSelectMenu, byName, useColumnFilters } from '@/components/dashboard/filters'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
-import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, isMonthAligned, monthLabel, presetRange, shortDay, shortRange, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
+import { dataSpan, runsOf } from '@/components/dashboard/labels'
+import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, fromDay, isMonthAligned, monthLabel, presetRange, shortDay, shortRange, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn } from '@/lib/utils'
@@ -69,6 +71,8 @@ import { sessionDetailPath } from '@/lib/links'
 import { When } from '@/components/ui/Tooltip'
 import { ExportMenu, InfoTip, Segmented } from '@/components/ui/PageShell'
 import { useTableView, ViewNote, ViewTh, type ViewColumn } from '@/components/ui/ColumnFilter'
+import { ScrollX } from '@/components/ui/ScrollX'
+import { PHONE, useCoarsePointer, useMediaQuery } from '@/lib/media'
 
 // ---- Formatting ------------------------------------------------------------
 
@@ -97,7 +101,134 @@ const DISPOSITION_CLASS: Record<Disposition, string> = {
   'Accept with concession': 'stroke-emerald-500',
 }
 
+/** Narrower than 400 px: the smallest phones, where the page's switch takes its short words. */
+const NARROW_PHONE = 'not all and (min-width: 400px)'
+/** From Tailwind's md (768 px): a filter row has room for every filter of a chart. */
+const TABLET = '(min-width: 768px)'
+
+/**
+ * What a widget's body is on a board: a box of the board's height scrolling inside itself; stacked (a phone, a
+ * tablet), as tall as it is — the page has the one scroll.
+ */
+function WidgetBody({ children, className }: { children: ReactNode; className?: string }) {
+  const grid = useContext(ChartFillContext)
+  return <div className={cn(grid && 'h-full overflow-auto overscroll-contain', className)}>{children}</div>
+}
+
+/**
+ * A group table's first column, by the width of its frame (TableFrame is the size container): 8rem in a frame up to
+ * an upright tablet's (an 820 px tablet's 732 px stacked table, a 1440 px screen's 640 px board box), 12rem from 48rem,
+ * 14rem from 60rem.
+ */
+const FIRST_COLUMN = 'min-w-[8rem] [@container(min-width:48rem)]:min-w-[12rem] [@container(min-width:60rem)]:min-w-[14rem]'
+
+/**
+ * The frame of a wide table. Stacked, or outside a board, a sideways scroller with a shadow at the end that hides
+ * more (its first column stays put: `table-sticky-first` on the table). On a board the widget's own box scrolls both
+ * ways and keeps the header row in view, so the table sits in it as it is. Either way the frame is a size container:
+ * the table's first column is sized from the frame's width, not the window's (a half-width board box on a wide screen
+ * is narrower than a stacked table on an upright tablet).
+ */
+function TableFrame({ children }: { children: ReactNode }) {
+  const grid = useContext(ChartFillContext)
+  return grid ? <div className="min-w-0 [container-type:inline-size]">{children}</div> : <ScrollX shadows="end" className="[container-type:inline-size]">{children}</ScrollX>
+}
+
+/** Whether a box that scrolls inside itself hides more below its fold: its fade says so. */
+function useMoreBelow(el: HTMLElement | null, on: boolean): boolean {
+  const [more, setMore] = useState(false)
+  useEffect(() => {
+    if (!el || !on) {
+      setMore(false)
+      return
+    }
+    let frame = 0
+    const read = () => {
+      frame = 0
+      setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 2)
+    }
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(read)
+    }
+    read()
+    el.addEventListener('scroll', schedule, { passive: true })
+    // The box with the board's grid, the content with its data: either moves the fold.
+    const sized = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null
+    const observeAll = () => {
+      if (!sized) return
+      sized.disconnect()
+      sized.observe(el)
+      for (const child of Array.from(el.children)) sized.observe(child)
+    }
+    observeAll()
+    const children =
+      typeof MutationObserver !== 'undefined'
+        ? new MutationObserver(() => {
+            observeAll()
+            schedule()
+          })
+        : null
+    children?.observe(el, { childList: true })
+    return () => {
+      if (frame) cancelAnimationFrame(frame)
+      el.removeEventListener('scroll', schedule)
+      sized?.disconnect()
+      children?.disconnect()
+    }
+  }, [el, on])
+  return more
+}
+
+/**
+ * A figure whose explanation would be a tooltip — a change against the period before — as a button: a mouse still
+ * reads the tooltip, and a tap (a finger gets no tooltip) or a click opens the same words in a panel.
+ */
+function TipButton({ tip, label, className, children }: { tip: string; label: string; className?: string; children: ReactNode }) {
+  const anchor = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button
+        ref={anchor}
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        data-tip={open ? undefined : tip}
+        onClick={() => setOpen((o) => !o)}
+        className={cn('-mx-1 inline-flex items-center gap-0.5 rounded-md px-1 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:hover:bg-slate-800 touch:min-h-[36px]', className)}
+      >
+        {children}
+      </button>
+      <FloatingPanel anchor={anchor} open={open} onClose={() => setOpen(false)} width={300} label={label}>
+        <p className="p-2 text-13 leading-relaxed text-slate-700 dark:text-slate-200">{tip}</p>
+      </FloatingPanel>
+    </>
+  )
+}
+
+/** The points of a time axis worth drawing: from the first that holds anything to the last (see dataSpan). */
+function trimmed<T>(points: T[], has: (p: T) => boolean): T[] {
+  const { from, to } = dataSpan(points.length, (i) => has(points[i]))
+  return points.slice(from, to)
+}
+
+/** A month axis and its lines cut to the months that hold anything, for every line alike. */
+function trimmedLines(labels: string[], lines: { label: string; values: (number | null)[]; className: string }[], has?: (i: number) => boolean): { labels: string[]; lines: typeof lines } {
+  const { from, to } = dataSpan(labels.length, has ?? ((i) => lines.some((l) => l.values[i] !== null && l.values[i] !== undefined)))
+  return { labels: labels.slice(from, to), lines: lines.map((l) => ({ ...l, values: l.values.slice(from, to) })) }
+}
+
 // ---- KPI tile --------------------------------------------------------------
+
+/** A tile's change against the period before: its explanation a tap away (TipButton), or plain when there is none. */
+function DeltaFigure({ tip, label, className, children }: { tip: string | undefined; label: string; className?: string; children: ReactNode }) {
+  if (!tip) return <span className={cn('inline-flex items-center gap-0.5', className)}>{children}</span>
+  return (
+    <TipButton tip={tip} label={label} className={className}>
+      {children}
+    </TipButton>
+  )
+}
 
 function KpiTile({
   label,
@@ -139,13 +270,14 @@ function KpiTile({
       ? undefined
       : `Relative change: ${fmtValue(current)} now against ${fmtValue(previous)}${vs ? ` in ${vs}` : ''} (${delta > 0 ? '+' : delta < 0 ? '−' : ''}${Math.abs(delta).toFixed(2)}% relative${unit === '%' ? `, ${current - previous >= 0 ? '+' : '−'}${Math.abs(current - previous).toFixed(2)} pp` : ''})`
   return (
-    <Card className={cn('p-4 ring-1 transition-shadow hover:shadow-hover', TONE_RING[tone])}>
+    <Card className={cn('min-w-0 p-4 ring-1 transition-shadow hover:shadow-hover', TONE_RING[tone])}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
+          {/* The whole name, on up to three lines on a phone: "First part released" and "First pass released" cut short look alike. */}
+          <p className="line-clamp-3 break-words text-[11px] font-semibold uppercase leading-tight tracking-wide text-muted lg:line-clamp-2">{label}</p>
           {period && <p className="truncate text-[11px] text-muted">{period}</p>}
         </div>
-        <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', tone === 'neutral' ? 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300' : tone === 'green' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : tone === 'amber' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400')}>
+        <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg max-[419px]:hidden', tone === 'neutral' ? 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300' : tone === 'green' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : tone === 'amber' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400')}>
           {icon}
         </span>
       </div>
@@ -159,11 +291,11 @@ function KpiTile({
             <Minus className="h-3 w-3" /> no comparison
           </span>
         ) : (
-          <span data-tip={deltaTip} className={cn('inline-flex items-center gap-0.5 font-semibold tabular-nums', good === null ? 'text-muted' : good ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
+          <DeltaFigure tip={deltaTip} label={`${label}: the change`} className={cn('font-semibold tabular-nums', good === null ? 'text-muted' : good ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
             {flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
             {flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
             {vs && <span className="ml-0.5 font-medium text-muted">vs {vs}</span>}
-          </span>
+          </DeltaFigure>
         )}
         {previous !== null && <span className="text-muted">prev {typeof previous === 'number' ? (unit === '%' ? pctStr(previous) : num(previous, 1)) : '—'}</span>}
         {sub && <span className="basis-full text-muted">{sub}</span>}
@@ -214,7 +346,7 @@ function InsightList({
                 <p className="mt-0.5 text-sm opacity-90">{i.detail}</p>
                 {i.action && <p className="mt-1.5 text-sm font-medium">→ {i.action}</p>}
                 {i.link && (
-                  <button type="button" onClick={() => onLink(i.link!)} className="print-hidden mt-1.5 text-xs font-semibold underline-offset-2 hover:underline">
+                  <button type="button" onClick={() => onLink(i.link!)} className="print-hidden mt-1.5 text-xs font-semibold underline-offset-2 hover:underline touch:-my-2 touch:min-h-[44px]">
                     {i.link.kind === 'history-hold' ? 'Open the Hold list' : i.link.kind === 'machine' ? `Filter to machine ${i.link.value}` : i.link.kind === 'item' ? `Filter to item ${i.link.value}` : 'Open'}
                   </button>
                 )}
@@ -223,7 +355,7 @@ function InsightList({
                 <button
                   type="button"
                   onClick={() => onHide(key)}
-                  className="print-hidden -mr-1 -mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-lg opacity-60 transition-opacity hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+                  className="print-hidden -mr-1 -mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-lg opacity-60 transition-opacity hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10 touch:h-11 touch:w-11"
                   aria-label={`Hide: ${i.title}`}
                   data-tip="Hide this insight until you show it again"
                 >
@@ -234,7 +366,7 @@ function InsightList({
                 <button
                   type="button"
                   onClick={() => onRestore(key)}
-                  className="print-hidden inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold underline-offset-2 hover:bg-black/5 hover:underline dark:hover:bg-white/10"
+                  className="print-hidden inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold underline-offset-2 hover:bg-black/5 hover:underline dark:hover:bg-white/10 touch:min-h-[44px]"
                   aria-label={`Show again: ${i.title}`}
                 >
                   <Eye className="h-4 w-4" /> Show again
@@ -283,6 +415,7 @@ function Table<T>({
   maxRows,
   total,
   onRowClick,
+  sticky = true,
 }: {
   rows: T[]
   columns: Column<T>[]
@@ -293,6 +426,8 @@ function Table<T>({
   maxRows?: number
   /** How many rows exist in the period when `rows` is the largest few of them. */
   total?: number
+  /** The first column, what a row is about, stays in view as the rest scrolls sideways; false when it is not (an age). */
+  sticky?: boolean
 }) {
   const [showAll, setShowAll] = useState(false)
   const viewColumns = useMemo(
@@ -310,8 +445,9 @@ function Table<T>({
   const filtered = view.active > 0 || view.sort !== null
   const visible = maxRows && !showAll && !filtered ? view.rows.slice(0, maxRows) : view.rows
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <div>
+      <TableFrame>
+      <table className={cn('w-full text-sm', sticky && 'table-sticky-first')}>
         <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
             {columns.map((c) =>
@@ -328,8 +464,12 @@ function Table<T>({
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {visible.map((r) => (
             <tr key={rowKey(r)} onClick={onRowClick && (() => onRowClick(r))} className={cn('transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40', onRowClick && 'cursor-pointer')}>
-              {columns.map((c) => (
-                <td key={c.key} className={cn('px-2 py-1.5 align-top', c.className)}>
+              {columns.map((c, i) => (
+                // A figure on one line; a word column wide enough to read without breaking every word onto its own line. The
+                // first (sticky, so what a row is about stays in view) is sized from the table's frame: 8rem in a phone's
+                // frame, an upright tablet's or a half-width board box, so the figures beside it are in view, and wider
+                // only in a frame with room to spare, so a long machine or item name keeps to two lines or so.
+                <td key={c.key} className={cn('px-2 py-1.5 align-top', c.className, c.className?.includes('text-right') ? 'whitespace-nowrap' : i === 0 ? FIRST_COLUMN : 'min-w-[10rem]')}>
                   {c.render(r)}
                 </td>
               ))}
@@ -337,10 +477,11 @@ function Table<T>({
           ))}
         </tbody>
       </table>
+      </TableFrame>
       <ViewNote view={view} total={rows.length} className="mt-1" />
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         {maxRows && rows.length > maxRows && !filtered && (
-          <button type="button" onClick={() => setShowAll((s) => !s)} className="print-hidden text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
+          <button type="button" onClick={() => setShowAll((s) => !s)} className="print-hidden text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px] touch:px-1">
             {showAll ? 'Show fewer' : `Show all ${rows.length}`}
           </button>
         )}
@@ -360,41 +501,54 @@ function ToneCell({ value, tone, digits = 2 }: { value: number | null; tone: Kpi
   return <span className={cn('font-semibold tabular-nums', TONE_TEXT[tone])}>{pctStr(value, digits)}</span>
 }
 
+/** A column a phone leaves out of a wide table: the figure behind a rate, read in full from a tablet up. */
+const FROM_TABLET = 'hidden md:table-cell'
+
 function groupColumns(t: KpiThresholds, first: Column<KpiGroupRow>): Column<KpiGroupRow>[] {
   return [
     first,
     { key: 'sessions', label: 'Sessions', className: 'text-right tabular-nums', render: (r) => num(r.sessions), text: (r) => num(r.sessions), sortNum: (r) => r.sessions },
-    { key: 'samples', label: 'Samples', className: 'text-right tabular-nums', render: (r) => num(r.samples), text: (r) => num(r.samples), sortNum: (r) => r.samples },
-    { key: 'pieces', label: 'Inspected', className: 'text-right tabular-nums', render: (r) => num(r.pieces), text: (r) => num(r.pieces), sortNum: (r) => r.pieces },
+    { key: 'samples', label: 'Samples', className: `text-right tabular-nums ${FROM_TABLET}`, render: (r) => num(r.samples), text: (r) => num(r.samples), sortNum: (r) => r.samples },
+    { key: 'pieces', label: 'Inspected', className: `text-right tabular-nums ${FROM_TABLET}`, render: (r) => num(r.pieces), text: (r) => num(r.pieces), sortNum: (r) => r.pieces },
     { key: 'defects', label: 'Defect pcs', className: 'text-right tabular-nums', render: (r) => num(r.defectPieces), text: (r) => num(r.defectPieces), sortNum: (r) => r.defectPieces },
     { key: 'produced', label: 'Produced', className: 'text-right tabular-nums', render: (r) => (r.piecesProduced === null ? <span className="text-muted">—</span> : num(r.piecesProduced)), text: (r) => (r.piecesProduced === null ? '—' : num(r.piecesProduced)), sortNum: (r) => r.piecesProduced },
     { key: 'rate', label: 'Defect rate', className: 'text-right', render: (r) => <ToneCell value={r.defectRatePct} tone={toneLowIsGood(r.defectRatePct, t.defectRateGreen, t.defectRateAmber)} />, text: (r) => pctStr(r.defectRatePct), sortNum: (r) => r.defectRatePct },
-    { key: 'inspectedRate', label: 'Of inspected', className: 'text-right', render: (r) => <ToneCell value={r.inspectedDefectPct} tone="neutral" />, text: (r) => pctStr(r.inspectedDefectPct), sortNum: (r) => r.inspectedDefectPct },
+    { key: 'inspectedRate', label: 'Of inspected', className: `text-right ${FROM_TABLET}`, render: (r) => <ToneCell value={r.inspectedDefectPct} tone="neutral" />, text: (r) => pctStr(r.inspectedDefectPct), sortNum: (r) => r.inspectedDefectPct },
     { key: 'fpy', label: 'FPY', className: 'text-right', render: (r) => <ToneCell value={r.fpyPct} tone={toneHighIsGood(r.fpyPct, t.fpyGreen, t.fpyAmber)} />, text: (r) => pctStr(r.fpyPct), sortNum: (r) => r.fpyPct },
-    { key: 'dim', label: 'Dim fail', className: 'text-right', render: (r) => <ToneCell value={r.dimFailPct} tone={toneLowIsGood(r.dimFailPct, t.dimFailGreen, t.dimFailAmber)} />, text: (r) => pctStr(r.dimFailPct), sortNum: (r) => r.dimFailPct },
+    { key: 'dim', label: 'Dim fail', className: `text-right ${FROM_TABLET}`, render: (r) => <ToneCell value={r.dimFailPct} tone={toneLowIsGood(r.dimFailPct, t.dimFailGreen, t.dimFailAmber)} />, text: (r) => pctStr(r.dimFailPct), sortNum: (r) => r.dimFailPct },
   ]
 }
 
 /** The period every chart on the page covers, unless the chart says its own (a month window, all time). */
 const PeriodBadgeContext = createContext<string | null>(null)
 
-function Section({ title: ownTitle, hint: ownHint, icon, children, className, action, period }: { title: string; hint?: string; icon?: ReactNode; children: ReactNode; className?: string; action?: ReactNode; period?: string | null }) {
+/**
+ * A widget's card: its title, the period it covers, its own controls, and its body. The controls share the title's
+ * row while they fit and wrap inside the card when they do not — on a phone, a row of their own under the title —
+ * never pushing past the card's edge. `toolbar` is a row under the title for controls too many for the header (a
+ * chart's filters). On a board the body scrolls inside the box, with a fade at its foot while more lies below;
+ * stacked, it is as tall as it is.
+ */
+function Section({ title: ownTitle, hint: ownHint, icon, children, className, action, toolbar, period }: { title: string; hint?: string; icon?: ReactNode; children: ReactNode; className?: string; action?: ReactNode; toolbar?: ReactNode; period?: string | null }) {
   // On a board an administrator may have named and described the widget; that wins over the code's words.
   const label = useContext(WidgetLabelContext)
   const pagePeriod = useContext(PeriodBadgeContext)
+  const grid = useContext(ChartFillContext)
+  const [body, setBody] = useState<HTMLDivElement | null>(null)
+  const more = useMoreBelow(body, grid)
   const title = label.title || ownTitle
   const hint = label.title || label.hint ? label.hint || undefined : ownHint
   const badge = period === undefined ? pagePeriod : period
   return (
-    <Card className={cn('flex h-full min-h-0 flex-col p-4 sm:p-5', className)}>
+    <Card className={cn('relative flex h-full min-h-0 min-w-0 flex-col p-4 sm:p-5', className)}>
       <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           {icon && <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{icon}</span>}
-          <h2 className="min-w-0 text-base font-bold leading-tight">{title}</h2>
+          <h2 className="min-w-0 break-words text-base font-bold leading-tight">{title}</h2>
           {hint && <InfoTip text={hint} label={`About ${title}`} />}
         </div>
         {(badge || action) && (
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <div className={cn('flex min-w-0 max-w-full flex-wrap items-center gap-2 sm:justify-end', !!action && 'max-sm:w-full')}>
             {badge && (
               <Badge tone="neutral" tip="The period this chart covers">
                 {badge}
@@ -404,9 +558,13 @@ function Section({ title: ownTitle, hint: ownHint, icon, children, className, ac
           </div>
         )}
       </div>
+      {toolbar && <div className="print-hidden mb-3 shrink-0">{toolbar}</div>}
       {/* On paper there is no tooltip: the explanation is printed under the title. */}
       {hint && <p className="mb-2 hidden text-xs text-muted print:block">{hint}</p>}
-      <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+      <div ref={setBody} className={cn('min-w-0', grid && 'min-h-0 flex-1 overflow-auto overscroll-contain')}>
+        {children}
+      </div>
+      {grid && <div aria-hidden className={cn('pointer-events-none absolute inset-x-0 bottom-0 h-10 rounded-b-2xl bg-gradient-to-t from-white to-transparent transition-opacity duration-150 dark:from-slate-900', more ? 'opacity-100' : 'opacity-0')} />}
     </Card>
   )
 }
@@ -419,14 +577,14 @@ function PlainTile({ label, value, sub, icon, tone = 'neutral', control, onOpen 
     ? { role: 'button' as const, tabIndex: 0, onClick: onOpen, onKeyDown: (e: { key: string; preventDefault: () => void }) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onOpen()), 'aria-label': `${label}: open the sessions behind it` }
     : {}
   return (
-    <Card className={cn('p-4 ring-1', TONE_RING[tone], onOpen && 'cursor-pointer transition-shadow hover:shadow-hover')} {...opens}>
+    <Card className={cn('min-w-0 p-4 ring-1', TONE_RING[tone], onOpen && 'cursor-pointer transition-shadow hover:shadow-hover')} {...opens}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
+          <p className="line-clamp-3 break-words text-[11px] font-semibold uppercase leading-tight tracking-wide text-muted lg:line-clamp-2">{label}</p>
           {period && <p className="truncate text-[11px] text-muted">{period}</p>}
           {control && <div className="print-hidden mt-1">{control}</div>}
         </div>
-        <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', tone === 'neutral' ? 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300' : tone === 'green' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : tone === 'amber' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400')}>
+        <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg max-[419px]:hidden', tone === 'neutral' ? 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300' : tone === 'green' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : tone === 'amber' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400')}>
           {icon}
         </span>
       </div>
@@ -456,25 +614,32 @@ function monthTrend(rates: (number | null)[], labels: string[]): MonthTrend {
 
 /**
  * An arrow and a figure for a trend where a fall is good, saying what it is
- * against: "▼ 13.53% vs Sep". The figure is the relative change; the
- * tooltip gives both rates and the change in percentage points.
+ * against: "▼ 13.53% vs Sep". The figure is the relative change; under it, in
+ * a muted line, the two rates it compares ("1.07% Oct vs 1.57% Sep") — said
+ * on the card, not only in the tooltip a finger never sees; the tooltip adds
+ * the change in percentage points.
  */
 function TrendMark({ trend }: { trend: MonthTrend }) {
   const { delta } = trend
   const up = delta !== null && delta > 0
   const flat = delta !== null && Math.abs(delta) < 0.005
+  const compared = delta !== null && trend.last !== null && trend.before !== null
   const tip =
     delta === null || trend.last === null || trend.before === null
       ? 'No earlier month to compare with'
       : `Relative change of the reject rate: ${pctStr(trend.last)} in ${trend.lastLabel} against ${pctStr(trend.before)} in ${trend.beforeLabel} (${delta > 0 ? '+' : delta < 0 ? '−' : ''}${Math.abs(delta).toFixed(2)}% relative, ${trend.last - trend.before >= 0 ? '+' : '−'}${Math.abs(trend.last - trend.before).toFixed(2)} pp)`
   return (
-    <span
-      className={cn('inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-xs font-semibold tabular-nums', delta === null ? 'text-muted' : flat ? 'text-muted' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}
-      data-tip={tip}
-    >
-      {delta === null || flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
-      {delta === null ? '—' : flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
-      {delta !== null && trend.beforeLabel && <span className="ml-0.5 font-medium text-muted">vs {trend.beforeLabel}</span>}
+    <span className="inline-flex min-w-0 shrink-0 flex-col items-end text-right" data-tip={tip}>
+      <span className={cn('inline-flex items-center gap-0.5 whitespace-nowrap text-xs font-semibold tabular-nums', delta === null ? 'text-muted' : flat ? 'text-muted' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}>
+        {delta === null || flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
+        {delta === null ? '—' : flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
+        {delta !== null && trend.beforeLabel && <span className="ml-0.5 font-medium text-muted">vs {trend.beforeLabel}</span>}
+      </span>
+      {compared && (
+        <span className="text-[11px] tabular-nums leading-tight text-muted">
+          {pctStr(trend.last)} {trend.lastLabel} vs {pctStr(trend.before)} {trend.beforeLabel}
+        </span>
+      )}
     </span>
   )
 }
@@ -537,7 +702,11 @@ function ScopeNote({ leftOut }: { leftOut: { code: string; displayName: string }
   )
 }
 
-function GeneralOverview({ data, loading, error, leftOut }: { data: KpiGeneral | null; loading: boolean; error: string | null; leftOut: { code: string; displayName: string }[] }) {
+/**
+ * `strip`: one row of cards that swipes sideways — on the details, on a phone, where the analysis and its filters
+ * come next rather than a screen further down.
+ */
+function GeneralOverview({ data, loading, error, leftOut, strip = false }: { data: KpiGeneral | null; loading: boolean; error: string | null; leftOut: { code: string; displayName: string }[]; strip?: boolean }) {
   if (error) return <Card className="border border-rose-200 p-4 text-sm text-rose-700 dark:border-rose-500/30 dark:text-rose-300">{error}</Card>
   if (!data) {
     return loading ? (
@@ -557,52 +726,54 @@ function GeneralOverview({ data, loading, error, leftOut }: { data: KpiGeneral |
     { key: '__plant', label: 'Whole plant', sub: `${num(data.totals.factories)} factories · ${num(data.totals.machines)} machines`, rate: data.totals.defectRatePct, months: data.months },
     ...[...data.factories].sort((a, b) => byName(a.factory, b.factory)).map((f) => ({ key: f.factory, label: f.factory, sub: Array.from(new Set(data.machines.filter((m) => m.factory === f.factory).map((m) => PROCESS_LABEL[m.process]))).join(' · ') || 'no process', rate: f.defectRatePct, months: f.months })),
   ]
+  // Two cards a row from a phone up, compact there; on a wide screen the row holds them all when it can, so no card is left alone on a row of its own.
+  const wide = cards.length === 3 ? 'lg:grid-cols-3' : cards.length >= 4 ? 'xl:grid-cols-4' : ''
+  const grid = (
+    <div className={strip ? 'flex snap-x gap-3 p-0.5' : cn('grid grid-cols-1 gap-3 min-[340px]:grid-cols-2 sm:gap-4', wide)}>
+      {cards.map((c) => {
+        const tone = toneLowIsGood(c.rate, t.defectRateGreen, t.defectRateAmber)
+        const trend = monthTrend(
+          c.months.map((m) => m.defectRatePct),
+          c.months.map((m) => monthLabel(m.month, false)),
+        )
+        return (
+          <Card key={c.key} className={cn('min-w-0 p-3 ring-1 sm:p-4', TONE_RING[tone], c.key === '__plant' && 'bg-slate-50 dark:bg-slate-800/40', strip && 'w-[11.5rem] shrink-0 snap-start')}>
+            <div className="min-w-0">
+              <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                <span className="min-w-0 break-words">{c.label}</span>
+                {c.key === '__plant' && <InfoTip text={`${about}\n\n${scopeWords}`} label="How these figures are counted" />}
+              </p>
+              <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted">
+                <span>{c.sub}</span>
+                {c.key === '__plant' && leftOut.length > 0 && (
+                  <Badge tone="amber" tip={scopeWords} className="h-[18px] px-1.5 text-[10px]">
+                    {leftOut.length} left out
+                  </Badge>
+                )}
+              </p>
+            </div>
+            <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+              <p className={cn('text-xl font-extrabold tabular-nums tracking-tight sm:text-2xl', TONE_TEXT[tone])}>
+                {pctStr(c.rate)}
+                <span className="ml-1 text-[11px] font-semibold uppercase text-muted">reject</span>
+              </p>
+              <TrendMark trend={trend} />
+            </div>
+            <div className="mt-1 flex flex-wrap items-end justify-between gap-x-2 gap-y-1">
+              <p className="text-xs text-muted">
+                <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{ppmStr(c.rate)}</span> PPM
+                <span className="block text-[11px]">{period}</span>
+              </p>
+              <Sparkline width={120} height={36} values={c.months.map((m) => m.defectRatePct)} svgClassName="h-auto w-full min-w-[4rem] max-w-[120px] flex-1 basis-16" className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
+            </div>
+          </Card>
+        )
+      })}
+    </div>
+  )
   return (
     <div className="space-y-4">
-      {/* As many cards a row as fit at 16 rem or more, the row filled edge to edge. */}
-      <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 sm:grid-cols-[repeat(auto-fit,minmax(16rem,1fr))]">
-        {cards.map((c) => {
-          const tone = toneLowIsGood(c.rate, t.defectRateGreen, t.defectRateAmber)
-          const trend = monthTrend(
-            c.months.map((m) => m.defectRatePct),
-            c.months.map((m) => monthLabel(m.month, false)),
-          )
-          return (
-            <Card key={c.key} className={cn('p-4 ring-1', TONE_RING[tone], c.key === '__plant' && 'bg-slate-50 dark:bg-slate-800/40')}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                    <span className="truncate">{c.label}</span>
-                    {c.key === '__plant' && <InfoTip text={`${about}\n\n${scopeWords}`} label="How these figures are counted" />}
-                  </p>
-                  <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted">
-                    <span>{c.sub}</span>
-                    {c.key === '__plant' && leftOut.length > 0 && (
-                      <Badge tone="amber" tip={scopeWords} className="h-[18px] px-1.5 text-[10px]">
-                        {leftOut.length} left out
-                      </Badge>
-                    )}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-2">
-                <p className={cn('text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
-                  {pctStr(c.rate)}
-                  <span className="ml-1 text-[11px] font-semibold uppercase text-muted">reject</span>
-                </p>
-                <TrendMark trend={trend} />
-              </div>
-              <div className="mt-1 flex items-end justify-between gap-2">
-                <p className="text-xs text-muted">
-                  <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{ppmStr(c.rate)}</span> PPM
-                  <span className="block text-[11px]">{period}</span>
-                </p>
-                <Sparkline width={120} height={36} values={c.months.map((m) => m.defectRatePct)} className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
-              </div>
-            </Card>
-          )
-        })}
-      </div>
+      {strip ? <ScrollX label="The plant and its factories">{grid}</ScrollX> : grid}
       {/* On paper the explanation is printed; on screen it is behind the (i) on the first card. */}
       <p className="hidden text-xs text-muted print:block">{about}</p>
       <div className="hidden print:block">
@@ -692,10 +863,13 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
   const factoryLines = [...general.factories].sort((a, b) => byName(a.factory, b.factory)).slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.factory, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
   const windowSpan = monthSpan(general.window.from, general.window.to)
   // The month charts of the pick: the period's months, the pick's factories, and its machines with the highest reject rate.
-  const pickLabels = (breakdown?.months ?? []).map((m) => monthLabel(m.month, false))
-  const pickFactoryLines = (breakdown?.series.factories ?? []).slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.label, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] }))
+  // Cut to the months that made anything: This year read in October draws September and October, not eight empty months first.
+  const pickMonths = breakdown?.months ?? []
+  const pickLabels = pickMonths.map((m) => monthLabel(m.month, false))
+  const madeIn = (i: number) => (pickMonths[i]?.made ?? 0) > 0
+  const pickFactoryLines = trimmedLines(pickLabels, (breakdown?.series.factories ?? []).slice(0, LINE_CLASSES.length).map((f, i) => ({ label: f.label, values: f.months.map((m) => m.defectRatePct), className: LINE_CLASSES[i] })), madeIn)
   const pickMachines = [...(breakdown?.series.machines ?? [])].filter((m) => m.made > 0).sort((a, b) => (b.defectRatePct ?? -1) - (a.defectRatePct ?? -1) || b.made - a.made).slice(0, LINE_CLASSES.length)
-  const pickMachineLines = pickMachines.map((m, i) => ({ label: m.label, values: m.months.map((x) => x.defectRatePct), className: LINE_CLASSES[i] }))
+  const pickMachineLines = trimmedLines(pickLabels, pickMachines.map((m, i) => ({ label: m.label, values: m.months.map((x) => x.defectRatePct), className: LINE_CLASSES[i] })), madeIn)
   const detailTitle = picked.length ? `${picked.length === 1 ? 'Machine' : `${picked.length} machines`}: ${machines.filter((m) => picked.includes(m.workCenterCode)).map((m) => m.label).join(', ')}` : scopeLabel
   return (
     <div className="space-y-4">
@@ -704,7 +878,7 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
           type="button"
           aria-pressed={chosen.length === 0}
           onClick={allScopes}
-          className={cn('min-h-[40px] rounded-xl px-3 text-sm font-semibold ring-1 transition-colors', chosen.length === 0 ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
+          className={cn('min-h-[40px] rounded-xl px-3 text-sm font-semibold ring-1 transition-colors touch:min-h-[44px]', chosen.length === 0 ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
         >
           {kind === 'factory' ? 'All factories' : 'All processes'}
         </button>
@@ -716,7 +890,7 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
               type="button"
               aria-pressed={on}
               onClick={() => toggleScope(o.key)}
-              className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3 text-sm font-semibold ring-1 transition-colors', on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
+              className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3 text-sm font-semibold ring-1 transition-colors touch:min-h-[44px]', on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
             >
               {on && <Check className="h-3.5 w-3.5" />}
               {o.label}
@@ -741,7 +915,7 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
         </Section>
           ) },
           { id: 'g.machines', title: 'Machines of the pick', node: (
-        <Section title={`${scopeLabel}: machines`} hint={kind === 'process' ? 'Reject rate of each machine over the period, under its process, worst first in each, with its trend. Tick machines to compare them; the breakdown below follows the ticks.' : 'Reject rate of each machine over the period, worst first, with its trend. Tick machines to compare them; the breakdown below follows the ticks.'} icon={<Layers className="h-4 w-4" />} className="xl:col-span-2" action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-muted hover:text-rose-600">Clear {picked.length} ticked</button>}>
+        <Section title={`${scopeLabel}: machines`} hint={kind === 'process' ? 'Reject rate of each machine over the period, under its process, worst first in each, with its trend. Tick machines to compare them; the breakdown below follows the ticks.' : 'Reject rate of each machine over the period, worst first, with its trend. Tick machines to compare them; the breakdown below follows the ticks.'} icon={<Layers className="h-4 w-4" />} className="xl:col-span-2" action={picked.length > 0 && <button type="button" onClick={clearPick} className="text-xs font-semibold text-muted hover:text-rose-600 touch:min-h-[44px] touch:px-2">Clear {picked.length} ticked</button>}>
           {machines.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted">No production closed in this period.</p>
           ) : (
@@ -760,16 +934,21 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
                 const tone = toneLowIsGood(m.defectRatePct, t.defectRateGreen, t.defectRateAmber)
                 return (
                   <li key={m.workCenterCode}>
-                    <button type="button" onClick={() => togglePick(m.workCenterCode)} aria-pressed={on} className={cn('flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60', on && 'bg-brand-50 ring-1 ring-brand-300 dark:bg-brand-500/10 dark:ring-brand-500/40')}>
+                    {/* The name on a line of its own (two at most, never cut to "31…"), then its rate, PPM and bar; the trend beside them from a tablet up. */}
+                    <button type="button" onClick={() => togglePick(m.workCenterCode)} aria-pressed={on} className={cn('flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60 touch:py-2.5', on && 'bg-brand-50 ring-1 ring-brand-300 dark:bg-brand-500/10 dark:ring-brand-500/40')}>
                       <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded border', on ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 dark:border-slate-600')}>{on && <Check className="h-3.5 w-3.5" />}</span>
                       <span className="min-w-0 flex-1">
-                        <span className="flex items-baseline justify-between gap-2 text-sm">
-                          <span className="truncate font-medium text-slate-700 dark:text-slate-200">{m.label}<span className="ml-1.5 text-xs font-normal text-muted">{kind === 'process' ? m.factory : PROCESS_LABEL[m.process]}</span></span>
-                          <span className="shrink-0 text-xs tabular-nums text-muted"><span className={cn('font-semibold', TONE_TEXT[tone])}>{pctStr(m.defectRatePct)}</span> · {ppmStr(m.defectRatePct)} PPM</span>
+                        <span className="line-clamp-2 break-words text-sm font-medium leading-snug text-slate-700 dark:text-slate-200">
+                          <bdi>{m.label}</bdi>
                         </span>
-                        <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><span className={cn('block h-full rounded-full', tone === 'red' ? 'bg-rose-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-slate-300')} style={{ width: `${Math.min(100, ((m.defectRatePct ?? 0) / maxRate) * 100)}%` }} /></span>
+                        {/* The tag on a line of its own, so a two-line name never cuts it short. */}
+                        <span className="block text-xs font-normal text-muted">{kind === 'process' ? m.factory : PROCESS_LABEL[m.process]}</span>
+                        <span className="mt-1 flex items-center gap-2">
+                          <span className="shrink-0 text-xs tabular-nums text-muted"><span className={cn('font-semibold', TONE_TEXT[tone])}>{pctStr(m.defectRatePct)}</span> · {ppmStr(m.defectRatePct)} PPM</span>
+                          <span className="block h-1.5 min-w-[2rem] flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><span className={cn('block h-full rounded-full', tone === 'red' ? 'bg-rose-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-slate-300')} style={{ width: `${Math.min(100, ((m.defectRatePct ?? 0) / maxRate) * 100)}%` }} /></span>
+                        </span>
                       </span>
-                      <Sparkline values={m.months.map((x) => x.defectRatePct)} width={72} height={24} />
+                      <Sparkline values={m.months.map((x) => x.defectRatePct)} width={72} height={24} svgClassName="hidden shrink-0 sm:block" />
                     </button>
                   </li>
                 )
@@ -783,12 +962,12 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
           ) },
           { id: 'g.factoriesByMonth', title: 'Factories by month', node: (
         <Section title={`${scopeLabel}: factories by month`} hint={`Reject rate of each factory in the pick, month by month over ${describeRange({ from: general.from, to: general.to })}.`} icon={<Factory className="h-4 w-4" />}>
-          {breakdown ? <LineChart labels={pickLabels} series={pickFactoryLines} /> : <div className="skeleton h-48" />}
+          {breakdown ? <LineChart labels={pickFactoryLines.labels} series={pickFactoryLines.lines} /> : <div className="skeleton h-48" />}
         </Section>
           ) },
           { id: 'g.machinesByMonth', title: 'Machines by month', node: (
         <Section title={`${scopeLabel}: machines by month`} hint={`The ${pickMachines.length} machines of the pick with the highest reject rate, month by month over ${describeRange({ from: general.from, to: general.to })}. Tick machines above to choose them yourself.`} icon={<Layers className="h-4 w-4" />}>
-          {breakdown ? <LineChart labels={pickLabels} series={pickMachineLines} /> : <div className="skeleton h-48" />}
+          {breakdown ? <LineChart labels={pickMachineLines.labels} series={pickMachineLines.lines} /> : <div className="skeleton h-48" />}
         </Section>
           ) },
                     { id: 'g.pieScope', title: 'Rejected by factory or process', node: (
@@ -851,7 +1030,7 @@ function GrainPicker({ value, onChange }: { value: KpiGrainChoice; onChange: (g:
           type="button"
           aria-pressed={value === g.value}
           onClick={() => onChange(g.value)}
-          className={cn('min-h-[30px] rounded-md px-2 text-xs font-semibold transition-colors', value === g.value ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800')}
+          className={cn('min-h-[30px] rounded-md px-2 text-xs font-semibold transition-colors touch:min-h-[44px] touch:px-2.5', value === g.value ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800')}
         >
           {g.label}
         </button>
@@ -911,6 +1090,10 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
       .filter((m): m is KpiCompareSeries => m !== undefined && m.made > 0)
       .map((m) => ({ label: m.label, values: m.points.map((pt) => pt.defectRatePct), className: colourOf(m.key) }))
   const leftOut = Math.max(0, (chosen.length || ranked.length) - SERIES_STROKES.length)
+  // The period's and the months' points cut to the ones some machine drawn holds: no run of empty days before the first.
+  const machinesOverPeriod = data ? trimmedLines(data.machines.buckets.map((bk) => bucketLabel(bk, data.machines.grain)), linesOf(data.machines.series)) : null
+  const machinesByMonth = data ? trimmedLines(data.machinesWindow.buckets.map((bk) => bucketLabel(bk, 'month')), linesOf(data.machinesWindow.series)) : null
+  const coarse = useCoarsePointer()
   const machinePicker = ranked.length > 0 && (
     <MultiSelectMenu
       options={options.map((m) => ({ value: m.key, label: m.label, sub: m.factory }))}
@@ -953,18 +1136,18 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
         className={cn('transition-opacity', isFetching && 'opacity-70')}
         widgets={[
           { id: 'c.groupCards', title: 'Reject rate of each group', labelled: false, node: data ? (
-            <div className="grid h-full grid-cols-2 gap-3 overflow-auto md:grid-cols-4">
+            <WidgetBody className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 lg:grid-cols-4">
               {PROCESSES.map((p) => {
                 const inPeriod = data.period.series.find((x) => x.key === p)
                 const months = data.window.series.find((x) => x.key === p)?.points ?? []
                 const rate = inPeriod?.defectRatePct ?? null
                 const tone = toneLowIsGood(rate, t.defectRateGreen, t.defectRateAmber)
                 return (
-                  <Card key={p} className={cn('p-4 ring-1', TONE_RING[tone])}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{PROCESS_LABEL[p]}</p>
-                        <p className="truncate text-[11px] text-muted">{num(inPeriod?.productionDefectPieces ?? 0)} rejected of {num(inPeriod?.made ?? 0)} made</p>
+                  <Card key={p} className={cn('min-w-0 p-4 ring-1', TONE_RING[tone])}>
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1 basis-28">
+                        <p className="break-words text-[11px] font-semibold uppercase leading-tight tracking-wide text-muted">{PROCESS_LABEL[p]}</p>
+                        <p className="break-words text-[11px] text-muted">{num(inPeriod?.productionDefectPieces ?? 0)} rejected of {num(inPeriod?.made ?? 0)} made</p>
                       </div>
                       <TrendMark
                         trend={monthTrend(
@@ -977,17 +1160,17 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
                       {pctStr(rate)}
                       <span className="ml-1 text-[11px] font-semibold uppercase text-muted">reject</span>
                     </p>
-                    <div className="mt-1 flex items-end justify-between gap-2">
+                    <div className="mt-1 flex flex-wrap items-end justify-between gap-x-2 gap-y-1">
                       <p className="text-xs text-muted">
                         <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{ppmStr(rate)}</span> PPM
                         <span className="block text-[11px]">{shortRange({ from: data.period.from, to: data.period.to })}</span>
                       </p>
-                      <Sparkline width={120} height={36} values={months.map((m) => m.defectRatePct)} className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
+                      <Sparkline width={120} height={36} values={months.map((m) => m.defectRatePct)} svgClassName="h-auto w-full min-w-[4rem] max-w-[120px] flex-1 basis-16" className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
                     </div>
                   </Card>
                 )
               })}
-            </div>
+            </WidgetBody>
           ) : <div className="skeleton h-full min-h-[7rem]" /> },
           { id: 'c.processMonths', title: 'Groups by month', node: (
             <Section title="Groups by month" period={windowBadge} hint={`Each group's reject rate month by month, ${windowWordsText}: from the first month with production and at most the last ${GENERAL_MONTHS}. Neither the period nor the group picked moves it.`} icon={<Activity className="h-4 w-4" />}>
@@ -1015,7 +1198,7 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
                 setProcess(p)
                 setLineMachines([])
               }}
-              className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3 text-sm font-semibold ring-1 transition-colors', on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
+              className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3 text-sm font-semibold ring-1 transition-colors touch:min-h-[44px]', on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
             >
               {on && <Check className="h-3.5 w-3.5" />}
               {PROCESS_LABEL[p]}
@@ -1033,18 +1216,23 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
               title={`${processName}: machines over the period`}
               hint={`Each machine's reject rate over ${periodWords}, a point ${data ? GRAIN_WORD[data.machines.grain] : 'a day'}; a line runs on over the points when nothing was made.${leftOut > 0 ? ` ${leftOut} more ${leftOut === 1 ? 'machine is' : 'machines are'} not drawn: choose up to ${SERIES_STROKES.length}.` : ''} Pick machines to compare a few.`}
               icon={<Factory className="h-4 w-4" />}
-              action={<span className="flex flex-wrap items-center justify-end gap-2"><GrainPicker value={grain} onChange={setGrain} />{machinePicker}</span>}
+              action={
+                <>
+                  <GrainPicker value={grain} onChange={setGrain} />
+                  {machinePicker}
+                </>
+              }
             >
-              {!data ? <div className="skeleton h-56" /> : machines.length ? <LineChart labels={data.machines.buckets.map((b) => bucketLabel(b, data.machines.grain))} series={linesOf(data.machines.series)} height={260} connectGaps /> : empty(`on ${processName.toLowerCase()} in this period`)}
+              {!data ? <div className="skeleton h-56" /> : machines.length ? <LineChart labels={machinesOverPeriod!.labels} series={machinesOverPeriod!.lines} height={260} connectGaps /> : empty(`on ${processName.toLowerCase()} in this period`)}
             </Section>
           ) },
           { id: 'c.machinesMonths', title: 'Machines of the group by month', node: (
             <Section title={`${processName}: machines by month`} period={windowBadge} hint={`Each machine's reject rate month by month, ${windowWordsText}. The period does not move it; the machines are the ones drawn beside.`} icon={<Activity className="h-4 w-4" />}>
-              {!data ? <div className="skeleton h-56" /> : monthMachines.length ? <LineChart labels={data.machinesWindow.buckets.map((b) => bucketLabel(b, 'month'))} series={linesOf(data.machinesWindow.series)} height={260} /> : empty(`on ${processName.toLowerCase()} in these months`)}
+              {!data ? <div className="skeleton h-56" /> : monthMachines.length ? <LineChart labels={machinesByMonth!.labels} series={machinesByMonth!.lines} height={260} /> : empty(`on ${processName.toLowerCase()} in these months`)}
             </Section>
           ) },
           { id: 'c.machineDefects', title: 'Defects on each machine of the group', node: (
-            <Section title={`${processName}: defects on each machine`} hint={`The rejected pieces of each machine over ${periodWords}, stacked by defect: the ${STACKED_DEFECTS} largest in their own colour, the rest as Others. Hover a machine for its defects.`} icon={<AlertTriangle className="h-4 w-4" />}>
+            <Section title={`${processName}: defects on each machine`} hint={`The rejected pieces of each machine over ${periodWords}, stacked by defect: the ${STACKED_DEFECTS} largest in their own colour, the rest as Others. ${coarse ? 'Tap' : 'Hover'} a machine for its defects.`} icon={<AlertTriangle className="h-4 w-4" />}>
               {!data ? <div className="skeleton h-56" /> : defectTotal > 0 ? <StackedColumnChart columns={defectColumns} legend={defectLegend} height={260} /> : <p className="py-10 text-center text-sm text-muted">No rejected piece on {processName.toLowerCase()} in this period.</p>}
             </Section>
           ) },
@@ -1056,7 +1244,8 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
                 <p className="py-10 text-center text-sm text-muted">No rejected piece on {processName.toLowerCase()} in this period.</p>
               ) : (
                 <div>
-                  <table className="w-full text-sm">
+                  <TableFrame>
+                  <table className="table-sticky-first w-full text-sm">
                     <thead className="sticky top-0 z-10 bg-white text-left text-[11px] uppercase tracking-wide text-muted shadow-[0_1px_0_0_rgb(226_232_240)] dark:bg-slate-900 dark:shadow-[0_1px_0_0_rgb(30_41_59)]">
                       <tr>
                         <FilterTh filters={defectFilters} column="defect" label="Defect" />
@@ -1070,7 +1259,10 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {defectFilters.rows.map((d) => (
                         <tr key={d.defectName} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setDrill({ title: `${d.defectName}: rejected pieces`, subtitle: `${processName} · ${periodWords}`, query: { ...pickQuery, defect: d.defectName } })}>
-                          <td className="whitespace-nowrap px-2 py-1.5 font-medium" dir="auto">{d.defectName}</td>
+                          {/* Left-aligned like the column, the name in its own direction: an Arabic one is not pushed to the right. */}
+                          <td className="whitespace-nowrap px-2 py-1.5 text-left font-medium">
+                            <span dir="auto" className="inline-block">{d.defectName}</span>
+                          </td>
                           {d.byMachine.map((v, i) => (
                             <td key={defects.machines[i].key} className={cn('px-2 py-1.5 text-right tabular-nums', v === 0 && 'text-muted')}>
                               {num(v)}
@@ -1082,6 +1274,7 @@ function ComparisonsView({ general, t }: { general: KpiGeneral; t: KpiThresholds
                       ))}
                     </tbody>
                   </table>
+                  </TableFrame>
                   <FilterNote filters={defectFilters} total={defects.rows.length} />
                 </div>
               )}
@@ -1145,7 +1338,7 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
   const thicknessWords = listWords(pickedThicknesses.map((v) => `${thicknessText(v)} mm`), 'Every thickness', 'thicknesses')
   const gradeWords = grades.length ? listWords(grades, '', 'grades') : material === 'all' ? 'black and galvanized' : MATERIAL_KIND_LABEL[material].toLowerCase()
   const trendWhat = `${thicknessWords} · ${gradeWords}${grades.length && material !== 'all' ? ` (${MATERIAL_KIND_LABEL[material].toLowerCase()})` : ''} · ${supplierWords}`
-  const selectClass = '!w-auto min-h-[36px] rounded-lg py-1 text-xs font-semibold'
+  const selectClass = '!w-auto min-h-[36px] rounded-lg py-1 text-xs font-semibold touch:min-h-[44px]'
   const details = data?.details ?? []
   const filters = useColumnFilters(details, [
     { key: 'supplier', value: (d) => d.supplier || 'No supplier recorded' },
@@ -1180,8 +1373,82 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
     setMaterial('all')
   }
 
+  // The trend's four filters: a row under its title from a tablet up; on a phone a Filters button and a sheet holding them, one a line.
+  const wide = useMediaQuery(TABLET)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const trendFilterCount = [suppliers.length > 0, thicknesses.length > 0, grades.length > 0, material !== 'all'].filter(Boolean).length
+  const trendFilters = (sheet: boolean) => {
+    const menu = sheet ? 'w-full !max-w-none justify-between' : undefined
+    return (
+      <>
+        <MultiSelectMenu
+          options={(data?.suppliers ?? []).map((r) => ({ value: r.key || NO_SUPPLIER, label: r.label }))}
+          selected={suppliers}
+          onChange={setSuppliers}
+          allLabel="All suppliers"
+          noun="suppliers"
+          ariaLabel="Suppliers"
+          className={menu}
+        />
+        <MultiSelectMenu
+          options={(data?.thicknessOptions ?? []).map((v) => ({ value: thicknessText(v), label: `${thicknessText(v)} mm` }))}
+          selected={thicknesses}
+          onChange={setThicknesses}
+          allLabel="All thicknesses"
+          noun="thicknesses"
+          ariaLabel="Thicknesses"
+          className={menu}
+        />
+        <MultiSelectMenu
+          options={(data?.gradeOptions ?? []).map((g) => ({ value: g, label: g }))}
+          selected={grades}
+          onChange={setGrades}
+          allLabel="All grades"
+          noun="grades"
+          ariaLabel="Grades"
+          className={menu}
+        />
+        <Select value={material} onChange={(e) => setMaterial(e.target.value as MaterialKind | 'all')} className={sheet ? 'min-h-[44px] rounded-lg py-1 text-xs font-semibold' : selectClass} aria-label="Material">
+          <option value="all">Black and galvanized</option>
+          <option value="black">Black</option>
+          <option value="galvanized">Galvanized</option>
+        </Select>
+      </>
+    )
+  }
+
   return (
     <div className="space-y-3 pt-2">
+      <Modal
+        open={filtersOpen && !wide}
+        onClose={() => setFiltersOpen(false)}
+        title="Filters of the trend"
+        icon={<SlidersHorizontal className="h-5 w-5" />}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              disabled={trendFilterCount === 0}
+              onClick={() => {
+                setSuppliers([])
+                setThicknesses([])
+                setGrades([])
+                setMaterial('all')
+              }}
+            >
+              Clear
+            </Button>
+            <Button variant="primary" onClick={() => setFiltersOpen(false)}>
+              Done
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-2">
+          <p className="text-sm text-muted">The trend reads {trendWhat.toLowerCase()}. None ticked is every one.</p>
+          <div className="grid gap-2">{trendFilters(true)}</div>
+        </div>
+      </Modal>
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-extrabold tracking-tight">Roll forming: raw material</h2>
         <MultiSelectMenu
@@ -1221,39 +1488,15 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
               title={`${trendWhat}: over the period`}
               hint={`Pieces made and the reject rate of ${scope} on ${trendWhat.toLowerCase()}, a point ${data ? GRAIN_WORD[data.trend.grain] : 'a day'}. Black or galvanized is read off the coil's grade.`}
               icon={<Activity className="h-4 w-4" />}
-              action={
-                <span className="flex flex-wrap items-center justify-end gap-2">
-                  <GrainPicker value={grain} onChange={setGrain} />
-                  <MultiSelectMenu
-                    options={(data?.suppliers ?? []).map((r) => ({ value: r.key || NO_SUPPLIER, label: r.label }))}
-                    selected={suppliers}
-                    onChange={setSuppliers}
-                    allLabel="All suppliers"
-                    noun="suppliers"
-                    ariaLabel="Suppliers"
-                  />
-                  <MultiSelectMenu
-                    options={(data?.thicknessOptions ?? []).map((v) => ({ value: thicknessText(v), label: `${thicknessText(v)} mm` }))}
-                    selected={thicknesses}
-                    onChange={setThicknesses}
-                    allLabel="All thicknesses"
-                    noun="thicknesses"
-                    ariaLabel="Thicknesses"
-                  />
-                  <MultiSelectMenu
-                    options={(data?.gradeOptions ?? []).map((g) => ({ value: g, label: g }))}
-                    selected={grades}
-                    onChange={setGrades}
-                    allLabel="All grades"
-                    noun="grades"
-                    ariaLabel="Grades"
-                  />
-                  <Select value={material} onChange={(e) => setMaterial(e.target.value as MaterialKind | 'all')} className={selectClass} aria-label="Material">
-                    <option value="all">Black and galvanized</option>
-                    <option value="black">Black</option>
-                    <option value="galvanized">Galvanized</option>
-                  </Select>
-                </span>
+              action={<GrainPicker value={grain} onChange={setGrain} />}
+              toolbar={
+                wide ? (
+                  <div className="flex flex-wrap items-center gap-2">{trendFilters(false)}</div>
+                ) : (
+                  <button type="button" onClick={() => setFiltersOpen(true)} className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-white px-3 text-xs font-semibold ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:ring-slate-700 dark:hover:bg-slate-800 touch:min-h-[44px]">
+                    <SlidersHorizontal className="h-4 w-4" /> Filters{trendFilterCount > 0 && <span className="rounded-full bg-brand-600 px-1.5 text-[11px] leading-[18px] text-white">{trendFilterCount}</span>}
+                  </button>
+                )
               }
             >
               {!data ? (
@@ -1263,7 +1506,7 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
                   <p className="mb-2 text-sm text-muted">
                     Over the period: <span className={cn('font-bold', TONE_TEXT[rateTone(data.trend.total.defectRatePct)])}>{pctStr(data.trend.total.defectRatePct)}</span> · {ppmStr(data.trend.total.defectRatePct)} PPM · {num(data.trend.total.productionDefectPieces)} rejected of {num(data.trend.total.made)} made
                   </p>
-                  <TrendChart points={data.trend.buckets.map((b, i) => ({ label: bucketLabel(b, data.trend.grain), bar: data.trend.points[i].made, line: data.trend.points[i].defectRatePct }))} barLabel="Pieces made" lineLabel="Reject rate" connectGaps />
+                  <TrendChart points={trimmed(data.trend.buckets.map((b, i) => ({ label: bucketLabel(b, data.trend.grain), bar: data.trend.points[i].made, line: data.trend.points[i].defectRatePct })), (p) => p.bar > 0)} barLabel="Pieces made" lineLabel="Reject rate" connectGaps />
                 </>
               ) : (
                 <p className="py-10 text-center text-sm text-muted">Nothing of {trendWhat.toLowerCase()} was made on {scope} in this period.</p>
@@ -1278,7 +1521,8 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
                 <p className="py-10 text-center text-sm text-muted">Nothing was made on {scope} in this period.</p>
               ) : (
                 <div>
-                  <table className="w-full text-sm">
+                  <TableFrame>
+                  <table className="table-sticky-first w-full text-sm">
                     <thead className="sticky top-0 z-10 bg-white text-left text-[11px] uppercase tracking-wide text-muted shadow-[0_1px_0_0_rgb(226_232_240)] dark:bg-slate-900 dark:shadow-[0_1px_0_0_rgb(30_41_59)]">
                       <tr>
                         <FilterTh filters={filters} column="supplier" label="Supplier" />
@@ -1301,8 +1545,11 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
                             onClick={() => pickRow(d)}
                             aria-selected={on}
                           >
-                            <td className="px-2 py-1.5 font-medium" dir="auto">{d.supplier || 'No supplier recorded'}</td>
-                            <td className="px-2 py-1.5 tabular-nums">{d.thickness === null ? '—' : `${thicknessText(d.thickness)} mm`}</td>
+                            {/* The sticky first cell carries the row's own colour, opaque (dark: brand-500 at 10% over slate-900), so a row followed reads as one under the scroll too. */}
+                            <td className={cn('min-w-[8rem] px-2 py-1.5 text-left font-medium', on && 'bg-brand-50 dark:bg-[#131d39]')}>
+                              <span dir="auto" className="inline-block">{d.supplier || 'No supplier recorded'}</span>
+                            </td>
+                            <td className="whitespace-nowrap px-2 py-1.5 tabular-nums">{d.thickness === null ? '—' : `${thicknessText(d.thickness)} mm`}</td>
                             <td className="whitespace-nowrap px-2 py-1.5" dir="auto">{d.grade || '—'}</td>
                             <td className="px-2 py-1.5">{MATERIAL_KIND_LABEL[d.material]}</td>
                             <td className="px-2 py-1.5 text-right tabular-nums">{num(d.made)}</td>
@@ -1314,6 +1561,7 @@ function RawMaterialSection({ from, to, t }: { from: string; to: string; t: KpiT
                       })}
                     </tbody>
                   </table>
+                  </TableFrame>
                   <FilterNote filters={filters} total={details.length} />
                 </div>
               )}
@@ -1352,9 +1600,9 @@ function PickTiles({
   const rejected = data.totals.productionDefectPieces
   const rate = data.totals.defectRatePct
   return (
-    <div className="h-full space-y-3 overflow-auto">
+    <WidgetBody className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-2">
-        <h2 className="text-lg font-extrabold tracking-tight">{title}</h2>
+        <h2 className="min-w-0 break-words text-lg font-extrabold tracking-tight">{title}</h2>
         <p className="text-xs text-muted">{describeRange({ from: data.filters.from, to: data.filters.to })}</p>
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -1363,7 +1611,7 @@ function PickTiles({
         <PlainTile label="First part released" value={pctStr(fp.pct)} sub={`${num(fp.clean)} of ${num(fp.sessions)} sessions with nothing rejected before release`} icon={<PackageCheck className="h-4 w-4" />} tone={releasedTone(fp.pct)} onOpen={fp.sessions > fp.clean ? () => openFirstPart('Sessions not clean', 1) : undefined} />
         <PlainTile label="First pass released cumulative" value={pctStr(fp.cumulativePct)} sub={`${num(fp.rejectedPieces)} rejected before release ÷ (${num(fp.clean)} clean sessions + ${num(fp.rejectedPieces)}) · lower is better`} icon={<PackageCheck className="h-4 w-4" />} tone={cumTone(fp.cumulativePct)} onOpen={fp.rejectedPieces > 0 ? () => openFirstPart('Pieces rejected before release', 1) : undefined} />
       </div>
-    </div>
+    </WidgetBody>
   )
 }
 
@@ -1414,6 +1662,12 @@ function scopeDetailWidgets({
     />
   )
   const fpTone: KpiTone = releasedTone(fp.pct)
+  // The first part month by month, from the first month with a session to the last.
+  const fpLines = trimmedLines(
+    fp.months.map((m) => monthLabel(m.month, false)),
+    fp.byMachineMonth.slice(0, LINE_CLASSES.length).map((m, i) => ({ label: m.label, values: m.months.map((x) => (x.sessions > 0 ? pct(x.clean, x.sessions) : null)), className: LINE_CLASSES[i] })),
+    (i) => fp.months[i].sessions > 0,
+  )
   return [
     { id: 'g.tiles', title: 'Reject rate, PPM, first part', labelled: false, node: <PickTiles title={title} data={data} t={t} fp={fp} openRejects={openRejects} openFirstPart={openFirstPart} /> },
     { id: 'g.pieDefects', title: 'Share of each defect', node: (
@@ -1477,8 +1731,9 @@ function scopeDetailWidgets({
           </div>
           <div>
             <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">By month</p>
+            {/* From the first month with a session to the last: This year read in October is not eight empty chips before September. */}
             <ul className="flex flex-wrap gap-2 text-xs">
-              {fp.months.map((m) => (
+              {trimmed(fp.months, (m) => m.sessions > 0).map((m) => (
                 <li key={m.month} className="rounded-lg bg-slate-50 px-2 py-1 dark:bg-slate-800/60">
                   <span className="font-semibold">{monthLabel(m.month, false)}</span>{' '}
                   {m.sessions > 0 ? <><span className={cn('font-semibold', TONE_TEXT[releasedTone(m.pct)])}>{pctStr(m.pct)}</span> <span className="text-muted">{num(m.clean)} ÷ {num(m.sessions)}</span></> : <span className="text-slate-300">—</span>}
@@ -1491,7 +1746,7 @@ function scopeDetailWidgets({
     ) },
     { id: 'g.firstPartChart', title: 'First part: machines by month', node: (
       <Section title="First part released, by machine" hint={`Each machine's clean sessions ÷ all its sessions, month by month; higher is better. ${fpMachines.length ? 'The machines ticked.' : `The ${Math.min(LINE_CLASSES.length, fp.byMachineMonth.length)} machines with the most pieces rejected before release.`}`} icon={<Layers className="h-4 w-4" />} action={fpFilter}>
-        <LineChart labels={fp.months.map((m) => monthLabel(m.month, false))} series={fp.byMachineMonth.slice(0, LINE_CLASSES.length).map((m, i) => ({ label: m.label, values: m.months.map((x) => (x.sessions > 0 ? pct(x.clean, x.sessions) : null)), className: LINE_CLASSES[i] }))} height={200} />
+        <LineChart labels={fpLines.labels} series={fpLines.lines} height={200} />
       </Section>
     ) },
     { id: 'g.firstPartQty', title: 'First part: sessions by pieces rejected', node: (
@@ -1587,8 +1842,8 @@ function FirstPartParts({ rows, navigate }: { rows: PartRow[]; navigate: (to: st
   if (rows.length === 0) return <p className="py-6 text-center text-sm text-muted">Every session started clean.</p>
   return (
     <>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+      <TableFrame>
+        <table className="table-sticky-first w-full text-sm">
           <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
             <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
               <FilterTh filters={filters} column="machine" label="Machine" />
@@ -1602,13 +1857,13 @@ function FirstPartParts({ rows, navigate }: { rows: PartRow[]; navigate: (to: st
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {filters.rows.map((r) => (
               <tr key={`${r.workCenterCode}|${r.itemCode}`} onClick={() => setOpen(r)} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60">
-                <td className="px-2 py-1.5">{r.machineLabel}{r.factory && <span className="ml-1 text-xs text-muted">{r.factory}</span>}</td>
-                <td className="px-2 py-1.5 font-semibold" dir="auto">{r.item}</td>
-                <td className="px-2 py-1.5 text-xs text-muted">{r.itemCode}</td>
+                <td className="min-w-[8rem] px-2 py-1.5">{r.machineLabel}{r.factory && <span className="ml-1 text-xs text-muted">{r.factory}</span>}</td>
+                <td className="min-w-[8rem] px-2 py-1.5 font-semibold" dir="auto">{r.item}</td>
+                <td className="whitespace-nowrap px-2 py-1.5 text-xs text-muted">{r.itemCode}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums"><span className="font-semibold">{num(r.notClean)}</span> <span className="text-xs text-muted">of {num(r.sessions)}</span></td>
                 <td className="px-2 py-1.5 text-right"><Badge tone="red">{num(r.rejectedPieces)} pcs</Badge></td>
                 <td className="print-hidden px-2 py-1.5 text-right">
-                  <button type="button" onClick={(e) => { e.stopPropagation(); setOpen(r) }} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
+                  <button type="button" onClick={(e) => { e.stopPropagation(); setOpen(r) }} className="whitespace-nowrap text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px] touch:px-1">
                     {r.orders.length === 1 ? '1 order' : `${r.orders.length} orders`}
                   </button>
                 </td>
@@ -1619,7 +1874,7 @@ function FirstPartParts({ rows, navigate }: { rows: PartRow[]; navigate: (to: st
             )}
           </tbody>
         </table>
-      </div>
+      </TableFrame>
       <FilterNote filters={filters} total={rows.length} />
       <Modal open={open !== null} onClose={() => setOpen(null)} title={open ? `${open.item} on ${open.machineLabel}` : ''} icon={<PackageCheck className="h-5 w-5" />} size="lg">
         {open && (
@@ -1645,7 +1900,8 @@ function PartOrders({ orders, navigate }: { orders: PartOrder[]; navigate: (to: 
   ])
   return (
     <>
-      <table className="w-full text-sm">
+      <ScrollX shadows="end">
+      <table className="table-sticky-first w-full text-sm">
         <thead>
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
             <FilterTh filters={filters} column="order" label="Order" />
@@ -1663,7 +1919,7 @@ function PartOrders({ orders, navigate }: { orders: PartOrder[]; navigate: (to: 
               <td className="px-2 py-1.5 text-right">
                 <span className="inline-flex flex-wrap justify-end gap-1">
                   {o.sessionIds.map((id, i) => (
-                    <button key={id} type="button" onClick={() => navigate(sessionDetailPath(id))} className="rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300">
+                    <button key={id} type="button" onClick={() => navigate(sessionDetailPath(id))} className="whitespace-nowrap rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300 touch:min-h-[44px] touch:px-3">
                       {o.sessionIds.length === 1 ? 'Session' : `Session ${i + 1}`}
                     </button>
                   ))}
@@ -1673,6 +1929,7 @@ function PartOrders({ orders, navigate }: { orders: PartOrder[]; navigate: (to: 
           ))}
         </tbody>
       </table>
+      </ScrollX>
       <FilterNote filters={filters} total={orders.length} />
     </>
   )
@@ -1680,7 +1937,13 @@ function PartOrders({ orders, navigate }: { orders: PartOrder[]; navigate: (to: 
 
 type BreakdownRow = KpiBreakdown['byOrder'][number]
 
-/** Each month's rejected pieces laid on the order lines or the items, filtered like Excel on every column. */
+/** A summary row's background on a sticky first cell, opaque (dark: slate-800 at 60% over slate-900): the row's own is see-through. */
+const SUMMARY_CELL = 'bg-slate-50 dark:bg-[#182234]'
+
+/**
+ * Each month's rejected pieces laid on the order lines or the items, filtered like Excel on every column. The largest
+ * `maxRows` rows show first, the rest behind "Show all", so a stacked phone page is not a thousand rows long.
+ */
 function BreakdownTable({
   rows,
   months,
@@ -1688,6 +1951,7 @@ function BreakdownTable({
   t,
   onOpen,
   onOpenMonth,
+  maxRows = 12,
 }: {
   rows: BreakdownRow[]
   months: KpiBreakdown['months']
@@ -1696,7 +1960,9 @@ function BreakdownTable({
   /** A row opens the sessions behind its rejected pieces. */
   onOpen?: (row: BreakdownRow) => void
   onOpenMonth?: (month: string) => void
+  maxRows?: number
 }) {
+  const [showAll, setShowAll] = useState(false)
   const filters = useColumnFilters(rows, [
     { key: 'label', value: (r) => r.label },
     { key: 'sub', value: (r) => (what === 'order' ? (r.sub ?? '') : r.key) },
@@ -1704,10 +1970,22 @@ function BreakdownTable({
     { key: 'made', value: (r) => pctStr(r.pctOfMade, 3), numeric: true },
     { key: 'period', value: (r) => pctStr(r.shareOfPeriodPct), numeric: true },
   ])
-  const groups = months.map((m) => ({ month: m, rows: filters.rows.filter((r) => r.month === m.month) })).filter((g) => g.rows.length > 0)
+  const narrowed = filters.active > 0 || filters.sort !== null
+  const cut = !showAll && !narrowed && filters.rows.length > maxRows
+  // The months in their order, each with its rows, until `maxRows` rows are shown.
+  let room = cut ? maxRows : Number.POSITIVE_INFINITY
+  const groups = months
+    .map((m) => {
+      const inMonth = filters.rows.filter((r) => r.month === m.month)
+      const shown = inMonth.slice(0, Math.max(0, room))
+      room -= shown.length
+      return { month: m, rows: shown, all: inMonth.length }
+    })
+    .filter((g) => g.rows.length > 0)
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <div>
+      <TableFrame>
+      <table className="table-sticky-first w-full text-sm">
         <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
             <FilterTh filters={filters} column="label" label={what === 'order' ? 'Order' : 'Item'} />
@@ -1721,16 +1999,23 @@ function BreakdownTable({
           {groups.map((g) => (
             <Fragment key={g.month.month}>
               <tr className={cn('bg-slate-50 dark:bg-slate-800/60', onOpenMonth && 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800')} onClick={onOpenMonth && (() => onOpenMonth(g.month.month))}>
-                <td className="px-2 py-1.5 font-bold" colSpan={3}>{monthLabel(g.month.month)}</td>
+                <td className={cn('whitespace-nowrap px-2 py-1.5 font-bold', SUMMARY_CELL)} colSpan={3}>{monthLabel(g.month.month)}</td>
                 <td className="px-2 py-1.5 text-right"><ToneCell value={g.month.defectRatePct} tone={toneLowIsGood(g.month.defectRatePct, t.defectRateGreen, t.defectRateAmber)} /></td>
-                <td className="px-2 py-1.5 text-right text-xs text-muted">{num(g.month.productionDefectPieces)} of {num(g.month.made)}</td>
+                <td className="whitespace-nowrap px-2 py-1.5 text-right text-xs text-muted">{num(g.month.productionDefectPieces)} of {num(g.month.made)}</td>
               </tr>
               {g.rows.map((r) => (
                 <tr key={`${r.month}|${r.key}`} onClick={onOpen && (() => onOpen(r))} className={cn(onOpen && 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60')}>
-                  <td className="px-2 py-1.5 font-semibold" dir="auto">{r.label}</td>
-                  <td className="px-2 py-1.5 text-xs text-muted" dir="auto">{what === 'order' ? r.sub : r.key}</td>
+                  {/* An order number or an item code is one token: never broken over two lines ("RM-34-" / "0"). */}
+                  <td className={cn('px-2 py-1.5 font-semibold', what === 'order' ? 'whitespace-nowrap' : 'min-w-[8rem]')} dir="auto">{r.label}</td>
+                  <td className={cn('px-2 py-1.5 text-xs text-muted', what === 'order' ? 'min-w-[8rem]' : 'whitespace-nowrap')} dir="auto">{what === 'order' ? r.sub : r.key}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{num(r.pieces)}</td>
-                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums" data-tip={`${num(r.pieces)} rejected of ${num(r.made)} made by this ${what} in the month`}>{pctStr(r.pctOfMade, 3)}</td>
+                  {/* The rate and, under it, what it is of: said on the table, not only in the tooltip a finger never sees. */}
+                  <td className="whitespace-nowrap px-2 py-1.5 text-right font-semibold tabular-nums" data-tip={`${num(r.pieces)} rejected of ${num(r.made)} made by this ${what} in the month`}>
+                    {pctStr(r.pctOfMade, 3)}
+                    <span className="block text-[11px] font-normal text-muted">
+                      {num(r.pieces)} of {num(r.made)}
+                    </span>
+                  </td>
                   <td className="px-2 py-1.5 text-right tabular-nums text-muted">{pctStr(r.shareOfPeriodPct)}</td>
                 </tr>
               ))}
@@ -1741,59 +2026,72 @@ function BreakdownTable({
           )}
         </tbody>
       </table>
+      </TableFrame>
       <FilterNote filters={filters} total={rows.length} />
+      {!narrowed && filters.rows.length > maxRows && (
+        <button type="button" onClick={() => setShowAll((v) => !v)} className="print-hidden mt-2 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px] touch:px-1">
+          {showAll ? 'Show fewer' : `Show all ${filters.rows.length}`}
+        </button>
+      )}
     </div>
   )
 }
 
-/** Each defect's rejected pieces month by month and its share of the month's, filtered like Excel on the defect and its total. */
+/**
+ * Each defect's rejected pieces month by month and its share of the month's, filtered like Excel on the defect and
+ * its total. Only the months that made anything have a column: This year read in October opens on September and
+ * October, not on eight empty columns with the figures off to the right.
+ */
 function DefectsByMonthTable({ data, rejected, rate, onOpen }: { data: KpiBreakdown; rejected: number; rate: number | null; onOpen?: (defect: string | null, month: string | null) => void }) {
   /** A cell with pieces opens the sessions behind them. */
   const opens = (defect: string | null, month: string | null, pieces: number): { onClick?: () => void; className: string } =>
     onOpen && pieces > 0 ? { onClick: () => onOpen(defect, month), className: 'cursor-pointer hover:bg-brand-50 dark:hover:bg-brand-500/10' } : { className: '' }
+  const months = data.months.filter((m) => m.made > 0 || m.productionDefectPieces > 0)
   const filters = useColumnFilters(data.defects, [
     { key: 'defect', value: (d) => d.defectName },
     // Each month's pieces of the defect, a column of its own.
-    ...data.months.map((m) => ({ key: `m:${m.month}`, value: (d: (typeof data.defects)[number]) => num(d.months.find((x) => x.month === m.month)?.pieces ?? 0), numeric: true })),
+    ...months.map((m) => ({ key: `m:${m.month}`, value: (d: (typeof data.defects)[number]) => num(d.months.find((x) => x.month === m.month)?.pieces ?? 0), numeric: true })),
     { key: 'total', value: (d) => String(d.pieces), numeric: true },
   ])
   if (data.defects.length === 0) return <p className="py-6 text-center text-sm text-muted">No rejected piece in these months.</p>
   const shown = filters.active > 0 || filters.sort ? filters.rows : filters.rows.slice(0, 15)
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <div>
+      <TableFrame>
+      <table className="table-sticky-first w-full text-sm">
         <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
             <FilterTh filters={filters} column="defect" label="Defect" />
-            {data.months.map((m) => <FilterTh key={m.month} filters={filters} column={`m:${m.month}`} label={monthLabel(m.month, false)} className="text-right" />)}
+            {months.map((m) => <FilterTh key={m.month} filters={filters} column={`m:${m.month}`} label={monthLabel(m.month, false)} className="text-right" />)}
             <FilterTh filters={filters} column="total" label="Total" className="text-right" />
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           <tr className="bg-slate-50 font-semibold dark:bg-slate-800/60">
-            <td className="px-2 py-1.5">All rejected · rate</td>
-            {data.months.map((m) => {
+            <td className={cn('whitespace-nowrap px-2 py-1.5', SUMMARY_CELL)}>All rejected · rate</td>
+            {months.map((m) => {
               const o = opens(null, m.month, m.productionDefectPieces)
-              return <td key={m.month} onClick={o.onClick} className={cn('px-2 py-1.5 text-right tabular-nums', o.className)}>{m.made > 0 ? <>{num(m.productionDefectPieces)} <span className="text-xs text-muted">{pctStr(m.defectRatePct)}</span></> : <span className="text-slate-300">—</span>}</td>
+              return <td key={m.month} onClick={o.onClick} className={cn('whitespace-nowrap px-2 py-1.5 text-right tabular-nums', o.className)}>{m.made > 0 ? <>{num(m.productionDefectPieces)} <span className="text-xs text-muted">{pctStr(m.defectRatePct)}</span></> : <span className="text-slate-300">—</span>}</td>
             })}
-            <td onClick={opens(null, null, rejected).onClick} className={cn('px-2 py-1.5 text-right tabular-nums', opens(null, null, rejected).className)}>{num(rejected)} <span className="text-xs text-muted">{pctStr(rate)}</span></td>
+            <td onClick={opens(null, null, rejected).onClick} className={cn('whitespace-nowrap px-2 py-1.5 text-right tabular-nums', opens(null, null, rejected).className)}>{num(rejected)} <span className="text-xs text-muted">{pctStr(rate)}</span></td>
           </tr>
           {shown.map((d) => (
             <tr key={d.defectName}>
-              <td onClick={opens(d.defectName, null, d.pieces).onClick} className={cn('px-2 py-1.5 text-left', opens(d.defectName, null, d.pieces).className)}><span dir="auto" className="inline-block font-medium">{d.defectName}</span></td>
-              {d.months.map((m) => {
-                const monthRejected = data.months.find((x) => x.month === m.month)?.productionDefectPieces ?? 0
+              <td onClick={opens(d.defectName, null, d.pieces).onClick} className={cn('min-w-[7rem] px-2 py-1.5 text-left', opens(d.defectName, null, d.pieces).className)}><span dir="auto" className="inline-block font-medium">{d.defectName}</span></td>
+              {months.map((month) => {
+                const m = d.months.find((x) => x.month === month.month) ?? { month: month.month, pieces: 0 }
                 const o = opens(d.defectName, m.month, m.pieces)
-                return <td key={m.month} onClick={o.onClick} className={cn('px-2 py-1.5 text-right tabular-nums', o.className)}>{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-muted">{pctStr(pct(m.pieces, monthRejected))}</span></> : <span className="text-slate-300">—</span>}</td>
+                return <td key={m.month} onClick={o.onClick} className={cn('whitespace-nowrap px-2 py-1.5 text-right tabular-nums', o.className)}>{m.pieces > 0 ? <>{num(m.pieces)} <span className="text-xs text-muted">{pctStr(pct(m.pieces, month.productionDefectPieces))}</span></> : <span className="text-slate-300">—</span>}</td>
               })}
-              <td onClick={opens(d.defectName, null, d.pieces).onClick} className={cn('px-2 py-1.5 text-right font-semibold tabular-nums', opens(d.defectName, null, d.pieces).className)}>{num(d.pieces)} <span className="text-xs font-normal text-muted">{pctStr(d.sharePct)}</span></td>
+              <td onClick={opens(d.defectName, null, d.pieces).onClick} className={cn('whitespace-nowrap px-2 py-1.5 text-right font-semibold tabular-nums', opens(d.defectName, null, d.pieces).className)}>{num(d.pieces)} <span className="text-xs font-normal text-muted">{pctStr(d.sharePct)}</span></td>
             </tr>
           ))}
           {shown.length === 0 && (
-            <tr><td colSpan={data.months.length + 2} className="py-6 text-center text-sm text-muted">No row matches the filters.</td></tr>
+            <tr><td colSpan={months.length + 2} className="py-6 text-center text-sm text-muted">No row matches the filters.</td></tr>
           )}
         </tbody>
       </table>
+      </TableFrame>
       <FilterNote filters={filters} total={data.defects.length} />
     </div>
   )
@@ -1819,12 +2117,16 @@ function MachineCards({ rows, previous, t, onPick }: { rows: KpiGroupRow[]; prev
             <button type="button" onClick={() => onPick(m.key)} className={cn('block w-full rounded-2xl p-4 text-left ring-1 transition-shadow hover:shadow-hover', TONE_RING[tone])}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate font-bold">{m.label}</p>
+                  <p className="line-clamp-2 break-words font-bold leading-snug">{m.label}</p>
                   {m.sub && <p className="truncate text-xs text-muted">{m.sub}</p>}
                 </div>
-                <span className={cn('inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold tabular-nums', delta === null ? 'text-muted' : flat ? 'text-muted' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')} data-tip={prev ? `Was ${pctStr(prev.defectRatePct)} in the comparison period` : 'Nothing in the comparison period'}>
-                  {delta === null ? <Minus className="h-3 w-3" /> : flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
-                  {delta === null ? 'new' : flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
+                {/* The change, and under it what it is against: on the card, where a finger can read it. */}
+                <span className="flex shrink-0 flex-col items-end text-right text-xs" data-tip={prev ? `Was ${pctStr(prev.defectRatePct)} in the comparison period` : 'Nothing in the comparison period'}>
+                  <span className={cn('inline-flex items-center gap-0.5 font-semibold tabular-nums', delta === null ? 'text-muted' : flat ? 'text-muted' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}>
+                    {delta === null ? <Minus className="h-3 w-3" /> : flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
+                    {delta === null ? 'new' : flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
+                  </span>
+                  <span className="text-[11px] tabular-nums text-muted">{prev ? `was ${pctStr(prev.defectRatePct)}` : 'none before'}</span>
                 </span>
               </div>
               <p className={cn('mt-1 text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
@@ -1940,6 +2242,8 @@ export function DashboardPage() {
 
   const { data, isLoading, isFetching, error, refetch } = useKpiOverview(allowed ? filters : null)
   const [insightsOpen, setInsightsOpen] = useState(false)
+  /** The details' filters in their sheet, on a phone. */
+  const [filtersOpen, setFiltersOpen] = useState(false)
   /** The ones this person put away: hidden on every device until shown again. */
   const [hiddenOpen, setHiddenOpen] = useState(false)
   const { data: hiddenState } = useHiddenInsights(allowed)
@@ -2058,6 +2362,10 @@ export function DashboardPage() {
   const leftOut = useMemo(() => registered.filter((m) => m.onDashboard === false).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true })), [registered])
   const { data: users = [] } = useUsers()
   const { data: span } = useKpiSpan(allowed)
+  // How much room there is: the boards stacked (no grid to arrange), a phone, the smallest phones.
+  const { ref: pageRef, stacked } = useBoardsStacked()
+  const phone = useMediaQuery(PHONE)
+  const narrowPhone = useMediaQuery(NARROW_PHONE)
 
   /**
    * The inspector filter used to offer every account, whether or not the
@@ -2136,15 +2444,24 @@ export function DashboardPage() {
 
   const t = data?.thresholds
   // Every day of the period on the axis, so a day without a sample shows as a gap rather than vanishing.
-  const dailyPoints = useMemo(() => {
-    if (!data) return []
+  // From the first day with a sample to the last (a day between them without one stays, as a gap), and the same
+  // days a week a bar — Monday to Sunday — for a chart too narrow for a bar a day.
+  const { dailyPoints, weeklyPoints } = useMemo(() => {
+    if (!data) return { dailyPoints: [], weeklyPoints: [] }
     const byDay = new Map(data.daily.map((d) => [d.day, d]))
-    const out: { label: string; total: number; part: number }[] = []
-    for (let day = data.filters.from; day <= data.filters.to && out.length < 400; day = addDays(day, 1)) {
+    const all: { day: string; total: number; part: number }[] = []
+    for (let day = data.filters.from; day <= data.filters.to && all.length < 400; day = addDays(day, 1)) {
       const d = byDay.get(day)
-      out.push({ label: shortDay(day), total: d?.pieces ?? 0, part: d?.defectPieces ?? 0 })
+      all.push({ day, total: d?.pieces ?? 0, part: d?.defectPieces ?? 0 })
     }
-    return out
+    const days = trimmed(all, (d) => d.total > 0 || d.part > 0)
+    const weeks = runsOf(days.length, (i) => fromDay(days[i].day).getDay() === 1).map(({ from, to }) => {
+      const run = days.slice(from, to)
+      const first = run[0].day
+      const last = run[run.length - 1].day
+      return { label: first === last ? shortDay(first) : `${shortDay(first)} – ${shortDay(last)}`, total: run.reduce((n, d) => n + d.total, 0), part: run.reduce((n, d) => n + d.part, 0) }
+    })
+    return { dailyPoints: days.map((d) => ({ label: shortDay(d.day), total: d.total, part: d.part })), weeklyPoints: weeks }
   }, [data])
   const cur = data?.current
   const prevT = data?.previous
@@ -2156,15 +2473,101 @@ export function DashboardPage() {
       ? `${describeRange(range)} · reject rate = rejected ÷ (produced + rejected) · trend over ${general ? windowLength(general) : 'the last months'}`
       : `${describeRange(range)} compared with ${describeRange(prev)}${activeFilters.length > 0 ? ` · ${activeFilters.join(' · ')}` : ''}`
 
+  // The details' seven filters: in their card from 640 px, in a sheet on a phone. One a line in the sheet, so each
+  // says what it holds in full; two from 440 px, three from a tablet, four from 1280 so each select reads in full,
+  // and all seven in one row from 1536.
+  const filterFields = (
+    <div className="grid grid-cols-1 gap-3 min-[440px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
+      <Field label="Compare with">
+        <Select value={f.compare} onChange={(e) => patch({ compare: e.target.value as ComparePreset })}>
+          {COMPARE_PRESETS.map((p) => (
+            <option key={p.key} value={p.key}>
+              {p.label}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="Factory">
+        <Select value={f.factory} onChange={(e) => patch({ factory: e.target.value, workCenterCode: '' })}>
+          <option value="">All factories</option>
+          {factories.map((x) => (
+            <option key={x} value={x}>
+              {x}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="Process">
+        <Select value={f.process} onChange={(e) => patch({ process: e.target.value as DashFilters['process'], workCenterCode: '' })}>
+          <option value="">All processes</option>
+          {PROCESSES.map((p) => (
+            <option key={p} value={p}>
+              {PROCESS_LABEL[p]}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="Machine">
+        <Select value={f.workCenterCode} onChange={(e) => patch({ workCenterCode: e.target.value })}>
+          <option value="">All machines</option>
+          {machineOptions.map((m) => (
+            <option key={m.id} value={m.code}>
+              {m.displayName}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="Item code">
+        <Input list="dash-items" value={f.itemCode} onChange={(e) => patch({ itemCode: e.target.value })} placeholder="All items" />
+        <datalist id="dash-items">{data?.byItem.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}</datalist>
+      </Field>
+      <Field label="Inspector">
+        <Select value={f.inspectorId} onChange={(e) => patch({ inspectorId: e.target.value })}>
+          <option value="">All inspectors</option>
+          {inspectorChoices.withRecord.length > 0 && (
+            <optgroup label="Recorded in this period">
+              {inspectorChoices.withRecord.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {inspectorChoices.without.length > 0 && (
+            <optgroup label="Nothing recorded in this period">
+              {inspectorChoices.without.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </Select>
+      </Field>
+      <Field label="Shift">
+        <Select value={f.shift} onChange={(e) => patch({ shift: e.target.value as DashFilters['shift'] })}>
+          <option value="">All shifts</option>
+          {(['A', 'B', 'C'] as ShiftLetter[]).map((s) => (
+            <option key={s} value={s}>
+              {s} · {shiftName(s)}
+            </option>
+          ))}
+        </Select>
+      </Field>
+    </div>
+  )
+
   return (
     <BoardContext.Provider value={boardState}>
     <PeriodBadgeContext.Provider value={shortRange(range)}>
       {canArrange && editingLayout && <ChartGallery open={galleryOpen} onClose={() => setGalleryOpen(false)} />}
       <DrillModal spec={detailDrill} onClose={() => setDetailDrill(null)} />
-    <div className="mx-auto max-w-[110rem] space-y-5">
+    <div ref={pageRef} className="mx-auto max-w-[110rem] space-y-5">
       {editingLayout && (
         <div className="print-hidden rounded-xl border border-brand-300 bg-brand-50 px-4 py-2 text-sm text-brand-800 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-100">
-          Arranging your own dashboard: drag a chart by its blue bar, pull its bottom-right corner to size it. Save keeps it for you only; everyone else keeps the default. Default puts the default back on yours.
+          {stacked
+            ? 'The charts are arranged on a screen at least 1,024 px wide; here they are stacked in their order. Widen the window, or turn the tablet on its side, to drag them. Charts, Save, Default and Cancel still work.'
+            : 'Arranging your own dashboard: drag a chart by its blue bar, pull its bottom-right corner to size it. Save keeps it for you only; everyone else keeps the default. Default puts the default back on yours.'}
         </div>
       )}
       {/* One row: the view, the period with its presets, and the page's actions as icons. What the page reads is behind the (i). */}
@@ -2223,7 +2626,8 @@ export function DashboardPage() {
                   </span>
                 </button>
               )}
-              {canArrange && view === 'general' && !editingLayout && (
+              {/* Offered where there is a grid to arrange: a stacked board (a phone, a tablet upright) has nothing to drag. */}
+              {canArrange && view === 'general' && !editingLayout && !stacked && (
                 <button type="button" onClick={startArranging} aria-label="Arrange the charts" data-tip="Arrange the charts" className="grid h-9 w-9 place-items-center rounded-lg text-muted ring-1 ring-slate-200 transition-colors hover:bg-white hover:text-slate-700 dark:ring-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
                   <LayoutDashboard className="h-4 w-4" />
                 </button>
@@ -2261,20 +2665,21 @@ export function DashboardPage() {
       {/* §15 — the general page: the plant and its factories on three figures, then one angle to read it from. */}
       {view === 'general' && (
         <>
-          <GeneralOverview data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} leftOut={leftOut} />
-          <div className="print-hidden flex flex-wrap items-center gap-2">
+          <GeneralOverview data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} leftOut={leftOut} strip={pick === 'details' && phone} />
+          {/* One row whatever the width: the switch (its short words on the smallest phones), and Reset at its end. */}
+          <div className="print-hidden flex items-center gap-2">
             <Segmented
               label="Read it"
               value={pick}
               onChange={setPick}
               options={[
-                { value: 'factory', label: 'By factory', icon: <Factory className="h-4 w-4" /> },
-                { value: 'process', label: 'Comparisons', icon: <Layers className="h-4 w-4" /> },
-                { value: 'details', label: 'Details', icon: <LayoutGrid className="h-4 w-4" /> },
+                { value: 'factory', label: narrowPhone ? 'Factory' : 'By factory', icon: narrowPhone ? undefined : <Factory className="h-4 w-4" /> },
+                { value: 'process', label: narrowPhone ? 'Compare' : 'Comparisons', icon: narrowPhone ? undefined : <Layers className="h-4 w-4" /> },
+                { value: 'details', label: 'Details', icon: narrowPhone ? undefined : <LayoutGrid className="h-4 w-4" /> },
               ]}
             />
             {pick === 'details' && <InfoTip text="The full analysis: the filters below narrow it." label="About the details" />}
-            <button type="button" onClick={resetAll} disabled={!anythingSet} aria-label="Reset all filters and picks" data-tip="Reset all filters and picks" className="ml-auto grid h-9 w-9 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-200/70 hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
+            <button type="button" onClick={resetAll} disabled={!anythingSet} aria-label="Reset all filters and picks" data-tip="Reset all filters and picks" className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-200/70 hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
               <RotateCcw className="h-4 w-4" />
             </button>
           </div>
@@ -2285,86 +2690,19 @@ export function DashboardPage() {
       )}
 
 
-      {/* Filters — for the details and the inspector ranking. */}
+      {/* Filters — for the details and the inspector ranking. On a phone a Filters button and a sheet holding them, the filters in force as chips under it. */}
       <Card className={cn('print-hidden space-y-3 p-4', !showDetails && 'hidden')}>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-7">
-          <Field label="Compare with">
-            <Select value={f.compare} onChange={(e) => patch({ compare: e.target.value as ComparePreset })}>
-              {COMPARE_PRESETS.map((p) => (
-                <option key={p.key} value={p.key}>
-                  {p.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Factory">
-            <Select value={f.factory} onChange={(e) => patch({ factory: e.target.value, workCenterCode: '' })}>
-              <option value="">All factories</option>
-              {factories.map((x) => (
-                <option key={x} value={x}>
-                  {x}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Process">
-            <Select value={f.process} onChange={(e) => patch({ process: e.target.value as DashFilters['process'], workCenterCode: '' })}>
-              <option value="">All processes</option>
-              {PROCESSES.map((p) => (
-                <option key={p} value={p}>
-                  {PROCESS_LABEL[p]}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Machine">
-            <Select value={f.workCenterCode} onChange={(e) => patch({ workCenterCode: e.target.value })}>
-              <option value="">All machines</option>
-              {machineOptions.map((m) => (
-                <option key={m.id} value={m.code}>
-                  {m.displayName}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Item code">
-            <Input list="dash-items" value={f.itemCode} onChange={(e) => patch({ itemCode: e.target.value })} placeholder="All items" />
-            <datalist id="dash-items">{data?.byItem.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}</datalist>
-          </Field>
-          <Field label="Inspector">
-            <Select value={f.inspectorId} onChange={(e) => patch({ inspectorId: e.target.value })}>
-              <option value="">All inspectors</option>
-              {inspectorChoices.withRecord.length > 0 && (
-                <optgroup label="Recorded in this period">
-                  {inspectorChoices.withRecord.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              {inspectorChoices.without.length > 0 && (
-                <optgroup label="Nothing recorded in this period">
-                  {inspectorChoices.without.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </Select>
-          </Field>
-          <Field label="Shift">
-            <Select value={f.shift} onChange={(e) => patch({ shift: e.target.value as DashFilters['shift'] })}>
-              <option value="">All shifts</option>
-              {(['A', 'B', 'C'] as ShiftLetter[]).map((s) => (
-                <option key={s} value={s}>
-                  {s} · {shiftName(s)}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </div>
+        {phone ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <button type="button" onClick={() => setFiltersOpen(true)} className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-white px-3 text-sm font-semibold ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:ring-slate-700 dark:hover:bg-slate-800">
+              <SlidersHorizontal className="h-4 w-4" /> Filters
+              {activeFilters.length > 0 && <span className="rounded-full bg-brand-600 px-1.5 text-[11px] leading-[18px] text-white">{activeFilters.length}</span>}
+            </button>
+            <span className="text-xs text-muted">vs {COMPARE_PRESETS.find((p) => p.key === f.compare)?.label.toLowerCase() ?? 'the period before'}</span>
+          </div>
+        ) : (
+          filterFields
+        )}
         {activeFilters.length > 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {activeFilters.map((a) => (
@@ -2372,15 +2710,18 @@ export function DashboardPage() {
                 {a}
               </Badge>
             ))}
-            <button type="button" onClick={() => patch({ factory: '', process: '', workCenterCode: '', itemCode: '', inspectorId: '', shift: '' })} className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-rose-600">
+            <button type="button" onClick={() => patch({ factory: '', process: '', workCenterCode: '', itemCode: '', inspectorId: '', shift: '' })} className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-rose-600 touch:min-h-[44px] touch:px-1">
               <X className="h-3.5 w-3.5" /> Clear filters
             </button>
-            <button type="button" onClick={resetAll} className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-rose-600">
+            <button type="button" onClick={resetAll} className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-rose-600 touch:min-h-[44px] touch:px-1">
               <RotateCcw className="h-3.5 w-3.5" /> Reset all
             </button>
           </div>
         )}
       </Card>
+      <Modal open={filtersOpen && phone} onClose={() => setFiltersOpen(false)} title="Filters" icon={<SlidersHorizontal className="h-5 w-5" />} footer={<Button variant="primary" onClick={() => setFiltersOpen(false)}>Done</Button>}>
+        {filterFields}
+      </Modal>
 
       {error && showDetails && (
         <Card className="border border-rose-200 p-4 text-sm text-rose-700 dark:border-rose-500/30 dark:text-rose-300">
@@ -2436,7 +2777,7 @@ export function DashboardPage() {
             page="details"
             widgets={[
               { id: 'd.tiles', title: 'KPI tiles', labelled: false, node: (
-<div className="h-full overflow-auto">
+<WidgetBody>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             {/* Defect pieces per 100 produced, over the sessions closed in the period with a final quantity. */}
             <KpiTile vs={prevShort}
@@ -2461,7 +2802,7 @@ export function DashboardPage() {
             <KpiTile vs={prevShort} label="Sessions" value={num(cur.sessions)} current={cur.sessions} previous={prevT.sessions} goodWhen="none" sub={`${num(cur.sessionsClosed)} closed · ${num(cur.machinesInspected)} machines · ${num(cur.activeInspectors)} inspectors`} icon={<Users className="h-4 w-4" />} />
             <KpiTile period="Now" label="On Hold now" value={num(data.holds.length)} current={null} previous={null} goodWhen="down" tone={data.holds.some((h) => h.ageDays >= t.holdAgeRedDays) ? 'red' : data.holds.some((h) => h.ageDays >= t.holdAgeAmberDays) ? 'amber' : data.holds.length ? 'neutral' : 'green'} sub={`${num(holdPieces)} pieces waiting for a disposition`} icon={<PauseCircle className="h-4 w-4" />} />
           </div>
-</div>
+</WidgetBody>
               ) },
               { id: 'd.machines', title: 'Machines', node: (
           <Section
@@ -2474,7 +2815,7 @@ export function DashboardPage() {
               ) },
               { id: 'd.monthly', title: 'Month by month', node: (
             <Section title="Month by month" hint="Pieces produced each month of the period, with the defect rate over them." icon={<Activity className="h-4 w-4" />} className="xl:col-span-2">
-              <TrendChart points={data.monthly.map((m) => ({ label: monthLabel(m.month, false), bar: m.piecesProduced, line: m.defectRatePct }))} barLabel="Pieces produced" lineLabel="Defect rate" />
+              <TrendChart points={trimmed(data.monthly.map((m) => ({ label: monthLabel(m.month, false), bar: m.piecesProduced, line: m.defectRatePct })), (p) => p.bar > 0 || p.line !== null)} barLabel="Pieces produced" lineLabel="Defect rate" />
             </Section>
               ) },
               { id: 'd.defectDetails', title: 'Defect details', node: (
@@ -2511,7 +2852,7 @@ export function DashboardPage() {
               ) },
               { id: 'd.dailyTrend', title: 'Daily trend', node: (
             <Section title="Daily trend" hint="Each day: pieces inspected beside pieces found defective, on one scale." icon={<Activity className="h-4 w-4" />} className="xl:col-span-2">
-              <PairedBarChart points={dailyPoints} totalLabel="Pieces inspected" partLabel="Defect pieces" />
+              <PairedBarChart points={dailyPoints} weekly={weeklyPoints} totalLabel="Pieces inspected" partLabel="Defect pieces" />
             </Section>
               ) },
               { id: 'd.dispositions', title: 'Dispositions', node: (
@@ -2537,7 +2878,7 @@ export function DashboardPage() {
               className="xl:col-span-2"
               action={
                 data.paretoByMachine.length > 0 && (
-                  <Select value={paretoMachine} onChange={(e) => setParetoMachine(e.target.value)} className="print-hidden min-h-[40px] max-w-[16rem]" aria-label="Pareto for machine">
+                  <Select value={paretoMachine} onChange={(e) => setParetoMachine(e.target.value)} className="print-hidden min-h-[40px] min-w-0 sm:!w-auto sm:max-w-[16rem] touch:min-h-[44px]" aria-label="Pareto for machine">
                     <option value="">All machines</option>
                     {data.paretoByMachine.map((m) => (
                       <option key={m.workCenterCode} value={m.workCenterCode}>
@@ -2725,7 +3066,7 @@ export function DashboardPage() {
               icon={<PauseCircle className="h-4 w-4" />}
               action={
                 data.holds.length > 0 && (
-                  <Button className="print-hidden min-h-[40px]" onClick={() => navigate('/history?disposition=Hold')}>
+                  <Button className="print-hidden min-h-[40px] touch:min-h-[44px]" onClick={() => navigate('/history?disposition=Hold')}>
                     Open in History
                   </Button>
                 )
@@ -2796,7 +3137,7 @@ export function DashboardPage() {
               icon={<PauseCircle className="h-4 w-4" />}
               action={
                 data.holds.length > 0 && (
-                  <Button className="print-hidden min-h-[40px]" onClick={() => navigate('/history?disposition=Hold')}>
+                  <Button className="print-hidden min-h-[40px] touch:min-h-[44px]" onClick={() => navigate('/history?disposition=Hold')}>
                     Open in History
                   </Button>
                 )
@@ -2807,15 +3148,16 @@ export function DashboardPage() {
                 total={data.counts.holds}
                 rowKey={(h) => h.defectId}
                 maxRows={10}
+                sticky={false}
                 empty="Nothing on Hold. Good."
                 columns={[
                   { key: 'age', label: 'Age', className: 'text-right', text: (h) => `${h.ageDays} d`, sortNum: (h) => h.ageDays, render: (h) => <Badge tone={h.ageDays >= t.holdAgeRedDays ? 'red' : h.ageDays >= t.holdAgeAmberDays ? 'amber' : 'neutral'}>{h.ageDays} d</Badge> },
-                  { key: 'o', label: 'Order', text: (h) => h.orderNumber, render: (h) => <span className="font-semibold">{h.orderNumber}</span> },
+                  { key: 'o', label: 'Order', text: (h) => h.orderNumber, render: (h) => <span className="whitespace-nowrap font-semibold">{h.orderNumber}</span> },
                   { key: 'i', label: 'Item', render: (h) => h.item },
                   { key: 'm', label: 'Machine', render: (h) => h.workCenterCode },
                   { key: 'd', label: 'Defect', render: (h) => h.defectName },
                   { key: 'q', label: 'Qty', className: 'text-right tabular-nums', render: (h) => num(h.qty) },
-                  { key: 'go', label: '', className: 'print-hidden text-right', filterable: false, render: (h) => (<button type="button" onClick={() => navigate(sessionDetailPath(h.sessionId))} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">Session</button>) },
+                  { key: 'go', label: '', className: 'print-hidden text-right', filterable: false, render: (h) => (<button type="button" onClick={() => navigate(sessionDetailPath(h.sessionId))} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:-my-2 touch:min-h-[44px] touch:px-2">Session</button>) },
                 ]}
               />
             </Section>

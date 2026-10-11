@@ -28,6 +28,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AiChatRequest, AiConversation, AiMessage, AiMessagesResponse } from '@qc/shared/ai'
 import { ApiError, apiStream } from '@/lib/api'
+import { useMediaQuery } from '@/lib/media'
 import { readSse } from '@/lib/sse'
 import { newSubmissionId } from '@/lib/utils'
 import { keys, useAiMe } from '@/services/queries'
@@ -49,7 +50,7 @@ export interface AiControls {
   open: boolean
   setOpen: (open: boolean) => void
   toggle: () => void
-  /** A desktop (lg and up): the panel docks beside the page instead of covering it. */
+  /** A wide desktop (AI_DOCKED, 2xl and up): the panel docks beside the page instead of covering it as a sheet. */
   docked: boolean
   /** The conversation on screen; null for a new one. */
   conversationId: string | null
@@ -84,18 +85,12 @@ const LiveContext = createContext<LiveTurn | null>(null)
 
 const LOST = { code: 'internal' as const, message: 'The connection was lost before the answer finished.' }
 
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(query).matches)
-  useEffect(() => {
-    const mq = window.matchMedia?.(query)
-    if (!mq) return
-    const onChange = () => setMatches(mq.matches)
-    onChange()
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
-  }, [query])
-  return matches
-}
+/**
+ * Where the panel docks beside the page instead of lying over it as a sheet: from 2xl (1536 px), where the shell
+ * makes room for it (AppShell's 2xl:pr-[32rem]). Narrower — a landscape tablet, a laptop — a docked panel would
+ * cover a third or more of the page with nothing to close it but its own button.
+ */
+const AI_DOCKED = '(min-width: 1536px)'
 
 /** A refusal that may mean the assistant was taken away (or never given): /ai/me is asked again, and says which. */
 const mayBeRevoked = (err: unknown) => err instanceof ApiError && (err.status === 403 || err.status === 404)
@@ -108,7 +103,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   const enabled = me?.granted ?? false
   const owner = me?.owner ?? false
   const automations = me?.automations ?? false
-  const docked = useMediaQuery('(min-width: 1024px)')
+  const docked = useMediaQuery(AI_DOCKED)
   const [open, setOpenState] = useState(false)
   const [revoked, setRevoked] = useState(false)
   // Whether it was ever given in this sign-in: losing it then is "taken away", not "never there".

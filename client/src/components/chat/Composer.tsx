@@ -14,6 +14,7 @@ import { uploadImage } from '@/services/uploadImage'
 import { ImageRejected } from '@/services/imageStore'
 import { useApp } from '@/store/AppContext'
 import { ApiError } from '@/lib/api'
+import { isCoarsePointer } from '@/lib/media'
 import { cn, newSubmissionId } from '@/lib/utils'
 import { messageDirection } from '@/lib/direction'
 import { EmojiPicker } from './EmojiPicker'
@@ -25,8 +26,6 @@ interface Suggestion {
   label: string
   sub?: string
 }
-
-const isTouch = () => typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches
 
 export function Composer({
   conversationId,
@@ -55,18 +54,20 @@ export function Composer({
   const [emoji, setEmoji] = useState(false)
   const [pick, setPick] = useState(0)
   const area = useRef<HTMLTextAreaElement>(null)
+  const emojiButton = useRef<HTMLButtonElement>(null)
   const imgRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const clientId = useRef(newSubmissionId())
   const { data: attached = [] } = useImages(imageIds)
 
-  // Switching conversation or entering edit mode resets the box.
+  // Switching conversation or entering edit mode resets the box. The caret goes into it — on a touch screen only for
+  // an edit, which was asked for: opening a conversation does not raise the keyboard over its messages.
   useEffect(() => {
     setText(editing?.body ?? '')
     setImageIds([])
     setFiles([])
     clientId.current = newSubmissionId()
-    area.current?.focus()
+    if (editing || !isCoarsePointer()) area.current?.focus()
   }, [conversationId, editing])
 
   useEffect(() => {
@@ -208,7 +209,7 @@ export function Composer({
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); choose(suggestions[pick]); return }
       if (e.key === 'Escape') { e.preventDefault(); insertAt(caret, caret, ' '); return }
     }
-    if (e.key === 'Enter' && !e.shiftKey && !isTouch()) {
+    if (e.key === 'Enter' && !e.shiftKey && !isCoarsePointer()) {
       e.preventDefault()
       void submit()
     }
@@ -221,7 +222,8 @@ export function Composer({
         <div className="mb-2 flex items-start gap-2 rounded-xl border-l-4 border-brand-500 bg-slate-50 px-3 py-1.5 text-xs dark:bg-slate-800">
           {editing ? <Pencil className="mt-0.5 h-3.5 w-3.5 text-brand-600" /> : <span className="mt-0.5 font-bold text-brand-700 dark:text-brand-300">{replyTo?.senderName}</span>}
           <span className="line-clamp-2 flex-1 text-slate-600 dark:text-slate-300">{editing ? 'Editing your message' : plainText(replyTo?.body ?? '') || (replyTo?.imageIds.length ? '📷 Photo' : '📎 File')}</span>
-          <button type="button" onClick={editing ? onCancelEdit : onCancelReply} className="rounded-md p-0.5 text-muted hover:text-slate-700" aria-label="Cancel">
+          {/* 36 px (44 with a finger), its margins taken back so the banner keeps its height. */}
+          <button type="button" onClick={editing ? onCancelEdit : onCancelReply} className="icon-btn -my-1.5 -me-2 h-9 w-9 shrink-0 touch:h-11 touch:w-11" aria-label={editing ? 'Cancel the edit' : 'Cancel the reply'}>
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -231,15 +233,26 @@ export function Composer({
           {attached.map((a) => (
             <span key={a.id} className="relative">
               <img src={a.thumbnailDataUrl} alt="" className="h-14 w-14 rounded-lg object-cover ring-1 ring-slate-200 dark:ring-slate-700" />
-              <button type="button" onClick={() => setImageIds((ids) => ids.filter((x) => x !== a.id))} className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full bg-slate-900 text-white" aria-label="Remove photo">
-                <X className="h-3 w-3" />
+              {/* A 24 px circle on the photo's corner; its target reaches 40 px around it (44 with a finger). */}
+              <button
+                type="button"
+                onClick={() => setImageIds((ids) => ids.filter((x) => x !== a.id))}
+                className="absolute -right-2 -top-2 grid h-6 w-6 place-items-center rounded-full bg-slate-900 text-white ring-2 ring-white before:absolute before:-inset-2 touch:before:-inset-2.5 dark:ring-slate-900"
+                aria-label="Remove photo"
+              >
+                <X className="h-3.5 w-3.5" />
               </button>
             </span>
           ))}
           {files.map((f) => (
             <span key={f.id} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2 py-1 text-xs font-medium dark:bg-slate-800">
               <Paperclip className="h-3.5 w-3.5" /> {f.originalFilename}
-              <button type="button" onClick={() => setFiles((fs) => fs.filter((x) => x.id !== f.id))} className="text-muted hover:text-rose-600" aria-label="Remove file">
+              <button
+                type="button"
+                onClick={() => setFiles((fs) => fs.filter((x) => x.id !== f.id))}
+                className="relative -my-1 -me-1 grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted hover:text-rose-600 before:absolute before:-inset-2 touch:before:-inset-2.5"
+                aria-label={`Remove ${f.originalFilename}`}
+              >
                 <X className="h-3.5 w-3.5" />
               </button>
             </span>
@@ -268,14 +281,14 @@ export function Composer({
           ))}
         </ul>
       )}
-      {emoji && <EmojiPicker onPick={addEmoji} onClose={() => setEmoji(false)} className="absolute bottom-full left-2 mb-1" />}
+      {emoji && <EmojiPicker onPick={addEmoji} onClose={() => setEmoji(false)} trigger={emojiButton} className="absolute bottom-full left-2 mb-1" />}
       <div className="flex items-end gap-1">
-        <button type="button" onClick={() => setEmoji((v) => !v)} className="icon-btn h-10 w-10" aria-label="Emoji">
+        <button ref={emojiButton} type="button" onClick={() => setEmoji((v) => !v)} className="icon-btn h-10 w-10 touch:h-11 touch:w-11" aria-label="Emoji" aria-expanded={emoji}>
           <Smile className="h-5 w-5" />
         </button>
         {!editing && (
           <>
-            <button type="button" onClick={() => imgRef.current?.click()} className="icon-btn h-10 w-10" aria-label="Photo" disabled={imageIds.length >= 10}>
+            <button type="button" onClick={() => imgRef.current?.click()} className="icon-btn h-10 w-10 touch:h-11 touch:w-11" aria-label="Photo" disabled={imageIds.length >= 10}>
               <ImagePlus className="h-5 w-5" />
             </button>
             {CHAT_FILE_ATTACHMENTS_ENABLED && (
@@ -296,11 +309,11 @@ export function Composer({
           onKeyDown={onKey}
           placeholder={editing ? 'Edit your message' : 'Message · @ person · # order, item, machine'}
           dir={messageDirection(text) ?? 'auto'}
-          className="input min-h-[40px] flex-1 resize-none rounded-2xl py-2 leading-snug"
+          className="input min-h-[40px] flex-1 resize-none rounded-2xl py-2 leading-snug touch:min-h-[44px]"
           maxLength={4000}
           aria-label="Message"
         />
-        <button type="button" onClick={() => void submit()} disabled={!canSend} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-card transition hover:bg-brand-700 disabled:opacity-40" aria-label={editing ? 'Save' : 'Send'}>
+        <button type="button" onClick={() => void submit()} disabled={!canSend} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-card transition hover:bg-brand-700 disabled:opacity-40 touch:h-11 touch:w-11" aria-label={editing ? 'Save' : 'Send'}>
           {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : editing ? <Pencil className="h-4 w-4" /> : <Send className="h-5 w-5" />}
         </button>
       </div>

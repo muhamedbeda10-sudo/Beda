@@ -99,7 +99,7 @@ describe('an answer as it ended', () => {
     expect(html).toContain('Defects by machine')
     expect(html).toMatch(/<svg[^>]*role="img"/)
     expect(html.indexOf('defect pieces on two machines')).toBeLessThan(html.indexOf('ai-figure'))
-    expect(html.indexOf('ai-figure')).toBeLessThan(html.indexOf('Copy table'))
+    expect(html.indexOf('ai-figure')).toBeLessThan(html.indexOf('Copies the rows as tab-separated text'))
   })
 
   it('folds its queries under “How I got this” at the end', () => {

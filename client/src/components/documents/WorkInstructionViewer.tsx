@@ -12,6 +12,10 @@ import type { WorkInstruction } from '@qc/shared/types'
  * download rather than show it), then every page is drawn with pdf.js at the
  * width of the screen. The renderer is loaded on first use so the wizard's
  * bundle stays small.
+ *
+ * Zoom is in the header from a tablet up; on a phone, whose header has room
+ * only for the title, it is a pill floating over the foot of the document,
+ * under the thumb. Zoomed past the screen's width, the pages scroll sideways.
  */
 export function WorkInstructionViewer({ instruction, onClose }: { instruction: WorkInstruction; onClose: () => void }) {
   const subtitle = [instruction.code, instruction.issueNo ? `Issue ${instruction.issueNo}` : '', instruction.issueDate ? instruction.issueDate.slice(0, 10) : ''].filter(Boolean).join(' · ')
@@ -74,20 +78,14 @@ export function PdfViewer({ path, title, subtitle, onClose }: { path: string; ti
           </p>
         </div>
         <div className="hidden items-center gap-1 sm:flex">
-          <button type="button" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))} className="rounded-lg p-2 hover:bg-white/10" aria-label="Zoom out">
-            <Minus className="h-4 w-4" />
-          </button>
-          <span className="w-12 text-center text-xs tabular-nums text-white/70">{Math.round(zoom * 100)}%</span>
-          <button type="button" onClick={() => setZoom((z) => Math.min(3, +(z + 0.25).toFixed(2)))} className="rounded-lg p-2 hover:bg-white/10" aria-label="Zoom in">
-            <Plus className="h-4 w-4" />
-          </button>
+          <ZoomControls zoom={zoom} setZoom={setZoom} />
         </div>
-        <button type="button" onClick={onClose} className="rounded-lg p-2 hover:bg-white/10" aria-label="Close document">
+        <button type="button" onClick={onClose} className={cn(CONTROL, '-me-1')} aria-label="Close document">
           <X className="h-6 w-6" />
         </button>
       </header>
 
-      <div ref={scroller} className="flex-1 overflow-auto overscroll-contain px-2 py-3 sm:px-4">
+      <div ref={scroller} className="flex-1 overflow-auto overscroll-contain px-2 pb-24 pt-3 sm:px-4 sm:pb-3">
         {state.status === 'loading' && (
           <p className="flex items-center justify-center gap-2 py-16 text-sm text-white/70">
             <Loader2 className="h-5 w-5 animate-spin" /> Opening the document…
@@ -99,15 +97,59 @@ export function PdfViewer({ path, title, subtitle, onClose }: { path: string; ti
           </p>
         )}
         {doc && state.status === 'ready' && (
-          <div className="mx-auto flex max-w-4xl flex-col items-center gap-3">
+          // As wide as the widest page and never narrower than the frame: a page zoomed past the frame's width
+          // scrolls sideways from its left edge, and a narrower one stays centred.
+          <div className="mx-auto flex w-max min-w-full flex-col items-center gap-3">
             {Array.from({ length: state.pages }, (_, i) => (
               <PdfPage key={i} doc={doc} pageNumber={i + 1} zoom={zoom} container={scroller} />
             ))}
           </div>
         )}
       </div>
+
+      {state.status === 'ready' && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-4 safe-bottom sm:hidden">
+          <div className="pointer-events-auto flex items-center gap-1 rounded-full bg-slate-800/95 p-1 shadow-lift ring-1 ring-white/10 backdrop-blur">
+            <ZoomControls zoom={zoom} setZoom={setZoom} round />
+          </div>
+        </div>
+      )}
     </div>,
     document.body,
+  )
+}
+
+const MIN_ZOOM = 0.5
+const MAX_ZOOM = 3
+/** A 44 px control on the viewer's dark ground. */
+const CONTROL = 'icon-btn text-white hover:bg-white/10 hover:text-white disabled:opacity-40 disabled:hover:bg-transparent dark:text-white dark:hover:bg-white/10'
+
+/** Zoom out, the zoom now, zoom in: in the header from a tablet up, in a floating pill on a phone. */
+function ZoomControls({ zoom, setZoom, round }: { zoom: number; setZoom: (next: (z: number) => number) => void; round?: boolean }) {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setZoom((z) => Math.max(MIN_ZOOM, +(z - 0.25).toFixed(2)))}
+        disabled={zoom <= MIN_ZOOM}
+        className={cn(CONTROL, round && 'rounded-full')}
+        aria-label="Zoom out"
+      >
+        <Minus className="h-5 w-5" />
+      </button>
+      <span className="w-12 text-center text-xs font-semibold tabular-nums text-white/80" aria-live="polite">
+        {Math.round(zoom * 100)}%
+      </span>
+      <button
+        type="button"
+        onClick={() => setZoom((z) => Math.min(MAX_ZOOM, +(z + 0.25).toFixed(2)))}
+        disabled={zoom >= MAX_ZOOM}
+        className={cn(CONTROL, round && 'rounded-full')}
+        aria-label="Zoom in"
+      >
+        <Plus className="h-5 w-5" />
+      </button>
+    </>
   )
 }
 
@@ -162,7 +204,7 @@ function PdfPage({
 
   return (
     <div className={cn('relative rounded-lg bg-white shadow-lift', !drawn && 'min-h-[40vh] w-full max-w-[900px] animate-pulse bg-white/20')}>
-      <canvas ref={canvas} className="block max-w-full rounded-lg" aria-label={`Page ${pageNumber}`} />
+      <canvas ref={canvas} className="block rounded-lg" aria-label={`Page ${pageNumber}`} />
     </div>
   )
 }

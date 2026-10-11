@@ -11,7 +11,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Activity, Bot, Coins, Eye, EyeOff, Hash, KeyRound, Loader2, MessageSquareText, Save, SlidersHorizontal, Trash2, Zap } from 'lucide-react'
+import { Activity, Bot, ChevronDown, Coins, Eye, EyeOff, Hash, KeyRound, Loader2, MessageSquareText, Save, SlidersHorizontal, Trash2, Zap } from 'lucide-react'
 import { AI_MAX_MONTHLY_CAP_USD, type AiKeyState, type AiSettingsResponse, type AiStatusResponse, type AiUsageResponse } from '@qc/shared/ai'
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { CAP_RANGE_TEXT, parseCapUsd } from '@/components/ai/access'
@@ -23,6 +23,7 @@ import { formatCap, formatMonth, formatTokens, formatUsd, formatUtcDay, spendBar
 import { Badge, Button, Card, Field, Input, Modal, Stat } from '@/components/ui'
 import { Segmented } from '@/components/ui/PageShell'
 import { ApiError } from '@/lib/api'
+import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn, formatDateTime } from '@/lib/utils'
 import { removeAiKey, saveAiSettings, setAiKey } from '@/services/mutations'
 import { useAiMe, useAiSettings, useAiUsage } from '@/services/queries'
@@ -37,6 +38,10 @@ export function AiAssistantPage() {
   const { data: me } = useAiMe()
   const owner = me?.owner ?? false
   const { data, isLoading, isError, refetch } = useAiSettings(owner)
+  // On a phone the ten-line introduction folds under "What is this?", so the key and the switch come first.
+  const phone = useMediaQuery(PHONE)
+  const intro =
+    "Only you see this page. The people you choose ask about the factory's record in plain words, in English or Arabic; Claude answers by running read-only queries over curated views of the record, and every query is shown with its rows and can be taken to Excel. It cannot change anything. You decide who may ask, about which data, on which model and effort, and up to what each may spend a month; the app-wide cap stops everyone before the bill runs away. Nobody sees a price or an amount in the chat — the figures are here alone."
 
   return (
     <AdminLayout
@@ -52,12 +57,16 @@ export function AiAssistantPage() {
       }
     >
       <div className="space-y-4">
-        <p className="text-sm text-muted">
-          Only you see this page. The people you choose ask about the factory's record in plain words, in English or Arabic; Claude answers by running read-only
-          queries over curated views of the record, and every query is shown with its rows and can be taken to Excel. It cannot change anything. You decide who
-          may ask, about which data, on which model and effort, and up to what each may spend a month; the app-wide cap stops everyone before the bill runs away.
-          Nobody sees a price or an amount in the chat — the figures are here alone.
-        </p>
+        {phone ? (
+          <details className="group rounded-xl bg-white/60 ring-1 ring-slate-200/70 dark:bg-slate-900/60 dark:ring-slate-800">
+            <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 px-3 text-sm font-semibold text-slate-700 dark:text-slate-200 [&::-webkit-details-marker]:hidden">
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted transition-transform group-open:rotate-180" /> What is this?
+            </summary>
+            <p className="px-3 pb-3 text-sm text-muted">{intro}</p>
+          </details>
+        ) : (
+          <p className="text-sm text-muted">{intro}</p>
+        )}
 
         {isLoading && (
           <p className="flex items-center gap-2 text-sm text-muted">
@@ -191,14 +200,14 @@ function KeyCard({ data }: { data: AiSettingsResponse }) {
               data-1p-ignore
               data-lpignore="true"
               disabled={saving}
-              className="pr-11 font-mono"
+              className="pr-12 font-mono"
             />
             <button
               type="button"
               onClick={() => setShow((s) => !s)}
               aria-label={show ? 'Hide the key' : 'Show the key'}
               data-tip={show ? 'Hide' : 'Show'}
-              className="absolute right-1 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              className="absolute right-0.5 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-lg text-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
             >
               {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
@@ -350,7 +359,8 @@ function SettingsCard({ data }: { data: AiSettingsResponse }) {
 
       {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</p>}
 
-      <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+      {/* The whole row is the switch's label: a tap on its words toggles it too. */}
+      <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-slate-200 p-4 has-[:disabled]:cursor-default dark:border-slate-800">
         <div className="min-w-0">
           <p id="ai-enabled-label" className="font-semibold">
             Assistant on
@@ -358,7 +368,7 @@ function SettingsCard({ data }: { data: AiSettingsResponse }) {
           <p className="mt-0.5 text-xs text-muted">Off, nobody can ask — you included — whatever the key and the caps. Conversations stay.</p>
         </div>
         <AiSwitch on={enabled} onChange={setEnabled} labelledBy="ai-enabled-label" disabled={saving} />
-      </div>
+      </label>
 
       <Field
         label="App-wide monthly cap (USD)"
@@ -428,7 +438,7 @@ function Usage({ data, stale }: { data: AiUsageResponse; stale: boolean }) {
 
   return (
     <div className={cn('space-y-4 transition-opacity', stale && 'opacity-60')}>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Stat
           label="Spent"
           value={formatUsd(data.spentUsd)}
@@ -536,9 +546,11 @@ function Usage({ data, stale }: { data: AiUsageResponse; stale: boolean }) {
 export function UsageByAutomation({ rows, month }: { rows: AiUsageResponse['byAutomation']; month: string }) {
   return (
     <Card className="overflow-hidden lg:col-span-2">
-      <h3 className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 text-sm font-bold dark:border-slate-800">
-        <Zap className="h-4 w-4 text-muted" /> By automation
-        <span className="font-normal text-muted">· scheduled reports’ summaries, also counted above</span>
+      <h3 className="border-b border-slate-100 px-4 py-3 text-sm font-bold dark:border-slate-800">
+        <span className="flex items-center gap-2">
+          <Zap className="h-4 w-4 shrink-0 text-muted" /> By automation
+        </span>
+        <span className="block text-xs font-normal text-muted">Scheduled reports’ summaries, also counted above</span>
       </h3>
       {rows.length === 0 ? (
         <p className="px-4 py-8 text-center text-sm text-muted">No scheduled report was summarised in {formatMonth(month)}.</p>
@@ -556,11 +568,12 @@ export function UsageByAutomation({ rows, month }: { rows: AiUsageResponse['byAu
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {rows.map((a) => (
                 <tr key={a.automationId} className="data-row">
-                  <td className="px-4 font-semibold" dir="auto">
-                    {a.name}
+                  {/* Aligned as the header is; the name itself keeps its own direction. */}
+                  <td className="px-4 text-left font-semibold">
+                    <span dir="auto">{a.name}</span>
                   </td>
-                  <td className="px-4" dir="auto">
-                    {a.creatorName}
+                  <td className="px-4 text-left">
+                    <span dir="auto">{a.creatorName}</span>
                   </td>
                   <td className="px-4 text-right tabular-nums">{a.runs.toLocaleString()}</td>
                   <td className="px-4 text-right tabular-nums">{formatUsd(a.costUsd)}</td>

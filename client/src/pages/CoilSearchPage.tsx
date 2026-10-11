@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react'
 import { usePersistedState } from '@/lib/usePersistedState'
-import { Search, Package2, ArrowLeft } from 'lucide-react'
+import { Search, Package2, ArrowLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { Badge, Button, Card, EmptyState, Input } from '@/components/ui'
-import { useCoilSearch, useCoilUsage } from '@/services/queries'
+import { fetchSampleDetail, useCoilSearch, useCoilUsage } from '@/services/queries'
+import { sampleDetailPath } from '@/lib/links'
+import { useApp } from '@/store/AppContext'
 
 /**
  * §4 — Coil Search. Used when an inspector needs to trace material back:
@@ -11,6 +14,8 @@ import { useCoilSearch, useCoilUsage } from '@/services/queries'
  */
 export function CoilSearchPage() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const { toast } = useApp()
   const [term, setTerm] = usePersistedState('qc-coils:term', '')
 
   // The coil catalogue is not loaded to find one. The API matches the term as
@@ -24,15 +29,30 @@ export function CoilSearchPage() {
 
   /** Where each coil has been used — the traceability the search exists for. */
   const usage = useMemo(() => {
-    const map = new Map<string, { orderNumber: string; customer: string; sampleIndex: number }[]>()
+    const map = new Map<string, { sampleId: string; orderNumber: string; customer: string; sampleIndex: number }[]>()
     for (const u of usageRows) {
       const key = u.coilNumber.toLowerCase()
       const arr = map.get(key) ?? []
-      arr.push({ orderNumber: u.orderNumber, customer: u.customer, sampleIndex: u.sampleIndex })
+      arr.push({ sampleId: u.sampleId, orderNumber: u.orderNumber, customer: u.customer, sampleIndex: u.sampleIndex })
       map.set(key, arr)
     }
     return map
   }, [usageRows])
+
+  // A usage opens the sample's full record in History, over its session: the rest of the trail. The usage names the
+  // sample, not its session, so the record is read first — under the key History's view reads, so it opens filled.
+  const [opening, setOpening] = useState<string | null>(null)
+  async function openUsage(sampleId: string) {
+    setOpening(sampleId)
+    try {
+      const { sample } = await fetchSampleDetail(queryClient, sampleId)
+      navigate(sampleDetailPath(sample.sessionId, sampleId))
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'The sample could not be opened.', 'error')
+    } finally {
+      setOpening(null)
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -92,9 +112,17 @@ export function CoilSearchPage() {
                   ) : (
                     <div className="flex flex-wrap gap-2">
                       {used.map((u, i) => (
-                        <span key={i} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold dark:bg-slate-800">
+                        <button
+                          key={`${u.sampleId}-${i}`}
+                          type="button"
+                          onClick={() => void openUsage(u.sampleId)}
+                          disabled={opening !== null}
+                          aria-busy={opening === u.sampleId || undefined}
+                          className="inline-flex items-center gap-1 rounded-lg bg-slate-100 py-1 pe-1.5 ps-2.5 text-start text-xs font-semibold transition-colors hover:bg-brand-50 hover:text-brand-700 disabled:cursor-wait dark:bg-slate-800 dark:hover:bg-brand-500/10 dark:hover:text-brand-300 touch:min-h-[44px]"
+                        >
                           {u.orderNumber} · #{u.sampleIndex} · {u.customer}
-                        </span>
+                          {opening === u.sampleId ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted rtl:rotate-180" aria-hidden />}
+                        </button>
                       ))}
                     </div>
                   )}

@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowDownAZ, ArrowDownWideNarrow, ArrowUpAZ, ArrowUpNarrowWide, Check, ChevronDown, Filter, FilterX, Search, X } from 'lucide-react'
 import type { ColumnFilter, ColumnFilters, ColumnSort, ColumnValuesResponse } from '@qc/shared/api'
 import { FloatingPanel } from '@/components/dashboard/filters'
+import { isCoarsePointer } from '@/lib/media'
 import { cn } from '@/lib/utils'
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
@@ -64,7 +65,10 @@ export interface ColumnMenuProps {
   formatValue?: (value: string) => string
 }
 
-/** The small button in a header cell and the menu it opens. */
+/**
+ * The small button in a header cell and the menu it opens. The button keeps its size on a touch screen, so the
+ * header row does not grow, but takes a tap 8 px around it: a 44 px target for a finger.
+ */
 export function ColumnMenu({ label, filter, sort, numeric = false, onApply, onSort, values, loadValues, noValues = false, align = 'left', formatValue }: ColumnMenuProps) {
   const anchor = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
@@ -83,7 +87,7 @@ export function ColumnMenu({ label, filter, sort, numeric = false, onApply, onSo
         }}
         data-tip={active ? describeFilter(label, filter!) : sort ? `Sorted ${sort === 'asc' ? (numeric ? 'smallest first' : 'A → Z') : numeric ? 'largest first' : 'Z → A'}` : `Sort and filter ${label}`}
         className={cn(
-          'print-hidden inline-grid h-5 w-5 shrink-0 place-items-center rounded align-middle transition-colors touch:h-7 touch:w-7',
+          "print-hidden relative inline-grid h-5 w-5 shrink-0 place-items-center rounded align-middle transition-colors before:absolute before:content-[''] touch:h-7 touch:w-7 touch:before:-inset-2",
           active || sort ? 'bg-brand-100 text-brand-700 dark:bg-brand-500/20 dark:text-brand-300' : 'text-slate-400 hover:bg-slate-200/70 hover:text-slate-700 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-200',
         )}
       >
@@ -221,9 +225,9 @@ function MenuBody({
       <label className="block px-1">
         <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">Text contains</span>
         <span className="flex items-center gap-1.5 rounded-lg bg-slate-50 px-2 ring-1 ring-slate-200 focus-within:ring-brand-400 dark:bg-slate-800 dark:ring-slate-700">
-          <input value={contains} onChange={(e) => setContains(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && apply()} placeholder="Any part of the text" className="min-h-[34px] w-full bg-transparent text-sm outline-none" dir="auto" />
+          <input value={contains} onChange={(e) => setContains(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && apply()} placeholder="Any part of the text" className="min-h-[34px] w-full bg-transparent text-sm outline-none touch:min-h-[44px]" dir="auto" />
           {contains && (
-            <button type="button" onClick={() => setContains('')} aria-label="Clear the text" className="text-muted hover:text-slate-700 dark:hover:text-slate-200">
+            <button type="button" onClick={() => setContains('')} aria-label="Clear the text" className="shrink-0 text-muted hover:text-slate-700 dark:hover:text-slate-200 touch:-mr-1.5 touch:grid touch:h-9 touch:w-9 touch:place-items-center">
               <X className="h-3.5 w-3.5" />
             </button>
           )}
@@ -234,9 +238,12 @@ function MenuBody({
           <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
           <label className="flex items-center gap-1.5 rounded-lg bg-slate-50 px-2 ring-1 ring-slate-200 focus-within:ring-brand-400 dark:bg-slate-800 dark:ring-slate-700">
             <Search className="h-3.5 w-3.5 shrink-0 text-muted" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search the values" aria-label={`Search the values of ${label}`} className="min-h-[34px] w-full bg-transparent text-sm outline-none" dir="auto" autoFocus />
+            {/* Ready to type under a mouse; on a touch screen it waits for a tap, so the keyboard does not cover the list and OK. */}
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search the values" aria-label={`Search the values of ${label}`} className="min-h-[34px] w-full bg-transparent text-sm outline-none touch:min-h-[44px]" dir="auto" autoFocus={!isCoarsePointer()} />
           </label>
-          <div className="max-h-60 overflow-auto rounded-lg ring-1 ring-slate-100 dark:ring-slate-800">
+          {/* Its own scroller under a mouse, so the sort rows and the search stay put. Under a finger the whole menu is the
+              one scroller: a list scrolling inside a panel that scrolls too takes the swipe the finger did not mean. */}
+          <div className="max-h-60 overflow-auto rounded-lg ring-1 ring-slate-100 dark:ring-slate-800 touch:max-h-none touch:overflow-visible">
             {list.length > 0 && (
               <CheckRow on={allOn} onClick={toggleAll}>
                 {search ? '(Select all search results)' : '(Select all)'}
@@ -252,7 +259,9 @@ function MenuBody({
           {remote?.truncated && <p className="px-1 text-[11px] text-muted">Showing the first {remote.values.length.toLocaleString()} values — search to find the rest.</p>}
         </>
       )}
-      <div className="flex justify-end gap-2 pt-1">
+      {/* OK and Cancel stay in view at the panel's foot while a long list scrolls. Pinned over the panel's bottom padding
+          (-bottom-2 with the -mb-2), so no value row shows, or takes a tap, in a strip under them. */}
+      <div className="sticky -bottom-2 z-[1] -mx-2 -mb-2 flex justify-end gap-2 border-t border-slate-100 bg-white px-2 py-2 dark:border-slate-800 dark:bg-slate-900">
         <button type="button" onClick={onCancel} className="btn-secondary h-8 min-h-0 px-3 py-0 text-13 touch:h-11">
           Cancel
         </button>
@@ -276,7 +285,7 @@ function MenuRow({ on, disabled, onClick, icon, children }: { on: boolean; disab
 
 function CheckRow({ on, onClick, children, count }: { on: boolean; onClick: () => void; children: ReactNode; count?: number }) {
   return (
-    <button type="button" role="menuitemcheckbox" aria-checked={on} onClick={onClick} className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800 touch:min-h-[40px]">
+    <button type="button" role="menuitemcheckbox" aria-checked={on} onClick={onClick} className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800 touch:min-h-[44px]">
       <span className={cn('grid h-4 w-4 shrink-0 place-items-center rounded border', on ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 dark:border-slate-600')}>{on && <Check className="h-3 w-3" />}</span>
       <span className="min-w-0 flex-1 truncate" dir="auto">
         {children}

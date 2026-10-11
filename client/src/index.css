@@ -57,12 +57,18 @@ body {
     radial-gradient(800px 400px at 100% 100%, rgba(227, 32, 42, 0.06), transparent 60%);
 }
 
-/* Respect iOS safe areas on mobile */
+/* Room for a phone's home indicator and its notch (iOS safe areas). Added to whatever padding the element has, never
+   in place of it: a transparent border of the inset's size, which the element's own background still fills. As
+   padding, written here after the utilities, it replaced pb-2 or py-5 with the inset — 0 on most screens — so a
+   composer sat flush with the screen's edge. The colour is held transparent against a border-colour class on the same
+   element (dark:border-slate-800 is stronger than this rule). Not for an element with a border on that side. */
 .safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
+  border-bottom: env(safe-area-inset-bottom, 0px) solid transparent;
+  border-bottom-color: transparent !important;
 }
 .safe-top {
-  padding-top: env(safe-area-inset-top);
+  border-top: env(safe-area-inset-top, 0px) solid transparent;
+  border-top-color: transparent !important;
 }
 
 @layer components {
@@ -114,12 +120,82 @@ body {
   .label {
     @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted;
   }
+  /* How tall a dialog may be (components/ui Modal): what the window leaves, which with the keyboard open is what is
+     left above it (interactive-widget=resizes-content in index.html). A bottom sheet on a phone, 92% of it; centred
+     from 640 px, a margin of 1rem above and below. dvh where the browser has it, vh where it does not. */
+  .max-h-dialog {
+    max-height: 92vh;
+    max-height: 92dvh;
+  }
+  @media (min-width: 640px) {
+    .max-h-dialog {
+      max-height: calc(100vh - 2rem);
+      max-height: calc(100dvh - 2rem);
+    }
+  }
+  /* A bottom sheet's height on a phone (components/ui Drawer). */
+  .max-h-sheet {
+    max-height: 92vh;
+    max-height: 92dvh;
+  }
+  /* A table whose first (or last) column stays in view while the rest scrolls sideways under it: the order a row is
+     about, or the row's actions. The class goes on the <table>; the column takes the card's colour and a hairline on
+     its inner edge, and inside a <ScrollX> a soft shadow too, while rows run under it (the frame's data-overflow-*
+     say when). Beside a sticky column, ScrollX's own edge shadow at that end is left out (shadows="end" or "start").
+     Every selector but the cell itself sits in :where(), so a cell's own bg-* or z-* class still wins.
+     --sticky-inner is the side of the cell the rows run under: 1 its right, -1 its left (right to left). */
+  :where(.table-sticky-first > :is(thead, tbody, tfoot) > tr) > :first-child,
+  :where(.table-sticky-last > :is(thead, tbody, tfoot) > tr) > :last-child {
+    --sticky-line: theme('colors.slate.200');
+    --sticky-cast: rgb(15 23 42 / 0.18);
+    position: sticky;
+    z-index: 1;
+    background-color: theme('colors.white');
+    box-shadow: inset calc(var(--sticky-inner) * -1px) 0 0 var(--sticky-line);
+  }
+  :where(.table-sticky-first > :is(thead, tbody, tfoot) > tr) > :first-child {
+    --sticky-inner: 1;
+    inset-inline-start: 0;
+  }
+  :where(.table-sticky-last > :is(thead, tbody, tfoot) > tr) > :last-child {
+    --sticky-inner: -1;
+    inset-inline-end: 0;
+  }
+  :where(.table-sticky-first > :is(thead, tbody, tfoot) > tr) > :first-child:where(:dir(rtl)) {
+    --sticky-inner: -1;
+  }
+  :where(.table-sticky-last > :is(thead, tbody, tfoot) > tr) > :last-child:where(:dir(rtl)) {
+    --sticky-inner: 1;
+  }
+  :where([data-overflow-start] .table-sticky-first > :is(thead, tbody, tfoot) > tr) > :first-child,
+  :where([data-overflow-end] .table-sticky-last > :is(thead, tbody, tfoot) > tr) > :last-child {
+    box-shadow:
+      inset calc(var(--sticky-inner) * -1px) 0 0 var(--sticky-line),
+      calc(var(--sticky-inner) * 8px) 0 10px -8px var(--sticky-cast);
+  }
+  :where(.dark .table-sticky-first > :is(thead, tbody, tfoot) > tr) > :first-child,
+  :where(.dark .table-sticky-last > :is(thead, tbody, tfoot) > tr) > :last-child {
+    --sticky-line: theme('colors.slate.800');
+    --sticky-cast: rgb(0 0 0 / 0.5);
+    background-color: theme('colors.slate.900');
+  }
   /* Loading placeholder that moves, so a wait reads as activity rather than a hang. */
   .skeleton {
     @apply rounded-xl bg-slate-200/70 dark:bg-slate-800;
     background-image: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
     background-size: 200% 100%;
     @apply animate-shimmer;
+  }
+}
+
+@layer utilities {
+  /* A strip that scrolls sideways with no bar of its own (a switch, a row of tabs or chips): a bar would take half
+     its height. Pair it with an edge cue (<EdgeShadows>, components/ui/ScrollX) when the strip can run long. */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }
 
@@ -136,8 +212,14 @@ body {
 }
 
 /* A wide table lives in a frame of bounded height: its header stays put
-   and both scrollbars are on screen, not under the end of the page. */
+   and both scrollbars are on screen, not under the end of the page.
+   The frame is positioned, and must be: an absolutely placed child (an
+   sr-only label in a cell — History's "Needs review" flags) is otherwise laid
+   out against the page, at its place in the whole table, and stretches the
+   document sideways and down past the frame. The same holds for any
+   horizontal scroller: give it `relative`, or use <ScrollX>, which does. */
 .grid-scroll {
+  position: relative;
   min-height: 12rem;
   overflow: auto;
   overscroll-behavior-x: contain;
@@ -289,6 +371,23 @@ body {
   }
   to {
     transform: translateX(250%);
+  }
+}
+
+/* iOS zooms the page into any text box whose type is under 16 px as it takes focus, and leaves it zoomed: a sign-in,
+   a search or the chat's message box then needs a pinch back out each time. On a touch screen every box is 16 px;
+   one sized larger (text-lg in the wizard's quantities) keeps its size. Written after the utilities and stronger
+   than a text-* class, so a box's own text-sm or text-13 does not undo it. The sizes are matched as attributes, not
+   as classes: Tailwind would take a rule naming `.text-sm` for part of text-sm, and copy it into every @apply of it. */
+@media (pointer: coarse) {
+  .input:not([class~='text-base']):not([class~='text-lg']):not([class~='text-xl']):not([class~='text-2xl']):not([class~='text-3xl']),
+  .input-cell:not([class~='text-base']):not([class~='text-lg']):not([class~='text-xl']):not([class~='text-2xl']):not([class~='text-3xl']),
+  :is(input, select, textarea):is([class~='text-xs'], [class~='text-13'], [class~='text-sm']) {
+    font-size: 16px;
+  }
+  /* A long press shows an element's tooltip (components/ui/Tooltip): not the phone's own menu for a link or image. */
+  [data-tip] {
+    -webkit-touch-callout: none;
   }
 }
 

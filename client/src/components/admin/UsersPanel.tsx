@@ -5,15 +5,17 @@
 
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Loader2, Pencil, RotateCcw, ShieldAlert, Trash2, UserCog, UserPlus } from 'lucide-react'
+import { KeyRound, Loader2, Pencil, Trash2, UserCheck, UserCog, UserPlus, UserX } from 'lucide-react'
 import { Badge, Button, Card, Field, Input, Modal, Select } from '@/components/ui'
+import { ScrollX } from '@/components/ui/ScrollX'
+import { STICKY_TH, clickedControl } from '@/components/admin/MasterDataPanel'
 import { useUsers } from '@/services/queries'
 import { createUser, deleteUser, updateUser } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can } from '@/domain'
+import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn } from '@/lib/utils'
-import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
+import { useTableView, ViewTh } from '@/components/ui/ColumnFilter'
 import { ROLES, type Role, type UserProfile } from '@qc/shared/types'
 
 
@@ -28,6 +30,12 @@ const ROLE_HELP: Record<Role, string> = {
 
 /** Mirrors the API's rule: 2–40 letters, digits, dots, dashes or underscores. */
 const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{1,39}$/
+
+/** The row's icon actions, Edit and Remove: 44 px each. */
+const ROW_BTN = 'grid h-11 w-11 shrink-0 place-items-center rounded-xl text-muted transition-colors'
+/** Deactivate and Reactivate say what they do: a shield icon alone read as "permissions", and was tapped by mistake. */
+const WORD_BTN =
+  'inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 text-xs font-semibold text-slate-600 ring-1 ring-inset ring-slate-200 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800 touch:min-h-[44px]'
 
 interface UserDraft {
   username: string
@@ -44,6 +52,8 @@ export function UsersPanel() {
   const [creating, setCreating] = useState<UserDraft | null>(null)
   const [editing, setEditing] = useState<UserProfile | null>(null)
   const [removing, setRemoving] = useState<UserProfile | null>(null)
+  /** Deactivating signs the person out everywhere: asked first, as Remove is. Bringing an account back is not. */
+  const [deactivating, setDeactivating] = useState<UserProfile | null>(null)
   const [editDraft, setEditDraft] = useState<{ username: string; name: string; role: Role; password: string }>({
     username: '',
     name: '',
@@ -51,6 +61,8 @@ export function UsersPanel() {
     password: '',
   })
   const [busy, setBusy] = useState(false)
+  // On a phone each account is a card; from 640 px the table, its Actions column kept in view while the rest scrolls.
+  const phone = useMediaQuery(PHONE)
 
   const sorted = useMemo(
     () => [...users].sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name)),
@@ -123,12 +135,38 @@ export function UsersPanel() {
     try {
       await updateUser(queryClient, u.id, { isActive: !u.isActive })
       toast(u.isActive ? `${u.name} deactivated — they are signed out everywhere.` : `${u.name} reactivated.`, 'success')
+      setDeactivating(null)
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Could not change the account.', 'error')
     } finally {
       setBusy(false)
     }
   }
+
+  const openEdit = (u: UserProfile) => {
+    setEditing(u)
+    setEditDraft({ username: u.username, name: u.name, role: u.role, password: '' })
+  }
+
+  /** Edit, then Deactivate or Reactivate in words, then Remove; a person's own account offers Edit alone. */
+  const actions = (u: UserProfile) => (
+    <>
+      <button type="button" onClick={() => openEdit(u)} aria-label={`Edit ${u.name}`} className={cn(ROW_BTN, 'hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800')}>
+        <Pencil className="h-4 w-4" />
+      </button>
+      {u.id !== profile?.id && (
+        <button type="button" disabled={busy} onClick={() => (u.isActive ? setDeactivating(u) : void toggleActive(u))} className={cn(WORD_BTN, u.isActive ? 'hover:text-rose-600' : 'hover:text-emerald-700')}>
+          {u.isActive ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+          {u.isActive ? 'Deactivate' : 'Reactivate'}
+        </button>
+      )}
+      {u.id !== profile?.id && (
+        <button type="button" disabled={busy} onClick={() => setRemoving(u)} aria-label={`Remove ${u.name}`} className={cn(ROW_BTN, 'hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10')}>
+          <Trash2 className="h-4 w-4" />
+        </button>
+      )}
+    </>
+  )
 
   return (
     <div className="space-y-4">
@@ -152,21 +190,46 @@ export function UsersPanel() {
           <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
+        ) : phone ? (
+          <ul className="space-y-2">
+            {view.rows.map((u) => (
+              <li key={u.id} className={cn('rounded-2xl p-3 ring-1 ring-slate-200 dark:ring-slate-800', !u.isActive && 'opacity-70')}>
+                <button type="button" onClick={() => openEdit(u)} aria-label={`Edit ${u.name}`} className="-my-1 flex min-h-[44px] w-full flex-col justify-center text-left">
+                  <span className="block text-sm font-semibold">
+                    {u.name}
+                    {u.id === profile?.id && <span className="ml-2 text-xs font-normal text-muted">(you)</span>}
+                  </span>
+                  <span className="block font-mono text-xs text-muted">{u.username}</span>
+                </button>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <Badge tone={ROLE_TONE[u.role]}>{u.role}</Badge>
+                  <Badge tone={u.isActive ? 'green' : 'red'}>{u.isActive ? 'Active' : 'Deactivated'}</Badge>
+                  <span className="ml-auto flex items-center gap-0.5">{actions(u)}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
         ) : (
-          <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
-            <table className="w-full min-w-[40rem] text-sm">
+          <ScrollX className="rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800" innerClassName="rounded-2xl" shadows="start">
+            <table className="table-sticky-last w-full min-w-[40rem] text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
                 <tr>
                   <ViewTh view={view} column="name" label="Name" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="username" label="Username" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="role" label="Role" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="status" label="Status" className="px-3 py-2.5 font-bold" />
-                  <th className="px-3 py-2.5 text-right font-bold">Actions</th>
+                  <th className={cn(STICKY_TH, 'px-3 py-2.5 text-right font-bold')}>Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {view.rows.map((u) => (
-                  <tr key={u.id} className={cn('hover:bg-slate-50/70 dark:hover:bg-slate-800/40', !u.isActive && 'opacity-60')}>
+                  <tr
+                    key={u.id}
+                    onClick={(e) => {
+                      if (!clickedControl(e)) openEdit(u)
+                    }}
+                    className={cn('cursor-pointer hover:bg-slate-50/70 dark:hover:bg-slate-800/40', !u.isActive && 'opacity-60')}
+                  >
                     <td className="px-3 py-2.5 font-semibold">
                       {u.name}
                       {u.id === profile?.id && <span className="ml-2 text-xs font-normal text-muted">(you)</span>}
@@ -178,48 +241,14 @@ export function UsersPanel() {
                     <td className="px-3 py-2.5">
                       <Badge tone={u.isActive ? 'green' : 'red'}>{u.isActive ? 'Active' : 'Deactivated'}</Badge>
                     </td>
-                    <td className="px-3 py-2 text-right">
-                      <div className="inline-flex gap-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditing(u)
-                            setEditDraft({ username: u.username, name: u.name, role: u.role, password: '' })
-                          }}
-                          aria-label={`Edit ${u.name}`}
-                          className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        {u.id !== profile?.id && (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void toggleActive(u)}
-                            aria-label={u.isActive ? `Deactivate ${u.name}` : `Reactivate ${u.name}`}
-                            className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
-                          >
-                            {u.isActive ? <ShieldAlert className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
-                          </button>
-                        )}
-                        {u.id !== profile?.id && (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => setRemoving(u)}
-                            aria-label={`Remove ${u.name}`}
-                            className="grid h-12 w-12 place-items-center rounded-xl text-muted transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
+                    <td className="px-2 py-1 text-right">
+                      <div className="inline-flex items-center gap-0.5">{actions(u)}</div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </ScrollX>
         )}
       </Card>
 
@@ -329,6 +358,34 @@ export function UsersPanel() {
               </div>
             </Field>
           </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={deactivating !== null}
+        onClose={() => {
+          if (!busy) setDeactivating(null)
+        }}
+        title={deactivating ? `Deactivate ${deactivating.name}?` : 'Deactivate user'}
+        icon={<UserX className="h-5 w-5" />}
+        size="sm"
+        footer={
+          <>
+            <Button className="min-h-[48px]" onClick={() => setDeactivating(null)} disabled={busy}>
+              Keep it active
+            </Button>
+            <Button variant="danger" className="min-h-[48px]" onClick={() => deactivating && void toggleActive(deactivating)} disabled={busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserX className="h-4 w-4" />}
+              Deactivate
+            </Button>
+          </>
+        }
+      >
+        {deactivating && (
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            <span className="font-semibold">{deactivating.name}</span> (<span className="font-mono">{deactivating.username}</span>) is signed out on
+            every device and cannot sign in until the account is reactivated. The account, its name and everything recorded under it stay.
+          </p>
         )}
       </Modal>
 

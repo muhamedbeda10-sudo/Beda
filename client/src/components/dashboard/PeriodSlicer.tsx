@@ -2,22 +2,32 @@
 // §15 — the period slicer: a timeline strip with two handles.
 //
 // One row: the period as two dates, the presets, and a button that shows the
-// timeline — a slim strip, day by day back to the first record, that scrolls
-// sideways. On it the chosen period is the band between the handles; drag a
-// handle to move one end, drag the band to move the whole period.
-// Pointer events carry mouse and finger alike; the handles snap to days and a
-// period cannot exceed what the API accepts.
+// timeline — a slim strip, day by day from the first record to today, as
+// wide as the screen allows (it scrolls sideways only when a day would be
+// narrower than 2 px). On it the chosen period is the band between the
+// handles; drag a handle to move one end, drag the band — or, with a finger,
+// the grip in its middle — to move the whole period. A finger swiping the
+// band itself scrolls the strip. Pointer events carry mouse and finger alike;
+// the handles snap to days and a period cannot exceed what the API accepts.
+// On a phone the row wraps: the dates on a line of their own, the presets on
+// two lines rather than a strip scrolled out of sight.
 // ============================================================================
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { CalendarRange, ChevronDown } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
+import { CalendarRange, ChevronDown, GripVertical } from 'lucide-react'
 import type { KpiRange } from '@qc/shared/kpi'
 import { addDays, fromDay, toDay, PERIOD_PRESETS, presetRange, type PeriodPreset } from './period'
 import { cn } from '@/lib/utils'
 import { usePersistedState } from '@/lib/usePersistedState'
+import { useCoarsePointer } from '@/lib/media'
 
-/** Width of one day on the strip. */
-const DAY_PX = 10
+/** Width of one day on the strip: what fits the strip's width, within these bounds. */
+const MAX_DAY_PX = 10
+const MIN_DAY_PX = 2
+/** Room at either end of the strip, so a handle at the first day or at today is not cut by the strip's edge. */
+const EDGE = 16
+/** The band takes a grip in its middle (to move the period with a finger) while it is at least this wide. */
+const GRIP_MIN_BAND = 48
 /** The strip always offers at least this much, even before there is a record. */
 const MIN_SPAN_DAYS = 31
 /** The most days the dashboard will answer for. */
@@ -48,15 +58,34 @@ export function PeriodSlicer({
   trailing?: ReactNode
 }) {
   const [timelineOpen, setTimelineOpen] = usePersistedState<boolean>('qc-dash:timeline-open', false)
+  // Under a finger the hint is printed under the strip; a tooltip would only pop up over the toolbar as it opens.
+  const coarse = useCoarsePointer()
   const today = toDay(new Date())
-  // The strip runs from the first day of the record to today — never shorter
-  // than a month, and never starting after the period it is showing.
+  // The strip runs from the first day of the record to today, never shorter
+  // than a month. A period that begins before any record (This year, the
+  // record starting in September) does not stretch it back: its start handle
+  // waits at the strip's start. Only a period wholly before the record moves
+  // the strip's start back to it.
   const origin = useMemo(() => {
     const floor = addDays(today, -(MIN_SPAN_DAYS - 1))
-    return [firstDay, value.from, floor].filter((d): d is string => !!d).sort()[0]
-  }, [today, firstDay, value.from])
+    const start = firstDay && value.to >= firstDay ? firstDay : value.from
+    return [start, floor].sort()[0]
+  }, [today, firstDay, value.from, value.to])
   const spanDays = dayIndex(origin, today) + 1
-  const scroller = useRef<HTMLDivElement>(null)
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
+  const [stripWidth, setStripWidth] = useState(0)
+  useLayoutEffect(() => {
+    if (!scroller) return
+    const read = () => setStripWidth(scroller.clientWidth)
+    read()
+    if (typeof ResizeObserver === 'undefined') return
+    const watch = new ResizeObserver(read)
+    watch.observe(scroller)
+    return () => watch.disconnect()
+  }, [scroller])
+  // The whole record on screen when a day can be 2 px or more; at most 10 px a day.
+  const dayPx = stripWidth > 0 ? Math.max(MIN_DAY_PX, Math.min(MAX_DAY_PX, (stripWidth - 2 * EDGE - 1) / spanDays)) : MAX_DAY_PX
+  const xOf = (i: number) => EDGE + i * dayPx
   const [drag, setDrag] = useState<Drag | null>(null)
   /** While dragging, the band follows the pointer; the page is told on release. */
   const [live, setLive] = useState<{ from: number; to: number } | null>(null)
@@ -73,23 +102,23 @@ export function PeriodSlicer({
       const start = Math.max(0, dayIndex(origin, toDay(d)))
       const next = new Date(d.getFullYear(), d.getMonth() + 1, 1)
       const end = Math.min(spanDays, dayIndex(origin, toDay(next)))
-      out.push({ label: `${MONTH[d.getMonth()]}${d.getMonth() === 0 || out.length === 0 ? ` ${d.getFullYear()}` : ''}`, x: start * DAY_PX, width: (end - start) * DAY_PX })
+      out.push({ label: `${MONTH[d.getMonth()]}${d.getMonth() === 0 || out.length === 0 ? ` ${d.getFullYear()}` : ''}`, x: EDGE + start * dayPx, width: (end - start) * dayPx })
       d = next
     }
     return out
-  }, [origin, today])
+  }, [origin, today, dayPx, spanDays])
 
   // Keep the chosen period in view when it changes from outside (a preset).
   useEffect(() => {
-    const el = scroller.current
+    const el = scroller
     if (!el || drag) return
-    const left = sel.from * DAY_PX
-    const right = (sel.to + 1) * DAY_PX
+    const left = xOf(Math.max(0, sel.from))
+    const right = xOf(sel.to + 1)
     const viewL = el.scrollLeft
     const viewR = viewL + el.clientWidth
     if (left < viewL || right > viewR) el.scrollTo({ left: Math.max(0, (left + right) / 2 - el.clientWidth / 2), behavior: 'smooth' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value.from, value.to, timelineOpen])
+  }, [value.from, value.to, timelineOpen, scroller, dayPx])
 
   function start(kind: Drag['kind'], e: React.PointerEvent) {
     e.preventDefault()
@@ -105,7 +134,12 @@ export function PeriodSlicer({
 
   function move(e: React.PointerEvent) {
     if (!drag || e.pointerId !== drag.pointerId) return
-    const delta = Math.round((e.clientX - drag.startX) / DAY_PX)
+    const delta = Math.round((e.clientX - drag.startX) / dayPx)
+    // Not a day yet: the period stays as it was (one that began before the strip keeps its start).
+    if (delta === 0) {
+      setLive({ from: drag.from, to: drag.to })
+      return
+    }
     let from = drag.from
     let to = drag.to
     if (drag.kind === 'from') from = clampIndex(Math.min(drag.from + delta, drag.to))
@@ -169,21 +203,25 @@ export function PeriodSlicer({
     if (from !== value.from || to !== value.to) onChange({ from, to }, 'custom')
   }
 
+  // Drawn from the strip's first day: a period that began before it starts at its start.
+  const shownFrom = Math.max(0, sel.from)
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         {leading}
-        <div className="flex items-center gap-1.5" role="group" aria-label="Period">
-          <input type="date" aria-label="First day of the period" value={value.from} max={today} onChange={(e) => typed('from', e.target.value)} className="input h-9 w-[9.25rem] px-2 py-0 text-13 tabular-nums touch:h-11" />
+        {/* The two dates share a line on a phone, the count of days under them below 400 px. */}
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5" role="group" aria-label="Period">
+          <input type="date" aria-label="First day of the period" value={value.from} max={today} onChange={(e) => typed('from', e.target.value)} className="input h-9 min-w-0 max-w-[9.25rem] flex-1 basis-[8.5rem] px-2 py-0 text-13 tabular-nums touch:h-11" />
           <span className="text-muted" aria-hidden>
             –
           </span>
-          <input type="date" aria-label="Last day of the period" value={value.to} max={today} onChange={(e) => typed('to', e.target.value)} className="input h-9 w-[9.25rem] px-2 py-0 text-13 tabular-nums touch:h-11" />
-          <span className="whitespace-nowrap text-xs font-semibold tabular-nums text-muted">
+          <input type="date" aria-label="Last day of the period" value={value.to} max={today} onChange={(e) => typed('to', e.target.value)} className="input h-9 min-w-0 max-w-[9.25rem] flex-1 basis-[8.5rem] px-2 py-0 text-13 tabular-nums touch:h-11" />
+          <span className="basis-full whitespace-nowrap text-xs font-semibold tabular-nums text-muted min-[400px]:basis-auto">
             {days} day{days === 1 ? '' : 's'}
           </span>
         </div>
-        <div className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800" role="group" aria-label="Period presets">
+        <div className="flex max-w-full flex-wrap items-center gap-0.5 rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800 sm:flex-nowrap sm:overflow-x-auto" role="group" aria-label="Period presets">
           {PERIOD_PRESETS.filter((p) => p.key !== 'custom').map((p) => (
             <button
               key={p.key}
@@ -205,7 +243,7 @@ export function PeriodSlicer({
           aria-expanded={timelineOpen}
           aria-label={timelineOpen ? 'Hide the timeline' : 'Show the timeline'}
           data-tip={timelineOpen ? 'Hide the timeline' : 'Drag the period on a timeline'}
-          className={cn('inline-flex h-9 items-center gap-1 rounded-lg px-2 text-muted transition-colors hover:bg-slate-200/70 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11', timelineOpen && 'bg-slate-200/70 text-slate-700 dark:bg-slate-800 dark:text-slate-200')}
+          className={cn('inline-flex h-9 items-center gap-1 rounded-lg px-2 text-muted transition-colors hover:bg-slate-200/70 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:px-3', timelineOpen && 'bg-slate-200/70 text-slate-700 dark:bg-slate-800 dark:text-slate-200')}
         >
           <CalendarRange className="h-4 w-4" />
           <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', timelineOpen && 'rotate-180')} />
@@ -213,62 +251,84 @@ export function PeriodSlicer({
         {trailing && <div className="ml-auto flex flex-wrap items-center gap-2">{trailing}</div>}
       </div>
 
-      {/* The strip, 40 px high. It scrolls sideways; the handles and the band are dragged. */}
+      {/* The strip, 40 px high (56 under a finger). It fits the screen, scrolling sideways only for a long record; the handles and the band are dragged. */}
       {timelineOpen && (
-        <div
-          ref={scroller}
-          className="relative overflow-x-auto overscroll-x-contain rounded-lg bg-white ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
-          style={{ touchAction: 'pan-x' }}
-          data-tip="Drag a handle to move one end, drag the band to move the whole period, scroll the strip to go further back. Up to 366 days."
-        >
-          <div className="relative h-10 select-none" style={{ width: spanDays * DAY_PX }} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
-            {/* Months */}
-            {months.map((m) => (
-              <div key={m.label + m.x} className="absolute top-0 h-full border-l border-slate-200 dark:border-slate-700" style={{ left: m.x, width: m.width }}>
-                <span className="absolute left-1 top-0.5 whitespace-nowrap text-[10px] font-semibold leading-none text-muted">{m.label}</span>
-              </div>
-            ))}
-            {/* Weeks, as ticks along the bottom */}
-            {Array.from({ length: Math.ceil(spanDays / 7) }, (_, i) => (
-              <span key={i} className="absolute bottom-0 h-1 border-l border-slate-300 dark:border-slate-600" style={{ left: i * 7 * DAY_PX }} />
-            ))}
-            {/* Today */}
-            <span className="absolute bottom-0 top-0 border-l-2 border-dashed border-rose-400" style={{ left: (spanDays - 1) * DAY_PX + DAY_PX / 2 }} aria-hidden />
+        <>
+          <div
+            ref={setScroller}
+            className="relative overflow-x-auto overscroll-x-contain rounded-lg bg-white ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
+            style={{ touchAction: 'pan-x' }}
+            data-tip={coarse ? undefined : 'Drag a handle to move one end, drag the band to move the whole period. Up to 366 days.'}
+          >
+            <div className="relative h-10 select-none touch:h-14" style={{ width: spanDays * dayPx + 2 * EDGE }} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
+              {/* Months */}
+              {months.map((m) => (
+                <div key={m.label + m.x} className="absolute top-0 h-full border-l border-slate-200 dark:border-slate-700" style={{ left: m.x, width: m.width }}>
+                  <span className="absolute left-1 top-0.5 whitespace-nowrap text-[10px] font-semibold leading-none text-muted">{m.label}</span>
+                </div>
+              ))}
+              {/* Weeks, as ticks along the bottom */}
+              {Array.from({ length: Math.ceil(spanDays / 7) }, (_, i) => (
+                <span key={i} className="absolute bottom-0 h-1 border-l border-slate-300 dark:border-slate-600" style={{ left: xOf(i * 7) }} />
+              ))}
+              {/* Today */}
+              <span className="absolute bottom-0 top-0 border-l-2 border-dashed border-rose-400" style={{ left: xOf(spanDays - 1) + dayPx / 2 }} aria-hidden />
 
-            {/* The band: the chosen period. Dragging it moves the whole period. */}
-            <div
-              role="slider"
-              aria-label="Period"
-              aria-valuetext={`${pretty(fromDate)} to ${pretty(toDate)}`}
-              tabIndex={-1}
-              onPointerDown={(e) => start('band', e)}
-              className={cn('absolute bottom-1.5 top-3.5 cursor-grab rounded bg-brand-500/25 ring-1 ring-brand-500/50 active:cursor-grabbing dark:bg-brand-400/25', drag?.kind === 'band' && 'bg-brand-500/35')}
-              style={{ left: sel.from * DAY_PX, width: Math.max(DAY_PX, days * DAY_PX), touchAction: 'none' }}
-            />
-            {/* The handles */}
-            {(['from', 'to'] as const).map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                aria-label={kind === 'from' ? 'Start of period' : 'End of period'}
-                onPointerDown={(e) => start(kind, e)}
-                onKeyDown={(e) => {
-                  if (e.key === 'ArrowLeft') nudge(kind, -1)
-                  else if (e.key === 'ArrowRight') nudge(kind, 1)
-                  else return
-                  e.preventDefault()
+              {/* The band: the chosen period. A mouse or a pen drags it to move the whole period; a finger on it scrolls the strip. */}
+              <div
+                role="slider"
+                aria-label="Period"
+                aria-valuetext={`${pretty(fromDate)} to ${pretty(toDate)}`}
+                tabIndex={-1}
+                onPointerDown={(e) => {
+                  if (e.pointerType !== 'touch') start('band', e)
                 }}
-                className={cn(
-                  'absolute bottom-0.5 top-3 w-3.5 -translate-x-1/2 cursor-ew-resize rounded bg-brand-600 shadow-card ring-2 ring-white transition-transform hover:scale-x-125 focus:outline-none focus:ring-brand-300 dark:ring-slate-900',
-                  drag?.kind === kind && 'scale-x-125',
-                )}
-                style={{ left: (kind === 'from' ? sel.from : sel.to + 1) * DAY_PX, touchAction: 'none' }}
+                className={cn('absolute bottom-1.5 top-3.5 rounded bg-brand-500/25 ring-1 ring-brand-500/50 dark:bg-brand-400/25 mouse:cursor-grab mouse:active:cursor-grabbing touch:bottom-2 touch:top-4', drag?.kind === 'band' && 'bg-brand-500/35')}
+                style={{ left: xOf(shownFrom), width: Math.max(dayPx, (sel.to + 1 - shownFrom) * dayPx), touchAction: 'pan-x' }}
               >
-                <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/60" aria-hidden />
-              </button>
-            ))}
+                {/* The grip that moves the whole period, for a finger (a mouse may take the band anywhere). */}
+                {(sel.to + 1 - shownFrom) * dayPx >= GRIP_MIN_BAND && (
+                  <span
+                    aria-hidden
+                    onPointerDown={(e) => start('band', e)}
+                    className="absolute left-1/2 top-1/2 grid h-full min-h-[20px] w-7 -translate-x-1/2 -translate-y-1/2 cursor-grab place-items-center rounded-md text-brand-700 active:cursor-grabbing dark:text-brand-200 touch:w-10 touch:before:absolute touch:before:-inset-y-2 touch:before:inset-x-0 touch:before:content-['']"
+                    style={{ touchAction: 'none' }}
+                  >
+                    <GripVertical className="h-3.5 w-3.5" />
+                  </span>
+                )}
+              </div>
+              {/* The handles: 14 px drawn, a wider reach for a finger on the side of the band. */}
+              {(['from', 'to'] as const).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  aria-label={kind === 'from' ? 'Start of period' : 'End of period'}
+                  onPointerDown={(e) => start(kind, e)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowLeft') nudge(kind, -1)
+                    else if (e.key === 'ArrowRight') nudge(kind, 1)
+                    else return
+                    e.preventDefault()
+                  }}
+                  className={cn(
+                    'absolute bottom-0.5 top-3 w-3.5 -translate-x-1/2 cursor-ew-resize rounded bg-brand-600 shadow-card ring-2 ring-white transition-transform hover:scale-x-125 focus:outline-none focus:ring-brand-300 dark:ring-slate-900',
+                    "touch:top-3.5 touch:w-4 touch:before:absolute touch:before:-top-2 touch:before:bottom-0 touch:before:content-['']",
+                    kind === 'from' ? 'touch:before:-left-2 touch:before:-right-5' : 'touch:before:-left-5 touch:before:-right-2',
+                    drag?.kind === kind && 'scale-x-125',
+                  )}
+                  style={{ left: xOf(kind === 'from' ? shownFrom : sel.to + 1), touchAction: 'none' }}
+                >
+                  {/* A grip: two lines down its middle. */}
+                  <span className="absolute inset-y-1.5 left-1/2 w-px -translate-x-[2px] bg-white/70" aria-hidden />
+                  <span className="absolute inset-y-1.5 left-1/2 w-px translate-x-px bg-white/70" aria-hidden />
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+          {/* A finger gets no tooltip: the how-to, said under the strip. */}
+          <p className="hidden text-xs text-muted touch:block">Drag a handle to move one end, or the grip in the band to move the whole period; swipe the strip to scroll it. Up to 366 days.</p>
+        </>
       )}
     </div>
   )
