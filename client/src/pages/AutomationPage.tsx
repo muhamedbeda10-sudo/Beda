@@ -1,10 +1,10 @@
 // ============================================================================
 // §21 — one automation, on its own page: what it does in plain words and as
 // facts, its state and why (a stop names its cause; a block resumes on its
-// own), when it runs next and how its last run went, its queries read-only
-// (they change only through the assistant: "Edit in chat" opens a new
-// conversation saying which automation), and every run it made — when,
-// what it found, whom it told, what failed — newest first, page by page.
+// own; a failed last run says what went wrong), when it runs next and how
+// its last run went. Its queries are not shown here, nor its run history:
+// the queries change only through the assistant ("Edit in chat" opens a new
+// conversation saying which automation), and the runs are kept by the server.
 // Its creator, and the assistant's owner, may change its words, people,
 // channels, actions and timing here, pause and resume it, run it now (a real
 // run), test it (a dry run: nothing sent, nothing recorded) or delete it.
@@ -19,7 +19,6 @@ import {
   ArrowLeft,
   CalendarClock,
   CheckCircle2,
-  FileChartColumn,
   FlaskConical,
   ListChecks,
   Loader2,
@@ -34,10 +33,8 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import type { Automation, AutomationRun, AutomationTestResponse } from '@qc/shared/automation'
-import { Badge, Button, Card, Modal } from '@/components/ui'
-import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
-import { AiCode } from '@/components/ai/AiCode'
+import type { Automation, AutomationTestResponse } from '@qc/shared/automation'
+import { Button, Card, Modal } from '@/components/ui'
 import { textDirection } from '@/components/ai/tables'
 import { Notice } from '@/components/ai/AiNotice'
 import { useAi } from '@/components/ai/AiAssistantProvider'
@@ -52,8 +49,6 @@ import {
   factoryTimestamp,
   knownWatchColumns,
   noNextRunText,
-  runFigures,
-  runOutcome,
   runToast,
   stoppedText,
   testSummary,
@@ -69,7 +64,6 @@ import {
   testAutomation,
   updateAutomation,
   useAutomation,
-  useAutomationRuns,
 } from '@/services/automations'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
@@ -226,54 +220,48 @@ function AutomationView({ a }: { a: Automation }) {
 
       {test && <TestResult a={a} test={test} timeZone={factoryTimeZone} onClose={() => setTest(null)} />}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card className="space-y-3 p-4">
-          <h2 className="flex items-center gap-2 text-sm font-bold">
-            <Zap className="h-4 w-4 text-muted" /> What it does
-          </h2>
-          <p className="text-13 leading-relaxed text-slate-700 dark:text-slate-200">{summary}</p>
-          <DefinitionFacts def={a} recipients={a.recipients} assignee={a.assignee} />
-          <dl className="grid grid-cols-1 gap-2 border-t border-slate-100 pt-3 text-13 dark:border-slate-800 sm:grid-cols-3">
-            <Figure label="Next run" icon={<CalendarClock className="h-4 w-4" />}>
-              {a.nextRunAt ? (
-                <time dateTime={a.nextRunAt} data-tip={factoryTimestamp(a.nextRunAt, factoryTimeZone)}>
-                  {factoryMoment(a.nextRunAt, factoryTimeZone)}
-                </time>
-              ) : (
-                <span className="text-muted">{noNextRunText(status)}</span>
-              )}
-            </Figure>
-            <Figure label="Last run" icon={a.lastRunOk === false ? <OctagonX className="h-4 w-4 text-rose-600 dark:text-rose-400" /> : <CheckCircle2 className="h-4 w-4" />}>
-              {a.lastRunAt ? (
-                <time dateTime={a.lastRunAt} data-tip={factoryTimestamp(a.lastRunAt, factoryTimeZone)}>
-                  {factoryMoment(a.lastRunAt, factoryTimeZone)}
-                  {a.lastRunOk === false && <span className="text-rose-700 dark:text-rose-300"> · failed</span>}
-                </time>
-              ) : (
-                <span className="text-muted">Never</span>
-              )}
-            </Figure>
-            <Figure label="Open follow-ups" icon={<ListChecks className="h-4 w-4" />}>
-              {a.openFollowUps > 0 ? (
-                <Link to={`/follow-ups?automationId=${encodeURIComponent(a.id)}`} className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
-                  {a.openFollowUps.toLocaleString()} open
-                </Link>
-              ) : (
-                <span className="text-muted">None</span>
-              )}
-            </Figure>
-          </dl>
-          {a.conversationId && ai.enabled && (
-            <button type="button" onClick={openConversation} className="inline-flex min-h-[40px] items-center gap-1.5 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
-              <MessageSquareText className="h-3.5 w-3.5" /> Open the conversation it was proposed in
-            </button>
-          )}
-        </Card>
-
-        <Definition a={a} canChat={mine && ai.enabled} onEditInChat={() => ai.compose(editInChatText(a))} />
-      </div>
-
-      <RunHistory a={a} timeZone={factoryTimeZone} />
+      <Card className="space-y-3 p-4">
+        <h2 className="flex items-center gap-2 text-sm font-bold">
+          <Zap className="h-4 w-4 text-muted" /> What it does
+        </h2>
+        <p className="text-13 leading-relaxed text-slate-700 dark:text-slate-200">{summary}</p>
+        <DefinitionFacts def={a} recipients={a.recipients} assignee={a.assignee} />
+        <dl className="grid grid-cols-1 gap-2 border-t border-slate-100 pt-3 text-13 dark:border-slate-800 sm:grid-cols-3">
+          <Figure label="Next run" icon={<CalendarClock className="h-4 w-4" />}>
+            {a.nextRunAt ? (
+              <time dateTime={a.nextRunAt} data-tip={factoryTimestamp(a.nextRunAt, factoryTimeZone)}>
+                {factoryMoment(a.nextRunAt, factoryTimeZone)}
+              </time>
+            ) : (
+              <span className="text-muted">{noNextRunText(status)}</span>
+            )}
+          </Figure>
+          <Figure label="Last run" icon={a.lastRunOk === false ? <OctagonX className="h-4 w-4 text-rose-600 dark:text-rose-400" /> : <CheckCircle2 className="h-4 w-4" />}>
+            {a.lastRunAt ? (
+              <time dateTime={a.lastRunAt} data-tip={`${factoryTimestamp(a.lastRunAt, factoryTimeZone)}${a.lastRunError ? ` · ${a.lastRunError}` : ''}`}>
+                {factoryMoment(a.lastRunAt, factoryTimeZone)}
+                {a.lastRunOk === false && <span className="text-rose-700 dark:text-rose-300"> · failed</span>}
+              </time>
+            ) : (
+              <span className="text-muted">Never</span>
+            )}
+          </Figure>
+          <Figure label="Open follow-ups" icon={<ListChecks className="h-4 w-4" />}>
+            {a.openFollowUps > 0 ? (
+              <Link to={`/follow-ups?automationId=${encodeURIComponent(a.id)}`} className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
+                {a.openFollowUps.toLocaleString()} open
+              </Link>
+            ) : (
+              <span className="text-muted">None</span>
+            )}
+          </Figure>
+        </dl>
+        {a.conversationId && ai.enabled && (
+          <button type="button" onClick={openConversation} className="inline-flex min-h-[40px] items-center gap-1.5 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
+            <MessageSquareText className="h-3.5 w-3.5" /> Open the conversation it was proposed in
+          </button>
+        )}
+      </Card>
 
       {editing && (
         <AutomationEditor
@@ -283,7 +271,7 @@ function AutomationView({ a }: { a: Automation }) {
           creatorName={a.creator.name}
           columns={columns}
           title={a.name}
-          subtitle={a.kind === 'watch' ? 'A watch: its words, people, actions and interval.' : 'A scheduled report: its words, people, timing and summary.'}
+          subtitle={a.kind === 'watch' ? 'A watch: its words, people, actions and when it looks.' : 'A scheduled report: its words, people, timing and summary.'}
           saveLabel="Save changes"
           footnote={
             <>
@@ -322,7 +310,7 @@ function AutomationView({ a }: { a: Automation }) {
             <bdi dir="auto" className="font-semibold text-slate-800 dark:text-slate-100">
               “{a.name}”
             </bdi>{' '}
-            stops at once and leaves the list. Its follow-ups, its run history and the reports it sent stay. The change is in the audit log.
+            stops at once and leaves the list. Its follow-ups and the reports it sent stay. The change is in the audit log.
           </p>
         </Modal>
       )}
@@ -360,104 +348,21 @@ function StateNotice({ a, onResume, busy }: { a: Automation; onResume: () => voi
   }
   if (a.status === 'paused') return <Notice tone="neutral" action={resume}>Paused: it does not run until it is resumed.</Notice>
   if (a.blockedReason) return <Notice tone="amber">{BLOCKED_TEXT[a.blockedReason]} It does not run meanwhile, and resumes by itself once this is put right.</Notice>
-  if (a.consecutiveFailures > 0) return <Notice tone="amber">Its last {a.consecutiveFailures === 1 ? 'run' : `${a.consecutiveFailures} runs`} failed; it stops itself after five in a row. The run history says why.</Notice>
-  return null
-}
-
-/** Its queries, as they run: read-only here. */
-function Definition({ a, canChat, onEditInChat }: { a: Automation; canChat: boolean; onEditInChat: () => void }) {
-  const { toast } = useApp()
-  const copy = async (sql: string) => {
-    try {
-      await navigator.clipboard.writeText(sql)
-      toast('SQL copied.', 'success')
-    } catch {
-      toast('Could not copy — select the SQL and copy it by hand.', 'error')
-    }
+  if (a.consecutiveFailures > 0) {
+    const runs = a.consecutiveFailures === 1 ? 'run' : `${a.consecutiveFailures} runs`
+    return (
+      <Notice tone="amber">
+        Its last {runs} failed
+        {a.lastRunError ? (
+          <>
+            : <span dir="auto">{a.lastRunError}</span>
+          </>
+        ) : null}
+        . It stops itself after five in a row.
+      </Notice>
+    )
   }
-  const w = a.watch
-  const s = a.schedule
-  return (
-    <Card className="space-y-3 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-sm font-bold">
-          <FileChartColumn className="h-4 w-4 text-muted" /> {a.kind === 'watch' ? 'Its query' : 'Its sections'}
-        </h2>
-        {canChat && (
-          <button type="button" onClick={onEditInChat} className="inline-flex min-h-[40px] items-center gap-1.5 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
-            <Sparkles className="h-3.5 w-3.5" /> Edit in chat
-          </button>
-        )}
-      </div>
-      <p className="text-xs text-muted">Read-only here: the queries change only through the assistant. They run with {a.kind === 'watch' ? 'its' : 'their'} creator's data, as it stands at each run.</p>
-      {w && (
-        <>
-          <AiCode label="SQL" onCopy={() => void copy(w.sql)} copyLabel="Copy the SQL" className="rounded-lg" codeClassName="max-h-72 p-2.5 text-[11px]">
-            {w.sql}
-          </AiCode>
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
-            <dt className="font-semibold text-muted">A case is</dt>
-            <dd>
-              one value of <code className="font-mono">{w.keyColumn}</code>
-            </dd>
-            <dt className="font-semibold text-muted">Title</dt>
-            <dd dir="auto" className="break-words font-mono">
-              {w.titleTemplate}
-            </dd>
-            {w.bodyTemplate && (
-              <>
-                <dt className="font-semibold text-muted">Body</dt>
-                <dd dir="auto" className="break-words font-mono">
-                  {w.bodyTemplate}
-                </dd>
-              </>
-            )}
-            {(w.sessionColumn || w.sampleColumn || w.orderColumn) && (
-              <>
-                <dt className="font-semibold text-muted">Links</dt>
-                <dd className="flex flex-wrap gap-x-3">
-                  {w.sessionColumn && (
-                    <span>
-                      session <code className="font-mono">{w.sessionColumn}</code>
-                    </span>
-                  )}
-                  {w.sampleColumn && (
-                    <span>
-                      sample <code className="font-mono">{w.sampleColumn}</code>
-                    </span>
-                  )}
-                  {w.orderColumn && (
-                    <span>
-                      order <code className="font-mono">{w.orderColumn}</code>
-                    </span>
-                  )}
-                </dd>
-              </>
-            )}
-          </dl>
-          <p className="text-[11px] text-muted">
-            <code dir="ltr" className="font-mono">{'{{column}}'}</code> in the title and body is filled from each case's row.
-          </p>
-        </>
-      )}
-      {s &&
-        s.sections.map((section, i) => (
-          <div key={i} className="space-y-1">
-            <h3 dir="auto" className="text-13 font-semibold">
-              {i + 1}. {section.title}
-            </h3>
-            <AiCode label="SQL" onCopy={() => void copy(section.sql)} copyLabel={`Copy the SQL of section ${i + 1}`} className="rounded-lg" codeClassName="max-h-56 p-2.5 text-[11px]">
-              {section.sql}
-            </AiCode>
-          </div>
-        ))}
-      {s?.period && /\{\{(from|to)\}\}/.test(s.sections.map((x) => x.sql).join('\n')) && (
-        <p className="text-[11px] text-muted">
-          <code dir="ltr" className="font-mono">{'{{from}}'}</code> and <code dir="ltr" className="font-mono">{'{{to}}'}</code> stand for the first and last day of the period it covers.
-        </p>
-      )}
-    </Card>
-  )
+  return null
 }
 
 /** A dry run's result: what it would find now and whom it would tell. */
@@ -489,146 +394,5 @@ function TestResult({ a, test, timeZone, onClose }: { a: Automation; test: Autom
       {a.kind === 'report' && test.sections && <SectionsPreview sections={test.sections} />}
       {a.kind === 'report' && test.recipients !== undefined && <p className="text-xs text-muted">It would go to {test.recipients === 1 ? '1 person' : `${test.recipients.toLocaleString()} people`} now.</p>}
     </Card>
-  )
-}
-
-const TRIGGER_LABEL: Record<AutomationRun['trigger'], string> = { schedule: 'On schedule', manual: 'Run now' }
-
-/** "850 ms", "4.2 s", "1 min 5 s". */
-function took(ms: number | undefined): string {
-  if (ms === undefined) return '—'
-  if (ms < 1000) return `${ms} ms`
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`
-  return `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`
-}
-
-/** Every run, newest first, a page at a time. */
-function RunHistory({ a, timeZone }: { a: Automation; timeZone: string }) {
-  const runs = useAutomationRuns(a.id)
-  const rows = useMemo(() => runs.data?.pages.flatMap((p) => p.runs) ?? [], [runs.data])
-  const view = useTableView(rows, [
-    { key: 'started', value: (r) => factoryMoment(r.startedAt, timeZone), sortValue: (r) => Date.parse(r.startedAt), numeric: true },
-    { key: 'trigger', value: (r) => TRIGGER_LABEL[r.trigger] },
-    { key: 'outcome', value: (r) => runOutcome(r).label },
-    { key: 'figures', value: (r) => runFigures(r, a.kind), noValues: true },
-    { key: 'note', value: (r) => r.error ?? r.note ?? '', noValues: true },
-  ])
-
-  return (
-    <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-        <h2 className="text-sm font-bold">Run history</h2>
-        <span className="text-xs text-muted">Factory time · kept for every run</span>
-      </div>
-      {runs.isLoading ? (
-        <p className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-        </p>
-      ) : runs.isError && rows.length === 0 ? (
-        <div className="p-4">
-          <Notice tone="red" action={<Button className="h-8 min-h-0 px-3 py-0 text-xs touch:h-11" onClick={() => void runs.refetch()}>Try again</Button>}>
-            The run history could not be loaded.
-          </Notice>
-        </div>
-      ) : rows.length === 0 ? (
-        <p className="px-4 py-8 text-center text-sm text-muted">It has not run yet.</p>
-      ) : (
-        <>
-          {/* Phone: a line each. */}
-          <ul className="divide-y divide-slate-100 md:hidden dark:divide-slate-800">
-            {view.rows.map((r) => (
-              <li key={r.id} className="space-y-1 px-4 py-3">
-                <RunHead r={r} timeZone={timeZone} />
-                <p className="text-xs text-slate-600 dark:text-slate-300">{runFigures(r, a.kind) || '—'}</p>
-                <RunNote r={r} />
-              </li>
-            ))}
-          </ul>
-          <div className="hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[48rem] text-sm">
-              <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-muted dark:bg-slate-800/60">
-                <tr>
-                  <ViewTh view={view} column="started" label="Started" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="trigger" label="How" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="outcome" label="Outcome" className="px-3 py-2 font-semibold" />
-                  <th className="px-3 py-2 text-right font-semibold">Took</th>
-                  <ViewTh view={view} column="figures" label="Found and sent" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="note" label="Notes" className="px-3 py-2 font-semibold" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {view.rows.map((r) => {
-                  const o = runOutcome(r)
-                  return (
-                    <tr key={r.id} className="data-row align-top">
-                      <td className="whitespace-nowrap px-3 py-2 tabular-nums">
-                        <time dateTime={r.startedAt} data-tip={factoryTimestamp(r.startedAt, timeZone)}>
-                          {factoryMoment(r.startedAt, timeZone)}
-                        </time>
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-muted">{TRIGGER_LABEL[r.trigger]}</td>
-                      <td className="px-3 py-2">
-                        <Badge tone={o.tone}>{o.label}</Badge>
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-muted">{took(r.ms)}</td>
-                      <td className="px-3 py-2 tabular-nums">
-                        {runFigures(r, a.kind) || <span className="text-muted">—</span>}
-                        {r.deliveryId && (
-                          <Link to={`/automations/deliveries/${encodeURIComponent(r.deliveryId)}`} className="ms-2 whitespace-nowrap text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
-                            Open the report
-                          </Link>
-                        )}
-                      </td>
-                      <td className="max-w-[24rem] px-3 py-2">
-                        <RunNote r={r} />
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-            <ViewNote view={view} total={rows.length} />
-          </div>
-          {runs.hasNextPage && (
-            <div className="border-t border-slate-100 px-4 py-2.5 dark:border-slate-800">
-              <button type="button" onClick={() => void runs.fetchNextPage()} disabled={runs.isFetchingNextPage} className="btn-secondary h-8 min-h-0 px-3 py-0 text-13 touch:h-11">
-                {runs.isFetchingNextPage ? 'Loading…' : 'Show older runs'}
-              </button>
-            </div>
-          )}
-        </>
-      )}
-    </Card>
-  )
-}
-
-function RunHead({ r, timeZone }: { r: AutomationRun; timeZone: string }) {
-  const o = runOutcome(r)
-  return (
-    <p className="flex flex-wrap items-center gap-2 text-13">
-      <Badge tone={o.tone}>{o.label}</Badge>
-      <time dateTime={r.startedAt} className="font-semibold tabular-nums" data-tip={factoryTimestamp(r.startedAt, timeZone)}>
-        {factoryMoment(r.startedAt, timeZone)}
-      </time>
-      <span className="text-xs text-muted">
-        {TRIGGER_LABEL[r.trigger]} · {took(r.ms)}
-      </span>
-      {r.deliveryId && (
-        <Link to={`/automations/deliveries/${encodeURIComponent(r.deliveryId)}`} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
-          Open the report
-        </Link>
-      )}
-    </p>
-  )
-}
-
-/** Why a run failed, or a word on anything it left out. */
-function RunNote({ r }: { r: AutomationRun }) {
-  if (!r.error && !r.note) return null
-  return (
-    <p dir="auto" className={cn('whitespace-pre-wrap break-words text-xs', r.error ? 'text-rose-700 dark:text-rose-300' : 'text-muted')}>
-      {r.error ?? r.note}
-      {r.error && r.note && <span className="block text-muted">{r.note}</span>}
-    </p>
   )
 }

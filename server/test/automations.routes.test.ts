@@ -158,6 +158,9 @@ describe('§21 an automation, changed outside the chat', () => {
   it('checks a change like a draft (its queries as they are), and audits it field by field', async () => {
     const wrong: [unknown, RegExp][] = [
       [{ everyMinutes: 3 }, /^watch\.everyMinutes: from 5 to 1440/],
+      [{ hours: { from: '5:00', to: '10:00' } }, /^watch\.hours: from and to as HH:MM/],
+      [{ hours: { from: '05:00', to: '05:00' } }, /^watch\.hours: from and to are the same time/],
+      [{ weekdays: [] }, /^watch\.weekdays: the days it runs/],
       [{ recipients: [{ kind: 'user', userId: '00000000-0000-4000-8000-000000000000' }] }, /no active account/],
       [{ recipients: [{ kind: 'column', column: 'inspector_id' }] }, /the result has no column "inspector_id"/],
       [{ cadence: 'weekly' }, /^cadence: only a scheduled report has one/],
@@ -173,17 +176,26 @@ describe('§21 an automation, changed outside the chat', () => {
     const ok = await patch<Automation>(`/api/automations/${mine}`, {
       name: 'Mine, renamed',
       everyMinutes: 30,
+      hours: { from: '05:00', to: '10:00' },
+      weekdays: [6, 0, 1, 2, 3, 4],
       recipients: [{ kind: 'user', userId: p.plain.user.id }, { kind: 'column', column: 'machine_code' }],
       channels: { bell: true, chat: true },
     })
     expect(ok.status, JSON.stringify(ok.body)).toBe(200)
-    expect(ok.body).toMatchObject({ name: 'Mine, renamed', watch: { everyMinutes: 30, sql: watchDraft().watch!.sql }, channels: { bell: true, chat: true }, updatedByName: 'Cara Creator' })
+    expect(ok.body).toMatchObject({
+      name: 'Mine, renamed',
+      watch: { everyMinutes: 30, hours: { from: '05:00', to: '10:00' }, weekdays: [0, 1, 2, 3, 4, 6], sql: watchDraft().watch!.sql },
+      channels: { bell: true, chat: true },
+      updatedByName: 'Cara Creator',
+    })
     const audit = await get<AuditListResponse>(`/api/audit?entity=Automation&limit=200`, p.owner)
     const changes = audit.body.entries.filter((e) => e.entityId === mine).map((e) => [e.field, e.oldValue, e.newValue])
     expect(changes).toEqual(
       expect.arrayContaining([
         ['name', 'Mine', 'Mine, renamed'],
         ['interval', 'Every 5 minutes', 'Every 30 minutes'],
+        ['hours', 'around the clock', '05:00 to 10:00'],
+        ['days', 'Every day', 'Saturday to Thursday'],
         ['recipients', 'Every supervisor', 'Paula Plain, People in "machine_code"'],
         ['channels', 'bell', 'bell, chat'],
       ]),
@@ -198,6 +210,12 @@ describe('§21 an automation, changed outside the chat', () => {
     expect(new Intl.DateTimeFormat('en-US', { timeZone: app.config.FACTORY_TIMEZONE, weekday: 'long', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(at)).toBe('Wednesday 06:15')
     expect((await patch<ApiErrorBody>(`/api/automations/${report}`, { period: null, sections: [] })).status).toBe(400)
     expect((await patch<ApiErrorBody>(`/api/automations/${report}`, { everyMinutes: 10 })).body.error.message).toMatch(/only a watch has an interval/)
+    expect((await patch<ApiErrorBody>(`/api/automations/${report}`, { hours: { from: '05:00', to: '10:00' } })).body.error.message).toMatch(/only a watch has hours/)
+    // Hours and days taken away again: around the clock, every day — and the next run, once it is on, falls within its hours.
+    const whole = await patch<Automation>(`/api/automations/${mine}`, { hours: null, weekdays: null })
+    expect(whole.status, JSON.stringify(whole.body)).toBe(200)
+    expect(whole.body.watch).not.toHaveProperty('hours')
+    expect(whole.body.watch).not.toHaveProperty('weekdays')
   })
 
   it('pauses, resumes and deletes, each audited; deleted, it is gone from every list', async () => {

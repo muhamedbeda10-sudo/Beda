@@ -523,6 +523,10 @@ describe('§21 checking a draft', () => {
       ['report with a watch', { ...r, watch: w.watch }, /^watch: only a watch has a query of its own/],
       ['too often', watchDraft({}, { everyMinutes: 4 }), /^watch\.everyMinutes: from 5 to 1440/],
       ['too rarely', watchDraft({}, { everyMinutes: 1441 }), /^watch\.everyMinutes: from 5 to 1440/],
+      ['hours that are no times', watchDraft({}, { hours: { from: '5:00', to: '10:00' } }), /^watch\.hours: from and to as HH:MM/],
+      ['hours that start and end alike', watchDraft({}, { hours: { from: '05:00', to: '05:00' } }), /^watch\.hours: from and to are the same time/],
+      ['no days', watchDraft({}, { weekdays: [] }), /^watch\.weekdays: the days it runs/],
+      ['a day that is none', watchDraft({}, { weekdays: [7 as never] }), /^watch\.weekdays: the days it runs/],
       ['no title', watchDraft({}, { titleTemplate: ' ' }), /^watch\.titleTemplate: give each case a title/],
       ['long title', watchDraft({}, { titleTemplate: 'x'.repeat(301) }), /^watch\.titleTemplate: at most 300/],
       ['long body', watchDraft({}, { bodyTemplate: 'x'.repeat(301) }), /^watch\.bodyTemplate: at most 300/],
@@ -654,6 +658,12 @@ describe('§21 checking a draft', () => {
     const read = readDraft({ ...reportDraft(), replacesAutomationId: null, schedule: { ...reportDraft().schedule, weekdays: null, period: { kind: 'last_days', days: 7, from: null, to: null, weekStart: null } } })
     expect(read).toEqual({ draft: expect.objectContaining({ schedule: expect.objectContaining({ period: { kind: 'last_days', days: 7 } }) }) })
     expect('draft' in read && read.draft.schedule).not.toHaveProperty('weekdays')
+    // A watch's hours and days likewise: given, they are kept; null, they are left out.
+    const timed = readDraft({ ...watchDraft(), watch: { ...watchDraft().watch, hours: { from: '22:00', to: '06:00' }, weekdays: [1, 2, 3, 4, 5] } })
+    expect(timed).toEqual({ draft: expect.objectContaining({ watch: expect.objectContaining({ hours: { from: '22:00', to: '06:00' }, weekdays: [1, 2, 3, 4, 5] }) }) })
+    const untimed = readDraft({ ...watchDraft(), watch: { ...watchDraft().watch, hours: null, weekdays: null } })
+    expect('draft' in untimed && untimed.draft.watch).not.toHaveProperty('hours')
+    expect('draft' in untimed && untimed.draft.watch).not.toHaveProperty('weekdays')
     // §22 — the person's words are read on their own, whatever the draft's shape, and never kept in it; the version it revises is.
     const revised = '6f1c1b2e-3d4a-4b5c-8d6e-7f8091a2b3c4'
     const withWords = readDraft({ confirmation: 'Yes, go ahead', ...watchDraft(), revisesProposalId: revised })

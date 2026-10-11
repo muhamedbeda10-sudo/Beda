@@ -327,7 +327,17 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
               className={ACTION_BTN}
               onClick={() => void activate()}
               disabled={writing || busy !== null || replacedGone}
-              data-tip={writing ? PROPOSAL_WAIT : replacedGone ? 'The automation it changes is no longer there' : watch ? 'Starts it now: its first run is within a minute' : 'Starts it now: its first run is at its next time'}
+              data-tip={
+                writing
+                  ? PROPOSAL_WAIT
+                  : replacedGone
+                    ? 'The automation it changes is no longer there'
+                    : watch
+                      ? def.watch?.hours || def.watch?.weekdays?.length
+                        ? 'Starts it now: its first run is within a minute, or as its hours next open'
+                        : 'Starts it now: its first run is within a minute'
+                      : 'Starts it now: its first run is at its next time'
+              }
             >
               {busy === 'activate' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />} {busy === 'activate' ? 'Activating…' : 'Activate'}
             </Button>

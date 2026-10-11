@@ -189,8 +189,10 @@ role can read.
 on something or to send a report regularly. The assistant writes it as a
 proposal, tried once against the data; nothing runs until a person presses
 Activate. A watch is a read-only query the API runs every few minutes (at
-least five), without the model, under its creator's current domains: each row
-is a case, and each case fires once (`ai_automation_hits`). A scheduled report
+least five) — around the clock, or only within the hours of the factory day
+and on the days it was given — without the model, under its creator's current
+domains: each row is a case, and each case fires once (`ai_automation_hits`).
+A scheduled report
 runs its queries at a factory-time hour and the model writes a short summary
 on top, counted against its creator's cap. An automation can only tell people
 — an alert in the bell (`user_notifications`) and a message from the "QC

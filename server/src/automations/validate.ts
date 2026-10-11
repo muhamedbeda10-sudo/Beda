@@ -12,7 +12,8 @@
 //   • a report's sections (1 to 8) pass the saved reports' template rules
 //     ({{from}} and {{to}} only with a period, standing alone, bounding the
 //     data) and each runs over the period as of the factory's today;
-//   • the schedule's fields fit its cadence; the interval its limits;
+//   • the schedule's fields fit its cadence; the interval its limits, a
+//     watch's hours two HH:MM times that differ and its days real ones;
 //   • the people named are active accounts (never the system sender), the
 //     roles real, the channels at least one, the follow-up's deadline in range;
 //   • a change names one of the creator's own automations of the same kind,
@@ -212,6 +213,8 @@ function normalise(d: AutomationDraft): AutomationDraft {
       everyMinutes: d.watch.everyMinutes,
       titleTemplate: oneLine(d.watch.titleTemplate),
     }
+    if (d.watch.hours) w.hours = { from: String(d.watch.hours.from ?? '').trim(), to: String(d.watch.hours.to ?? '').trim() }
+    if (d.watch.weekdays !== undefined) w.weekdays = [...new Set(d.watch.weekdays)].sort((a, b) => a - b)
     const body = d.watch.bodyTemplate?.trim()
     if (body) w.bodyTemplate = body
     for (const k of ['sessionColumn', 'sampleColumn', 'orderColumn'] as const) {
@@ -265,6 +268,13 @@ function checkWatch(w: AutomationWatchSpec, errors: string[]): boolean {
   if (!Number.isInteger(w.everyMinutes) || w.everyMinutes < AUTOMATION_MIN_EVERY_MINUTES || w.everyMinutes > AUTOMATION_MAX_EVERY_MINUTES) {
     errors.push(`watch.everyMinutes: from ${AUTOMATION_MIN_EVERY_MINUTES} to ${AUTOMATION_MAX_EVERY_MINUTES} minutes.`)
   }
+  if (w.hours) {
+    const problem = hoursProblem(w.hours)
+    if (problem) errors.push(problem)
+  }
+  if (w.weekdays && (w.weekdays.length === 0 || w.weekdays.some((d) => !isAutomationWeekday(d)))) {
+    errors.push('watch.weekdays: the days it runs, each 0 (Sunday) to 6 (Saturday); leave it out for every day.')
+  }
   if (!w.titleTemplate) errors.push('watch.titleTemplate: give each case a title, e.g. "Hold on {{machine}}: {{defect}}".')
   else if (chars(w.titleTemplate) > AUTOMATION_TEMPLATE_MAX) errors.push(`watch.titleTemplate: at most ${AUTOMATION_TEMPLATE_MAX} characters.`)
   if (w.bodyTemplate && chars(w.bodyTemplate) > AUTOMATION_TEMPLATE_MAX) errors.push(`watch.bodyTemplate: at most ${AUTOMATION_TEMPLATE_MAX} characters.`)
@@ -275,6 +285,15 @@ function checkWatch(w: AutomationWatchSpec, errors: string[]): boolean {
     return false
   }
   return true
+}
+
+/** Why a watch's hours are not a stretch of the day (two HH:MM times that differ), or null when they are. */
+function hoursProblem(h: { from: string; to: string }): string | null {
+  if (!isAutomationTime(h.from) || !isAutomationTime(h.to)) {
+    return 'watch.hours: from and to as HH:MM on the 24-hour clock, factory time, e.g. {"from": "05:00", "to": "10:00"}; leave hours out to run around the clock.'
+  }
+  if (h.from === h.to) return 'watch.hours: from and to are the same time; give a later to (an earlier one crosses midnight), or leave hours out to run around the clock.'
+  return null
 }
 
 /** The schedule and its sections; whether every section may be run. */

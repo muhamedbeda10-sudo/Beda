@@ -30,7 +30,8 @@
 // when less than six hours late — the latest of its times, over the days of
 // that time — and any earlier times passed are recorded as missed; otherwise
 // that run is recorded as missed and the next one scheduled. A watch simply
-// runs at the next tick.
+// runs at the next tick — unless its hours have closed meanwhile: then it
+// waits, nothing recorded, for them to open again (its cases keep till then).
 //
 // The clock is injectable: the tests drive ticks directly at chosen moments.
 // ============================================================================
@@ -53,7 +54,7 @@ import { createNotifications, purgeNotifications } from './notify'
 import { activeUserIds, distinctIds } from './people'
 import { runReport, runSections, sectionError, type ReportReader } from './report'
 import { INTERRUPTED_ERROR, beginRun, closeLostRuns, findRun, skippedRun } from './runs'
-import { MISSED_RUN_GRACE_MS, nextReportRun, nextWatchRun, previousReportRun, reportRunsBetween } from './schedule'
+import { MISSED_RUN_GRACE_MS, nextReportRun, nextWatchRun, previousReportRun, reportRunsBetween, watchRunAt } from './schedule'
 import { isolate } from './text'
 import { AUTOMATION_QUERY_TIMEOUT_MS, queryErrorForPeople, reportPeriodAt, watchBacktest, type AutomationReaders } from './validate'
 import { appState, blockedNote, blockedReason, creatorDomains, creatorStates, findAutomation, type AutomationRow } from './views'
@@ -136,8 +137,16 @@ export async function claimDue(deps: EngineDeps, now: Date): Promise<Claim> {
     await closeLostRuns(tx, a.id, now)
     let slotAt: Date | null = null
     let next: Date
-    if (a.kind === 'watch') next = nextWatchRun(a.watch!.everyMinutes, now)
-    else {
+    if (a.kind === 'watch') {
+      const tz = deps.config.FACTORY_TIMEZONE
+      // Due while no instance could run it, and its hours over since: it waits for them to open again.
+      const opens = watchRunAt(a.watch!, now, tz)
+      if (opens.getTime() > now.getTime()) {
+        await tx.query(`UPDATE ai_automations SET next_run_at = $2, retry_at = NULL, blocked_reason = NULL WHERE id = $1`, [a.id, opens.toISOString()])
+        return { kind: 'missed' }
+      }
+      next = nextWatchRun(a.watch!, now, tz)
+    } else {
       const tz = deps.config.FACTORY_TIMEZONE
       const s = a.schedule!
       const stored = new Date(a.nextRunAt!)

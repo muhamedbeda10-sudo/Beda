@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  describeHours,
   describeSchedule,
   describeWatchInterval,
+  describeWatchTiming,
+  describeWeekdays,
+  isAutomationHours,
   isAutomationTime,
   isAutomationWeekday,
   renderAutomationTemplate,
@@ -17,6 +21,29 @@ describe('describeWatchInterval', () => {
     expect(describeWatchInterval(90)).toBe('Every 1 hour 30 minutes')
     expect(describeWatchInterval(150)).toBe('Every 2 hours 30 minutes')
     expect(describeWatchInterval(1440)).toBe('Once a day')
+  })
+})
+
+describe('describeWatchTiming', () => {
+  it('reads the interval alone when a watch runs around the clock, every day', () => {
+    expect(describeWatchTiming({ everyMinutes: 5 })).toBe('Every 5 minutes')
+    expect(describeWatchTiming({ everyMinutes: 5, weekdays: [] })).toBe('Every 5 minutes')
+    expect(describeWatchTiming({ everyMinutes: 5, weekdays: [0, 1, 2, 3, 4, 5, 6] })).toBe('Every 5 minutes')
+  })
+
+  it('adds the hours it runs in, the night included, and the days', () => {
+    expect(describeWatchTiming({ everyMinutes: 5, hours: { from: '05:00', to: '10:00' } })).toBe('Every 5 minutes from 05:00 to 10:00')
+    expect(describeWatchTiming({ everyMinutes: 60, hours: { from: '22:00', to: '06:00' }, weekdays: [1, 2, 3, 4, 5] })).toBe('Every hour from 22:00 to 06:00, Monday to Friday')
+    expect(describeWatchTiming({ everyMinutes: 5, weekdays: [6, 0, 1, 2, 3, 4] })).toBe('Every 5 minutes, Saturday to Thursday')
+    expect(describeWatchTiming({ everyMinutes: 1440, hours: { from: '07:00', to: '08:00' }, weekdays: [3] })).toBe('Once a day from 07:00 to 08:00, Every Wednesday')
+    expect(describeHours({ from: '05:00', to: '10:00' })).toBe('05:00 to 10:00')
+  })
+
+  it('names the days as the schedule does', () => {
+    expect(describeWeekdays(undefined)).toBe('Every day')
+    expect(describeWeekdays([3])).toBe('Every Wednesday')
+    expect(describeWeekdays([6, 0, 1, 2, 3, 4])).toBe('Saturday to Thursday')
+    expect(describeWeekdays([0, 2, 4])).toBe('Sunday, Tuesday, Thursday')
   })
 })
 
@@ -65,6 +92,14 @@ describe('isAutomationTime / isAutomationWeekday', () => {
     expect(isAutomationWeekday(7)).toBe(false)
     expect(isAutomationWeekday(1.5)).toBe(false)
     expect(isAutomationWeekday('1')).toBe(false)
+  })
+  it('hours are two HH:MM times that differ, in either order', () => {
+    expect(isAutomationHours({ from: '05:00', to: '10:00' })).toBe(true)
+    expect(isAutomationHours({ from: '22:00', to: '06:00' })).toBe(true)
+    expect(isAutomationHours({ from: '05:00', to: '05:00' })).toBe(false)
+    expect(isAutomationHours({ from: '5:00', to: '10:00' })).toBe(false)
+    expect(isAutomationHours({ from: '05:00' })).toBe(false)
+    expect(isAutomationHours(null)).toBe(false)
   })
 })
 
