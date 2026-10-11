@@ -136,12 +136,12 @@ export function ConversationInfoModal({
               <span className="block text-xs capitalize text-muted">{m.role}</span>
             </span>
             {m.id !== profile?.id && c.kind !== 'direct' && (
-              <button type="button" onClick={() => onOpenDirect(m.id)} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
+              <button type="button" onClick={() => onOpenDirect(m.id)} className="btn-secondary min-h-[40px] shrink-0 px-3 py-1.5 text-xs text-brand-700 dark:text-brand-200 touch:min-h-[44px]" aria-label={`Message ${m.name}`}>
                 Message
               </button>
             )}
             {admin && m.id !== profile?.id && (
-              <button type="button" onClick={() => void change({ removeMemberIds: [m.id] })} disabled={busy} className="icon-btn h-9 w-9 hover:text-rose-600" aria-label={`Remove ${m.name}`}>
+              <button type="button" onClick={() => void change({ removeMemberIds: [m.id] })} disabled={busy} className="icon-btn h-10 w-10 shrink-0 hover:text-rose-600 touch:h-11 touch:w-11" aria-label={`Remove ${m.name}`}>
                 <UserMinus className="h-4 w-4" />
               </button>
             )}

@@ -183,6 +183,67 @@ export type OrderImportRow = Partial<Omit<ProductionOrder, 'id' | 'deletedAt' | 
 
 export type CoilImportRow = Partial<Omit<Coil, 'id' | 'deletedAt'>> & { coilNumber: string }
 
+/**
+ * §24 — one row of the ERP's production task record as the importer sends
+ * it (PRODUCTION_RECORD_FIELDS): the order line's Order ID and the ERP's
+ * record id name it; the rest as the export has it, blanks left out. The day
+ * and the day number travel as text and are read by the API (parseWorkDay,
+ * parseDayNo); every row of a request is stored whole, so a field left out
+ * clears the stored value.
+ */
+export interface ProductionRecordImportRow {
+  lineKey: string
+  erpRecordId: string
+  week?: string
+  orderNumber?: string
+  item?: string
+  colour?: string
+  producedQty?: number
+  worker1?: string
+  worker2?: string
+  worker3?: string
+  worker4?: string
+  dayNo?: string | number
+  workDay?: string
+  workCenterCode?: string
+  durationHours?: number
+  stageNo?: number
+  stageQty?: number
+  remarks?: string
+  lengthMm?: number
+  widthMm?: number
+  thicknessMm?: number
+  requiredQty?: number
+  actualHours?: number
+  plannedHours?: number
+  shift?: string
+  resource?: string
+  weightKg?: number
+  producedWeightKg?: number
+  producedLengthM?: number
+}
+
+/** §24 — what the import page says of the production record as it stands. */
+export interface ProductionRecordsSummary {
+  /** Live records. */
+  rows: number
+  /** Distinct order lines (line_key) among them… */
+  lines: number
+  /** …of which this many are on the order sheet now. */
+  linesKnown: number
+  /** First and last work day ('YYYY-MM-DD'); null while there are no records, or none with a day. */
+  firstDay: string | null
+  lastDay: string | null
+  /** When an import last touched a live row; null while there are no records. */
+  lastImportAt: string | null
+}
+
+/** Answer to removing every current production record before a fresh import. */
+export interface ClearProductionRecordsResult {
+  /** Records marked deleted; a re-import of the file brings them back. */
+  removed: number
+}
+
 export type DimensionOrderImportRow = Partial<Omit<ItemDimensionOrder, 'id' | 'deletedAt'>> & {
   itemCode: string
   dimensionName: string

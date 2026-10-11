@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { QueryClient } from '@tanstack/react-query'
 import { EXISTING_KEYS_MAX } from '@qc/shared/api'
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }))
@@ -29,5 +30,31 @@ describe('existingKeys', () => {
   it('makes no request when the file has no keys', async () => {
     expect((await existingKeys('orders', [])).size).toBe(0)
     expect(apiMock.mock.calls).toHaveLength(0)
+  })
+
+  it('asks the production record (§24) about its composite keys at its own address, as the API answers them', async () => {
+    apiMock.mockResolvedValueOnce({ existing: ['490226||113290'] })
+    const found = await existingKeys('production-records', ['490226||113290', '490226||113291'])
+    expect(apiMock.mock.calls).toHaveLength(1)
+    expect(apiMock.mock.calls[0][0]).toBe('/production-records/existing-keys')
+    expect([...found]).toEqual(['490226||113290'])
+  })
+})
+
+describe('the production record (§24)', () => {
+  beforeEach(() => apiMock.mockClear())
+
+  it('removes every record with one request and refreshes what the import page says about it', async () => {
+    const { clearProductionRecords } = await import('./mutations')
+    const qc = new QueryClient()
+    const invalidate = vi.fn().mockResolvedValue(undefined)
+    qc.invalidateQueries = invalidate as unknown as QueryClient['invalidateQueries']
+    apiMock.mockResolvedValueOnce({ removed: 42_143 })
+
+    const result = await clearProductionRecords(qc)
+
+    expect(result).toEqual({ removed: 42_143 })
+    expect(apiMock.mock.calls).toEqual([['/production-records', { method: 'DELETE' }]])
+    expect(invalidate.mock.calls.map(([arg]) => (arg as { queryKey: unknown[] }).queryKey)).toEqual([['production-records']])
   })
 })

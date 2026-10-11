@@ -117,6 +117,26 @@ const MEANINGS: { domains: AiDomain[]; text: string }[] = [
     domains: ['inspection'],
     text: '- Machines with counts_on_dashboard = false are left out of the dashboard\'s figures (production, reject rate, first-pass yield); leave them out only when the question is about those figures. Asked about such a machine\'s own production, use ai.production_between(from, to, per, true). Counts and lists of sessions, samples, defects, holds or measurements - by machine, inspector, item or order - include every machine unless the question says otherwise.',
   },
+  {
+    domains: ['production'],
+    text: '- The production task record (ai.production_task_records) is the ERP\'s, not the inspection record\'s: a row is one order line on one working day (line_key + day_no), the child of the order sheet. It joins ai.order_lines on line_key when you can read both; the view already carries the line\'s item_code, customer and quantities when the line is known, and order_line_known says whether the sheet still has the line.',
+  },
+  {
+    domains: ['production'],
+    text: '- Production from the record: sum produced_qty over any grouping (machine, day, week, worker, order). required_qty repeats on every row of a line, so never sum it across days: take it once per line_key (max(required_qty) GROUP BY line_key).',
+  },
+  {
+    domains: ['production'],
+    text: '- actual_hours NULL = not recorded (the ERP\'s placeholder), so average or sum hours over the rows that have them; duration_hours and planned_hours are the ERP\'s planned hours. Hours, weights and lengths are per row (per line per day).',
+  },
+  {
+    domains: ['production'],
+    text: '- Up to four workers per row (worker_1 to worker_4; workers is the list of those present: unnest it to count by person). week is the ERP\'s week/year as written (week_no, week_year when it parses).',
+  },
+  {
+    domains: ['production'],
+    text: '- The record is imported by hand from the ERP, so imported_at says how fresh a row is. Machine codes map to the register where known (machine, factory, process); where not, resource names the ERP\'s line.',
+  },
 ]
 
 /**

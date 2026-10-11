@@ -44,6 +44,7 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express'
 import { z } from 'zod'
 import {
+  AI_DOMAIN_IDS,
   AI_EXPORT_MAX_ROWS,
   AI_MAX_MESSAGE_CHARS,
   AI_MAX_MONTHLY_CAP_USD,
@@ -180,7 +181,7 @@ const accessSchema = z
     enabled: z.boolean(),
     domains: z
       .array(z.string().refine(isAiDomain, 'Not one of the data domains.'))
-      .max(4)
+      .max(AI_DOMAIN_IDS.length)
       .refine((d) => new Set(d).size === d.length, 'Each domain once.'),
     model: z.string().refine(isAiModel, 'Not one of the models the assistant offers.'),
     effort: z.string().refine(isAiEffort, 'Not one of the effort levels.'),

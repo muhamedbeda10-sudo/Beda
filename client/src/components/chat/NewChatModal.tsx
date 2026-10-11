@@ -7,6 +7,7 @@ import { useChatUsers } from '@/services/queries'
 import { createConversation } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
+import { isCoarsePointer } from '@/lib/media'
 import { cn } from '@/lib/utils'
 import { UserAvatar } from '@/components/ui/UserAvatar'
 
@@ -71,7 +72,7 @@ export function NewChatModal({ onClose, onCreated }: { onClose: () => void; onCr
       {role === 'admin' && (
         <div className="mb-3 flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
           {(['direct', 'group'] as const).map((t) => (
-            <button key={t} type="button" onClick={() => setTab(t)} className={cn('flex-1 rounded-lg py-1.5 text-sm font-semibold', tab === t ? 'bg-white shadow-card dark:bg-slate-900' : 'text-muted')}>
+            <button key={t} type="button" onClick={() => setTab(t)} aria-pressed={tab === t} className={cn('flex-1 rounded-lg py-2.5 text-sm font-semibold touch:min-h-[44px]', tab === t ? 'bg-white shadow-card dark:bg-slate-900' : 'text-muted')}>
               {t === 'direct' ? 'Direct message' : 'Group'}
             </button>
           ))}
@@ -79,12 +80,12 @@ export function NewChatModal({ onClose, onCreated }: { onClose: () => void; onCr
       )}
       {tab === 'group' && (
         <Field label="Group name">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Welding LM4" maxLength={80} autoFocus />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Welding LM4" maxLength={80} autoFocus={!isCoarsePointer()} />
         </Field>
       )}
       <div className="relative mt-3">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-        <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Find a person" className="pl-9" autoFocus={tab === 'direct'} />
+        <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Find a person" className="pl-9" autoFocus={tab === 'direct' && !isCoarsePointer()} />
       </div>
       <ul className="mt-2 max-h-72 space-y-0.5 overflow-y-auto">
         {others.map((u) =>

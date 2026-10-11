@@ -3,7 +3,7 @@
 // views in schema ai of the domains they stand for, and nothing else.
 //
 // Migration 0033 creates one role without LOGIN per data domain, holding its
-// views. Every start creates (or brings back in line) one role per
+// views (0039 the fifth). Every start creates (or brings back in line) one role per
 // combination of domains, a member of the base role and of those domains'
 // roles only, with LOGIN and a password derived from JWT_SECRET and the
 // role's name, so no extra secret has to be configured anywhere. The password
@@ -168,7 +168,7 @@ export class AiReader {
       const domainRoles = (['base', ...AI_DOMAIN_IDS] as AiRoleDomain[]).map((d) => domainRole(database, d))
       const found = await db.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[])`, [domainRoles])
       const missing = domainRoles.filter((r) => !found.rows.some((f) => f.rolname === r))
-      if (missing.length > 0) throw new Error(`role ${missing[0]} does not exist (migration 0033 has not run)`)
+      if (missing.length > 0) throw new Error(`role ${missing[0]} does not exist (migration 0033 or 0039 has not run)`)
       // Every combination holds the schema: whatever in it everyone may use, every domain may use.
       const open = await openToEveryone(db)
       if (open) throw new Error(`${open} in schema ai can be used by every role; revoke it from PUBLIC in its migration and grant it to its domain`)

@@ -7,6 +7,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import {
   EXISTING_KEYS_MAX,
   type ClearOrdersResult,
+  type ClearProductionRecordsResult,
   type CreateIntegrationKeyResponse,
   type CloseSessionRequest,
   type CorrectDefectRequest,
@@ -243,20 +244,33 @@ export async function revokeIntegrationKey(qc: QueryClient, id: string): Promise
 
 // ---- Bulk import -----------------------------------------------------------
 
-export type ImportTarget = 'orders' | 'coils' | 'item-dimension-order' | 'machines' | 'work-center-defects'
+export type ImportTarget = 'orders' | 'coils' | 'item-dimension-order' | 'machines' | 'work-center-defects' | 'production-records'
 
 /** Where each importer lives on the API, and which cached reads it changes.
  *  The dashboard reads all of them — an order line imported changes coverage,
  *  a machine's factory changes which list a figure belongs to — so `['kpi']`
- *  is invalidated alongside whatever the target names. */
+ *  is invalidated alongside whatever the target names. (The production
+ *  record, §24, is read by the assistant alone; its summary is what moves.) */
 function importEndpoint(target: ImportTarget): { path: string; invalidates: readonly string[] } {
   switch (target) {
     case 'orders':
     case 'coils':
+    case 'production-records':
       return { path: `/${target}`, invalidates: [target] }
     default:
       return { path: `/master/${target}`, invalidates: ['master', target] }
   }
+}
+
+/**
+ * §24 — mark every production record deleted, for a wrong import. Nothing is
+ * erased: a record the next file still carries comes back through the
+ * import's upsert. Only an administrator, and the count is audited.
+ */
+export async function clearProductionRecords(qc: QueryClient): Promise<ClearProductionRecordsResult> {
+  const result = await api<ClearProductionRecordsResult>('/production-records', { method: 'DELETE' })
+  await qc.invalidateQueries({ queryKey: ['production-records'] })
+  return result
 }
 
 /**

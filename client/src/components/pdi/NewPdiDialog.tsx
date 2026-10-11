@@ -14,6 +14,13 @@ import { cn } from '@/lib/utils'
 import { SearchSelect, byName, type PickOption } from '@/components/dashboard/filters'
 import { itemsOfLines } from './pdiItems'
 
+/** What closing would throw away, in a sentence: "Order 20480 with 3 items ticked, the notes and 2 photos will not be saved." */
+export function discardWords(parts: string[]): string {
+  const kept = parts.filter(Boolean)
+  const list = kept.length > 1 ? `${kept.slice(0, -1).join(', ')} and ${kept[kept.length - 1]}` : (kept[0] ?? 'This PDI')
+  return `${list.charAt(0).toUpperCase()}${list.slice(1)} will not be saved. Nothing of this PDI is recorded until you save it.`
+}
+
 export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void; onSave: (orderIds: string[], notes: string, imageIds: string[]) => void; saving: boolean }) {
   const [orderTerm, setOrderTerm] = useState('')
   const [factory, setFactory] = useState('')
@@ -265,17 +272,11 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
           </>
         }
       >
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          {[
-            orderNumber && orderIds.length > 0 ? `order ${orderNumber} with ${ticked.length} ${ticked.length === 1 ? 'item' : 'items'} ticked` : '',
-            notes.trim() ? 'the notes' : '',
-            imageIds.length > 0 ? `${imageIds.length} ${imageIds.length === 1 ? 'photo' : 'photos'}` : '',
-          ]
-            .filter(Boolean)
-            .join(', ')
-            .replace(/^./, (c) => c.toUpperCase())}{' '}
-          will not be saved. Nothing of this PDI is recorded until you save it.
-        </p>
+        <p className="text-sm text-slate-600 dark:text-slate-300">{discardWords([
+          orderNumber && orderIds.length > 0 ? `order ${orderNumber} with ${ticked.length} ${ticked.length === 1 ? 'item' : 'items'} ticked` : '',
+          notes.trim() ? 'the notes' : '',
+          imageIds.length > 0 ? `${imageIds.length} ${imageIds.length === 1 ? 'photo' : 'photos'}` : '',
+        ])}</p>
       </Modal>
     </Modal>
   )

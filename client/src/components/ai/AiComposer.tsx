@@ -10,14 +10,13 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 're
 import { Link } from 'react-router-dom'
 import { ArrowUp, Square } from 'lucide-react'
 import { AI_MAX_MESSAGE_CHARS } from '@qc/shared/ai'
+import { isCoarsePointer } from '@/lib/media'
 import { cn } from '@/lib/utils'
 import { useAiMe } from '@/services/queries'
 import { aiBlock } from './access'
 import { useAi, useAiLive } from './AiAssistantProvider'
 import { BlockedNotice } from './AiNotice'
 import { spentFocus, takesCaret, type ComposerFocus } from './suggestions'
-
-const isTouch = () => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none)').matches
 
 function caretAtEnd(el: HTMLTextAreaElement) {
   el.focus()
@@ -105,12 +104,12 @@ export function AiComposer({
     if (handled.current === focus.key) return
     handled.current = focus.key
     const el = area.current
-    if (el && takesCaret(focus, isTouch())) caretAtEnd(el)
+    if (el && takesCaret(focus, isCoarsePointer())) caretAtEnd(el)
     if (focus.always) onFocusUsed()
   }, [focus, onFocusUsed])
   useEffect(() => {
     const el = area.current
-    if (el && !isTouch()) caretAtEnd(el)
+    if (el && !isCoarsePointer()) caretAtEnd(el)
   }, [conversationId])
 
   const submit = () => {
@@ -119,14 +118,14 @@ export function AiComposer({
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || isTouch()) return
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || isCoarsePointer()) return
     e.preventDefault()
     submit()
   }
 
   // The owner alone has somewhere to go about it: the settings page says precisely why, and holds the switch, the key and the caps.
   const settings = blocked && me?.owner && (
-    <Link to="/admin/ai" onClick={() => !docked && setOpen(false)} className="text-xs font-semibold underline underline-offset-2">
+    <Link to="/admin/ai" onClick={() => !docked && setOpen(false)} className="inline-flex items-center text-xs font-semibold underline underline-offset-2 touch:min-h-[44px]">
       Open the assistant's settings
     </Link>
   )
@@ -138,10 +137,10 @@ export function AiComposer({
         {elsewhere && (
           <p className="mb-2 flex flex-wrap items-center gap-x-2 text-xs text-muted">
             Still answering in another conversation.
-            <button type="button" onClick={() => openConversation(live?.conversationId ?? null)} className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
+            <button type="button" onClick={() => openConversation(live?.conversationId ?? null)} className="font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px] touch:px-1">
               Go to it
             </button>
-            <button type="button" onClick={stop} className="font-semibold text-rose-700 hover:underline dark:text-rose-300">
+            <button type="button" onClick={stop} className="font-semibold text-rose-700 hover:underline dark:text-rose-300 touch:min-h-[44px] touch:px-1">
               Stop it
             </button>
           </p>

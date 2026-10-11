@@ -621,7 +621,7 @@ export function DonutChart({ slices, centerLabel, size = 160, onPick }: { slices
       </svg>
       <ul className="min-w-[10rem] flex-1 space-y-1.5 text-sm">
         {slices.map((s) => (
-          <li key={s.label} className={cn('flex items-start gap-2 py-0.5 touch:py-2', onPick && s.value > 0 && 'rounded-md hover:bg-slate-50 dark:hover:bg-slate-800')} {...(s.value > 0 ? pickable(onPick && (() => onPick(s.label)), s.label) : {})}>
+          <li key={s.label} className={cn('flex items-start gap-2 py-0.5 touch:py-2.5', onPick && s.value > 0 && 'rounded-md hover:bg-slate-50 dark:hover:bg-slate-800')} {...(s.value > 0 ? pickable(onPick && (() => onPick(s.label)), s.label) : {})}>
             <i className={cn('mt-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full', s.className.replace(/stroke-/g, 'bg-'))} />
             <span className="min-w-0 flex-1 break-words leading-snug text-slate-600 dark:text-slate-300">{s.label}</span>
             <span className="font-semibold tabular-nums">{fmt(s.value)}</span>
@@ -746,7 +746,7 @@ export function PieChart({ slices, centerLabel, unit = '', onPick, format = fmt 
         {drawn.map((s, i) => (
           <li
             key={s.label}
-            className={cn('flex flex-wrap items-start gap-x-2 py-0.5 touch:py-2', onPick && !isOthers(s.label) && 'rounded-md hover:bg-slate-50 dark:hover:bg-slate-800', picked === i && 'rounded-md bg-slate-100 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700')}
+            className={cn('flex flex-wrap items-start gap-x-2 py-0.5 touch:py-2.5', onPick && !isOthers(s.label) && 'rounded-md hover:bg-slate-50 dark:hover:bg-slate-800', picked === i && 'rounded-md bg-slate-100 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700')}
             {...pickable(open(s), s.label)}
           >
             <i className={cn('mt-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full', s.className.replace(/fill-/g, 'bg-'))} />
@@ -801,8 +801,9 @@ export function HorizontalBars({ rows, max, unit = '' }: { rows: HBar[]; max?: n
         const w = r.value === null ? 0 : Math.min(100, (r.value / top) * 100)
         const inner = (
           <>
-            <div className="flex items-start justify-between gap-2 text-sm">
-              <span className="min-w-0">
+            {/* The figures beside the name while both fit; a long one ("no closed production · …") goes under it rather than squeeze it. */}
+            <div className="flex flex-wrap items-start justify-between gap-x-2 text-sm">
+              <span className="min-w-[9rem] flex-1">
                 <span className="line-clamp-2 break-words font-medium leading-snug text-slate-700 dark:text-slate-200" dir="auto">
                   {r.label}
                 </span>
@@ -812,7 +813,7 @@ export function HorizontalBars({ rows, max, unit = '' }: { rows: HBar[]; max?: n
                   </span>
                 )}
               </span>
-              <span className="shrink-0 pt-0.5 text-right text-xs tabular-nums text-muted">{r.text}</span>
+              <span className="ml-auto shrink-0 pt-0.5 text-right text-xs tabular-nums text-muted">{r.text}</span>
             </div>
             <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
               <div className={cn('h-full rounded-full transition-[width] duration-500', TONE_BAR[r.tone])} style={{ width: `${w}%` }} aria-hidden />

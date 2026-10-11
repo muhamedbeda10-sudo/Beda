@@ -80,8 +80,11 @@ The **first account created becomes the admin**. Afterwards, set
   register, item dimensions (by item code, optionally per machine), master
   dimensions, reference images (single or bulk upload), machine defects, grade
   mappings, PT consumables, each with its sheet importer where the ERP exports
-  one; **Data import**: order lines and coils, CSV or Excel, with a preview
-  (idempotent upsert on the business key); **Users**; **Audit log** — every
+  one; **Data import**: order lines, coils and the ERP's production task
+  record (the production written against the order sheet: one row per order
+  line per working day, matched on Order ID + Record ID; rows missing from a
+  later file are kept), CSV or Excel, with a preview (idempotent upsert on the
+  business key); **Users**; **Audit log** — every
   create / update / delete / acknowledge / purge, field by field, with who and
   when, append-only and undeletable at the database.
 
@@ -161,7 +164,10 @@ Main tables: `users`, `auth_sessions`, `machines`, `production_orders`,
 `item_reference_images`, `work_center_defects`, `grade_mappings`,
 `pt_consumables`, `images`, `inspection_sessions`, `inspection_samples`,
 `dimension_results`, `defect_results`, `sample_coils`, `paint_samples`,
-`pt_records`, `pdi_documents`, the image junction tables, and `audit_log`.
+`pt_records`, `pdi_documents`, `production_task_records` (the ERP's
+production task record, one row per order line per working day, joined to
+`production_orders` on `line_key`), the image junction tables, and
+`audit_log`.
 
 The AI assistant belongs to one owner: the live, active account named by
 `AI_OWNER_USERNAME`, pinned in `ai_owner` the first time it exists and never
@@ -173,12 +179,16 @@ The owner gives the assistant to people one by one (`ai_access`): the data
 domains each may ask about, the model and effort, and a personal monthly cap.
 
 The assistant reads the record only through the views in schema `ai`, and the
-database enforces the domains: migration 0033 creates one role without LOGIN
-per domain (`<database>_ai_base`, `_ai_inspection`, `_ai_orders`,
-`_ai_materials`, `_ai_audit`), each holding exactly its views, and every start
-creates one LOGIN role per combination of domains (`<database>_ai_r_1010` and
-so on, fifteen in all), a member of the base and of its domains only, with a
-password derived from `JWT_SECRET` and the role's name. A question runs as the
+database enforces the domains: migrations 0033 and 0039 create one role
+without LOGIN per domain (`<database>_ai_base`, `_ai_inspection`,
+`_ai_orders`, `_ai_materials`, `_ai_audit`, `_ai_production` — the last for
+the ERP's production task record, `ai.production_task_records`, the child of
+the order sheet joined on `line_key`), each holding exactly its views, and
+every start creates one LOGIN role per combination of domains
+(`<database>_ai_r_10100` and so on, one bit per domain in that order,
+thirty-one in all; 0039 retired the fifteen four-bit ones), a member of the
+base and of its domains only, with a password derived from `JWT_SECRET` and
+the role's name. A question runs as the
 asker's combination; every query runs read-only and is rolled back. The
 assistant's own records are the `ai_*` tables (conversations, usage for the
 caps, the encrypted API key, the owner and the access list), which no reader
@@ -215,6 +225,7 @@ in `shared/src/api.ts`.
 | Master   | `GET/POST /master/:kind` `PUT/DELETE /master/:kind/:id` `POST /master/{item-dimension-order,machines,work-center-defects}/{import,existing-keys}` |
 | Orders   | `GET /orders?search=&machine=&orderNumber=` `GET /orders/numbers?machine=` `GET /orders/:id` `GET /orders/:id/history` `POST /orders/import` `POST /orders/existing-keys` |
 | Coils    | `GET /coils?search=` `GET /coils/usage` `POST /coils/import`                                |
+| Production record | `POST /production-records/import` `POST /production-records/existing-keys` `DELETE /production-records` `GET /production-records/summary` (admin) |
 | Sessions | `GET /sessions/open` `GET /sessions/history` `POST /sessions` `GET /sessions/:id/wizard` `POST /sessions/:id/close` `DELETE /sessions/:id` `POST /sessions/:id/samples` |
 | Samples  | `GET /samples/:id` `PATCH /samples/dimensions/:id` `PATCH /samples/defects/:id`             |
 | Images   | `POST /images` (multipart) `GET /images?ids=` `GET /images/:id/content`                      |

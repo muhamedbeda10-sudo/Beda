@@ -1,6 +1,10 @@
 // ============================================================================
-// §17 — Chat. Two panes on a wide screen; on a phone the list and then the
-// conversation, each full screen. The route carries the open conversation.
+// §17 — Chat. Two panes from a portrait tablet (md) up; on a phone the list
+// and then the conversation, each full screen. The route carries the open
+// conversation. The page fills the window under the header — its 1px rule
+// and the safe area above it too, as the assistant's page does — and its foot
+// runs to the screen's bottom edge, where the composer keeps clear of the
+// home indicator itself.
 // ============================================================================
 
 import { useEffect, useState } from 'react'
@@ -46,16 +50,16 @@ export function ChatPage() {
   }
 
   return (
-    <div className="-mx-4 -my-5 h-[calc(100dvh-4rem)] sm:-mx-6 lg:-mx-8 lg:py-4 lg:px-8">
-      <Card className="grid h-full min-h-0 grid-cols-1 overflow-hidden rounded-none lg:grid-cols-[22rem_1fr] lg:rounded-2xl">
-        <aside className={cn('min-h-0 border-r border-slate-200 dark:border-slate-800', conversationId ? 'hidden lg:block' : 'block')}>
+    <div className="-mx-4 -mt-5 mb-[calc(-1.25rem-env(safe-area-inset-bottom))] h-[calc(100dvh-4rem-1px-env(safe-area-inset-top))] sm:-mx-6 md:p-4 lg:-mx-8 lg:px-8">
+      <Card className="grid h-full min-h-0 grid-cols-1 overflow-hidden rounded-none md:grid-cols-[18rem_1fr] md:rounded-2xl lg:grid-cols-[22rem_1fr]">
+        <aside className={cn('min-h-0 border-r border-slate-200 dark:border-slate-800', conversationId ? 'hidden md:block' : 'block')}>
           {isLoading ? (
             <p className="p-6 text-sm text-muted">Loading…</p>
           ) : (
             <ConversationList conversations={conversations} activeId={active?.id ?? null} onPick={open} onNew={() => setCreating(true)} myId={profile?.id ?? ''} />
           )}
         </aside>
-        <section className={cn('min-h-0', conversationId ? 'block' : 'hidden lg:block')}>
+        <section className={cn('min-h-0', conversationId ? 'block' : 'hidden md:block')}>
           {active ? (
             <ChatThread conversation={active} onBack={() => navigate('/chat')} onOpenDirect={(id) => void openDirect(id)} onDeleted={() => navigate('/chat', { replace: true })} />
           ) : (

@@ -160,8 +160,9 @@ export function SampleDetail({
               {dimensions.map((d) => (
                 <li key={d.id} className="flex items-center gap-2 py-2 pl-3 pr-1.5">
                   <div className="min-w-0 flex-1">
-                    <p className="break-words font-semibold" dir="auto">
-                      {d.name}
+                    {/* The name in its own direction, the row starting at the card's edge whatever its script. */}
+                    <p className="break-words font-semibold">
+                      <bdi>{d.name}</bdi>
                       {d.unit && <span className="ms-1 text-xs font-normal text-muted">({d.unit})</span>}
                     </p>
                     <p className="text-xs tabular-nums text-muted">

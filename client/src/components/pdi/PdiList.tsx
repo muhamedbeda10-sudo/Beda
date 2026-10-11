@@ -274,11 +274,12 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
               ))}
             </FilterSelect>
             {range === 'custom' && (
-              <>
-                {/* On a phone the two days share a row, half each, like the selects around them. */}
-                <input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} className="input h-10 py-0 text-sm max-md:!w-[calc(50%-4px)] md:!w-[9rem] touch:h-11" aria-label="From day" data-tip="From day" />
-                <input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} className="input h-10 py-0 text-sm max-md:!w-[calc(50%-4px)] md:!w-[9rem] touch:h-11" aria-label="To day" data-tip="To day" />
-              </>
+              // On a phone the two days take a row of their own, half each, so the rows around them stay in pairs; from a
+              // tablet up the wrapper steps aside and the days sit in the row like any filter.
+              <div className="flex w-full gap-2 md:contents">
+                <input type="date" value={fromDay} max={toDay || undefined} onChange={(e) => setFromDay(e.target.value)} className="input h-10 py-0 text-sm max-md:!w-auto max-md:min-w-0 max-md:flex-1 md:!w-[9rem] touch:h-11" aria-label="From day" data-tip="From day" />
+                <input type="date" value={toDay} min={fromDay || undefined} onChange={(e) => setToDay(e.target.value)} className="input h-10 py-0 text-sm max-md:!w-auto max-md:min-w-0 max-md:flex-1 md:!w-[9rem] touch:h-11" aria-label="To day" data-tip="To day" />
+              </div>
             )}
             <input
               value={item}

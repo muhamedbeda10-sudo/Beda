@@ -595,21 +595,19 @@ export function AccessPage() {
           <TableFooter
             shown={rows.length}
             total={data?.total ?? null}
-            noun={data?.total === 1 ? 'line' : 'lines'}
+            // The phrase reads on from the count, in one run: "1–50 of 1,224 lines on the sheet".
+            noun={`${data?.total === 1 ? 'line' : 'lines'} ${filtering ? (data?.total === 1 ? 'matches the filters' : 'match the filters') : 'on the sheet'}`}
             hasMore={hasMore}
             loadingMore={loadingMore}
             onMore={() => void showMore()}
             pageSize={pageSize}
             onPageSize={setPageSize}
             extra={
-              <>
-                <span>{filtering ? (data?.total === 1 ? 'matches the filters' : 'match the filters') : 'on the sheet'}</span>
-                {toCheck > 0 && (
-                  <span className="inline-flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-400" data-tip="Lines the order sheet got wrong: an order numbered 0, or no item name or code. They are marked in the table; correct them on the sheet.">
-                    <AlertTriangle className="h-3.5 w-3.5" /> {toCheck} on screen to check on the sheet
-                  </span>
-                )}
-              </>
+              toCheck > 0 ? (
+                <span className="inline-flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-400" data-tip="Lines the order sheet got wrong: an order numbered 0, or no item name or code. They are marked in the table; correct them on the sheet.">
+                  <AlertTriangle className="h-3.5 w-3.5" /> {toCheck} on screen to check on the sheet
+                </span>
+              ) : undefined
             }
           />
         </>

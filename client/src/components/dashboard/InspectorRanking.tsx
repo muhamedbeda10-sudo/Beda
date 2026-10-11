@@ -13,6 +13,7 @@ import { useState } from 'react'
 import { Award, ChevronRight, Info, Medal, Trophy } from 'lucide-react'
 import type { KpiInspectorGroup, KpiInspectorRank, KpiInspectorRanking } from '@qc/shared/kpi'
 import { Badge, Card } from '@/components/ui'
+import { ScrollX } from '@/components/ui/ScrollX'
 import { FilterNote, FilterTh, useColumnFilters } from '@/components/dashboard/filters'
 import { cn } from '@/lib/utils'
 
@@ -70,7 +71,7 @@ function Podium({ rows, onPick }: { rows: KpiInspectorRank[]; onPick: (id: strin
               <span className={cn('text-xs font-bold uppercase tracking-wide', place.text)}>{place.label}</span>
               <span className="ml-auto text-2xl font-extrabold tabular-nums">{num(r.score, 1)}</span>
             </div>
-            <p dir="auto" className="mt-1 truncate text-sm font-bold">{r.name}</p>
+            <p dir="auto" className="mt-1 line-clamp-2 break-words text-sm font-bold">{r.name}</p>
             <p className="text-xs text-muted">
               {num(r.samples)} samples · {num(r.samplesPerActiveDay, 1)}/day · {num(r.pieces)} pcs
             </p>
@@ -93,8 +94,10 @@ function RankTable({ rows, onPick }: { rows: KpiInspectorRank[]; onPick: (id: st
     { key: 'dims', value: (r) => (r.dimensionCompletionPct === null ? '—' : `${num(r.dimensionCompletionPct, 1)}%`), numeric: true },
     { key: 'corrections', value: (r) => num(r.correctionsPer100Samples, 1), numeric: true },
   ])
+  // Wider than a phone: it scrolls sideways in its own frame, a shadow at the end while there is more.
   return (
-    <div className="overflow-x-auto">
+    <div>
+      <ScrollX shadows="end">
       <table className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
@@ -137,6 +140,7 @@ function RankTable({ rows, onPick }: { rows: KpiInspectorRank[]; onPick: (id: st
           ))}
         </tbody>
       </table>
+      </ScrollX>
       <FilterNote filters={filters} total={rows.length} />
     </div>
   )
@@ -164,7 +168,7 @@ export function InspectorRanking({ data, onPick }: { data: KpiInspectorRanking; 
               type="button"
               onClick={() => setTab(t.key)}
               className={cn(
-                'min-h-[36px] rounded-xl px-3 text-xs font-semibold ring-1 transition-colors',
+                'min-h-[36px] rounded-xl px-3 text-xs font-semibold ring-1 transition-colors touch:min-h-[44px]',
                 shown.key === t.key
                   ? 'bg-brand-600 text-white ring-brand-600'
                   : 'ring-slate-200 hover:bg-slate-50 dark:ring-slate-700 dark:hover:bg-slate-800',
@@ -176,7 +180,7 @@ export function InspectorRanking({ data, onPick }: { data: KpiInspectorRanking; 
         <button
           type="button"
           onClick={() => setExplain((v) => !v)}
-          className="print-hidden ml-auto inline-flex min-h-[36px] items-center gap-1 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300"
+          className="print-hidden ml-auto inline-flex min-h-[36px] items-center gap-1 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px] touch:px-1"
         >
           <Info className="h-3.5 w-3.5" /> {explain ? 'Hide' : 'How is this scored?'}
         </button>
