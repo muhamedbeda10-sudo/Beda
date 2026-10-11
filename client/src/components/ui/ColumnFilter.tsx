@@ -241,7 +241,9 @@ function MenuBody({
             {/* Ready to type under a mouse; on a touch screen it waits for a tap, so the keyboard does not cover the list and OK. */}
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search the values" aria-label={`Search the values of ${label}`} className="min-h-[34px] w-full bg-transparent text-sm outline-none touch:min-h-[44px]" dir="auto" autoFocus={!isCoarsePointer()} />
           </label>
-          <div className="max-h-60 overflow-auto rounded-lg ring-1 ring-slate-100 dark:ring-slate-800">
+          {/* Its own scroller under a mouse, so the sort rows and the search stay put. Under a finger the whole menu is the
+              one scroller: a list scrolling inside a panel that scrolls too takes the swipe the finger did not mean. */}
+          <div className="max-h-60 overflow-auto rounded-lg ring-1 ring-slate-100 dark:ring-slate-800 touch:max-h-none touch:overflow-visible">
             {list.length > 0 && (
               <CheckRow on={allOn} onClick={toggleAll}>
                 {search ? '(Select all search results)' : '(Select all)'}
@@ -257,8 +259,9 @@ function MenuBody({
           {remote?.truncated && <p className="px-1 text-[11px] text-muted">Showing the first {remote.values.length.toLocaleString()} values — search to find the rest.</p>}
         </>
       )}
-      {/* OK and Cancel stay in view at the panel's foot while a long list scrolls. */}
-      <div className="sticky bottom-0 z-[1] -mx-2 -mb-2 flex justify-end gap-2 border-t border-slate-100 bg-white px-2 py-2 dark:border-slate-800 dark:bg-slate-900">
+      {/* OK and Cancel stay in view at the panel's foot while a long list scrolls. Pinned over the panel's bottom padding
+          (-bottom-2 with the -mb-2), so no value row shows, or takes a tap, in a strip under them. */}
+      <div className="sticky -bottom-2 z-[1] -mx-2 -mb-2 flex justify-end gap-2 border-t border-slate-100 bg-white px-2 py-2 dark:border-slate-800 dark:bg-slate-900">
         <button type="button" onClick={onCancel} className="btn-secondary h-8 min-h-0 px-3 py-0 text-13 touch:h-11">
           Cancel
         </button>

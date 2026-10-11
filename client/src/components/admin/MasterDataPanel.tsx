@@ -29,7 +29,7 @@ export interface Column<T> {
   sortNum?: (row: T) => number | null
   /** A column with nothing to filter (a picture, a sign). */
   filterable?: false
-  /** A column of little value on a narrow table: shown from a wide screen (1280 px) only. The phone's cards keep it. */
+  /** A column of little value on a narrow table: shown from a wide screen (1280 px) only, and left off the phone's cards. */
   hideBelow?: 'xl'
 }
 
@@ -307,32 +307,35 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
     </ScrollX>
   )
 
+  // A phone's card: the tick and the title line with Edit and Delete at its end, and under the title the other
+  // columns, label and value, across the rest of the card, so a value is not squeezed beside the buttons.
   const cards = (visible: T[]) => {
-    const [title, ...rest] = props.columns
+    const [title, ...others] = props.columns
+    const rest = others.filter((c) => !c.hideBelow)
     return (
       <ul className="space-y-2">
         {visible.map((row) => (
           <li
             key={row.id}
-            className={cn('flex items-start gap-1 rounded-2xl p-2 ring-1 ring-slate-200 dark:ring-slate-800', selected.has(row.id) && 'bg-brand-50/60 dark:bg-brand-500/10')}
+            className={cn('grid grid-cols-[auto_1fr] items-start gap-x-1 rounded-2xl p-2 ring-1 ring-slate-200 dark:ring-slate-800', selected.has(row.id) && 'bg-brand-50/60 dark:bg-brand-500/10')}
           >
             {checkbox(selected.has(row.id), () => toggle(row.id), `Select ${props.describe(row)}`)}
-            <div className="min-w-0 flex-1 py-1.5">
-              <button type="button" onClick={() => edit(row)} aria-label={`Edit ${props.describe(row)}`} className="-my-1.5 flex min-h-[44px] w-full items-center break-words text-left text-sm font-semibold">
+            <div className="flex min-w-0 items-start gap-1">
+              <button type="button" onClick={() => edit(row)} aria-label={`Edit ${props.describe(row)}`} className="flex min-h-[44px] min-w-0 flex-1 items-center break-words text-left text-sm font-semibold">
                 {title.render(row)}
               </button>
-              {rest.length > 0 && (
-                <dl className="mt-1 grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 text-xs">
-                  {rest.map((c) => (
-                    <div key={c.key} className="contents">
-                      <dt className="text-muted">{c.label || ''}</dt>
-                      <dd className="min-w-0 break-words">{c.render(row)}</dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
+              <div className="flex shrink-0 gap-0.5">{actions(row)}</div>
             </div>
-            <div className="flex shrink-0 gap-0.5">{actions(row)}</div>
+            {rest.length > 0 && (
+              <dl className="col-start-2 mb-1.5 mt-1 grid min-w-0 grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 text-xs">
+                {rest.map((c) => (
+                  <div key={c.key} className="contents">
+                    <dt className="text-muted">{c.label || ''}</dt>
+                    <dd className="min-w-0 break-words">{c.render(row)}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
           </li>
         ))}
       </ul>

@@ -70,12 +70,19 @@ export function FloatingPanel({ anchor, open, onClose, width = 260, label, child
       if (h <= below || below >= above) setPos({ top: r.bottom + 4, left, maxHeight: Math.max(160, below) })
       else setPos({ top: Math.max(8, r.top - 4 - Math.min(h, above)), left, maxHeight: Math.max(160, above) })
     }
+    // The page or a box around the anchor scrolling moves it; the panel's own list scrolling does not. Placed again
+    // then, it would be measured at its full height — longer once its values have loaded — and jump to the other side
+    // of the anchor under the finger scrolling it.
+    const scrolled = (e: Event) => {
+      if (e.target instanceof Node && panel.current?.contains(e.target)) return
+      place()
+    }
     place()
     window.addEventListener('resize', place)
-    window.addEventListener('scroll', place, true)
+    window.addEventListener('scroll', scrolled, true)
     return () => {
       window.removeEventListener('resize', place)
-      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('scroll', scrolled, true)
     }
   }, [open, anchor, width, sheet])
   useEffect(() => {

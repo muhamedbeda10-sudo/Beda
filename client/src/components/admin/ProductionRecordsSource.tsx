@@ -1,7 +1,7 @@
 // ============================================================================
 // §24 — the ERP's production task record as an import source: what is stored
-// now (one line), the importer itself, and the one way to take it all back —
-// "Remove all", for a wrong file. The record is the child of the order sheet
+// now (one line), the importer itself, and below it, quiet, the one way to take
+// it all back — "Remove all", for a wrong file. The record is the child of the order sheet
 // (joined on the Order ID), so the line says how many of its order lines the
 // sheet knows. Nothing else in the app writes a row of it.
 // ============================================================================
@@ -39,8 +39,8 @@ export function ProductionRecordsSource({ importer }: { importer: Importer }) {
 
   return (
     <div className="space-y-4">
-      {/* ---- What is stored now ---- */}
-      <Card className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
+      {/* ---- What is stored now: information only ---- */}
+      <Card className="p-4 sm:p-5">
         <div className="flex min-w-0 items-start gap-3">
           <Factory className="mt-0.5 h-5 w-5 shrink-0 text-brand-600 dark:text-brand-400" />
           <div className="min-w-0">
@@ -56,12 +56,24 @@ export function ProductionRecordsSource({ importer }: { importer: Importer }) {
             )}
           </div>
         </div>
-        <Button variant="danger" className="min-h-[48px]" onClick={() => setConfirmClear(true)} disabled={summary?.rows === 0}>
-          <Trash2 className="h-4 w-4" /> Remove all current production records
-        </Button>
       </Card>
 
       <CsvImporter importer={importer} />
+
+      {/* ---- Taking a wrong file back. Below the importer and quiet, as on the order sheet, so the page's first control
+          is not the one that removes everything; the confirmation stays. ---- */}
+      <Card className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
+        <div className="min-w-0 flex-1 basis-full sm:basis-0">
+          <h3 className="text-base font-bold">Loading the wrong file?</h3>
+          <p className="mt-0.5 text-sm text-muted">
+            Remove the current production records, then load the right export. They are marked deleted, not erased, and any record the
+            new export still carries comes back when it is imported.
+          </p>
+        </div>
+        <Button className="min-h-[44px] hover:text-rose-600" onClick={() => setConfirmClear(true)} disabled={summary?.rows === 0}>
+          <Trash2 className="h-4 w-4" /> Remove all current production records…
+        </Button>
+      </Card>
 
       <Modal
         open={confirmClear}

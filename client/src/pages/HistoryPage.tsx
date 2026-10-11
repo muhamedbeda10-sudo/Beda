@@ -145,11 +145,28 @@ const HISTORY_COLUMNS: ColumnDef[] = [
   { key: 'open', label: '', width: 48, min: 40, hideable: false },
 ]
 
+/** On a touch screen these lead, in this order; the rest follow as on a desktop. */
+const TOUCH_LEAD = ['seq', 'order', 'status', 'defectPieces', 'final']
+
+/** Touch widths. 'Rejected before release' needs 161 px: its 105 px label, the gap and the 28 px touch menu button, the padding. */
+const TOUCH_WIDTHS: Record<string, Partial<ColumnDef>> = {
+  status: { width: 256, min: 256 },
+  item: { width: 180 },
+  machine: { width: 160 },
+  rejected: { width: 168 },
+}
+
 /**
- * The columns on a touch screen: the status column takes the badges spelt out, wrapping, at 16rem at least (a finger
- * gets no tooltip to read the short forms in).
+ * The columns on a touch screen. The status column takes the badges spelt out, wrapping, at 16rem at least (a finger
+ * gets no tooltip to read the short forms in), and the release figures come straight after it, before the text
+ * columns, with the item and the machine a little narrower: an upright tablet's 710–950 px frame then shows the
+ * status, the defect pieces, the final quantity and the item without a sideways swipe, and a tablet on its side
+ * has the figures before the names. A desktop keeps its order and widths.
  */
-const HISTORY_COLUMNS_TOUCH: ColumnDef[] = HISTORY_COLUMNS.map((c) => (c.key === 'status' ? { ...c, width: Math.max(c.width, 256), min: 256 } : c))
+const HISTORY_COLUMNS_TOUCH: ColumnDef[] = [
+  ...HISTORY_COLUMNS.filter((c) => TOUCH_LEAD.includes(c.key)).sort((a, b) => TOUCH_LEAD.indexOf(a.key) - TOUCH_LEAD.indexOf(b.key)),
+  ...HISTORY_COLUMNS.filter((c) => !TOUCH_LEAD.includes(c.key)),
+].map((c) => ({ ...c, ...TOUCH_WIDTHS[c.key] }))
 
 interface HistoryCellContext {
   /** True wherever the table shows: fixed column widths, the cell shows what fits and the whole text on hover. */

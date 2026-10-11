@@ -349,6 +349,11 @@ export function WizardPage() {
   const stuck = useStuck(stickyRef, `${!!draft} ${short} ${keyboard}`)
   /** Set when a save is refused for the sample quantity: the review step then puts the cursor in it. */
   const [focusQty, setFocusQty] = useState(false)
+  /** The same for the connector coil number, which lives on Setup: the save lands there with the cursor in it. */
+  const [focusConnector, setFocusConnector] = useState(false)
+  const connectorFocused = useCallback(() => setFocusConnector(false), [])
+  /** A save was refused while the connector coil number was blank: Setup marks the field until it is filled. */
+  const [connectorRefused, setConnectorRefused] = useState(false)
 
   // A step opened from further down the page — Next at the foot of a long step, a chip on the stuck rail — starts at
   // its top, just under the rail. One opened with the top of the page in view stays where it is.
@@ -526,6 +531,10 @@ export function WizardPage() {
       toast(issues[0].message, 'error')
       // The quantity is the one thing asked on the review step itself: the cursor goes to it.
       if (issues[0].step === 'review') setFocusQty(true)
+      // The connector coil number sits low on Setup, where a phone's Back / Next bar can cover it: the cursor goes to it,
+      // and the field is marked, so the field the message names is the one in view.
+      if (issues.some((i) => i.ref === 'connectorCoil')) setConnectorRefused(true)
+      if (issues[0].ref === 'connectorCoil') setFocusConnector(true)
       return
     }
     // §8.4 — block on a grade mismatch unless it was explicitly acknowledged.
@@ -697,7 +706,17 @@ export function WizardPage() {
         </div>
 
         {current === 'setup' && (
-          <SetupStep draft={draft} order={order} update={update} shift={shift} gradeIndex={gradeIndex} instructions={short ? [] : instructions} />
+          <SetupStep
+            draft={draft}
+            order={order}
+            update={update}
+            shift={shift}
+            gradeIndex={gradeIndex}
+            instructions={short ? [] : instructions}
+            connectorRefused={connectorRefused}
+            focusConnector={focusConnector}
+            onConnectorFocused={connectorFocused}
+          />
         )}
         {current !== 'setup' && current !== 'review' && steps.includes('setup') && (
           <SetupSummary draft={draft} onEdit={() => update({ step: 'setup' })} />
@@ -1077,6 +1096,9 @@ function SetupStep({
   shift,
   gradeIndex,
   instructions,
+  connectorRefused,
+  focusConnector,
+  onConnectorFocused,
 }: {
   draft: SampleDraft
   order: ProductionOrder
@@ -1084,6 +1106,11 @@ function SetupStep({
   shift: 'A' | 'B' | 'C'
   gradeIndex: Map<string, string>
   instructions: WorkInstruction[]
+  /** A save was refused while the connector coil number was blank: the field is marked until it is filled. */
+  connectorRefused: boolean
+  /** A save was refused for the connector coil number: put the cursor in it. */
+  focusConnector: boolean
+  onConnectorFocused: () => void
 }) {
   const { toast } = useApp()
   const [picking, setPicking] = useState(false)
@@ -1097,6 +1124,23 @@ function SetupStep({
     if (litTimer.current) clearTimeout(litTimer.current)
     litTimer.current = setTimeout(() => setLitCoil(null), 2500)
   }
+  const connectorMissing = !draft.pt?.connectorCoilNumber?.trim()
+  const connectorBad = connectorRefused && connectorMissing
+  // A refused save lands here for the connector coil number: the cursor goes to it, centred clear of the Back / Next
+  // bar. On the next frame, as the wizard first brings a newly opened step's card to the top of the page.
+  const connectorRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (!focusConnector) return
+    const frame = requestAnimationFrame(() => {
+      const el = connectorRef.current
+      if (el) {
+        el.focus({ preventScroll: true })
+        el.scrollIntoView({ block: 'center' })
+      }
+      onConnectorFocused()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [focusConnector, onConnectorFocused])
   // A welding machine records the wire, not the coil (§5.2).
   const welding = draft.process === 'welding'
 
@@ -1186,14 +1230,17 @@ function SetupStep({
             <Field label="Connector coil number *" hint="Required. Remembered from the previous sample of this session; change it when a new connector coil goes on.">
               <div className="relative">
                 <Cable className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-                <Input
+                <input
+                  ref={connectorRef}
+                  id="wizard-connector-coil"
                   value={draft.pt?.connectorCoilNumber ?? ''}
                   onChange={(e) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), connectorCoilNumber: e.target.value } }))}
-                  className="min-h-[48px] pl-9"
+                  className={cn('input min-h-[48px] pl-9', connectorBad && 'border-rose-400 focus:border-rose-400 focus:ring-rose-400/40 dark:border-rose-400 dark:focus:border-rose-400')}
                   placeholder="e.g. C10021"
                   autoCapitalize="characters"
                   required
                   aria-required="true"
+                  aria-invalid={connectorBad || undefined}
                 />
               </div>
             </Field>
@@ -1311,7 +1358,8 @@ function CoilFact({ label, value, unit }: { label: string; value?: string; unit?
 /**
  * What Setup holds, shown above the later steps: the drawing, and the coils
  * running now — or, on a welding machine, which records the wire and not the
- * coil, the wire batch. A second coil often goes on mid-session, so adding one
+ * coil, the wire batch and the connector coil (required, so a blank one is
+ * seen before Save is refused for it). A second coil often goes on mid-session, so adding one
  * is a tap away without hunting for the Setup step on the rail. On a phone the
  * button is an icon at the end of the line, so the summary stays one short
  * strip instead of a box with a button wrapped under it.
@@ -1320,6 +1368,7 @@ function SetupSummary({ draft, onEdit }: { draft: SampleDraft; onEdit: () => voi
   const welding = draft.process === 'welding'
   const coils = draft.coils.map((c) => c.coilNumber).filter(Boolean)
   const wire = draft.pt?.weldingWireBatch?.trim() ?? ''
+  const connector = draft.pt?.connectorCoilNumber?.trim() ?? ''
   const action = welding ? 'Change setup' : coils.length === 0 ? 'Add coil' : 'Add coil / change setup'
   const ActionIcon = welding ? Pencil : Plus
   const phone = useMediaQuery(PHONE)
@@ -1333,11 +1382,17 @@ function SetupSummary({ draft, onEdit }: { draft: SampleDraft; onEdit: () => voi
           </span>
         )}
         {welding ? (
-          // Carried from the previous sample, so it is usually there; amber only when it is not.
-          <span className="min-w-0 break-words">
-            <span className="text-muted">Wire batch</span>{' '}
-            {wire ? <span className="font-mono text-xs font-semibold">{wire}</span> : <span className="font-semibold text-amber-600 dark:text-amber-400">not set</span>}
-          </span>
+          // Both carried from the previous sample, so usually there; amber only when one is not.
+          <>
+            <span className="min-w-0 break-words">
+              <span className="text-muted">Wire batch</span>{' '}
+              {wire ? <span className="font-mono text-xs font-semibold">{wire}</span> : <span className="font-semibold text-amber-600 dark:text-amber-400">not set</span>}
+            </span>
+            <span className="min-w-0 break-words">
+              <span className="text-muted">Connector coil</span>{' '}
+              {connector ? <span className="font-mono text-xs font-semibold">{connector}</span> : <span className="font-semibold text-amber-600 dark:text-amber-400">not set</span>}
+            </span>
+          </>
         ) : (
           <span className="flex flex-wrap items-center gap-1.5">
             <span className="text-muted">Coils</span>

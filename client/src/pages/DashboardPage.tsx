@@ -116,13 +116,22 @@ function WidgetBody({ children, className }: { children: ReactNode; className?: 
 }
 
 /**
+ * A group table's first column, by the width of its frame (TableFrame is the size container): 8rem in a frame up to
+ * an upright tablet's (an 820 px tablet's 732 px stacked table, a 1440 px screen's 640 px board box), 12rem from 48rem,
+ * 14rem from 60rem.
+ */
+const FIRST_COLUMN = 'min-w-[8rem] [@container(min-width:48rem)]:min-w-[12rem] [@container(min-width:60rem)]:min-w-[14rem]'
+
+/**
  * The frame of a wide table. Stacked, or outside a board, a sideways scroller with a shadow at the end that hides
  * more (its first column stays put: `table-sticky-first` on the table). On a board the widget's own box scrolls both
- * ways and keeps the header row in view, so the table sits in it as it is.
+ * ways and keeps the header row in view, so the table sits in it as it is. Either way the frame is a size container:
+ * the table's first column is sized from the frame's width, not the window's (a half-width board box on a wide screen
+ * is narrower than a stacked table on an upright tablet).
  */
 function TableFrame({ children }: { children: ReactNode }) {
   const grid = useContext(ChartFillContext)
-  return grid ? <div className="min-w-0">{children}</div> : <ScrollX shadows="end">{children}</ScrollX>
+  return grid ? <div className="min-w-0 [container-type:inline-size]">{children}</div> : <ScrollX shadows="end" className="[container-type:inline-size]">{children}</ScrollX>
 }
 
 /** Whether a box that scrolls inside itself hides more below its fold: its fade says so. */
@@ -456,10 +465,11 @@ function Table<T>({
           {visible.map((r) => (
             <tr key={rowKey(r)} onClick={onRowClick && (() => onRowClick(r))} className={cn('transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40', onRowClick && 'cursor-pointer')}>
               {columns.map((c, i) => (
-                // A figure on one line; a word column wide enough to read without breaking every word onto its own line — the
-                // first (sticky, so what a row is about stays in view) a little narrower on a phone, to leave room for the figures beside it,
-                // and wider from a tablet, so a long machine or item name keeps to two lines or so.
-                <td key={c.key} className={cn('px-2 py-1.5 align-top', c.className, c.className?.includes('text-right') ? 'whitespace-nowrap' : i === 0 ? 'min-w-[8rem] md:min-w-[14rem] lg:min-w-[16rem]' : 'min-w-[10rem]')}>
+                // A figure on one line; a word column wide enough to read without breaking every word onto its own line. The
+                // first (sticky, so what a row is about stays in view) is sized from the table's frame: 8rem in a phone's
+                // frame, an upright tablet's or a half-width board box, so the figures beside it are in view, and wider
+                // only in a frame with room to spare, so a long machine or item name keeps to two lines or so.
+                <td key={c.key} className={cn('px-2 py-1.5 align-top', c.className, c.className?.includes('text-right') ? 'whitespace-nowrap' : i === 0 ? FIRST_COLUMN : 'min-w-[10rem]')}>
                   {c.render(r)}
                 </td>
               ))}
@@ -2464,7 +2474,8 @@ export function DashboardPage() {
       : `${describeRange(range)} compared with ${describeRange(prev)}${activeFilters.length > 0 ? ` · ${activeFilters.join(' · ')}` : ''}`
 
   // The details' seven filters: in their card from 640 px, in a sheet on a phone. One a line in the sheet, so each
-  // says what it holds in full; two from 440 px, then three, then all seven.
+  // says what it holds in full; two from 440 px, three from a tablet, four from 1280 so each select reads in full,
+  // and all seven in one row from 1536.
   const filterFields = (
     <div className="grid grid-cols-1 gap-3 min-[440px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
       <Field label="Compare with">

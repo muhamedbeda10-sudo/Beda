@@ -38,7 +38,7 @@ export function ThemeSwitch() {
               if (!on) toggleTheme()
             }}
             className={cn(
-              'flex min-h-[40px] items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors',
+              'flex min-h-[40px] items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors touch:min-h-[44px]',
               on ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white' : 'text-muted hover:text-slate-800 dark:hover:text-slate-100',
             )}
           >
@@ -118,6 +118,7 @@ export function AccountMenu({ name, role, username }: { name: string; role: stri
   const { data } = useMyAvatar(!!profile)
   return (
     <>
+      {/* The circle stays 36 px; under a finger the target around it is 44, like Sign out beside it. */}
       <button
         ref={anchor}
         type="button"
@@ -126,7 +127,7 @@ export function AccountMenu({ name, role, username }: { name: string; role: stri
         aria-expanded={open}
         aria-label={`Your account: ${name}`}
         data-tip={open ? undefined : name}
-        className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900"
+        className="grid place-items-center rounded-full touch:h-11 touch:w-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900"
       >
         <Avatar name={name} dataUrl={data?.dataUrl} size={36} />
       </button>
