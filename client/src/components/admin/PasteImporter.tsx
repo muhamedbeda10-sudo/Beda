@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react
 import { useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, ClipboardPaste, Eraser, Loader2, Plus, Trash2, UploadCloud, CheckCircle2 } from 'lucide-react'
 import { Badge, Button } from '@/components/ui'
+import { ScrollX } from '@/components/ui/ScrollX'
 import { existingKeys, importRows } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { cn } from '@/lib/utils'
@@ -137,9 +138,9 @@ export function PasteImporter({ importer }: { importer: Importer }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="flex items-center gap-2 text-sm text-muted">
-          <ClipboardPaste className="h-4 w-4 text-brand-600" />
-          Copy the cells in Excel, click a cell below, and paste. A pasted header row is recognised and skipped.
+        <p className="flex items-start gap-2 text-sm text-muted">
+          <ClipboardPaste className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />
+          <span>Copy the cells in Excel, click a cell below, and paste. A pasted header row is recognised and skipped.</span>
         </p>
         <div className="flex gap-2">
           <Button className="min-h-[40px]" disabled={busy} onClick={() => setRows((cur) => [...cur, fields.map(() => '')])}>
@@ -151,8 +152,8 @@ export function PasteImporter({ importer }: { importer: Importer }) {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800" onPaste={onPaste}>
-        <table ref={gridRef} className="w-full min-w-[40rem] border-collapse text-sm">
+      <ScrollX className="rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800" innerClassName="rounded-2xl">
+        <table ref={gridRef} onPaste={onPaste} className="w-full min-w-[40rem] border-collapse text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
             <tr>
               <th className="w-10 px-2 py-2 text-center font-bold text-muted">#</th>
@@ -162,7 +163,7 @@ export function PasteImporter({ importer }: { importer: Importer }) {
                   {importer.businessKeys.includes(f.key) && <span className="text-rose-500"> *</span>}
                 </th>
               ))}
-              <th className="w-10" />
+              <th className="w-12" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -182,8 +183,9 @@ export function PasteImporter({ importer }: { importer: Importer }) {
                         placeholder={isGhost ? f.sample || '' : ''}
                         inputMode={f.kind === 'number' ? 'decimal' : undefined}
                         onChange={(e) => setCell(r, c, e.target.value)}
+                        // A cell is 38 px tall under a mouse and 44 px under a finger.
                         className={cn(
-                          'w-full min-w-[7rem] rounded-lg border border-transparent bg-transparent px-2 py-2 focus:border-brand-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/25 dark:focus:bg-slate-800',
+                          'w-full min-w-[7rem] rounded-lg border border-transparent bg-transparent px-2 py-2 focus:border-brand-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/25 dark:focus:bg-slate-800 touch:min-h-[44px]',
                           problems?.cols.has(f.key) && 'border-rose-300 bg-rose-50 dark:bg-rose-500/10',
                         )}
                         aria-label={`${f.label}, row ${r + 1}`}
@@ -196,7 +198,7 @@ export function PasteImporter({ importer }: { importer: Importer }) {
                         type="button"
                         disabled={busy}
                         onClick={() => setRows((cur) => cur.filter((_, i) => i !== r))}
-                        className="rounded p-1.5 text-slate-300 hover:text-rose-500"
+                        className="grid h-10 w-10 place-items-center rounded-lg text-slate-300 hover:text-rose-500"
                         aria-label={`Remove row ${r + 1}`}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -208,7 +210,7 @@ export function PasteImporter({ importer }: { importer: Importer }) {
             })}
           </tbody>
         </table>
-      </div>
+      </ScrollX>
 
       {plan.problems.size > 0 && (
         <p className="flex items-start gap-2 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">

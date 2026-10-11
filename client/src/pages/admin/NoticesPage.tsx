@@ -26,7 +26,9 @@ import { AdminLayout } from '@/components/admin/AdminLayout'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { NoticeCard, NoticeFileRow, SeverityBadge, TargetChips, validityText } from '@/components/notices/NoticeCard'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
+import { Segmented } from '@/components/ui/PageShell'
 import { ApiError } from '@/lib/api'
+import { isCoarsePointer } from '@/lib/media'
 import { cn, formatDateTime } from '@/lib/utils'
 import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 import { deleteNotice, saveNotice, uploadNoticeFile, withdrawNotice } from '@/services/mutations'
@@ -46,6 +48,12 @@ interface Draft extends SaveNoticeRequest {
 const EMPTY: Draft = { title: '', body: '', severity: 'warning', requiresAck: true, matchMode: 'all', validFrom: today(), validTo: null, targets: [], imageIds: [], fileIds: [], files: [] }
 
 const CONTEXT_KINDS: NoticeTargetKind[] = ['factory', 'machine', 'process', 'order-number', 'order-line', 'item-code', 'customer', 'shift']
+
+/** What each way of combining the targets means, written under the switch. */
+const MATCH_MODE_HINT: Record<NoticeMatchMode, string> = {
+  all: 'Each kind must hold at once; several values of one kind are alternatives. This machine AND this order.',
+  any: 'One target of any kind is enough. This machine OR this order OR this person.',
+}
 
 // ---- Target builder --------------------------------------------------------
 
@@ -274,27 +282,27 @@ function TargetBuilder({
 
   return (
     <div className="space-y-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800">
-      {/* How the targets combine. Only worth deciding once there is more than one. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+      {/* How the targets combine. Only worth deciding once there is more than one. The chosen way is explained in
+          words under the switch — a finger gets no tooltip. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         <span className="font-semibold text-muted">Reach:</span>
-        {(
-          [
-            ['all', 'ALL of them (AND)', 'Each kind must hold; several values of one kind are alternatives. This machine AND this order.'],
-            ['any', 'ANY of them (OR)', 'One target of any kind is enough. This machine OR this order OR this person.'],
-          ] as const
-        ).map(([mode, label, hint]) => (
-          <label key={mode} className="inline-flex items-center gap-1.5" data-tip={hint}>
-            <input type="radio" name="notice-match" checked={matchMode === mode} onChange={() => onMatchMode(mode)} className="h-4 w-4 accent-brand-600" />
-            <span className={cn('font-semibold', matchMode === mode ? 'text-brand-700 dark:text-brand-300' : 'text-slate-600 dark:text-slate-300')}>{label}</span>
-          </label>
-        ))}
+        <Segmented
+          label="Reach"
+          value={matchMode}
+          onChange={onMatchMode}
+          options={[
+            { value: 'all', label: 'ALL of them (AND)' },
+            { value: 'any', label: 'ANY of them (OR)' },
+          ]}
+        />
         <span className="basis-full text-muted">
-          No target means everyone, everywhere. {matchMode === 'any' ? 'Any one of the targets below reaches the reader.' : 'Every kind below must hold at once; within a kind, any value.'}
+          {MATCH_MODE_HINT[matchMode]} No target means everyone, everywhere.
           {narrowedBy.length > 0 && <> The lists below are narrowed by what is already targeted: {narrowedBy.join(', ')}.</>}
         </span>
       </div>
 
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[11rem_1fr]">
+      {/* items-start: the kind's select keeps its own height instead of stretching to the pick list's beside it. */}
+      <div className="grid grid-cols-1 items-start gap-2 sm:grid-cols-[11rem_1fr]">
         <Select value={kind} onChange={(e) => { setKind(e.target.value as NoticeTargetKind); setTerm(''); setTyped('') }} aria-label="Target kind" className="min-h-[44px]">
           {NOTICE_TARGET_KINDS.map((k) => (
             <option key={k} value={k}>
@@ -340,17 +348,27 @@ function TargetBuilder({
         </div>
       </div>
       {targets.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap items-center gap-2">
           {targets.map((t) => (
-            <span key={`${t.kind}:${t.value}`} className="inline-flex items-center gap-1 rounded-full bg-brand-50 py-1 pl-2.5 pr-1 text-xs font-semibold text-brand-800 ring-1 ring-brand-200 dark:bg-brand-500/15 dark:text-brand-100 dark:ring-brand-500/30">
-              <span className="font-normal opacity-70">{NOTICE_TARGET_LABEL[t.kind]}</span> {t.label || t.value}
-              <button type="button" onClick={() => remove(t)} className="rounded-full p-0.5 hover:bg-brand-200/60 dark:hover:bg-brand-500/30" aria-label={`Remove ${t.label || t.value}`}>
-                <X className="h-3 w-3" />
+            <span key={`${t.kind}:${t.value}`} className="inline-flex h-9 items-center gap-1 rounded-full bg-brand-50 pl-3 pr-0.5 text-xs font-semibold text-brand-800 ring-1 ring-brand-200 dark:bg-brand-500/15 dark:text-brand-100 dark:ring-brand-500/30">
+              <span className="font-normal opacity-70">{NOTICE_TARGET_LABEL[t.kind]}</span>{' '}
+              <span dir="auto" className="max-w-[14rem] truncate">
+                {t.label || t.value}
+              </span>
+              {/* Drawn 32 px round; the invisible box around it takes a tap 6 px further out, a 44 px target that is still
+                  the chip's own, so a finger removes this target and not the one beside it. */}
+              <button
+                type="button"
+                onClick={() => remove(t)}
+                className="relative grid h-8 w-8 shrink-0 place-items-center rounded-full hover:bg-brand-200/60 before:absolute before:-inset-1.5 before:content-[''] dark:hover:bg-brand-500/30"
+                aria-label={`Remove ${t.label || t.value}`}
+              >
+                <X className="h-4 w-4" />
               </button>
             </span>
           ))}
           {targets.length > 1 && (
-            <button type="button" onClick={() => onChange([])} className="inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold text-muted hover:text-rose-600">
+            <button type="button" onClick={() => onChange([])} className="inline-flex min-h-[44px] items-center rounded-xl px-3 text-xs font-semibold text-muted hover:bg-slate-100 hover:text-rose-600 dark:hover:bg-slate-800">
               Clear all
             </button>
           )}
@@ -435,10 +453,10 @@ function NoticeForm({ initial, id, onClose }: { initial: Draft; id: string | nul
       <div className="space-y-4">
         {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</p>}
         <Field label="Title">
-          <Input value={d.title} onChange={(e) => patch({ title: e.target.value })} placeholder="What must the reader know?" maxLength={200} autoFocus />
+          <Input dir="auto" value={d.title} onChange={(e) => patch({ title: e.target.value })} placeholder="What must the reader know?" maxLength={200} autoFocus={!isCoarsePointer()} />
         </Field>
         <Field label="Message">
-          <textarea className="input min-h-[7rem]" value={d.body} onChange={(e) => patch({ body: e.target.value })} placeholder="Say what to do and why." maxLength={4000} />
+          <textarea dir="auto" className="input min-h-[7rem]" value={d.body} onChange={(e) => patch({ body: e.target.value })} placeholder="Say what to do and why." maxLength={4000} />
         </Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <Field label="Severity">
@@ -595,7 +613,9 @@ export function NoticesPage() {
             {n.requiresAck && <Badge tone="violet">Acknowledge</Badge>}
             {n.withdrawnAt ? <Badge tone="neutral">Withdrawn</Badge> : !n.active ? <Badge tone="neutral">{n.validFrom > today() ? 'Scheduled' : 'Expired'}</Badge> : <Badge tone="green">Live</Badge>}
           </div>
-          <h3 className="mt-1.5 text-base font-bold leading-snug">{n.title}</h3>
+          <h3 dir="auto" className="mt-1.5 break-words text-start text-base font-bold leading-snug">
+            {n.title}
+          </h3>
           <p className="mt-0.5 text-xs text-muted">
             {n.createdByName} · {validityText(n)} · {n.imageIds.length} photo{n.imageIds.length === 1 ? '' : 's'} · {n.files.length} file{n.files.length === 1 ? '' : 's'}
           </p>

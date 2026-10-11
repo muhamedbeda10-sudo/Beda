@@ -265,8 +265,8 @@ export function MessageBubble({
         <ChatSheet label="Message actions" onClose={closeMenu} header={<SheetHeader message={m} mine={mine} />}>
           {react && <QuickReactions onReact={react} large />}
           <ul>
-            {items.map((it) => (
-              <li key={it.key}>
+            {items.map(({ key, ...it }) => (
+              <li key={key}>
                 <MenuItem {...it} large />
               </li>
             ))}

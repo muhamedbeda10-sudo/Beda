@@ -255,7 +255,7 @@ function AutomationView({ a }: { a: Automation }) {
             </Figure>
             <Figure label="Open follow-ups" icon={<ListChecks className="h-4 w-4" />}>
               {a.openFollowUps > 0 ? (
-                <Link to={`/follow-ups?automationId=${encodeURIComponent(a.id)}`} className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
+                <Link to={`/follow-ups?automationId=${encodeURIComponent(a.id)}`} className="inline-flex items-center font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
                   {a.openFollowUps.toLocaleString()} open
                 </Link>
               ) : (
@@ -574,7 +574,7 @@ function RunHistory({ a, timeZone }: { a: Automation; timeZone: string }) {
                       <td className="px-3 py-2 tabular-nums">
                         {runFigures(r, a.kind) || <span className="text-muted">—</span>}
                         {r.deliveryId && (
-                          <Link to={`/automations/deliveries/${encodeURIComponent(r.deliveryId)}`} className="ms-2 whitespace-nowrap text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
+                          <Link to={`/automations/deliveries/${encodeURIComponent(r.deliveryId)}`} className="ms-2 inline-flex items-center whitespace-nowrap text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
                             Open the report
                           </Link>
                         )}
@@ -614,7 +614,7 @@ function RunHead({ r, timeZone }: { r: AutomationRun; timeZone: string }) {
         {TRIGGER_LABEL[r.trigger]} · {took(r.ms)}
       </span>
       {r.deliveryId && (
-        <Link to={`/automations/deliveries/${encodeURIComponent(r.deliveryId)}`} className="text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300">
+        <Link to={`/automations/deliveries/${encodeURIComponent(r.deliveryId)}`} className="inline-flex items-center text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
           Open the report
         </Link>
       )}

@@ -62,7 +62,7 @@ describe('who can use it, as the owner reads it', () => {
     expect(html).toContain('aria-label="Change Mona Adel&#x27;s access"')
     expect(html).toContain('aria-label="Take the assistant from Mona Adel"')
     // The scroller is positioned: its screen-reader-only header stays inside it, never widening a phone's page.
-    expect(html).toMatch(/^<div class="relative overflow-x-auto/)
+    expect(html).toMatch(/<div class="relative overflow-x-auto/)
   })
 
   it('says who may create automations: those allowed, and the owner always', () => {

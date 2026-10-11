@@ -19,11 +19,12 @@ import type { Automation } from '@qc/shared/automation'
 import { Badge, Button, Card, EmptyState } from '@/components/ui'
 import { FilterBar, FilterSelect, HeaderStat, InfoTip, type FilterChip } from '@/components/ui/PageShell'
 import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
+import { ScrollX } from '@/components/ui/ScrollX'
 import { Notice } from '@/components/ai/AiNotice'
 import { AiSwitch } from '@/components/ai/AiSwitch'
 import { useAi } from '@/components/ai/AiAssistantProvider'
 import { KindBadge, StatusBadge, errorLines } from '@/components/automations/parts'
-import { KIND_LABEL, STATUS_ORDER, automationStatus, automationSwitch, factoryMoment, factoryTimestamp, noNextRunText, whenText, type StatusView } from '@/components/automations/wording'
+import { automationStatus, automationSwitch, factoryMoment, factoryTimestamp, noNextRunText, whenText, type StatusView } from '@/components/automations/wording'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn } from '@/lib/utils'
 import { pauseAutomation, recheckAccessOn404, resumeAutomation, useAutomations } from '@/services/automations'
@@ -76,15 +77,13 @@ export function AutomationsPage() {
     })
   }, [all, term, kind, status, byCreator])
 
+  // The table's columns (its kind, state and creator sit under the name; the Kind, State and Created by selects sift those).
   const view = useTableView(filtered, [
     { key: 'name', value: (a) => a.name },
-    { key: 'kind', value: (a) => KIND_LABEL[a.kind] },
-    { key: 'status', value: (a) => automationStatus(a).label, sortValue: (a) => STATUS_ORDER[automationStatus(a).key] },
     { key: 'when', value: (a) => whenText(a) },
     { key: 'next', value: (a) => (a.nextRunAt ? factoryMoment(a.nextRunAt, factoryTimeZone) : noNextRunText(automationStatus(a))), sortValue: (a) => (a.nextRunAt ? Date.parse(a.nextRunAt) : null), numeric: true },
-    { key: 'last', value: (a) => (a.lastRunAt ? factoryMoment(a.lastRunAt, factoryTimeZone) : 'Never'), sortValue: (a) => (a.lastRunAt ? Date.parse(a.lastRunAt) : null), numeric: true },
+    { key: 'last', value: (a) => (a.lastRunAt ? `${factoryMoment(a.lastRunAt, factoryTimeZone)} · ${lastRunWord(a)}` : 'Never'), sortValue: (a) => (a.lastRunAt ? Date.parse(a.lastRunAt) : null), numeric: true },
     { key: 'followUps', value: (a) => String(a.openFollowUps), sortValue: (a) => a.openFollowUps, numeric: true },
-    { key: 'creator', value: (a) => a.creator.name },
   ])
 
   const filtersSet = term !== '' || kind !== 'all' || status !== 'all' || byCreator !== ''
@@ -180,69 +179,69 @@ export function AutomationsPage() {
         <EmptyState icon={<Zap className="h-10 w-10" />} title="No automation matches" hint="Clear the search or the filters to see them all." />
       ) : (
         <>
-          {/* Phone: a card each. */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:hidden">
+          {/* Phones and tablets: a card each — two across from 640 px, three from 1024. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:hidden">
             {view.rows.map((a) => (
               <AutomationCard key={a.id} a={a} owner={owner} timeZone={factoryTimeZone} />
             ))}
           </div>
 
-          {/* md+: one line each; what does not fit is in the tooltips. */}
-          <Card className="hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[56rem] text-sm">
-              <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-muted dark:bg-slate-800/60">
-                <tr>
-                  <ViewTh view={view} column="name" label="Name" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="kind" label="Kind" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="status" label="State" className="px-3 py-2 font-semibold" />
-                  <th className="px-3 py-2 font-semibold">On</th>
-                  <ViewTh view={view} column="when" label="Runs" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="next" label="Next run" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="last" label="Last run" className="px-3 py-2 font-semibold" />
-                  <ViewTh view={view} column="followUps" label="Open follow-ups" className="px-3 py-2 text-right font-semibold" />
-                  {owner && <ViewTh view={view} column="creator" label="Created by" className="px-3 py-2 font-semibold" />}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {view.rows.map((a) => (
-                  <tr key={a.id} onClick={() => navigate(`/automations/${encodeURIComponent(a.id)}`)} className="data-row cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60">
-                    <td className="max-w-[18rem] px-3 py-2">
-                      <Link
-                        to={`/automations/${encodeURIComponent(a.id)}`}
-                        onClick={(e) => e.stopPropagation()}
-                        dir="auto"
-                        data-tip={a.description}
-                        className="block truncate font-semibold text-slate-800 hover:text-brand-700 hover:underline dark:text-slate-100 dark:hover:text-brand-300"
-                      >
-                        {a.name}
-                      </Link>
-                    </td>
-                    <td className="px-3">
-                      <KindBadge kind={a.kind} />
-                    </td>
-                    <td className="px-3">
-                      <StatusBadge automation={a} />
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <AutomationSwitch a={a} />
-                    </td>
-                    <td className="whitespace-nowrap px-3 text-slate-600 dark:text-slate-300">{whenText(a)}</td>
-                    <td className="whitespace-nowrap px-3 tabular-nums">
-                      <NextRun a={a} timeZone={factoryTimeZone} />
-                    </td>
-                    <td className="whitespace-nowrap px-3 tabular-nums">
-                      <LastRun a={a} timeZone={factoryTimeZone} />
-                    </td>
-                    <td className={cn('px-3 text-right tabular-nums', a.openFollowUps === 0 && 'text-muted')}>{a.openFollowUps}</td>
-                    {owner && (
-                      <td className="max-w-[12rem] truncate px-3" dir="auto" data-tip={a.creator.name}>
-                        {a.creator.name}
-                      </td>
-                    )}
+          {/* From xl (1280 px): one line each, slim enough to fit a laptop beside the docked assistant — its kind, state
+              and creator under the name, which stays in view while the rest scrolls under it; what does not fit is in
+              the tooltips. */}
+          <Card className="hidden overflow-hidden xl:block">
+            <ScrollX shadows="end" label="Automations">
+              <table className="table-sticky-first w-full min-w-[56rem] text-sm">
+                <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-muted dark:bg-slate-800/60">
+                  <tr>
+                    <ViewTh view={view} column="name" label="Name" className="bg-slate-50 px-3 py-2 font-semibold dark:bg-slate-800/60" />
+                    <th className="px-3 py-2 font-semibold">On</th>
+                    <ViewTh view={view} column="when" label="Runs" className="px-3 py-2 font-semibold" />
+                    <ViewTh view={view} column="next" label="Next run" className="px-3 py-2 font-semibold" />
+                    <ViewTh view={view} column="last" label="Last run" className="px-3 py-2 font-semibold" />
+                    <ViewTh view={view} column="followUps" label="Open follow-ups" className="px-3 py-2 text-right font-semibold" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {view.rows.map((a) => (
+                    <tr key={a.id} onClick={() => navigate(`/automations/${encodeURIComponent(a.id)}`)} className="data-row cursor-pointer align-top hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                      <td className="w-[22rem] max-w-[22rem] px-3 py-2">
+                        {/* With a finger the name is plain text: the whole 55 px row opens the automation, as the link does. */}
+                        <Link
+                          to={`/automations/${encodeURIComponent(a.id)}`}
+                          onClick={(e) => e.stopPropagation()}
+                          dir="auto"
+                          data-tip={a.description}
+                          className="block truncate font-semibold text-slate-800 hover:text-brand-700 hover:underline dark:text-slate-100 dark:hover:text-brand-300 touch:pointer-events-none"
+                        >
+                          {a.name}
+                        </Link>
+                        <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <KindBadge kind={a.kind} />
+                          <StatusBadge automation={a} />
+                          {owner && (
+                            <span dir="auto" className="min-w-0 truncate text-xs text-muted" data-tip={`Created by ${a.creator.name}`}>
+                              by {a.creator.name}
+                            </span>
+                          )}
+                        </span>
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <AutomationSwitch a={a} />
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-slate-600 dark:text-slate-300">{whenText(a)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 tabular-nums">
+                        <NextRun a={a} timeZone={factoryTimeZone} />
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 tabular-nums">
+                        <LastRun a={a} timeZone={factoryTimeZone} />
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums', a.openFollowUps === 0 && 'text-muted')}>{a.openFollowUps}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ScrollX>
             <ViewNote view={view} total={filtered.length} />
           </Card>
 
@@ -315,13 +314,20 @@ function NextRun({ a, timeZone }: { a: Automation; timeZone: string }) {
   )
 }
 
-/** When it last ran and whether that run worked. */
+/** How the last run went, in a word. */
+function lastRunWord(a: Pick<Automation, 'lastRunOk'>): 'worked' | 'failed' {
+  return a.lastRunOk === false ? 'failed' : 'worked'
+}
+
+/** When it last ran and whether that run worked — the word written out, not left to the icon and a hover tooltip. */
 function LastRun({ a, timeZone }: { a: Automation; timeZone: string }) {
   if (!a.lastRunAt) return <span className="text-muted">Never</span>
+  const failed = a.lastRunOk === false
   return (
-    <span className="inline-flex items-center gap-1.5" data-tip={`${factoryTimestamp(a.lastRunAt, timeZone)} · ${a.lastRunOk === false ? 'failed' : 'worked'}`}>
-      {a.lastRunOk === false ? <OctagonX className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" aria-label="Failed" /> : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-label="Worked" />}
+    <span className="inline-flex flex-wrap items-center gap-x-1.5" data-tip={factoryTimestamp(a.lastRunAt, timeZone)}>
+      {failed ? <OctagonX className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" aria-hidden /> : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />}
       <time dateTime={a.lastRunAt}>{factoryMoment(a.lastRunAt, timeZone)}</time>
+      <span className={cn('text-xs font-semibold', failed ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-700 dark:text-emerald-300')}>{lastRunWord(a)}</span>
     </span>
   )
 }

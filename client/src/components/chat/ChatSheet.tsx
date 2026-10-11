@@ -2,9 +2,10 @@
 // A sheet from the bottom of the screen, for a message's actions and its
 // emoji: drawn over the page (a portal, so no frame of the thread clips or
 // moves it), above the home indicator, on a dimmed backdrop. A tap on the
-// backdrop closes it — one that began there, not the lift of the long press
-// that opened it — as does Escape. From 640 px it floats, narrower, a margin
-// above the bottom edge.
+// backdrop closes it, and a tap on a row takes its action — each one that
+// began there, not the lift of the long press that opened the sheet, which
+// lands wherever the finger was. Escape closes it too. From 640 px it
+// floats, narrower, a margin above the bottom edge.
 // ============================================================================
 
 import { useEffect, useRef, type ReactNode } from 'react'
@@ -14,6 +15,8 @@ import { cn, lockBodyScroll } from '@/lib/utils'
 export function ChatSheet({ label, onClose, header, children, className }: { label: string; onClose: () => void; header?: ReactNode; children: ReactNode; className?: string }) {
   const panel = useRef<HTMLDivElement>(null)
   const armed = useRef(false)
+  // Whether a press began inside the sheet: a click without one is the lift of the press that opened it.
+  const pressed = useRef(false)
   const close = useRef(onClose)
   close.current = onClose
 
@@ -54,6 +57,14 @@ export function ChatSheet({ label, onClose, header, children, className }: { lab
         aria-modal="true"
         aria-label={label}
         tabIndex={-1}
+        onPointerDownCapture={() => {
+          pressed.current = true
+        }}
+        onClickCapture={(e) => {
+          if (pressed.current) return
+          e.preventDefault()
+          e.stopPropagation()
+        }}
         className={cn(
           'relative z-10 flex max-h-sheet w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-lift ring-1 ring-slate-200 animate-slide-up focus:outline-none dark:bg-slate-900 dark:ring-slate-800 sm:max-w-md sm:rounded-3xl safe-bottom',
           className,

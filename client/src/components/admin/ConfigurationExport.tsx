@@ -157,13 +157,13 @@ export function ConfigurationExport({ onClose }: { onClose: () => void }) {
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <p className="text-sm text-muted">Pick what to take out. Each becomes a sheet in one workbook.</p>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             onClick={() => setPicked(all ? new Set() : new Set(EXPORTABLES.map((e) => e.key)))}
-            className="shrink-0 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300"
+            className="min-h-[40px] shrink-0 px-2 py-0 text-xs text-brand-700 dark:text-brand-300"
           >
             {all ? 'Clear all' : 'Select all'}
-          </button>
+          </Button>
         </div>
 
         <ul className="space-y-1.5">

@@ -7,6 +7,7 @@ import { uploadImage } from '@/services/uploadImage'
 import { ImageRejected } from '@/services/imageStore'
 import { createMaster } from '@/services/mutations'
 import { ApiError } from '@/lib/api'
+import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn } from '@/lib/utils'
 
 /**
@@ -27,6 +28,9 @@ export function ReferenceImageBulkUpload({ open, onClose }: { open: boolean; onC
   const [dragging, setDragging] = useState(false)
   /** Empty = the photos apply on every machine. */
   const [machine, setMachine] = useState('')
+  // On a phone each file is a card: the name in full, the code box the full width, the status and Remove under them.
+  // From 640 px a table, with the code box no narrower than 10 rem.
+  const phone = useMediaQuery(PHONE)
 
   const pending = rows.filter((r) => r.status !== 'done')
   const ready = pending.filter((r) => r.itemCode.trim() !== '')
@@ -131,52 +135,62 @@ export function ReferenceImageBulkUpload({ open, onClose }: { open: boolean; onC
           <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
         </div>
 
-        {rows.length > 0 && (
+        {rows.length > 0 && phone && (
+          <ul className="space-y-2">
+            {rows.map((r) => (
+              <li key={r.key} className="space-y-2 rounded-2xl p-3 ring-1 ring-slate-200 dark:ring-slate-800">
+                <p className="break-all text-sm font-medium">{r.file.name}</p>
+                <Input
+                  value={r.itemCode}
+                  disabled={r.status === 'done' || running}
+                  onChange={(e) => patch(r.key, { itemCode: e.target.value })}
+                  className={cn('min-h-[44px]', r.itemCode.trim() === '' && 'border-rose-400')}
+                  placeholder="Item code"
+                  aria-label={`Item code for ${r.file.name}`}
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <StatusBadge row={r} />
+                  <RemoveButton row={r} running={running} onRemove={() => setRows((cur) => cur.filter((x) => x.key !== r.key))} />
+                </div>
+                {r.status === 'failed' && r.error && <p className="text-xs text-rose-600 dark:text-rose-300">{r.error}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {rows.length > 0 && !phone && (
           <div className="max-h-[46vh] overflow-y-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
                 <tr>
                   <th className="px-3 py-2 font-bold">File</th>
-                  <th className="px-3 py-2 font-bold">Item code</th>
+                  <th className="w-[12rem] px-3 py-2 font-bold">Item code</th>
                   <th className="px-3 py-2 text-right font-bold">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {rows.map((r) => (
                   <tr key={r.key}>
-                    <td className="max-w-[14rem] truncate px-3 py-2 align-middle" data-tip={r.file.name}>
-                      {r.file.name}
+                    <td className="max-w-[16rem] px-3 py-2 align-middle">
+                      <span className="block truncate" data-tip={r.file.name}>
+                        {r.file.name}
+                      </span>
+                      {r.status === 'failed' && r.error && <span className="block whitespace-normal text-xs text-rose-600 dark:text-rose-300">{r.error}</span>}
                     </td>
                     <td className="px-3 py-2 align-middle">
                       <Input
                         value={r.itemCode}
                         disabled={r.status === 'done' || running}
                         onChange={(e) => patch(r.key, { itemCode: e.target.value })}
-                        className={cn('min-h-[40px]', r.itemCode.trim() === '' && 'border-rose-400')}
+                        className={cn('min-h-[40px] min-w-[10rem]', r.itemCode.trim() === '' && 'border-rose-400')}
                         placeholder="Item code"
+                        aria-label={`Item code for ${r.file.name}`}
                       />
                     </td>
-                    <td className="px-3 py-2 text-right align-middle">
-                      <span className="inline-flex items-center gap-2">
-                        {r.status === 'pending' && r.itemCode.trim() === '' && <Badge tone="red">needs a code</Badge>}
-                        {r.status === 'pending' && r.itemCode.trim() !== '' && <Badge tone="neutral">ready</Badge>}
-                        {r.status === 'uploading' && <Loader2 className="h-4 w-4 animate-spin text-brand-500" />}
-                        {r.status === 'done' && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
-                        {r.status === 'failed' && (
-                          <span className="inline-flex items-center gap-1 text-xs text-rose-600" data-tip={r.error}>
-                            <AlertCircle className="h-4 w-4" /> {r.error ?? 'failed'}
-                          </span>
-                        )}
-                        {r.status !== 'done' && !running && (
-                          <button
-                            type="button"
-                            onClick={() => setRows((cur) => cur.filter((x) => x.key !== r.key))}
-                            className="rounded p-1 text-slate-300 hover:text-rose-500"
-                            aria-label={`Remove ${r.file.name}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
+                    <td className="whitespace-nowrap px-2 py-1 text-right align-middle">
+                      <span className="inline-flex items-center gap-1">
+                        <StatusBadge row={r} />
+                        <RemoveButton row={r} running={running} onRemove={() => setRows((cur) => cur.filter((x) => x.key !== r.key))} />
                       </span>
                     </td>
                   </tr>
@@ -202,6 +216,28 @@ interface PendingImage {
   itemCode: string
   status: 'pending' | 'uploading' | 'done' | 'failed'
   error?: string
+}
+
+/** Where a file stands: waiting for a code, ready, uploading, done, or failed (the reason is written beside the file). */
+function StatusBadge({ row: r }: { row: PendingImage }) {
+  if (r.status === 'pending') return r.itemCode.trim() === '' ? <Badge tone="red">needs a code</Badge> : <Badge tone="neutral">ready</Badge>
+  if (r.status === 'uploading') return <Loader2 className="h-4 w-4 animate-spin text-brand-500" aria-label="Uploading" />
+  if (r.status === 'done') return <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-label="Uploaded" />
+  return (
+    <span className="inline-flex items-center gap-1 text-xs font-medium text-rose-600 dark:text-rose-300">
+      <AlertCircle className="h-4 w-4" /> failed
+    </span>
+  )
+}
+
+/** Takes a file out of the batch before it is uploaded: a 44 px target. */
+function RemoveButton({ row: r, running, onRemove }: { row: PendingImage; running: boolean; onRemove: () => void }) {
+  if (r.status === 'done' || running) return null
+  return (
+    <button type="button" onClick={onRemove} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-500/10" aria-label={`Remove ${r.file.name}`}>
+      <Trash2 className="h-4 w-4" />
+    </button>
+  )
 }
 
 /**

@@ -42,8 +42,9 @@ export function MachineDefectsSection() {
           key: 'name',
           label: 'Defect name',
           text: (r) => r.defectName,
+          // A block in its own direction: an Arabic name starts at the right of its cell, an English one at the left.
           render: (r) => (
-            <span dir="auto" className="font-semibold">
+            <span dir="auto" className="block text-start font-semibold">
               {r.defectName}
             </span>
           ),

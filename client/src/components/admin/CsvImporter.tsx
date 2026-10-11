@@ -5,14 +5,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, AlertTriangle, CheckCircle2, FileDown, FileSpreadsheet, Info, Loader2, Pause, Play, Plus, RotateCcw, UploadCloud } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, FileDown, FileSpreadsheet, Info, Loader2, Pause, Play, Plus, RotateCcw, UploadCloud } from 'lucide-react'
 import { Badge, Button, Card, Field, Select, Stat } from '@/components/ui'
+import { ScrollX } from '@/components/ui/ScrollX'
 import { existingKeys, importRows } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
-import { can } from '@/domain'
+import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn, downloadText, parseCSV } from '@/lib/utils'
 import { isLegacyExcelFile, isZipFile, readWorkbook, WorkbookReadError, type WorkbookSheet } from '@/lib/xlsx'
-import { BATCH_SIZE, coerceCell, csvCell, normaliseHeader, normaliseKeyPart, type CellValue, type Importer } from '@/components/admin/importers'
+import { BATCH_SIZE, coerceCell, csvCell, normaliseHeader, normaliseKeyPart, type CellValue, type ImportField, type Importer } from '@/components/admin/importers'
 
 interface PlannedRow {
   rowNumber: number
@@ -48,6 +49,11 @@ export function CsvImporter({ importer }: { importer: Importer }) {
   const [dataRows, setDataRows] = useState<string[][]>([])
   const [mapping, setMapping] = useState<Record<string, number>>({})
   const [parseError, setParseError] = useState<string | null>(null)
+  /** The mapping laid out field by field. Folded to one line when every column matched by name, as the ERP's export
+   *  does: seventeen selects were three screens of a phone before the preview. Opened by hand, or by a column missing. */
+  const [mappingOpen, setMappingOpen] = useState(false)
+  // On a phone the preview rows are cards (the row, what happens to it, its first fields); from 640 px the table.
+  const phone = useMediaQuery(PHONE)
 
   const [status, setStatus] = useState<RunStatus>('idle')
   const [written, setWritten] = useState(0)
@@ -110,12 +116,14 @@ export function CsvImporter({ importer }: { importer: Importer }) {
       }
       const cols = grid[0].map((h) => h.trim())
       const rest = grid.slice(1)
+      const mapped = autoMap(cols)
       setHeaders(cols)
       setDataRows(rest)
-      setMapping(autoMap(cols))
+      setMapping(mapped)
+      setMappingOpen(importer.fields.some((f) => mapped[f.key] < 0))
       if (rest.length === 0) setParseError('The header row was found but there are no data rows under it.')
     },
-    [autoMap],
+    [autoMap, importer.fields],
   )
 
   const loadFile = useCallback(
@@ -282,6 +290,8 @@ export function CsvImporter({ importer }: { importer: Importer }) {
   }, [headers, dataRows, mapping, missingKeys, importer, keyParts, existing, resolvedFor, lookupSignature])
 
   const mappedFields = useMemo(() => importer.fields.filter((f) => (mapping[f.key] ?? -1) >= 0), [importer.fields, mapping])
+  /** The template's header for a field: the ERP's own column name where the importer has one (templateHeaders), else the key. */
+  const templateHeader = (f: ImportField) => importer.templateHeaders?.[f.key] ?? f.key
 
   /**
    * Send in batches, from the cursor onwards. Pausing leaves the cursor where
@@ -333,7 +343,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
   }
 
   function downloadTemplate() {
-    const head = importer.fields.map((f) => csvCell(f.key)).join(',')
+    const head = importer.fields.map((f) => csvCell(templateHeader(f))).join(',')
     const sample = importer.fields.map((f) => csvCell(f.sample)).join(',')
     downloadText(importer.templateFile, `${head}\n${sample}\n`)
   }
@@ -346,6 +356,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
     setHeaders([])
     setDataRows([])
     setMapping({})
+    setMappingOpen(false)
     setParseError(null)
     if (fileRef.current) fileRef.current.value = ''
   }
@@ -442,12 +453,20 @@ export function CsvImporter({ importer }: { importer: Importer }) {
       {/* ---- Column mapping ---- */}
       {hasFile && (
         <Card className="space-y-4 p-4 sm:p-5">
-          <div>
-            <h3 className="text-base font-bold">Match your columns</h3>
-            <p className="mt-0.5 text-sm text-muted">
-              Columns whose names matched are already selected. The sample under each one comes from the first data row, so you can confirm
-              the mapping is right before importing. Anything you don't need can be skipped — a skipped column leaves the stored value alone.
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-base font-bold">
+                {mappingOpen ? 'Match your columns' : `Columns matched: ${mappedFields.length}/${importer.fields.length}`}
+              </h3>
+              <p className="mt-0.5 text-sm text-muted">
+                {mappingOpen
+                  ? "Columns whose names matched are already selected. The sample under each one comes from the first data row, so you can confirm the mapping is right before importing. Anything you don't need can be skipped — a skipped column leaves the stored value alone."
+                  : 'Every column was found by its name. Open the mapping to check a sample of each, or to skip one.'}
+              </p>
+            </div>
+            <Button className="min-h-[44px]" onClick={() => setMappingOpen((o) => !o)} aria-expanded={mappingOpen}>
+              <ChevronDown className={cn('h-4 w-4 transition-transform', mappingOpen && 'rotate-180')} /> {mappingOpen ? 'Fold' : 'Change'}
+            </Button>
           </div>
 
           {missingKeys.length > 0 && (
@@ -460,37 +479,39 @@ export function CsvImporter({ importer }: { importer: Importer }) {
             </p>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {importer.fields.map((f) => {
-              const col = mapping[f.key] ?? -1
-              const isKey = importer.businessKeys.includes(f.key)
-              const sample = col >= 0 ? (dataRows[0]?.[col] ?? '').trim() : ''
-              return (
-                <div key={f.key}>
-                  <Field label={isKey ? `${f.label} *` : f.label} hint={col >= 0 ? `Sample: ${sample === '' ? '(empty)' : sample}` : undefined}>
-                    <Select
-                      className="min-h-[48px]"
-                      value={String(col)}
-                      disabled={status === 'running'}
-                      onChange={(e) => {
-                        const next = Number(e.target.value)
-                        setMapping((m) => ({ ...m, [f.key]: next }))
-                        resetRun()
-                      }}
-                    >
-                      <option value="-1">— skip —</option>
-                      {headers.map((h, i) => (
-                        <option key={`${i}-${h}`} value={String(i)}>
-                          {h || `Column ${i + 1}`}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                  {isKey && col < 0 && <p className="mt-1 text-xs font-semibold text-amber-600 dark:text-amber-400">Required — records are matched on this.</p>}
-                </div>
-              )
-            })}
-          </div>
+          {mappingOpen && (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {importer.fields.map((f) => {
+                const col = mapping[f.key] ?? -1
+                const isKey = importer.businessKeys.includes(f.key)
+                const sample = col >= 0 ? (dataRows[0]?.[col] ?? '').trim() : ''
+                return (
+                  <div key={f.key}>
+                    <Field label={isKey ? `${f.label} *` : f.label} hint={col >= 0 ? `Sample: ${sample === '' ? '(empty)' : sample}` : undefined}>
+                      <Select
+                        className="min-h-[48px]"
+                        value={String(col)}
+                        disabled={status === 'running'}
+                        onChange={(e) => {
+                          const next = Number(e.target.value)
+                          setMapping((m) => ({ ...m, [f.key]: next }))
+                          resetRun()
+                        }}
+                      >
+                        <option value="-1">— skip —</option>
+                        {headers.map((h, i) => (
+                          <option key={`${i}-${h}`} value={String(i)}>
+                            {h || `Column ${i + 1}`}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    {isKey && col < 0 && <p className="mt-1 text-xs font-semibold text-amber-600 dark:text-amber-400">Required — records are matched on this.</p>}
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </Card>
       )}
 
@@ -530,11 +551,12 @@ export function CsvImporter({ importer }: { importer: Importer }) {
             <p className="mt-0.5 text-sm text-muted">This is exactly what pressing Import would do.</p>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Stat label="New records" value={plan.newCount} icon={<Plus className="h-5 w-5" />} tone="green" />
-            <Stat label="Would be updated" value={plan.updateCount} sub="Matched on the business key" icon={<RotateCcw className="h-5 w-5" />} tone="blue" />
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            <Stat compact label="New" value={plan.newCount} icon={<Plus className="h-5 w-5" />} tone="green" />
+            <Stat compact label="Updated" value={plan.updateCount} sub="Matched on the business key" icon={<RotateCcw className="h-5 w-5" />} tone="blue" />
             <Stat
-              label="Rows skipped"
+              compact
+              label="Skipped"
               value={plan.errors.length}
               sub={plan.errors.length > 0 ? 'Listed below with the reason' : 'No problems found'}
               icon={<AlertTriangle className="h-5 w-5" />}
@@ -547,36 +569,60 @@ export function CsvImporter({ importer }: { importer: Importer }) {
               <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">
                 First {Math.min(5, plan.valid.length)} of {plan.valid.length} mapped rows
               </p>
-              <div className="overflow-x-auto rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800">
-                <table className="w-full min-w-[40rem] text-sm">
-                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
-                    <tr>
-                      <th className="px-3 py-2.5 font-bold">Row</th>
-                      <th className="px-3 py-2.5 font-bold">Action</th>
-                      {mappedFields.map((f) => (
-                        <th key={f.key} className="px-3 py-2.5 font-bold">
-                          {f.label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {plan.valid.slice(0, 5).map((p) => (
-                      <tr key={p.rowNumber}>
-                        <td className="px-3 py-2.5 tabular-nums text-muted">{p.rowNumber}</td>
-                        <td className="px-3 py-2.5">
-                          <Badge tone={p.mode === 'new' ? 'green' : 'blue'}>{p.mode === 'new' ? 'New' : 'Update'}</Badge>
-                        </td>
+              {phone ? (
+                <ul className="space-y-2">
+                  {plan.valid.slice(0, 5).map((p) => (
+                    <li key={p.rowNumber} className="rounded-2xl p-3 ring-1 ring-slate-200 dark:ring-slate-800">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-muted">Row {p.rowNumber}</span>
+                        <Badge tone={p.mode === 'new' ? 'green' : 'blue'}>{p.mode === 'new' ? 'New' : 'Update'}</Badge>
+                      </div>
+                      <dl className="mt-1.5 space-y-0.5 text-sm">
+                        {mappedFields.slice(0, 4).map((f) => (
+                          <div key={f.key} className="flex gap-2">
+                            <dt className="w-[7rem] shrink-0 truncate text-xs leading-5 text-muted">{f.label}</dt>
+                            <dd dir="auto" className="min-w-0 flex-1 break-words">
+                              {p.values[f.key] === undefined ? '—' : String(p.values[f.key])}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                      {mappedFields.length > 4 && <p className="mt-1 text-xs text-muted">and {mappedFields.length - 4} more columns</p>}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <ScrollX className="rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800" innerClassName="rounded-2xl" label="Preview rows">
+                  <table className="w-full min-w-[40rem] text-sm">
+                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
+                      <tr>
+                        <th className="px-3 py-2.5 font-bold">Row</th>
+                        <th className="px-3 py-2.5 font-bold">Action</th>
                         {mappedFields.map((f) => (
-                          <td key={f.key} dir="auto" className="whitespace-nowrap px-3 py-2.5">
-                            {p.values[f.key] === undefined ? '—' : String(p.values[f.key])}
-                          </td>
+                          <th key={f.key} className="whitespace-nowrap px-3 py-2.5 font-bold">
+                            {f.label}
+                          </th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {plan.valid.slice(0, 5).map((p) => (
+                        <tr key={p.rowNumber}>
+                          <td className="px-3 py-2.5 tabular-nums text-muted">{p.rowNumber}</td>
+                          <td className="px-3 py-2.5">
+                            <Badge tone={p.mode === 'new' ? 'green' : 'blue'}>{p.mode === 'new' ? 'New' : 'Update'}</Badge>
+                          </td>
+                          {mappedFields.map((f) => (
+                            <td key={f.key} dir="auto" className="whitespace-nowrap px-3 py-2.5">
+                              {p.values[f.key] === undefined ? '—' : String(p.values[f.key])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </ScrollX>
+              )}
             </div>
           )}
 
@@ -597,7 +643,9 @@ export function CsvImporter({ importer }: { importer: Importer }) {
             </div>
           )}
 
-          <div className="space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+          {/* Sticky at the foot of the window while the card is on screen: Import is reachable without scrolling past
+              the preview and the skipped rows. The card's rounding is kept by the negative margins and the bar's own. */}
+          <div className="sticky bottom-0 -mx-4 -mb-4 space-y-3 rounded-b-2xl border-t border-slate-100 bg-white/95 px-4 pb-4 pt-3 backdrop-blur safe-bottom sm:-mx-5 sm:-mb-5 sm:px-5 sm:pb-5 dark:border-slate-800 dark:bg-slate-900/95">
             {status !== 'idle' && (
               <div>
                 <div className="mb-1.5 flex items-center justify-between gap-2 text-xs font-semibold text-muted">
