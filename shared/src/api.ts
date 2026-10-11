@@ -412,6 +412,8 @@ export interface WizardContext {
   process: Process
   /** The welding wire batch of this session's latest sample, offered again. */
   previousWeldingWireBatch: string | null
+  /** The connector coil number of this session's latest sample, offered again. */
+  previousConnectorCoilNumber: string | null
   /** The setup of this session's latest sample — drawing, issue, coils and
    *  an acknowledged grade mismatch. Setup is entered once per session, so
    *  the next sample starts from it and skips the Setup step. Null on the
@@ -509,6 +511,8 @@ export interface SavePTInput {
   consumableLots: Record<PTConsumableKind, string>
   /** The welding wire batch number, entered on the setup step. */
   weldingWireBatch?: string
+  /** The connector's coil number, entered on the setup step under the welding wire: required. */
+  connectorCoilNumber?: string
   /** At least one tested length, each with its verdict. */
   testedLengths: Array<{ lengthMm: number; verdict: PTVerdict }>
   notes?: string

@@ -179,14 +179,14 @@ The owner gives the assistant to people one by one (`ai_access`): the data
 domains each may ask about, the model and effort, and a personal monthly cap.
 
 The assistant reads the record only through the views in schema `ai`, and the
-database enforces the domains: migrations 0033 and 0039 create one role
+database enforces the domains: migrations 0033 and 0041 create one role
 without LOGIN per domain (`<database>_ai_base`, `_ai_inspection`,
 `_ai_orders`, `_ai_materials`, `_ai_audit`, `_ai_production` — the last for
 the ERP's production task record, `ai.production_task_records`, the child of
 the order sheet joined on `line_key`), each holding exactly its views, and
 every start creates one LOGIN role per combination of domains
 (`<database>_ai_r_10100` and so on, one bit per domain in that order,
-thirty-one in all; 0039 retired the fifteen four-bit ones), a member of the
+thirty-one in all; 0041 retired the fifteen four-bit ones), a member of the
 base and of its domains only, with a password derived from `JWT_SECRET` and
 the role's name. A question runs as the
 asker's combination; every query runs read-only and is rolled back. The
@@ -199,8 +199,10 @@ role can read.
 on something or to send a report regularly. The assistant writes it as a
 proposal, tried once against the data; nothing runs until a person presses
 Activate. A watch is a read-only query the API runs every few minutes (at
-least five), without the model, under its creator's current domains: each row
-is a case, and each case fires once (`ai_automation_hits`). A scheduled report
+least five) — around the clock, or only within the hours of the factory day
+and on the days it was given — without the model, under its creator's current
+domains: each row is a case, and each case fires once (`ai_automation_hits`).
+A scheduled report
 runs its queries at a factory-time hour and the model writes a short summary
 on top, counted against its creator's cap. An automation can only tell people
 — an alert in the bell (`user_notifications`) and a message from the "QC

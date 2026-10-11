@@ -19,9 +19,10 @@ import {
   FOLLOW_UP_MAX_DUE_HOURS,
   FOLLOW_UP_MIN_DUE_HOURS,
   describeSchedule,
-  describeWatchInterval,
+  describeWatchTiming,
   isAutomationTime,
   isAutomationWeekday,
+  isEveryDay,
   templatePlaceholders,
   weekdayName,
   type AiAutomationPart,
@@ -35,6 +36,7 @@ import {
   type AutomationChannels,
   type AutomationDraft,
   type AutomationEdits,
+  type AutomationHours,
   type AutomationKind,
   type AutomationProposalState,
   type AutomationRecipient,
@@ -177,9 +179,13 @@ export function describeDueHours(hours: number): string {
   return rest === 0 ? daysText : `${daysText} ${hoursText(rest)}`
 }
 
-/** When it runs, in words: a watch's interval, a report's schedule (factory time). */
-export function whenText(def: { kind: AutomationKind; watch?: Pick<AutomationWatchSpec, 'everyMinutes'>; schedule?: Pick<AutomationScheduleSpec, 'cadence' | 'time' | 'weekdays' | 'weekday' | 'monthDay'> }): string {
-  if (def.kind === 'watch') return def.watch ? describeWatchInterval(def.watch.everyMinutes) : '—'
+/** When it runs, in words: a watch's interval, hours and days; a report's schedule (factory time). */
+export function whenText(def: {
+  kind: AutomationKind
+  watch?: Pick<AutomationWatchSpec, 'everyMinutes' | 'hours' | 'weekdays'>
+  schedule?: Pick<AutomationScheduleSpec, 'cadence' | 'time' | 'weekdays' | 'weekday' | 'monthDay'>
+}): string {
+  if (def.kind === 'watch') return def.watch ? describeWatchTiming(def.watch) : '—'
   return def.schedule ? describeSchedule(def.schedule) : '—'
 }
 
@@ -208,7 +214,9 @@ export interface SummaryInput {
  * An automation in one or two plain sentences: when it runs and what it does.
  * "Every 5 minutes it looks for new cases. Each new case is told to every
  * supervisor on the bell, and gets a follow-up for Mona Adel, due 1 day
- * after the case." Recipients and the assignee as a sentence names them.
+ * after the case." — or, kept to some hours and days, "Every 5 minutes from
+ * 05:00 to 10:00, Saturday to Thursday (factory time), it looks for new
+ * cases." Recipients and the assignee as a sentence names them.
  */
 export function automationSummary(d: SummaryInput): string {
   const who = listWords(d.recipients.map(recipientPhrase))
@@ -223,7 +231,9 @@ export function automationSummary(d: SummaryInput): string {
     return `${describeSchedule(s)} (factory time) it runs ${sections}${over}${summary} and sends the result to ${who} on ${where}.`
   }
   const w = d.watch
-  const start = w ? `${describeWatchInterval(w.everyMinutes)} it looks for new cases.` : 'It looks for new cases.'
+  // Kept to some hours or days, the timing is a clause of its own.
+  const limited = !!w && (!!w.hours || !isEveryDay(w.weekdays))
+  const start = !w ? 'It looks for new cases.' : limited ? `${describeWatchTiming(w)}${w.hours ? ' (factory time)' : ''}, it looks for new cases.` : `${describeWatchTiming(w)} it looks for new cases.`
   const f = d.actions.followUp
   const follow = f ? `gets a follow-up for ${d.assignee ? assigneePhrase(d.assignee) : 'its assignee'}, due ${describeDueHours(f.dueHours)} after the case` : ''
   if (d.actions.notify && f) return `${start} Each new case is told to ${who} on ${where}, and ${follow}.`
@@ -585,9 +595,13 @@ export interface AutomationForm {
   /** As typed. */
   dueHours: string
   everyMinutes: number
+  /** A watch: whether it runs in some hours only, and which (as typed, HH:MM). */
+  hoursOn: boolean
+  hoursFrom: string
+  hoursTo: string
   cadence: AutomationCadence
   time: string
-  /** daily: the days ticked (all seven: every day). */
+  /** A watch, or a daily report: the days ticked (all seven: every day). */
   weekdays: AutomationWeekday[]
   weekday: AutomationWeekday
   monthDay: number
@@ -608,6 +622,8 @@ const ALL_DAYS: AutomationWeekday[] = [0, 1, 2, 3, 4, 5, 6]
 export function formFromDefinition(d: EditableDefinition): AutomationForm {
   const s = d.schedule
   const p = s?.period
+  const w = d.watch
+  const days = d.kind === 'watch' ? w?.weekdays : s?.cadence === 'daily' ? s.weekdays : undefined
   return {
     kind: d.kind,
     name: d.name,
@@ -619,10 +635,13 @@ export function formFromDefinition(d: EditableDefinition): AutomationForm {
     followUp: d.actions.followUp !== null,
     assignee: d.actions.followUp ? bareAssignee(d.actions.followUp.assignee) : { kind: 'creator' },
     dueHours: String(d.actions.followUp?.dueHours ?? 24),
-    everyMinutes: d.watch?.everyMinutes ?? AUTOMATION_MIN_EVERY_MINUTES,
+    everyMinutes: w?.everyMinutes ?? AUTOMATION_MIN_EVERY_MINUTES,
+    hoursOn: !!w?.hours,
+    hoursFrom: w?.hours?.from ?? '07:00',
+    hoursTo: w?.hours?.to ?? '16:00',
     cadence: s?.cadence ?? 'daily',
     time: s?.time ?? '08:00',
-    weekdays: s?.cadence === 'daily' && s.weekdays?.length ? [...new Set(s.weekdays)] : [...ALL_DAYS],
+    weekdays: days?.length ? [...new Set(days)] : [...ALL_DAYS],
     weekday: s?.weekday ?? 6,
     monthDay: s?.monthDay ?? 1,
     hasPeriod: !!p,
@@ -678,6 +697,11 @@ export function checkAutomationForm(f: AutomationForm): string | null {
     if (!Number.isInteger(f.everyMinutes) || f.everyMinutes < AUTOMATION_MIN_EVERY_MINUTES || f.everyMinutes > AUTOMATION_MAX_EVERY_MINUTES) {
       return `A watch runs every ${AUTOMATION_MIN_EVERY_MINUTES} to ${AUTOMATION_MAX_EVERY_MINUTES.toLocaleString('en-US')} minutes.`
     }
+    if (f.hoursOn) {
+      if (!isAutomationTime(f.hoursFrom) || !isAutomationTime(f.hoursTo)) return 'Choose the hours it runs in, on the 24-hour clock (HH:MM).'
+      if (f.hoursFrom === f.hoursTo) return 'Its hours start and end at the same time: choose a later end, or let it run around the clock.'
+    }
+    if (f.weekdays.length === 0) return 'Tick at least one day it runs.'
     if (!f.notify && !f.followUp) return 'A watch must tell people, open a follow-up for each case, or both.'
     if (f.followUp) {
       const due = wholeNumber(f.dueHours)
@@ -715,12 +739,21 @@ export function formActions(f: AutomationForm): AutomationActions {
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
-const sortedDays = (days: readonly number[]) => [...new Set(days)].sort((a, b) => a - b)
+const sortedDays = (days: readonly number[]) => [...new Set(days)].sort((a, b) => a - b) as AutomationWeekday[]
+
+/** The days ticked as the server takes them: null for all seven (every day); undefined when they are the days it already has. */
+function weekdaysEdit(ticked: readonly AutomationWeekday[], before: readonly AutomationWeekday[] | undefined): AutomationWeekday[] | null | undefined {
+  const days = sortedDays(ticked)
+  const next = days.length === 7 ? null : days
+  const was = before?.length && sortedDays(before).length < 7 ? sortedDays(before) : null
+  return same(next, was) ? undefined : next
+}
 
 /**
  * The changes the form makes to a definition, as the server takes them: only
- * the fields that differ. A daily report ticked for all seven days runs every
- * day (weekdays: null). Call checkAutomationForm first.
+ * the fields that differ. A watch or a daily report ticked for all seven days
+ * runs every day (weekdays: null); a watch running around the clock has no
+ * hours (hours: null). Call checkAutomationForm first.
  */
 export function editsFromForm(d: EditableDefinition, f: AutomationForm): AutomationEdits {
   const edits: AutomationEdits = {}
@@ -735,7 +768,13 @@ export function editsFromForm(d: EditableDefinition, f: AutomationForm): Automat
     const actions = formActions(f)
     const before: AutomationActions = d.actions.followUp ? { notify: d.actions.notify, followUp: { assignee: bareAssignee(d.actions.followUp.assignee), dueHours: d.actions.followUp.dueHours } } : { notify: d.actions.notify, followUp: null }
     if (!same(actions, before)) edits.actions = actions
-    if (d.watch && f.everyMinutes !== d.watch.everyMinutes) edits.everyMinutes = f.everyMinutes
+    if (d.watch) {
+      if (f.everyMinutes !== d.watch.everyMinutes) edits.everyMinutes = f.everyMinutes
+      const hours: AutomationHours | null = f.hoursOn ? { from: f.hoursFrom, to: f.hoursTo } : null
+      if (!same(hours, d.watch.hours ?? null)) edits.hours = hours
+      const days = weekdaysEdit(f.weekdays, d.watch.weekdays)
+      if (days !== undefined) edits.weekdays = days
+    }
     return edits
   }
   const s = d.schedule
@@ -744,10 +783,8 @@ export function editsFromForm(d: EditableDefinition, f: AutomationForm): Automat
   if (cadenceChanged) edits.cadence = f.cadence
   if (f.time !== s.time) edits.time = f.time
   if (f.cadence === 'daily') {
-    const days = sortedDays(f.weekdays)
-    const next = days.length === 7 ? null : (days as AutomationWeekday[])
-    const before = s.cadence === 'daily' && s.weekdays?.length && sortedDays(s.weekdays).length < 7 ? sortedDays(s.weekdays) : null
-    if (!same(next, before) || (cadenceChanged && next !== null)) edits.weekdays = next
+    const days = weekdaysEdit(f.weekdays, s.cadence === 'daily' ? s.weekdays : undefined)
+    if (days !== undefined) edits.weekdays = days
   }
   if (f.cadence === 'weekly' && (cadenceChanged || f.weekday !== s.weekday)) edits.weekday = f.weekday
   if (f.cadence === 'monthly' && (cadenceChanged || f.monthDay !== s.monthDay)) edits.monthDay = f.monthDay
@@ -762,7 +799,8 @@ export const hasEdits = (e: AutomationEdits | null | undefined): boolean => !!e 
 /**
  * A definition with changes on top, as the server applies them (a change of
  * cadence takes the fields the old one used away with it, unless given
- * anew): what the card shows of a proposal edited before it is activated.
+ * anew; hours or days set to null are taken away): what the card shows of a
+ * proposal edited before it is activated.
  */
 export function applyEdits<T extends EditableDefinition>(d: T, e: AutomationEdits): T {
   const next: T = structuredClone(d)
@@ -772,7 +810,19 @@ export function applyEdits<T extends EditableDefinition>(d: T, e: AutomationEdit
   if (e.channels !== undefined) next.channels = { ...e.channels }
   if (next.kind === 'watch') {
     if (e.actions !== undefined) next.actions = structuredClone(e.actions)
-    if (e.everyMinutes !== undefined && next.watch) next.watch = { ...next.watch, everyMinutes: e.everyMinutes }
+    if (next.watch) {
+      const w: AutomationWatchSpec = { ...next.watch }
+      if (e.everyMinutes !== undefined) w.everyMinutes = e.everyMinutes
+      if (e.hours !== undefined) {
+        if (e.hours === null) delete w.hours
+        else w.hours = { ...e.hours }
+      }
+      if (e.weekdays !== undefined) {
+        if (e.weekdays === null) delete w.weekdays
+        else w.weekdays = [...e.weekdays]
+      }
+      next.watch = w
+    }
     return next
   }
   if (!next.schedule) return next

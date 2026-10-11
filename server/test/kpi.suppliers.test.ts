@@ -37,6 +37,7 @@ function sample(process: 'forming' | 'welding', defects: number): SaveSampleRequ
             testFrequencyPct: 10,
             consumableLots: { Cleaner: 'B1', Penetrant: 'B2', Developer: 'B3' },
             weldingWireBatch: 'WW-1',
+            connectorCoilNumber: 'CC-1',
             testedLengths: [{ lengthMm: 150, verdict: 'Accept' as const }],
             imageIds: [],
           },

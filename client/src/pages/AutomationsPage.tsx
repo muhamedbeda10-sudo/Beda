@@ -229,7 +229,7 @@ export function AutomationsPage() {
                       <td className="px-3 py-1.5">
                         <AutomationSwitch a={a} />
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-slate-600 dark:text-slate-300">{whenText(a)}</td>
+                      <td className="max-w-[18rem] px-3 py-2 text-slate-600 dark:text-slate-300">{whenText(a)}</td>
                       <td className="whitespace-nowrap px-3 py-2 tabular-nums">
                         <NextRun a={a} timeZone={factoryTimeZone} />
                       </td>

@@ -39,6 +39,7 @@ describe('an issue about a tested length is named by its row on the screen', () 
       defects: [],
       pt: {
         consumableLots: { Cleaner: 'C', Penetrant: 'P', Developer: 'D' },
+        connectorCoilNumber: 'C10021',
         testedLengths: kept.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict ?? null })),
       },
     })

@@ -4,16 +4,19 @@ import type { ChatMention } from '@qc/shared/types'
 import { cn } from '@/lib/utils'
 import { segments } from './mentions'
 import { appLinkSegments } from './appLinks'
-import { textDirection } from '@/lib/direction'
+import { messageDirection, textDirection } from '@/lib/direction'
 
 /**
  * A message body with its mentions as chips. Tapping a chip opens the thing it names.
+ * It reads the way its words do (messageDirection): a message in Arabic
+ * that opens with an English word (a part's name) still wraps right to left,
+ * which dir="auto" — going by the first letter — gets wrong.
  * §21 — with `appLinks` (the automations sender's messages): line by line, the app's addresses in the text opening in place.
  */
 export function MessageBody({ body, mine, onMention, className, appLinks = false }: { body: string; mine: boolean; onMention: (m: ChatMention) => void; className?: string; appLinks?: boolean }) {
   if (appLinks) return <AutomatedBody body={body} mine={mine} className={className} />
   return (
-    <span className={cn('whitespace-pre-wrap break-words', className)}>
+    <span dir={messageDirection(body) ?? 'auto'} className={cn('block whitespace-pre-wrap break-words text-start', className)}>
       {segments(body).map((s, i) =>
         s.type === 'text' ? (
           <span key={i}>{s.text}</span>

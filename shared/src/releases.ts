@@ -28,6 +28,26 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-11.2',
+    date: '2026-10-11',
+    title: 'Connector coil number, watch hours, and Arabic chat messages',
+    items: [
+      { text: 'Welding machines: the Setup step has a new required field, Connector coil number, under the welding wire batch. It is remembered from the previous sample of the session, shown on the sample in History, and a welding sample cannot be saved without it.' },
+      { text: 'Automations: a watch can now run only in some hours of the day and on some days, for example every 5 minutes from 05:00 to 10:00, Saturday to Thursday (factory time). Set it under Edit, "When it looks", or ask the assistant. Hours such as 22:00 to 06:00 cover the night.' },
+      { text: "An automation's page no longer shows its run history table or its query. When its last run failed, the page says why." },
+      { text: 'Chat: a message written mostly in Arabic now reads right to left even when it starts with an English word, in the conversation, the reply quote, the list of conversations and the message box.' },
+    ],
+  },
+  {
+    id: '2026-10-11.1',
+    date: '2026-10-11',
+    title: "The ERP's production record: import it, ask the assistant about it",
+    items: [
+      { text: "Administration → Data import has a new tab, Production record: load the ERP's production task record export (CSV or Excel) as it is. Each row is an order line on one working day — what the machine made, who stood at it, the shift, the hours and the weights — linked to the order sheet by its Order ID. Importing again updates and adds; rows missing from a later file are kept." },
+      { text: 'The AI assistant can read it as a new data area, Production record, which is given to each person separately. It answers questions such as what a machine made last month and who worked it, or which order lines are behind what was required.' },
+    ],
+  },
+  {
     id: '2026-10-10.3',
     date: '2026-10-10',
     title: 'Notices through the AI assistant, and a tidier header',

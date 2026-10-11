@@ -1,9 +1,9 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
-import { describeSchedule, type AutomationScheduleSpec } from '@qc/shared/automation'
-import { factoryDayStart, nextReportRun, nextWatchRun, previousReportRun, reportRunsBetween, zonedInstant } from '../src/automations/schedule'
+import { describeSchedule, type AutomationScheduleSpec, type AutomationWeekday } from '@qc/shared/automation'
+import { factoryDayStart, inWatchHours, nextReportRun, nextWatchRun, previousReportRun, reportRunsBetween, watchRunAt, zonedInstant } from '../src/automations/schedule'
 import { MISSED_NOTE, claimDue, missedNote } from '../src/automations/engine'
 import { TestApp } from './harness'
-import { Clock, depsFor, engineFor, insertAutomation, reportDraft, runsOf, setUp, HOUR, MINUTE, type People } from './automationsKit'
+import { Clock, depsFor, engineFor, insertAutomation, reportDraft, runsOf, setUp, watchDraft, HOUR, MINUTE, type People } from './automationsKit'
 
 // §21 — when automations run. A scheduled report runs at a factory-time hour
 // (daily, on chosen weekdays, weekly, or on a day of the month 1–28), turned
@@ -12,6 +12,9 @@ import { Clock, depsFor, engineFor, insertAutomation, reportDraft, runsOf, setUp
 // A report whose time passed while the app was down runs late if less than
 // six hours late — the latest of its times, over the days of that time — and
 // is recorded as missed otherwise; a run lost with its instance runs again.
+// A watch runs its interval after its last run, within the hours of the
+// factory day and on the days it was given (hours crossing midnight belong
+// to the day they start on): outside them it waits for them to open again.
 
 type Timing = Pick<AutomationScheduleSpec, 'cadence' | 'time' | 'weekdays' | 'weekday' | 'monthDay'>
 
@@ -133,9 +136,52 @@ describe('§21 the next run of a scheduled report', () => {
     expect(reportRunsBetween({ cadence: 'weekly', time: '08:00', weekday: 1 }, new Date('2026-10-10T05:00:00Z'), new Date('2026-10-12T05:00:00Z'), 'Africa/Cairo')).toBe(0)
   })
 
-  it('runs a watch its interval after the run that started', () => {
-    expect(nextWatchRun(5, new Date('2026-10-10T10:00:00Z')).toISOString()).toBe('2026-10-10T10:05:00.000Z')
-    expect(nextWatchRun(1440, new Date('2026-10-10T10:00:00Z')).toISOString()).toBe('2026-10-11T10:00:00.000Z')
+  it('runs a watch its interval after the run that started, around the clock when it has no hours or days', () => {
+    const cairo = 'Africa/Cairo'
+    expect(nextWatchRun({ everyMinutes: 5 }, new Date('2026-10-10T10:00:00Z'), cairo).toISOString()).toBe('2026-10-10T10:05:00.000Z')
+    expect(nextWatchRun({ everyMinutes: 1440 }, new Date('2026-10-10T10:00:00Z'), cairo).toISOString()).toBe('2026-10-11T10:00:00.000Z')
+    expect(watchRunAt({ everyMinutes: 5 }, new Date('2026-10-10T10:00:00Z'), cairo).toISOString()).toBe('2026-10-10T10:00:00.000Z')
+    expect(inWatchHours({ everyMinutes: 5, weekdays: [] }, new Date('2026-10-10T10:00:00Z'), cairo)).toBe(true)
+  })
+
+  it('keeps a watch to its hours of the factory day: its interval within them, and the next opening past their end', () => {
+    // 05:00 to 10:00 Cairo is 02:00 to 07:00 UTC in October.
+    const cairo = 'Africa/Cairo'
+    const w = { everyMinutes: 5, hours: { from: '05:00', to: '10:00' } }
+    expect(nextWatchRun(w, new Date('2026-10-10T02:00:00Z'), cairo).toISOString()).toBe('2026-10-10T02:05:00.000Z')
+    // The look after 09:55 would be at 10:00, past the end: the next day as the hours open.
+    expect(nextWatchRun(w, new Date('2026-10-10T06:55:00Z'), cairo).toISOString()).toBe('2026-10-11T02:00:00.000Z')
+    expect(nextWatchRun(w, new Date('2026-10-10T06:57:00Z'), cairo).toISOString()).toBe('2026-10-11T02:00:00.000Z')
+    // Before the hours open: as they open. Within them: at once. After them: the next day.
+    expect(watchRunAt(w, new Date('2026-10-10T01:30:00Z'), cairo).toISOString()).toBe('2026-10-10T02:00:00.000Z')
+    expect(watchRunAt(w, new Date('2026-10-10T04:00:00Z'), cairo).toISOString()).toBe('2026-10-10T04:00:00.000Z')
+    expect(watchRunAt(w, new Date('2026-10-10T07:00:00Z'), cairo).toISOString()).toBe('2026-10-11T02:00:00.000Z')
+    expect(inWatchHours(w, new Date('2026-10-10T06:59:59Z'), cairo)).toBe(true)
+    expect(inWatchHours(w, new Date('2026-10-10T07:00:00Z'), cairo)).toBe(false)
+    // An interval longer than the hours: once a day, as they open.
+    expect(nextWatchRun({ everyMinutes: 360, hours: w.hours }, new Date('2026-10-10T02:00:00Z'), cairo).toISOString()).toBe('2026-10-11T02:00:00.000Z')
+    // Hours opening at a time the clocks jump over (Berlin, 29 March 2026: 02:00 becomes 03:00) open as the clocks jump.
+    expect(watchRunAt({ everyMinutes: 5, hours: { from: '02:30', to: '05:00' } }, new Date('2026-03-29T00:00:00Z'), 'Europe/Berlin').toISOString()).toBe('2026-03-29T01:30:00.000Z')
+  })
+
+  it('runs a watch on its days only; hours crossing midnight belong to the day they start on', () => {
+    const cairo = 'Africa/Cairo'
+    // 2026-10-09 is a Friday. Saturday to Thursday: Thursday 23:55 + 10 minutes is Friday, so the next look is Saturday 00:00.
+    const days = { everyMinutes: 10, weekdays: [6, 0, 1, 2, 3, 4] as AutomationWeekday[] }
+    expect(nextWatchRun(days, new Date('2026-10-08T20:55:00Z'), cairo).toISOString()).toBe('2026-10-09T21:00:00.000Z')
+    expect(inWatchHours(days, new Date('2026-10-09T10:00:00Z'), cairo)).toBe(false)
+    expect(watchRunAt(days, new Date('2026-10-10T10:00:00Z'), cairo).toISOString()).toBe('2026-10-10T10:00:00.000Z')
+    // The night shift, 22:00 to 06:00, Monday to Friday: Friday night runs into Saturday morning; Saturday night does not run.
+    const night = { everyMinutes: 30, hours: { from: '22:00', to: '06:00' }, weekdays: [1, 2, 3, 4, 5] as AutomationWeekday[] }
+    // Saturday 02:00 Cairo is Friday's night.
+    expect(inWatchHours(night, new Date('2026-10-09T23:00:00Z'), cairo)).toBe(true)
+    // Saturday 23:00 and Sunday 02:00 Cairo are Saturday's night.
+    expect(inWatchHours(night, new Date('2026-10-10T20:00:00Z'), cairo)).toBe(false)
+    expect(inWatchHours(night, new Date('2026-10-10T23:00:00Z'), cairo)).toBe(false)
+    // From Saturday 06:00 Cairo the hours next open on Monday at 22:00.
+    expect(watchRunAt(night, new Date('2026-10-10T03:00:00Z'), cairo).toISOString()).toBe('2026-10-12T19:00:00.000Z')
+    // Friday 05:45 + 30 minutes is 06:15, past the end: Friday 22:00.
+    expect(nextWatchRun(night, new Date('2026-10-09T02:45:00Z'), cairo).toISOString()).toBe('2026-10-09T19:00:00.000Z')
   })
 })
 
@@ -268,6 +314,26 @@ describe('§21 a report whose time passed while the app was down', () => {
       expect.objectContaining({ ok: true, error: null, deliveryId: delivery.rows[0].id, note: expect.stringContaining('delivered its report') }),
     ])
     expect((await app.db.query(`SELECT 1 FROM ai_report_deliveries WHERE automation_id = $1`, [id])).rowCount).toBe(1)
+  })
+
+  it('lets a watch due while the server was down wait for its hours when they have closed meanwhile, recording nothing', async () => {
+    // Due at 09:58 Cairo (06:58 UTC), in hours 05:00 to 10:00; the server comes back at 11:00 Cairo.
+    const clock = new Clock(new Date('2026-10-10T08:00:00Z'))
+    const id = await insertAutomation(app.db, {
+      creatorId: p.creator.user.id,
+      watch: { ...watchDraft().watch!, hours: { from: '05:00', to: '10:00' } },
+      nextRunAt: new Date('2026-10-10T06:58:00Z'),
+    })
+    const engine = engineFor(app, clock)
+    await engine.tick()
+    expect(await runsOf(app.db, id)).toEqual([])
+    const nextRunAt = async () => (await app.db.query<{ at: string }>(`SELECT next_run_at AS at FROM ai_automations WHERE id = $1`, [id])).rows[0].at
+    expect(await nextRunAt()).toBe('2026-10-11T02:00:00.000Z')
+    // As its hours open it runs, and is due again its interval later.
+    clock.at = new Date('2026-10-11T02:00:10Z')
+    await engine.tick()
+    expect((await runsOf(app.db, id)).map((r) => r.ok)).toEqual([true])
+    expect(await nextRunAt()).toBe('2026-10-11T02:05:10.000Z')
   })
 
   it('runs a watch at the next tick, however late', async () => {

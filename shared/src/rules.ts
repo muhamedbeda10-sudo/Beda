@@ -311,6 +311,8 @@ export interface SampleDraftForValidation {
     /** Older records typed a frequency by hand; the requirement is now worked out from the final quantity. */
     testFrequencyPct?: number | null
     consumableLots: Partial<Record<'Cleaner' | 'Penetrant' | 'Developer', string>>
+    /** The connector coil number, typed on the setup step: required. */
+    connectorCoilNumber?: string | null
     testedLengths?: Array<{ lengthMm: number; verdict: PTVerdict | null | undefined }>
   }
 }
@@ -389,6 +391,10 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
     if (!pt) {
       issues.push({ step: 'pt', message: 'PT / weld inspection details are required.' })
     } else {
+      // The connector coil number is traced on every welding sample, like the coil on a forming one.
+      if (!pt.connectorCoilNumber?.trim()) {
+        issues.push({ step: 'setup', message: 'Connector coil number is required.', ref: 'connectorCoil' })
+      }
       for (const kind of ['Cleaner', 'Penetrant', 'Developer'] as const) {
         if (!pt.consumableLots?.[kind]?.trim()) {
           issues.push({

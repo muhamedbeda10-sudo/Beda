@@ -207,6 +207,7 @@ const saveSampleSchema = z.object({
       testFrequencyPct: z.number().finite().optional(),
       consumableLots: z.object({ Cleaner: z.string().trim(), Penetrant: z.string().trim(), Developer: z.string().trim() }),
       weldingWireBatch: optText(100),
+      connectorCoilNumber: optText(100),
       testedLengths: z
         .array(z.object({ lengthMm: z.number().finite(), verdict: z.enum(['Accept', 'Reject / Repair']) }))
         .max(50)
@@ -822,9 +823,9 @@ export function sessionsRoutes(ctx: AppContext): Router {
           ORDER BY d.sequence, d.name`,
         [id, order.itemCode, normaliseMachineCode(wc), order.id || null, order.item ?? ''],
       ),
-      // The welding wire batch of this session's latest sample, offered again.
-      q.query<{ batch: string | null }>(
-        `SELECT p.welding_wire_batch AS batch
+      // The welding wire batch and connector coil number of this session's latest sample, offered again.
+      q.query<{ batch: string | null; connector: string | null }>(
+        `SELECT p.welding_wire_batch AS batch, p.connector_coil_number AS connector
            FROM pt_records p JOIN inspection_samples sm ON sm.id = p.sample_id
           WHERE sm.session_id = $1 AND sm.deleted_at IS NULL AND p.deleted_at IS NULL
           ORDER BY sm.created_at DESC LIMIT 1`,
@@ -853,6 +854,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       previousDimensions: previousDims.rows,
       process,
       previousWeldingWireBatch: previousWire.rows[0]?.batch ?? null,
+      previousConnectorCoilNumber: previousWire.rows[0]?.connector ?? null,
       previousSetup,
       workInstructions: instructions,
       orderNotes,
@@ -1572,7 +1574,7 @@ async function validateSampleBody(
     dimensions: body.dimensions.map((d) => ({ name: d.name, nominal: d.nominal ?? null, actual: d.actual ?? null })),
     paint: body.paint ? { imageIds: body.paint.imageIds } : { imageIds: [] },
     pt: body.pt
-      ? { testFrequencyPct: body.pt.testFrequencyPct, consumableLots: body.pt.consumableLots, testedLengths: body.pt.testedLengths }
+      ? { testFrequencyPct: body.pt.testFrequencyPct, consumableLots: body.pt.consumableLots, connectorCoilNumber: body.pt.connectorCoilNumber, testedLengths: body.pt.testedLengths }
       : undefined,
   })
   if (issues.length > 0) throw badRequest(issues[0].message, issues)
@@ -1651,9 +1653,19 @@ async function writeSampleChildren(
     const verdict = ptOverallVerdict(pt.testedLengths)
     const ptId = (await tx.query<{ id: string }>(
       `INSERT INTO pt_records
-         (sample_id, test_frequency_pct, cleaner_lot, penetrant_lot, developer_lot, welding_wire_batch, accept_or_repair, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-      [sampleId, pt.testFrequencyPct ?? null, pt.consumableLots.Cleaner, pt.consumableLots.Penetrant, pt.consumableLots.Developer, pt.weldingWireBatch ?? null, verdict, pt.notes ?? null],
+         (sample_id, test_frequency_pct, cleaner_lot, penetrant_lot, developer_lot, welding_wire_batch, connector_coil_number, accept_or_repair, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [
+        sampleId,
+        pt.testFrequencyPct ?? null,
+        pt.consumableLots.Cleaner,
+        pt.consumableLots.Penetrant,
+        pt.consumableLots.Developer,
+        pt.weldingWireBatch ?? null,
+        pt.connectorCoilNumber ?? null,
+        verdict,
+        pt.notes ?? null,
+      ],
     )).rows[0].id
     for (const [i, l] of pt.testedLengths.entries()) {
       await tx.query(`INSERT INTO pt_tested_lengths (pt_record_id, seq, length_mm, verdict) VALUES ($1, $2, $3, $4)`, [ptId, i + 1, l.lengthMm, l.verdict])

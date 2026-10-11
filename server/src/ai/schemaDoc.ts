@@ -1,7 +1,7 @@
 // ============================================================================
 // §20 — the data dictionary the model reads: the views in schema ai a person
 // may read, with their columns, and the helper functions, written from the
-// catalog and the comments migrations 0031–0039 put on them. So the
+// catalog and the comments migrations 0031–0041 put on them. So the
 // description can never drift from what the views really are, nor promise
 // views the person's roles cannot select: which objects are described is
 // read from the grants of the base role and of the person's domain roles.

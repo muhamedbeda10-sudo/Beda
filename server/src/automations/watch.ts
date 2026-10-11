@@ -278,7 +278,7 @@ function caseLink(c: WatchCase, p: Person, a: AutomationRow): string | null {
   return null
 }
 
-/** Where a list of cases leads one person: the automation's run history if they may open it, otherwise its follow-ups when some of them are theirs to see. */
+/** Where a list of cases leads one person: the automation's page if they may open it, otherwise its follow-ups when some of them are theirs to see. */
 function listLink(cases: WatchCase[], p: Person, a: AutomationRow): string | null {
   if (p.opensAutomation) return automationLink(a.id)
   if (cases.some((c) => c.followUpId && (p.seesAllFollowUps || p.id === c.followUpAssigneeId))) return followUpsOfLink(a.id)

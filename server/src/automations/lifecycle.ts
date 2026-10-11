@@ -23,8 +23,10 @@ import { describeAiPeriod } from '@qc/shared/ai'
 import { auditEvent } from '@qc/shared/audit'
 import {
   AUTOMATION_MAX_PER_CREATOR,
+  describeHours,
   describeSchedule,
   describeWatchInterval,
+  describeWeekdays,
   type AutomationActivateResponse,
   type AutomationDiscardResponse,
   type AutomationDraft,
@@ -37,7 +39,7 @@ import { applyEdits, type EditsInputType } from './draft'
 import type { EngineDeps } from './engine'
 import { assigneeView, namedUserIds, peopleById, recipientViews } from './labels'
 import { findProposal, proposalPart } from './proposals'
-import { nextReportRun, nextWatchRun } from './schedule'
+import { nextReportRun, nextWatchRun, watchRunAt } from './schedule'
 import { caseKey, keepsCases, validateDraft, type Validation } from './validate'
 import { appState, findAutomation, toAutomations, type AutomationRow } from './views'
 
@@ -87,6 +89,8 @@ async function auditSnapshot(q: Queryable, d: AutomationDraft, creatorName: stri
   }
   if (d.watch) {
     snap.interval = describeWatchInterval(d.watch.everyMinutes)
+    snap.hours = d.watch.hours ? describeHours(d.watch.hours) : 'around the clock'
+    snap.days = describeWeekdays(d.watch.weekdays)
     snap.notify = d.actions.notify ? 'on' : 'off'
     const f = d.actions.followUp
     snap.followUp = f ? `${assigneeView(f.assignee, people, { name: creatorName }, null).label}, due in ${f.dueHours} h` : 'none'
@@ -284,9 +288,10 @@ async function assertRevisedStillOpen(tx: Queryable, d: AutomationDraft, userId:
   }
 }
 
-/** When a new (or changed) automation first runs: a watch at once, a report at its next time. */
+/** When a new (or changed) automation first runs: a watch at once (or when its hours next open), a report at its next time. */
 function firstRun(deps: EngineDeps, d: AutomationDraft, now: Date): Date {
-  return d.schedule ? nextReportRun(d.schedule, now, deps.config.FACTORY_TIMEZONE) : now
+  const tz = deps.config.FACTORY_TIMEZONE
+  return d.schedule ? nextReportRun(d.schedule, now, tz) : watchRunAt(d.watch!, now, tz)
 }
 
 /** The cases a watch's query returns now, recorded as seen without telling anyone. */
@@ -339,14 +344,15 @@ export async function updateAutomation(deps: EngineDeps, id: string, by: Actor, 
     const d = checked.draft
     const changes = await auditChanges(tx, auditContext(by, id), await auditSnapshot(tx, before, a.creatorName), await auditSnapshot(tx, d, a.creatorName))
     if (changes === 0) return
-    // When it runs next follows a new interval or schedule at once.
+    // When it runs next follows a new interval, new hours or days, or a new schedule at once.
     let next = a.nextRunAt ? new Date(a.nextRunAt) : null
     if (a.status === 'active') {
-      if (d.watch && d.watch.everyMinutes !== a.watch?.everyMinutes) {
-        const due = a.lastRunAt ? nextWatchRun(d.watch.everyMinutes, new Date(a.lastRunAt)) : now
-        next = due.getTime() < now.getTime() ? now : due
+      const tz = deps.config.FACTORY_TIMEZONE
+      if (d.watch && JSON.stringify(watchTiming(d)) !== JSON.stringify(watchTiming(before))) {
+        const due = a.lastRunAt ? nextWatchRun(d.watch, new Date(a.lastRunAt), tz) : now
+        next = watchRunAt(d.watch, due.getTime() < now.getTime() ? now : due, tz)
       }
-      if (d.schedule && JSON.stringify(scheduleTiming(d)) !== JSON.stringify(scheduleTiming(before))) next = nextReportRun(d.schedule, now, deps.config.FACTORY_TIMEZONE)
+      if (d.schedule && JSON.stringify(scheduleTiming(d)) !== JSON.stringify(scheduleTiming(before))) next = nextReportRun(d.schedule, now, tz)
     }
     await tx.query(
       `UPDATE ai_automations SET name = $2, description = $3, watch = $4::json, schedule = $5::json, recipients = $6::json, channels = $7::json,
@@ -372,6 +378,11 @@ export async function updateAutomation(deps: EngineDeps, id: string, by: Actor, 
 const scheduleTiming = (d: AutomationDraft) => {
   const s = d.schedule
   return s ? [s.cadence, s.time, s.weekdays ?? null, s.weekday ?? null, s.monthDay ?? null] : null
+}
+
+const watchTiming = (d: AutomationDraft) => {
+  const w = d.watch
+  return w ? [w.everyMinutes, w.hours ?? null, w.weekdays ?? null] : null
 }
 
 /** Pause an automation: it stops running until resumed. */

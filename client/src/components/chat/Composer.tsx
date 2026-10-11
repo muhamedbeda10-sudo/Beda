@@ -16,6 +16,7 @@ import { useApp } from '@/store/AppContext'
 import { ApiError } from '@/lib/api'
 import { isCoarsePointer } from '@/lib/media'
 import { cn, newSubmissionId } from '@/lib/utils'
+import { messageDirection } from '@/lib/direction'
 import { EmojiPicker } from './EmojiPicker'
 import { mentionToken, plainText, triggerAt } from './mentions'
 
@@ -307,6 +308,7 @@ export function Composer({
           onSelect={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart)}
           onKeyDown={onKey}
           placeholder={editing ? 'Edit your message' : 'Message · @ person · # order, item, machine'}
+          dir={messageDirection(text) ?? 'auto'}
           className="input min-h-[40px] flex-1 resize-none rounded-2xl py-2 leading-snug touch:min-h-[44px]"
           maxLength={4000}
           aria-label="Message"

@@ -1,6 +1,7 @@
 // ============================================================================
 // §21 — automations through the API: the reads the Automations page, an
-// automation's page and a delivered report show, and the writes behind
+// automation's page and a delivered report show (an automation's run history
+// is kept by the server and not shown), and the writes behind
 // their buttons and the proposal card's. Each write puts what the server
 // answered into the cache, so every screen showing it follows at once —
 // the card in the conversation included, wherever the conversation is open;
@@ -13,7 +14,7 @@
 // is asked again then and the routes' guard follows what it says.
 // ============================================================================
 
-import { keepPreviousData, useInfiniteQuery, useQuery, type QueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useQuery, type QueryClient } from '@tanstack/react-query'
 import type { AiMessagesResponse } from '@qc/shared/ai'
 import type {
   AiAutomationPart,
@@ -25,7 +26,6 @@ import type {
   AutomationEdits,
   AutomationPeopleResponse,
   AutomationRun,
-  AutomationRunsResponse,
   AutomationsResponse,
   AutomationTestResponse,
 } from '@qc/shared/automation'
@@ -34,14 +34,13 @@ import { replaceAutomationPart } from '@/components/automations/wording'
 import { keys } from './queries'
 
 export const automationKeys = {
-  /** Everything about automations: the lists, each one, its runs. */
+  /** Everything about automations: the lists, each one. */
   all: ['automations'] as const,
   /** The list as one creator's (the owner's filter), or everyone's the viewer may see (''). */
   list: (creator: string | null) => ['automations', 'list', creator ?? ''] as const,
   lists: ['automations', 'list'] as const,
   people: ['automations', 'people'] as const,
   one: (id: string) => ['automations', 'one', id] as const,
-  runs: (id: string) => ['automations', 'runs', id] as const,
   delivery: (id: string) => ['automations', 'delivery', id] as const,
 }
 
@@ -72,19 +71,6 @@ export function useAutomation(id: string | null) {
   return useQuery({
     queryKey: automationKeys.one(id ?? ''),
     queryFn: () => api<Automation>(path(id ?? '')),
-    enabled: id !== null,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-  })
-}
-
-/** Its runs, newest first, a page (30) at a time: "Show older runs" is fetchNextPage. */
-export function useAutomationRuns(id: string | null) {
-  return useInfiniteQuery({
-    queryKey: automationKeys.runs(id ?? ''),
-    queryFn: ({ pageParam }) => api<AutomationRunsResponse>(`${path(id ?? '')}/runs${qs({ before: pageParam })}`),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last: AutomationRunsResponse) => (last.hasMore ? (last.runs.at(-1)?.id ?? null) : null),
     enabled: id !== null,
     staleTime: 30_000,
     refetchInterval: 60_000,
@@ -135,8 +121,6 @@ export async function activateProposal(qc: QueryClient, proposalId: string, body
   settleProposal(qc, res.part)
   qc.setQueryData(automationKeys.one(res.automation.id), res.automation)
   void qc.invalidateQueries({ queryKey: automationKeys.lists })
-  // A change of an existing automation keeps its runs; a new one has none yet.
-  void qc.invalidateQueries({ queryKey: automationKeys.runs(res.automation.id) })
   return res
 }
 
@@ -173,7 +157,6 @@ export async function deleteAutomation(qc: QueryClient, id: string): Promise<voi
   await api<void>(path(id), { method: 'DELETE' })
   qc.setQueriesData<Automation[]>({ queryKey: automationKeys.lists }, (old) => old?.filter((x) => x.id !== id))
   qc.removeQueries({ queryKey: automationKeys.one(id) })
-  qc.removeQueries({ queryKey: automationKeys.runs(id) })
   void qc.invalidateQueries({ queryKey: automationKeys.lists })
 }
 
@@ -182,7 +165,6 @@ export async function runAutomationNow(qc: QueryClient, id: string): Promise<Aut
   try {
     return await api<AutomationRun>(`${path(id)}/run`, { method: 'POST' })
   } finally {
-    void qc.invalidateQueries({ queryKey: automationKeys.runs(id) })
     void qc.invalidateQueries({ queryKey: automationKeys.one(id) })
     void qc.invalidateQueries({ queryKey: automationKeys.lists })
   }

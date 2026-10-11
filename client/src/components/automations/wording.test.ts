@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AiMessagesResponse } from '@qc/shared/ai'
-import type { AiAutomationPart, Automation, AutomationDraft, AutomationRun, AutomationTestResponse } from '@qc/shared/automation'
+import type { AiAutomationPart, Automation, AutomationDraft, AutomationRun, AutomationTestResponse, AutomationWeekday } from '@qc/shared/automation'
 import {
   PROPOSAL_STATE_LABEL,
   PROPOSAL_STATE_TONE,
@@ -161,6 +161,21 @@ describe('an automation in words', () => {
     expect(whenText(watch)).toBe('Every 5 minutes')
   })
 
+  it('says in which hours and on which days a watch looks, when it is kept to some', () => {
+    const shift = { ...watch, watch: { ...watch.watch!, hours: { from: '05:00', to: '10:00' }, weekdays: [6, 0, 1, 2, 3, 4] as AutomationWeekday[] } }
+    expect(whenText(shift)).toBe('Every 5 minutes from 05:00 to 10:00, Saturday to Thursday')
+    const recipients = recipientViews(watch.recipients, people)
+    expect(automationSummary({ ...shift, actions: { notify: true, followUp: null }, recipients })).toBe(
+      'Every 5 minutes from 05:00 to 10:00, Saturday to Thursday (factory time), it looks for new cases. Each new case is told to every supervisor and Mona Adel on the bell.',
+    )
+    const days = { ...watch, watch: { ...watch.watch!, weekdays: [1, 2, 3, 4, 5] as AutomationWeekday[] } }
+    expect(automationSummary({ ...days, actions: { notify: true, followUp: null }, recipients })).toBe(
+      'Every 5 minutes, Monday to Friday, it looks for new cases. Each new case is told to every supervisor and Mona Adel on the bell.',
+    )
+    // All seven days is every day: nothing to say.
+    expect(whenText({ ...watch, watch: { ...watch.watch!, weekdays: [0, 1, 2, 3, 4, 5, 6] } })).toBe('Every 5 minutes')
+  })
+
   it('says what the trial run found and what activation does with the cases matching now', () => {
     expect(matchedText(0, false)).toBe('No case matched.')
     expect(matchedText(1, false)).toBe('1 case matched.')
@@ -313,7 +328,11 @@ describe('runs and tests in words', () => {
 describe('the edit form', () => {
   it('starts from the definition, a daily report on all seven days when it names none', () => {
     const f = formFromDefinition(watch)
-    expect(f).toMatchObject({ name: 'Holds on line 3', notify: true, followUp: true, assignee: { kind: 'column', column: 'inspector_id' }, dueHours: '24', everyMinutes: 5 })
+    expect(f).toMatchObject({ name: 'Holds on line 3', notify: true, followUp: true, assignee: { kind: 'column', column: 'inspector_id' }, dueHours: '24', everyMinutes: 5, hoursOn: false })
+    // A watch around the clock, every day: the hours switched off, all seven days ticked.
+    expect([...f.weekdays].sort()).toEqual([0, 1, 2, 3, 4, 5, 6])
+    const shift = formFromDefinition({ ...watch, watch: { ...watch.watch!, hours: { from: '22:00', to: '06:00' }, weekdays: [1, 2, 3, 4, 5] } })
+    expect(shift).toMatchObject({ hoursOn: true, hoursFrom: '22:00', hoursTo: '06:00', weekdays: [1, 2, 3, 4, 5] })
     const r = formFromDefinition({ ...report, schedule: { ...report.schedule!, weekdays: undefined } })
     expect([...r.weekdays].sort()).toEqual([0, 1, 2, 3, 4, 5, 6])
     expect(r).toMatchObject({ cadence: 'daily', time: '08:00', hasPeriod: true, periodKind: 'yesterday', summary: true })
@@ -333,6 +352,13 @@ describe('the edit form', () => {
     expect(checkAutomationForm({ ...f, dueHours: '2.5' })).toMatch(/1 to 720 hours/)
     expect(checkAutomationForm({ ...f, assignee: { kind: 'user', userId: '' } })).toBe('Choose who the follow-ups go to.')
     expect(checkAutomationForm({ ...f, everyMinutes: 2 })).toMatch(/every 5 to 1,440 minutes/)
+    expect(checkAutomationForm({ ...f, hoursOn: true, hoursFrom: '5:00', hoursTo: '10:00' })).toBe('Choose the hours it runs in, on the 24-hour clock (HH:MM).')
+    expect(checkAutomationForm({ ...f, hoursOn: true, hoursFrom: '05:00', hoursTo: '05:00' })).toMatch(/start and end at the same time/)
+    // The night is fine: the end before the start crosses midnight.
+    expect(checkAutomationForm({ ...f, hoursOn: true, hoursFrom: '22:00', hoursTo: '06:00' })).toBeNull()
+    // Switched off, whatever is typed in them is not looked at.
+    expect(checkAutomationForm({ ...f, hoursOn: false, hoursFrom: 'x', hoursTo: '' })).toBeNull()
+    expect(checkAutomationForm({ ...f, weekdays: [] })).toBe('Tick at least one day it runs.')
     expect(checkAutomationForm({ ...f, recipients: [] })).toBe('Choose at least one person, role or column of people to tell.')
     // A watch that only opens follow-ups needs nobody to tell.
     expect(checkAutomationForm({ ...f, notify: false, recipients: [] })).toBeNull()
@@ -358,6 +384,23 @@ describe('the edit form', () => {
     })
     expect(editsFromForm(watch, { ...f, recipients: [{ kind: 'role', role: 'supervisor' }] })).toEqual({ recipients: [{ kind: 'role', role: 'supervisor' }] })
     expect(editsFromForm(watch, { ...f, channels: { bell: true, chat: true } })).toEqual({ channels: { bell: true, chat: true } })
+  })
+
+  it('sends a watch’s hours and days as the server takes them: none for around the clock, none for all seven days', () => {
+    const f = formFromDefinition(watch)
+    expect(editsFromForm(watch, { ...f, hoursOn: true, hoursFrom: '05:00', hoursTo: '10:00', weekdays: [6, 0, 1, 2, 3, 4] })).toEqual({
+      hours: { from: '05:00', to: '10:00' },
+      weekdays: [0, 1, 2, 3, 4, 6],
+    })
+    // Typed hours count only while they are switched on.
+    expect(editsFromForm(watch, { ...f, hoursOn: false, hoursFrom: '05:00', hoursTo: '10:00' })).toEqual({})
+    const shift: AutomationDraft = { ...watch, watch: { ...watch.watch!, hours: { from: '05:00', to: '10:00' }, weekdays: [6, 0, 1, 2, 3, 4] } }
+    const s = formFromDefinition(shift)
+    expect(editsFromForm(shift, s)).toEqual({})
+    expect(editsFromForm(shift, { ...s, hoursOn: false })).toEqual({ hours: null })
+    expect(editsFromForm(shift, { ...s, hoursTo: '12:00' })).toEqual({ hours: { from: '05:00', to: '12:00' } })
+    expect(editsFromForm(shift, { ...s, weekdays: [0, 1, 2, 3, 4, 5, 6] })).toEqual({ weekdays: null })
+    expect(editsFromForm(shift, { ...s, weekdays: [1, 2] })).toEqual({ weekdays: [1, 2] })
   })
 
   it('sends a schedule’s changes with what its cadence needs; all seven days is every day', () => {
@@ -388,6 +431,15 @@ describe('the edit form', () => {
     expect(changed.schedule?.weekdays).toBeUndefined()
     expect(applyEdits(report, { period: null }).schedule?.period).toBeUndefined()
     expect(applyEdits(watch, { everyMinutes: 30 }).watch?.everyMinutes).toBe(30)
+    // A watch's hours and days are set, and taken away as null.
+    const timed = applyEdits(watch, { hours: { from: '22:00', to: '06:00' }, weekdays: [1, 2, 3, 4, 5] })
+    expect(timed.watch).toMatchObject({ everyMinutes: 5, hours: { from: '22:00', to: '06:00' }, weekdays: [1, 2, 3, 4, 5] })
+    expect(watch.watch).not.toHaveProperty('hours')
+    const untimed = applyEdits(timed, { hours: null, weekdays: null })
+    expect(untimed.watch).not.toHaveProperty('hours')
+    expect(untimed.watch).not.toHaveProperty('weekdays')
+    const shiftForm = { ...formFromDefinition(watch), hoursOn: true, hoursFrom: '05:00', hoursTo: '10:00', weekdays: [6, 0, 1, 2, 3, 4] as AutomationWeekday[] }
+    expect(formFromDefinition(applyEdits(watch, editsFromForm(watch, shiftForm)))).toEqual({ ...shiftForm, weekdays: [0, 1, 2, 3, 4, 6] })
     // The definition it was given is left as it was.
     expect(report.schedule?.weekdays).toEqual([6, 0, 1, 2, 3, 4])
     // Round trip: what the form sends, applied, is what the form shows.

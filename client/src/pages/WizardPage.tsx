@@ -154,6 +154,7 @@ export function WizardPage() {
   // The machine's process decides the steps: the API resolved it from the register.
   const process: Process = ctx?.process ?? 'forming'
   const previousWire = ctx?.previousWeldingWireBatch ?? null
+  const previousConnectorCoil = ctx?.previousConnectorCoilNumber ?? null
   const previousSetup = ctx?.previousSetup ?? null
   const orderNotes = useMemo(() => ctx?.orderNotes ?? [], [ctx])
   const steps = useMemo(() => stepsForProcess(process), [process])
@@ -278,11 +279,11 @@ export function WizardPage() {
       note: { text: '', imageIds: [] },
       pt:
         process === 'welding'
-          ? { consumableLots: {}, weldingWireBatch: previousWire ?? '', testedLengths: [], imageIds: [] }
+          ? { consumableLots: {}, weldingWireBatch: previousWire ?? '', connectorCoilNumber: previousConnectorCoil ?? '', testedLengths: [], imageIds: [] }
           : undefined,
       updatedAt: new Date().toISOString(),
     })
-  }, [session, pending, draftKey, wc, order, draft, dimOrder, previousDims, process, previousWire, previousSetup, editing, editingSampleId, ctxFetching])
+  }, [session, pending, draftKey, wc, order, draft, dimOrder, previousDims, process, previousWire, previousConnectorCoil, previousSetup, editing, editingSampleId, ctxFetching])
 
   // Persist on every change so a reload or a dead network loses nothing (§9.6).
   const update = useCallback((patch: Partial<SampleDraft> | ((d: SampleDraft) => SampleDraft)) => {
@@ -331,6 +332,7 @@ export function WizardPage() {
       pt: draft.pt
         ? {
             consumableLots: draft.pt.consumableLots,
+            connectorCoilNumber: draft.pt.connectorCoilNumber,
             testedLengths: lengths.kept.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict ?? null })),
           }
         : undefined,
@@ -444,6 +446,8 @@ export function WizardPage() {
                   Developer: draft.pt.consumableLots.Developer ?? '',
                 },
                 weldingWireBatch: draft.pt.weldingWireBatch?.trim() || undefined,
+                // validateSample has already refused a missing connector coil number.
+                connectorCoilNumber: draft.pt.connectorCoilNumber?.trim() || undefined,
                 // validateSample has already refused a missing verdict or length; a blank row is not saved.
                 testedLengths: keptLengths(draft.pt.testedLengths).kept.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict as PTVerdict })),
                 notes: draft.pt.notes || undefined,
@@ -1178,6 +1182,22 @@ function SetupStep({
               />
             </div>
           </Field>
+          <div className="mt-3">
+            <Field label="Connector coil number *" hint="Required. Remembered from the previous sample of this session; change it when a new connector coil goes on.">
+              <div className="relative">
+                <Cable className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+                <Input
+                  value={draft.pt?.connectorCoilNumber ?? ''}
+                  onChange={(e) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), connectorCoilNumber: e.target.value } }))}
+                  className="min-h-[48px] pl-9"
+                  placeholder="e.g. C10021"
+                  autoCapitalize="characters"
+                  required
+                  aria-required="true"
+                />
+              </div>
+            </Field>
+          </div>
         </div>
       )}
 
@@ -1976,6 +1996,7 @@ function draftFromSample(detail: SampleDetail, sessionId: string, workCenterCode
         ? {
             consumableLots: pt?.consumableLots ?? {},
             weldingWireBatch: pt?.weldingWireBatch ?? '',
+            connectorCoilNumber: pt?.connectorCoilNumber ?? '',
             testedLengths: (pt?.testedLengths ?? []).map((l) => ({ key: uid('tl'), lengthMm: String(l.lengthMm), verdict: l.verdict })),
             notes: pt?.notes ?? '',
             imageIds: pt?.imageIds ?? [],
@@ -1994,7 +2015,7 @@ function draftFromSample(detail: SampleDetail, sessionId: string, workCenterCode
 }
 
 function emptyPT(): DraftPT {
-  return { consumableLots: {}, weldingWireBatch: '', testedLengths: [], imageIds: [] }
+  return { consumableLots: {}, weldingWireBatch: '', connectorCoilNumber: '', testedLengths: [], imageIds: [] }
 }
 
 function PaintStep({
@@ -2462,6 +2483,7 @@ function ReviewStep({
           <Row label="Item" value={order.item} />
           {draft.process !== 'paint' && <Row label="Drawing" value={draft.drawing || '—'} />}
           {draft.process === 'welding' && <Row label="Welding wire" value={draft.pt?.weldingWireBatch?.trim() || '—'} />}
+          {draft.process === 'welding' && <Row label="Connector coil number" value={draft.pt?.connectorCoilNumber?.trim() || '—'} />}
           <Row label="Sample qty" value={draft.sampleQty || '—'} />
         </dl>
       </Section>

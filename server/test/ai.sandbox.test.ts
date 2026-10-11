@@ -44,7 +44,7 @@ describe('§20 the reader roles', () => {
       `SELECT rolname, rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolinherit, rolconnlimit, rolconfig FROM pg_roles WHERE rolname LIKE $1 ORDER BY rolname`,
       [`${database}\\_ai\\_r\\_%`],
     )
-    // Five bits, one per domain, every combination but none: the four-bit roles of the four-domain days (0039) are gone.
+    // Five bits, one per domain, every combination but none: the four-bit roles of the four-domain days (0041) are gone.
     expect(AI_DOMAIN_COMBINATIONS).toHaveLength(31)
     expect(rows.map((r) => r.rolname.slice(`${database}_ai_r_`.length))).toEqual([...AI_DOMAIN_COMBINATIONS])
     expect(rows.map((r) => r.rolname)).toEqual(expect.arrayContaining([`${database}_ai_r_00001`, `${database}_ai_r_10101`, `${database}_ai_r_11111`]))
