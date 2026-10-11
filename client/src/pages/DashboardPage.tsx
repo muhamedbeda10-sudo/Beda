@@ -265,7 +265,7 @@ function KpiTile({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           {/* The whole name, on up to three lines on a phone: "First part released" and "First pass released" cut short look alike. */}
-          <p className="line-clamp-3 break-words text-[11px] font-semibold uppercase leading-tight tracking-wide text-muted sm:line-clamp-2">{label}</p>
+          <p className="line-clamp-3 break-words text-[11px] font-semibold uppercase leading-tight tracking-wide text-muted lg:line-clamp-2">{label}</p>
           {period && <p className="truncate text-[11px] text-muted">{period}</p>}
         </div>
         <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg max-[419px]:hidden', tone === 'neutral' ? 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300' : tone === 'green' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : tone === 'amber' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400')}>
@@ -457,8 +457,9 @@ function Table<T>({
             <tr key={rowKey(r)} onClick={onRowClick && (() => onRowClick(r))} className={cn('transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40', onRowClick && 'cursor-pointer')}>
               {columns.map((c, i) => (
                 // A figure on one line; a word column wide enough to read without breaking every word onto its own line — the
-                // first (sticky, so what a row is about stays in view) a little narrower, to leave a phone room for the figures beside it.
-                <td key={c.key} className={cn('px-2 py-1.5 align-top', c.className, c.className?.includes('text-right') ? 'whitespace-nowrap' : i === 0 ? 'min-w-[8rem]' : 'min-w-[10rem]')}>
+                // first (sticky, so what a row is about stays in view) a little narrower on a phone, to leave room for the figures beside it,
+                // and wider from a tablet, so a long machine or item name keeps to two lines or so.
+                <td key={c.key} className={cn('px-2 py-1.5 align-top', c.className, c.className?.includes('text-right') ? 'whitespace-nowrap' : i === 0 ? 'min-w-[8rem] md:min-w-[14rem] lg:min-w-[16rem]' : 'min-w-[10rem]')}>
                   {c.render(r)}
                 </td>
               ))}
@@ -569,7 +570,7 @@ function PlainTile({ label, value, sub, icon, tone = 'neutral', control, onOpen 
     <Card className={cn('min-w-0 p-4 ring-1', TONE_RING[tone], onOpen && 'cursor-pointer transition-shadow hover:shadow-hover')} {...opens}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="line-clamp-3 break-words text-[11px] font-semibold uppercase leading-tight tracking-wide text-muted sm:line-clamp-2">{label}</p>
+          <p className="line-clamp-3 break-words text-[11px] font-semibold uppercase leading-tight tracking-wide text-muted lg:line-clamp-2">{label}</p>
           {period && <p className="truncate text-[11px] text-muted">{period}</p>}
           {control && <div className="print-hidden mt-1">{control}</div>}
         </div>
@@ -929,8 +930,9 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
                       <span className="min-w-0 flex-1">
                         <span className="line-clamp-2 break-words text-sm font-medium leading-snug text-slate-700 dark:text-slate-200">
                           <bdi>{m.label}</bdi>
-                          <span className="ml-1.5 text-xs font-normal text-muted">{kind === 'process' ? m.factory : PROCESS_LABEL[m.process]}</span>
                         </span>
+                        {/* The tag on a line of its own, so a two-line name never cuts it short. */}
+                        <span className="block text-xs font-normal text-muted">{kind === 'process' ? m.factory : PROCESS_LABEL[m.process]}</span>
                         <span className="mt-1 flex items-center gap-2">
                           <span className="shrink-0 text-xs tabular-nums text-muted"><span className={cn('font-semibold', TONE_TEXT[tone])}>{pctStr(m.defectRatePct)}</span> · {ppmStr(m.defectRatePct)} PPM</span>
                           <span className="block h-1.5 min-w-[2rem] flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><span className={cn('block h-full rounded-full', tone === 'red' ? 'bg-rose-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-slate-300')} style={{ width: `${Math.min(100, ((m.defectRatePct ?? 0) / maxRate) * 100)}%` }} /></span>
@@ -2464,7 +2466,7 @@ export function DashboardPage() {
   // The details' seven filters: in their card from 640 px, in a sheet on a phone. One a line in the sheet, so each
   // says what it holds in full; two from 440 px, then three, then all seven.
   const filterFields = (
-    <div className="grid grid-cols-1 gap-3 min-[440px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-7">
+    <div className="grid grid-cols-1 gap-3 min-[440px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
       <Field label="Compare with">
         <Select value={f.compare} onChange={(e) => patch({ compare: e.target.value as ComparePreset })}>
           {COMPARE_PRESETS.map((p) => (

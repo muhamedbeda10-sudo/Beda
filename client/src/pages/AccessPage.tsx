@@ -25,14 +25,15 @@ import { sessionDetailPath } from '@/lib/links'
 /**
  * The sheet's columns. A screen narrower than 1180 px starts with the lean set — the order, the item, its ERP status,
  * what remains to produce, the customer and the order's date — so a tablet held upright sees Remaining without
- * scrolling; the Columns button adds the rest.
+ * scrolling; the Columns button adds the rest. From 1180 px (an iPad Air on its side) the everyday set fits the frame
+ * up to Remaining.
  */
 const ACCESS_COLUMNS: ColumnDef[] = [
   { key: 'orderNumber', label: 'Order', width: 150, min: 90, lean: true },
   { key: 'lineKey', label: 'Line key', width: 110, min: 70, defaultHidden: true },
-  { key: 'item', label: 'Item', width: 220, min: 100, flex: true, lean: true },
-  { key: 'itemCode', label: 'Item code', width: 130, min: 80 },
-  { key: 'machine', label: 'Machine', width: 160, min: 80 },
+  { key: 'item', label: 'Item', width: 200, min: 100, flex: true, lean: true },
+  { key: 'itemCode', label: 'Item code', width: 120, min: 80 },
+  { key: 'machine', label: 'Machine', width: 150, min: 80 },
   { key: 'factory', label: 'Factory', width: 110, min: 80, defaultHidden: true },
   { key: 'erpStatus', label: 'ERP status', width: 100, min: 80, lean: true },
   { key: 'requiredQty', label: 'Required', width: 124, min: 96, align: 'right' },

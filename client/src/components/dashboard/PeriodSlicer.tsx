@@ -19,6 +19,7 @@ import type { KpiRange } from '@qc/shared/kpi'
 import { addDays, fromDay, toDay, PERIOD_PRESETS, presetRange, type PeriodPreset } from './period'
 import { cn } from '@/lib/utils'
 import { usePersistedState } from '@/lib/usePersistedState'
+import { useCoarsePointer } from '@/lib/media'
 
 /** Width of one day on the strip: what fits the strip's width, within these bounds. */
 const MAX_DAY_PX = 10
@@ -57,6 +58,8 @@ export function PeriodSlicer({
   trailing?: ReactNode
 }) {
   const [timelineOpen, setTimelineOpen] = usePersistedState<boolean>('qc-dash:timeline-open', false)
+  // Under a finger the hint is printed under the strip; a tooltip would only pop up over the toolbar as it opens.
+  const coarse = useCoarsePointer()
   const today = toDay(new Date())
   // The strip runs from the first day of the record to today, never shorter
   // than a month. A period that begins before any record (This year, the
@@ -255,7 +258,7 @@ export function PeriodSlicer({
             ref={setScroller}
             className="relative overflow-x-auto overscroll-x-contain rounded-lg bg-white ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
             style={{ touchAction: 'pan-x' }}
-            data-tip="Drag a handle to move one end, drag the band to move the whole period. Up to 366 days."
+            data-tip={coarse ? undefined : 'Drag a handle to move one end, drag the band to move the whole period. Up to 366 days.'}
           >
             <div className="relative h-10 select-none touch:h-14" style={{ width: spanDays * dayPx + 2 * EDGE }} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
               {/* Months */}

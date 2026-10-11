@@ -161,7 +161,8 @@ function CheckRow({ on, onClick, children, count }: { on: boolean; onClick: () =
   return (
     <button type="button" role="menuitemcheckbox" aria-checked={on} onClick={onClick} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800 touch:min-h-[44px]">
       <span className={cn('grid h-4 w-4 shrink-0 place-items-center rounded border', on ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 dark:border-slate-600')}>{on && <Check className="h-3 w-3" />}</span>
-      <span className="min-w-0 flex-1 truncate" dir="auto">{children}</span>
+      {/* One line with a mouse; under a finger (the menu is a sheet there) a long machine name wraps to two instead of being cut. */}
+      <span className="min-w-0 flex-1 truncate touch:line-clamp-2 touch:whitespace-normal touch:break-words touch:leading-snug" dir="auto">{children}</span>
       {count !== undefined && <span className="shrink-0 text-xs tabular-nums text-muted">{count}</span>}
     </button>
   )
