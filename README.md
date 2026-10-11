@@ -179,14 +179,14 @@ The owner gives the assistant to people one by one (`ai_access`): the data
 domains each may ask about, the model and effort, and a personal monthly cap.
 
 The assistant reads the record only through the views in schema `ai`, and the
-database enforces the domains: migrations 0033 and 0040 create one role
+database enforces the domains: migrations 0033 and 0041 create one role
 without LOGIN per domain (`<database>_ai_base`, `_ai_inspection`,
 `_ai_orders`, `_ai_materials`, `_ai_audit`, `_ai_production` — the last for
 the ERP's production task record, `ai.production_task_records`, the child of
 the order sheet joined on `line_key`), each holding exactly its views, and
 every start creates one LOGIN role per combination of domains
 (`<database>_ai_r_10100` and so on, one bit per domain in that order,
-thirty-one in all; 0040 retired the fifteen four-bit ones), a member of the
+thirty-one in all; 0041 retired the fifteen four-bit ones), a member of the
 base and of its domains only, with a password derived from `JWT_SECRET` and
 the role's name. A question runs as the
 asker's combination; every query runs read-only and is rolled back. The

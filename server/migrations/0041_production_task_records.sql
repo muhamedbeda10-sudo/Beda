@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0040 — the ERP's production task record (§24): the production written
+-- 0041 — the ERP's production task record (§24): the production written
 -- against the order sheet, and the assistant's fifth data domain.
 --   • production_task_records — one row per DAY'S WORK (a shift, or a stage)
 --     on one ORDER LINE, as the ERP's "Production Task Record" exports it; a
