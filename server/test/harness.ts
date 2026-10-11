@@ -140,14 +140,15 @@ export class TestApp {
 }
 
 /**
- * The factory's calendar day, whole days away from today. The API counts days
- * in the factory's time zone (Africa/Cairo unless FACTORY_TIMEZONE says
- * otherwise), so a test naming "today" must name the same day: the UTC date
- * is a day behind it every evening.
+ * The factory's calendar day, whole days away from today — or from the day an
+ * instant falls on, when `at` is given. The API counts days in the factory's
+ * time zone (Africa/Cairo unless FACTORY_TIMEZONE says otherwise; `zone`
+ * names it outright), so a test naming "today" must name the same day: the
+ * UTC date is a day behind it every evening.
  */
-export function factoryDay(offsetDays = 0): string {
-  const zone = process.env.FACTORY_TIMEZONE || 'Africa/Cairo'
-  const local = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+export function factoryDay(offsetDays = 0, options: { at?: Date; zone?: string } = {}): string {
+  const zone = options.zone ?? (process.env.FACTORY_TIMEZONE || 'Africa/Cairo')
+  const local = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(options.at ?? new Date())
   const d = new Date(`${local}T00:00:00Z`)
   d.setUTCDate(d.getUTCDate() + offsetDays)
   return d.toISOString().slice(0, 10)

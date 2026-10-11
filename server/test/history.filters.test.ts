@@ -10,6 +10,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import type { HistoryOptionsResponse, HistoryResponse } from '@qc/shared/api'
 import type { ProductionOrder } from '@qc/shared/types'
+import { factoryDayStart } from '../src/automations/schedule'
 import { TestApp, type Session, factoryDay } from './harness'
 
 const app = new TestApp()
@@ -26,11 +27,41 @@ const PAGE = 5
  *  other order, other inspector, other factory. */
 let buried: string
 
+/**
+ * The instant the record is laid out against: the buried session an hour
+ * before it, the recent ones a minute apart after that. The tests read the
+ * record by factory day, so the hour must sit on one factory day — which
+ * "an hour before now" does not in the first hour after midnight. The anchor
+ * is therefore noon: today's in the factory's zone once it has passed, else
+ * yesterday's. Whatever the hour the suite runs at, the record lies in the
+ * hour before that noon, on one day and a safe distance from any clock
+ * change (it is later moved whole days).
+ */
+let anchor: Date
+/** The factory's zone: the one the API counts days in, read from the app itself. */
+let zone: string
+/** A `since` cutting the record in two: after the buried session started, before any recent one. */
+const midRecord = () => new Date(anchor.getTime() - 30 * 60_000).toISOString()
+/** The factory's day, counted from the record's anchor rather than from now. */
+const day = (offset: number) => factoryDay(offset, { at: anchor, zone })
+
 const get = (path: string, token: string) => app.api<HistoryResponse>('GET', `/api/sessions/history?limit=${PAGE}&${path}`, { token })
+
+/** Noon of the latest factory day whose noon has passed: see `anchor`. */
+function latestNoon(now: Date, timeZone: string): Date {
+  const HOUR = 60 * 60_000
+  const todayStart = factoryDayStart(now, timeZone)
+  const today = new Date(todayStart.getTime() + 12 * HOUR)
+  if (now >= today) return today
+  // The instant before today began is yesterday, whatever the clocks did.
+  return new Date(factoryDayStart(new Date(todayStart.getTime() - 1), timeZone).getTime() + 12 * HOUR)
+}
 
 beforeAll(async () => {
   await app.start()
   await app.resetDatabase()
+  zone = app.config.FACTORY_TIMEZONE
+  anchor = latestNoon(new Date(), zone)
   admin = await app.register('admin', 'Admin')
   one = await app.register('insp1', 'Hany Fathy')
   two = await app.register('insp2', 'Mostafa Zaki')
@@ -76,12 +107,12 @@ beforeAll(async () => {
   beam = orders.find((o) => o.orderNumber === '20552-Ph2.3-RHE')!
   panel = orders.find((o) => o.orderNumber === '19868-Ph2.2B-EHF')!
 
-  // The buried one first, an hour back; the recent ones a minute apart after it.
+  // The buried one first, an hour before the anchor; the recent ones a minute apart after it.
   buried = (await app.api<{ id: string }>('POST', '/api/sessions', { token: two.token, body: { orderId: panel.id, startQty: 0 } })).body.id
-  await app.db.query(`UPDATE inspection_sessions SET started_at = now() - interval '60 minutes' WHERE id = $1`, [buried])
+  await app.db.query(`UPDATE inspection_sessions SET started_at = $2::timestamptz - interval '60 minutes' WHERE id = $1`, [buried, anchor])
   for (let i = 0; i < RECENT; i++) {
     const made = await app.api<{ id: string }>('POST', '/api/sessions', { token: one.token, body: { orderId: beam.id, startQty: i } })
-    await app.db.query(`UPDATE inspection_sessions SET started_at = now() - make_interval(mins => $2) WHERE id = $1`, [made.body.id, RECENT - i])
+    await app.db.query(`UPDATE inspection_sessions SET started_at = $2::timestamptz - make_interval(mins => $3) WHERE id = $1`, [made.body.id, anchor, RECENT - i])
   }
   // One closed session, so the status filter has something to find. Closing
   // through the API needs a recorded sample; the filter under test is a read.
@@ -139,8 +170,7 @@ describe('§6 — a filter reaches past the first page', () => {
     expect(closed.body.totals).toEqual({ sessions: 1, open: 0 })
     expect(closed.body.sessions[0].seq).toBe(2)
 
-    const since = new Date(Date.now() - 30 * 60_000).toISOString()
-    const recent = await get(`since=${encodeURIComponent(since)}`, one.token)
+    const recent = await get(`since=${encodeURIComponent(midRecord())}`, one.token)
     expect(recent.body.totals!.sessions).toBe(RECENT)
     expect(recent.body.sessions.map((s) => s.id)).not.toContain(buried)
   })
@@ -194,9 +224,9 @@ describe('§6 — a filter reaches past the first page', () => {
   })
 
   it('lands on a session sampled in the period even when it started before it', async () => {
-    const since = new Date(Date.now() - 30 * 60_000).toISOString()
+    const since = midRecord()
     expect((await get(`since=${encodeURIComponent(since)}`, one.token)).body.sessions.map((s) => s.id)).not.toContain(buried)
-    // A sample recorded now on the hour-old session: the dashboard counts it today, so History shows the session today.
+    // A sample recorded now on the session that started before the period: the dashboard counts the sample in the period, so History shows the session in it.
     await app.db.query(
       `INSERT INTO inspection_samples (session_id, order_id, index, shift, inspector_id, inspector_name, drawing, sample_qty, submission_id)
        VALUES ($1, $2, 1, 'A', $3, $4, 'D-2', 5, gen_random_uuid())`,
@@ -204,24 +234,21 @@ describe('§6 — a filter reaches past the first page', () => {
     )
     const res = await get(`since=${encodeURIComponent(since)}`, one.token)
     expect(res.body.totals!.sessions).toBe(RECENT + 1)
-    // It started an hour ago, so it sorts behind the first page; narrowed to its inspector it is the match.
+    // It started before every recent one, so it sorts behind the first page; narrowed to its inspector it is the match.
     const theirs = await get(`since=${encodeURIComponent(since)}&inspectorId=${two.user.id}`, one.token)
     expect(theirs.body.sessions.map((s) => s.id)).toEqual([buried])
   })
 
   it('finds the sessions of one day, or of a range of days', async () => {
-    const day = (offset: number) => {
-      return factoryDay(offset)
-    }
-    // Everything here was started today (some an hour ago), so today alone holds the whole record...
-    const today = await get(`from=${day(0)}&to=${day(0)}`, one.token)
-    expect(today.status).toBe(200)
-    expect(today.body.totals!.sessions).toBe(RECENT + 1)
-    // ...a window ending yesterday holds nothing, and a window from yesterday on holds all.
+    // The whole record was started on the anchor's day (the buried session an hour before the rest), so that day alone holds it all...
+    const thatDay = await get(`from=${day(0)}&to=${day(0)}`, one.token)
+    expect(thatDay.status).toBe(200)
+    expect(thatDay.body.totals!.sessions).toBe(RECENT + 1)
+    // ...a window ending the day before holds nothing, and a window from the day before on holds all.
     expect((await get(`from=${day(-30)}&to=${day(-1)}`, one.token)).body.totals!.sessions).toBe(0)
     expect((await get(`from=${day(-1)}`, one.token)).body.totals!.sessions).toBe(RECENT + 1)
     expect((await get(`to=${day(-1)}`, one.token)).body.totals!.sessions).toBe(0)
-    // Pushed back to a day last week, the buried session leaves today and is found on its own day.
+    // Pushed back to a day last week, the buried session leaves that day and is found on its own day.
     await app.db.query(`UPDATE inspection_sessions SET started_at = started_at - interval '7 days' WHERE id = $1`, [buried])
     await app.db.query(`UPDATE inspection_samples SET created_at = created_at - interval '7 days' WHERE session_id = $1`, [buried])
     expect((await get(`from=${day(0)}&to=${day(0)}`, one.token)).body.totals!.sessions).toBe(RECENT)
