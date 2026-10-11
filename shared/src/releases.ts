@@ -28,6 +28,18 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-11.3',
+    date: '2026-10-11',
+    title: 'Better on phones and tablets',
+    items: [
+      { text: 'Every page was checked on phones and tablets, upright and on their side: nothing scrolls sideways any more, buttons and links are big enough for a finger, tables keep the row\'s name in view while the figures scroll, and menus open as sheets from the bottom on a phone.' },
+      { text: 'Tooltips open with a long press on a touch screen; typing in a box no longer zooms the page on an iPhone.' },
+      { text: 'Inspection: when a welding sample cannot be saved because the connector coil number is missing, the Setup step opens with that box highlighted, and the setup summary on the later steps shows the number.' },
+      { text: 'Coil search: each "Used in" entry now opens that sample in History.' },
+      { text: 'History on a tablet shows the defect pieces and the final quantity right after the status.' },
+    ],
+  },
+  {
     id: '2026-10-11.2',
     date: '2026-10-11',
     title: 'Connector coil number, watch hours, and Arabic chat messages',
