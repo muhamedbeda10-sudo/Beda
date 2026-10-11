@@ -5,6 +5,7 @@
 
 import { type ImportTarget } from '@/services/mutations'
 import { ORDER_IMPORT_FIELDS, deriveOrderValues, gradeFromMaterial, normaliseHeader } from '@qc/shared/orderImport'
+import { PRODUCTION_RECORD_FIELDS, PRODUCTION_RECORD_KEYS } from '@qc/shared/productionImport'
 
 export { gradeFromMaterial, normaliseHeader }
 
@@ -36,6 +37,11 @@ export interface Importer {
   /** Fills in fields the sheet does not carry as columns but implies — run on
    *  each row after its mapped cells are read and before it is validated. */
   derive?: (values: Record<string, CellValue>) => Record<string, CellValue>
+  /** The header the CSV template writes for a field instead of its key: the
+   *  ERP's own column name, so the template reads like the export it stands
+   *  in for. A field left out keeps its key. Every one must map back to its
+   *  field through the aliases, or the template would not import itself. */
+  templateHeaders?: Readonly<Record<string, string>>
 }
 
 /** Rows sent per request. The API merges each batch in one transaction. */
@@ -144,4 +150,64 @@ export const DEFECTS_IMPORTER: Importer = {
     { key: 'workCenterCode', label: 'Machine code', kind: 'text', aliases: ['machine', 'machine code', 'work center', 'work centre', 'wc'], sample: '58' },
     { key: 'defectName', label: 'Defect name', kind: 'text', aliases: ['defect', 'name'], sample: 'عيب لحام' },
   ],
+}
+
+/**
+ * §24 — the ERP's production task record, column for column as its export
+ * writes them ("Production Task Record" in Access). The template carries
+ * these names so it reads like the export; each one maps back to its field
+ * through the shared aliases. "Productivity" is not here: the ERP writes 0 on
+ * every row, so it is never read.
+ */
+export const PRODUCTION_RECORD_TEMPLATE_HEADERS: Readonly<Record<string, string>> = {
+  lineKey: 'ID',
+  erpRecordId: 'Record ID',
+  week: 'Pivot',
+  orderNumber: 'Order',
+  item: 'Item',
+  colour: 'Color',
+  producedQty: 'Qty',
+  worker1: 'Worker1',
+  worker2: 'Worker2',
+  worker3: 'Worker3',
+  worker4: 'Worker4',
+  dayNo: 'DayNo',
+  workDay: 'Day',
+  workCenterCode: 'Work Center',
+  durationHours: 'Duration',
+  stageNo: 'Stage (N)',
+  stageQty: 'Stage (Qty)',
+  remarks: 'Remarks',
+  lengthMm: 'L (mm)',
+  widthMm: 'W (mm)',
+  thicknessMm: 'T (mm)',
+  requiredQty: 'Req_Q',
+  actualHours: 'Actual Time',
+  plannedHours: 'Planned time',
+  shift: 'Shift Category',
+  resource: 'Resource',
+  weightKg: 'Weight (KG)',
+  producedWeightKg: 'Produced Weight (KG)',
+  producedLengthM: 'Produced Length (Meter)',
+}
+
+/**
+ * §24 — the production written against the order sheet. The order sheet is
+ * the master (one row per order line, keyed by its Order ID); this record is
+ * its child: the export's ID column is that same Order ID, once per working
+ * day the line was made on. An import only inserts and updates — the owner
+ * exports the whole table each time, so a row the file no longer carries is
+ * kept, never deleted.
+ */
+export const PRODUCTION_RECORDS_IMPORTER: Importer = {
+  id: 'production-records',
+  title: 'Production record',
+  description:
+    "The production written against the order sheet, from the ERP: one row per order line per working day — what the machine made, who stood at it, in which shift, with hours, weights and lengths. Rows are matched and updated on Order ID + Record ID; a row missing from the file is kept. The Order ID is the same column the Production orders import is matched on.",
+  target: 'production-records',
+  templateFile: 'production-record-template.csv',
+  businessKeys: [...PRODUCTION_RECORD_KEYS],
+  // The same fields and aliases the API reads, kept in one place.
+  fields: [...PRODUCTION_RECORD_FIELDS],
+  templateHeaders: PRODUCTION_RECORD_TEMPLATE_HEADERS,
 }

@@ -333,7 +333,8 @@ export function CsvImporter({ importer }: { importer: Importer }) {
   }
 
   function downloadTemplate() {
-    const head = importer.fields.map((f) => csvCell(f.key)).join(',')
+    // The ERP's own column names where the importer gives them (they map back through the aliases); otherwise the field keys.
+    const head = importer.fields.map((f) => csvCell(importer.templateHeaders?.[f.key] ?? f.key)).join(',')
     const sample = importer.fields.map((f) => csvCell(f.sample)).join(',')
     downloadText(importer.templateFile, `${head}\n${sample}\n`)
   }

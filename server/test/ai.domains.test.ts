@@ -42,6 +42,7 @@ const VIEWS: Record<string, 'base' | AiDomain> = {
   work_instructions: 'materials',
   audit_log: 'audit',
   users: 'audit',
+  production_task_records: 'production',
 }
 
 const readable = (view: string, domains: AiDomain[]) => VIEWS[view] === 'base' || domains.includes(VIEWS[view] as AiDomain)
@@ -69,7 +70,9 @@ describe('§20 the data domains', () => {
   })
 
   it('make each combination a member of the base and of its own domains only', async () => {
-    expect(AI_DOMAIN_COMBINATIONS).toHaveLength(15)
+    expect(AI_DOMAIN_COMBINATIONS).toHaveLength(31)
+    expect(AI_DOMAIN_COMBINATIONS[0]).toBe('00001')
+    expect(AI_DOMAIN_COMBINATIONS[30]).toBe('11111')
     for (const bits of AI_DOMAIN_COMBINATIONS) {
       const { rows } = await app.db.query<{ name: string }>(
         `SELECT g.rolname AS name FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid JOIN pg_roles r ON r.oid = m.member
@@ -117,7 +120,7 @@ describe('§20 the data domains', () => {
     const client = new pg.Client({ connectionString: readerConnectionString(app.config.DATABASE_URL, role, readerPassword(app.config.JWT_SECRET, role)) })
     await client.connect()
     try {
-      for (const target of [domainRole(database, 'orders'), domainRole(database, 'audit'), combinationRole(database, '1111'), 'qc']) {
+      for (const target of [domainRole(database, 'orders'), domainRole(database, 'production'), combinationRole(database, '11111'), 'qc']) {
         await expect(client.query(`SET ROLE ${pg.escapeIdentifier(target)}`), target).rejects.toThrow(/permission denied/)
       }
       // A role of its own domains it may become; it reads no more for it.
@@ -129,7 +132,7 @@ describe('§20 the data domains', () => {
   })
 
   it('bring a combination back in line at the next start, and refuse to start with one that can do more than read', async () => {
-    const role = combinationRole(database, '1000')
+    const role = combinationRole(database, '10000')
     // Someone gives it another domain behind the API's back: the next start takes it away.
     await app.db.query(`GRANT ${pg.escapeIdentifier(domainRole(database, 'audit'))} TO ${pg.escapeIdentifier(role)}`)
     expect(await app.aiReader.provision(app.db, app.config)).toBe(true)

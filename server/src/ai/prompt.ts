@@ -70,10 +70,16 @@ const DOMAIN_LINES: Record<AiDomain, string> = {
   orders: 'the order sheet ("Access") with its order lines and quantities, and pre-delivery inspections (PDI)',
   materials: 'the coil register, suppliers and master data: item dimensions, defect lists, PT products, work instructions',
   audit: 'the audit trail of changes and the list of accounts',
+  production: "the ERP's production task record: what each machine made per day, by whom and in which shift, with hours, weights and lengths",
 }
 
-/** Meanings that are easy to get wrong, each told only to someone who can read the views it concerns. */
-const MEANINGS: { domains: AiDomain[]; text: string }[] = [
+/**
+ * Meanings that are easy to get wrong, each told only to someone who can read
+ * the views it concerns: with any of its domains, or, when `all` is set, only
+ * with every one of them (a meaning that reconciles two domains' figures has
+ * no place in the prompt of someone who reads one of them alone).
+ */
+const MEANINGS: { domains: AiDomain[]; all?: boolean; text: string }[] = [
   {
     domains: ['inspection'],
     text: '- rejected_before_release (start_qty): pieces already rejected on the line before the first-part release inspection, typed when a session opens. first_part_clean: nothing was rejected before release.',
@@ -116,6 +122,31 @@ const MEANINGS: { domains: AiDomain[]; text: string }[] = [
     domains: ['inspection'],
     text: '- Machines with counts_on_dashboard = false are left out of the dashboard\'s figures (production, reject rate, first-pass yield); leave them out only when the question is about those figures. Asked about such a machine\'s own production, use ai.production_between(from, to, per, true). Counts and lists of sessions, samples, defects, holds or measurements - by machine, inspector, item or order - include every machine unless the question says otherwise.',
   },
+  {
+    domains: ['production'],
+    text: '- The production task record (ai.production_task_records) is the ERP\'s, not the inspection record\'s: a row is one day\'s work on one order line (line_key + day_no; two rows may share a work_day: another shift or stage - count days with count(DISTINCT work_day)), the child of the order sheet. It joins ai.order_lines on line_key when you can read both; the view already carries the line\'s item_code, customer and quantities when the line is known, and order_line_known says whether the sheet still has the line.',
+  },
+  {
+    domains: ['production'],
+    text: '- Production from the production task record (ai.production_task_records): sum produced_qty over any grouping (machine, work_day, work_month, worker, order). On a staged (universal) line the stage rows carry produced_qty 0 and the stage\'s pieces in stage_qty; the finished pieces are on its last row, so a period holding only its stage rows shows no finished production for it - say so rather than 0.',
+  },
+  {
+    domains: ['production'],
+    text: '- Per row (one day\'s work on the line): produced_qty, planned_hours, actual_hours, produced_weight_kg, produced_length_m - sum them over any grouping. Per TASK, repeated on every row of the line: required_qty, duration_hours (the task\'s planned hours) and weight_kg (the task\'s weight) - never sum them across days; take each once per line_key (max(required_qty) GROUP BY line_key, and the same for the other two). length_mm, width_mm, thickness_mm are the piece\'s dimensions. actual_hours NULL = not recorded (the ERP\'s placeholder): average or sum hours over the rows that have them.',
+  },
+  {
+    domains: ['production'],
+    text: '- Up to four workers per row (worker_1 to worker_4; workers is the list of those present: unnest it to count by person). week / week_no / week_year is the ERP\'s planning week of the task, the same on every row of the line, not the week the work was done: "this week" or "last week" means work_day (work_day >= date_trunc(\'week\', current_date)); production by week is date_trunc(\'week\', work_day), by month work_month.',
+  },
+  {
+    domains: ['production'],
+    text: '- The record is imported by hand from the ERP, so imported_at says how fresh a row is. Periods of the task record are work_day (work_day >= \'2026-09-01\' AND work_day < \'2026-10-01\'), never imported_at. Machine codes map to the register where known (machine, factory, process); where not, resource names the ERP\'s line.',
+  },
+  {
+    domains: ['inspection', 'production'],
+    all: true,
+    text: '- Two records of production exist: the inspection record\'s (closed inspection sessions: ai.production_between, the dashboard\'s figure) and the ERP\'s production task record (sum of produced_qty by work_day). They are written by different people at different moments and need not agree. Use the task record when the question is about the ERP, workers, shifts, hours, weights or what a machine made on a day; otherwise, and whenever "production" is asked without a source, use ai.production_between and say which record the figure comes from. Never add the two together.',
+  },
 ]
 
 /**
@@ -149,7 +180,7 @@ export function renderSystemPrompt(
 ): string {
   const granted = AI_DOMAIN_IDS.filter((d) => domains.includes(d))
   const has = (d: AiDomain) => granted.includes(d)
-  const meanings = MEANINGS.filter((m) => m.domains.some(has)).map((m) => m.text)
+  const meanings = MEANINGS.filter((m) => (m.all ? m.domains.every(has) : m.domains.some(has))).map((m) => m.text)
   const sections: string[] = []
   sections.push(`You are the data assistant inside LinkMisr's QC Inspection Recorder, the quality-control system of a factory that makes steel storage racking (roll forming, welding, painting, presses and other machines). The person asking works with the system; the assistant's owner has given them part of the factory's record to ask about.
 
