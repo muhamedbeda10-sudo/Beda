@@ -76,17 +76,8 @@ describe('§24 a device turns notifications on and off', () => {
     expect((await app.db.query(`SELECT 1 FROM push_subscriptions WHERE endpoint = $1`, [ep])).rowCount).toBe(1)
     expect((await app.api('DELETE', '/api/push/subscriptions', { token: sup.token, body: { endpoint: ep } })).status).toBe(204)
     expect((await app.db.query(`SELECT 1 FROM push_subscriptions WHERE endpoint = $1`, [ep])).rowCount).toBe(0)
-  })
-
-  it('sends a test to one’s own devices, and says so when there are none', async () => {
-    expect((await app.api<ApiErrorBody>('POST', '/api/push/test', { token: viewer.token })).status).toBe(400)
-    await new Promise((r) => setTimeout(r, 10))
-    const ep = endpoint('phone')
-    await subscribe(insp, ep)
-    const res = await app.api<{ sent: number }>('POST', '/api/push/test', { token: insp.token })
-    expect(res.body).toEqual({ sent: 1 })
-    expect(pushedTo(ep)).toEqual([expect.objectContaining({ kind: 'test', title: 'Notifications are on', url: '/' })])
-    expect((await app.api('POST', '/api/push/test', { token: insp.token })).status).toBe(429)
+    // There is no test push any more.
+    expect((await app.api('POST', '/api/push/test', { token: sup.token })).status).toBe(404)
   })
 })
 

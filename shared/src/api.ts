@@ -1293,8 +1293,8 @@ export interface PushUnsubscribeRequest {
 
 /** What a push carries, for the service worker to show. */
 export interface PushPayload {
-  /** What it is about: an alert, a chat message, a notice, or a test from the account panel. */
-  kind: 'alert' | 'chat' | 'notice' | 'test'
+  /** What it is about: an alert, a chat message or a notice. */
+  kind: 'alert' | 'chat' | 'notice'
   title: string
   body: string
   /** A path in the app the notification opens. */
