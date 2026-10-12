@@ -1,17 +1,19 @@
 // ============================================================================
 // §24 — "Notifications on this device", in the account panel and the phone's
-// menu: turn them on (the browser asks first) or off, send a test, and the
-// app's own chime on or off. Says plainly why they cannot be turned on when
-// they cannot: blocked in the browser, a browser without them, or an iPhone
-// where the app must first be added to the Home Screen.
+// menu: whether they are on, turning them off (or on again: the browser asks
+// first), and the app's own chime on or off. The browser itself asks to allow
+// them at the first tap in the app (lib/push.ts); this is where they are
+// changed later. Says plainly why they cannot be on when they cannot: blocked
+// in the browser, a browser without them, or an iPhone where the app must
+// first be added to the Home Screen.
 // ============================================================================
 
 import { useCallback, useEffect, useState } from 'react'
-import { Bell, BellOff, Loader2, Send, Volume2, VolumeX } from 'lucide-react'
+import { Bell, BellOff, Loader2, Volume2, VolumeX } from 'lucide-react'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { chimeOn, playChime, setChimeOn } from '@/lib/chime'
-import { disablePush, enablePush, pushState, sendTestPush, type PushState } from '@/lib/push'
+import { PUSH_CHANGED_EVENT, disablePush, enablePush, pushState, type PushState } from '@/lib/push'
 import { cn } from '@/lib/utils'
 
 const WHY_NOT: Partial<Record<PushState, string>> = {
@@ -28,7 +30,7 @@ export function NotificationSettings() {
   const { toast } = useApp()
   const userId = profile?.id ?? ''
   const [state, setState] = useState<PushState | null>(null)
-  const [busy, setBusy] = useState<'on' | 'off' | 'test' | null>(null)
+  const [busy, setBusy] = useState<'on' | 'off' | null>(null)
   const [sound, setSound] = useState(chimeOn())
 
   const refresh = useCallback(async () => {
@@ -36,9 +38,13 @@ export function NotificationSettings() {
   }, [userId])
   useEffect(() => {
     void refresh()
+    // The browser's question answered at a tap elsewhere, or turned off on another screen: this follows.
+    const follow = () => void refresh()
+    window.addEventListener(PUSH_CHANGED_EVENT, follow)
+    return () => window.removeEventListener(PUSH_CHANGED_EVENT, follow)
   }, [refresh])
 
-  const act = async (what: 'on' | 'off' | 'test', fn: () => Promise<void>) => {
+  const act = async (what: 'on' | 'off', fn: () => Promise<void>) => {
     setBusy(what)
     try {
       await fn()
@@ -70,28 +76,18 @@ export function NotificationSettings() {
               ? 'On: alerts, chat messages and notices reach this device with its sound, even with the app closed.'
               : 'Get alerts, chat messages and notices here with a sound, even with the app closed.'}
           </p>
-          <div className="grid grid-cols-2 gap-1">
-            {on ? (
-              <>
-                <button type="button" className={cn(ROW, 'bg-white text-slate-800 shadow-sm dark:bg-slate-950 dark:text-slate-100')} disabled={busy !== null} onClick={() => void act('test', async () => {
-                  await sendTestPush()
-                  toast('A test notification is on its way.', 'success')
-                })}>
-                  {busy === 'test' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Send a test
-                </button>
-                <button type="button" className={cn(ROW, 'text-muted hover:text-rose-600')} disabled={busy !== null} onClick={() => void act('off', () => disablePush(userId))}>
-                  {busy === 'off' ? <Loader2 className="h-4 w-4 animate-spin" /> : <BellOff className="h-4 w-4" />} Turn off
-                </button>
-              </>
-            ) : (
-              <button type="button" className={cn(ROW, 'col-span-2 bg-brand-600 text-white hover:bg-brand-700')} disabled={busy !== null} onClick={() => void act('on', async () => {
-                await enablePush(userId)
-                toast('Notifications are on for this device.', 'success')
-              })}>
-                {busy === 'on' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bell className="h-4 w-4" />} Turn on notifications
-              </button>
-            )}
-          </div>
+          {on ? (
+            <button type="button" className={cn(ROW, 'bg-white text-muted shadow-sm hover:text-rose-600 dark:bg-slate-950')} disabled={busy !== null} onClick={() => void act('off', () => disablePush(userId))}>
+              {busy === 'off' ? <Loader2 className="h-4 w-4 animate-spin" /> : <BellOff className="h-4 w-4" />} Turn off
+            </button>
+          ) : (
+            <button type="button" className={cn(ROW, 'bg-brand-600 text-white hover:bg-brand-700')} disabled={busy !== null} onClick={() => void act('on', async () => {
+              await enablePush(userId)
+              toast('Notifications are on for this device.', 'success')
+            })}>
+              {busy === 'on' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bell className="h-4 w-4" />} Turn on notifications
+            </button>
+          )}
         </>
       )}
       <button

@@ -28,13 +28,23 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-12.2',
+    date: '2026-10-12',
+    title: 'Notifications: the browser asks for you',
+    items: [
+      { text: 'No need to look for the setting: the first time you tap anywhere in the app, the browser asks whether to allow notifications. Choose Allow, and alerts, chat messages and notices reach this device with its sound, even with the app closed. Signing in again later turns them on by itself.' },
+      { text: 'Closed the question without answering? It is asked again the next time the app opens. To stop them on a device, tap your photo, then "Turn off".' },
+      { text: 'The "Send a test" button is gone.' },
+    ],
+  },
+  {
     id: '2026-10-12.1',
     date: '2026-10-12',
     title: 'Notifications with sound, even with the app closed',
     items: [
       { text: 'Turn on notifications for your phone, tablet or computer: tap your photo at the top right (on a phone, the menu), then "Turn on notifications" and allow them. Alerts from the bell, chat messages sent to you and notices for you then arrive with the device’s sound, even when the app or the browser is closed. Tap one to open what it is about.' },
       { text: 'iPhone and iPad: add the app to the Home Screen first (Share, then "Add to Home Screen"), open it from there, then turn notifications on.' },
-      { text: 'While the app is open in front of you, a short chime plays instead; "Sound while the app is open" turns it off on that device. "Send a test" checks that a device gets them.' },
+      { text: 'While the app is open in front of you, a short chime plays instead; "Sound while the app is open" turns it off on that device.' },
       { text: 'Signing out turns notifications off on that device, so a shared tablet never shows the last person’s messages; they come back when the same person signs in again.' },
     ],
   },

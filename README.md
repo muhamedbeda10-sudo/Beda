@@ -194,8 +194,10 @@ assistant's own records are the `ai_*` tables (conversations, usage for the
 caps, the encrypted API key, the owner and the access list), which no reader
 role can read.
 
-**Push notifications.** Each person can turn on notifications for a device
-(the account panel, or the phone's menu). The device subscribes with the
+**Push notifications.** At the first tap in the app the browser asks to
+allow notifications (browsers ask only after a tap); once allowed, the device
+is subscribed at every sign-in, until the person turns it off in the account
+panel (or the phone's menu). The device subscribes with the
 server's VAPID key (made once and kept in `app_settings`, unless
 `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` are set) and is stored in
 `push_subscriptions`. Triggers queue every new bell alert and chat message in

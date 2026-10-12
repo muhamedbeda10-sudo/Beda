@@ -87,7 +87,6 @@ export class TestApp {
       aiReader: this.aiReader,
       aiLimiter: this.aiLimiter,
       aiReportLimiter: this.aiReportLimiter,
-      pushSender: this.pushSender,
     })
     await new Promise<void>((resolve) => {
       this.server = app.listen(0, '127.0.0.1', () => resolve())
