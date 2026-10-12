@@ -89,6 +89,20 @@ const schema = z
      * Switched off, automations stay as they are and wait.
      */
     AUTOMATIONS_ENABLED: bool.default(true),
+    /**
+     * §24 — push notifications to phones and computers, with the app closed.
+     * On by default. The VAPID keys are made and kept in the database unless
+     * set here (both, base64url); VAPID_SUBJECT is how a push service may
+     * reach whoever runs the app (mailto: or https:).
+     */
+    PUSH_ENABLED: bool.default(true),
+    VAPID_PUBLIC_KEY: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+    VAPID_PRIVATE_KEY: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+    VAPID_SUBJECT: z
+      .string()
+      .optional()
+      .transform((v) => (v && v.trim() ? v.trim() : undefined))
+      .refine((v) => v === undefined || /^(mailto:|https:\/\/)/.test(v), { message: 'Starts with mailto: or https://' }),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.IMAGE_STORAGE_DRIVER === 'azure-blob' && !cfg.AZURE_STORAGE_CONNECTION_STRING) {

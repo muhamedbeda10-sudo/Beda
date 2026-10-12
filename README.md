@@ -194,6 +194,19 @@ assistant's own records are the `ai_*` tables (conversations, usage for the
 caps, the encrypted API key, the owner and the access list), which no reader
 role can read.
 
+**Push notifications.** Each person can turn on notifications for a device
+(the account panel, or the phone's menu). The device subscribes with the
+server's VAPID key (made once and kept in `app_settings`, unless
+`VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` are set) and is stored in
+`push_subscriptions`. Triggers queue every new bell alert and chat message in
+`push_events`; an in-process dispatcher (`server/src/push/`) works out who is
+told, by the same rules the app shows them by, and pushes through the browser's
+push service, so they arrive with the device's sound even with the app closed.
+Notices aimed at everyone, roles or named people are pushed once, on their
+first day. Signing out removes the device's subscription. On iPhone and iPad
+the app must be added to the Home Screen first. `PUSH_ENABLED=false` turns it
+all off.
+
 **Automations.** The owner, and the people the owner allows
 (`ai_access.automations`), can ask the assistant in plain words to keep an eye
 on something or to send a report regularly. The assistant writes it as a

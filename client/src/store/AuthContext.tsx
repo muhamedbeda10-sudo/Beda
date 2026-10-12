@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import type { AuthConfigResponse, AuthResponse, LoginRequest, RegisterRequest } from '@qc/shared/api'
 import type { Role, UserProfile } from '@qc/shared/types'
 import { ApiError, api, hasSessionMarker, refreshAccessToken, setAccessToken, setSessionLostHandler } from '@/lib/api'
+import { disablePush } from '@/lib/push'
 
 interface AuthValue {
   /** False until the first refresh attempt has settled. */
@@ -106,6 +107,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const signOutUser = useCallback(async () => {
+    // §24 — this device stops getting this person's notifications (a shared tablet never shows them to the next one);
+    // their choice is kept, so it is on again when they sign back in here.
+    if (profile) await disablePush(profile.id, true).catch(() => {})
     try {
       await api<void>('/auth/logout', { method: 'POST', noRetry: true })
     } catch {
@@ -118,7 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       /* ignore */
     }
-  }, [clearSession])
+  }, [clearSession, profile])
 
   const reloadProfile = useCallback(async () => {
     const me = await api<UserProfile>('/auth/me')

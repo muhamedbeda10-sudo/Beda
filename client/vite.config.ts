@@ -59,6 +59,8 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         clientsClaim: true,
         skipWaiting: true,
+        // §24 — push notifications: shown with the app closed, and opening the app where they point (public/push-sw.js).
+        importScripts: ['/push-sw.js'],
       },
     }),
   ],

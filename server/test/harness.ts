@@ -10,7 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
-import type { AuthResponse } from '@qc/shared/api'
+import type { AuthResponse, PushPayload } from '@qc/shared/api'
 import { loadConfig, type Config } from '../src/config'
 import { createPool, type Db } from '../src/db/pool'
 import { migrate } from '../src/db/migrate'
@@ -20,6 +20,7 @@ import { RateLimiter } from '../src/lib/rateLimit'
 import type { AiModelClient } from '../src/ai/model'
 import { AiReader } from '../src/ai/reader'
 import { ScriptedModel } from './aiFake'
+import type { PushSender } from '../src/push/send'
 
 export interface ApiResponse<T = unknown> {
   status: number
@@ -49,6 +50,14 @@ export class TestApp {
   aiLimiter = new RateLimiter(30, 10 * 60_000)
   /** §20 — saved reports run or exported per person, as in production (60 per 10 minutes). */
   aiReportLimiter = new RateLimiter(60, 10 * 60_000)
+  /** §24 — the pushes the app sent, as a push service would have received them; an endpoint listed in `gone` answers 410. */
+  pushes: { endpoint: string; payload: PushPayload }[] = []
+  gonePushEndpoints = new Set<string>()
+  pushSender: PushSender = async (target, payload) => {
+    if (this.gonePushEndpoints.has(target.endpoint)) throw Object.assign(new Error('Gone'), { statusCode: 410 })
+    this.pushes.push({ endpoint: target.endpoint, payload: JSON.parse(payload) as PushPayload })
+    return { statusCode: 201 }
+  }
   private tmpDir!: string
 
   async start(overrides: Partial<NodeJS.ProcessEnv> = {}, options: { ai?: AiModelClient } = {}): Promise<this> {
@@ -78,6 +87,7 @@ export class TestApp {
       aiReader: this.aiReader,
       aiLimiter: this.aiLimiter,
       aiReportLimiter: this.aiReportLimiter,
+      pushSender: this.pushSender,
     })
     await new Promise<void>((resolve) => {
       this.server = app.listen(0, '127.0.0.1', () => resolve())

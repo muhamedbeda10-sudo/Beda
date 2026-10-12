@@ -17,6 +17,7 @@ import { AnthropicModelClient } from './ai/model'
 import { AiReader } from './ai/reader'
 import { aiOwner } from './ai/owner'
 import { AutomationEngine } from './automations/engine'
+import { PushDispatcher } from './push/dispatcher'
 
 function readVersion(): string {
   try {
@@ -94,6 +95,14 @@ if (automations) {
   console.log('[automations] engine started')
 }
 
+// §24 — pushes to the devices people turned notifications on for: on every
+// instance (each event is taken once). Never in tests, which drive it themselves.
+const push = config.PUSH_ENABLED && config.NODE_ENV !== 'test' ? new PushDispatcher({ db, config }) : null
+if (push) {
+  push.start()
+  console.log('[push] dispatcher started')
+}
+
 // App Service sends SIGTERM on restart/scale-in: stop accepting, finish
 // in-flight requests, then release the pools.
 function shutdown(signal: string) {
@@ -101,8 +110,9 @@ function shutdown(signal: string) {
   // The engine first, while requests drain: it takes nothing more, and the runs under
   // way are cut short and handed back at once, so another instance takes them.
   const engineStopped = automations?.stop() ?? Promise.resolve()
+  const pushStopped = push?.stop() ?? Promise.resolve()
   server.close(() => {
-    Promise.allSettled([engineStopped])
+    Promise.allSettled([engineStopped, pushStopped])
       .then(() => Promise.allSettled([db.end(), aiReader.end()]))
       .finally(() => process.exit(0))
   })

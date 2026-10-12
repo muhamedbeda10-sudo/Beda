@@ -1,8 +1,9 @@
 // ============================================================================
 // The account circle at the top right: the person's photo, or their initials
 // until they add one. Their name is not written beside it; a tap opens a small
-// panel with the name, the role, the photo to add, change or remove, and the
-// light or dark look of the app (on a phone, the same sits in the menu).
+// panel with the name, the role, the photo to add, change or remove, the
+// light or dark look of the app, and notifications on this device (on a
+// phone, the same sits in the menu).
 // ============================================================================
 
 import { useRef, useState } from 'react'
@@ -16,6 +17,7 @@ import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { cn } from '@/lib/utils'
 import { Avatar } from '@/components/ui/UserAvatar'
+import { NotificationSettings } from './NotificationSettings'
 
 /** Light or dark, chosen in the account panel and in the phone's menu; kept on this device. */
 export function ThemeSwitch() {
@@ -142,6 +144,7 @@ export function AccountMenu({ name, role, username }: { name: string; role: stri
           </div>
           <AvatarEditor name={name} />
           <ThemeSwitch />
+          <NotificationSettings />
         </div>
       </FloatingPanel>
     </>

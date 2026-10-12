@@ -23,6 +23,7 @@ import { useAiMe } from '@/services/queries'
 import { useAi } from '@/components/ai/AiAssistantProvider'
 import { can, type Capability } from '@qc/shared/rules'
 import { lazy, Suspense, type ReactElement } from 'react'
+import { usePushBridge } from '@/lib/push'
 
 // §20 — the assistant's settings are its owner's alone: fetched when first opened, in nobody else's bundle.
 const AiAssistantPage = lazy(() => import('@/pages/admin/AiAssistantPage').then((m) => ({ default: m.AiAssistantPage })))
@@ -94,6 +95,12 @@ function PageLoading() {
   )
 }
 
+/** §24 — pushes while the app is open: the chime and a refresh; a tapped notification opens its page. */
+function PushBridge({ userId }: { userId: string }) {
+  usePushBridge(userId)
+  return null
+}
+
 function Splash() {
   return (
     <div className="grid min-h-screen place-items-center bg-slate-100 dark:bg-slate-950">
@@ -113,6 +120,7 @@ export default function App() {
 
   return (
     <AppShell>
+      <PushBridge userId={profile.id} />
       <Routes>
         <Route path="/" element={<InspectionsPage />} />
         <Route path="/wizard/:sessionId" element={<Only cap="record-inspection"><WizardPage /></Only>} />
