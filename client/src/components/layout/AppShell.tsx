@@ -10,6 +10,7 @@ import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
 import { can } from '@qc/shared/rules'
 import { AccountMenu, AvatarEditor, ThemeSwitch } from '@/components/layout/AccountMenu'
+import { NotificationSettings } from '@/components/layout/NotificationSettings'
 import { ADMIN_NAV, NAV, TOOLS_NAV, visibleNav, type NavItem } from '@/components/layout/navItems'
 import { AiAssistantProvider, useAi } from '@/components/ai/AiAssistantProvider'
 import { AiButton } from '@/components/ai/AiButton'
@@ -340,6 +341,9 @@ function Shell({ children }: { children: ReactNode }) {
               </div>
               <div className="mt-3">
                 <ThemeSwitch />
+              </div>
+              <div className="mt-3">
+                <NotificationSettings />
               </div>
               <button
                 onClick={() => {

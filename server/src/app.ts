@@ -35,6 +35,7 @@ import { notificationsRoutes } from './modules/notifications.routes'
 import { followUpsRoutes } from './modules/followUps.routes'
 import { automationsRoutes } from './modules/automations.routes'
 import { productionRecordsRoutes } from './modules/productionRecords.routes'
+import { pushRoutes } from './modules/push.routes'
 
 export function createApp(ctx: AppContext): Express {
   const app = express()
@@ -102,6 +103,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/follow-ups', guard, followUpsRoutes(ctx))
   app.use('/api/automations', guard, automationsRoutes(ctx))
   app.use('/api/production-records', guard, productionRecordsRoutes(ctx))
+  app.use('/api/push', guard, pushRoutes(ctx))
 
   app.all('/api/{*rest}', (_req, res) => {
     const body: ApiErrorBody = { error: { code: 'not_found', message: 'No such endpoint.' } }

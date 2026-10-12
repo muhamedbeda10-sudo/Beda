@@ -1271,3 +1271,35 @@ export interface ColumnValuesResponse {
 /** The most distinct values one column's list sends at a time. */
 export const COLUMN_VALUES_LIMIT = 500
 
+
+// ---- Push notifications (§24) -------------------------------------------------
+
+/** Whether this server sends push notifications, and the key a device subscribes with. */
+export interface PushConfigResponse {
+  enabled: boolean
+  /** The VAPID public key, base64url; null when push is off. */
+  publicKey: string | null
+}
+
+/** A device's push subscription, as the browser gives it (PushSubscription.toJSON()). */
+export interface PushSubscribeRequest {
+  endpoint: string
+  keys: { p256dh: string; auth: string }
+}
+
+export interface PushUnsubscribeRequest {
+  endpoint: string
+}
+
+/** What a push carries, for the service worker to show. */
+export interface PushPayload {
+  /** What it is about: an alert, a chat message, a notice, or a test from the account panel. */
+  kind: 'alert' | 'chat' | 'notice' | 'test'
+  title: string
+  body: string
+  /** A path in the app the notification opens. */
+  url: string
+  /** Notifications with one tag replace each other (a conversation's messages, say). */
+  tag: string
+  severity: 'info' | 'warning' | 'critical'
+}
