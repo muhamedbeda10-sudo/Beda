@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-12.3',
+    date: '2026-10-12',
+    title: 'A tidier Automations page',
+    items: [
+      { text: 'Automations are listed in two parts, Watches and Scheduled reports, each with its count and what it does.' },
+      { text: 'Each one shows its name with a line on what it does; Arabic names line up with the rest. Its state is shown only when it is not simply on (paused, failed or blocked), and a failed last run says so in red.' },
+      { text: 'The columns sit evenly across the page; open follow-ups show as a badge, and the on/off switch is at the end of the row.' },
+    ],
+  },
+  {
     id: '2026-10-12.2',
     date: '2026-10-12',
     title: 'Notifications: the browser asks for you',
