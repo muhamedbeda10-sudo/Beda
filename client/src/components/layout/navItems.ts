@@ -4,7 +4,7 @@
 // the assistant. Automations (§21) open from the assistant's header, and
 // follow-ups (§21) from the bell, beside the notices: neither is a tab here.
 
-import { BellRing, ClipboardCheck, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
+import { ClipboardCheck, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
 import { can, type Capability } from '@qc/shared/rules'
 import type { Role } from '@qc/shared/types'
 
@@ -43,7 +43,6 @@ export const ADMIN_NAV: NavItem[] = [
   { to: '/admin/configuration', label: 'Configuration', icon: SlidersHorizontal, needs: 'manage-admin-data', hint: 'Machines, items, defects, grades' },
   { to: '/admin/import', label: 'Data import', icon: UploadCloud, needs: 'manage-admin-data', hint: 'Production orders and coils' },
   { to: '/admin/users', label: 'Users', icon: Users, needs: 'manage-admin-data', hint: 'Accounts and roles' },
-  { to: '/admin/notices', label: 'Notices', icon: BellRing, needs: 'manage-admin-data', hint: 'Targeted messages and who read them' },
   { to: '/admin/audit', label: 'Audit log', icon: ScrollText, needs: 'edit-closed-session', hint: 'Who changed what, and when' },
   { to: '/admin/whats-new', label: "What's new", icon: Sparkles, needs: 'manage-admin-data', hint: 'Every update, newest first' },
 ]

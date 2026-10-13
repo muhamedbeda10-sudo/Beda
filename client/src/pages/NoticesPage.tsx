@@ -2,11 +2,13 @@
 // §16 — the administrator's notices: write one, aim it, attach photos and
 // documents, see who has read it, withdraw it. Targets are alternatives
 // within a kind and combine across kinds; that rule is written on the form.
+// A page of its own at /notices, opened from the bell's Notices tab (for
+// those who may manage them), not from Administration.
 // ============================================================================
 
 import { useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { BellPlus, Check, ClipboardList, Eye, FileUp, Loader2, Pencil, Plus, Trash2, Undo2, Users, X } from 'lucide-react'
+import { BellPlus, Check, ClipboardList, Eye, FileUp, Loader2, Megaphone, Pencil, Plus, Trash2, Undo2, Users, X } from 'lucide-react'
 import type { SaveNoticeRequest } from '@qc/shared/api'
 import {
   NOTICE_TARGET_KINDS,
@@ -22,7 +24,6 @@ import {
   type NoticeMatchMode,
 } from '@qc/shared/types'
 import { can, normaliseMachineCode, shiftName } from '@qc/shared/rules'
-import { AdminLayout } from '@/components/admin/AdminLayout'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { NoticeCard, NoticeFileRow, SeverityBadge, TargetChips, validityText } from '@/components/notices/NoticeCard'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
@@ -637,16 +638,21 @@ export function NoticesPage() {
   )
 
   return (
-    <AdminLayout
-      title="Notices"
-      description="A notice reaches the people it is aimed at through the bell, and comes up before they start a session where it applies. Each reader sees it once; when it must be acknowledged, their name and the time are kept."
-      needs="manage-admin-data"
-      actions={
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+          <Megaphone className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-2xl font-extrabold tracking-tight">Notices</h1>
+          <p className="max-w-4xl text-13 text-muted">
+            A notice reaches the people it is aimed at through the bell, and comes up before they start a session where it applies. Each reader sees it once; when it must be acknowledged, their name and the time are kept.
+          </p>
+        </div>
         <Button variant="primary" className="min-h-[44px]" onClick={() => setForm({ id: null, draft: { ...EMPTY, validFrom: today() } })}>
           <BellPlus className="h-4 w-4" /> New notice
         </Button>
-      }
-    >
+      </div>
       <div className="space-y-4">
         {isLoading && <p className="text-sm text-muted">Loading…</p>}
         {!isLoading && notices.length === 0 && (
@@ -698,6 +704,6 @@ export function NoticesPage() {
           </p>
         </Modal>
       )}
-    </AdminLayout>
+    </div>
   )
 }

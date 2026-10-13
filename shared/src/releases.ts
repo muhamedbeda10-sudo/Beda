@@ -28,6 +28,14 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.100',
+    date: '2026-10-13',
+    title: 'Notices open from the bell',
+    items: [
+      { text: 'Notices are no longer under Administration. Whoever writes them opens the Notices page from the bell: the Notices tab has "Open the Notices page" under the list. The page is the same: write a notice, change it, withdraw it, see who read it.' },
+    ],
+  },
+  {
     id: '2026-10-13.99',
     date: '2026-10-13',
     title: 'Administration pages, tidied',

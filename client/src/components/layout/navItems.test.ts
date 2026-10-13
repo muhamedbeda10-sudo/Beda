@@ -13,7 +13,7 @@ describe('the sections each person sees', () => {
   })
 
   it('keeps every other entry to its capability', () => {
-    expect(paths(visibleNav(ADMIN_NAV, 'admin', false))).toEqual(['/admin/configuration', '/admin/import', '/admin/users', '/admin/notices', '/admin/audit', '/admin/whats-new'])
+    expect(paths(visibleNav(ADMIN_NAV, 'admin', false))).toEqual(['/admin/configuration', '/admin/import', '/admin/users', '/admin/audit', '/admin/whats-new'])
     expect(paths(visibleNav(NAV, 'inspector', false))).toEqual(['/', '/history'])
     expect(paths(visibleNav(NAV, undefined, false))).toEqual(['/', '/history'])
   })

@@ -133,7 +133,7 @@ describe('the notice card', () => {
   it('once published, says so and opens the Notices page for an administrator, keeping what was proposed folded', () => {
     const applied: AiNoticePart = { ...create, state: 'applied', noticeId: 'nt9', appliedAt: '2026-10-10T05:01:00Z', appliedByName: 'Mona Adel' }
     const h = html(applied)
-    expect(h).toContain('href="/admin/notices"')
+    expect(h).toContain('href="/notices"')
     expect(h).toMatch(/aria-expanded="false"[^>]*>.*Show what was proposed/)
     const t = text(applied)
     expect(t).toContain('New notice Published')
@@ -143,7 +143,7 @@ describe('the notice card', () => {
     expect(t).not.toContain('Nothing goes out until you press Publish.')
     // No longer an administrator: no link to a page that is not theirs.
     auth.role = 'supervisor'
-    expect(html(applied)).not.toContain('href="/admin/notices"')
+    expect(html(applied)).not.toContain('href="/notices"')
   })
 
   it('once discarded, replaced or out of date, says so and offers nothing to press', () => {
