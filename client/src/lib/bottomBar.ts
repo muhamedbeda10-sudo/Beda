@@ -7,7 +7,7 @@
 // gives the space back.
 // ============================================================================
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useRef } from 'react'
 
 export const BOTTOM_INSET_VAR = '--app-bottom-inset'
 
@@ -32,7 +32,8 @@ export function useBottomBarRef<T extends HTMLElement>(): (el: T | null) => void
     observed.current = null
     publish()
   }, [])
-  useEffect(() => release, [release])
+  // No cleanup effect: React hands the ref null when the bar goes, which releases it. (An effect's cleanup would also
+  // run in StrictMode's rehearsal, after the ref was set and with no second call to set it again.)
   return useCallback(
     (el: T | null) => {
       if (observed.current?.el === el) return

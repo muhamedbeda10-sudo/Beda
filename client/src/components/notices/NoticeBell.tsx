@@ -11,7 +11,8 @@
 // Follow-ups page is opened from, with the count of their open ones on its
 // tab (red once one is overdue). That count is not in the bell's own: an
 // open follow-up is work, not something unread. The same for Tasks
-// (BellTasks): the ones to do, and the dones waiting for the sender.
+// (BellTasks): the ones to do, and the dones waiting for the sender. Those
+// who write notices open the Notices page from the Notices tab.
 //
 // The scheduled reports delivered have their own tab, Reports, apart from the
 // alerts: a report is read at leisure, an alert acted on, and a day's reports
@@ -19,8 +20,10 @@
 // ============================================================================
 
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { Bell, BellRing, Check, ChevronDown, ChevronUp, FileChartColumn, ListChecks, ListTodo, Loader2, Megaphone } from 'lucide-react'
+import { can } from '@qc/shared/rules'
+import { ArrowRight, Bell, BellRing, Check, ChevronDown, ChevronUp, FileChartColumn, ListChecks, ListTodo, Loader2, Megaphone } from 'lucide-react'
 import type { NoticeForUser } from '@qc/shared/types'
 import { Badge, Button, Drawer, EmptyState } from '@/components/ui'
 import { useNoticeInbox } from '@/services/queries'
@@ -115,6 +118,7 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
   const { data: reportPages } = useNotifications('reports')
   const { data: followUps } = useFollowUpCounts(!!profile)
   const { data: tasks } = useTaskCounts(!!profile)
+  const manageNotices = can(role, 'manage-admin-data')
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<BellTab>('notices')
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -247,6 +251,12 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
                   ))}
                 </ul>
               </section>
+            )}
+            {/* Whoever writes notices opens their page from here: to write one, change it, or see who read it. */}
+            {manageNotices && (
+              <Link to="/notices" onClick={close} className={cn('inline-flex min-h-[40px] items-center gap-1 text-13 font-semibold text-brand-700 hover:underline dark:text-brand-300', notices.length > 0 && 'mt-3')}>
+                Open the Notices page <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
+              </Link>
             )}
           </>
         )}

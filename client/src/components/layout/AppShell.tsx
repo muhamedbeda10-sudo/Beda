@@ -338,6 +338,9 @@ function Shell({ children }: { children: ReactNode }) {
         <div key={pageKey} className="animate-page-in">
           {children}
         </div>
+        {/* Room under the last thing on a page (a row's actions, Load more) to scroll it clear of the assistant's
+            floating button. Not on the chat, which fills the window to the pixel and lifts the button over Send instead. */}
+        {(ai.enabled || ai.owner) && !location.pathname.startsWith('/chat') && <div aria-hidden className="h-16" />}
       </main>
       {/* §20 — the assistant: its floating button in the bottom corner, and its popup. Outside <main>, which remounts
           on every route: an answer keeps streaming while its asker moves around. */}
