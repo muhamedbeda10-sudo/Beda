@@ -43,9 +43,9 @@ describe('the saved-table card', () => {
     expect(renderToStaticMarkup(<MemoryRouter><AiSavedTableCard part={card} /></MemoryRouter>)).toContain('href="/saved-tables"')
   })
 
-  it('says when the table was replaced or removed since, and what a removal card is', () => {
+  it('says when the table was changed or removed since, and what a removal card is', () => {
     expect(savedTableCardSince(card)).toBeNull()
-    expect(savedTableCardSince({ ...card, state: 'changed' })).toBe('Replaced since')
+    expect(savedTableCardSince({ ...card, state: 'changed' })).toBe('Changed since')
     expect(savedTableCardSince({ ...card, state: 'removed' })).toBe('Removed since')
     expect(savedTableCardSince({ action: 'remove', state: 'removed' })).toBeNull()
     expect(text({ ...card, state: 'removed' })).toContain('Removed since')
@@ -62,7 +62,7 @@ describe('the saved-table card', () => {
 
   it('is marked removed in every cached conversation once the table is removed', () => {
     const old: AiMessagesResponse = {
-      conversation: { id: 'c', title: 't', createdAt: '2026-10-13T10:00:00Z', lastMessageAt: '2026-10-13T10:00:00Z' },
+      conversation: { id: 'c', title: 't', createdAt: '2026-10-13T10:00:00Z', lastMessageAt: '2026-10-13T10:00:00Z', pinnedAt: null, groupId: null, archivedAt: null },
       messages: [
         { id: 'a', role: 'assistant', parts: [{ type: 'text', text: 'Saved.' }, card], createdAt: '2026-10-13T10:00:00Z' },
         { id: 'b', role: 'assistant', parts: [{ type: 'text', text: 'Nothing here.' }], createdAt: '2026-10-13T10:01:00Z' },

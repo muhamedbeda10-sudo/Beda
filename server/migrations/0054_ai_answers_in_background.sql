@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0051 — the assistant's answers outlive the request that asked for them.
+-- 0054 — the assistant's answers outlive the request that asked for them.
 -- Closing the page no longer stops an answer: it goes on on the server, and
 -- the bell says when it is ready. Only Stop ends it early. A server that
 -- restarts, or stops, hands the answer on, and it continues from its last
@@ -19,6 +19,9 @@
 --     a step cut short is finished, its tools run once each, rather than
 --     asked of the model again. The step joins the replay with its results.
 --   • user_notifications: the kind 'ai-answer', at most one per answer.
+--   • ai_turn_answer_text_or_null: an answer's words for the search (0052),
+--     or none when the database cannot read its messages, so that a turn
+--     can always be closed.
 -- ============================================================================
 
 ALTER TABLE ai_turns
@@ -51,3 +54,13 @@ ALTER TABLE user_notifications ADD CONSTRAINT user_notifications_kind CHECK (kin
 -- One bell row per answer, however many instances finish it.
 CREATE UNIQUE INDEX user_notifications_ai_answer_once ON user_notifications (ai_turn_id) WHERE kind = 'ai-answer';
 ALTER TABLE user_notifications ADD CONSTRAINT user_notifications_ai_answer_turn CHECK ((kind = 'ai-answer') = (ai_turn_id IS NOT NULL));
+
+-- A turn is closed with its answer's words for the search (0052). A message the database's JSON operators cannot
+-- read (a NUL the model wrote, kept before messages were cleaned of it) leaves the words out, never the turn open.
+CREATE FUNCTION ai_turn_answer_text_or_null(turn uuid) RETURNS text LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  RETURN ai_turn_answer_text(turn);
+EXCEPTION WHEN untranslatable_character OR invalid_text_representation THEN
+  RETURN NULL;
+END
+$$;

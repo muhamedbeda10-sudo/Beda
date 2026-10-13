@@ -1,17 +1,19 @@
 // ============================================================================
-// The assistant's saved tables: what it keeps to build on. Each table says
-// what it holds, where its rows come from and how often they are computed
-// again, when they last were (and why not, when that failed), who may read
-// it and who made it. Its first rows open under it; anyone who may read a
-// table may compute it again now, and whoever made it, or the assistant's
-// owner, may remove it. The assistant makes and replaces them in a
-// conversation. Opened from the table icon in the assistant's header, and
-// from a saved-table card in an answer.
+// The assistant's saved tables: what it keeps to build on. Each table leads
+// with its title, a sentence or two on what it shows, and its first rows,
+// with a line on how many rows it has and when they were computed; whether
+// its last computation failed, when it did. The full account (what a row is,
+// where the rows come from, the rules applied), its columns, who may read it,
+// who made it and its query wait under Details. Anyone who may read a table
+// may compute it again now, and whoever made it, or the assistant's owner,
+// may remove it. The assistant makes and replaces them in a conversation.
+// Opened from the table icon in the assistant's header, and from a
+// saved-table card in an answer.
 // ============================================================================
 
 import '@fontsource/ibm-plex-sans-arabic/arabic-400.css'
 import '@fontsource/ibm-plex-sans-arabic/arabic-600.css'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, ChevronDown, Loader2, RefreshCw, Search, Table2, Trash2 } from 'lucide-react'
 import { AI_DOMAINS, type AiQueryPart } from '@qc/shared/ai'
@@ -19,7 +21,7 @@ import { SAVED_TABLE_REFRESH_LABEL, type SavedTable } from '@qc/shared/savedTabl
 import { Button, Card, Modal } from '@/components/ui'
 import { PreviewTable } from '@/components/ai/AiResultTable'
 import { ApiError } from '@/lib/api'
-import { cn, formatDateTime, formatFullTimestamp } from '@/lib/utils'
+import { formatDateTime, formatFullTimestamp } from '@/lib/utils'
 import { refreshSavedTable, removeSavedTable, useSavedTableRows, useSavedTables } from '@/services/savedTables'
 import { useApp } from '@/store/AppContext'
 
@@ -29,11 +31,58 @@ export function savedTableReaders(t: Pick<SavedTable, 'domains'>): string {
   return `People who may read ${t.domains.map((d) => AI_DOMAINS.find((x) => x.id === d)?.name ?? d).join(' and ')}`
 }
 
-/** A table matches a search by its title, name, description or columns. */
+/** A table matches a search by its title, name, summary, description or columns. */
 export function matchesSavedTable(t: SavedTable, search: string): boolean {
   const q = search.trim().toLowerCase()
   if (!q) return true
-  return [t.title, t.name, t.description, ...t.columns.map((c) => c.name)].some((s) => s.toLowerCase().includes(q))
+  return [t.title, t.name, t.summary, t.description, ...t.columns.map((c) => c.name)].some((s) => s.toLowerCase().includes(q))
+}
+
+/** A fallback summary at most, in characters: about two lines on a phone. */
+const FALLBACK_SUMMARY_MAX = 180
+
+/**
+ * What the card says of a table under its title: its summary, or for a table
+ * saved before summaries, the first sentence of its description, cut at a
+ * word when it runs long. Null when it has neither.
+ */
+export function savedTableSummary(t: Pick<SavedTable, 'summary' | 'description'>): string | null {
+  const summary = t.summary.trim()
+  if (summary) return summary
+  const description = t.description.replace(/\s+/g, ' ').trim()
+  if (!description) return null
+  // A sentence ends at . ! ? or ؟ before a space or the end, so ai.views and 2025-01-01 stay whole.
+  const end = description.search(/[.!?؟](\s|$)/)
+  const first = end === -1 ? description : description.slice(0, end + 1)
+  if (first.length <= FALLBACK_SUMMARY_MAX) return first
+  const cut = first.slice(0, FALLBACK_SUMMARY_MAX)
+  const space = cut.lastIndexOf(' ')
+  return `${(space > FALLBACK_SUMMARY_MAX / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:(]+$/, '')}…`
+}
+
+/** The rows and how the table is kept, in one line. */
+export function savedTableFacts(t: Pick<SavedTable, 'rowCount' | 'source' | 'refresh'>): string {
+  const rows = t.rowCount === null ? null : `${t.rowCount.toLocaleString('en-US')} ${t.rowCount === 1 ? 'row' : 'rows'}`
+  return [rows, t.source === 'rows' ? 'Written out' : SAVED_TABLE_REFRESH_LABEL[t.refresh]].filter(Boolean).join(' · ')
+}
+
+/**
+ * Whether the element has come near the screen yet, and stays true once it
+ * has: a table's rows are read when its card is about to be seen, not all at
+ * once for a long list. Without IntersectionObserver, at once.
+ */
+function useSeen<T extends Element>(): [RefObject<T>, boolean] {
+  const ref = useRef<T>(null)
+  const [seen, setSeen] = useState(() => typeof IntersectionObserver === 'undefined')
+  useEffect(() => {
+    if (seen || !ref.current) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setSeen(true)
+    }, { rootMargin: '300px 0px' })
+    observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [seen])
+  return [ref, seen]
 }
 
 export function SavedTablesPage() {
@@ -91,7 +140,8 @@ export function SavedTablesPage() {
 function TableCard({ table: t }: { table: SavedTable }) {
   const qc = useQueryClient()
   const { toast } = useApp()
-  const [open, setOpen] = useState(false)
+  const [rowsRef, seen] = useSeen<HTMLDivElement>()
+  const summary = savedTableSummary(t)
   const [busy, setBusy] = useState<'refresh' | 'remove' | null>(null)
   const [confirming, setConfirming] = useState(false)
 
@@ -122,18 +172,28 @@ function TableCard({ table: t }: { table: SavedTable }) {
 
   return (
     <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-start gap-x-3 gap-y-2 px-4 py-3">
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-2 px-4 pt-3">
         {/* Narrow, the buttons go under the title rather than squeezing it. */}
         <div className="min-w-[14rem] flex-1">
           <h2 dir="auto" className="break-words text-sm font-bold text-slate-800 dark:text-slate-100">
             {t.title}
           </h2>
-          <p className="break-all font-mono text-[11px] text-muted">ai_saved.{t.name}</p>
-          {t.description && (
-            <p dir="auto" className="mt-1 whitespace-pre-wrap break-words text-13 text-slate-600 dark:text-slate-300">
-              {t.description}
+          {summary && (
+            <p dir="auto" className="mt-0.5 break-words text-13 text-slate-600 dark:text-slate-300">
+              {summary}
             </p>
           )}
+          <p className="mt-1 text-xs text-muted">
+            {savedTableFacts(t)}
+            {t.refreshedAt && (
+              <>
+                {' · Computed '}
+                <time dateTime={t.refreshedAt} data-tip={formatFullTimestamp(t.refreshedAt)}>
+                  {formatDateTime(t.refreshedAt)}
+                </time>
+              </>
+            )}
+          </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {t.mayRefresh && (
@@ -156,27 +216,8 @@ function TableCard({ table: t }: { table: SavedTable }) {
         </div>
       </div>
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-slate-100 px-4 py-3 text-xs dark:border-slate-800 sm:grid-cols-4">
-        <Fact label="Rows">{t.rowCount === null ? '—' : t.rowCount.toLocaleString('en-US')}</Fact>
-        <Fact label="Kept">{t.source === 'rows' ? 'Written out' : SAVED_TABLE_REFRESH_LABEL[t.refresh]}</Fact>
-        <Fact label="Computed">
-          {t.refreshedAt ? (
-            <time dateTime={t.refreshedAt} data-tip={formatFullTimestamp(t.refreshedAt)}>
-              {formatDateTime(t.refreshedAt)}
-            </time>
-          ) : (
-            '—'
-          )}
-        </Fact>
-        <Fact label="Made by">{t.createdByName}</Fact>
-        <div className="col-span-2 sm:col-span-4">
-          <dt className="text-muted">Who may read it</dt>
-          <dd className="font-medium text-slate-700 dark:text-slate-200">{savedTableReaders(t)}</dd>
-        </div>
-      </dl>
-
       {t.lastError && (
-        <p role="status" className="flex items-start gap-2 border-t border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+        <p role="status" className="mx-4 mt-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-500/30">
           <AlertTriangle aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span className="min-w-0 break-words">
             The last computation failed{t.lastErrorAt ? ` (${formatDateTime(t.lastErrorAt)})` : ''}, so the rows are the ones before it: {t.lastError}
@@ -184,32 +225,56 @@ function TableCard({ table: t }: { table: SavedTable }) {
         </p>
       )}
 
-      <div className="border-t border-slate-100 px-4 py-2 dark:border-slate-800">
-        <p className="flex flex-wrap gap-1 py-1">
-          {t.columns.map((c) => (
-            <span key={c.name} className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 dark:bg-slate-800 dark:text-slate-200" data-tip={[c.type, c.note].filter(Boolean).join(' · ')}>
-              {c.name}
-            </span>
-          ))}
-        </p>
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          aria-expanded={open}
-          className="inline-flex min-h-[40px] items-center gap-1 text-13 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]"
-        >
-          <ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} /> {open ? 'Hide the rows' : 'Show the first rows'}
-        </button>
-        {open && <TableRows table={t} />}
-        {t.sql && (
-          <details className="pb-2 text-xs">
-            <summary className="cursor-pointer py-1 font-semibold text-muted">How it is computed</summary>
-            <pre dir="ltr" className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-2 font-mono text-[11px] text-slate-700 dark:bg-slate-900 dark:text-slate-200">
-              {t.sql}
-            </pre>
-          </details>
-        )}
+      <div ref={rowsRef} className="px-4 py-3">
+        {seen ? <TableRows table={t} /> : <div className="h-24" aria-hidden />}
       </div>
+
+      <details className="group/details border-t border-slate-100 dark:border-slate-800">
+        <summary className="flex min-h-[40px] cursor-pointer list-none items-center gap-1 px-4 text-13 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px] [&::-webkit-details-marker]:hidden">
+          <ChevronDown aria-hidden className="h-4 w-4 transition-transform group-open/details:rotate-180" /> Details
+        </summary>
+        <div className="space-y-3 px-4 pb-3 text-xs">
+          {t.description && (
+            <p dir="auto" className="whitespace-pre-wrap break-words text-13 text-slate-600 dark:text-slate-300">
+              {t.description}
+            </p>
+          )}
+          <dl className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+            <Fact label="Name in questions and automations">
+              <span className="break-all font-mono text-[11px]">ai_saved.{t.name}</span>
+            </Fact>
+            <Fact label="Made by">{t.createdByName}</Fact>
+            <div className="min-w-0 sm:col-span-2">
+              <Fact label="Who may read it">{savedTableReaders(t)}</Fact>
+            </div>
+          </dl>
+          {t.columns.length > 0 && (
+            <div>
+              <p className="text-muted">Columns</p>
+              <ul className="mt-1 space-y-0.5">
+                {t.columns.map((c) => (
+                  <li key={c.name} className="break-words">
+                    <span className="font-mono text-[11px] text-slate-700 dark:text-slate-200">{c.name}</span>
+                    {c.note && (
+                      <span dir="auto" className="text-muted">
+                        {' '}— {c.note}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {t.sql && (
+            <details>
+              <summary className="cursor-pointer py-1 font-semibold text-muted">How it is computed</summary>
+              <pre dir="ltr" className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-2 font-mono text-[11px] text-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                {t.sql}
+              </pre>
+            </details>
+          )}
+        </div>
+      </details>
 
       {confirming && (
         <Modal
@@ -242,7 +307,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
       <dt className="text-muted">{label}</dt>
-      <dd className="truncate font-medium text-slate-700 dark:text-slate-200">{children}</dd>
+      <dd className="font-medium text-slate-700 dark:text-slate-200">{children}</dd>
     </div>
   )
 }

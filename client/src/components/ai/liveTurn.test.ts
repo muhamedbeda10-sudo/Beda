@@ -26,7 +26,7 @@ import {
   type LiveTurn,
 } from './liveTurn'
 
-const conversation: AiConversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z' }
+const conversation: AiConversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z', pinnedAt: null, groupId: null, archivedAt: null }
 const status: AiStatusResponse = { available: true, model: 'claude-sonnet-5-5', spentUsd: 1, capUsd: 50, monthStart: '2026-10-01T00:00:00Z' }
 const query: AiQueryPart = { type: 'query', queryId: 'q1', purpose: 'Defects', sql: 'SELECT 1', ok: true, columns: ['n'], rows: [[1]], rowCount: 1, truncated: false, ms: 12 }
 const answer: AiMessage = { id: 'a1', role: 'assistant', parts: [query, { type: 'text', text: 'Weld porosity leads.' }], createdAt: '2026-10-09T10:00:05Z', costUsd: 0.012, stopReason: 'end_turn' }

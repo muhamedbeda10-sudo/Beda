@@ -1,9 +1,9 @@
 // ============================================================================
-// A saved table the assistant made, replaced, computed again or removed, as a
+// A saved table the assistant made, changed, computed again or removed, as a
 // small card in its answer: its title and name (what questions and
 // automations read it as), its rows and columns, and how often it is
 // computed again. The change is made already, so the card offers the Saved
-// tables page; replaced or removed since, it says so.
+// tables page; its rows changed or the table removed since, it says so.
 // ============================================================================
 
 import { memo } from 'react'
@@ -18,7 +18,8 @@ const SHOWN_COLUMNS = 8
 
 const ACTION_TITLE: Record<AiSavedTablePart['action'], string> = {
   create: 'Saved table',
-  replace: 'Saved table replaced',
+  replace: 'Saved table changed',
+  update: 'Saved table updated',
   refresh: 'Saved table computed again',
   remove: 'Saved table removed',
 }
@@ -27,7 +28,7 @@ const ACTION_TITLE: Record<AiSavedTablePart['action'], string> = {
 export function savedTableCardSince(part: Pick<AiSavedTablePart, 'action' | 'state'>): string | null {
   if (part.action === 'remove') return null
   if (part.state === 'removed') return 'Removed since'
-  if (part.state === 'changed') return 'Replaced since'
+  if (part.state === 'changed') return 'Changed since'
   return null
 }
 

@@ -17,7 +17,7 @@ const { AI_ANSWERING_POLL_MS, AI_RUNNING_POLL_MS, aiConversationsPoll, aiMessage
 const { stopAiAnswer, withStopping } = await import('@/services/mutations')
 const { messagesConversation, refreshAfterAnswer, runningWatch } = await import('./running')
 
-const conversation: AiConversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z' }
+const conversation: AiConversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z', pinnedAt: null, groupId: null, archivedAt: null }
 const question: AiMessage = { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Top defects?' }], createdAt: '2026-10-09T10:00:00Z' }
 const soFar: AiMessage = { id: 't1', role: 'assistant', parts: [], createdAt: '2026-10-09T10:00:01Z', turnId: 't1', running: true }
 const ended: AiMessage = { ...soFar, running: undefined, stopReason: 'end_turn' }

@@ -35,8 +35,9 @@ export const SAVED_TABLE_MAX_ROWS = 200_000
 export const SAVED_TABLE_MAX_LITERAL_ROWS = 5_000
 /** The most columns a saved table may have. */
 export const SAVED_TABLE_MAX_COLUMNS = 100
-/** A table's title, and its description, at most. */
+/** A table's title, its summary and its description, at most. */
 export const SAVED_TABLE_TITLE_MAX = 120
+export const SAVED_TABLE_SUMMARY_MAX = 300
 export const SAVED_TABLE_DESCRIPTION_MAX = 2_000
 /** A column's note at most. */
 export const SAVED_TABLE_NOTE_MAX = 300
@@ -63,6 +64,9 @@ export interface SavedTable {
   id: string
   name: string
   title: string
+  /** What the table shows, in a sentence or two for anyone; empty for a table saved before summaries. */
+  summary: string
+  /** The full account: what a row is, where the rows come from, the rules applied. */
   description: string
   source: SavedTableSource
   /** The query a query's table is computed from; null for rows written out. */
@@ -109,7 +113,8 @@ export interface AiSavedTablePart {
   tableId: string
   name: string
   title: string
-  action: 'create' | 'replace' | 'refresh' | 'remove'
+  /** update: its words, notes or schedule changed in place; replace: what it holds changed, computed again. */
+  action: 'create' | 'replace' | 'update' | 'refresh' | 'remove'
   source: SavedTableSource
   refresh: SavedTableRefresh
   /** As the change left it. */

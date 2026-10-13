@@ -8,7 +8,7 @@
 // search, a lookup by id, or a capped page. Nothing loads a whole table.
 // ============================================================================
 
-import { infiniteQueryOptions, keepPreviousData, useInfiniteQuery, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { infiniteQueryOptions, keepPreviousData, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import type {
   AuditFilters,
@@ -54,6 +54,9 @@ import type { AvatarResponse, ColumnValuesResponse, DashboardLayoutResponse, Hid
 import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
 import type {
   AiAccessListResponse,
+  AiConversationGroupsResponse,
+  AiConversationScope,
+  AiConversationSearchResponse,
   AiConversationsResponse,
   AiDayRange,
   AiMeResponse,
@@ -69,6 +72,7 @@ import type {
   AiUsageResponse,
 } from '@qc/shared/ai'
 import { ApiError, api, apiBlob, qs } from '@/lib/api'
+import { AI_CONVERSATION_SEARCH_MAX, AI_CONVERSATION_SEARCH_MIN } from '@qc/shared/ai'
 
 export const keys = {
   openBoard: ['sessions', 'open'] as const,
@@ -128,7 +132,12 @@ export const keys = {
   aiAccess: ['ai', 'access'] as const,
   /** The active accounts the owner has not given the assistant to yet. */
   aiPeople: ['ai', 'people'] as const,
+  /** Every list of conversations, their groups and searches: what a change to a conversation refreshes. */
   aiConversations: ['ai', 'conversations'] as const,
+  /** One scope of the list ('pinned', 'recent', a group's, 'archived'). */
+  aiConversationList: (scope: AiConversationScope, groupId: string | null) => ['ai', 'conversations', 'list', scope, groupId ?? ''] as const,
+  aiConversationGroups: ['ai', 'conversations', 'groups'] as const,
+  aiConversationSearch: (q: string) => ['ai', 'conversations', 'search', q] as const,
   aiMessages: (id: string) => ['ai', 'messages', id] as const,
   aiUsage: (month: string) => ['ai', 'usage', month] as const,
   aiActivity: (month: string, userId: string, kind: string) => ['ai', 'activity', month, userId, kind] as const,
@@ -889,14 +898,18 @@ export const aiConversationGone = (error: unknown): boolean => error instanceof 
 export const aiMessagesPoll = (data: AiMessagesResponse | undefined, error: unknown = null, following = false): number | false =>
   aiConversationGone(error) ? false : data?.running || following ? AI_RUNNING_POLL_MS : false
 
-/** How often the list is asked again: while a conversation in it is being answered, and not otherwise. */
+/** How often a list of conversations is asked again: while a conversation in it is being answered, and not otherwise. */
 export const aiConversationsPoll = (data: AiConversationsResponse | undefined): number | false => (data?.conversations.some((c) => c.answering) ? AI_ANSWERING_POLL_MS : false)
 
-/** This person's conversations, the latest first: the first page. */
+/** The same for a list read page after page: any of the pages read. */
+const aiConversationPagesPoll = (data: InfiniteData<AiConversationsResponse> | undefined): number | false =>
+  data?.pages.some((page) => aiConversationsPoll(page) !== false) ? AI_ANSWERING_POLL_MS : false
+
+/** This person's latest conversations, whatever their place in the list: whether one is being answered (the floating button). */
 export function useAiConversations(enabled: boolean) {
   return useQuery({
-    queryKey: keys.aiConversations,
-    queryFn: () => api<AiConversationsResponse>(`/ai/conversations${qs({ limit: AI_CONVERSATIONS_PAGE })}`),
+    queryKey: keys.aiConversationList('all', null),
+    queryFn: () => api<AiConversationsResponse>(`/ai/conversations${qs({ scope: 'all', limit: AI_CONVERSATIONS_PAGE })}`),
     enabled,
     staleTime: 60_000,
     refetchInterval: (q) => aiConversationsPoll(q.state.data),
@@ -904,9 +917,65 @@ export function useAiConversations(enabled: boolean) {
   })
 }
 
-/** The page of conversations older than the given instant (the last one's latest message). */
-export function loadOlderAiConversations(before: string): Promise<AiConversationsResponse> {
-  return api<AiConversationsResponse>(`/ai/conversations${qs({ before, limit: AI_CONVERSATIONS_PAGE })}`)
+/** A page of the conversations list starts after the last one of the page before: its latest message, its id breaking a tie. */
+type ConversationCursor = { lastMessageAt: string; id: string } | null
+
+/**
+ * One scope of this person's conversations (recent, a group's, archived),
+ * the latest first, page after page: "Older conversations" is fetchNextPage.
+ */
+export function aiConversationListOptions(scope: Exclude<AiConversationScope, 'pinned'>, groupId: string | null = null) {
+  return infiniteQueryOptions({
+    queryKey: keys.aiConversationList(scope, groupId),
+    queryFn: ({ pageParam }) =>
+      api<AiConversationsResponse>(`/ai/conversations${qs({ scope, groupId, limit: AI_CONVERSATIONS_PAGE, before: pageParam?.lastMessageAt, beforeId: pageParam?.id })}`),
+    initialPageParam: null as ConversationCursor,
+    getNextPageParam: (last: AiConversationsResponse): ConversationCursor => {
+      const end = last.conversations.at(-1)
+      return last.hasMore && end ? { lastMessageAt: end.lastMessageAt, id: end.id } : null
+    },
+    staleTime: 60_000,
+    refetchInterval: (q) => aiConversationPagesPoll(q.state.data),
+    refetchIntervalInBackground: false,
+  })
+}
+
+export function useAiConversationList(scope: Exclude<AiConversationScope, 'pinned'>, groupId: string | null, enabled: boolean) {
+  return useInfiniteQuery({ ...aiConversationListOptions(scope, groupId), enabled })
+}
+
+/** This person's pinned conversations, the latest pinned first: all of them, in one page. */
+export function useAiPinnedConversations(enabled: boolean) {
+  return useQuery({
+    queryKey: keys.aiConversationList('pinned', null),
+    queryFn: () => api<AiConversationsResponse>(`/ai/conversations${qs({ scope: 'pinned' })}`),
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: (q) => aiConversationsPoll(q.state.data),
+    refetchIntervalInBackground: false,
+  })
+}
+
+/** This person's groups of conversations, by name, each with how many it holds. */
+export function useAiConversationGroups(enabled: boolean) {
+  return useQuery({
+    queryKey: keys.aiConversationGroups,
+    queryFn: () => api<AiConversationGroupsResponse>('/ai/conversation-groups'),
+    enabled,
+    staleTime: 60_000,
+  })
+}
+
+/** The person's conversations with these words in them (from AI_CONVERSATION_SEARCH_MIN characters); the last search's stay while the next one's come. */
+export function useAiConversationSearch(words: string, enabled: boolean) {
+  const q = words.replace(/\s+/g, ' ').trim().slice(0, AI_CONVERSATION_SEARCH_MAX)
+  return useQuery({
+    queryKey: keys.aiConversationSearch(q),
+    queryFn: () => api<AiConversationSearchResponse>(`/ai/conversations/search${qs({ q })}`),
+    enabled: enabled && Array.from(q).length >= AI_CONVERSATION_SEARCH_MIN,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  })
 }
 
 /** One conversation, every question and answer with the queries they ran; and the answer the server is writing in it, if any. */

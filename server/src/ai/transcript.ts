@@ -21,7 +21,7 @@
 // ============================================================================
 
 import type Anthropic from '@anthropic-ai/sdk'
-import type { AiCell, AiChartSpec, AiConversation, AiKpi, AiMessage, AiPart, AiQueryPart, AiRunningAnswer, AiStopReason, AiTokenUsage } from '@qc/shared/ai'
+import type { AiCell, AiChartSpec, AiConversation, AiConversationScope, AiKpi, AiMessage, AiPart, AiQueryPart, AiRunningAnswer, AiStopReason, AiTokenUsage } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
 import { loadProposalParts } from '../automations/proposals'
 import { loadNoticeParts } from '../noticeAssistant/proposals'
@@ -42,15 +42,21 @@ export interface ConversationRecord extends AiConversation {
   tools: Anthropic.Beta.BetaToolUnion[]
 }
 
-const CONVERSATION_SELECT = `c.id, c.title, c.created_at AS "createdAt", c.last_message_at AS "lastMessageAt"`
-/** Whether an answer is being written in the conversation now (one at most: ai_turns_one_running). */
-const ANSWERING = `EXISTS (SELECT 1 FROM ai_turns t WHERE t.conversation_id = c.id AND t.status = 'running') AS answering`
+export const CONVERSATION_SELECT = `c.id, c.title, c.created_at AS "createdAt", c.last_message_at AS "lastMessageAt",
+  c.pinned_at AS "pinnedAt", c.group_id AS "groupId", c.archived_at AS "archivedAt"`
+/** Whether an answer is being written in the conversation now (one at most: ai_turns_one_running), as lists show it. */
+export const ANSWERING = `EXISTS (SELECT 1 FROM ai_turns t WHERE t.conversation_id = c.id AND t.status = 'running') AS answering`
+
+const iso = (v: string | Date | null) => (v === null ? null : new Date(v).toISOString())
 
 export const toConversation = (c: AiConversation): AiConversation => ({
   id: c.id,
   title: c.title,
-  createdAt: c.createdAt,
-  lastMessageAt: c.lastMessageAt,
+  createdAt: new Date(c.createdAt).toISOString(),
+  lastMessageAt: new Date(c.lastMessageAt).toISOString(),
+  pinnedAt: iso(c.pinnedAt),
+  groupId: c.groupId,
+  archivedAt: iso(c.archivedAt),
   ...(c.answering ? { answering: true } : {}),
 })
 
@@ -78,14 +84,43 @@ export async function createConversation(
   return rows[0]
 }
 
-export async function listConversations(q: Queryable, userId: string, before: string | null, limit: number): Promise<{ conversations: AiConversation[]; hasMore: boolean }> {
+/** Which conversations of a person's each scope of the list holds (see AiConversationScope). */
+const SCOPE_WHERE: Record<AiConversationScope, string> = {
+  all: 'c.archived_at IS NULL',
+  recent: 'c.archived_at IS NULL AND c.pinned_at IS NULL AND c.group_id IS NULL',
+  pinned: 'c.pinned_at IS NOT NULL',
+  group: 'c.archived_at IS NULL AND c.group_id = $5::uuid',
+  archived: 'c.archived_at IS NOT NULL',
+}
+
+/**
+ * A page of a person's conversations in one scope of the list: the pinned
+ * ones all at once, the latest pinned first; the others the latest message
+ * first, from just after `before` (the last one of the page read, its id
+ * breaking a tie at the API's millisecond precision).
+ */
+export async function listConversations(
+  q: Queryable,
+  userId: string,
+  opts: { scope: AiConversationScope; groupId?: string | null; before: string | null; beforeId?: string | null; limit: number },
+): Promise<{ conversations: AiConversation[]; hasMore: boolean }> {
+  if (opts.scope === 'pinned') {
+    const { rows } = await q.query<AiConversation>(
+      `SELECT ${CONVERSATION_SELECT}, ${ANSWERING} FROM ai_conversations c WHERE c.user_id = $1 AND c.deleted_at IS NULL AND ${SCOPE_WHERE.pinned} ORDER BY c.pinned_at DESC, c.id DESC`,
+      [userId],
+    )
+    return { conversations: rows.map(toConversation), hasMore: false }
+  }
   const { rows } = await q.query<AiConversation>(
     `SELECT ${CONVERSATION_SELECT}, ${ANSWERING} FROM ai_conversations c
-      WHERE c.user_id = $1 AND c.deleted_at IS NULL AND ($2::timestamptz IS NULL OR c.last_message_at < $2)
-      ORDER BY c.last_message_at DESC, c.id DESC LIMIT $3`,
-    [userId, before, limit + 1],
+      WHERE c.user_id = $1 AND c.deleted_at IS NULL AND ${SCOPE_WHERE[opts.scope]}
+        AND ($2::timestamptz IS NULL
+             OR ($4::uuid IS NULL AND date_trunc('milliseconds', c.last_message_at) < $2)
+             OR ($4::uuid IS NOT NULL AND (date_trunc('milliseconds', c.last_message_at), c.id) < ($2, $4::uuid)))
+      ORDER BY date_trunc('milliseconds', c.last_message_at) DESC, c.id DESC LIMIT $3`,
+    [userId, opts.before, opts.limit + 1, opts.beforeId ?? null, ...(opts.scope === 'group' ? [opts.groupId ?? null] : [])],
   )
-  return { conversations: rows.slice(0, limit).map(toConversation), hasMore: rows.length > limit }
+  return { conversations: rows.slice(0, opts.limit).map(toConversation), hasMore: rows.length > opts.limit }
 }
 
 // ---- The replay ------------------------------------------------------------------
@@ -112,20 +147,29 @@ export interface NewMessage {
  * each message as it will be replayed — read back from its stored JSON, so
  * what the loop sends next is what a later request will send.
  */
+/**
+ * A message as the database keeps it: JSON whose every string Postgres can read. A NUL — which the model can write in
+ * a tool's input — is left out: kept, it would make the message unreadable to the database's JSON operators (a turn's
+ * words for the search, read as it closes, among them).
+ */
+// eslint-disable-next-line no-control-regex
+const storable = (value: unknown): string => JSON.stringify(value, (_key, v: unknown) => (typeof v === 'string' ? v.replace(/\u0000/g, '') : v))
+
 export async function appendMessages(q: Queryable, conversationId: string, turnId: string, messages: NewMessage[]): Promise<{ id: string; param: StoredMessage }[]> {
   const { rows } = await q.query<{ next: number }>(`SELECT COALESCE(max(seq), 0) + 1 AS next FROM ai_messages WHERE conversation_id = $1`, [conversationId])
   let seq = rows[0].next
   const out: { id: string; param: StoredMessage }[] = []
   for (const m of messages) {
-    const content = JSON.stringify(m.content)
+    const content = storable(m.content)
     const { rows: inserted } = await q.query<{ id: string }>(
       `INSERT INTO ai_messages (conversation_id, turn_id, seq, role, kind, content, raw_content, in_replay, pending, model)
        VALUES ($1, $2, $3, $4, $5, $6::json, $7::json, $8, $9, $10) RETURNING id`,
-      [conversationId, turnId, seq++, m.role, m.kind, content, m.rawContent ? JSON.stringify(m.rawContent) : null, m.pending ? false : (m.inReplay ?? true), !!m.pending, m.model ?? null],
+      [conversationId, turnId, seq++, m.role, m.kind, content, m.rawContent ? storable(m.rawContent) : null, m.pending ? false : (m.inReplay ?? true), !!m.pending, m.model ?? null],
     )
     out.push({ id: inserted[0].id, param: { role: m.role, content: JSON.parse(content) as StoredBlock[] } })
   }
-  await q.query(`UPDATE ai_conversations SET last_message_at = now() WHERE id = $1`, [conversationId])
+  // Asked in again, an archived conversation is back in the list.
+  await q.query(`UPDATE ai_conversations SET last_message_at = now(), archived_at = NULL WHERE id = $1`, [conversationId])
   return out
 }
 
@@ -288,7 +332,7 @@ export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
 export async function finishTurn(q: Queryable, turnId: string, stopReason: AiStopReason, notice: string | null): Promise<boolean> {
   const { rowCount } = await q.query(
     `UPDATE ai_turns
-        SET status = 'done', stop_reason = $2, notice = $3, finished_at = now(), progress = NULL,
+        SET status = 'done', stop_reason = $2, notice = $3, finished_at = now(), progress = NULL, answer_text = ai_turn_answer_text_or_null($1),
             cost_usd = (SELECT COALESCE(sum(u.cost_usd), 0) FROM ai_usage u WHERE u.turn_id = $1)
       WHERE id = $1 AND status = 'running'`,
     [turnId, stopReason, notice],

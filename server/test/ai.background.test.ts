@@ -424,6 +424,22 @@ describe('§20 what an answer says of itself', () => {
     await waitFor(async () => (await turnOf('With a NUL')).status === 'done', 'the answer to end')
     expect(await turnOf('With a NUL')).toMatchObject({ stop_reason: 'end_turn' })
     expect((await app.db.query(`SELECT purpose, ok FROM ai_queries WHERE turn_id = $1`, [t.id])).rows).toEqual([{ purpose: 'Machines by code', ok: true }])
+    // Kept without it, so the database can read every message of the answer (its words for the search, as it closed).
+    const steps = await app.db.query<{ content: string }>(`SELECT content::text AS content FROM ai_messages WHERE turn_id = $1 AND kind = 'assistant'`, [t.id])
+    expect(steps.rows.map((r) => r.content).join()).not.toContain('\\u0000')
+    expect((await app.db.query(`SELECT answer_text FROM ai_turns WHERE id = $1`, [t.id])).rows).toEqual([{ answer_text: 'There are 2.' }])
+  })
+
+  it('closes, all the same, an answer whose kept messages the database cannot read', async () => {
+    // Kept before messages were cleaned of a NUL: the database's JSON operators refuse the message.
+    const t = await leftTurn('Unreadable', ', runner, heartbeat_at, resumes', `, 'x', now() - interval '1 minute', ${MAX_RESUMES}`)
+    await app.db.query(
+      `INSERT INTO ai_messages (conversation_id, turn_id, seq, role, kind, content, in_replay) VALUES ($1, $2, 1, 'assistant', 'assistant', $3::json, true)`,
+      [t.conversationId, t.id, '[{"type":"text","text":"a\\u0000b"}]'],
+    )
+    expect(await app.answers.sweep()).toBe(1)
+    expect(await turnOf('Unreadable')).toMatchObject({ status: 'done', stop_reason: 'error', notice: TOO_MANY_RESUMES_NOTICE })
+    expect((await app.db.query(`SELECT answer_text FROM ai_turns WHERE id = $1`, [t.id])).rows).toEqual([{ answer_text: null }])
   })
 
   it('reads the note’s tag in a result as data, whatever is around it', () => {

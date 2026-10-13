@@ -242,7 +242,7 @@ describe('an answer the server is still writing, followed through its conversati
   })
 
   it('draws a turn this device let go of as still being written, never as stopped', () => {
-    const streaming = applyEvent(writing([{ type: 'text', text: 'Looking.' }]), { type: 'start', conversation: { id: 'c1', title: 'Defects', createdAt: '2026-10-09T10:00:00.000Z', lastMessageAt: '2026-10-09T10:00:00.000Z' }, userMessageId: 'u1' })
+    const streaming = applyEvent(writing([{ type: 'text', text: 'Looking.' }]), { type: 'start', conversation: { id: 'c1', title: 'Defects', createdAt: '2026-10-09T10:00:00.000Z', lastMessageAt: '2026-10-09T10:00:00.000Z', pinnedAt: null, groupId: null, archivedAt: null }, userMessageId: 'u1' })
     const html = render({ turn: streamEnded(streaming, false) })
     expect(html).toContain('Looking.')
     expect(html).toContain('Thinking…')

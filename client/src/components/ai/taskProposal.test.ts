@@ -24,7 +24,7 @@ const card = (over: Partial<AiTaskPart> = {}): AiTaskPart => ({
 })
 
 const cached = (...parts: AiTaskPart[]): AiMessagesResponse => ({
-  conversation: { id: 'c1', title: 'Tasks', createdAt: '2026-10-13T08:00:00Z', lastMessageAt: '2026-10-13T08:00:00Z' },
+  conversation: { id: 'c1', title: 'Tasks', createdAt: '2026-10-13T08:00:00Z', lastMessageAt: '2026-10-13T08:00:00Z', pinnedAt: null, groupId: null, archivedAt: null },
   messages: [
     { id: 'q1', role: 'user', parts: [{ type: 'text', text: 'Send Cyril a task' }], createdAt: '2026-10-13T08:00:00Z' },
     { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'Here is the card.' }, ...parts], createdAt: '2026-10-13T08:00:05Z' },

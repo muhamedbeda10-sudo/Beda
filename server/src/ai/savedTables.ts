@@ -40,6 +40,7 @@ import {
   SAVED_TABLE_NAME_PATTERN,
   SAVED_TABLE_PREVIEW_ROWS,
   SAVED_TABLE_SCHEMA,
+  SAVED_TABLE_SUMMARY_MAX,
   type SavedTable,
   type SavedTableColumn,
   type SavedTableColumnType,
@@ -112,6 +113,8 @@ export interface LiteralColumn {
 export type SavedTableDefinition = {
   name: string
   title: string
+  /** What the table shows, plainly; none leaves it empty. */
+  summary?: string
   description: string
 } & (
   | { source: 'query'; sql: string; refresh: SavedTableRefresh; notes: Record<string, string> }
@@ -131,6 +134,7 @@ interface TableRow {
   id: string
   name: string
   title: string
+  summary: string
   description: string
   source: SavedTableSource
   sql: string | null
@@ -154,7 +158,7 @@ interface TableRow {
   updatedAt: string
 }
 
-const TABLE_SELECT = `t.id, t.name, t.title, t.description, t.source, t.sql, t.literal, t.column_notes AS "columnNotes", t.refresh,
+const TABLE_SELECT = `t.id, t.name, t.title, t.summary, t.description, t.source, t.sql, t.literal, t.column_notes AS "columnNotes", t.refresh,
   t.domains, t.depends_on AS "dependsOn", t.version, t.columns, t.row_count AS "rowCount", t.refreshed_at AS "refreshedAt",
   t.next_refresh_at AS "nextRefreshAt", t.last_error AS "lastError", t.last_error_at AS "lastErrorAt", t.failures,
   t.created_by_id AS "createdById", t.created_by_name AS "createdByName", t.created_at AS "createdAt",
@@ -170,6 +174,7 @@ function toTable(r: TableRow, viewer: { id: string; owner: boolean } | null): Sa
     id: r.id,
     name: r.name,
     title: r.title,
+    summary: r.summary,
     description: r.description,
     source: r.source,
     sql: r.sql,
@@ -476,7 +481,7 @@ const columnsJson = (c: Computed) => JSON.stringify(c.columns)
 
 async function recordChange(
   tx: Queryable,
-  change: { tableId: string; version: number; action: 'create' | 'replace' | 'refresh' | 'remove'; definition?: unknown; rowCount?: number; columns?: string },
+  change: { tableId: string; version: number; action: 'create' | 'replace' | 'update' | 'refresh' | 'remove'; definition?: unknown; rowCount?: number; columns?: string },
   by: { id: string; name: string },
   origin: SavedTableOrigin | undefined,
 ): Promise<string> {
@@ -502,7 +507,7 @@ async function recordChange(
 
 /** The definition as kept in the history: what the assistant gave, nothing computed. */
 function definitionRecord(def: SavedTableDefinition): Record<string, unknown> {
-  const base = { name: def.name, title: def.title, description: def.description, source: def.source }
+  const base = { name: def.name, title: def.title, summary: def.summary ?? '', description: def.description, source: def.source }
   return def.source === 'query' ? { ...base, sql: def.sql, refresh: def.refresh, notes: def.notes } : { ...base, columns: def.columns, rows: def.rows }
 }
 
@@ -531,6 +536,8 @@ export async function saveTable(
   def: SavedTableDefinition,
   replace = false,
   origin?: SavedTableOrigin,
+  /** Replace only the table as it was at this version: a change made since is not overwritten. */
+  expectVersion?: number,
 ): Promise<SavedTableOutcome> {
   const problems = definitionProblems(def)
   if (problems.length > 0) return fail(problems.join(' '))
@@ -554,6 +561,7 @@ export async function saveTable(
       const now = await findLive(tx, { name: def.name }, true)
       const again = checkReplace(now, actor, replace, def.name)
       if (again) return fail(again)
+      if (expectVersion !== undefined && now?.version !== expectVersion) return fail(CHANGED_MEANWHILE)
       await writeTable(tx, def.name, def.title, computed, notes)
       const values = [
         def.title.trim(),
@@ -571,6 +579,7 @@ export async function saveTable(
         actor.id,
         actor.name,
         deps.timeZone,
+        oneLineSummary(def.summary),
       ]
       const schedule = nextRefreshSql('$7::text', '$15::text')
       let id: string
@@ -580,16 +589,16 @@ export async function saveTable(
           `UPDATE ai_saved_tables SET title = $1, description = $2, source = $3, sql = $4, literal = $5, column_notes = $6, refresh = $7,
                   domains = $8, depends_on = $9, columns = $10, row_count = $11, refresh_ms = $12, refreshed_at = now(),
                   last_error = NULL, last_error_at = NULL, failures = 0, next_refresh_at = ${schedule},
-                  updated_by_id = $13, updated_by_name = $14, version = version + 1
-            WHERE id = $16 RETURNING id, version`,
+                  updated_by_id = $13, updated_by_name = $14, version = version + 1, summary = $16
+            WHERE id = $17 RETURNING id, version`,
           [...values, now.id],
         )
         ;({ id, version } = rows[0])
       } else {
         const { rows } = await tx.query<{ id: string; version: number }>(
           `INSERT INTO ai_saved_tables (title, description, source, sql, literal, column_notes, refresh, domains, depends_on, columns, row_count,
-                                        refresh_ms, refreshed_at, next_refresh_at, created_by_id, created_by_name, updated_by_id, updated_by_name, name)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), ${schedule}, $13, $14, $13, $14, $16) RETURNING id, version`,
+                                        refresh_ms, refreshed_at, next_refresh_at, created_by_id, created_by_name, updated_by_id, updated_by_name, summary, name)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), ${schedule}, $13, $14, $13, $14, $16, $17) RETURNING id, version`,
           [...values, def.name],
         )
         ;({ id, version } = rows[0])
@@ -608,6 +617,11 @@ export async function saveTable(
   } catch (e) {
     return writeFailure(e)
   }
+}
+
+/** A summary as it is kept: on one line, cut to its length. */
+function oneLineSummary(summary: string | undefined): string {
+  return (summary ?? '').replace(/\s+/g, ' ').trim().slice(0, SAVED_TABLE_SUMMARY_MAX)
 }
 
 /** The query's text as it is kept: trimmed, without its trailing semicolon. */
@@ -667,7 +681,7 @@ export async function refreshTable(
   if (!row) {
     const live = await findLive(deps.db, { id: tableId })
     if (!live) return fail('There is no such saved table.')
-    if (live.source !== 'query') return fail('Rows written out are not computed: replace the table to change them.')
+    if (live.source !== 'query') return fail('Rows written out are not computed: change them with update_saved_table.')
     return fail('The table is being computed right now. Wait a minute and look again.')
   }
   const started = Date.now()
@@ -695,7 +709,8 @@ export async function refreshTable(
         )
         return fail(`It could not be computed, so it keeps its rows of ${row.refreshedAt ? new Date(row.refreshedAt).toISOString() : 'before'}: ${computed.error}`)
       }
-      await writeTable(tx, row.name, row.title, computed, row.columnNotes)
+      // Its title and notes as they are now: an update may have changed them while it was computed.
+      await writeTable(tx, now.name, now.title, computed, now.columnNotes)
       await tx.query(
         `UPDATE ai_saved_tables SET domains = $2, depends_on = $3, columns = $4, row_count = $5, refresh_ms = $6, refreshed_at = now(),
                 last_error = NULL, last_error_at = NULL, failures = 0, refreshing_until = NULL,
@@ -710,6 +725,145 @@ export async function refreshTable(
     })
   } catch (e) {
     await deps.db.query(`UPDATE ai_saved_tables SET refreshing_until = NULL WHERE id = $1`, [row.id]).catch(() => undefined)
+    return writeFailure(e)
+  }
+}
+
+const CHANGED_MEANWHILE = 'The table was changed by someone else meanwhile: look at it again (list_saved_tables) before you change it.'
+
+/** What a change to a table in place gives: what is given changes, the rest stays. */
+export interface SavedTableChanges {
+  title?: string
+  summary?: string
+  description?: string
+  /** Notes by column, merged into the table's: an empty one removes that column's note. */
+  columnNotes?: Record<string, string>
+  /** For a query's table: how often it is computed again. */
+  refresh?: SavedTableRefresh
+  /** For a query's table: a new query, computed at once. */
+  sql?: string
+  /** For rows written out: the columns, when they change (rows must come with them). */
+  columns?: LiteralColumn[]
+  /** For rows written out: every row, in place of the table's. */
+  rows?: unknown[][]
+  /** For rows written out: rows added after the table's. */
+  addRows?: unknown[][]
+}
+
+/** Whether the changes touch what the table holds, and so compute it again. */
+export const changesData = (c: SavedTableChanges) => c.sql !== undefined || c.columns !== undefined || c.rows !== undefined || c.addRows !== undefined
+
+/** What is wrong with changes to a table of this source, before anything is read or run. */
+export function changeProblems(source: SavedTableSource, c: SavedTableChanges): string[] {
+  const problems: string[] = []
+  const given = Object.values(c).some((v) => v !== undefined)
+  if (!given) problems.push('Say what to change: title, summary, description, columnNotes, refresh, sql, or (for rows written out) columns, rows or addRows.')
+  if (c.title !== undefined && !c.title.trim()) problems.push('title: what the table is, in a few words.')
+  if (source === 'query') {
+    if (c.columns !== undefined || c.rows !== undefined || c.addRows !== undefined) problems.push('columns, rows and addRows are for rows written out; this table is computed from a query: change its sql.')
+    if (c.sql !== undefined && !c.sql.trim()) problems.push('sql: the SELECT the table is computed from.')
+  } else {
+    if (c.sql !== undefined) problems.push('sql is for a table computed from a query; this one holds rows written out: change its rows.')
+    if (c.refresh !== undefined && c.refresh !== 'never') problems.push('refresh: rows written out are kept as written; only a query\'s table is computed again.')
+    if (c.columns !== undefined && c.rows === undefined) problems.push('columns: give the rows with them (rows), in the order of the new columns.')
+    if (c.rows !== undefined && c.addRows !== undefined) problems.push('rows and addRows: give one; rows replaces them all, addRows adds after them.')
+    if (c.columns !== undefined && c.columns.length === 0) problems.push('columns: at least one.')
+  }
+  return problems
+}
+
+/**
+ * Change a table in place: whoever made it, or the owner. Its title, summary,
+ * description, notes or schedule change at once, its rows and version stay
+ * (an "update" in the history). A new query, new rows or rows added make it
+ * a replace, computed now — under the same name, so whatever reads it reads
+ * the new rows — and only of the table as it was read here.
+ */
+export async function updateTable(
+  deps: SavedTableDeps,
+  actor: SavedTableActor,
+  tableId: string,
+  changes: SavedTableChanges,
+  origin?: SavedTableOrigin,
+): Promise<SavedTableOutcome & { dataChanged?: boolean }> {
+  const row = await findLive(deps.db, { id: tableId })
+  if (!row || !readable(row, actor.domains)) return fail('There is no such saved table.')
+  if (!(actor.owner || row.createdById === actor.id)) return fail(`The saved table ${row.name} was made by ${row.createdByName}: only they, or the assistant's owner, may change it.`)
+  const problems = changeProblems(row.source, changes)
+  if (problems.length > 0) return fail(problems.join(' '))
+
+  const notes = { ...row.columnNotes }
+  for (const [column, note] of Object.entries(changes.columnNotes ?? {})) {
+    const clean = note.replace(/\s+/g, ' ').trim()
+    if (clean) notes[column] = clean.slice(0, 300)
+    else delete notes[column]
+  }
+
+  if (changesData(changes)) {
+    const base = { name: row.name, title: changes.title ?? row.title, summary: changes.summary ?? row.summary, description: changes.description ?? row.description }
+    let def: SavedTableDefinition
+    if (row.source === 'query') {
+      def = { ...base, source: 'query', sql: changes.sql ?? row.sql!, refresh: changes.refresh ?? row.refresh, notes }
+    } else {
+      const literal = row.literal!
+      // New columns bring their own notes, a note given apart overriding one; the table's columns keep theirs, merged.
+      const columns = changes.columns
+        ? changes.columns.map((c) => ({ ...c, note: changes.columnNotes?.[c.name] !== undefined ? notes[c.name] : c.note }))
+        : literal.columns.map((c) => ({ ...c, note: notes[c.name] }))
+      const rows = changes.rows ?? [...literal.rows, ...(changes.addRows ?? [])]
+      def = { ...base, source: 'rows', columns, rows }
+    }
+    const outcome = await saveTable(deps, actor, def, true, origin, row.version)
+    return outcome.ok ? { ...outcome, dataChanged: true } : outcome
+  }
+
+  try {
+    return await withTransaction(deps.db, async (tx) => {
+      await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`ai_saved:${row.name}`])
+      const now = await findLive(tx, { id: row.id }, true)
+      if (!now) return fail('There is no such saved table.')
+      if (now.version !== row.version) return fail(CHANGED_MEANWHILE)
+      const refresh = changes.refresh ?? now.refresh
+      const kept = Object.fromEntries(Object.entries(notes).filter(([c]) => now.columns.some((x) => x.name === c)))
+      await tx.query(
+        `UPDATE ai_saved_tables
+            SET title = $2, summary = $3, description = $4, column_notes = $5, refresh = $6,
+                next_refresh_at = CASE WHEN $6 = refresh THEN next_refresh_at ELSE ${nextRefreshSql('$6::text', '$7::text')} END,
+                updated_by_id = $8, updated_by_name = $9
+          WHERE id = $1`,
+        [
+          now.id,
+          (changes.title ?? now.title).trim(),
+          changes.summary === undefined ? now.summary : oneLineSummary(changes.summary),
+          (changes.description ?? now.description).trim(),
+          JSON.stringify(kept),
+          refresh,
+          deps.timeZone,
+          actor.id,
+          actor.name,
+        ],
+      )
+      // What questions and automations see of it in the database: its title and its columns' notes.
+      await tx.query(`SET LOCAL lock_timeout = '${WRITE_LOCK_TIMEOUT}'`)
+      await tx.query(`COMMENT ON TABLE ${qualified(now.name)} IS ${pg.escapeLiteral((changes.title ?? now.title).trim())}`)
+      for (const c of now.columns) {
+        if ((kept[c.name] ?? '') !== (now.columnNotes[c.name] ?? '')) {
+          await tx.query(`COMMENT ON COLUMN ${qualified(now.name)}.${pg.escapeIdentifier(c.name)} IS ${kept[c.name] ? pg.escapeLiteral(kept[c.name]) : 'NULL'}`)
+        }
+      }
+      const definition = Object.fromEntries(Object.entries({ ...changes, columnNotes: changes.columnNotes }).filter(([, v]) => v !== undefined))
+      const changeId = await recordChange(tx, { tableId: now.id, version: now.version, action: 'update', definition, rowCount: now.rowCount ?? undefined, columns: JSON.stringify(now.columns) }, actor, origin)
+      await writeAudit(tx, [
+        auditEvent('update', { userId: actor.id, userName: actor.name, entity: 'AiSavedTable', entityId: now.id }, new Date().toISOString(), {
+          field: 'definition',
+          oldValue: `version ${now.version}`,
+          newValue: `${now.name}: ${Object.keys(definition).join(', ')}`,
+        }),
+      ])
+      const table = (await findLive(tx, { id: now.id }))!
+      return { ok: true as const, changeId, table: toTable(table, actor), dataChanged: false }
+    })
+  } catch (e) {
     return writeFailure(e)
   }
 }

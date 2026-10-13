@@ -1,6 +1,6 @@
 // ============================================================================
 // §20 — the assistant's answers, written on the server whatever happens to
-// the request that asked for them (migration 0051).
+// the request that asked for them (migration 0054).
 //
 //   • An answer belongs to the instance that writes it (ai_turns.runner),
 //     which says so every HEARTBEAT_MS (heartbeat_at), with how long the

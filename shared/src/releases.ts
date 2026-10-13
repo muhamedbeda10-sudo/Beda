@@ -28,7 +28,7 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-10-13.105',
+    id: '2026-10-13.108',
     date: '2026-10-13',
     title: 'The assistant finishes its answers on its own',
     items: [
@@ -36,6 +36,35 @@ export const RELEASES: readonly Release[] = [
       { text: 'When an answer ends while you are not looking at it, the bell says so (AI assistant), and it reaches your phone like any other alert; tapping it opens the conversation.' },
       { text: 'If the server restarts in the middle of an answer, the answer goes on from the step it had reached, without starting again.' },
       { text: 'One answer may take up to 30 minutes. As it nears its time or its steps, the assistant saves what is worth keeping and closes with what it found and what remains, so you can ask it to go on.' },
+    ],
+  },
+  {
+    id: '2026-10-13.107',
+    date: '2026-10-13',
+    title: 'The assistant changes a saved table in place',
+    items: [
+      { text: 'Ask the assistant to change a saved table — its title, summary or description, a column\'s note, how often it is computed, its query, or the rows written in it (add rows, replace them, change the columns) — and it changes that table where it is, without removing it and making it again. Its name stays, so questions, reports and automations that read it go on reading it.' },
+      { text: 'A change to its words or schedule keeps its rows as they are; a change to its query or rows computes it again at once. The card in the answer says "Saved table updated" or "Saved table changed".' },
+    ],
+  },
+  {
+    id: '2026-10-13.106',
+    date: '2026-10-13',
+    title: 'Your conversations with the assistant, kept in order',
+    items: [
+      { text: 'Pin conversations to the top of the list (up to 30), rename any of them, and put them in groups of your own — each conversation in one group. A group opens in place in the list; removing a group sends its conversations back to the list, none deleted.' },
+      { text: 'Archive a conversation to keep it out of the way without deleting it: it is under Archived at the end of the list, and asking in it again brings it back.' },
+      { text: 'The search now reads every conversation, archived ones too — titles, questions and answers — and shows the words around what it found. Arabic is found however it is written: اجابة finds إجابة.' },
+      { text: 'All of it is in the menu (⋯) beside each conversation and each group. Your groups and pins are yours alone.' },
+    ],
+  },
+  {
+    id: '2026-10-13.105',
+    date: '2026-10-13',
+    title: 'Saved tables, simpler to read',
+    items: [
+      { text: 'Each table on the Saved tables page now shows its title, a sentence or two on what it shows, how many rows it has and when they were computed, and the table itself, open at once. The full description, the columns, who may read it, who made it and how it is computed are under Details.' },
+      { text: 'The assistant writes that short summary when it saves or replaces a table. A table saved before this shows the first sentence of its description until the assistant replaces it.' },
     ],
   },
   {
