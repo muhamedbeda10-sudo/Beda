@@ -11,6 +11,7 @@
 import type { ApiErrorCode } from './api'
 import type { AiAutomationPart } from './automation'
 import type { AiNoticePart } from './noticeAssistant'
+import type { AiPlaybookPart } from './playbook'
 
 /** The model the assistant runs on. */
 export const AI_MODEL = 'claude-sonnet-5-5'
@@ -452,8 +453,11 @@ export interface AiTaskProposalResponse {
   part: AiTaskPart
 }
 
-/** An answer's pieces in order. An automation proposal (§21), a notice card (§23) and a task card are cards the person applies or discards. */
-export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart | AiNoticePart | AiTaskPart
+/**
+ * An answer's pieces in order. An automation proposal (§21), a notice card (§23) and a task card are cards the person
+ * applies or discards; a playbook card says what the assistant saved, with Remove.
+ */
+export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart | AiNoticePart | AiTaskPart | AiPlaybookPart
 
 /** How an answer ended. */
 export type AiStopReason =
@@ -523,6 +527,8 @@ export type AiStreamEvent =
   | { type: 'notice'; part: AiNoticePart }
   /** A task card: a task drafted, waiting for Send task. */
   | { type: 'task'; part: AiTaskPart }
+  /** A playbook card: an instruction or conclusion saved, changed or removed. */
+  | { type: 'playbook'; part: AiPlaybookPart }
   | { type: 'done'; message: AiMessage; status: AiStatusResponse }
   | { type: 'error'; code: ApiErrorCode; message: string }
 

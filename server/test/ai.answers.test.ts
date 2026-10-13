@@ -11,6 +11,7 @@ import { RUN_SQL_TOOL, TOOL_SEARCH_TOOL, deferred } from '../src/ai/prompt'
 import { AUTOMATION_TOOLS } from '../src/automations/tools'
 import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS } from '../src/noticeAssistant/tools'
 import { TASK_TOOLS } from '../src/tasks/assistant'
+import { PLAYBOOK_TOOLS } from '../src/playbook/assistant'
 import type { QueryPreview } from '../src/ai/runQuery'
 import { SUGGESTIONS_BLOCK } from '../src/ai/suggestions'
 
@@ -358,7 +359,7 @@ describe('§20 a professional answer in a conversation', () => {
     expect(system.indexOf('# Headline figures')).toBeLessThan(system.indexOf('# Follow-up questions'))
     // The owner asks here, who may create automations (§21): the automations' tools follow run_sql; then the
     // notices' (§23), the owner being an administrator who may have them written; then the tasks'.
-    expect(p.tools).toEqual([RUN_SQL_TOOL, TOOL_SEARCH_TOOL, ...[...AUTOMATION_TOOLS, ...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS, ...TASK_TOOLS].map(deferred)])
+    expect(p.tools).toEqual([RUN_SQL_TOOL, TOOL_SEARCH_TOOL, ...[...AUTOMATION_TOOLS, ...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS, ...TASK_TOOLS, ...PLAYBOOK_TOOLS].map(deferred)])
   })
 
   it('draws the charts that fit their results, live and in the history, and tells the model about the rest', async () => {

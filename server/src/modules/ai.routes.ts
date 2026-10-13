@@ -89,6 +89,7 @@ import {
 import { auditEvent } from '@qc/shared/audit'
 import type { AutomationActivateResponse, AutomationDiscardResponse } from '@qc/shared/automation'
 import type { AiNoticeApplyResponse, AiNoticeDiscardResponse } from '@qc/shared/noticeAssistant'
+import { PLAYBOOK_BASIS_MAX, PLAYBOOK_TEXT_MAX, type PlaybookEntry, type PlaybookResponse } from '@qc/shared/playbook'
 import type { AppContext } from '../context'
 import { PG, pgCode, withTransaction, type Queryable } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
@@ -165,6 +166,8 @@ import { applyNoticeProposal, discardNoticeProposal } from '../noticeAssistant/l
 import { noticeManager, noticePromptMode } from '../noticeAssistant/scope'
 import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS, noticeToolHandlers } from '../noticeAssistant/tools'
 import { TASK_TOOLS, discardTaskProposal, sendTaskProposal, taskToolHandlers } from '../tasks/assistant'
+import { PLAYBOOK_TOOLS, playbookToolHandlers } from '../playbook/assistant'
+import { addEntry, changeEntry, listPlaybook, mayUsePlaybook, promptPlaybook, removeEntry } from '../playbook/service'
 import {
   appendMessages,
   createConversation,
@@ -597,11 +600,12 @@ export function aiRoutes(ctx: AppContext): Router {
     // and — for a person who may create automations as it starts — how to propose one, with the tools to do it (§21);
     // and what the person sees of notices, with the tools to read them, and — for an administrator the owner allows —
     // how to draft one as a card, with the tools to do it (§23); and, as for everyone given the assistant, how to draft
-    // a task as a card and follow their tasks. Their role is the one this request was signed in with.
+    // a task as a card and follow their tasks, and their playbook as it is now, with the tool to keep it. Their role is
+    // the one this request was signed in with.
     const automations = avail.me.automations ? { id: user.id, name: user.name, role: user.role } : null
     const managesNotices = mayManageNotices(access, owner, user.role)
     const notices = noticePromptMode(user.role, managesNotices)
-    const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains, { automations, notices, tasks: true })
+    const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains, { automations, notices, tasks: true, playbook: await promptPlaybook(db, user.id, tz) })
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return
     const askedAt = new Date()
@@ -625,7 +629,7 @@ export function aiRoutes(ctx: AppContext): Router {
           title: conversationTitle(body.message || (await firstAttachmentName(tx, user.id, body.attachmentIds))),
           model: access.model,
           systemPrompt: systemPrompt!,
-          tools: conversationTools(automations ? AUTOMATION_TOOLS : null, managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS, TASK_TOOLS),
+          tools: conversationTools(automations ? AUTOMATION_TOOLS : null, managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS, [...TASK_TOOLS, ...PLAYBOOK_TOOLS]),
         })
       }
       // The model and effort the owner set for the person now: an earlier conversation goes on with them too.
@@ -695,6 +699,8 @@ export function aiRoutes(ctx: AppContext): Router {
           ...noticeToolHandlers({ db, config: ctx.config, userId: user.id, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
           // Tasks: drafting ones checks the person may still send tasks.
           ...taskToolHandlers({ db, config: ctx.config, userId: user.id, userName: user.name, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
+          // The playbook: changed at once, at the person's word; the owner alone sets instructions for everyone.
+          ...playbookToolHandlers({ db, config: ctx.config, userId: user.id, userName: user.name, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
         },
       })
       await finishTurn(db, turnId, outcome.stopReason, outcome.notice)
@@ -1036,6 +1042,48 @@ export function aiRoutes(ctx: AppContext): Router {
     const part = await withTransaction(db, (tx) => discardTaskProposal(tx, id, user.id))
     const reply: AiTaskProposalResponse = { part }
     res.json(reply)
+  })
+
+  // ---- The playbook ---------------------------------------------------------------------------------
+
+  /** The person asking, while they keep a playbook (given the assistant), and whether they are its owner. */
+  async function playbookActor(req: Request) {
+    const user = requireUser(req)
+    if (!(await mayUsePlaybook(db, user.id))) throw new HttpError(403, 'forbidden', 'The playbook is for the people given the AI assistant.')
+    return { id: user.id, name: user.name, owner: (await ownerId()) === user.id }
+  }
+
+  const playbookEntry = async (viewer: { id: string; owner: boolean }, id: string): Promise<PlaybookEntry> => (await listPlaybook(db, viewer)).find((e) => e.id === id)!
+
+  r.get('/playbook', async (req, res) => {
+    const by = await playbookActor(req)
+    const reply: PlaybookResponse = { entries: await listPlaybook(db, by), mayShare: by.owner }
+    res.json(reply)
+  })
+
+  const playbookText = z.string().max(PLAYBOOK_TEXT_MAX * 2)
+  const playbookBasis = z.string().max(PLAYBOOK_BASIS_MAX * 2)
+
+  r.post('/playbook', async (req, res) => {
+    const by = await playbookActor(req)
+    const body = parse(z.object({ scope: z.enum(['personal', 'shared']), kind: z.enum(['instruction', 'conclusion']), text: playbookText, basis: playbookBasis.optional() }).strict(), req.body)
+    const change = await withTransaction(db, (tx) => addEntry(tx, by, body))
+    res.status(201).json(await playbookEntry(by, change.entry.id))
+  })
+
+  r.patch('/playbook/:id', async (req, res) => {
+    const by = await playbookActor(req)
+    const id = parse(uuid, req.params.id)
+    const body = parse(z.object({ text: playbookText.optional(), basis: playbookBasis.optional() }).strict(), req.body)
+    await withTransaction(db, (tx) => changeEntry(tx, by, id, body))
+    res.json(await playbookEntry(by, id))
+  })
+
+  r.delete('/playbook/:id', async (req, res) => {
+    const by = await playbookActor(req)
+    const id = parse(uuid, req.params.id)
+    await withTransaction(db, (tx) => removeEntry(tx, by, id))
+    res.status(204).end()
   })
 
   // ---- Saved reports ------------------------------------------------------------------------
