@@ -18,7 +18,7 @@ import {
 import { TestApp, type Session } from './harness'
 import { apiError, fallback, runSql, text, thinking, type FakeReply } from './aiFake'
 import { ACCESS_NOTICE } from '../src/ai/access'
-import { KEY_REFUSED_MESSAGE, answerQuestion } from '../src/ai/assistant'
+import { KEY_REFUSED_MESSAGE, answerQuestion, toReplayContent } from '../src/ai/assistant'
 import { minCallWorstCaseUsd } from '../src/ai/models'
 import { appendMessages, findConversation, finishTurn, loadReplay } from '../src/ai/transcript'
 
@@ -203,20 +203,25 @@ describe('§20 asking a question', () => {
     expect(system).toContain('The factory\'s time zone is Africa/Cairo.')
     expect(system).not.toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
     // The owner may create automations (§21): their new conversations also get the automations' two tools; and,
-    // an administrator, the notices' four (§23): reading them, as everyone does, and having them written.
+    // an administrator, the notices' four (§23): reading them, as everyone does, and having them written. Only
+    // run_sql and the tool search are loaded from the start; the rest load when Claude searches for them.
     expect(p.tools).toEqual([
       expect.objectContaining({ name: 'run_sql', strict: true, eager_input_streaming: true, input_schema: expect.objectContaining({ additionalProperties: false, required: ['purpose', 'sql'] }) }),
-      expect.objectContaining({ name: 'propose_automation', eager_input_streaming: true }),
-      expect.objectContaining({ name: 'my_automations', strict: true }),
-      expect.objectContaining({ name: 'list_notices', eager_input_streaming: true }),
-      expect.objectContaining({ name: 'notice_details', eager_input_streaming: true }),
-      expect.objectContaining({ name: 'find_notice_targets', eager_input_streaming: true }),
-      expect.objectContaining({ name: 'propose_notice_change', eager_input_streaming: true }),
+      { type: 'tool_search_tool_bm25_20251119', name: 'tool_search_tool_bm25' },
+      expect.objectContaining({ name: 'propose_automation', eager_input_streaming: true, defer_loading: true }),
+      expect.objectContaining({ name: 'my_automations', strict: true, defer_loading: true }),
+      expect.objectContaining({ name: 'list_notices', eager_input_streaming: true, defer_loading: true }),
+      expect.objectContaining({ name: 'notice_details', eager_input_streaming: true, defer_loading: true }),
+      expect.objectContaining({ name: 'find_notice_targets', eager_input_streaming: true, defer_loading: true }),
+      expect.objectContaining({ name: 'propose_notice_change', eager_input_streaming: true, defer_loading: true }),
     ])
+    expect(p.tools![0]).not.toHaveProperty('defer_loading')
     // None of the notices' tools is strict: each strict schema adds to one grammar, and the server reads their input itself.
-    for (const tool of p.tools!.slice(3)) expect(tool).not.toHaveProperty('strict')
+    for (const tool of p.tools!.slice(4)) expect(tool).not.toHaveProperty('strict')
     // Not strict: with run_sql's, its alternatives compile to a grammar larger than the API accepts; the server checks the input itself.
-    expect(p.tools![1]).not.toHaveProperty('strict')
+    expect(p.tools![2]).not.toHaveProperty('strict')
+    // The prompt says how the other tools are found.
+    expect(system).toContain('first find it with tool_search_tool_bm25')
     expect(p.messages).toHaveLength(1)
     const question = p.messages[0]
     expect(question.role).toBe('user')
@@ -609,6 +614,13 @@ describe('§20 how answers end', () => {
     app.model.reply({ content: [text('Next.')] })
     await ask('Go on', { conversationId: res.conversationId })
     expect(JSON.stringify(last(app.model.calls).params.messages[1])).toBe(JSON.stringify({ role: 'assistant', content: content.slice(1) }))
+  })
+
+  it('echoes a tool search that came with its result across a hand-over, and drops one cut off without it', () => {
+    const search = (id: string) => ({ type: 'server_tool_use', id, name: 'tool_search_tool_bm25', input: { query: 'notices' } })
+    const found = (id: string) => ({ type: 'tool_search_tool_result', tool_use_id: id, content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'list_notices' }] } })
+    const content = [thinking('Searching.'), text('Looking. '), search('srvtoolu_a'), found('srvtoolu_a'), search('srvtoolu_b'), fallback(AI_MODEL, 'claude-sonnet-5'), text('Done.')] as Anthropic.Beta.BetaContentBlock[]
+    expect(toReplayContent(content)).toEqual([content[1], content[2], content[3], content[5], content[6]])
   })
 
   it('stops at the monthly cap before a call that could pass it, keeping what was answered', async () => {

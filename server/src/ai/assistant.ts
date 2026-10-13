@@ -166,8 +166,10 @@ export interface Outcome {
 
 /**
  * The answer as it is sent back. Unchanged, unless a fallback model took over
- * mid-answer: then, before the last hand-over, only the text and the hand-over
- * markers are echoed (the API's rule); the markers stay where they were.
+ * mid-answer: then, before the last hand-over, only the text, the hand-over
+ * markers and the server tools' calls that came with their results (a tool
+ * search and what it found) are echoed — the API's rule; the markers stay
+ * where they were.
  */
 export function toReplayContent(content: ContentBlock[]): ContentBlockParam[] {
   let last = -1
@@ -175,7 +177,12 @@ export function toReplayContent(content: ContentBlock[]): ContentBlockParam[] {
     if (b.type === 'fallback') last = i
   })
   if (last < 0) return content as ContentBlockParam[]
-  return content.filter((b, i) => i >= last || b.type === 'text' || b.type === 'fallback') as ContentBlockParam[]
+  // A server tool's result (in an answer, every *_tool_result is one) names its call by tool_use_id.
+  const resultOf = (b: ContentBlock): string | null => (b.type.endsWith('_tool_result') && 'tool_use_id' in b && typeof b.tool_use_id === 'string' ? b.tool_use_id : null)
+  const calls = new Set(content.flatMap((b) => (b.type === 'server_tool_use' ? [b.id] : [])))
+  const answered = new Set(content.flatMap((b) => resultOf(b) ?? []))
+  const paired = (b: ContentBlock) => (b.type === 'server_tool_use' && answered.has(b.id)) || (resultOf(b) !== null && calls.has(resultOf(b)!))
+  return content.filter((b, i) => i >= last || b.type === 'text' || b.type === 'fallback' || paired(b)) as ContentBlockParam[]
 }
 
 // ---- What a call cost --------------------------------------------------------------
@@ -493,8 +500,9 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
 
 const notRun = (tu: ToolUse, why: string): ToolResult => ({ type: 'tool_result', tool_use_id: tu.id, is_error: true, content: why })
 
-/** The conversation's own tools, by name, as it was given them. */
-const toolNames = (qn: Question): string[] => qn.conversation.tools.flatMap((t) => ('name' in t && typeof t.name === 'string' ? [t.name] : []))
+/** The conversation's own tools that the model calls and this server runs, by name, as it was given them: not the tool search, which Anthropic runs. */
+const toolNames = (qn: Question): string[] =>
+  qn.conversation.tools.flatMap((t) => ('name' in t && typeof t.name === 'string' && (!('type' in t) || !t.type || t.type === 'custom') ? [t.name] : []))
 
 /** The handler of a tool other than run_sql, when the conversation was given that tool and the request handles it. */
 function toolHandler(qn: Question, name: string): ToolHandler | null {

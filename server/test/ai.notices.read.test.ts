@@ -72,7 +72,7 @@ describe('§23 reading notices: the tools and the prompt of a new conversation',
   it('gives everyone the reading tools, the writing ones only to administrators allowed, and says what each person sees', async () => {
     app.model.reply({ content: [text('Hi.')] })
     await ask(app, p.insp, 'Hello')
-    expect(toolNames(app)).toEqual(['run_sql', 'list_notices', 'notice_details'])
+    expect(toolNames(app)).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details'])
     const reader = systemOf(app)
     expect(reader).toContain('# Notices')
     expect(reader).toContain('You see the notices this person can see in the app: the ones in their bell')
@@ -92,7 +92,7 @@ describe('§23 reading notices: the tools and the prompt of a new conversation',
 
     app.model.reply({ content: [text('Hi.')] })
     await ask(app, p.admin2, 'Hello')
-    expect(toolNames(app)).toEqual(['run_sql', 'list_notices', 'notice_details'])
+    expect(toolNames(app)).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details'])
     expect(systemOf(app)).toContain('This person is an administrator: you see every notice that is not deleted')
     expect(systemOf(app)).toContain("You cannot draft notices for this person here: they put them out on the Notices page, and the assistant's owner decides")
     expect(systemOf(app)).not.toContain('This person may also have you write notices')
@@ -100,13 +100,13 @@ describe('§23 reading notices: the tools and the prompt of a new conversation',
     // An inspector's row may allow notices: it never takes effect, as an inspector is no administrator.
     app.model.reply({ content: [text('Hi.')] })
     await ask(app, p.inspFlag, 'Hello')
-    expect(toolNames(app)).toEqual(['run_sql', 'list_notices', 'notice_details'])
+    expect(toolNames(app)).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details'])
     expect(systemOf(app)).toBe(reader)
 
     // The viewer has the reading tools too: they answer that a viewer has no bell.
     app.model.reply({ content: [text('Hi.')] })
     await ask(app, p.viewer, 'Hello')
-    expect(toolNames(app)).toEqual(['run_sql', 'list_notices', 'notice_details'])
+    expect(toolNames(app)).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details'])
 
     for (const manager of [p.boss, p.owner]) {
       app.model.reply({ content: [text('Hi.')] })
@@ -154,6 +154,35 @@ describe('§23 reading notices: the tools and the prompt of a new conversation',
     const next = app.model.calls[app.model.calls.length - 1]
     expect(JSON.stringify(next.params.messages.slice(0, prior.length))).toBe(JSON.stringify(prior))
     expect(JSON.stringify(next.params.tools)).toBe(stored)
+  })
+})
+
+describe('§20 tools loaded on demand', () => {
+  it('runs a tool Claude found with the tool search, and replays the search as it came', async () => {
+    // As the API answers: the search runs on Anthropic's side, its result in the same reply, then the call of the tool found.
+    const search = { type: 'server_tool_use', id: 'srvtoolu_01', name: 'tool_search_tool_bm25', input: { query: 'list_notices' } }
+    const found = { type: 'tool_search_tool_result', tool_use_id: 'srvtoolu_01', content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'list_notices' }] } }
+    app.model.reply(
+      { content: [text('Let me find the notices tool.'), search, found, listNotices({}, 'toolu_found1')] as never },
+      { content: [text('You have 3 notices.')] },
+    )
+    const asked = await ask(app, p.insp, 'What notices do I have?')
+    expect(asked.done?.message.parts.map((x) => x.type)).toEqual(['text'])
+    expect(asked.done?.message.parts[0]).toEqual({ type: 'text', text: 'Let me find the notices tool.You have 3 notices.' })
+    // The tool found ran; the search's own blocks went back to Claude as they came, with no result of ours for them.
+    const second = app.model.calls[1].params
+    expect(JSON.stringify(second.messages[1].content)).toContain('"tool_search_tool_result"')
+    expect(resultsOf(app).map((r) => r.tool_use_id)).toEqual(['toolu_found1'])
+    // A later question replays the whole of it byte for byte.
+    app.model.reply({ content: [text('Still 3.')] })
+    await ask(app, p.insp, 'And now?', asked.conversationId)
+    expect(JSON.stringify(app.model.calls[2].params.messages.slice(0, 3))).toBe(JSON.stringify(second.messages))
+  })
+
+  it('names only the tools Claude may call when it calls one it was not given', async () => {
+    app.model.reply({ content: [toolUse('drop_table', {}, 'toolu_bad')] }, { content: [text('Sorry.')] })
+    await ask(app, p.insp, 'Do something odd')
+    expect(resultsOf(app)[0]).toMatchObject({ is_error: true, content: 'Unknown tool "drop_table". The tools are "run_sql", "list_notices", "notice_details".' })
   })
 })
 
