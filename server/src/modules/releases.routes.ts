@@ -32,9 +32,14 @@ export function releasesRoutes(ctx: AppContext): Router {
     const user = requireUser(req)
     const body = parse(seenSchema, req.body) as MarkReleaseSeenRequest
     if (!isReleaseId(body.releaseId)) throw badRequest('That release is not in the notes.')
-    // Forward only: dismissing an older note never hides a newer one again.
+    // Forward only: dismissing an older note never hides a newer one again. Ordered as compareReleaseIds orders them —
+    // the day, then its counter as a number (the tenth release of a day after its ninth) — and a mark that is no
+    // release id at all is replaced.
     const { rows } = await db.query<{ lastSeenReleaseId: string | null }>(
-      `UPDATE users SET last_seen_release_id = CASE WHEN last_seen_release_id IS NULL OR last_seen_release_id < $2 THEN $2 ELSE last_seen_release_id END
+      `UPDATE users SET last_seen_release_id = CASE
+         WHEN last_seen_release_id IS NULL OR last_seen_release_id !~ '^\\d{4}-\\d{2}-\\d{2}\\.\\d+$' THEN $2
+         WHEN (split_part(last_seen_release_id, '.', 1), split_part(last_seen_release_id, '.', 2)::int) < (split_part($2, '.', 1), split_part($2, '.', 2)::int) THEN $2
+         ELSE last_seen_release_id END
         WHERE id = $1 RETURNING last_seen_release_id AS "lastSeenReleaseId"`,
       [user.id, body.releaseId],
     )

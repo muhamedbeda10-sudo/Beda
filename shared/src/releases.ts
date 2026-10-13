@@ -11,7 +11,7 @@ export interface ReleaseItem {
 }
 
 export interface Release {
-  /** Sorts as text: the day, then a counter for a second release on the same day. */
+  /** The day, then a counter for a further release on the same day: "2026-10-13.2". Ordered by compareReleaseIds. */
   id: string
   /** ISO date of the deploy. */
   date: string
@@ -28,15 +28,23 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-10-13.92',
+    id: '2026-10-13.93',
     date: '2026-10-13',
     title: 'The AI assistant floats in the corner',
     items: [
       { text: 'The AI assistant is now a round button in the bottom-right corner of every page, no longer an icon in the bar at the top. Press it and the assistant opens as a card in the corner; the page beside it stays usable.' },
       { text: 'Expand (the arrows at the top of the card) opens it as a large window in the middle of the screen, with your conversations and reports beside the chat; Shrink puts it back in the corner. On a phone it takes the whole screen.' },
       { text: 'The Automations and Playbook buttons at the top of the assistant open those pages inside it, with Back and a button back to the chat. A link to any other page (a session, a task, the follow-ups) opens that page, and the assistant moves to the corner beside it.' },
-      { text: 'Tasks are no longer a button in the assistant: open them from the bell\'s Tasks tab. You can still ask the assistant to send a task.' },
       { text: 'On screens with buttons along the bottom (recording an inspection, a selection\'s toolbar), the assistant\'s button sits above them.' },
+    ],
+  },
+  {
+    id: '2026-10-13.92',
+    date: '2026-10-13',
+    title: 'Tasks are sent through the assistant',
+    items: [
+      { text: 'On the Tasks page, “New task” is now “New in the assistant”: it opens the AI assistant in a new conversation, where you say what is to be done, by whom and by when, and it drafts the task as a card for you to send. Everything else on the page stays as it was.' },
+      { text: 'Tasks are no longer in the assistant’s header: they stay in the bell, in the Tasks tab, with “Open the Tasks page”.' },
     ],
   },
   {
@@ -848,12 +856,23 @@ export const RELEASES: readonly Release[] = [
   },
 ]
 
-const byIdDesc = (a: Release, b: Release) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
+/**
+ * Two release ids in order: the day (as text, which sorts as the calendar does), then the day's counter as a
+ * number — the tenth release of a day ("…13.10") after its ninth ("…13.9"), which as text it would not be.
+ */
+export function compareReleaseIds(a: string, b: string): number {
+  const [dayA, nA] = a.split('.')
+  const [dayB, nB] = b.split('.')
+  if (dayA !== dayB) return dayA < dayB ? -1 : 1
+  return (Number(nA) || 0) - (Number(nB) || 0)
+}
+
+const byIdDesc = (a: Release, b: Release) => compareReleaseIds(b.id, a.id)
 
 /** The entries newer than what this person has dismissed (or than the baseline), newest first. */
 export function unseenReleases(lastSeenId: string | null | undefined, releases: readonly Release[] = RELEASES): Release[] {
-  const floor = lastSeenId && lastSeenId > RELEASE_NOTES_BASELINE ? lastSeenId : RELEASE_NOTES_BASELINE
-  return releases.filter((r) => r.id > floor).sort(byIdDesc)
+  const floor = lastSeenId && compareReleaseIds(lastSeenId, RELEASE_NOTES_BASELINE) > 0 ? lastSeenId : RELEASE_NOTES_BASELINE
+  return releases.filter((r) => compareReleaseIds(r.id, floor) > 0).sort(byIdDesc)
 }
 
 export function latestReleaseId(releases: readonly Release[] = RELEASES): string | null {

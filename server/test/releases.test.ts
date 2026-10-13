@@ -35,4 +35,15 @@ describe('§18 — what\'s new', () => {
     expect(again.body.lastSeenReleaseId).toBe(newest)
     expect((await app.api<ReleaseStateResponse>('GET', '/api/releases/state', { token: admin.token })).body.lastSeenReleaseId).toBe(newest)
   })
+
+  it('moves forward through the newest releases, and never back', async () => {
+    const [newest, middle, oldest] = RELEASES.slice(0, 3).map((r) => r.id)
+    const made = await app.api('POST', '/api/users', { token: admin.token, body: { username: 'admin2', password: 'Password#1', name: 'Second Admin', role: 'admin' } })
+    expect(made.status, JSON.stringify(made.body)).toBe(201)
+    const other = await app.login('admin2')
+    const mark = async (releaseId: string) => (await app.api<ReleaseStateResponse>('POST', '/api/releases/seen', { token: other.token, body: { releaseId } })).body.lastSeenReleaseId
+    expect(await mark(oldest)).toBe(oldest)
+    expect(await mark(newest)).toBe(newest)
+    expect(await mark(middle)).toBe(newest)
+  })
 })

@@ -1,21 +1,19 @@
 // ============================================================================
-// Tasks through the API: what waits on the person (the bell's Tasks tab and
-// the assistant's icon), their boxes (sent to them, sent by them) page by
-// page, one task with its thread, the people one may be sent to, and the
-// writes behind its buttons. Each write puts the task the server answered
+// Tasks through the API: what waits on the person (the bell's Tasks tab),
+// their boxes (sent to them, sent by them) page by page, one task with its
+// thread, and the writes behind its buttons (a task is sent by the
+// assistant, from its card). Each write puts the task the server answered
 // into its cache, then refreshes the lists and the counts it may have moved.
 // A task someone is not on is "not found" to them: the server decides.
 // ============================================================================
 
 import { useInfiniteQuery, useQuery, keepPreviousData, type QueryClient } from '@tanstack/react-query'
 import type {
-  CreateTaskRequest,
   TaskBox,
   TaskCountsResponse,
   TaskDetail,
   TaskListStatus,
   TaskMessageRequest,
-  TaskPerson,
   TaskReviewRequest,
   TasksResponse,
   TaskStateRequest,
@@ -30,7 +28,6 @@ export const taskKeys = {
   lists: ['tasks', 'list'] as const,
   list: (box: TaskBox, status: TaskListStatus) => ['tasks', 'list', box, status] as const,
   one: (id: string) => ['tasks', 'one', id] as const,
-  people: ['tasks', 'people'] as const,
 }
 
 const path = (id: string) => `/tasks/${encodeURIComponent(id)}`
@@ -75,9 +72,6 @@ export function useTask(id: string | null) {
   })
 }
 
-export function useTaskPeople(enabled: boolean) {
-  return useQuery({ queryKey: taskKeys.people, queryFn: () => api<TaskPerson[]>('/tasks/people'), enabled, staleTime: 5 * 60_000 })
-}
 
 /** The task as the server answered, in its cache; the lists and the counts asked again. */
 function settled(qc: QueryClient, task: TaskDetail): TaskDetail {
@@ -87,9 +81,6 @@ function settled(qc: QueryClient, task: TaskDetail): TaskDetail {
   return task
 }
 
-export async function createTask(qc: QueryClient, body: CreateTaskRequest): Promise<TaskDetail> {
-  return settled(qc, await api<TaskDetail>('/tasks', { method: 'POST', body }))
-}
 
 export async function updateTask(qc: QueryClient, id: string, body: UpdateTaskRequest): Promise<TaskDetail> {
   return settled(qc, await api<TaskDetail>(path(id), { method: 'PATCH', body }))
