@@ -1,10 +1,11 @@
 // ============================================================================
-// §20 — a question asked just after a stop. Stopped while a query runs, an
-// answer is finished by the server only when that query ends (its time limit
-// is 10 seconds), and a question sent to the same conversation before then is
-// refused as "still answering" — with no Stop on screen, since this side
-// already ended that answer. For a while after a stop, such a refusal is sent
-// again after a pause, with Stop on offer meanwhile.
+// §20 — a question asked just after a stop. Stop asks the server to end the
+// answer at its next step — stopped while a query runs, only when that query
+// ends (its time limit is 10 seconds) — and a question sent to the same
+// conversation before then is refused as "still answering", though this side
+// may already show that answer as stopped, or the conversation as free (a
+// copy of it fetched a moment before). For a while after a stop, such a
+// refusal is sent again after a pause, with Stop on offer meanwhile.
 // ============================================================================
 
 import { ApiError } from '@/lib/api'

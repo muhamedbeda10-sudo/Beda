@@ -13,6 +13,7 @@ import {
   type AiQueryExportResponse,
   type AiQueryPart,
   type AiStatusResponse,
+  type AiStopResponse,
   type AiStreamEvent,
   type AiActivityResponse,
   type AiUsageResponse,
@@ -22,7 +23,7 @@ import { apiError, fallback, runSql, text, thinking, type FakeReply } from './ai
 import { ACCESS_NOTICE } from '../src/ai/access'
 import { KEY_REFUSED_MESSAGE, answerQuestion, toReplayContent } from '../src/ai/assistant'
 import { minCallWorstCaseUsd } from '../src/ai/models'
-import { MAX_STEPS_PER_ANSWER } from '../src/ai/prompt'
+import { MAX_STEPS_PER_ANSWER, WRAP_UP_STEPS } from '../src/ai/prompt'
 import { appendMessages, findConversation, finishTurn, loadReplay } from '../src/ai/transcript'
 
 // §20 — asking: the answer streams as Server-Sent Events while the model
@@ -81,7 +82,7 @@ const SLOW_SQL = 'SELECT count(*) AS n FROM generate_series(1, 100000) a, genera
 const EMPTY_NOTICE = 'Claude returned an empty answer. Ask again, or rephrase the question.'
 
 /** Ask over a plain fetch, to stop it midway: read until `until` streams, then return the reader and what came. */
-async function askToStop(message: string, until: string, ac: AbortController): Promise<{ seen: string; conversationId: string }> {
+async function askToStop(message: string, until: string, ac: AbortController): Promise<{ seen: string; conversationId: string; more: (next: string) => Promise<string> }> {
   const res = await fetch(`${app.baseUrl}/api/ai/chat`, {
     method: 'POST',
     headers: { authorization: `Bearer ${admin.token}`, 'content-type': 'application/json' },
@@ -94,7 +95,12 @@ async function askToStop(message: string, until: string, ac: AbortController): P
   while (!seen.includes(until)) seen += new TextDecoder().decode((await reader.read()).value)
   const start = /event: start\ndata: (.+)\n/.exec(seen)
   const conversationId = start ? (JSON.parse(start[1]) as Extract<AiStreamEvent, { type: 'start' }>).conversation.id : ''
-  return { seen, conversationId }
+  /** Read on until `next` streams; returns everything read so far. */
+  const more = async (next: string): Promise<string> => {
+    while (!seen.includes(next)) seen += new TextDecoder().decode((await reader.read()).value)
+    return seen
+  }
+  return { seen, conversationId, more }
 }
 const callParams = (n: number) => app.model.calls[n].params
 const messagesOf = (conversationId: string) => app.api<AiMessagesResponse>('GET', `/api/ai/conversations/${conversationId}/messages`, { token: admin.token })
@@ -365,32 +371,65 @@ describe('§20 one answer at a time', () => {
     expect((await ask('Another', { conversationId: first.conversationId })).res.status).toBe(200)
   })
 
-  it('closes an answer a restart cut off, when the next question comes', async () => {
-    const stale = await app.db.query<{ id: string }>(
-      `INSERT INTO ai_turns (conversation_id, user_id, client_id, question, created_at) VALUES ($1, $2, $3, 'cut off', now() - interval '17 minutes') RETURNING id`,
-      [first.conversationId, admin.user.id, randomUUID()],
-    )
-    app.model.reply({ content: [text('Here.')] })
-    expect((await ask('After a restart', { conversationId: first.conversationId })).res.status).toBe(200)
-    const { rows } = await app.db.query(`SELECT status, stop_reason, notice FROM ai_turns WHERE id = $1`, [stale.rows[0].id])
-    expect(rows[0]).toMatchObject({ status: 'done', stop_reason: 'error', notice: expect.stringMatching(/restarted/) })
+  it('goes on when the asker leaves, shows how far it has got to whoever reopens it, and says in the bell when it is ready', async () => {
+    let release!: () => void
+    app.model.reply({ content: [text('Counting every sample ever recorded.')], hold: new Promise<void>((r) => (release = r)) })
+    const ac = new AbortController()
+    const { conversationId } = await askToStop('Count everything', 'event: text', ac)
+    ac.abort()
+    await new Promise((r) => setTimeout(r, 200))
+    const turn = async () =>
+      (await app.db.query<{ status: string; stop_reason: string | null; id: string }>(`SELECT id, status, stop_reason FROM ai_turns WHERE question = 'Count everything'`)).rows[0]
+    expect((await turn()).status).toBe('running')
+    // Reopened meanwhile: being written, as far as it has got.
+    const open = await messagesOf(conversationId)
+    expect(open.body.running).toMatchObject({ question: 'Count everything', stopping: false, clientId: expect.any(String), questionMessageId: expect.any(String) })
+    expect(open.body.conversation.answering).toBe(true)
+    expect(last(open.body.messages)).toMatchObject({ role: 'assistant', running: true, parts: [] })
+    expect(last(open.body.messages)).not.toHaveProperty('stopReason')
+    const listed = await app.api<AiConversationsResponse>('GET', '/api/ai/conversations', { token: admin.token })
+    expect(listed.body.conversations.find((c) => c.id === conversationId)).toMatchObject({ answering: true })
+    // Nobody has it on screen any more: it ends, and the bell says so, once.
+    await app.db.query(`UPDATE ai_turns SET watched_at = now() - interval '1 minute' WHERE question = 'Count everything'`)
+    release()
+    await waitFor(async () => (await turn())?.status === 'done', 'the answer to end')
+    const t = await turn()
+    expect(t.stop_reason).toBe('end_turn')
+    const bell = await app.db.query(`SELECT kind, severity, title, body, link FROM user_notifications WHERE ai_turn_id = $1`, [t.id])
+    expect(bell.rows).toEqual([
+      { kind: 'ai-answer', severity: 'info', title: expect.stringMatching(/^Answer ready: /), body: 'Counting every sample ever recorded.', link: `/ai?c=${conversationId}` },
+    ])
+    const after = await messagesOf(conversationId)
+    expect(after.body.running).toBeNull()
+    expect(after.body.conversation).not.toHaveProperty('answering')
+    expect(last(after.body.messages)).toMatchObject({ stopReason: 'end_turn', parts: [{ type: 'text', text: 'Counting every sample ever recorded.' }] })
+    expect(last(after.body.messages)).not.toHaveProperty('running')
+    // An answer watched to its end (its stream open) says nothing in the bell.
+    app.model.reply({ content: [text('Watched.')] })
+    const watched = await ask('A quick one', { conversationId })
+    expect((await app.db.query(`SELECT 1 FROM user_notifications WHERE ai_turn_id = (SELECT turn_id FROM ai_messages WHERE id = $1)`, [watched.start!.userMessageId])).rowCount).toBe(0)
   })
 
-  it('stops when the asker leaves: the call is aborted, its usage recorded, the turn closed', async () => {
+  it('stops only on Stop: the call is aborted, its usage recorded, the turn closed, and nothing said in the bell', async () => {
     app.model.reply({ content: [text('Counting every sample ever recorded')], usage: { input_tokens: 4000 }, hold: new Promise(() => undefined) })
     const calls = app.model.calls.length
     const ac = new AbortController()
     const asked = Date.now()
-    await askToStop('Count everything', 'event: text', ac)
+    const { conversationId, more } = await askToStop('Count everything again', 'event: text', ac)
     // The model goes on thinking out of sight for a while before the asker stops.
     await new Promise((r) => setTimeout(r, 300))
+    const stop = await app.api<AiStopResponse>('POST', `/api/ai/conversations/${conversationId}/stop`, { token: admin.token })
+    expect(stop.body).toEqual({ stopping: true })
+    // The stream that asked ends with the answer as it was stopped.
+    const tail = await more('event: done')
+    const done = frames(tail.slice(tail.indexOf('event: done'))).find((f) => f.event === 'done')!.data as Extract<AiStreamEvent, { type: 'done' }>
+    expect(done.message).toMatchObject({ stopReason: 'stopped', notice: 'Stopped before the answer was finished.' })
     ac.abort()
     const turn = async () =>
-      (await app.db.query<{ status: string; stop_reason: string; id: string }>(`SELECT id, status, stop_reason FROM ai_turns WHERE question = 'Count everything'`)).rows[0]
-    await waitFor(async () => (await turn())?.status === 'done', 'the stopped turn to close')
+      (await app.db.query<{ status: string; stop_reason: string; id: string }>(`SELECT id, status, stop_reason FROM ai_turns WHERE question = 'Count everything again'`)).rows[0]
     const seconds = (Date.now() - asked) / 1000
     const t = await turn()
-    expect(t.stop_reason).toBe('stopped')
+    expect(t).toMatchObject({ status: 'done', stop_reason: 'stopped' })
     const usage = await app.db.query<{ input_tokens: number; output_tokens: number; partial: boolean }>(
       `SELECT input_tokens, output_tokens, partial FROM ai_usage WHERE turn_id = $1`,
       [t.id],
@@ -401,27 +440,33 @@ describe('§20 one answer at a time', () => {
     const output = usage.rows[0].output_tokens
     expect(output).toBeGreaterThanOrEqual(Math.max(Math.ceil('Counting every sample ever recorded'.length / 2), 60))
     expect(output).toBeLessThanOrEqual(Math.ceil(seconds * 200))
-    // Stopped through the asker's signal, not by the loop.
+    // Stopped through the run's signal, not by the loop.
     expect(app.model.calls[calls].abortCalled).toBe(false)
-    // Nothing of the cut-off answer is in the replay.
+    // Nothing of the cut-off answer is in the replay, and the bell says nothing: the asker stopped it.
     const kinds = await app.db.query(`SELECT kind FROM ai_messages WHERE turn_id = $1`, [t.id])
     expect(kinds.rows).toEqual([{ kind: 'question' }])
+    expect((await app.db.query(`SELECT 1 FROM user_notifications WHERE ai_turn_id = $1`, [t.id])).rowCount).toBe(0)
+    // Nothing left to stop.
+    expect((await app.api<AiStopResponse>('POST', `/api/ai/conversations/${conversationId}/stop`, { token: admin.token })).body).toEqual({ stopping: false })
+    // Someone else's conversation is not there to stop.
+    expect((await app.api('POST', `/api/ai/conversations/${conversationId}/stop`, { token: other.token })).status).toBe(404)
   })
 
-  it('cancels a running query when the asker stops, so the answer closes at once and the next question is taken', async () => {
+  it('cancels a running query on Stop, so the answer closes at once and the next question is taken', async () => {
     app.model.reply({ content: [runSql('toolu_slow', 'Everything, twice over', SLOW_SQL), runSql('toolu_next', 'Then this', 'SELECT 1 AS one')] })
     const ac = new AbortController()
     const { conversationId } = await askToStop('A slow query', 'event: query_start', ac)
     const stoppedAt = Date.now()
+    expect((await app.api<AiStopResponse>('POST', `/api/ai/conversations/${conversationId}/stop`, { token: admin.token })).body).toEqual({ stopping: true })
     ac.abort()
     const turn = async () =>
       (await app.db.query<{ status: string; stop_reason: string; id: string }>(`SELECT id, status, stop_reason FROM ai_turns WHERE question = 'A slow query'`)).rows[0]
     await waitFor(async () => (await turn())?.status === 'done', 'the stopped turn to close')
-    // Not after the query's own 10 s.
+    // Not after the query's own 30 s.
     expect(Date.now() - stoppedAt).toBeLessThan(2000)
     const t = await turn()
     expect(t.stop_reason).toBe('stopped')
-    // The call and its results stored together, each saying what happened.
+    // The step and its results stored together, each saying what happened.
     const results = await app.db.query(`SELECT content FROM ai_messages WHERE turn_id = $1 AND kind = 'tool_results'`, [t.id])
     expect(results.rows).toEqual([
       {
@@ -431,6 +476,8 @@ describe('§20 one answer at a time', () => {
         ],
       },
     ])
+    const step = await app.db.query(`SELECT in_replay, pending FROM ai_messages WHERE turn_id = $1 AND kind = 'assistant'`, [t.id])
+    expect(step.rows).toEqual([{ in_replay: true, pending: false }])
     const queries = await app.db.query(`SELECT tool_use_id, ok, error FROM ai_queries WHERE turn_id = $1`, [t.id])
     expect(queries.rows).toEqual([{ tool_use_id: 'toolu_slow', ok: false, error: 'Interrupted by the user.' }])
     // Asked again straight away: taken, not "still answering".
@@ -470,6 +517,43 @@ describe('§20 one answer at a time', () => {
     await new Promise((r) => setTimeout(r, 300))
     expect((await app.db.query(`SELECT 1 FROM ai_turns WHERE question = $1`, [question])).rowCount).toBe(0)
     expect(app.model.calls).toHaveLength(calls)
+  })
+
+  it('stops, before a word of it, a question whose asker left while it was being kept: they never heard it was asked', async () => {
+    app.model.reply({ content: [text('Begun.')] })
+    const first = await ask('Before the one being kept')
+    const question = 'Gone while it was kept'
+    // The conversation is held while the question is kept: the asker leaves meanwhile (a Stop before `start`, a tab closed).
+    const lock = await app.db.connect()
+    await lock.query('BEGIN')
+    await lock.query('SELECT 1 FROM ai_conversations WHERE id = $1 FOR UPDATE', [first.conversationId])
+    const ac = new AbortController()
+    const calls = app.model.calls.length
+    try {
+      const sent = fetch(`${app.baseUrl}/api/ai/chat`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${admin.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ message: question, clientId: randomUUID(), conversationId: first.conversationId }),
+        signal: ac.signal,
+      }).catch((e: unknown) => e)
+      const waiting = async () =>
+        ((await app.db.query(`SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`)).rowCount ?? 0) > 0
+      await waitFor(waiting, 'the question to wait for its conversation')
+      ac.abort()
+      expect(await sent).toBeInstanceOf(Error)
+      await new Promise((r) => setTimeout(r, 200))
+    } finally {
+      await lock.query('COMMIT')
+      lock.release()
+    }
+    // Kept, then stopped at once: no call made, nothing in the bell, the conversation free for the next question.
+    await waitFor(async () => (await app.db.query(`SELECT 1 FROM ai_turns WHERE question = $1 AND status = 'done'`, [question])).rowCount === 1, 'the answer to stop')
+    const turn = await app.db.query<{ id: string; stop_reason: string }>(`SELECT id, stop_reason FROM ai_turns WHERE question = $1`, [question])
+    expect(turn.rows[0].stop_reason).toBe('stopped')
+    expect(app.model.calls).toHaveLength(calls)
+    expect((await app.db.query(`SELECT 1 FROM user_notifications WHERE ai_turn_id = $1`, [turn.rows[0].id])).rowCount).toBe(0)
+    app.model.reply({ content: [text('Answered.')] })
+    expect((await ask('And the next one', { conversationId: first.conversationId })).done!.message.stopReason).toBe('end_turn')
   })
 })
 
@@ -789,6 +873,13 @@ describe('§20 the loop’s guards', () => {
     expect(res.done!.message.stopReason).toBe('limit')
     expect(res.done!.message.notice).toMatch(/more steps than one answer may take/)
     expect(res.done!.message.parts.filter((p) => p.type === 'query')).toHaveLength(MAX_STEPS_PER_ANSWER)
+    // With WRAP_UP_STEPS left it was told, once, after that step's results, to close.
+    const lastOf = (n: number) => JSON.stringify(app.model.calls[calls + n].params.messages.at(-1))
+    const toldAt = MAX_STEPS_PER_ANSWER - WRAP_UP_STEPS
+    expect(lastOf(toldAt - 1)).not.toContain('<wrap_up>')
+    expect(lastOf(toldAt)).toContain(`<wrap_up>This answer is close to its limits: ${WRAP_UP_STEPS} steps and about`)
+    const told = await app.db.query(`SELECT count(*)::int AS n FROM ai_messages WHERE turn_id = $1 AND kind = 'tool_results' AND content::text LIKE '%<wrap_up>%'`, [res.done!.message.turnId])
+    expect(told.rows).toEqual([{ n: 1 }])
   })
 
   it('asks again when the tool input could not be parsed at all, recording what the failed call used', async () => {
@@ -836,7 +927,7 @@ describe('§20 the loop’s guards', () => {
       deadlineMs: 500,
     })
     await finishTurn(app.db, turnId, outcome.stopReason, outcome.notice)
-    expect(outcome).toEqual({ stopReason: 'limit', notice: 'This answer took longer than 15 minutes and was stopped. Ask a narrower question.' })
+    expect(outcome).toEqual({ stopReason: 'limit', notice: 'This answer took longer than 30 minutes and was stopped. Ask a narrower question.' })
     // The query was cancelled at the deadline, not left to its own 30 s.
     expect(Date.now() - started).toBeLessThan(3000)
     expect(events.filter((e) => e.type === 'query_start')).toHaveLength(1)
@@ -850,6 +941,46 @@ describe('§20 the loop’s guards', () => {
       },
     ])
     expect(JSON.stringify(results.rows)).not.toContain('by the user')
+  })
+
+  it('tells an answer within the last fifth of its time to close, once, after a step that ran whole', async () => {
+    app.model.reply({ content: [text('Ready.')] })
+    const res = await ask('A conversation near its time')
+    const conversation = (await findConversation(app.db, res.conversationId, admin.user.id))!
+    const turn = await app.db.query<{ id: string }>(
+      `INSERT INTO ai_turns (conversation_id, user_id, client_id, question) VALUES ($1, $2, $3, 'Near the end') RETURNING id`,
+      [conversation.id, admin.user.id, randomUUID()],
+    )
+    const turnId = turn.rows[0].id
+    await appendMessages(app.db, conversation.id, turnId, [{ role: 'user', kind: 'question', content: [{ type: 'text', text: 'Near the end' }] }])
+    app.model.reply(
+      { content: [runSql('toolu_near_1', 'One', 'SELECT 1 AS one')] },
+      { content: [runSql('toolu_near_2', 'Two', 'SELECT 2 AS two')] },
+      { content: [text('Closed: one and two; nothing remains.')] },
+    )
+    const calls = app.model.calls.length
+    const outcome = await answerQuestion({
+      db: app.db,
+      readers: app.aiReader,
+      model: app.model,
+      apiKey: KEY,
+      config: app.config,
+      userId: admin.user.id,
+      conversation,
+      turnId,
+      messages: await loadReplay(app.db, conversation.id),
+      modelId: AI_MODEL,
+      effort: 'medium',
+      emit: () => undefined,
+      signal: new AbortController().signal,
+      // Five minutes left of the thirty: within the last fifth.
+      deadlineMs: 5 * 60_000,
+    })
+    await finishTurn(app.db, turnId, outcome.stopReason, outcome.notice)
+    expect(outcome).toEqual({ stopReason: 'end_turn', notice: null })
+    const lastOf = (n: number) => JSON.stringify(app.model.calls[calls + n].params.messages.at(-1))
+    expect(lastOf(1)).toMatch(/<wrap_up>This answer is close to its limits: \d+ steps and about [45] minutes are left\./)
+    expect(lastOf(2)).not.toContain('<wrap_up>')
   })
 
   it('a Stop the clock overtakes is still the asker’s', async () => {

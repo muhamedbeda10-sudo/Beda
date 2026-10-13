@@ -2,11 +2,15 @@
 // §20 — the answer being written. The stream's events (start, text, progress,
 // query_start, query_end, automation, notice, task, playbook, done, error) are folded into one value
 // the thread draws, and the saved conversation takes over once it holds the
-// same answer. Pure functions, so the folding is tested without a browser.
+// same answer. The answer is the server's once `start` has named its
+// question: it goes on there whatever becomes of the connection, and only
+// Stop ends it early. A stream lost after that lets go of the turn
+// (detached), and the saved conversation, asked again while the answer runs,
+// shows the rest. Pure functions, so the folding is tested without a browser.
 // ============================================================================
 
 import type { ApiErrorCode } from '@qc/shared/api'
-import type { AiAttachment, AiConversation, AiMessage, AiMessagesResponse, AiPart, AiStreamEvent } from '@qc/shared/ai'
+import type { AiAttachment, AiConversation, AiMessage, AiMessagesResponse, AiPart, AiRunningAnswer, AiStreamEvent } from '@qc/shared/ai'
 import { revisedProposalId, supersedeParts } from '@/components/automations/wording'
 
 /** A query the model asked for that has not come back: running, or cut off when the answer ended. */
@@ -20,7 +24,8 @@ export interface PendingQuery {
 
 export type LivePart = AiPart | PendingQuery
 
-export type LivePhase = 'sending' | 'streaming' | 'done' | 'stopped' | 'error'
+/** `detached`: this device let go of the stream after `start` (or lost it); the answer goes on on the server. */
+export type LivePhase = 'sending' | 'streaming' | 'done' | 'stopped' | 'error' | 'detached'
 
 export interface LiveTurn {
   /** The send's own key, also its clientId: one per question asked. */
@@ -41,13 +46,15 @@ export interface LiveTurn {
   /** The model's latest word on what it is doing, between queries. */
   progress: string | null
   phase: LivePhase
+  /** Stop was pressed and the server asked to end it: it ends at its next step, and its `done` says so. */
+  stopping: boolean
   error: { code: ApiErrorCode; message: string } | null
   /** The answer as saved, once done. */
   message: AiMessage | null
 }
 
 export function startTurn(key: string, conversationId: string | null, question: string, sentAt: string, after: string | null = null, attachments: AiAttachment[] = []): LiveTurn {
-  return { key, conversationId, conversation: null, question, attachments, sentAt, after, userMessageId: null, parts: [], progress: null, phase: 'sending', error: null, message: null }
+  return { key, conversationId, conversation: null, question, attachments, sentAt, after, userMessageId: null, parts: [], progress: null, phase: 'sending', stopping: false, error: null, message: null }
 }
 
 export const isInFlight = (t: LiveTurn | null): boolean => !!t && (t.phase === 'sending' || t.phase === 'streaming')
@@ -138,10 +145,35 @@ export function applyEvent(t: LiveTurn, e: AiStreamEvent): LiveTurn {
  */
 export const followsKeptRound = (e: AiStreamEvent): boolean => e.type === 'text' || e.type === 'progress'
 
-/** The answer ended on this side: the asker stopped it, or the connection or the request failed. */
+/** The answer ended on this side before the server had it: the asker stopped it, or the connection or the request failed. */
 export function endTurn(t: LiveTurn, phase: 'stopped' | 'error', error?: { code: ApiErrorCode; message: string }): LiveTurn {
   if (!isInFlight(t)) return t
   return { ...t, phase, progress: null, error: phase === 'error' ? (error ?? { code: 'internal', message: 'The answer could not be finished.' }) : null, parts: interrupt(t.parts) }
+}
+
+/** Stop pressed (`asked`), or taken back when the server could not be told: the answer goes on until its `done`. */
+export function askedToStop(t: LiveTurn, asked = true): LiveTurn {
+  if (t.stopping === asked || (asked && !isInFlight(t))) return t
+  return { ...t, stopping: asked }
+}
+
+const LOST = { code: 'internal' as const, message: 'The connection was lost before the answer finished.' }
+
+/**
+ * A turn whose stream ended without saying how the answer ended (no done, no
+ * error): the connection closed or failed, or this device let go of it. Once
+ * `start` has named the question the server has the answer, and it goes on
+ * there whatever became of the connection — only Stop ends it, and the server
+ * says so — so the turn is let go of as it stood, its queries still running,
+ * and the saved conversation shows the rest. Before `start` nothing of it may
+ * have been kept: Stop pressed then (`stopped`) ends it as stopped, and
+ * anything else as lost. Either way, a question the server did keep is found
+ * in the saved conversation by its words (askedAt), which then draws it.
+ */
+export function streamEnded(t: LiveTurn, stopped: boolean): LiveTurn {
+  if (!isInFlight(t)) return t
+  if (t.userMessageId !== null) return { ...t, phase: 'detached', progress: null }
+  return stopped ? endTurn(t, 'stopped') : endTurn(t, 'error', LOST)
 }
 
 function interrupt(parts: LivePart[]): LivePart[] {
@@ -171,9 +203,10 @@ const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'quer
  * has of the conversation — unless the answer before it, in the same
  * conversation, had its question saved (the server named it) and this device
  * has not fetched it yet. Then that question is the anchor: the new one surely
- * comes after it. Without it, a Stop then a quick "Ask again" in the same
- * words that ends before its own start (refused, cut off) would be taken for
- * the stopped question, and its error never drawn.
+ * comes after it. Without it, the same words asked again at once after an
+ * answer this device let go of (or that failed after its start), refused or
+ * cut off before their own start, would be taken for that earlier question,
+ * and their error never drawn.
  */
 export function sentAfter(prev: LiveTurn | null, conversationId: string | null, cached: readonly AiMessage[] | undefined): string | null {
   if (conversationId === null) return null
@@ -213,13 +246,35 @@ export function askedAt(t: LiveTurn, saved: readonly AiMessage[]): number {
  * answer follows that question there. While it is being written, the saved
  * list is cut before the question, so a half-saved answer never shows twice.
  */
-export function liveView(t: LiveTurn | null, conversationId: string | null, saved: AiMessage[]): { saved: AiMessage[]; question: boolean; answer: boolean } {
+export function liveView(t: LiveTurn | null, conversationId: string | null, saved: readonly AiMessage[]): { saved: readonly AiMessage[]; question: boolean; answer: boolean } {
   if (!t || t.conversationId !== conversationId) return { saved, question: false, answer: false }
   const at = askedAt(t, saved)
   if (isInFlight(t)) return { saved: at >= 0 ? saved.slice(0, at) : saved, question: true, answer: true }
   if (at < 0) return { saved, question: true, answer: true }
   const answered = saved.slice(at + 1).some((m) => m.role === 'assistant')
   return { saved, question: false, answer: !answered }
+}
+
+/**
+ * Whether the turn is one this device let go of in the conversation and still
+ * draws itself: its answer goes on on the server, and the saved conversation
+ * (not fetched again yet) does not hold it.
+ */
+export function letGoOf(t: LiveTurn | null, conversationId: string | null, saved: readonly AiMessage[]): t is LiveTurn {
+  return !!t && t.phase === 'detached' && conversationId !== null && t.conversationId === conversationId && liveView(t, conversationId, saved).answer
+}
+
+/**
+ * The parts of the answer being written in a conversation, wherever the
+ * thread draws it from: the turn this device reads, a turn it let go of until
+ * the saved conversation holds its answer, or else a saved answer the server
+ * is still writing. Empty when none is being written there.
+ */
+export function partsBeingWritten(t: LiveTurn | null, conversationId: string | null, saved: readonly AiMessage[]): readonly LivePart[] {
+  if (conversationId === null) return []
+  if (t && t.conversationId === conversationId && isInFlight(t)) return t.parts
+  if (letGoOf(t, conversationId, saved)) return t.parts
+  return saved.find((m) => m.role === 'assistant' && m.running)?.parts ?? []
 }
 
 /** A drawn item of the thread, with its React key: a saved message, or the turn's own question or answer. */
@@ -234,7 +289,7 @@ const answerKey = (questionId: string) => `answer:${questionId}`
  * next question is asked — so it is one component throughout, and its query
  * cards keep their state (opened, the table and its filters) as it is saved.
  */
-export function threadItems(t: LiveTurn | null, view: { saved: AiMessage[]; question: boolean; answer: boolean }): ThreadItem[] {
+export function threadItems(t: LiveTurn | null, view: { saved: readonly AiMessage[]; question: boolean; answer: boolean }): ThreadItem[] {
   const items: ThreadItem[] = []
   const used = new Set<string>()
   // A key taken twice (a list the server sent oddly) falls back to one that cannot be.
@@ -277,8 +332,9 @@ export function latestAnswerKey(items: readonly ThreadItem[]): string | null {
 /**
  * The question and its answer put into the saved conversation as they ended,
  * so the hand-over draws nothing twice. A copy already there (a refetch while
- * the answer was written holds it half-done, without its last words or how
- * it ended) is replaced, not kept.
+ * the answer was written holds it half-done and marked running, without its
+ * last words or how it ended) is replaced, not kept; and that refetch's word
+ * that the answer is still being written goes with it.
  */
 export function settleMessages(old: AiMessagesResponse | undefined, conversation: AiConversation, asked: AiMessage, answer: AiMessage): AiMessagesResponse {
   const base = old ?? { conversation, messages: [] }
@@ -286,7 +342,10 @@ export function settleMessages(old: AiMessagesResponse | undefined, conversation
   const have = new Set(base.messages.map((m) => m.id))
   const messages = base.messages.map((m) => fresh.get(m.id) ?? m)
   const add = [asked, answer].filter((m) => !have.has(m.id))
-  return { ...base, messages: [...messages, ...add] }
+  const next: AiMessagesResponse = { ...base, messages: [...messages, ...add] }
+  const running = base.running
+  if (running && (running.turnId === answer.turnId || running.questionMessageId === asked.id)) next.running = null
+  return next
 }
 
 /**
@@ -299,14 +358,34 @@ export function liveAnnouncement(t: LiveTurn | null): string {
   switch (t.phase) {
     case 'sending':
     case 'streaming':
+      if (t.stopping) return 'Stopping…'
       return t.parts.some((p) => p.type === 'pending-query' && p.state === 'running') ? 'Running a query…' : 'Thinking…'
+    case 'detached':
+      return 'Thinking…'
     case 'done':
-      return 'Answer ready.'
+      return t.message?.stopReason === 'stopped' ? 'Stopped.' : 'Answer ready.'
     case 'stopped':
       return 'Stopped.'
     case 'error':
       return t.error?.message ?? 'The answer could not be finished.'
   }
+}
+
+/** What a screen reader hears of an answer the server is writing, as the saved conversation last said it. */
+const runningAnnouncement = (running: AiRunningAnswer): string => (running.stopping ? 'Stopping…' : 'Thinking…')
+
+/**
+ * What the thread reads out, as its answer changes phase: the turn this
+ * device reads; else an answer the server is writing (reopened, or let go
+ * of); a turn let go of is ready once the saved conversation holds its answer
+ * and no longer says it runs. The turn of another conversation says nothing.
+ */
+export function threadAnnouncement(t: LiveTurn | null, conversationId: string | null, view: { answer: boolean }, running: AiRunningAnswer | null | undefined): string {
+  const mine = t && t.conversationId === conversationId ? t : null
+  if (mine && isInFlight(mine)) return liveAnnouncement(mine)
+  if (running) return runningAnnouncement(running)
+  if (mine?.phase === 'detached') return view.answer ? liveAnnouncement(mine) : 'Answer ready.'
+  return liveAnnouncement(mine)
 }
 
 /** The text of an answer, as markdown, for the clipboard. */

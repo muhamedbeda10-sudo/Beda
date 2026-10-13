@@ -11,7 +11,9 @@
 // Each conversation's menu pins it, renames it, moves it to a group (a new
 // one too), archives it or deletes it. The search reads every conversation
 // on the server, archived ones too — titles, questions and answers — and
-// shows the words around what it found.
+// shows the words around what it found. One whose answer is being written —
+// streamed here, or going on on the server with no one reading it — says so,
+// and cannot be removed until it has ended.
 // ============================================================================
 
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -350,7 +352,8 @@ function SectionTitle({ children, className }: { children: ReactNode; className?
 }
 
 function Row({ c, rows, below }: { c: AiConversation; rows: RowContext; below?: ReactNode }) {
-  return <AiConversationRow conversation={c} active={c.id === rows.activeId} writing={c.id === rows.writingIn} groups={rows.groups} actions={rows.actions} onOpen={rows.onOpen} below={below} />
+  // Being answered: streamed here (the list may not say so yet), or going on on the server with no one reading it.
+  return <AiConversationRow conversation={c} active={c.id === rows.activeId} writing={!!c.answering || c.id === rows.writingIn} groups={rows.groups} actions={rows.actions} onOpen={rows.onOpen} below={below} />
 }
 
 /** A scope of the list a page at a time, with "Older conversations" while there are more. */

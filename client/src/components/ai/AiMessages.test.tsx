@@ -2,14 +2,14 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { AiMeResponse, AiMessage, AiQueryPart } from '@qc/shared/ai'
+import type { AiMeResponse, AiMessage, AiQueryPart, AiRunningAnswer } from '@qc/shared/ai'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import { PROPOSAL_WAIT } from '@/components/automations/AutomationProposalCard'
 import { keys } from '@/services/queries'
 import { AppProvider } from '@/store/AppContext'
 import { AiAssistantProvider } from './AiAssistantProvider'
 import { Answer, UserBubble } from './AiMessages'
-import { startTurn, type LivePart, type LiveTurn } from './liveTurn'
+import { applyEvent, askedToStop, startTurn, streamEnded, type LivePart, type LiveTurn } from './liveTurn'
 
 // A notice card asks the signed-in person's role (its link to the Notices page is an administrator's).
 vi.mock('@/store/AuthContext', async (original) => ({
@@ -34,7 +34,7 @@ afterAll(() => {
 })
 
 /** An answer as the person sees it: by default someone the owner allows Excel (§20). */
-function render(props: { message?: AiMessage; turn?: LiveTurn; noticesWait?: boolean }, excel = true): string {
+function render(props: { message?: AiMessage; turn?: LiveTurn; running?: AiRunningAnswer; noticesWait?: boolean }, excel = true): string {
   const client = new QueryClient()
   client.setQueryData<AiMeResponse>(keys.aiMe, { granted: true, owner: false, available: true, automations: false, excel, notices: false })
   return renderToStaticMarkup(
@@ -192,6 +192,65 @@ describe('an answer being written', () => {
     expect(whole).toContain('Headline figures')
     expect(whole).toContain('There were 19')
     expect(whole).toContain('ai-caret')
+  })
+})
+
+describe('an answer the server is still writing, followed through its conversation', () => {
+  // The answer as the server lists it while it writes it (the conversation reopened): its steps so far, no figures yet.
+  const soFar: AiMessage = { id: 't1', role: 'assistant', turnId: 't1', createdAt: '2026-10-09T10:00:02.000Z', running: true, parts: [{ type: 'text', text: 'Looking at September.' }, byMachine] }
+  const running: AiRunningAnswer = { turnId: 't1', clientId: 'k1', question: 'Defects?', questionMessageId: 'u1', askedAt: '2026-10-09T10:00:00.000Z', progress: 'Counting the open holds', stopping: false }
+
+  it('reads as being written: what it has done, the server’s word on what it does now, its queries open', () => {
+    const html = render({ message: soFar, running })
+    expect(html).toContain('Looking at September.')
+    expect(html).toContain('Counting the open holds')
+    expect(html).toContain('ai-dots')
+    expect(html).toMatch(/aria-expanded="true"[^>]*>.*How I got this \(1 query\)/)
+    // No chart, no footer (Copy, Print, Save as report), no notice of how it ended: it has not.
+    expect(html).not.toContain('ai-figure')
+    expect(html).not.toContain('aria-label="Copy the answer"')
+    expect(html).not.toContain('aria-label="Print the answer"')
+    expect(html).not.toContain('Stopped before the answer finished.')
+    // No caret: its words come a step at a time, not as they are written.
+    expect(html).not.toContain('ai-caret')
+  })
+
+  it('says it is thinking between steps, and that it is stopping once Stop was pressed', () => {
+    expect(render({ message: soFar, running: { ...running, progress: null } })).toContain('Thinking…')
+    expect(render({ message: { ...soFar, parts: [] } })).toContain('Thinking…')
+    const stopping = render({ message: soFar, running: { ...running, stopping: true } })
+    expect(stopping).toContain('Stopping…')
+    expect(stopping).not.toContain('Counting the open holds')
+  })
+
+  it('holds its cards while it is written, and settles once the server says it has ended', () => {
+    const card: AiNoticePart = {
+      type: 'notice',
+      proposalId: 'n1',
+      ok: true,
+      action: 'create',
+      state: 'proposed',
+      draft: { title: 'Check the coating', body: 'Measure every coil.', severity: 'warning', requiresAck: true, matchMode: 'all', validFrom: '2026-10-10', validTo: null, targets: [] },
+      reach: { everyone: true, people: 12, placeBound: false },
+    }
+    // Publish and Discard wait, as on a card of an answer streamed here.
+    expect(render({ message: { ...soFar, parts: [...soFar.parts, card] }, running }).match(new RegExp(`disabled="" data-tip="${PROPOSAL_WAIT}"`, 'g'))).toHaveLength(2)
+    // Fetched again without `running`: it has ended, and reads as any saved answer.
+    const ended = render({ message: saved })
+    expect(ended).toContain('aria-label="Print the answer"')
+    expect(ended).not.toContain('ai-dots')
+  })
+
+  it('draws a turn this device let go of as still being written, never as stopped', () => {
+    const streaming = applyEvent(writing([{ type: 'text', text: 'Looking.' }]), { type: 'start', conversation: { id: 'c1', title: 'Defects', createdAt: '2026-10-09T10:00:00.000Z', lastMessageAt: '2026-10-09T10:00:00.000Z', pinnedAt: null, groupId: null, archivedAt: null }, userMessageId: 'u1' })
+    const html = render({ turn: streamEnded(streaming, false) })
+    expect(html).toContain('Looking.')
+    expect(html).toContain('Thinking…')
+    expect(html).not.toContain('ai-caret')
+    expect(html).not.toContain('Stopped before the answer finished.')
+    expect(html).not.toContain('The connection was lost')
+    // Stop pressed, then the stream lost: it says it is stopping until the conversation shows how it ended.
+    expect(render({ turn: streamEnded(askedToStop(streaming), false) })).toContain('Stopping…')
   })
 })
 

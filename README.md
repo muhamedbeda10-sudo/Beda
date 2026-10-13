@@ -194,6 +194,22 @@ assistant's own records are the `ai_*` tables (conversations, usage for the
 caps, the encrypted API key, the owner and the access list), which no reader
 role can read.
 
+An answer is written on the server, not by the request that asked for it
+(`server/src/ai/answerRunner.ts`): closing the page only stops watching, and
+only Stop (`POST /api/ai/conversations/:id/stop`) ends it early. The instance
+writing an answer says so every few seconds on its turn (`ai_turns.runner`,
+`heartbeat_at`); one that has not for 30 s was lost with its instance, and
+another instance takes it over and continues it from its last stored step —
+a step is stored before its tools run, so it is finished from there, each
+tool once, never asked of the model again. Its model calls and running time
+are counted on the turn, so its limits hold across hand-overs. A stopping
+instance hands its answers back at once. An answer begun by the version
+before (no heartbeat) is never continued: it is left to that version while
+it may still be writing it, and closed as cut off once past its limit
+(16 minutes). An answer that ends while nobody
+has it on screen puts an alert in the bell (kind `ai-answer`), which is
+pushed like any other.
+
 **Push notifications.** At the first tap in the app the browser asks to
 allow notifications (browsers ask only after a tap); once allowed, the device
 is subscribed at every sign-in, until the person turns it off in the account

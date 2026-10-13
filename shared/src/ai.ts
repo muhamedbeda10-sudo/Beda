@@ -352,6 +352,8 @@ export interface AiConversation {
   groupId: string | null
   /** When it was archived out of the list; null when it is in it. */
   archivedAt: string | null
+  /** An answer is being written in it now, on the server: whether or not anyone is watching. */
+  answering?: boolean
 }
 
 export interface AiConversationsResponse {
@@ -592,7 +594,7 @@ export type AiStopReason =
   | 'max_tokens'
   /** The model declined. */
   | 'refusal'
-  /** The asker pressed Stop, or left. */
+  /** The asker pressed Stop. (Leaving the page does not stop an answer: it goes on, and the bell says when it is ready.) */
   | 'stopped'
   /** Too many queries or too long for one question. */
   | 'limit'
@@ -620,11 +622,39 @@ export interface AiMessage {
   savedReportId?: string
   /** A question's files, in the order they were attached. */
   attachments?: AiAttachment[]
+  /** An answer still being written on the server: what it has done so far, not how it ends. */
+  running?: boolean
+}
+
+/**
+ * The answer being written in a conversation, on the server. It goes on when the asker closes the page; only Stop
+ * ends it early. A server that restarts hands it on, and it continues from its last step.
+ */
+export interface AiRunningAnswer {
+  turnId: string
+  /** The send's key, as the asker's device sent it (AiChatRequest.clientId). */
+  clientId: string
+  /** The question as typed. */
+  question: string
+  /** The question's saved message: what the answer follows. */
+  questionMessageId: string | null
+  askedAt: string
+  /** A line on what it is doing now (thinking, or the query it runs); null between steps. */
+  progress: string | null
+  /** Stop was pressed; it ends at its next step. */
+  stopping: boolean
 }
 
 export interface AiMessagesResponse {
   conversation: AiConversation
   messages: AiMessage[]
+  /** The answer being written now, when there is one. While it runs, ask again every few seconds for its progress. */
+  running?: AiRunningAnswer | null
+}
+
+/** POST /ai/conversations/:id/stop: whether an answer was being written and is now stopping. */
+export interface AiStopResponse {
+  stopping: boolean
 }
 
 export interface AiChatRequest {
@@ -640,7 +670,7 @@ export interface AiChatRequest {
 
 /** The answer as it is written: one JSON object per Server-Sent Event, its `type` the event name. */
 export type AiStreamEvent =
-  | { type: 'start'; conversation: AiConversation; userMessageId: string }
+  | { type: 'start'; conversation: AiConversation; userMessageId: string; turnId?: string }
   | { type: 'text'; delta: string }
   /** A line on what the model is doing between queries. */
   | { type: 'progress'; text: string }

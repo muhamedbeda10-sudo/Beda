@@ -28,12 +28,23 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-10-13.108',
+    id: '2026-10-13.109',
     date: '2026-10-13',
     title: 'Conversations named by the assistant',
     items: [
       { text: 'A new conversation with the assistant is given a short title of a few words on what it is about — in the language you asked in — instead of the start of your first question. It appears in the list and at the top of the conversation while the answer is being written.' },
       { text: 'A title you gave a conversation yourself (Rename in its menu) is never changed. If the title cannot be made, the start of the first question stays, as before. It costs a tiny part of a cent a conversation, counted with the question.' },
+    ],
+  },
+  {
+    id: '2026-10-13.108',
+    date: '2026-10-13',
+    title: 'The assistant finishes its answers on its own',
+    items: [
+      { text: 'An answer now goes on when you close the page, refresh it or put the phone away: only Stop ends it early. Open the conversation again, here or on another device, and it shows how far the answer has got, with its Stop.' },
+      { text: 'When an answer ends while you are not looking at it, the bell says so (AI assistant), and it reaches your phone like any other alert; tapping it opens the conversation.' },
+      { text: 'If the server restarts in the middle of an answer, the answer goes on from the step it had reached, without starting again.' },
+      { text: 'One answer may take up to 30 minutes. As it nears its time or its steps, the assistant saves what is worth keeping and closes with what it found and what remains, so you can ask it to go on.' },
     ],
   },
   {

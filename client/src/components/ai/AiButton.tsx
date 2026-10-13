@@ -1,12 +1,17 @@
 // §20 — the door to the AI assistant: a round button floating in the bottom corner of every page, above any bar
 // along the bottom (index.css: .ai-fab). It opens the popup where it was left; while the popup is open the button
-// steps aside for it. It pulses while an answer is being written, so a person who closed the popup sees it is busy.
+// steps aside for it. It pulses while an answer is being written, so a person who closed the popup sees it is busy:
+// the one this device reads, or else one going on on the server (the page reloaded meanwhile, or the stream let go
+// of), as the list of conversations says — asked again every few seconds while it says so.
 
 import { Bot } from 'lucide-react'
+import { useAiConversations } from '@/services/queries'
 import { useAi } from './AiAssistantProvider'
 
 export function AiButton() {
-  const { open, setOpen, openAt, busy, enabled } = useAi()
+  const { open, setOpen, openAt, busy: reading, enabled } = useAi()
+  const { data } = useAiConversations(enabled && !open && !reading)
+  const busy = reading || !!data?.conversations.some((c) => c.answering)
   if (open) return null
   return (
     <button

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { AiMessagesResponse, AiTaskPart } from '@qc/shared/ai'
+import type { AiMessage, AiMessagesResponse, AiTaskPart } from '@qc/shared/ai'
 import { ApiError } from '@/lib/api'
 import { applyEvent, endTurn, parseStreamEvent, startTurn, type LiveTurn } from './liveTurn'
 import { answerBlocks } from './answerLayout'
@@ -63,14 +63,22 @@ describe('the card in the cached conversation', () => {
 
   it('makes the saved cards wait while the answer being written there drafts one', () => {
     const asking: LiveTurn = { ...startTurn('k1', 'c1', 'Change it', '2026-10-13T08:01:00Z'), phase: 'streaming' }
-    expect(taskCardsWait(asking, 'c1')).toBe(false)
+    expect(taskCardsWait(asking, 'c1', [])).toBe(false)
     const drafting = applyEvent(asking, { type: 'task', part: card({ proposalId: 't3' }) })
-    expect(taskCardsWait(drafting, 'c1')).toBe(true)
-    expect(taskCardsWait(drafting, 'c2')).toBe(false)
-    expect(taskCardsWait(drafting, null)).toBe(false)
+    expect(taskCardsWait(drafting, 'c1', [])).toBe(true)
+    expect(taskCardsWait(drafting, 'c2', [])).toBe(false)
+    expect(taskCardsWait(drafting, null, [])).toBe(false)
     // A refused draft replaces nothing; an answer that has ended holds nothing back.
-    expect(taskCardsWait(applyEvent(asking, { type: 'task', part: card({ proposalId: 't4', ok: false, draft: undefined }) }), 'c1')).toBe(false)
-    expect(taskCardsWait(endTurn(drafting, 'stopped'), 'c1')).toBe(false)
+    expect(taskCardsWait(applyEvent(asking, { type: 'task', part: card({ proposalId: 't4', ok: false, draft: undefined }) }), 'c1', [])).toBe(false)
+    expect(taskCardsWait(endTurn(drafting, 'stopped'), 'c1', [])).toBe(false)
+  })
+
+  it('makes them wait too while the server writes that answer and this device only follows it', () => {
+    const asked: AiMessage = { id: 'q2', role: 'user', parts: [{ type: 'text', text: 'Change it' }], createdAt: '2026-10-13T08:01:00Z' }
+    const writing: AiMessage = { id: 'a2', role: 'assistant', parts: [card({ proposalId: 't3' })], createdAt: '2026-10-13T08:01:07Z', running: true }
+    const saved = [...cached(card()).messages, asked, writing]
+    expect(taskCardsWait(null, 'c1', saved)).toBe(true)
+    expect(taskCardsWait(null, 'c1', [...saved.slice(0, -1), { ...writing, running: undefined }])).toBe(false)
   })
 
   it('reads the card a refusal sends along', () => {

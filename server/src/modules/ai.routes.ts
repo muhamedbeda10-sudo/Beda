@@ -82,6 +82,7 @@ import {
   AI_CONVERSATION_SEARCH_MIN,
   type AiMeResponse,
   type AiMessagesResponse,
+  type AiStopResponse,
   type AiQueryExportResponse,
   type AiReport,
   type AiReportExportResponse,
@@ -124,9 +125,9 @@ import {
   type AccessRecord,
   type PersonAvailability,
 } from '../ai/access'
-import { TURN_DEADLINE_MINUTES, answerQuestion, describeModelFailure } from '../ai/assistant'
+import { LOST_TURN } from '../ai/answerRunner'
+import { describeModelFailure } from '../ai/assistant'
 import {
-  AttachmentExpander,
   attachmentBlocks,
   buildAiAttachmentKey,
   checkPending,
@@ -174,30 +175,29 @@ import {
 import { AI_EXPORT_LIMITS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
 import { describeAiSchema } from '../ai/schemaDoc'
 import { describeSavedTables, findSavedTable, listSavedTables, previewTable, refreshTable, removeTable, type SavedTableActor } from '../ai/savedTables'
-import { SAVED_TABLE_TOOLS, savedTableToolHandlers } from '../ai/savedTableTools'
+import { SAVED_TABLE_TOOLS } from '../ai/savedTableTools'
 import { AI_SETTINGS_KEY, loadAiSettings, loadAvailability } from '../ai/settings'
 import { SseStream } from '../ai/sse'
-import { asksForConfirmation } from '../automations/confirmation'
 import { EditsInput } from '../automations/draft'
 import { activateProposal, discardProposal } from '../automations/lifecycle'
-import { AUTOMATION_TOOLS, PROPOSE_AUTOMATION_TOOL_NAME, automationToolHandlers } from '../automations/tools'
+import { AUTOMATION_TOOLS } from '../automations/tools'
 import { applyNoticeProposal, discardNoticeProposal } from '../noticeAssistant/lifecycle'
 import { noticeManager, noticePromptMode } from '../noticeAssistant/scope'
-import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS, noticeToolHandlers } from '../noticeAssistant/tools'
-import { TASK_TOOLS, discardTaskProposal, sendTaskProposal, taskToolHandlers } from '../tasks/assistant'
-import { PLAYBOOK_TOOLS, playbookToolHandlers } from '../playbook/assistant'
-import { EXCEL_TOOLS, XLSX_CONTENT_TYPE, excelToolHandlers, findExcelFile, logExcelDownload } from '../ai/excel'
+import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS } from '../noticeAssistant/tools'
+import { TASK_TOOLS, discardTaskProposal, sendTaskProposal } from '../tasks/assistant'
+import { PLAYBOOK_TOOLS } from '../playbook/assistant'
+import { EXCEL_TOOLS, XLSX_CONTENT_TYPE, findExcelFile, logExcelDownload } from '../ai/excel'
 import { addEntry, changeEntry, listPlaybook, mayUsePlaybook, promptPlaybook, removeEntry } from '../playbook/service'
 import {
   appendMessages,
   createConversation,
   findConversation,
-  finishTurn,
   listConversations,
   loadDisplayMessages,
   loadReplay,
   personalMonthSpend,
   repairDanglingToolUse,
+  runningAnswer,
   toConversation,
   type ConversationRecord,
 } from '../ai/transcript'
@@ -207,8 +207,6 @@ const uuid = z.string().uuid()
 const EXPORT_QUERY_TIMEOUT_MS = 30_000
 /** How long a finished answer waits for its conversation's title before it closes without it. */
 const TITLE_WAIT_MS = 3_000
-/** A turn still "running" after this long was cut off by a restart: the next question closes it. */
-const STALE_TURN_MINUTES = TURN_DEADLINE_MINUTES + 1
 /** Where the owner fixes what stops the assistant. */
 const SETTINGS_PAGE = 'Administration → AI assistant'
 
@@ -714,36 +712,52 @@ export function aiRoutes(ctx: AppContext): Router {
     const id = parse(uuid, req.params.id)
     const conversation = await findConversation(db, id, user.id)
     if (!conversation) throw notFound('That conversation')
-    const body: AiMessagesResponse = { conversation: toConversation(conversation), messages: await loadDisplayMessages(db, id) }
+    // Asked while an answer is being written: the asker has it on screen (a device polls it only while it shows it),
+    // so it is not told in the bell when it ends.
+    await ctx.answers.watched(id)
+    const running = await runningAnswer(db, id)
+    const body: AiMessagesResponse = { conversation: { ...toConversation(conversation), ...(running ? { answering: true } : {}) }, messages: await loadDisplayMessages(db, id), running }
     res.json(body)
   })
 
-  /** Removed from the person's list; the record stays (soft delete). */
+  /** Stop the answer being written in the conversation, wherever it is written. Nothing to stop is not an error: it ended. */
+  r.post('/conversations/:id/stop', async (req, res) => {
+    const { user } = await aiUser(req)
+    const id = parse(uuid, req.params.id)
+    if (!(await findConversation(db, id, user.id))) throw notFound('That conversation')
+    const body: AiStopResponse = { stopping: await ctx.answers.requestStop(id, user.id) }
+    res.json(body)
+  })
+
+  /** Removed from the person's list; the record stays (soft delete). An answer still being written in it stops. */
   r.delete('/conversations/:id', async (req, res) => {
     const { user } = await aiUser(req)
     const id = parse(uuid, req.params.id)
     const { rowCount } = await db.query(`UPDATE ai_conversations SET deleted_at = now() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`, [id, user.id])
     if (!rowCount) throw notFound('That conversation')
+    await ctx.answers.requestStop(id, user.id)
     res.status(204).end()
   })
 
   // ---- Asking -------------------------------------------------------------------------
 
   r.post('/chat', async (req, res) => {
-    // The browser leaving (or Stop) closes the response before it has ended; listened for from the
-    // start, so leaving while the question is being set up counts too. Not req's close: that fires
-    // as soon as the body is read.
+    // The browser leaving closes the response before it has ended. Before the question is kept that means nobody
+    // asked it (listened for from the start; not req's close, which fires as soon as the body is read); once it is
+    // kept the answer goes on without them, and only POST /conversations/:id/stop ends it early.
     const ac = new AbortController()
-    res.on('close', () => {
-      if (!res.writableEnded) ac.abort()
-    })
+    const left = new Promise<'left'>((resolve) =>
+      res.on('close', () => {
+        if (!res.writableEnded) ac.abort()
+        resolve('left')
+      }),
+    )
     const { user, access, avail } = await asker(req)
     const owner = avail.me.owner
     const body = parse(chatSchema, req.body)
     const wait = ctx.aiLimiter.hit(user.id)
     if (wait > 0) throw new HttpError(429, 'rate_limited', `Too many questions in a short time. Try again in ${wait} seconds.`)
     if (!avail.me.available || !avail.app.apiKey) throw unavailable(avail)
-    const apiKey = avail.app.apiKey
 
     // A new conversation's prompt carries the data dictionary of the person's domains as the catalog has it now, for good,
     // and — for a person who may create automations as it starts — how to propose one, with the tools to do it (§21);
@@ -772,12 +786,11 @@ export function aiRoutes(ctx: AppContext): Router {
         const found = await findConversation(tx, body.conversationId, user.id, true)
         if (!found) throw notFound('That conversation')
         conversation = found
-        const running = await tx.query<{ id: string; stale: boolean }>(
-          `SELECT id, created_at < now() - make_interval(mins => $2) AS stale FROM ai_turns WHERE conversation_id = $1 AND status = 'running'`,
-          [conversation.id, STALE_TURN_MINUTES],
-        )
-        if (running.rows[0] && !running.rows[0].stale) throw new HttpError(409, 'conflict', 'Still answering the previous question. Wait for it, or stop it.')
-        if (running.rows[0]) await finishTurn(tx, running.rows[0].id, 'error', 'This answer was cut off (the server restarted).')
+        // An answer still being written comes first, wherever it is written. One whose instance went silent is
+        // taken over and continued (answerRunner.ts): look for it now rather than at the next sweep.
+        const running = await tx.query<{ lost: boolean }>(`SELECT (${LOST_TURN}) AS lost FROM ai_turns WHERE conversation_id = $1 AND status = 'running'`, [conversation.id])
+        if (running.rows[0]?.lost) ctx.answers.kick()
+        if (running.rows[0]) throw new HttpError(409, 'conflict', 'Still answering the previous question. Wait for it, or stop it.')
       } else {
         conversation = await createConversation(tx, {
           userId: user.id,
@@ -794,8 +807,10 @@ export function aiRoutes(ctx: AppContext): Router {
       }
       // The model and effort the owner set for the person now: an earlier conversation goes on with them too.
       const { rows } = await tx.query<{ id: string }>(
-        `INSERT INTO ai_turns (conversation_id, user_id, client_id, question, model, effort) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-        [conversation.id, user.id, body.clientId, body.message, access.model, access.effort],
+        // Written by this instance from the start: its runner and heartbeat set as it is kept, so no other takes it.
+        `INSERT INTO ai_turns (conversation_id, user_id, client_id, question, model, effort, runner, heartbeat_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now()) RETURNING id`,
+        [conversation.id, user.id, body.clientId, body.message, access.model, access.effort, ctx.answers.id],
       )
       const turnId = rows[0].id
       await repairDanglingToolUse(tx, conversation.id, turnId)
@@ -821,82 +836,47 @@ export function aiRoutes(ctx: AppContext): Router {
     })
 
     const { conversation, turnId } = started
+    // The answer is written by the runner, whatever happens to this response; the response watches it while it is open.
+    const run = ctx.answers.begin({ turnId, conversationId: conversation.id, userId: user.id })
+    // Gone while the question was kept (a Stop before the asker heard it was, or the connection lost): the asker never
+    // learnt it was asked, so it is not answered — stopped at once, as their Stop would.
+    if (ac.signal.aborted) {
+      await ctx.answers.requestStop(conversation.id, user.id)
+      return
+    }
     const sse = new SseStream(res)
     sse.open()
-    // A new conversation's title in a few words, asked beside the answer; sent as soon as it is kept.
+    // A new conversation's title in a few words, asked beside the answer: kept whoever watches, and sent on this
+    // stream as soon as it is. Not stopped with the request, nor by Stop.
     const titled =
       body.conversationId || !body.message.trim()
         ? null
-        : giveConversationTitle({ db, model: ctx.ai, apiKey, userId: user.id, conversationId: conversation.id, turnId, question: body.message })
+        : giveConversationTitle({ db, model: ctx.ai, apiKey: avail.app.apiKey, userId: user.id, conversationId: conversation.id, turnId, question: body.message })
             .then((c) => {
               if (c) sse.send({ type: 'title', conversation: c })
             })
             .catch((e) => console.warn(`[ai] conversation ${conversation.id}: the title could not be kept:`, e instanceof Error ? e.message : String(e)))
+    const unsubscribe = run.subscribe((event) => sse.send(event))
+    sse.send({ type: 'start', conversation: toConversation(conversation), userMessageId: started.questionId, turnId })
+    // Left: the answer goes on, and the bell tells the asker when it is ready. Stay only to end the stream politely.
     try {
-      sse.send({ type: 'start', conversation: toConversation(conversation), userMessageId: started.questionId })
-      const outcome = await answerQuestion({
-        db,
-        readers: ctx.aiReader,
-        model: ctx.ai,
-        apiKey,
-        config: ctx.config,
-        userId: user.id,
-        modelId: access.model,
-        effort: access.effort,
-        owner,
-        conversation,
-        turnId,
-        messages: started.replay,
-        // The conversation's files, read from the store once for this answer.
-        attachments: new AttachmentExpander(db, ctx.images),
-        emit: (event) => sse.send(event),
-        signal: ac.signal,
-        // Run only for a conversation that was given these tools; each checks the person may still use them.
-        tools: {
-          ...automationToolHandlers({
-            db,
-            config: ctx.config,
-            readers: ctx.aiReader,
-            userId: user.id,
-            conversationId: conversation.id,
-            turnId,
-            // Held to the person's words of agreement when its tool asks for them (§22): conversations begun before go on as they were sent.
-            confirmFirst: asksForConfirmation(conversation.tools, PROPOSE_AUTOMATION_TOOL_NAME),
-            emit: (event) => sse.send(event),
-          }),
-          // §23 — each reads the person's role again: what they see, and whether they may still have a notice written.
-          ...noticeToolHandlers({ db, config: ctx.config, userId: user.id, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
-          // Tasks: drafting ones checks the person may still send tasks.
-          ...taskToolHandlers({ db, config: ctx.config, userId: user.id, userName: user.name, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
-          // The playbook: changed at once, at the person's word; the owner alone sets instructions for everyone.
-          ...playbookToolHandlers({ db, config: ctx.config, userId: user.id, userName: user.name, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
-          // Excel files: whether the person may still have them made, and their domains, read again; every request logged, made or not.
-          ...excelToolHandlers({
-            db,
-            config: ctx.config,
-            readers: ctx.aiReader,
-            store: ctx.images,
-            limiter: ctx.aiReportLimiter,
-            userId: user.id,
-            userName: user.name,
-            conversationId: conversation.id,
-            turnId,
-            emit: (event) => sse.send(event),
-          }),
-          // Saved tables: each call reads the person's access again; what a table may read is what they may.
-          ...savedTableToolHandlers({ db, config: ctx.config, readers: ctx.aiReader, userId: user.id, userName: user.name, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
-        },
-      })
-      // The title is in before the answer closes (it is far quicker), so the list read then has it, and its cost is the turn's.
-      if (titled) await Promise.race([titled, new Promise((done) => setTimeout(done, TITLE_WAIT_MS).unref())])
-      await finishTurn(db, turnId, outcome.stopReason, outcome.notice)
-      const answer = (await loadDisplayMessages(db, conversation.id, turnId)).find((m) => m.role === 'assistant')!
-      sse.send({ type: 'done', message: answer, status: await statusAfter(user.id) })
+      const end = await Promise.race([run.done, left])
+      if (end === 'left') return
+      if (end.kind === 'done') {
+        // The title is in before the answer closes for this stream (it is far quicker), so the list read then has it.
+        if (titled) await Promise.race([titled, new Promise((done) => setTimeout(done, TITLE_WAIT_MS).unref())])
+        const answer = (await loadDisplayMessages(db, conversation.id, turnId)).find((m) => m.role === 'assistant')!
+        sse.send({ type: 'done', message: answer, status: await statusAfter(user.id) })
+      } else if (end.kind === 'error') {
+        sse.send({ type: 'error', code: end.code, message: end.message })
+      }
+      // Handed over (the server is stopping): the stream ends without a word; the asker's device follows the answer
+      // in the conversation, where whichever instance continues it writes it.
     } catch (e) {
-      const failure = describeModelFailure(e, conversation.id, owner)
-      await finishTurn(db, turnId, 'error', failure.message).catch((err) => console.error('[ai] could not close a failed answer', err))
-      sse.send({ type: 'error', code: failure.code, message: failure.message })
+      console.error(`[ai] conversation ${conversation.id}: the answer's stream failed`, e)
+      sse.send({ type: 'error', code: 'internal', message: 'Something went wrong while answering. Nothing was lost; try again.' })
     } finally {
+      unsubscribe()
       sse.end()
     }
   })
