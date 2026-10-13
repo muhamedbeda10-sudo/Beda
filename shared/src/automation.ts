@@ -529,6 +529,20 @@ export interface UserNotificationsResponse {
   hasMore: boolean
 }
 
+/**
+ * The bell's two lists of these: Reports, the scheduled reports delivered, and
+ * Alerts, everything else (a report that stopped is an alert: someone has to
+ * act on it). Each lists, counts and is read in full on its own.
+ */
+export type UserNotificationCategory = 'alerts' | 'reports'
+
+export const USER_NOTIFICATION_CATEGORIES = ['alerts', 'reports'] as const satisfies readonly UserNotificationCategory[]
+
+/** The kinds the Reports list holds; every other kind is an alert. */
+export const REPORT_NOTIFICATION_KINDS: readonly UserNotificationKind[] = ['automation-report']
+
+export const notificationCategory = (kind: UserNotificationKind): UserNotificationCategory => (REPORT_NOTIFICATION_KINDS.includes(kind) ? 'reports' : 'alerts')
+
 // ---- Wording -----------------------------------------------------------------------
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const

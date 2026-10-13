@@ -138,6 +138,47 @@ describe('§21 — reading alerts', () => {
   })
 })
 
+describe('§21 — the bell’s two lists: alerts, and the reports delivered', () => {
+  it('lists, counts and reads each apart; without a category, all of them as before', async () => {
+    await app.api('POST', '/api/users', { token: admin.token, body: { username: 'reader', password: 'Password#1', name: 'Report Reader', role: 'viewer' } })
+    const reader = await app.login('reader')
+    await createNotifications(app.db, [reader.user.id], alert({ title: 'Case A' }))
+    await createNotifications(app.db, [reader.user.id], alert({ title: 'Stopped', kind: 'automation-stopped', severity: 'warning' }))
+    await createNotifications(app.db, [reader.user.id], alert({ title: 'Daily QC 1', kind: 'automation-report', link: null }))
+    await createNotifications(app.db, [reader.user.id], alert({ title: 'Daily QC 2', kind: 'automation-report', link: null }))
+    await createNotifications(app.db, [reader.user.id], alert({ title: 'Daily QC 3', kind: 'automation-report', link: null }))
+
+    const reports = await list(reader, '?category=reports')
+    expect(reports.status).toBe(200)
+    expect(reports.body.notifications.map((n) => n.kind)).toEqual(['automation-report', 'automation-report', 'automation-report'])
+    expect(reports.body.unreadCount).toBe(3)
+    const alerts = await list(reader, '?category=alerts')
+    // A report that stopped is an alert: someone has to act on it.
+    expect(alerts.body.notifications.map((n) => n.title).sort()).toEqual(['Case A', 'Stopped'])
+    expect(alerts.body.unreadCount).toBe(2)
+    expect((await list(reader)).body.unreadCount).toBe(5)
+
+    // Pages walk within the category.
+    const first = await list(reader, '?category=reports&limit=2')
+    expect(first.body.notifications).toHaveLength(2)
+    expect(first.body.hasMore).toBe(true)
+    const rest = await list(reader, `?category=reports&limit=2&before=${first.body.notifications[1].id}`)
+    expect(rest.body.notifications.map((n) => n.kind)).toEqual(['automation-report'])
+    expect(rest.body.hasMore).toBe(false)
+
+    // "Mark all as read" on the Reports tab leaves the alerts unread, and the other way round.
+    expect((await app.api('POST', '/api/notifications/read-all?category=reports', { token: reader.token })).status).toBe(204)
+    expect((await list(reader, '?category=reports')).body.unreadCount).toBe(0)
+    expect((await list(reader, '?category=alerts')).body.unreadCount).toBe(2)
+    expect((await app.api('POST', '/api/notifications/read-all?category=alerts', { token: reader.token })).status).toBe(204)
+    expect((await list(reader)).body.unreadCount).toBe(0)
+
+    expect((await list(reader, '?category=everything')).status).toBe(400)
+    expect((await app.api('POST', '/api/notifications/read-all?category=everything', { token: reader.token })).status).toBe(400)
+    await app.db.query(`DELETE FROM user_notifications WHERE user_id = $1`, [reader.user.id])
+  })
+})
+
 describe('§21 — old alerts go', () => {
   it('removes those older than 90 days, read or not', async () => {
     const ids = (await list(insp, '?limit=3')).body.notifications.map((n) => n.id)

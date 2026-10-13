@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.91',
+    date: '2026-10-13',
+    title: 'Scheduled reports have their own tab in the bell',
+    items: [
+      { text: 'The scheduled reports sent to you now arrive in the bell\'s new Reports tab, beside Alerts, with the number not opened yet on the tab. Opening one shows the report as before.' },
+      { text: 'Alerts keeps what needs acting on: what automations find, follow-ups and tasks, and a report that stopped. "Mark all as read" on each tab reads only that tab.' },
+      { text: 'Reports already delivered moved to the Reports tab too.' },
+    ],
+  },
+  {
     id: '2026-10-13.9',
     date: '2026-10-13',
     title: 'Every chart can show its table',

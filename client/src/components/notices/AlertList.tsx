@@ -3,13 +3,18 @@
 // The ones not opened yet first, then the earlier ones, newest first, a page
 // at a time. Opening one reads it and goes where it leads (a follow-up, a
 // session, a delivered report); one that leads nowhere opens in place.
+//
+// The same list serves the bell's Reports tab: the scheduled reports
+// delivered, apart from the alerts, with their own count and their own
+// "Mark all as read".
 // ============================================================================
 
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { BellRing, CheckCheck, ChevronRight, Loader2 } from 'lucide-react'
-import type { UserNotification } from '@qc/shared/automation'
+import type { ReactNode } from 'react'
+import { BellRing, CheckCheck, ChevronRight, FileChartColumn, Loader2 } from 'lucide-react'
+import type { UserNotification, UserNotificationCategory } from '@qc/shared/automation'
 import { Button, EmptyState } from '@/components/ui'
 import { markAllNotificationsRead, markNotificationRead, useNotifications } from '@/services/notifications'
 import { useApp } from '@/store/AppContext'
@@ -81,11 +86,30 @@ function AlertRow({ alert: n, onOpen, onLeave }: { alert: UserNotification; onOp
   )
 }
 
-/** The alerts tab of the bell. `onLeave` closes the bell when an alert takes the reader elsewhere. */
-export function AlertList({ onLeave }: { onLeave: () => void }) {
+/** What each list says of itself. */
+const WORDING: Record<UserNotificationCategory, { icon: ReactNode; loadFailed: string; empty: string; emptyHint: string; markFailed: string }> = {
+  alerts: {
+    icon: <BellRing className="h-10 w-10" />,
+    loadFailed: 'The alerts could not be loaded',
+    empty: 'No alerts',
+    emptyHint: 'What automations find for you, and follow-ups given to you, show here.',
+    markFailed: 'Could not mark the alerts as read.',
+  },
+  reports: {
+    icon: <FileChartColumn className="h-10 w-10" />,
+    loadFailed: 'The reports could not be loaded',
+    empty: 'No reports',
+    emptyHint: 'Scheduled reports sent to you show here.',
+    markFailed: 'Could not mark the reports as read.',
+  },
+}
+
+/** One list of the bell: its alerts, or its reports. `onLeave` closes the bell when one takes the reader elsewhere. */
+export function AlertList({ category, onLeave }: { category: UserNotificationCategory; onLeave: () => void }) {
   const qc = useQueryClient()
   const { toast } = useApp()
-  const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = useNotifications()
+  const words = WORDING[category]
+  const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = useNotifications(category)
   const [marking, setMarking] = useState(false)
   const list = alertsOf(data)
   const { unread, earlier } = splitAlerts(list)
@@ -93,14 +117,14 @@ export function AlertList({ onLeave }: { onLeave: () => void }) {
 
   const open = (n: UserNotification) => {
     if (n.readAt !== null) return
-    void markNotificationRead(qc, n.id).catch(() => undefined)
+    void markNotificationRead(qc, n).catch(() => undefined)
   }
   const readAll = async () => {
     setMarking(true)
     try {
-      await markAllNotificationsRead(qc)
+      await markAllNotificationsRead(qc, category)
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Could not mark the alerts as read.', 'error')
+      toast(e instanceof Error ? e.message : words.markFailed, 'error')
     } finally {
       setMarking(false)
     }
@@ -114,10 +138,10 @@ export function AlertList({ onLeave }: { onLeave: () => void }) {
     )
   }
   if (isError && !data) {
-    return <EmptyState icon={<BellRing className="h-10 w-10" />} title="The alerts could not be loaded" hint="Check the connection and try again." action={<Button onClick={() => void refetch()}>Try again</Button>} />
+    return <EmptyState icon={words.icon} title={words.loadFailed} hint="Check the connection and try again." action={<Button onClick={() => void refetch()}>Try again</Button>} />
   }
   if (list.length === 0) {
-    return <EmptyState icon={<BellRing className="h-10 w-10" />} title="No alerts" hint="What automations find for you, and follow-ups given to you, show here." />
+    return <EmptyState icon={words.icon} title={words.empty} hint={words.emptyHint} />
   }
   return (
     <div className="space-y-5">
@@ -125,7 +149,7 @@ export function AlertList({ onLeave }: { onLeave: () => void }) {
         <section className="space-y-2">
           <div className="flex min-h-[32px] items-center justify-between gap-2">
             <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted">{unread.length > 0 ? 'Not opened yet' : ''}</p>
-            {/* Every alert not opened, whether its page is loaded or not. */}
+            {/* Every one of this list not opened, whether its page is loaded or not. */}
             {unreadCount > 0 && (
               <button
                 type="button"
