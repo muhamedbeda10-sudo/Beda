@@ -10,6 +10,8 @@ import { KPIS_BLOCK, MAX_KPIS, parseKpis } from '../src/ai/kpis'
 import { RUN_SQL_TOOL, TOOL_SEARCH_TOOL, deferred } from '../src/ai/prompt'
 import { AUTOMATION_TOOLS } from '../src/automations/tools'
 import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS } from '../src/noticeAssistant/tools'
+import { TASK_TOOLS } from '../src/tasks/assistant'
+import { PLAYBOOK_TOOLS } from '../src/playbook/assistant'
 import type { QueryPreview } from '../src/ai/runQuery'
 import { SUGGESTIONS_BLOCK } from '../src/ai/suggestions'
 
@@ -166,7 +168,7 @@ describe('§20 charts: checking a chart against its result', () => {
     expect(note({ type: 'bar', x: 'machine' })).toMatch(/^Chart not drawn: chart takes type, x and y/)
     expect(note({ type: 'bar', x: 'machine', y: [3] })).toMatch(/^Chart not drawn: chart takes/)
     expect(note({ type: 'radar', x: 'machine', y: ['samples'] })).toBe(
-      'Chart not drawn: its type must be one of bar, horizontal-bar, stacked-bar, stacked-bar-100, line, area, stacked-area, pie, combo, pareto, scatter, heatmap, control.',
+      'Chart not drawn: its type must be one of bar, horizontal-bar, stacked-bar, stacked-bar-100, line, area, stacked-area, pie, combo, pareto, scatter, heatmap, control, progress, funnel, waterfall, gantt, dumbbell, treemap.',
     )
     expect(note({ type: 'bar', x: 'day', y: ['samples'] })).toBe('Chart not drawn: x "day" is not a column of the result.')
     expect(note({ type: 'bar', x: 'machine', y: ['defects'] })).toBe('Chart not drawn: y "defects" is not a column of the result.')
@@ -278,6 +280,12 @@ describe('§20 charts: checking a chart against its result', () => {
       'scatter',
       'heatmap',
       'control',
+      'progress',
+      'funnel',
+      'waterfall',
+      'gantt',
+      'dumbbell',
+      'treemap',
     ])
     // Strict tool use takes no length or count limits: those are checked here instead.
     expect(JSON.stringify(RUN_SQL_TOOL)).not.toMatch(/"(minItems|maxItems|minLength|maxLength|minimum|maximum)"/)
@@ -356,8 +364,8 @@ describe('§20 a professional answer in a conversation', () => {
     // The figures open the answer; the questions still close it.
     expect(system.indexOf('# Headline figures')).toBeLessThan(system.indexOf('# Follow-up questions'))
     // The owner asks here, who may create automations (§21): the automations' tools follow run_sql; then the
-    // notices' (§23), the owner being an administrator who may have them written.
-    expect(p.tools).toEqual([RUN_SQL_TOOL, TOOL_SEARCH_TOOL, ...[...AUTOMATION_TOOLS, ...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS].map(deferred)])
+    // notices' (§23), the owner being an administrator who may have them written; then the tasks'.
+    expect(p.tools).toEqual([RUN_SQL_TOOL, TOOL_SEARCH_TOOL, ...[...AUTOMATION_TOOLS, ...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS, ...TASK_TOOLS, ...PLAYBOOK_TOOLS].map(deferred)])
   })
 
   it('draws the charts that fit their results, live and in the history, and tells the model about the rest', async () => {

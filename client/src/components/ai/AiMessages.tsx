@@ -28,6 +28,8 @@ import { useSaveAsReport } from './AiSaveReport'
 import { AiSuggestions } from './AiSuggestions'
 import { AutomationProposalCard } from '@/components/automations/AutomationProposalCard'
 import { AiNoticeProposalCard } from './AiNoticeProposalCard'
+import { AiTaskProposalCard } from './AiTaskProposalCard'
+import { AiPlaybookCard } from './AiPlaybookCard'
 import { answerBlocks, type AnswerBlock } from './answerLayout'
 import { queryChart, type ChartModel } from './chartData'
 import { kpiCards, liveKpis } from './kpis'
@@ -182,7 +184,8 @@ const NO_CHARTS: ReadonlyMap<string, ChartModel> = new Map()
  * Ask again. `latest`: the conversation's last answer, the one that offers
  * its follow-up questions (`onSuggestion` puts one in the box).
  * `noticesWait`: a later answer, still being written, drafted a notice card
- * that may replace one of this answer's (noticeCardsWait), so they wait.
+ * that may replace one of this answer's (noticeCardsWait), so they wait;
+ * `tasksWait` the same for task cards (taskCardsWait).
  */
 export const Answer = memo(function Answer({
   message,
@@ -193,6 +196,7 @@ export const Answer = memo(function Answer({
   onSuggestion,
   onOpenReport,
   noticesWait = false,
+  tasksWait = false,
 }: {
   message?: AiMessage
   turn?: LiveTurn
@@ -202,6 +206,7 @@ export const Answer = memo(function Answer({
   onSuggestion?: (q: string) => void
   onOpenReport?: (reportId: string) => void
   noticesWait?: boolean
+  tasksWait?: boolean
 }) {
   const writing = !!turn && isInFlight(turn)
   // The answer as it ended: the saved one, or the turn's once done; until then, the parts as streamed,
@@ -254,6 +259,10 @@ export const Answer = memo(function Answer({
             return <AutomationProposalCard key={b.key} part={b.part} writing={writing} />
           case 'notice':
             return <AiNoticeProposalCard key={b.key} part={b.part} writing={writing || noticesWait} />
+          case 'task':
+            return <AiTaskProposalCard key={b.key} part={b.part} writing={writing || tasksWait} />
+          case 'playbook':
+            return <AiPlaybookCard key={b.key} part={b.part} />
         }
       })}
       {working && <Working text={working} />}

@@ -28,13 +28,45 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-10-13.6',
+    id: '2026-10-13.9',
     date: '2026-10-13',
     title: 'Scheduled reports have their own tab in the bell',
     items: [
       { text: 'The scheduled reports sent to you now arrive in the bell\'s new Reports tab, beside Alerts, with the number not opened yet on the tab. Opening one shows the report as before.' },
       { text: 'Alerts keeps what needs acting on: what automations find, follow-ups and tasks, and a report that stopped. "Mark all as read" on each tab reads only that tab.' },
       { text: 'Reports already delivered moved to the Reports tab too.' },
+    ],
+  },
+  {
+    id: '2026-10-13.8',
+    date: '2026-10-13',
+    title: 'Six new charts for planning and production',
+    items: [
+      { text: 'The AI assistant draws six new kinds of chart: progress (how far each order or machine is toward its target), funnel (from required to produced to passed), waterfall (how the plan turned into what was made: downtime, rejects, overtime), gantt (plan and actual in time, by order line or machine), dumbbell (planned against actual hours, last month against this one) and treemap (the parts of a whole, grouped by factory or process).' },
+      { text: 'The assistant now answers about planning and production as well as quality: plan against actual, order progress, machine load and output, hours and efficiency, from the order sheet and the ERP production record you can read.' },
+      { text: 'They work in answers, in saved reports and in scheduled reports, like the other charts. Ask for one by name, or let the assistant choose.' },
+    ],
+  },
+  {
+    id: '2026-10-13.7',
+    date: '2026-10-13',
+    title: 'The assistant remembers: your playbook',
+    items: [
+      { text: 'Tell the AI assistant how you want it to work, and it remembers: "from now on, give rates as % with last month beside them", "always answer in Arabic", "remember that machine 58 is the old welder". It follows them in every new conversation.' },
+      { text: 'Ask it to analyse the data and keep what you concluded: "keep this conclusion". It saves the conclusion with what it was drawn from (the data and the period), bears it in mind in later answers, and checks it against the data when an answer rests on it.' },
+      { text: 'Each thing it saves shows in the chat as a small card with Remove. The new Playbook page (the book icon at the top of the chat) lists your instructions and conclusions: add, change or remove them there too.' },
+      { text: "The assistant's owner can also set instructions for everyone from the Playbook page." },
+    ],
+  },
+  {
+    id: '2026-10-13.6',
+    date: '2026-10-13',
+    title: 'The assistant drafts tasks for you',
+    items: [
+      { text: 'Ask the AI assistant to send a task, in your own words: "Send Cyril a task to recheck the coil stock in bay 3 by tomorrow 10:00". It finds the people by name and shows the task as a card: what is to be done, the details, who it goes to, how urgent and the deadline.' },
+      { text: 'Nothing is sent until you press "Send task" on the card; each person is then told in the bell. Ask for a change ("make it urgent", "add Sara too") and a new card replaces the old one. "Discard" sets it aside.' },
+      { text: 'Ask about your tasks too: "who has not finished the coil task?", "what is overdue?", "what was sent to me?". The assistant answers from your own tasks only, with links to them.' },
+      { text: 'This works in conversations started from now on.' },
     ],
   },
   {

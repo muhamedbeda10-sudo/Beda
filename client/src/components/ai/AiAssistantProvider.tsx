@@ -41,6 +41,7 @@ import { keys, useAiMe } from '@/services/queries'
 import { revisedProposalId, supersedeAutomationPart } from '@/components/automations/wording'
 import { pickedKind, readyIds, type PendingAttachment } from './attachments'
 import { hasOpenNoticeCard } from './noticeProposal'
+import { hasOpenTaskCard } from './taskProposal'
 import { applyEvent, endTurn, followsKeptRound, isInFlight, parseStreamEvent, sentAfter, settleMessages, startTurn, type LiveTurn } from './liveTurn'
 import { STOP_SETTLE_MS, retryAfterStop } from './retryAfterStop'
 import { aiWorkspaceHref, isAiWorkspacePath, type AiOpenReport, type AiWorkspaceList, type AiWorkspaceState } from './workspace'
@@ -294,7 +295,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
 
       let conversation: AiConversation | null = null
       let userMessageId: string | null = null
-      // §23 — a conversation to fetch again once the round that drafted a notice card is kept (see 'notice' below).
+      // §23 — a conversation to fetch again once the round that drafted a notice or task card is kept (see 'notice' below).
       let recheck: string | null = null
       const recheckNotices = () => {
         if (!recheck) return
@@ -344,6 +345,10 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
             // as the answer ends. Until then the earlier cards wait (noticeCardsWait).
             const id = conversation?.id ?? from
             if (e.part.ok && id && hasOpenNoticeCard(qc.getQueryData<AiMessagesResponse>(keys.aiMessages(id)), e.part.proposalId)) recheck = id
+          } else if (e.type === 'task') {
+            // The same for a newer task card: the earlier one it replaces is marked so once its round is kept (taskCardsWait).
+            const id = conversation?.id ?? from
+            if (e.part.ok && id && hasOpenTaskCard(qc.getQueryData<AiMessagesResponse>(keys.aiMessages(id)), e.part.proposalId)) recheck = id
           } else if (e.type === 'done') {
             // The event also carries the month's figures: the chat shows no amounts, so they are left where they are.
             ended = true

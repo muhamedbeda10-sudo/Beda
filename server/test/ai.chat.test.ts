@@ -214,9 +214,15 @@ describe('§20 asking a question', () => {
       expect.objectContaining({ name: 'notice_details', eager_input_streaming: true, defer_loading: true }),
       expect.objectContaining({ name: 'find_notice_targets', eager_input_streaming: true, defer_loading: true }),
       expect.objectContaining({ name: 'propose_notice_change', eager_input_streaming: true, defer_loading: true }),
+      // Everyone given the assistant drafts tasks and reads their own.
+      expect.objectContaining({ name: 'find_people', eager_input_streaming: true, defer_loading: true }),
+      expect.objectContaining({ name: 'propose_task', eager_input_streaming: true, defer_loading: true }),
+      expect.objectContaining({ name: 'my_tasks', eager_input_streaming: true, defer_loading: true }),
+      // And everyone keeps a playbook.
+      expect.objectContaining({ name: 'update_playbook', eager_input_streaming: true, defer_loading: true }),
     ])
     expect(p.tools![0]).not.toHaveProperty('defer_loading')
-    // None of the notices' tools is strict: each strict schema adds to one grammar, and the server reads their input itself.
+    // None of the notices' or tasks' tools is strict: each strict schema adds to one grammar, and the server reads their input itself.
     for (const tool of p.tools!.slice(4)) expect(tool).not.toHaveProperty('strict')
     // Not strict: with run_sql's, its alternatives compile to a grammar larger than the API accepts; the server checks the input itself.
     expect(p.tools![2]).not.toHaveProperty('strict')
@@ -554,7 +560,7 @@ describe('§20 how answers end', () => {
         tool_use_id: 'toolu_other',
         is_error: true,
         content:
-          'Unknown tool "drop_everything". The tools are "run_sql", "propose_automation", "my_automations", "list_notices", "notice_details", "find_notice_targets", "propose_notice_change".',
+          'Unknown tool "drop_everything". The tools are "run_sql", "propose_automation", "my_automations", "list_notices", "notice_details", "find_notice_targets", "propose_notice_change", "find_people", "propose_task", "my_tasks", "update_playbook".',
       },
       { type: 'tool_result', tool_use_id: 'toolu_case', is_error: true, content: expect.stringMatching(/permission denied/) },
     ])

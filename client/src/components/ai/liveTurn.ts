@@ -1,6 +1,6 @@
 // ============================================================================
 // §20 — the answer being written. The stream's events (start, text, progress,
-// query_start, query_end, automation, notice, done, error) are folded into one value
+// query_start, query_end, automation, notice, task, playbook, done, error) are folded into one value
 // the thread draws, and the saved conversation takes over once it holds the
 // same answer. Pure functions, so the folding is tested without a browser.
 // ============================================================================
@@ -91,6 +91,20 @@ export function applyEvent(t: LiveTurn, e: AiStreamEvent): LiveTurn {
       const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
       return { ...t, phase: 'streaming', progress: null, parts }
     }
+    case 'playbook': {
+      // A playbook change, where it came; the same card again (sent twice) takes its place.
+      const at = t.parts.findIndex((p) => p.type === 'playbook' && p.changeId === e.part.changeId)
+      const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
+      return { ...t, phase: 'streaming', progress: null, parts }
+    }
+    case 'task': {
+      // A task card, where it came; the same card again (sent twice) takes its place. A card it replaced in an earlier
+      // answer is marked so in the saved conversation, fetched again once the server keeps this one (AiAssistantProvider);
+      // until then that card waits (taskCardsWait).
+      const at = t.parts.findIndex((p) => p.type === 'task' && p.proposalId === e.part.proposalId)
+      const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
+      return { ...t, phase: 'streaming', progress: null, parts }
+    }
     case 'done':
       return { ...t, phase: 'done', progress: null, message: e.message, parts: interrupt(t.parts) }
     case 'error':
@@ -135,7 +149,7 @@ export function parseStreamEvent(event: string, data: string): AiStreamEvent | n
   return value as AiStreamEvent
 }
 
-const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'automation', 'notice', 'done', 'error'])
+const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'automation', 'notice', 'task', 'playbook', 'done', 'error'])
 
 /**
  * What a question is sent after (LiveTurn.after): the last message this device

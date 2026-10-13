@@ -19,7 +19,7 @@ const NAME = 'fill-slate-600 dark:fill-slate-300'
 const VALUE = 'fill-slate-700 dark:fill-slate-200'
 
 /** A swatch in a legend: a square for bars, areas and points, a stroke for lines. */
-function Swatch({ className, line = false }: { className: string; line?: boolean }) {
+export function Swatch({ className, line = false }: { className: string; line?: boolean }) {
   return line ? (
     <svg width="16" height="6" aria-hidden className="shrink-0"><line x1="0" y1="3" x2="16" y2="3" strokeWidth={3} className={className} /></svg>
   ) : (
