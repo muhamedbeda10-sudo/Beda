@@ -4,26 +4,37 @@
 // opened yet. Polled like the notices (every few minutes while the tab is
 // visible, never in the background). Opening one marks it read; so does
 // "Mark all as read". The cache follows at once, before the server answers.
+//
+// Two lists, each its own query: Alerts, and Reports (the scheduled reports
+// delivered). Each has its pages, its unread count and its "Mark all as read".
 // ============================================================================
 
 import { useInfiniteQuery, type InfiniteData, type QueryClient } from '@tanstack/react-query'
-import type { UserNotificationsResponse } from '@qc/shared/automation'
+import {
+  notificationCategory,
+  USER_NOTIFICATION_CATEGORIES,
+  type UserNotification,
+  type UserNotificationCategory,
+  type UserNotificationsResponse,
+} from '@qc/shared/automation'
 import { api } from '@/lib/api'
 import { firstAlertPage, withAlertRead, withAllAlertsRead } from '@/components/notices/alerts'
 import { NOTICE_POLL_MS } from './queries'
 
 export const notificationKeys = {
-  list: ['notifications', 'list'] as const,
+  all: ['notifications'] as const,
+  list: (category: UserNotificationCategory) => ['notifications', 'list', category] as const,
 }
 
 /** Alerts a page brings. */
 const PAGE = 30
 
-/** The alerts, newest first: the first page is what the bell polls; "Load more" is fetchNextPage. */
-export function useNotifications(enabled = true) {
+/** One list, newest first: the first page is what the bell polls; "Load more" is fetchNextPage. */
+export function useNotifications(category: UserNotificationCategory, enabled = true) {
   return useInfiniteQuery({
-    queryKey: notificationKeys.list,
-    queryFn: ({ pageParam }) => api<UserNotificationsResponse>(`/notifications?limit=${PAGE}${pageParam ? `&before=${encodeURIComponent(pageParam)}` : ''}`),
+    queryKey: notificationKeys.list(category),
+    queryFn: ({ pageParam }) =>
+      api<UserNotificationsResponse>(`/notifications?category=${category}&limit=${PAGE}${pageParam ? `&before=${encodeURIComponent(pageParam)}` : ''}`),
     initialPageParam: null as string | null,
     getNextPageParam: (last: UserNotificationsResponse) => (last.hasMore ? (last.notifications.at(-1)?.id ?? null) : null),
     enabled,
@@ -33,30 +44,35 @@ export function useNotifications(enabled = true) {
   })
 }
 
-/** One alert opened: read at once on screen; the server is told, and asked again should it refuse. */
-export async function markNotificationRead(qc: QueryClient, id: string): Promise<void> {
-  await qc.cancelQueries({ queryKey: notificationKeys.list })
-  qc.setQueryData<InfiniteData<UserNotificationsResponse>>(notificationKeys.list, (old) => withAlertRead(old, id, new Date().toISOString()))
+/** One opened: read at once on screen, in the list its kind belongs to; the server is told, and asked again should it refuse. */
+export async function markNotificationRead(qc: QueryClient, n: Pick<UserNotification, 'id' | 'kind'>): Promise<void> {
+  const key = notificationKeys.list(notificationCategory(n.kind))
+  await qc.cancelQueries({ queryKey: key })
+  qc.setQueryData<InfiniteData<UserNotificationsResponse>>(key, (old) => withAlertRead(old, n.id, new Date().toISOString()))
   try {
-    await api<void>(`/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' })
+    await api<void>(`/notifications/${encodeURIComponent(n.id)}/read`, { method: 'POST' })
   } catch (e) {
-    void qc.invalidateQueries({ queryKey: notificationKeys.list })
+    void qc.invalidateQueries({ queryKey: key })
     throw e
   }
 }
 
-export async function markAllNotificationsRead(qc: QueryClient): Promise<void> {
-  await qc.cancelQueries({ queryKey: notificationKeys.list })
-  qc.setQueryData<InfiniteData<UserNotificationsResponse>>(notificationKeys.list, (old) => withAllAlertsRead(old, new Date().toISOString()))
+/** Every one of a list read: the other list stays as it is. */
+export async function markAllNotificationsRead(qc: QueryClient, category: UserNotificationCategory): Promise<void> {
+  const key = notificationKeys.list(category)
+  await qc.cancelQueries({ queryKey: key })
+  qc.setQueryData<InfiniteData<UserNotificationsResponse>>(key, (old) => withAllAlertsRead(old, new Date().toISOString()))
   try {
-    await api<void>('/notifications/read-all', { method: 'POST' })
+    await api<void>(`/notifications/read-all?category=${category}`, { method: 'POST' })
   } catch (e) {
-    void qc.invalidateQueries({ queryKey: notificationKeys.list })
+    void qc.invalidateQueries({ queryKey: key })
     throw e
   }
 }
 
-/** The list closed: only its newest page is kept, so the bell's poll asks for one page, not every page read. */
+/** The bell closed: only each list's newest page is kept, so its poll asks for one page, not every page read. */
 export function trimNotifications(qc: QueryClient): void {
-  qc.setQueryData<InfiniteData<UserNotificationsResponse>>(notificationKeys.list, (old) => firstAlertPage(old))
+  for (const category of USER_NOTIFICATION_CATEGORIES) {
+    qc.setQueryData<InfiniteData<UserNotificationsResponse>>(notificationKeys.list(category), (old) => firstAlertPage(old))
+  }
 }

@@ -12,11 +12,15 @@
 // tab (red once one is overdue). That count is not in the bell's own: an
 // open follow-up is work, not something unread. The same for Tasks
 // (BellTasks): the ones to do, and the dones waiting for the sender.
+//
+// The scheduled reports delivered have their own tab, Reports, apart from the
+// alerts: a report is read at leisure, an alert acted on, and a day's reports
+// would bury the alerts. Its unread ones count on the bell like any alert.
 // ============================================================================
 
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Bell, BellRing, Check, ChevronDown, ChevronUp, ListChecks, ListTodo, Loader2, Megaphone } from 'lucide-react'
+import { Bell, BellRing, Check, ChevronDown, ChevronUp, FileChartColumn, ListChecks, ListTodo, Loader2, Megaphone } from 'lucide-react'
 import type { NoticeForUser } from '@qc/shared/types'
 import { Badge, Button, Drawer, EmptyState } from '@/components/ui'
 import { useNoticeInbox } from '@/services/queries'
@@ -35,7 +39,7 @@ import { BellTasks } from './BellTasks'
 import { BellTabs, type BellTabItem } from './BellTabs'
 import { badgeText, bellCount, unreadAlerts } from './alerts'
 
-type BellTab = 'notices' | 'alerts' | 'follow-ups' | 'tasks'
+type BellTab = 'notices' | 'alerts' | 'reports' | 'follow-ups' | 'tasks'
 
 function InboxRow({ notice, open, onToggle }: { notice: NoticeForUser; open: boolean; onToggle: () => void }) {
   const qc = useQueryClient()
@@ -107,7 +111,8 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
   const qc = useQueryClient()
   const { profile, role } = useAuth()
   const { data, isLoading } = useNoticeInbox(receivesNotices)
-  const { data: alertPages } = useNotifications()
+  const { data: alertPages } = useNotifications('alerts')
+  const { data: reportPages } = useNotifications('reports')
   const { data: followUps } = useFollowUpCounts(!!profile)
   const { data: tasks } = useTaskCounts(!!profile)
   const [open, setOpen] = useState(false)
@@ -115,7 +120,8 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
   const [expanded, setExpanded] = useState<string | null>(null)
   const pending = receivesNotices ? (data?.pendingCount ?? 0) : 0
   const unread = unreadAlerts(alertPages)
-  const total = bellCount(pending, unread)
+  const unreadReports = unreadAlerts(reportPages)
+  const total = bellCount(pending, unread + unreadReports)
   const notices = data?.notices ?? []
   const attention = notices.filter((n) => n.pending)
   const earlier = notices.filter((n) => !n.pending)
@@ -126,6 +132,7 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
   const tabs: BellTabItem<BellTab>[] = [
     ...(receivesNotices ? [{ value: 'notices' as const, label: 'Notices', icon: <Megaphone className="h-4 w-4" />, count: pending }] : []),
     { value: 'alerts', label: 'Alerts', icon: <BellRing className="h-4 w-4" />, count: unread },
+    { value: 'reports', label: 'Reports', icon: <FileChartColumn className="h-4 w-4" />, count: unreadReports },
     ...(hasFollowUps ? [{ value: 'follow-ups' as const, label: 'Follow-ups', icon: <ListChecks className="h-4 w-4" />, count: followUps?.mineOpen ?? 0, urgent: (followUps?.mineOverdue ?? 0) > 0 }] : []),
     ...(hasTasks ? [{ value: 'tasks' as const, label: 'Tasks', icon: <ListTodo className="h-4 w-4" />, count: tasksWaiting, urgent: (tasks?.assignedOverdue ?? 0) > 0 }] : []),
   ]
@@ -149,9 +156,9 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
     if (next && n.pending && !n.requiresAck) void markNoticeSeen(qc, n.id).catch(() => undefined)
   }
 
-  // Notices waiting come first (one may need acknowledging); then the alerts not opened; then overdue follow-ups.
+  // Notices waiting come first (one may need acknowledging); then the alerts not opened, the reports; then tasks and overdue follow-ups.
   const openBell = () => {
-    setTab(pending > 0 ? 'notices' : unread > 0 ? 'alerts' : hasTasks && tasksWaiting > 0 ? 'tasks' : hasFollowUps && (followUps?.mineOverdue ?? 0) > 0 ? 'follow-ups' : 'notices')
+    setTab(pending > 0 ? 'notices' : unread > 0 ? 'alerts' : unreadReports > 0 ? 'reports' : hasTasks && tasksWaiting > 0 ? 'tasks' : hasFollowUps && (followUps?.mineOverdue ?? 0) > 0 ? 'follow-ups' : 'notices')
     setOpen(true)
   }
   const close = () => {
@@ -163,14 +170,15 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
   const label = receivesNotices ? 'Notices and alerts' : 'Alerts'
   const open_ = followUps?.mineOpen ?? 0
   const overdue = followUps?.mineOverdue ?? 0
+  const listUnread = shown === 'reports' ? unreadReports : unread
   const subtitle =
     shown === 'notices'
       ? pending > 0
         ? `${pending} to read`
         : 'Nothing waiting for you'
-      : shown === 'alerts'
-        ? unread > 0
-          ? `${unread} not opened yet`
+      : shown === 'alerts' || shown === 'reports'
+        ? listUnread > 0
+          ? `${listUnread} not opened yet`
           : 'Nothing new for you'
         : shown === 'tasks'
           ? tasksWaiting > 0
@@ -179,9 +187,19 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
           : open_ > 0
             ? `${open_} open${overdue > 0 ? `, ${overdue} overdue` : ''}`
             : 'None open'
-  const title = shown === 'notices' ? 'Notices' : shown === 'alerts' ? 'Alerts' : shown === 'tasks' ? 'Tasks' : 'Follow-ups'
+  const title = shown === 'notices' ? 'Notices' : shown === 'alerts' ? 'Alerts' : shown === 'reports' ? 'Reports' : shown === 'tasks' ? 'Tasks' : 'Follow-ups'
   const icon =
-    shown === 'notices' ? <Bell className="h-5 w-5" /> : shown === 'alerts' ? <BellRing className="h-5 w-5" /> : shown === 'tasks' ? <ListTodo className="h-5 w-5" /> : <ListChecks className="h-5 w-5" />
+    shown === 'notices' ? (
+      <Bell className="h-5 w-5" />
+    ) : shown === 'alerts' ? (
+      <BellRing className="h-5 w-5" />
+    ) : shown === 'reports' ? (
+      <FileChartColumn className="h-5 w-5" />
+    ) : shown === 'tasks' ? (
+      <ListTodo className="h-5 w-5" />
+    ) : (
+      <ListChecks className="h-5 w-5" />
+    )
 
   return (
     <>
@@ -195,8 +213,9 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
       </button>
       <Drawer open={open} onClose={close} title={title} subtitle={subtitle} icon={icon}>
         {tabs.length > 1 && <BellTabs label="What the bell holds" tabs={tabs} value={shown} onChange={setTab} className="mb-4" />}
-        {shown === 'alerts' ? (
-          <AlertList onLeave={close} />
+        {shown === 'alerts' || shown === 'reports' ? (
+          // Keyed by tab: each list keeps its own state (an alert expanded) rather than the other's.
+          <AlertList key={shown} category={shown} onLeave={close} />
         ) : shown === 'follow-ups' ? (
           <BellFollowUps onLeave={close} />
         ) : shown === 'tasks' ? (

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider, type InfiniteData } from '@tanstack/react-query'
-import type { UserNotification, UserNotificationsResponse } from '@qc/shared/automation'
+import type { UserNotification, UserNotificationCategory, UserNotificationsResponse } from '@qc/shared/automation'
 import { AppProvider } from '@/store/AppContext'
 import { notificationKeys } from '@/services/notifications'
 import { AlertList } from './AlertList'
@@ -35,18 +35,18 @@ const alert = (over: Partial<UserNotification>): UserNotification => ({
   ...over,
 })
 
-function html(notifications: UserNotification[]): string {
+function html(notifications: UserNotification[], category: UserNotificationCategory = 'alerts'): string {
   const qc = new QueryClient()
   const data: InfiniteData<UserNotificationsResponse> = {
     pages: [{ notifications, unreadCount: notifications.filter((n) => n.readAt === null).length, hasMore: false }],
     pageParams: [null],
   }
-  qc.setQueryData(notificationKeys.list, data)
+  qc.setQueryData(notificationKeys.list(category), data)
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <AppProvider>
         <MemoryRouter>
-          <AlertList onLeave={() => undefined} />
+          <AlertList category={category} onLeave={() => undefined} />
         </MemoryRouter>
       </AppProvider>
     </QueryClientProvider>,
@@ -67,5 +67,17 @@ describe('the bell’s alerts', () => {
     expect(h).not.toContain('example.com')
     expect(h).toContain('Coil 77 out of tolerance')
     expect(h).toContain('An address outside the app')
+  })
+
+  it('lists the reports delivered on the Reports tab, each leading to its report', () => {
+    const h = html([alert({ id: 'r1', kind: 'automation-report', title: 'Daily QC report', link: '/automations/deliveries/d1' })], 'reports')
+    expect(h).toContain('href="/automations/deliveries/d1"')
+    expect(h).toContain('Scheduled report')
+    expect(h).toContain('Mark all as read')
+  })
+
+  it('says so when no report was sent yet', () => {
+    expect(html([], 'reports')).toContain('Scheduled reports sent to you show here.')
+    expect(html([], 'alerts')).toContain('No alerts')
   })
 })
