@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { ScrollText, Search, Plus, Pencil, Trash2, RotateCcw, ShieldAlert, Download, Flame } from 'lucide-react'
-import { Badge, Button, Card, Drawer, EmptyState, Input, Modal, Select, Stat } from '@/components/ui'
+import { Badge, Button, Card, Drawer, EmptyState, Input, Modal, Select } from '@/components/ui'
 import { ScrollX } from '@/components/ui/ScrollX'
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { loadAuditAt, loadAuditMatches, loadAuditValues, loadOlderAudit, useAuditList, useAuditOptions, useAuditStats, useDebounced } from '@/services/queries'
@@ -206,6 +206,7 @@ export function AuditPage() {
   return (
     <AdminLayout
       title="Audit log"
+      description="Who changed what, and when: every change to the record, kept for as long as you keep it."
       needs="edit-closed-session"
       actions={
         <>
@@ -220,21 +221,35 @@ export function AuditPage() {
         </>
       }
     >
-    <div className={cn('space-y-5', canPurge && selected.size > 0 && 'max-md:pb-16')}>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Total events" value={totalEvents} icon={<ScrollText className="h-5 w-5" />} />
-        <Stat label="Updates" value={stats?.byAction.update ?? 0} tone="blue" icon={<Pencil className="h-5 w-5" />} />
-        <Stat label="Deletions" value={stats?.byAction.delete ?? 0} tone="red" icon={<Trash2 className="h-5 w-5" />} />
-        <Stat label="Overrides" value={stats?.byAction.acknowledge ?? 0} tone="amber" icon={<ShieldAlert className="h-5 w-5" />} />
-      </div>
+    <div className={cn('space-y-4', canPurge && selected.size > 0 && 'max-md:pb-16')}>
+      {/* The counts in one strip, each with its colour, rather than four tall cards. */}
+      <Card className="grid grid-cols-2 overflow-hidden sm:grid-cols-4 sm:divide-x sm:divide-slate-100 dark:sm:divide-slate-800">
+        {(
+          [
+            { label: 'Total events', value: totalEvents, icon: ScrollText, tone: 'text-brand-700 dark:text-brand-300' },
+            { label: 'Updates', value: stats?.byAction.update ?? 0, icon: Pencil, tone: 'text-sky-700 dark:text-sky-300' },
+            { label: 'Deletions', value: stats?.byAction.delete ?? 0, icon: Trash2, tone: 'text-rose-700 dark:text-rose-300' },
+            { label: 'Overrides', value: stats?.byAction.acknowledge ?? 0, icon: ShieldAlert, tone: 'text-amber-700 dark:text-amber-300' },
+          ] as const
+        ).map((c, i) => (
+          <div key={c.label} className={cn('flex items-center gap-3 px-4 py-3', i < 2 && 'max-sm:border-b max-sm:border-slate-100 dark:max-sm:border-slate-800')}>
+            <c.icon aria-hidden className={cn('h-5 w-5 shrink-0', c.tone)} />
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-muted">{c.label}</p>
+              <p className="text-xl font-extrabold tabular-nums">{c.value.toLocaleString()}</p>
+            </div>
+          </div>
+        ))}
+      </Card>
 
       <Card className="space-y-2 p-3">
-        <div className="relative">
+        {/* The search and the four filters on one line on a wide screen; the search on its own line below that. */}
+        <div className="grid grid-cols-2 gap-2 xl:grid-cols-[minmax(16rem,2fr)_repeat(4,minmax(0,1fr))]">
+        <div className="relative col-span-2 xl:col-span-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-          <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search order, item, field or value…" className="min-h-[48px] pl-9" />
+          <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search order, item, field or value…" className="min-h-[44px] pl-9" />
         </div>
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-          <Select value={action} onChange={(e) => setAction(e.target.value as 'all' | AuditAction)} className="min-h-[48px]">
+          <Select value={action} onChange={(e) => setAction(e.target.value as 'all' | AuditAction)} className="min-h-[44px]">
             <option value="all">All actions</option>
             {AUDIT_ACTIONS.map((a) => (
               <option key={a} value={a}>
@@ -242,7 +257,7 @@ export function AuditPage() {
               </option>
             ))}
           </Select>
-          <Select value={user} onChange={(e) => setUser(e.target.value)} className="min-h-[48px]">
+          <Select value={user} onChange={(e) => setUser(e.target.value)} className="min-h-[44px]">
             <option value="all">All users</option>
             {users.map((u) => (
               <option key={u} value={u}>
@@ -250,7 +265,7 @@ export function AuditPage() {
               </option>
             ))}
           </Select>
-          <Select value={entity} onChange={(e) => setEntity(e.target.value)} className="min-h-[48px]">
+          <Select value={entity} onChange={(e) => setEntity(e.target.value)} className="min-h-[44px]">
             <option value="all">All entities</option>
             {entities.map((x) => (
               <option key={x} value={x}>
@@ -258,7 +273,7 @@ export function AuditPage() {
               </option>
             ))}
           </Select>
-          <Select value={days} onChange={(e) => setDays(Number(e.target.value))} className="min-h-[48px]">
+          <Select value={days} onChange={(e) => setDays(Number(e.target.value))} className="min-h-[44px]">
             {RANGES.map((r) => (
               <option key={r.days} value={r.days}>
                 {r.label}

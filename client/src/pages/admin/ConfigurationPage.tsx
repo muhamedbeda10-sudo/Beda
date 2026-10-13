@@ -42,7 +42,7 @@ export function ConfigurationPage() {
   const [exporting, setExporting] = useState(false)
   const current = SECTIONS.find((s) => s.key === section)
   // The section switch: a select on a phone, where eight pills took six rows; one scrolling row from 640 px, with
-  // a shadow at the end that hides more and the current one brought into view; the pills wrap from 1024 px.
+  // a shadow at the end that hides more and the current one brought into view, on every width (they never wrap).
   const strip = useRef<HTMLDivElement>(null)
   const edges = useScrollEdges(strip)
   useEffect(() => {
@@ -54,6 +54,7 @@ export function ConfigurationPage() {
   return (
     <AdminLayout
       title="Configuration"
+      description="The lists every inspection draws on: machines, items, defects, grades, consumables, work instructions and the dashboard's targets."
       needs="manage-admin-data"
       actions={
         <Button className="min-h-[44px]" onClick={() => setExporting(true)}>
@@ -70,17 +71,18 @@ export function ConfigurationPage() {
           ))}
         </Select>
         <div className="relative hidden sm:block">
-          <div ref={strip} className="scrollbar-none flex gap-2 overflow-x-auto pb-1 lg:flex-wrap lg:overflow-visible">
+          {/* One row, as a switch: the eight sections side by side, scrolling sideways where they do not fit. */}
+          <div ref={strip} className="scrollbar-none flex gap-0.5 overflow-x-auto rounded-xl bg-slate-200/70 p-0.5 dark:bg-slate-800">
             {SECTIONS.map((s) => (
               <NavLink
                 key={s.key}
                 to={`/admin/configuration/${s.key}`}
                 className={({ isActive }) =>
                   cn(
-                    'group inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-3.5 text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
+                    'group inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 text-13 font-semibold transition-colors duration-200 touch:h-11',
                     isActive
-                      ? 'bg-white text-brand-800 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:text-white dark:ring-slate-700'
-                      : 'text-muted hover:bg-white/70 hover:text-brand-700 dark:hover:bg-slate-800/70',
+                      ? 'bg-white text-brand-800 shadow-sm dark:bg-slate-900 dark:text-white'
+                      : 'text-muted hover:text-brand-700 dark:hover:text-white',
                   )
                 }
               >
@@ -89,7 +91,7 @@ export function ConfigurationPage() {
               </NavLink>
             ))}
           </div>
-          <EdgeShadows {...edges} className="lg:hidden" />
+          <EdgeShadows {...edges} />
         </div>
 
         <div key={current.key} className="animate-page-in space-y-4">

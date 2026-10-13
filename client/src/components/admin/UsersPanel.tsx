@@ -172,15 +172,11 @@ export function UsersPanel() {
     <div className="space-y-4">
       <Card className="space-y-4 p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
-              <UserCog className="h-5 w-5" />
-            </span>
-            <div className="min-w-0">
-              <h2 className="text-lg font-bold">Users</h2>
-              <p className="mt-0.5 text-sm text-muted">Who can sign in, and what each person may do.</p>
-            </div>
-          </div>
+          {/* The page's title says what this is: here, how many, active and not. */}
+          <p className="self-center text-sm text-muted">
+            <span className="font-semibold text-slate-700 dark:text-slate-200">{users.length}</span> account{users.length === 1 ? '' : 's'}
+            {users.some((u) => !u.isActive) ? ` · ${users.filter((u) => !u.isActive).length} inactive` : ''}
+          </p>
           <Button variant="primary" className="min-h-[48px]" onClick={() => setCreating({ username: '', name: '', role: 'inspector', password: '' })}>
             <UserPlus className="h-4 w-4" /> Add user
           </Button>

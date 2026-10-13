@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.99',
+    date: '2026-10-13',
+    title: 'Administration pages, tidied',
+    items: [
+      { text: 'The administration sections sit in one compact list on the left that stays in view while a page scrolls; each page has its title, a line on what it is for and its buttons on one row.' },
+      { text: 'Configuration\'s sections are one row of tabs. Data import keeps Download CSV template beside its heading. The audit log\'s counts are one strip, and its search and filters one line on a wide screen.' },
+      { text: 'What\'s new opens the newest updates and folds the others to their titles, under their day, with a search and Open all / Fold all.' },
+    ],
+  },
+  {
     id: '2026-10-13.97',
     date: '2026-10-13',
     title: 'Print reports from the assistant',

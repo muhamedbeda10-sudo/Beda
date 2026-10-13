@@ -639,6 +639,7 @@ export function NoticesPage() {
   return (
     <AdminLayout
       title="Notices"
+      description="A notice reaches the people it is aimed at through the bell, and comes up before they start a session where it applies. Each reader sees it once; when it must be acknowledged, their name and the time are kept."
       needs="manage-admin-data"
       actions={
         <Button variant="primary" className="min-h-[44px]" onClick={() => setForm({ id: null, draft: { ...EMPTY, validFrom: today() } })}>
@@ -647,9 +648,6 @@ export function NoticesPage() {
       }
     >
       <div className="space-y-4">
-        <p className="text-sm text-muted">
-          A notice reaches the people it is aimed at through the bell, and comes up before they start a session where it applies. Each reader sees it once; when it must be acknowledged, their name and the time are kept.
-        </p>
         {isLoading && <p className="text-sm text-muted">Loading…</p>}
         {!isLoading && notices.length === 0 && (
           <EmptyState icon={<ClipboardList className="h-10 w-10" />} title="No notices yet" hint="Write the first one for a machine, an order, a customer or a shift." action={<Button variant="primary" onClick={() => setForm({ id: null, draft: { ...EMPTY, validFrom: today() } })}><BellPlus className="h-4 w-4" /> New notice</Button>} />
