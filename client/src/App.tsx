@@ -21,6 +21,7 @@ import { ErrorBoundary, LoadFailed } from '@/components/ui/ErrorBoundary'
 import { useAuth } from '@/store/AuthContext'
 import { useAiMe } from '@/services/queries'
 import { useAi } from '@/components/ai/AiAssistantProvider'
+import { AiAddress } from '@/components/ai/AiAddress'
 import { can, type Capability } from '@qc/shared/rules'
 import { lazy, Suspense, type ReactElement } from 'react'
 import { usePushBridge } from '@/lib/push'
@@ -28,7 +29,6 @@ import { usePushBridge } from '@/lib/push'
 // §20 — the assistant's settings are its owner's alone: fetched when first opened, in nobody else's bundle.
 const AiAssistantPage = lazy(() => import('@/pages/admin/AiAssistantPage').then((m) => ({ default: m.AiAssistantPage })))
 // §20 — the assistant's full page, for the people given it: fetched when first opened, like its panel.
-const AiWorkspace = lazy(() => import('@/components/ai/AiWorkspace'))
 // §21 — automations: their pages for the few who may create them, a delivered report for whoever it went to.
 const AutomationsPage = lazy(() => import('@/pages/AutomationsPage').then((m) => ({ default: m.AutomationsPage })))
 const AutomationPage = lazy(() => import('@/pages/AutomationPage').then((m) => ({ default: m.AutomationPage })))
@@ -57,9 +57,10 @@ function OnlyAiOwner({ children }: { children: ReactElement }) {
 }
 
 /**
- * §20 — the assistant's full page, for the people the owner gave it to (/ai/me
- * says who), whatever their role. Anyone else is sent home; someone it was
- * taken from while the page was open stays, to be told so (the page says it).
+ * §20 — the assistant's pages (its addresses, which open its popup; the
+ * Playbook), for the people the owner gave it to (/ai/me says who), whatever
+ * their role. Anyone else is sent home; someone it was taken from while the
+ * page was open stays, to be told so.
  */
 function OnlyAiGranted({ children }: { children: ReactElement }) {
   const { data, isError } = useAiMe()
@@ -134,8 +135,8 @@ export default function App() {
         <Route path="/access" element={<Only cap="view-order-sheet"><AccessPage /></Only>} />
         <Route path="/dashboard" element={<Only cap="view-dashboard"><DashboardPage /></Only>} />
         <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
-        {/* §20 — the assistant's full page: /ai?c=<conversation>, /ai/reports/<id>. */}
-        <Route path="/ai/*" element={<OnlyAiGranted><ErrorBoundary fallback={<LoadFailed what="The assistant" />}><Suspense fallback={<PageLoading />}><AiWorkspace /></Suspense></ErrorBoundary></OnlyAiGranted>} />
+        {/* §20 — the assistant's addresses (/ai?c=<conversation>, /ai/reports/<id>) open its popup, large, on that place. */}
+        <Route path="/ai/*" element={<OnlyAiGranted><AiAddress /></OnlyAiGranted>} />
         {/* §21 — automations; a delivered report opens for the people it was sent to (the server decides who). */}
         <Route path="/automations" element={<OnlyAutomator><LazyPage what="This page"><AutomationsPage /></LazyPage></OnlyAutomator>} />
         <Route path="/automations/deliveries/:id" element={<LazyPage what="This report"><AutomationDeliveryPage /></LazyPage>} />

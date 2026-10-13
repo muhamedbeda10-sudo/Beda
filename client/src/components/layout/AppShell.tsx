@@ -15,7 +15,6 @@ import { ADMIN_NAV, NAV, TOOLS_NAV, visibleNav, type NavItem } from '@/component
 import { AiAssistantProvider, useAi } from '@/components/ai/AiAssistantProvider'
 import { AiButton } from '@/components/ai/AiButton'
 import { AiPanelHost } from '@/components/ai/AiPanelHost'
-import { isAiWorkspacePath } from '@/components/ai/workspace'
 import { useNavFit } from '@/components/layout/navFit'
 import { useCoarsePointer } from '@/lib/media'
 
@@ -195,11 +194,8 @@ function Shell({ children }: { children: ReactNode }) {
   const displayName = profile?.name || user
 
   const isActive = (n: NavItem) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to))
-  // §20 — the assistant's full page fills the window under the header, edge to edge; its own addresses (a
-  // conversation, a report) are one page, not a new entrance each.
-  const fullPage = isAiWorkspacePath(location.pathname)
-  // §21 — a follow-up opens in a drawer over the list: /follow-ups and /follow-ups/<id> are one page as well.
-  const pageKey = fullPage ? '/ai' : location.pathname.startsWith('/follow-ups') ? '/follow-ups' : location.pathname
+  // §21 — a follow-up opens in a drawer over the list: /follow-ups and /follow-ups/<id> are one page.
+  const pageKey = location.pathname.startsWith('/follow-ups') ? '/follow-ups' : location.pathname
 
   return (
     <div className="min-h-full">
@@ -249,9 +245,8 @@ function Shell({ children }: { children: ReactNode }) {
             })}
           </nav>
 
-          {/* Right — the assistant, chat, the bell, administration, account (the theme is in the account panel / the menu) */}
+          {/* Right — chat, the bell, administration, account (the theme is in the account panel / the menu; the assistant floats in the bottom corner) */}
           <div className="ml-auto flex shrink-0 items-center justify-end gap-1 lg:flex-1">
-            {ai.enabled && <AiButton />}
             {can(role, 'use-chat') && <ChatButton />}
             {/* §21 — everyone has the bell for their alerts; the notices in it are for the roles that receive them. */}
             <NoticeBell notices={can(role, 'read-notices')} />
@@ -288,7 +283,7 @@ function Shell({ children }: { children: ReactNode }) {
               </button>
             </div>
             <nav className="flex flex-col gap-1 p-3">
-              {/* The assistant is the header's own button on every screen, so the menu does not offer it a second time. */}
+              {/* The assistant is the floating button on every screen, so the menu does not offer it a second time. */}
               {nav.map((n) => (
                 <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
               ))}
@@ -338,14 +333,15 @@ function Shell({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {/* Full width; each route change replays the entrance so a page feels placed, not swapped.
-          On a very wide screen the page makes room for the docked assistant; narrower, the panel lies over its right edge. */}
-      <main className={cn(fullPage ? 'min-w-0' : 'px-4 py-5 transition-[padding] duration-300 sm:px-6 lg:px-8 safe-bottom', !fullPage && ai.open && ai.docked && '2xl:pr-[32rem]')}>
+      {/* Full width; each route change replays the entrance so a page feels placed, not swapped. */}
+      <main className="px-4 py-5 sm:px-6 lg:px-8 safe-bottom">
         <div key={pageKey} className="animate-page-in">
           {children}
         </div>
       </main>
-      {/* Outside <main>, which remounts on every route: an answer keeps streaming while its asker moves around. */}
+      {/* §20 — the assistant: its floating button in the bottom corner, and its popup. Outside <main>, which remounts
+          on every route: an answer keeps streaming while its asker moves around. */}
+      {ai.enabled && <AiButton />}
       <AiPanelHost />
       <ToastHost />
       <WhatsNewPrompt />

@@ -36,7 +36,6 @@ import { ApiError } from '@/lib/api'
 import { activateProposal, discardProposal, recheckAccessOn404, useAutomationPeople } from '@/services/automations'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
-import { useAi } from '@/components/ai/AiAssistantProvider'
 import { AutomationEditor } from './AutomationEditor'
 import { CasesTable, DefinitionFacts, ErrorList, KindBadge, NotificationPreview, SectionsPreview, errorLines, periodText } from './parts'
 import {
@@ -73,7 +72,6 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
   const qc = useQueryClient()
   const { toast } = useApp()
   const { profile, factoryTimeZone } = useAuth()
-  const { docked, setOpen } = useAi()
   const [edits, setEdits] = useState<AutomationEdits | null>(null)
   const [editing, setEditing] = useState(false)
   const [notifyExisting, setNotifyExisting] = useState(false)
@@ -159,10 +157,6 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
     }
   }
 
-  // Opening the automation's page from a sheet over the page puts the sheet away, so the page is in view.
-  const leaveForPage = () => {
-    if (!docked) setOpen(false)
-  }
 
   return (
     <article
@@ -296,7 +290,7 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
                 <span aria-hidden className="text-muted">
                   ·
                 </span>
-                <Link to={`/automations/${encodeURIComponent(part.automationId)}`} onClick={leaveForPage} className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
+                <Link to={`/automations/${encodeURIComponent(part.automationId)}`} className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
                   Open in Automations <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
                 </Link>
               </>

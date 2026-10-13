@@ -238,7 +238,7 @@ export function FilterBar({
   const anchor = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   return (
-    <div className="z-30 -mx-4 space-y-1.5 bg-slate-100/90 px-4 py-1 backdrop-blur sm:-mx-6 sm:px-6 md:sticky md:top-16 lg:-mx-8 lg:px-8 dark:bg-slate-950/90">
+    <div className="z-30 -mx-4 space-y-1.5 bg-slate-100/90 px-4 py-1 backdrop-blur sm:-mx-6 sm:px-6 md:sticky md:top-[var(--page-sticky-top,4rem)] lg:-mx-8 lg:px-8 dark:bg-slate-950/90">
       <div className={cn('flex flex-wrap items-center gap-2', singleRow && 'xl:flex-nowrap')}>
         {leading && actionsInline ? <div className="flex min-w-0 items-center gap-2 max-md:order-first">{leading}</div> : leading}
         {search && (

@@ -9,6 +9,7 @@ import { loadAuditAt, loadAuditMatches, loadAuditValues, loadOlderAudit, useAudi
 import { purgeAudit } from '@/services/mutations'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { PHONE, useMediaQuery } from '@/lib/media'
+import { useBottomBarRef } from '@/lib/bottomBar'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { can } from '@/domain'
@@ -72,6 +73,7 @@ const RANGES = [
 
 /** §11 — the audit browser. */
 export function AuditPage() {
+  const bottomBar = useBottomBarRef<HTMLDivElement>()
   const queryClient = useQueryClient()
   const { data: stats } = useAuditStats()
   const totalEvents = stats?.total ?? 0
@@ -438,6 +440,7 @@ export function AuditPage() {
         selected.size > 0 &&
         createPortal(
           <div
+            ref={bottomBar}
             role="toolbar"
             aria-label="Selected entries"
             className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-slate-200 bg-white/95 px-4 py-2 backdrop-blur safe-bottom md:hidden dark:border-slate-800 dark:bg-slate-900/95"

@@ -13,6 +13,7 @@ import { useMaster } from '@/services/queries'
 import { createMaster, deleteManyMaster, deleteMaster, updateMaster } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { PHONE, useMediaQuery } from '@/lib/media'
+import { useBottomBarRef } from '@/lib/bottomBar'
 import { cn } from '@/lib/utils'
 import { useTableView, ViewTh } from '@/components/ui/ColumnFilter'
 import type { MasterKind, MasterRecordByKind } from '@qc/shared/api'
@@ -98,6 +99,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
   type T = MasterRecordByKind[K]
   const queryClient = useQueryClient()
   const { toast } = useApp()
+  const bottomBar = useBottomBarRef<HTMLDivElement>()
   const [editing, setEditing] = useState<{ id: string | null; draft: D } | null>(null)
   const [confirming, setConfirming] = useState<T | null>(null)
   const [busy, setBusy] = useState(false)
@@ -351,6 +353,7 @@ export function MasterDataPanel<K extends MasterKind, D>(props: PanelProps<K, D>
         selectedVisible.length > 0 &&
         createPortal(
           <div
+            ref={bottomBar}
             role="toolbar"
             aria-label="Selected records"
             className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-slate-200 bg-white/95 px-4 py-2 backdrop-blur safe-bottom dark:border-slate-800 dark:bg-slate-900/95"

@@ -16,13 +16,11 @@ import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { removePlaybookEntry } from '@/services/playbook'
 import { useApp } from '@/store/AppContext'
-import { useAi } from './AiAssistantProvider'
 import { playbookCardState, playbookCardTitle } from './playbookCard'
 
 export const AiPlaybookCard = memo(function AiPlaybookCard({ part }: { part: AiPlaybookPart }) {
   const qc = useQueryClient()
   const { toast } = useApp()
-  const { docked, setOpen } = useAi()
   const [busy, setBusy] = useState(false)
   // Removed from this card, until the conversation itself says so.
   const [removed, setRemoved] = useState(false)
@@ -83,7 +81,7 @@ export const AiPlaybookCard = memo(function AiPlaybookCard({ part }: { part: AiP
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Remove
             </button>
           )}
-          <Link to="/playbook" onClick={() => !docked && setOpen(false)} className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
+          <Link to="/playbook" className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
             Open playbook <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
           </Link>
         </p>

@@ -225,7 +225,7 @@ export function AutomationsPage() {
                 </div>
 
                 {/* From xl (1280 px): one line each, its columns set so nothing floats apart; the name keeps its place
-                    while the rest scrolls under it beside the docked assistant. */}
+                    while the rest scrolls under it. */}
                 <Card className="hidden overflow-hidden xl:block">
                   <ScrollX shadows="end" label={sec.title}>
                     <table className="table-sticky-first w-full min-w-[60rem] table-fixed text-sm">

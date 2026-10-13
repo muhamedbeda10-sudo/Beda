@@ -26,7 +26,6 @@ import { cn } from '@/lib/utils'
 import { discardTaskProposal, sendTaskProposal } from '@/services/taskProposals'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
-import { useAi } from './AiAssistantProvider'
 import { TASK_CARD_STATE_LABEL, TASK_CARD_STATE_TONE, sentToast, taskPartOf } from './taskProposal'
 
 const ACTION_BTN = 'min-h-[40px] touch:min-h-[44px]'
@@ -48,7 +47,6 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiTaskPart; draft
   const qc = useQueryClient()
   const { toast } = useApp()
   const { factoryTimeZone: tz } = useAuth()
-  const { docked, setOpen } = useAi()
   const [busy, setBusy] = useState<'send' | 'discard' | null>(null)
   const [problems, setProblems] = useState<string[] | null>(null)
   // Replaced by a newer card: folded, the newer card below is the one to read.
@@ -107,10 +105,6 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiTaskPart; draft
     }
   }
 
-  // Opening the task's page from a sheet over the page puts the sheet away, so the page is in view.
-  const leaveForPage = () => {
-    if (!docked) setOpen(false)
-  }
 
   return (
     <article
@@ -198,7 +192,7 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiTaskPart; draft
                 <span aria-hidden className="text-muted">
                   ·
                 </span>
-                <Link to={`/tasks/${part.taskId}`} onClick={leaveForPage} className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
+                <Link to={`/tasks/${part.taskId}`} className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
                   Open task <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
                 </Link>
               </>

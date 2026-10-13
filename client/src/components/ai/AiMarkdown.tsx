@@ -19,12 +19,10 @@ import { useNavigate } from 'react-router-dom'
 import { ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/store/AppContext'
-import { useAi } from './AiAssistantProvider'
 import { AiCode } from './AiCode'
 import { AiMarkdownTable, TBODY_CLASS, TR_CLASS, tdClass, thClass } from './AiTable'
 import { aiAppUrlTransform, aiUrlTransform, classifyAiLink } from './links'
 import { DIR_ATTR, NUMERIC_ATTR, codeLanguage, hastDirection, hastRawText, proseDirection, rehypeAiTables, type HastNode } from './tables'
-import { isAiWorkspacePath } from './workspace'
 
 const REMARK = [remarkGfm]
 const REHYPE = [rehypeAiTables]
@@ -34,7 +32,6 @@ const LINK = 'font-semibold text-brand-700 underline decoration-brand-300 underl
 /** `appOnly`: a web address is not followed, only a page of the application (text read beyond the person who asked). */
 function MdLink({ href, children, appOnly = false }: AnchorHTMLAttributes<HTMLAnchorElement> & { children?: ReactNode; appOnly?: boolean }) {
   const navigate = useNavigate()
-  const { docked, setOpen, workspace } = useAi()
   const link = classifyAiLink(href)
   if (!link || (appOnly && link.kind !== 'app')) return <span>{children}</span>
   if (link.kind === 'external') {
@@ -50,13 +47,12 @@ function MdLink({ href, children, appOnly = false }: AnchorHTMLAttributes<HTMLAn
       href={link.to}
       className={LINK}
       onClick={(e) => {
-        // A modified click opens a new tab as any link does; a plain one moves the app, and a sheet steps aside.
-        // From the full page on a desktop, the conversation docks beside the page the link opens, still in view.
+        // A modified click opens a new tab as any link does; a plain one moves the router it is in. In the assistant's
+        // popup that is the popup's own: a place of the popup (a report, the Playbook) opens in it, and a page of the
+        // app opens in the app with the popup stepping aside (AiPopup's LeaveForApp).
         if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
         e.preventDefault()
         navigate(link.to)
-        if (workspace) setOpen(docked && !isAiWorkspacePath(link.to.split(/[?#]/)[0]))
-        else if (!docked) setOpen(false)
       }}
     >
       {children}

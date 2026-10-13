@@ -1,32 +1,26 @@
-// §20 — the header's door to the AI assistant: opens and closes the panel, and pulses while an answer is being written.
-// On the assistant's full page it docks the assistant back beside the page the person came from.
+// §20 — the door to the AI assistant: a round button floating in the bottom corner of every page, above any bar
+// along the bottom (index.css: .ai-fab). It opens the popup where it was left; while the popup is open the button
+// steps aside for it. It pulses while an answer is being written, so a person who closed the popup sees it is busy.
 
 import { Bot } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { useAi } from './AiAssistantProvider'
 
 export function AiButton() {
-  const { open, toggle, busy, workspace, dock } = useAi()
-  const on = open || workspace
+  const { open, setOpen, busy } = useAi()
+  if (open) return null
   return (
     <button
       type="button"
-      onClick={workspace ? () => dock() : toggle}
-      // On every screen: the theme moved to the account panel, so a phone has room for it beside chat and the bell.
-      className={cn('icon-btn relative', on && 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200')}
+      onClick={() => setOpen(true)}
+      className="ai-fab fixed z-40 grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-white shadow-lift ring-4 ring-white transition-transform duration-200 hover:scale-105 focus:outline-none focus-visible:ring-brand-300 active:scale-95 animate-fade-in print:hidden dark:ring-slate-900"
       aria-label={busy ? 'AI assistant, answering' : 'AI assistant'}
-      aria-haspopup={workspace ? undefined : 'dialog'}
-      aria-expanded={workspace ? undefined : open}
-      aria-current={workspace ? 'page' : undefined}
-      data-tip={workspace ? 'Dock the assistant beside the page' : busy ? 'AI assistant — answering…' : 'AI assistant — ask about the data'}
+      aria-haspopup="dialog"
+      aria-expanded={false}
+      data-tip={busy ? 'AI assistant — answering…' : 'AI assistant — ask about the data'}
     >
-      <Bot className="h-5 w-5" />
-      {busy && <AiBusyDot />}
+      <Bot className="h-7 w-7" />
+      {busy && <span aria-hidden className="absolute right-0.5 top-0.5 h-3 w-3 animate-pulse rounded-full bg-accent-500 ring-2 ring-white dark:ring-slate-900" />}
     </button>
   )
 }
 
-/** The small pulsing dot that says an answer is still being written. */
-export function AiBusyDot({ className }: { className?: string }) {
-  return <span aria-hidden className={cn('absolute right-1.5 top-1.5 h-2 w-2 animate-pulse rounded-full bg-accent-500 ring-2 ring-white dark:ring-slate-900', className)} />
-}

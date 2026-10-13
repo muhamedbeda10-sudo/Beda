@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.93',
+    date: '2026-10-13',
+    title: 'The AI assistant floats in the corner',
+    items: [
+      { text: 'The AI assistant is now a round button in the bottom-right corner of every page, no longer an icon in the bar at the top. Press it and the assistant opens as a card in the corner; the page beside it stays usable.' },
+      { text: 'Expand (the arrows at the top of the card) opens it as a large window in the middle of the screen, with your conversations and reports beside the chat; Shrink puts it back in the corner. On a phone it takes the whole screen.' },
+      { text: 'The Automations and Playbook buttons at the top of the assistant open those pages inside it, with Back and a button back to the chat. A link to any other page (a session, a task, the follow-ups) opens that page, and the assistant moves to the corner beside it.' },
+      { text: 'On screens with buttons along the bottom (recording an inspection, a selection\'s toolbar), the assistant\'s button sits above them.' },
+    ],
+  },
+  {
     id: '2026-10-13.92',
     date: '2026-10-13',
     title: 'Tasks are sent through the assistant',
