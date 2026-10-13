@@ -340,6 +340,6 @@ describe('§20 the query runner', () => {
     expect(res.ok).toBe(false)
     expect(res.error).toMatch(/column "nope" does not exist \(at character 44\)/)
     const missing = await run('SELECT * FROM ai.nothing_here')
-    expect(missing.error).toMatch(/does not exist.*Only the views and functions in schema ai can be read/)
+    expect(missing.error).toMatch(/does not exist.*Only the views and functions in schema ai, and the saved tables in schema ai_saved, can be read/)
   })
 })

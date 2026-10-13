@@ -12,6 +12,7 @@ import type { ApiErrorCode } from './api'
 import type { AiAutomationPart } from './automation'
 import type { AiNoticePart } from './noticeAssistant'
 import type { AiPlaybookPart } from './playbook'
+import type { AiSavedTablePart } from './savedTables'
 import type { AiExcelPart } from './aiExcel'
 
 /** The model the assistant runs on. */
@@ -504,9 +505,10 @@ export interface AiTaskProposalResponse {
 
 /**
  * An answer's pieces in order. An automation proposal (§21), a notice card (§23) and a task card are cards the person
- * applies or discards; a playbook card says what the assistant saved, with Remove; an Excel card is a file to download.
+ * applies or discards; a playbook card says what the assistant saved, with Remove; an Excel card is a file to download;
+ * a saved-table card says what table the assistant made, changed, computed again or removed.
  */
-export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart | AiNoticePart | AiTaskPart | AiPlaybookPart | AiExcelPart
+export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart | AiNoticePart | AiTaskPart | AiPlaybookPart | AiExcelPart | AiSavedTablePart
 
 /** How an answer ended. */
 export type AiStopReason =
@@ -580,6 +582,8 @@ export type AiStreamEvent =
   | { type: 'playbook'; part: AiPlaybookPart }
   /** An Excel file the assistant made, ready to download. */
   | { type: 'excel'; part: AiExcelPart }
+  /** A saved table the assistant made, changed, computed again or removed. */
+  | { type: 'saved-table'; part: AiSavedTablePart }
   | { type: 'done'; message: AiMessage; status: AiStatusResponse }
   | { type: 'error'; code: ApiErrorCode; message: string }
 

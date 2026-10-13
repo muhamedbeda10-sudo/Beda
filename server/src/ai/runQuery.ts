@@ -317,7 +317,7 @@ function errorText(err: pg.DatabaseError, at: { prefix: number; chars: number })
   if (Number.isFinite(position) && position >= 1 && position <= at.chars + 1) text += ` (at character ${position})`
   if (err.hint) text += ` Hint: ${err.hint}`
   if (err.code === '42501' || err.code === '42P01' || err.code === '3F000') {
-    text += ' Only the views and functions in schema ai can be read.'
+    text += ' Only the views and functions in schema ai, and the saved tables in schema ai_saved, can be read.'
   } else if (err.code === '25006') {
     text += ' The assistant can only read.'
   }

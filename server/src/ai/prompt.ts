@@ -170,14 +170,16 @@ export const deferred = (tool: Anthropic.Beta.BetaTool): Anthropic.Beta.BetaTool
  * The tools of a new conversation: run_sql and the tool search, loaded from
  * the start; then, deferred, the automations' own for a person allowed to
  * create them (§21), the notices' (§23): the reading ones for everyone, the
- * writing ones for a person who may have notices written; and the tasks'.
+ * writing ones for a person who may have notices written; the tasks'; and
+ * the saved tables'.
  */
 export function conversationTools(
   automationTools: readonly Anthropic.Beta.BetaTool[] | null,
   noticeTools: readonly Anthropic.Beta.BetaTool[] = [],
   taskTools: readonly Anthropic.Beta.BetaTool[] = [],
+  savedTableTools: readonly Anthropic.Beta.BetaTool[] = [],
 ): Anthropic.Beta.BetaToolUnion[] {
-  const onDemand = [...(automationTools ?? []), ...noticeTools, ...taskTools].map(deferred)
+  const onDemand = [...(automationTools ?? []), ...noticeTools, ...taskTools, ...savedTableTools].map(deferred)
   return onDemand.length > 0 ? [RUN_SQL_TOOL, TOOL_SEARCH_TOOL, ...onDemand] : [RUN_SQL_TOOL]
 }
 
@@ -192,14 +194,15 @@ export function conversationTools(
  * prompt, byte for byte, less the Automations section. Without `notices` it
  * is the prompt as before §23: no Notices section, and no word of notices in
  * the general rules; without `tasks`, no word of tasks; without `excel`, no
- * Excel files section; without `playbook`, no Playbook section. The chat
- * always passes all four: the playbook as it is when the conversation begins.
+ * Excel files section; without `playbook`, no Playbook section; without
+ * `savedTables`, no word of saved tables. The chat always passes all five:
+ * the playbook as it is when the conversation begins.
  */
 export function renderSystemPrompt(
   factoryTimeZone: string,
   schemaDescription: string,
   domains: readonly AiDomain[],
-  options: { automations?: AutomationAsker | null; notices?: NoticePromptMode | null; tasks?: boolean; excel?: boolean; playbook?: PromptPlaybook | null } = {},
+  options: { automations?: AutomationAsker | null; notices?: NoticePromptMode | null; tasks?: boolean; excel?: boolean; playbook?: PromptPlaybook | null; savedTables?: boolean } = {},
 ): string {
   const granted = AI_DOMAIN_IDS.filter((d) => domains.includes(d))
   const has = (d: AiDomain) => granted.includes(d)
@@ -212,13 +215,13 @@ export function renderSystemPrompt(
 # What you can read
 For this person you can read:
 ${granted.map((d) => `- ${DOMAIN_LINES[d]}`).join('\n')}
-plus the machine register${options.notices ? ', and the notices this person can see (see Notices)' : ''}${options.tasks ? ', and the tasks they sent or were sent (see Tasks)' : ''}. The views and functions described under "The data" below${toolWords ? `, with the ${toolWords} tools,` : ''} are all of it. When a question needs anything else, say plainly that it is not among the data the assistant can read for them; never guess it.`)
+plus the machine register${options.savedTables ? ', the saved tables (ai_saved.*) built from what they may read' : ''}${options.notices ? ', and the notices this person can see (see Notices)' : ''}${options.tasks ? ', and the tasks they sent or were sent (see Tasks)' : ''}. The views and functions described under "The data" below${toolWords ? `, with the ${toolWords} tools,` : ''} are all of it. When a question needs anything else, say plainly that it is not among the data the assistant can read for them; never guess it.`)
   sections.push(`# How you work
 - Every factual statement about the factory's record must come from run_sql queries over the ai.* views${sources ? ` (${sources})` : ''} that you run in this conversation - never from memory, assumption or general knowledge, even when you feel sure. If the views cannot answer the question, say what is missing.
 - Prefer aggregates computed in SQL (count, sum, GROUP BY) to listing rows. Select only the columns you need and use LIMIT for listings: a result shows at most ${AI_PREVIEW_ROWS} rows.
 - If a query fails, read the error, fix the query and run it again. A permission error means the view is not among the data you can read for this person. Several queries for one question are fine.
 - Before you start, say in one line what you are about to check. Close with an answer that stands on its own; when you need something from the person first (a choice, a missing detail, their agreement to a plan), close with your questions instead.${
-    options.notices || options.automations || options.tasks || options.excel || options.playbook
+    options.notices || options.automations || options.tasks || options.excel || options.playbook || options.savedTables
       ? '\n- run_sql is ready from the start. The other tools this prompt names load on demand, to keep each question light: when a request needs one, first find it with tool_search_tool_bm25 (search by the tool\'s name, for example "list_notices"), then call it. A tool once found stays ready for the rest of the conversation. Never search for a tool the question does not need.'
       : ''
   }`)
@@ -284,8 +287,9 @@ When your answer asks the person something (to choose an option, to answer a que
   if (options.tasks) sections.push(TASKS_SECTION)
   if (options.excel) sections.push(EXCEL_SECTION)
   if (options.playbook) sections.push(playbookSection(options.playbook))
+  if (options.savedTables) sections.push(SAVED_TABLES_SECTION)
   if (options.automations) sections.push(automationsSection(options.automations, has('audit'), options.notices === 'manager'))
-  sections.push(readOnlySection(options.notices === 'manager', !!options.tasks, !!options.playbook))
+  sections.push(readOnlySection(options.notices === 'manager', !!options.tasks, !!options.playbook, !!options.savedTables))
   sections.push(`# The data\n${schemaDescription}`)
   return sections.join('\n\n')
 }
@@ -295,8 +299,11 @@ When your answer asks the person something (to choose an option, to answer a que
  * through the cards the person presses, and the person's playbook at their
  * word.
  */
-function readOnlySection(notices: boolean, tasks: boolean, playbook: boolean): string {
-  const ownPlaybook = (exception: 'one' | 'other') => (playbook ? ` The person's playbook, which you change with update_playbook at their word, is the ${exception} exception.` : '')
+function readOnlySection(notices: boolean, tasks: boolean, playbook: boolean, savedTables = false): string {
+  const playbookWords = (exception: 'one' | 'other') => (playbook ? ` The person's playbook, which you change with update_playbook at their word, is the ${exception} exception.` : '')
+  // Saved tables hold what the assistant derived, never the record: made at its own judgement, removed at the person's word.
+  const ownPlaybook = (exception: 'one' | 'other') =>
+    `${playbookWords(exception)}${savedTables ? ' The saved tables are yours to make, replace and compute again (see Heavy work and saved tables): they hold what you derived from the record and never change it; remove one only at the person\'s word.' : ''}`
   if (notices && tasks) {
     return `# Read-only, but for notices and tasks
 You cannot change anything in the system except notices and tasks, and those only through the cards described under Notices and Tasks, which the person applies or sends themselves.${ownPlaybook('other')} For anything else, explain where in the app it is done.
@@ -375,6 +382,27 @@ When the person asks for data in Excel (a file, a sheet, "send it to me in Excel
 - A sheet holds at most ${AI_EXCEL_MAX_ROWS.toLocaleString('en-US')} rows. With more, no file is made: tell the person and ask how to narrow it (a shorter period, a machine, a summary instead of every row).
 - A percentage is 0 to 100 (2.5 for 2.5%), format percent; a day or a time is selected as a date or a timestamp, format date or datetime; a code, or a number that names something (an order or a session number), is text.
 - If make_excel lists problems, fix all of them and call it again. Once it is made, say in a sentence or two what the file holds (its sheets, the period, the filters); it can be downloaded for ${AI_EXCEL_KEEP_DAYS} days.`
+
+/** Calls to the model one answer may take: the assistant's steps, each a reply that may run queries or tools. */
+export const MAX_STEPS_PER_ANSWER = 40
+
+/**
+ * Heavy work: how to go about an analysis that takes many steps, and when to
+ * keep its result as a saved table to build on. The assistant chooses the
+ * way; the person only says what they want, and never hears of cost.
+ */
+const SAVED_TABLES_SECTION = `# Heavy work and saved tables
+Some requests need real work: an analysis over months or years of the record, several steps that build on one another, or a result that later questions, reports or automations should build on (a routing drawn from the production history, a normal range per item, a ranking of suppliers). Do it, step by step, choosing the way yourself: the person only says what they want and need not know how it is done.
+- Let the database do the work: aggregate in SQL (GROUP BY, window functions, string_agg, array_agg, percentile_cont, stddev, regr_slope, FILTER) and read only the summary. Never fetch raw rows to count, compare or classify them yourself.
+- Split a heavy analysis into steps. Save an intermediate result with save_table when the next step builds on it or would otherwise compute it again, then query the saved table. A query that takes too long: narrow it, or build it in saved steps.
+- Before you build a table, look at list_saved_tables: use one that already holds what you need, or replace it (replace: true) rather than making a near copy.
+- Save a table when its result is something to build on (a later question, a report or an automation compares against it) or when the person asks to keep it. A one-off answer needs no table.
+- refresh: daily for a table drawn from the record that should follow new data; hourly when an automation watches recent work against it; never for a baseline that must not move once agreed (a routing the person approved, targets). Rows written out (source rows) are for what the record does not hold: a mapping, targets or limits the person gives. Anyone given the assistant may read them, so never copy figures from the record into them: build those from a query.
+- Correctness comes first. Before you rely on a result, check it: its totals against the source (rows in and out, sums), a sample of its rows, and the edge cases (empty values, duplicates, the same day twice, codes written in two ways). Say in a line what you checked and what the result does not cover. When the data is too thin to conclude (an item made twice), say so rather than forcing a rule.
+- Name tables and columns so they read on their own, and describe each table so that someone can use it later without this conversation: what a row is, where the rows come from, the rules applied.
+- An automation or a report reads saved tables like views. To be alerted when the work departs from something derived (an item passing a work center its routing does not have, scrap above an item's normal range), save that table first, then propose the automation over it.
+- One answer may take up to ${MAX_STEPS_PER_ANSWER} steps. When the work is larger, do it in parts: save what is done, say what remains, and go on when the person answers.
+- Never speak of cost, tokens or how expensive a way is: choose the way that gives a correct result with the least work, and do it.`
 
 /**
  * Files a question carries: photos (often of handwritten sheets), PDFs and

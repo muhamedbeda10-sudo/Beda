@@ -94,6 +94,7 @@ import { AI_EXCEL_KEEP_DAYS } from '@qc/shared/aiExcel'
 import type { AutomationActivateResponse, AutomationDiscardResponse } from '@qc/shared/automation'
 import type { AiNoticeApplyResponse, AiNoticeDiscardResponse } from '@qc/shared/noticeAssistant'
 import { PLAYBOOK_BASIS_MAX, PLAYBOOK_TEXT_MAX, type PlaybookEntry, type PlaybookResponse } from '@qc/shared/playbook'
+import type { SavedTableRowsResponse, SavedTablesResponse } from '@qc/shared/savedTables'
 import type { AppContext } from '../context'
 import { PG, pgCode, withTransaction, type Queryable } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
@@ -115,7 +116,7 @@ import {
   type AccessRecord,
   type PersonAvailability,
 } from '../ai/access'
-import { answerQuestion, describeModelFailure } from '../ai/assistant'
+import { TURN_DEADLINE_MINUTES, answerQuestion, describeModelFailure } from '../ai/assistant'
 import {
   AttachmentExpander,
   attachmentBlocks,
@@ -161,6 +162,8 @@ import {
 } from '../ai/reports'
 import { AI_EXPORT_LIMITS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
 import { describeAiSchema } from '../ai/schemaDoc'
+import { describeSavedTables, findSavedTable, listSavedTables, previewTable, refreshTable, removeTable, type SavedTableActor } from '../ai/savedTables'
+import { SAVED_TABLE_TOOLS, savedTableToolHandlers } from '../ai/savedTableTools'
 import { AI_SETTINGS_KEY, loadAiSettings, loadAvailability } from '../ai/settings'
 import { SseStream } from '../ai/sse'
 import { asksForConfirmation } from '../automations/confirmation'
@@ -192,7 +195,7 @@ const uuid = z.string().uuid()
 /** A query run again for Excel may take this long. */
 const EXPORT_QUERY_TIMEOUT_MS = 30_000
 /** A turn still "running" after this long was cut off by a restart: the next question closes it. */
-const STALE_TURN_MINUTES = 6
+const STALE_TURN_MINUTES = TURN_DEADLINE_MINUTES + 1
 /** Where the owner fixes what stops the assistant. */
 const SETTINGS_PAGE = 'Administration → AI assistant'
 
@@ -640,7 +643,11 @@ export function aiRoutes(ctx: AppContext): Router {
     // Excel files, for the people the owner allows (and the owner).
     const excel = mayMakeExcel(access, owner)
     const notices = noticePromptMode(user.role, managesNotices)
-    const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains, { automations, notices, tasks: true, excel, playbook: await promptPlaybook(db, user.id, tz) })
+    // The data dictionary: the views the person may read, then the saved tables built from what they may read.
+    const dictionary = async () => [await describeAiSchema(db, access.domains), await describeSavedTables(db, access.domains)].filter(Boolean).join('\n\n')
+    const systemPrompt = body.conversationId
+      ? null
+      : renderSystemPrompt(tz, await dictionary(), access.domains, { automations, notices, tasks: true, excel, playbook: await promptPlaybook(db, user.id, tz), savedTables: true })
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return
     const askedAt = new Date()
@@ -664,7 +671,12 @@ export function aiRoutes(ctx: AppContext): Router {
           title: conversationTitle(body.message || (await firstAttachmentName(tx, user.id, body.attachmentIds))),
           model: access.model,
           systemPrompt: systemPrompt!,
-          tools: conversationTools(automations ? AUTOMATION_TOOLS : null, managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS, [...TASK_TOOLS, ...PLAYBOOK_TOOLS, ...(excel ? EXCEL_TOOLS : [])]),
+          tools: conversationTools(
+            automations ? AUTOMATION_TOOLS : null,
+            managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS,
+            [...TASK_TOOLS, ...PLAYBOOK_TOOLS, ...(excel ? EXCEL_TOOLS : [])],
+            SAVED_TABLE_TOOLS,
+          ),
         })
       }
       // The model and effort the owner set for the person now: an earlier conversation goes on with them too.
@@ -749,6 +761,8 @@ export function aiRoutes(ctx: AppContext): Router {
             turnId,
             emit: (event) => sse.send(event),
           }),
+          // Saved tables: each call reads the person's access again; what a table may read is what they may.
+          ...savedTableToolHandlers({ db, config: ctx.config, readers: ctx.aiReader, userId: user.id, userName: user.name, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
         },
       })
       await finishTurn(db, turnId, outcome.stopReason, outcome.notice)
@@ -1230,6 +1244,58 @@ export function aiRoutes(ctx: AppContext): Router {
     const by = await playbookActor(req)
     const id = parse(uuid, req.params.id)
     await withTransaction(db, (tx) => removeEntry(tx, by, id))
+    res.status(204).end()
+  })
+
+  // ---- Saved tables ------------------------------------------------------------------------
+  //
+  // For the people given the assistant: the tables they may read (what each one's query reads, all
+  // of it theirs), a preview read as their own domains, computing one again, and removing one they
+  // made (any, for the owner). The assistant makes and replaces them in a conversation.
+
+  const savedTableDeps = () => ({ db, readers: ctx.aiReader, timeZone: tz })
+
+  async function savedTableActor(req: Request): Promise<SavedTableActor> {
+    const { user, access } = await aiUser(req)
+    return { id: user.id, name: user.name, owner: (await ownerId()) === user.id, domains: access.domains }
+  }
+
+  async function readableTable(actor: SavedTableActor, id: string) {
+    const table = await findSavedTable(db, actor, { id })
+    if (!table) throw notFound('That saved table')
+    return table
+  }
+
+  r.get('/saved-tables', async (req, res) => {
+    const actor = await savedTableActor(req)
+    const reply: SavedTablesResponse = { tables: await listSavedTables(db, actor) }
+    res.json(reply)
+  })
+
+  r.get('/saved-tables/:id/rows', async (req, res) => {
+    const actor = await savedTableActor(req)
+    const id = parse(uuid, req.params.id)
+    if (!ctx.aiReader.ready) throw readerDown()
+    const reply: SavedTableRowsResponse | null = await previewTable(savedTableDeps(), actor, id)
+    if (!reply) throw notFound('That saved table')
+    res.json(reply)
+  })
+
+  r.post('/saved-tables/:id/refresh', async (req, res) => {
+    const actor = await savedTableActor(req)
+    const table = await readableTable(actor, parse(uuid, req.params.id))
+    if (!ctx.aiReader.ready) throw readerDown()
+    const outcome = await refreshTable(savedTableDeps(), table.id, actor)
+    if (!outcome.ok) throw new HttpError(409, 'conflict', outcome.error)
+    res.json(await readableTable(actor, table.id))
+  })
+
+  r.delete('/saved-tables/:id', async (req, res) => {
+    const actor = await savedTableActor(req)
+    const table = await readableTable(actor, parse(uuid, req.params.id))
+    if (!table.mayRemove) throw new HttpError(403, 'forbidden', `Only ${table.createdByName}, who made it, or the assistant's owner may remove this table.`)
+    const outcome = await removeTable(savedTableDeps(), actor, table.id)
+    if (!outcome.ok) throw new HttpError(409, 'conflict', outcome.error)
     res.status(204).end()
   })
 

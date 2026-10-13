@@ -37,6 +37,7 @@ const FollowUpsPage = lazy(() => import('@/pages/FollowUpsPage').then((m) => ({ 
 const TasksPage = lazy(() => import('@/pages/TasksPage').then((m) => ({ default: m.TasksPage })))
 const TaskPage = lazy(() => import('@/pages/TaskPage').then((m) => ({ default: m.TaskPage })))
 const PlaybookPage = lazy(() => import('@/pages/PlaybookPage').then((m) => ({ default: m.PlaybookPage })))
+const SavedTablesPage = lazy(() => import('@/pages/SavedTablesPage').then((m) => ({ default: m.SavedTablesPage })))
 
 /** A page for a capability the signed-in role lacks sends the reader home; the API refuses it anyway. */
 function Only({ cap, children }: { cap: Capability; children: ReactElement }) {
@@ -144,6 +145,7 @@ export default function App() {
         <Route path="/tasks" element={<LazyPage what="Tasks"><TasksPage /></LazyPage>} />
         <Route path="/tasks/:id" element={<LazyPage what="The task"><TaskPage /></LazyPage>} />
         <Route path="/playbook" element={<OnlyAiGranted><LazyPage what="The playbook"><PlaybookPage /></LazyPage></OnlyAiGranted>} />
+        <Route path="/saved-tables" element={<OnlyAiGranted><LazyPage what="The saved tables"><SavedTablesPage /></LazyPage></OnlyAiGranted>} />
         {/* Administration lives behind the gear; every section keeps its own address. */}
         <Route path="/admin" element={<Navigate to="/admin/configuration" replace />} />
         <Route path="/admin/configuration/:section?" element={<Only cap="manage-admin-data"><ConfigurationPage /></Only>} />

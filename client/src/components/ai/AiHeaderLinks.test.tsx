@@ -40,12 +40,13 @@ function links(automations: boolean): string {
 }
 
 describe('the assistant’s header links', () => {
-  it('offers the Playbook, marked when it is the page, and Automations only to those who may create them; never Tasks', () => {
+  it('offers the Playbook, marked when it is the page, the saved tables, and Automations only to those who may create them; never Tasks', () => {
     const plain = links(false)
     expect(plain).toContain('aria-label="Playbook"')
     expect(plain).toMatch(/aria-label="Playbook" aria-current="page"/)
     expect(plain).not.toContain('aria-label="Automations"')
     expect(plain).not.toContain('Tasks')
+    expect(plain).toContain('aria-label="Saved tables"')
     expect(links(true)).toContain('aria-label="Automations"')
   })
 })
