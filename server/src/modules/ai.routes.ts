@@ -459,7 +459,7 @@ export function aiRoutes(ctx: AppContext): Router {
     const access = await loadAccess(db, user.id)
     // Most people were never given the assistant: asked on every page, they cost two reads and no more.
     if (!isGranted(access)) {
-      const body: AiMeResponse = { granted: false, owner: owner === user.id, available: false, reason: 'not-granted', automations: false, excel: false }
+      const body: AiMeResponse = { granted: false, owner: owner === user.id, available: false, reason: 'not-granted', automations: false, excel: false, notices: false }
       res.json(body)
       return
     }

@@ -60,6 +60,8 @@ export interface AiControls {
   owner: boolean
   /** §21 — the signed-in person may create automations (/ai/me): the Automations page is theirs. */
   automations: boolean
+  /** §23 — the signed-in person may have the assistant write notices (/ai/me): the Notices page's "New in the assistant". */
+  notices: boolean
   /** It was given and has been taken away since: an open panel says so until it is closed. */
   revoked: boolean
   open: boolean
@@ -127,6 +129,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   const enabled = me?.granted ?? false
   const owner = me?.owner ?? false
   const automations = me?.automations ?? false
+  const notices = me?.notices ?? false
   const phone = useMediaQuery(AI_PHONE)
   const [open, setOpenState] = useState(false)
   const [size, setSize] = useState<AiPopupSize>('compact')
@@ -421,6 +424,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       enabled,
       owner,
       automations,
+      notices,
       revoked,
       // The owner has the popup for its settings even without the assistant given to them.
       open: (enabled || revoked || owner) && open,
@@ -445,7 +449,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       compose,
       composed,
     }),
-    [enabled, owner, automations, revoked, open, setOpen, toggle, size, phone, openAt, leaveForPage, conversationId, openConversation, busy, send, attachments, attach, detach, stop, compose, composed],
+    [enabled, owner, automations, notices, revoked, open, setOpen, toggle, size, phone, openAt, leaveForPage, conversationId, openConversation, busy, send, attachments, attach, detach, stop, compose, composed],
   )
 
   return (

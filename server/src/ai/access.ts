@@ -341,7 +341,16 @@ export async function personAvailability(
   const model = access?.model ?? AI_MODEL
   const app = await loadAvailability(q, config, readerReady, model)
   const owner = ownerId !== null && ownerId === userId
-  const me: AiMeResponse = { granted: isGranted(access), owner, available: false, automations: mayAutomate(access, owner), excel: mayMakeExcel(access, owner) }
+  // The role as it is now: a person demoted loses the notices at once (mayManageNotices).
+  const role = isGranted(access) ? ((await q.query<{ role: Role }>(`SELECT role FROM users WHERE id = $1`, [userId])).rows[0]?.role ?? null) : null
+  const me: AiMeResponse = {
+    granted: isGranted(access),
+    owner,
+    available: false,
+    automations: mayAutomate(access, owner),
+    excel: mayMakeExcel(access, owner),
+    notices: mayManageNotices(access, owner, role),
+  }
   if (!isGranted(access)) me.reason = 'not-granted'
   else if (app.status.reason === 'cap-reached') me.reason = 'cap-reached'
   else if (app.status.reason) me.reason = 'unavailable'

@@ -30,9 +30,11 @@ export const RELEASES: readonly Release[] = [
   {
     id: '2026-10-13.100',
     date: '2026-10-13',
-    title: 'Notices open from the bell',
+    title: 'Notices open from the bell, and are written with the assistant',
     items: [
-      { text: 'Notices are no longer under Administration. Whoever writes them opens the Notices page from the bell: the Notices tab has "Open the Notices page" under the list. The page is the same: write a notice, change it, withdraw it, see who read it.' },
+      { text: 'Notices are no longer under Administration. Whoever writes them opens the Notices page from the bell: the Notices tab has "Open the Notices page" under the list.' },
+      { text: 'A new notice is written with the AI assistant: on the Notices page, "New notice" is now "New in the assistant", which opens it on a new conversation to draft the notice as a card you publish. The page still shows who read each notice, and changes, withdraws or removes one.' },
+      { text: 'The assistant\'s round button no longer covers Send in the chat: it sits above the message box.' },
     ],
   },
   {
