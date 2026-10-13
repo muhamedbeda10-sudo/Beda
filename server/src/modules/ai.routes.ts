@@ -410,6 +410,15 @@ export function aiRoutes(ctx: AppContext): Router {
     return { user, access }
   }
 
+  /**
+   * Excel from the assistant — its files, and Excel of its queries and
+   * reports — is for the owner and the people the owner allows (§20); anyone
+   * else is refused, whatever the button they found.
+   */
+  async function mayHaveExcel(user: AuthUser, access: AccessRecord): Promise<void> {
+    if (!mayMakeExcel(access, (await ownerId()) === user.id)) throw new HttpError(403, 'forbidden', "The assistant's owner has not given you Excel files.")
+  }
+
   /** The same, with whether they may ask now. */
   async function asker(req: Request): Promise<{ user: AuthUser; access: AccessRecord; avail: PersonAvailability }> {
     const user = requireUser(req)
@@ -438,7 +447,7 @@ export function aiRoutes(ctx: AppContext): Router {
     const access = await loadAccess(db, user.id)
     // Most people were never given the assistant: asked on every page, they cost two reads and no more.
     if (!isGranted(access)) {
-      const body: AiMeResponse = { granted: false, owner: owner === user.id, available: false, reason: 'not-granted', automations: false }
+      const body: AiMeResponse = { granted: false, owner: owner === user.id, available: false, reason: 'not-granted', automations: false, excel: false }
       res.json(body)
       return
     }
@@ -891,9 +900,10 @@ export function aiRoutes(ctx: AppContext): Router {
 
   // ---- Excel ----------------------------------------------------------------------------
 
-  /** A query of an answer, run again now in full (up to AI_EXPORT_MAX_ROWS rows), as the person's current domains. */
+  /** A query of an answer, run again now in full (up to AI_EXPORT_MAX_ROWS rows), as the person's current domains; for someone allowed Excel. */
   r.get('/queries/:id/export', async (req, res) => {
     const { user, access } = await aiUser(req)
+    await mayHaveExcel(user, access)
     const id = parse(uuid, req.params.id)
     const { rows } = await db.query<{ purpose: string; sql: string }>(
       `SELECT q.purpose, q.sql FROM ai_queries q JOIN ai_conversations c ON c.id = q.conversation_id
@@ -923,7 +933,7 @@ export function aiRoutes(ctx: AppContext): Router {
    */
   r.get('/excel-files/:id/download', async (req, res) => {
     const { user, access } = await aiUser(req)
-    if (!mayMakeExcel(access, (await ownerId()) === user.id)) throw new HttpError(403, 'forbidden', "The assistant's owner has not given you Excel files.")
+    await mayHaveExcel(user, access)
     const id = parse(uuid, req.params.id)
     const file = await findExcelFile(db, user.id, id)
     const gone = () => new HttpError(410, 'not_found', `This file is no longer kept (files are kept ${AI_EXCEL_KEEP_DAYS} days). Ask the assistant for it again.`)
@@ -1351,8 +1361,10 @@ export function aiRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
-  /** A report run now in full for Excel: up to AI_EXPORT_MAX_ROWS rows a section. */
+  /** A report run now in full for Excel: up to AI_EXPORT_MAX_ROWS rows a section; for someone allowed Excel. */
   r.get('/reports/:id/export', async (req, res) => {
+    const { user, access } = await aiUser(req)
+    await mayHaveExcel(user, access)
     const { report, period, reader, signal } = await reportToRun(req, res)
     const ranAt = new Date().toISOString()
     const sections = await exportReportSections(reader, report, period, { timeZone: tz, signal })

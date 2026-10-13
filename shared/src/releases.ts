@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.95',
+    date: '2026-10-13',
+    title: 'Excel from the assistant follows its permission',
+    items: [
+      { text: 'Every Excel button in the AI assistant now follows "Can have Excel files made": on a query card, under a chart, on a table in an answer, and Export Excel on a saved report. Without it, the tables are still there to open and copy. The assistant\'s owner always has it.' },
+      { text: 'Reports that automations deliver keep their Excel for whoever receives them.' },
+    ],
+  },
+  {
     id: '2026-10-13.94',
     date: '2026-10-13',
     title: 'Excel files from the AI assistant',

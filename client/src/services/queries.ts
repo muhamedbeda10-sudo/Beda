@@ -836,6 +836,14 @@ export function useAiMe(enabled = true) {
   return useQuery({ queryKey: keys.aiMe, queryFn: () => api<AiMeResponse>('/ai/me'), enabled, staleTime: 60_000, refetchOnWindowFocus: true })
 }
 
+/**
+ * Whether the person may have Excel from the assistant (§20): its files, and
+ * Excel of its queries, answer tables and reports. The server checks it too.
+ */
+export function useAiExcel(): boolean {
+  return useAiMe().data?.excel ?? false
+}
+
 /** The switch, the cap, the key's state (never the key) and the month's spend: the owner's page only. */
 export function useAiSettings(enabled: boolean) {
   return useQuery({ queryKey: keys.aiSettings, queryFn: () => api<AiSettingsResponse>('/ai/settings'), enabled, staleTime: 60_000 })
