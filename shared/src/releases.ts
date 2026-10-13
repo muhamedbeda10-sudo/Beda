@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.9',
+    date: '2026-10-13',
+    title: 'Every chart can show its table',
+    items: [
+      { text: 'Every chart now has a Chart / Table switch: on the dashboard (in each card’s header), in the AI assistant’s answers, in saved reports and in automation reports. Table shows the figures the chart draws, row by row.' },
+      { text: 'In the assistant’s answers the chart and its table no longer sit one under the other: the chart shows first and Table switches to the rows. Open table and Export Excel stay under both.' },
+    ],
+  },
+  {
     id: '2026-10-13.8',
     date: '2026-10-13',
     title: 'Six new charts for planning and production',

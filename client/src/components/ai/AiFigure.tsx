@@ -1,11 +1,12 @@
 // ============================================================================
 // §20 — a chart in a finished answer: a query that asked to be drawn, as a
-// figure of its own — its title, the chart, then the query's table with its
-// tools (Copy table, Open table, Export Excel). The query's card, with its
-// SQL, stays under "How I got this".
+// figure of its own — its title with the Chart / Table switch, then the chart
+// or the query's table (with Copy table); Open table and Export Excel under
+// either. The query's card, with its SQL, stays under "How I got this".
 // ============================================================================
 
 import { memo, useState } from 'react'
+import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figureView'
 import {
   Activity,
   ChartBarBig,
@@ -56,7 +57,16 @@ const ICON: Record<AiChartType, typeof ChartLine> = {
 
 export const AiFigure = memo(function AiFigure({ part, model, question }: { part: AiQueryPart; model: ChartModel; question?: string }) {
   const [table, setTable] = useState(false)
+  const [view, setView] = useState<FigureView>('chart')
   const { exporting, exportExcel } = useQueryExport(part, question, false)
+  const tools = (
+    <>
+      <TableTool onClick={() => setTable(true)} disabled={part.rows.length === 0} icon={<Table2 className="h-3.5 w-3.5" />}>
+        Open table
+      </TableTool>
+      <ExportTool onExport={exportExcel} exporting={exporting} tip={EXPORT_TIP} />
+    </>
+  )
   const Icon = ICON[model.type]
   const title = model.title ?? part.purpose
   const drawn = model.series.length
@@ -79,27 +89,22 @@ export const AiFigure = memo(function AiFigure({ part, model, question }: { part
             </span>
           )}
         </span>
+        <ChartTableSwitch value={view} onChange={setView} className="mt-0.5" />
       </figcaption>
-      <AiChart model={model} />
-      {(model.omitted > 0 || part.truncated) && (
-        <p className="mt-1.5 text-[11px] text-muted">
-          {model.omitted > 0 && `The ${drawn} largest of ${drawn + model.omitted} series are drawn; the table has them all. `}
-          {part.truncated && `Drawn from the first ${part.rows.length.toLocaleString('en-US')} ${part.rows.length === 1 ? 'row' : 'rows'}; more matched — Export Excel has them all.`}
-        </p>
+      {view === 'chart' ? (
+        <>
+          <AiChart model={model} />
+          {(model.omitted > 0 || part.truncated) && (
+            <p className="mt-1.5 text-[11px] text-muted">
+              {model.omitted > 0 && `The ${drawn} largest of ${drawn + model.omitted} series are drawn; the table has them all. `}
+              {part.truncated && `Drawn from the first ${part.rows.length.toLocaleString('en-US')} ${part.rows.length === 1 ? 'row' : 'rows'}; more matched — Export Excel has them all.`}
+            </p>
+          )}
+          <div className="print-hidden mt-2 flex flex-wrap justify-end gap-1 text-xs text-muted">{tools}</div>
+        </>
+      ) : (
+        <PreviewTable part={part} tools={tools} />
       )}
-      <div className="mt-3">
-        <PreviewTable
-          part={part}
-          tools={
-            <>
-              <TableTool onClick={() => setTable(true)} disabled={part.rows.length === 0} icon={<Table2 className="h-3.5 w-3.5" />}>
-                Open table
-              </TableTool>
-              <ExportTool onExport={exportExcel} exporting={exporting} tip={EXPORT_TIP} />
-            </>
-          }
-        />
-      </div>
       {table && <AiResultModal part={part} onClose={() => setTable(false)} onExport={exportExcel} exporting={exporting} />}
     </figure>
   )

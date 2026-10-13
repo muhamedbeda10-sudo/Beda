@@ -20,6 +20,7 @@ import { Badge, Button, Card } from '@/components/ui'
 import { AiMarkdown } from '@/components/ai/AiMarkdown'
 import { Notice } from '@/components/ai/AiNotice'
 import { AiChart } from '@/components/ai/AiChart'
+import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figureView'
 import { AiResultModal, PreviewTable } from '@/components/ai/AiResultTable'
 import { queryChart } from '@/components/ai/chartData'
 import { useAi } from '@/components/ai/AiAssistantProvider'
@@ -139,8 +140,9 @@ function Delivery({ d }: { d: AutomationDelivery }) {
 const DeliveredSection = memo(function DeliveredSection({ part, onExport }: { part: AiQueryPart; onExport: () => void }) {
   const [table, setTable] = useState(false)
   const preview = useMemo(() => (part.rows.length > AI_PREVIEW_ROWS ? { ...part, rows: part.rows.slice(0, AI_PREVIEW_ROWS), truncated: true } : part), [part])
-  // The chart the section was given, drawn from every row it delivered.
+  // The chart the section was given, drawn from every row it delivered; the switch shows it or the rows themselves.
   const chart = useMemo(() => queryChart(part), [part])
+  const [view, setView] = useState<FigureView>('chart')
   const meta = part.ok ? `${part.rowCount.toLocaleString('en-US')}${part.truncated ? '+' : ''} ${part.rowCount === 1 && !part.truncated ? 'row' : 'rows'}` : 'Failed'
   return (
     <section className={cn('overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', part.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
@@ -159,10 +161,12 @@ const DeliveredSection = memo(function DeliveredSection({ part, onExport }: { pa
             )}
           </p>
         </div>
+        {chart && part.ok && <ChartTableSwitch value={view} onChange={setView} className="mt-0.5" />}
       </header>
       <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
-        {chart && <AiChart model={chart} />}
-        {part.ok ? (
+        {chart && view === 'chart' ? (
+          <AiChart model={chart} />
+        ) : part.ok ? (
           <PreviewTable part={preview} />
         ) : (
           <p dir="auto" className="whitespace-pre-wrap break-words rounded-lg bg-rose-50 px-2.5 py-2 text-xs text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
