@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import type { AiChartType, AiQueryPart } from '@qc/shared/ai'
 import { AiChart } from './AiChart'
+import { useAiExcel } from '@/services/queries'
 import { EXPORT_TIP, useQueryExport } from './AiQueryCard'
 import { AiResultModal, PreviewTable } from './AiResultTable'
 import { ExportTool, TableTool } from './AiTable'
@@ -59,12 +60,14 @@ export const AiFigure = memo(function AiFigure({ part, model, question }: { part
   const [table, setTable] = useState(false)
   const [view, setView] = useState<FigureView>('chart')
   const { exporting, exportExcel } = useQueryExport(part, question, false)
+  // Excel is for the people the assistant's owner allows (§20).
+  const excel = useAiExcel()
   const tools = (
     <>
       <TableTool onClick={() => setTable(true)} disabled={part.rows.length === 0} icon={<Table2 className="h-3.5 w-3.5" />}>
         Open table
       </TableTool>
-      <ExportTool onExport={exportExcel} exporting={exporting} tip={EXPORT_TIP} />
+      {excel && <ExportTool onExport={exportExcel} exporting={exporting} tip={EXPORT_TIP} />}
     </>
   )
   const Icon = ICON[model.type]
@@ -105,7 +108,7 @@ export const AiFigure = memo(function AiFigure({ part, model, question }: { part
       ) : (
         <PreviewTable part={part} tools={tools} />
       )}
-      {table && <AiResultModal part={part} onClose={() => setTable(false)} onExport={exportExcel} exporting={exporting} />}
+      {table && <AiResultModal part={part} onClose={() => setTable(false)} onExport={excel ? exportExcel : undefined} exporting={exporting} />}
     </figure>
   )
 })

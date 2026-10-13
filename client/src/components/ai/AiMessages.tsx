@@ -31,6 +31,8 @@ import { AiNoticeProposalCard } from './AiNoticeProposalCard'
 import { AiTaskProposalCard } from './AiTaskProposalCard'
 import { AiPlaybookCard } from './AiPlaybookCard'
 import { AiExcelCard } from './AiExcelCard'
+import { AiTableExcel } from './AiTable'
+import { useAiExcel } from '@/services/queries'
 import { answerBlocks, type AnswerBlock } from './answerLayout'
 import { queryChart, type ChartModel } from './chartData'
 import { kpiCards, liveKpis } from './kpis'
@@ -69,10 +71,14 @@ export const UserBubble = memo(function UserBubble({ text, at, attachments }: { 
 })
 
 function AnswerFrame({ children }: { children: ReactNode }) {
+  // An answer's own tables export to Excel only for someone the assistant's owner allows it (§20).
+  const excel = useAiExcel()
   return (
     <div className="flex items-start gap-2">
       <BotMark className="mt-0.5" />
-      <div className="min-w-0 flex-1 space-y-2">{children}</div>
+      <div className="min-w-0 flex-1 space-y-2">
+        <AiTableExcel.Provider value={excel}>{children}</AiTableExcel.Provider>
+      </div>
     </div>
   )
 }

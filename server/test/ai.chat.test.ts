@@ -102,10 +102,10 @@ beforeAll(async () => {
   admin = await app.register('admin', 'Admin')
   await app.api('POST', '/api/users', { token: admin.token, body: { username: 'admin2', password: 'Password#1', name: 'Second Admin', role: 'admin' } })
   other = await app.login('admin2')
-  // The owner (admin) gives the second administrator the assistant too: conversations stay personal all the same.
+  // The owner (admin) gives the second administrator the assistant too: conversations stay personal all the same, Excel included.
   const granted = await app.api('PUT', `/api/ai/access/${other.user.id}`, {
     token: admin.token,
-    body: { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit'], model: AI_MODEL, effort: 'medium', monthlyCapUsd: 50 },
+    body: { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit'], model: AI_MODEL, effort: 'medium', monthlyCapUsd: 50, excel: true },
   })
   expect(granted.status).toBe(200)
   for (const code of ['58', '31']) {

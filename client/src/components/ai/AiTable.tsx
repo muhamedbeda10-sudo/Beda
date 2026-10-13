@@ -14,7 +14,7 @@
 // width that decides, wherever the table is drawn.
 // ============================================================================
 
-import { useMemo, useRef, type ReactNode } from 'react'
+import { createContext, useContext, useMemo, useRef, type ReactNode } from 'react'
 import { ClipboardCopy, FileSpreadsheet, Loader2 } from 'lucide-react'
 import type { AiCell } from '@qc/shared/ai'
 import { EdgeShadows, useScrollEdges } from '@/components/ui/ScrollX'
@@ -164,6 +164,13 @@ export function ExportTool({ onExport, exporting = false, wait, tip }: { onExpor
   )
 }
 
+/**
+ * Whether the tables of the text around may be exported to Excel: within an
+ * answer, only for someone the assistant's owner allows Excel (§20); a
+ * delivered report shows its tables to whoever it went to, as before.
+ */
+export const AiTableExcel = createContext(true)
+
 /** QC-AI-table-2026-10-09-1405.xlsx. */
 export const aiTableFilename = (at: Date = new Date()) => `QC-AI-table-${aiStamp(at.toISOString()).replace(' ', '-').replace(':', '')}.xlsx`
 
@@ -174,6 +181,7 @@ export const aiTableFilename = (at: Date = new Date()) => `QC-AI-table-${aiStamp
  */
 export function AiMarkdownTable({ node, dir, children }: { node: HastNode | undefined; dir?: string; children: ReactNode }) {
   const { toast } = useApp()
+  const excel = useContext(AiTableExcel)
   const data = useMemo(() => (node ? hastTableData(node) : { header: [], rows: [] }), [node])
   const exportExcel = () => {
     try {
@@ -192,7 +200,7 @@ export function AiMarkdownTable({ node, dir, children }: { node: HastNode | unde
           <>
             <RowCount count={data.rows.length} />
             <CopyTableTool tsv={() => tableTsv(data.header, data.rows)} />
-            <ExportTool onExport={exportExcel} tip="Saves this table as a workbook" />
+            {excel && <ExportTool onExport={exportExcel} tip="Saves this table as a workbook" />}
           </>
         }
       >

@@ -280,6 +280,8 @@ export interface AiMeResponse {
   reason?: AiMeReason
   /** May create automations (§21): the owner, and people the owner allowed. */
   automations: boolean
+  /** May have Excel from the assistant (§20): its files, and Excel of its queries, tables and reports. The owner, and people the owner allowed. */
+  excel: boolean
 }
 
 // ---- Settings ----------------------------------------------------------------

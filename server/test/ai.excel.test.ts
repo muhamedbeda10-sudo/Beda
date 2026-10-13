@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
 import ExcelJS from 'exceljs'
 import type Anthropic from '@anthropic-ai/sdk'
-import type { AiMessagesResponse, AiStreamEvent } from '@qc/shared/ai'
+import type { ApiErrorBody } from '@qc/shared/api'
+import type { AiMeResponse, AiMessagesResponse, AiQueryPart, AiSaveReportResponse, AiStreamEvent } from '@qc/shared/ai'
 import type { AiExcelPart, AiExcelSpec } from '@qc/shared/aiExcel'
 import { formatOf, removeExpiredExcelFiles, resultColumn, sheetNameOf } from '../src/ai/excel'
 import { readAll } from '../src/ai/attachments'
@@ -341,6 +342,35 @@ describe('make_excel', () => {
     const log = await app.db.query(`SELECT status, file_name AS "fileName", removed_at IS NOT NULL AS removed, input_tokens > 0 AS "tokens", downloads FROM ai_excel_log WHERE id = $1`, [id])
     expect(log.rows).toEqual([{ status: 'made', fileName: 'Machines', removed: true, tokens: true, downloads: 1 }])
     await expect(app.db.query(`DELETE FROM ai_excel_downloads`)).rejects.toThrow(/append-only/)
+  })
+})
+
+describe('Excel of a query or a saved report', () => {
+  it('is for the owner and the people allowed Excel files, as /ai/me tells the app', async () => {
+    await grant(app, p.owner, p.plain, { excel: false })
+    const me = async (as: Session) => (await app.api<AiMeResponse>('GET', '/api/ai/me', { token: as.token })).body
+    expect(await me(p.plain)).toMatchObject({ granted: true, excel: false })
+    expect(await me(p.owner)).toMatchObject({ excel: true })
+
+    app.model.reply({ content: [toolUse('run_sql', { purpose: 'Machines', sql: 'SELECT machine_code FROM ai.machines' })] }, { content: [text('Two machines.')] })
+    const asked = await ask(app, p.plain, 'Which machines?')
+    const done = asked.events.find((e): e is Extract<AiStreamEvent, { type: 'done' }> => e.type === 'done')!
+    const query = done.message.parts.find((x): x is AiQueryPart => x.type === 'query')!
+    const saved = await app.api<AiSaveReportResponse>('POST', '/api/ai/reports', { token: p.plain.token, body: { turnId: done.message.turnId, adjustable: false } })
+    expect(saved.status).toBe(201)
+    const exports = async () => [
+      (await app.api('GET', `/api/ai/queries/${query.queryId}/export`, { token: p.plain.token })).status,
+      (await app.api('GET', `/api/ai/reports/${saved.body.report.id}/export`, { token: p.plain.token })).status,
+    ]
+    const refused = await app.api<ApiErrorBody>('GET', `/api/ai/queries/${query.queryId}/export`, { token: p.plain.token })
+    expect(refused.body.error.message).toBe("The assistant's owner has not given you Excel files.")
+    expect(await exports()).toEqual([403, 403])
+    // The report itself still runs: only its Excel is held back.
+    expect((await app.api('GET', `/api/ai/reports/${saved.body.report.id}/run`, { token: p.plain.token })).status).toBe(200)
+
+    await grant(app, p.owner, p.plain, { excel: true })
+    expect(await me(p.plain)).toMatchObject({ excel: true })
+    expect(await exports()).toEqual([200, 200])
   })
 })
 
