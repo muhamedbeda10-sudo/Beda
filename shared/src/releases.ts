@@ -11,7 +11,7 @@ export interface ReleaseItem {
 }
 
 export interface Release {
-  /** Sorts as text: the day, then a counter for a second release on the same day. */
+  /** The day, then a counter for a further release on the same day: "2026-10-13.2". Ordered by compareReleaseIds. */
   id: string
   /** ISO date of the deploy. */
   date: string
@@ -27,6 +27,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
+  {
+    id: '2026-10-13.92',
+    date: '2026-10-13',
+    title: 'Tasks are sent through the assistant',
+    items: [
+      { text: 'On the Tasks page, “New task” is now “New in the assistant”: it opens the AI assistant in a new conversation, where you say what is to be done, by whom and by when, and it drafts the task as a card for you to send. Everything else on the page stays as it was.' },
+      { text: 'Tasks are no longer in the assistant’s header: they stay in the bell, in the Tasks tab, with “Open the Tasks page”.' },
+    ],
+  },
   {
     id: '2026-10-13.91',
     date: '2026-10-13',
@@ -836,12 +845,23 @@ export const RELEASES: readonly Release[] = [
   },
 ]
 
-const byIdDesc = (a: Release, b: Release) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
+/**
+ * Two release ids in order: the day (as text, which sorts as the calendar does), then the day's counter as a
+ * number — the tenth release of a day ("…13.10") after its ninth ("…13.9"), which as text it would not be.
+ */
+export function compareReleaseIds(a: string, b: string): number {
+  const [dayA, nA] = a.split('.')
+  const [dayB, nB] = b.split('.')
+  if (dayA !== dayB) return dayA < dayB ? -1 : 1
+  return (Number(nA) || 0) - (Number(nB) || 0)
+}
+
+const byIdDesc = (a: Release, b: Release) => compareReleaseIds(b.id, a.id)
 
 /** The entries newer than what this person has dismissed (or than the baseline), newest first. */
 export function unseenReleases(lastSeenId: string | null | undefined, releases: readonly Release[] = RELEASES): Release[] {
-  const floor = lastSeenId && lastSeenId > RELEASE_NOTES_BASELINE ? lastSeenId : RELEASE_NOTES_BASELINE
-  return releases.filter((r) => r.id > floor).sort(byIdDesc)
+  const floor = lastSeenId && compareReleaseIds(lastSeenId, RELEASE_NOTES_BASELINE) > 0 ? lastSeenId : RELEASE_NOTES_BASELINE
+  return releases.filter((r) => compareReleaseIds(r.id, floor) > 0).sort(byIdDesc)
 }
 
 export function latestReleaseId(releases: readonly Release[] = RELEASES): string | null {
