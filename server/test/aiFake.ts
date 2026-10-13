@@ -49,7 +49,7 @@ export interface FakeCall {
 export const text = (t: string): Block => ({ type: 'text', text: t, citations: null }) as Block
 export const thinking = (t: string, signature = `sig_${t.length}_${t.slice(0, 8).replace(/\W/g, '')}`): Block =>
   ({ type: 'thinking', thinking: t, signature }) as Block
-export const runSql = (id: string, purpose: string, sql: string): Block => ({ type: 'tool_use', id, name: 'run_sql', input: { purpose, sql } }) as Block
+export const runSql = (id: string, purpose: string, sql: string, chart?: object): Block => ({ type: 'tool_use', id, name: 'run_sql', input: chart ? { purpose, sql, chart } : { purpose, sql } }) as Block
 export const fallback = (from: string, to: string): Block =>
   ({ type: 'fallback', from: { model: from }, to: { model: to }, trigger: { type: 'refusal', category: 'cyber' } }) as unknown as Block
 

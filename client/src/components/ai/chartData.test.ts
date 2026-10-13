@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AiCell, AiQueryPart } from '@qc/shared/ai'
-import { AI_CHART_MAX_SERIES, AI_CHART_MAX_WIDTH, AI_CHART_MIN_WIDTH, aiChartWidth, axisOrder, chartFigure, chartLabels, humanizeColumn, queryChart, shapeChart, uniqueLabels } from './chartData'
+import { AI_CHART_MAX_SERIES, AI_CHART_MAX_WIDTH, AI_CHART_MIN_WIDTH, aiChartWidth, axisOrder, chartFigure, chartLabels, humanizeColumn, queryChart, shapeChart, uniqueLabels, controlLimits, cumulativeShares, percentStack, trendLine } from './chartData'
 
 describe('a chart from a query’s rows', () => {
   const columns = ['machine', 'defect_pieces', 'samples']
@@ -235,5 +235,71 @@ describe('the width a chart is drawn at', () => {
     expect(aiChartWidth(300)).toBe(AI_CHART_MIN_WIDTH)
     expect(aiChartWidth(null)).toBe(720)
     expect(aiChartWidth(0)).toBe(720)
+  })
+})
+
+describe('the assistant’s further charts', () => {
+  it('works out a control chart’s limits from the moving range', () => {
+    // Moving ranges 2, 2, 2, 2: MR-bar 2, sigma 2 / 1.128.
+    const limits = controlLimits([10, 12, 10, 12, 10])!
+    expect(limits.mean).toBeCloseTo(10.8, 6)
+    expect(limits.sigma).toBeCloseTo(2 / 1.128, 6)
+    expect(limits.ucl).toBeCloseTo(10.8 + (3 * 2) / 1.128, 6)
+    expect(limits.lcl).toBeCloseTo(10.8 - (3 * 2) / 1.128, 6)
+    expect(controlLimits([5])).toBeNull()
+    expect(controlLimits([null, 4, null, 6])).toMatchObject({ mean: 5 })
+  })
+
+  it('runs a Pareto’s share up to 100%, and a 100% stack’s columns to their shares', () => {
+    expect(cumulativeShares([50, 30, 20])).toEqual([50, 80, 100])
+    expect(cumulativeShares([0, 0])).toEqual([0, 0])
+    const shares = percentStack(
+      [
+        { label: 'a', values: [1, 0, null] },
+        { label: 'b', values: [3, 0, 2] },
+      ],
+      3,
+    )
+    expect(shares).toEqual([
+      { label: 'a', values: [25, null, null] },
+      { label: 'b', values: [75, null, 100] },
+    ])
+  })
+
+  it('fits a trend line with Pearson’s r', () => {
+    const fit = trendLine([
+      { x: 1, y: 2 },
+      { x: 2, y: 4 },
+      { x: 3, y: 6 },
+    ])!
+    expect(fit.slope).toBeCloseTo(2, 9)
+    expect(fit.intercept).toBeCloseTo(0, 9)
+    expect(fit.r).toBeCloseTo(1, 9)
+    expect(trendLine([{ x: 1, y: 2 }, { x: 1, y: 3 }])).toBeNull()
+  })
+
+  it('shapes a Pareto largest first with its running share, and a combo with its line’s unit', () => {
+    const pareto = shapeChart({ type: 'pareto', x: 'defect', y: ['pieces'] }, ['defect', 'pieces'], [['Scratch', 5], ['Dent', 30], ['Burr', 15]])!
+    expect(pareto.labels).toEqual(['Dent', 'Burr', 'Scratch'])
+    expect(pareto.series[0].values).toEqual([30, 15, 5])
+    expect(pareto.cumulative).toEqual([60, 90, 100])
+    const combo = shapeChart({ type: 'combo', x: 'day', y: ['produced', 'reject_pct'], goal: 2 }, ['day', 'produced', 'reject_pct'], [['2026-09-01', 100, 1.5], ['2026-09-02', 120, 2.5]])!
+    expect(combo).toMatchObject({ type: 'combo', unit: '', lineUnit: '%', goal: 2 })
+    expect(combo.series.map((s) => s.label)).toEqual(['produced', 'reject pct'])
+  })
+
+  it('shapes a scatter as points by series, and a control chart with its limits', () => {
+    const scatter = shapeChart({ type: 'scatter', x: 'thickness', y: ['rejects'], series: 'line' }, ['thickness', 'rejects', 'line'], [[1.5, 3, 'L1'], [2, 5, 'L1'], [2.5, 4, 'L2']])!
+    expect(scatter.type).toBe('scatter')
+    expect(scatter.scatter).toEqual([
+      { label: 'L1', points: [{ x: 1.5, y: 3 }, { x: 2, y: 5 }] },
+      { label: 'L2', points: [{ x: 2.5, y: 4 }] },
+    ])
+    expect(scatter).toMatchObject({ xName: 'thickness', yName: 'rejects' })
+    const days = ['2026-09-05', '2026-09-01', '2026-09-03', '2026-09-02', '2026-09-04']
+    const control = shapeChart({ type: 'control', x: 'day', y: ['len'] }, ['day', 'len'], days.map((d, i) => [d, 2450 + i]))!
+    // In time's order, whatever order the rows came in.
+    expect(control.labels).toEqual(['Sep 1', 'Sep 2', 'Sep 3', 'Sep 4', 'Sep 5'])
+    expect(control.control?.mean).toBeCloseTo(2452, 6)
   })
 })

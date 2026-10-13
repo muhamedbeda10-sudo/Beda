@@ -49,6 +49,7 @@ import {
 } from '@qc/shared/ai'
 import type { Db, Queryable } from '../db/pool'
 import { CHAT_QUERY_TIMEOUT_MS, recordCutOffUsage, usageOf, watchStream } from './assistant'
+import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams } from './model'
 import { contextDay, conversationTitle, factoryDay } from './prompt'
 import { checkTemplate, fillTemplate, noDataRange, ordersRows, ownDays, periodProblem, rangeDays, readsClock, sameResult } from './reportTemplate'
@@ -96,7 +97,7 @@ function toSummary(r: ReportRow): AiReportSummary {
 }
 
 function toReport(r: ReportRow): AiReport {
-  const report: AiReport = { ...toSummary(r), sections: (r.sections ?? []).map((s) => ({ title: s.title, sql: s.sql })) }
+  const report: AiReport = { ...toSummary(r), sections: (r.sections ?? []).map((s) => (s.chart ? { title: s.title, sql: s.sql, chart: s.chart } : { title: s.title, sql: s.sql })) }
   if (r.conversationId) report.conversationId = r.conversationId
   return report
 }
@@ -213,7 +214,8 @@ export async function loadSavedTurn(q: Queryable, turnId: string, userId: string
   for (const part of answer?.parts ?? []) {
     if (part.type !== 'query' || !part.ok) continue
     if (sections.some((s) => s.sql === part.sql)) continue
-    sections.push({ title: part.purpose, sql: part.sql })
+    // Drawn as the answer drew it: the chart goes with its section.
+    sections.push(part.chart ? { title: part.purpose, sql: part.sql, chart: part.chart } : { title: part.purpose, sql: part.sql })
   }
   return { turnId, conversationId: turn.conversationId, status: turn.status, question: turn.question, askedOn, sections }
 }
@@ -539,7 +541,7 @@ export async function verifyTemplates(args: {
       if (asNothing.ok && !asNothing.truncated && sameResult(asRan, asNothing, ordered)) {
         return fixed(FIXED_NOTICE.unproven(original.title), `section ${i + 1}: the answer is what days with no data give`)
       }
-      sections.push({ title: original.title, sql: templates[i] })
+      sections.push({ ...original, sql: templates[i] })
     }
     return { kind: 'adjustable', period, sections }
   } finally {
@@ -615,6 +617,9 @@ export async function runReportSections(
     }
     const error = sectionError(run)
     if (error) result.error = error
+    // Drawn again from this run's rows, when they still fit the chart (another period may hold one row, or none).
+    const chart = run.ok ? checkChart(section.chart, preview).chart : undefined
+    if (chart) result.chart = chart
     out.push(result)
   }
   return out

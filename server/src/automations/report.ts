@@ -23,6 +23,7 @@ import { AUTOMATION_DELIVERY_MAX_ROWS, type AutomationBlockedReason, type Automa
 import type { Role } from '@qc/shared/types'
 import type { Config } from '../config'
 import { withTransaction, type Db } from '../db/pool'
+import { checkChart } from '../ai/charts'
 import { checkCall } from '../ai/access'
 import { recordCutOffUsage, usageOf, watchStream } from '../ai/assistant'
 import { cutChars } from '../ai/blocks'
@@ -178,6 +179,9 @@ export async function runSections(
     const result: AiReportSectionRun = { title: section.title, ok: run.ok, columns: run.columns, rows, rowCount: rows.length, truncated: run.truncated, ms: Math.round(run.ms) }
     // Read by the people it went to, and in the run's history.
     if (!run.ok) result.error = queryErrorForPeople(run)
+    // Its chart, drawn from this run's rows when they fit it (a day with one row is told in figures).
+    const chart = run.ok ? checkChart(section.chart, { columns: run.columns, rows, rowCount: rows.length, truncated: run.truncated }).chart : undefined
+    if (chart) result.chart = chart
     out.push(result)
   }
   return { sections: out }

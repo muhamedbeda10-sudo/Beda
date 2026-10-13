@@ -141,6 +141,21 @@ describe('§21 a report delivered', () => {
     expect(await alertsOf(app.db, p.plain.user.id)).toEqual([expect.objectContaining({ body: 'The report is ready.' })])
   })
 
+  it('draws a section’s chart from what each run delivered, and leaves it out when the rows do not fit it', async () => {
+    const chart = { type: 'horizontal-bar' as const, x: 'machine_code', y: ['n'], title: 'By machine' }
+    const { run } = await deliver({
+      summary: false,
+      sections: [
+        { title: 'By machine', sql: 'SELECT machine_code, 1 AS n FROM ai.machines ORDER BY machine_code', chart },
+        // One row this time: told in figures alone.
+        { title: 'Count', sql: 'SELECT 1 AS k, count(*)::int AS n FROM ai.machines', chart: { type: 'bar', x: 'k', y: ['n'] } },
+      ],
+    })
+    const shown = (await delivery(run.deliveryId!)).body
+    expect(shown.sections[0].chart).toEqual(chart)
+    expect(shown.sections[1]).not.toHaveProperty('chart')
+  })
+
   it('goes out without one, saying why in a sentence and never an amount, when a cap is reached, there is no key, or the call fails', async () => {
     const without = async (note: string) => {
       const { run } = await deliver()

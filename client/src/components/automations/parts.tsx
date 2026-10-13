@@ -16,7 +16,10 @@ import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { downloadWorkbook, sheetName } from '@/lib/xlsxWrite'
 import { useApp } from '@/store/AppContext'
+import { AiChart } from '@/components/ai/AiChart'
 import { AiResultModal, PreviewTable } from '@/components/ai/AiResultTable'
+import { queryChart } from '@/components/ai/chartData'
+import { sectionAsQuery } from '@/components/ai/reports'
 import { TableTool, aiTableFilename } from '@/components/ai/AiTable'
 import { aiCellValue } from '@/components/ai/exportAiResult'
 import {
@@ -275,6 +278,8 @@ function SectionPreview({ section, index, initiallyOpen }: { section: AiReportSe
   const [open, setOpen] = useState(initiallyOpen)
   const meta = section.ok ? `${section.rowCount.toLocaleString('en-US')}${section.truncated ? '+' : ''} ${section.rowCount === 1 && !section.truncated ? 'row' : 'rows'}` : 'Failed'
   const shown = section.rows.slice(0, AI_PREVIEW_ROWS)
+  // The chart the delivered report will draw, as this run would draw it.
+  const chart = useMemo(() => (section.ok ? queryChart(sectionAsQuery(section, '', index)) : null), [section, index])
   return (
     <section className={cn('overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', section.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-2 px-3 py-2 text-start hover:bg-slate-50 dark:hover:bg-slate-800/60 touch:min-h-[44px]">
@@ -286,7 +291,8 @@ function SectionPreview({ section, index, initiallyOpen }: { section: AiReportSe
         <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted transition-transform duration-200', open && 'rotate-180')} />
       </button>
       {open && (
-        <div className="border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
+        <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
+          {chart && <AiChart model={chart} />}
           {section.ok ? (
             <CasesTable title={section.title} columns={section.columns} rows={shown} more={section.truncated || section.rows.length > shown.length} />
           ) : (

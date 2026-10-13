@@ -35,7 +35,7 @@ const LEGEND_BESIDE = 400
 const useMeasureEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
 
 /** A figure on a chart is outlined in the card's own colour so it reads over a line beneath it. */
-const LABEL_HALO = 'stroke-white dark:stroke-slate-900'
+export const LABEL_HALO = 'stroke-white dark:stroke-slate-900'
 
 /** A slice that lumps several together cannot be opened on its own. */
 const isOthers = (label: string) => /^Others\b/.test(label)
@@ -54,7 +54,7 @@ const OPEN_BUTTON = 'print-hidden inline-flex min-h-[32px] items-center rounded-
  * second line does not move the plot under the pointer. Before it is measured
  * (and in a server render) a drawing is the dashboard's old 720 wide.
  */
-function useDrawing(given: number | undefined, height: number) {
+export function useDrawing(given: number | undefined, height: number) {
   const fill = useContext(ChartFillContext)
   const [figure, setFigure] = useState<HTMLElement | null>(null)
   const legend = useRef<HTMLDivElement>(null)
@@ -104,7 +104,7 @@ interface Picked {
  * mouse events at all, so a tap reads a mark out, a second tap on it puts it
  * away, and so does a tap anywhere else on the page.
  */
-function useReadout(figure: HTMLElement | null) {
+export function useReadout(figure: HTMLElement | null) {
   const [picked, setPicked] = useState<Picked | null>(null)
   /** The kind of pointer that pressed last: the click after a finger's press is a tap. */
   const pointer = useRef('mouse')
@@ -238,20 +238,20 @@ export function niceBounds(lo: number, hi: number, tight = false): ValueAxis {
 }
 
 /** The figure at grid line i of `steps` from min to max; a hair from zero (floating point's) is zero. */
-function tickAt(min: number, max: number, steps: number, i: number): number {
+export function tickAt(min: number, max: number, steps: number, i: number): number {
   const v = min + ((max - min) / steps) * i
   return Math.abs(v) <= Math.abs(max - min) * 1e-9 ? 0 : v
 }
 
 /** The left margin a value axis needs for its figures (written at 10 or 11 px, 6 left of the plot): at least the dashboard's 44. */
-function axisRoom(axis: ValueAxis, unit: string, format: FigureFormat): number {
+export function axisRoom(axis: ValueAxis, unit: string, format: FigureFormat): number {
   let longest = 0
   for (let i = 0; i <= axis.steps; i++) longest = Math.max(longest, `${format(tickAt(axis.min, axis.max, axis.steps, i))}${unit}`.length)
   return Math.max(44, Math.ceil(longest * CHAR_WIDTH_WIDE + 10))
 }
 
 /** Grid lines with their labels, `steps` steps from min (0 unless given) to max; the zero line drawn solid. */
-function Grid({ x0, x1, y0, y1, max, min = 0, steps = 4, unit = '', format = fmt, fontSize = 10 }: { x0: number; x1: number; y0: number; y1: number; max: number; min?: number; steps?: number; unit?: string; format?: FigureFormat; fontSize?: number }) {
+export function Grid({ x0, x1, y0, y1, max, min = 0, steps = 4, unit = '', format = fmt, fontSize = 10 }: { x0: number; x1: number; y0: number; y1: number; max: number; min?: number; steps?: number; unit?: string; format?: FigureFormat; fontSize?: number }) {
   return (
     <g className="text-muted" fontSize={fontSize}>
       {Array.from({ length: steps + 1 }, (_, i) => {
@@ -272,8 +272,20 @@ function Grid({ x0, x1, y0, y1, max, min = 0, steps = 4, unit = '', format = fmt
   )
 }
 
+/** A target across a plot (the assistant's charts, §20): a dashed amber line at `y`, named at its right end. */
+export function GoalLine({ x0, x1, y, text, at = 'end' }: { x0: number; x1: number; y: number; text: string; /** Where its name sits: at the right end, or the left (beside other names at the right). */ at?: 'start' | 'end' }) {
+  return (
+    <g className="pointer-events-none">
+      <line x1={x0} x2={x1} y1={y} y2={y} className="stroke-amber-500" strokeWidth={1.5} strokeDasharray="6 4" />
+      <text x={at === 'end' ? x1 - 2 : x0 + 4} y={y - 4} textAnchor={at} fontSize={10} fontWeight={700} className={cn('fill-amber-600 dark:fill-amber-400', LABEL_HALO)} strokeWidth={3} style={{ paintOrder: 'stroke' }}>
+        {text}
+      </text>
+    </g>
+  )
+}
+
 /** The legend row under a chart, and its read-out: the figures of the mark picked. */
-const LEGEND = 'mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted'
+export const LEGEND = 'mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted'
 const READOUT = 'ml-auto font-semibold tabular-nums text-slate-700 dark:text-slate-200'
 
 export interface TrendPoint {
@@ -1065,6 +1077,7 @@ export function StackedColumnChart({
   width,
   fitted = false,
   format = fmt,
+  showTotals = true,
 }: {
   columns: { label: string; segments: StackSegment[] }[]
   legend: { label: string; className: string }[]
@@ -1073,6 +1086,8 @@ export function StackedColumnChart({
   width?: number
   fitted?: boolean
   format?: FigureFormat
+  /** Each column's total on top of it; off where every total is the same (shares of 100%). */
+  showTotals?: boolean
 }) {
   const d = useDrawing(width, height)
   const readout = useReadout(d.figure)
@@ -1104,7 +1119,7 @@ export function StackedColumnChart({
   const hAt = (v: number) => ((y1 - y0) * v) / axis.max
   const every = everyFor(x0)
   // A total only on a column wide enough for it.
-  const totalled = slot >= 24
+  const totalled = showTotals && slot >= 24
   return (
     <figure ref={d.figureRef} className={d.figureClass}>
       <svg viewBox={`0 0 ${W} ${H}`} height={H} className={d.svgClass} role="img" aria-labelledby={`${id}-t`} {...readout.svg}>
@@ -1182,7 +1197,7 @@ export interface BarSeries {
  * chart, as the line charts do. `width`: the drawing's width, for a chart
  * drawn at the size it is shown. `format`: how figures are written.
  */
-export function GroupedBarChart({ labels, series, unit = '', height = 220, width = 720, format = fmt }: { labels: string[]; series: BarSeries[]; unit?: string; height?: number; width?: number; format?: FigureFormat }) {
+export function GroupedBarChart({ labels, series, unit = '', height = 220, width = 720, format = fmt, goal }: { labels: string[]; series: BarSeries[]; unit?: string; height?: number; width?: number; format?: FigureFormat; /** A target drawn across the bars (the assistant's). */ goal?: number }) {
   const d = useDrawing(width, height)
   const readout = useReadout(d.figure)
   const hover = readout.at
@@ -1191,7 +1206,8 @@ export function GroupedBarChart({ labels, series, unit = '', height = 220, width
   const n = labels.length
   const known = series.flatMap((s) => s.values.filter((v): v is number => v !== null && v !== undefined))
   if (n === 0 || series.length === 0 || known.every((v) => v === 0)) return <ChartEmpty height={height} />
-  const axis = niceBounds(Math.min(0, ...known), Math.max(...known), true)
+  const reach = goal === undefined ? known : [...known, goal]
+  const axis = niceBounds(Math.min(0, ...reach), Math.max(...reach), true)
   const slot0 = (W - 56) / n
   // Slanted names when a straight one would not fit its column.
   const tilt = labels.some((l) => l.length * CHAR_WIDTH_WIDE > slot0)
@@ -1259,6 +1275,7 @@ export function GroupedBarChart({ labels, series, unit = '', height = 220, width
               ))}
           </g>
         ))}
+        {goal !== undefined && <GoalLine x0={x0} x1={x1} y={yAt(goal)} text={`Target ${format(goal)}${unit}`} />}
       </svg>
       <div ref={d.legend} className={LEGEND}>
         {series.map((s) => (
@@ -1303,6 +1320,7 @@ export function LineChart({
   width,
   fitted = false,
   format = fmt,
+  goal,
 }: {
   labels: string[]
   series: LineSeries[]
@@ -1322,6 +1340,8 @@ export function LineChart({
   fitted?: boolean
   /** How figures are written. */
   format?: FigureFormat
+  /** A target drawn across the plot (the assistant's). */
+  goal?: number
 }) {
   const d = useDrawing(width, height)
   const readout = useReadout(d.figure)
@@ -1334,7 +1354,8 @@ export function LineChart({
   const n = labels.length
   if (n === 0 || series.length === 0 || series.every((s) => s.values.every((v) => v === null))) return <ChartEmpty height={height} />
   const known = series.flatMap((s) => s.values.filter((v): v is number => v !== null))
-  const axis = niceBounds(Math.min(0, ...known), Math.max(0, ...known), fitted)
+  const reach = goal === undefined ? known : [...known, goal]
+  const axis = niceBounds(Math.min(0, ...reach), Math.max(0, ...reach), fitted)
   const x0 = fitted ? Math.min(Math.round(W * 0.35), axisRoom(axis, unit, format)) : pad.l
   const x1 = W - pad.r
   const y0 = pad.t
@@ -1417,6 +1438,7 @@ export function LineChart({
               )
             })
           })}
+        {goal !== undefined && <GoalLine x0={x0} x1={x1} y={yAt(goal)} text={`Target ${format(goal)}${unit}`} />}
         {hover !== null && <line x1={xAt(hover)} x2={xAt(hover)} y1={y0} y2={y1} className="pointer-events-none stroke-slate-400" strokeDasharray="3 3" />}
       </svg>
       <div ref={d.legend} className={LEGEND}>

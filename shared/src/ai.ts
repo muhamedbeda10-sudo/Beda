@@ -364,8 +364,45 @@ export interface AiQueryPart {
   chart?: AiChartSpec
 }
 
-export type AiChartType = 'bar' | 'line' | 'area' | 'pie' | 'stacked-bar'
-export const AI_CHART_TYPES: readonly AiChartType[] = ['bar', 'line', 'area', 'pie', 'stacked-bar']
+/**
+ * The charts the assistant draws. bar, horizontal-bar: compare categories
+ * (horizontal for rankings and long names). stacked-bar, stacked-bar-100,
+ * stacked-area, pie: the parts of a whole (100: each column as shares).
+ * line, area: a trend. combo: a volume as bars with a rate as a line on its
+ * own axis. pareto: causes largest first with their running share. scatter:
+ * how two measures move together, with a trend line. heatmap: a measure
+ * across two categories (machine by day). control: an individuals control
+ * chart (SPC) with its centre line and 3-sigma limits.
+ */
+export type AiChartType =
+  | 'bar'
+  | 'horizontal-bar'
+  | 'stacked-bar'
+  | 'stacked-bar-100'
+  | 'line'
+  | 'area'
+  | 'stacked-area'
+  | 'pie'
+  | 'combo'
+  | 'pareto'
+  | 'scatter'
+  | 'heatmap'
+  | 'control'
+export const AI_CHART_TYPES: readonly AiChartType[] = [
+  'bar',
+  'horizontal-bar',
+  'stacked-bar',
+  'stacked-bar-100',
+  'line',
+  'area',
+  'stacked-area',
+  'pie',
+  'combo',
+  'pareto',
+  'scatter',
+  'heatmap',
+  'control',
+]
 
 /** A chart of a query's result: `x` the category or day column, `y` 1–4 numeric columns, `series` a column to split by (long to wide). */
 export interface AiChartSpec {
@@ -374,6 +411,8 @@ export interface AiChartSpec {
   y: string[]
   series?: string
   title?: string
+  /** A target drawn across the plot as a dashed line (bar, horizontal-bar, line, area, combo's line axis, control). */
+  goal?: number
 }
 
 export type AiKpiTrend = 'up-good' | 'up-bad' | 'down-good' | 'down-bad' | 'flat'
@@ -607,6 +646,8 @@ export interface AiReportSection {
   title: string
   /** With an adjustable period, the SQL carries {{from}} and {{to}}. */
   sql: string
+  /** How its result is drawn, as the answer drew it; checked again against each run's result. */
+  chart?: AiChartSpec
 }
 
 export interface AiReportSummary {
@@ -649,6 +690,8 @@ export interface AiSaveReportResponse {
 /** One section of a report, run. */
 export interface AiReportSectionRun {
   title: string
+  /** The section's chart, when its result this time can be drawn so. */
+  chart?: AiChartSpec
   ok: boolean
   error?: string
   columns: string[]

@@ -60,6 +60,7 @@ import {
   type AutomationWatchSpec,
 } from '@qc/shared/automation'
 import type { Queryable } from '../db/pool'
+import { checkChart } from '../ai/charts'
 import { cutChars } from '../ai/blocks'
 import { factoryDay } from '../ai/prompt'
 import { checkTemplate, fillTemplate, periodProblem } from '../ai/reportTemplate'
@@ -184,6 +185,7 @@ export async function validateDraft(ctx: ValidationContext, input: AutomationDra
       ran.runs.forEach((run, i) => {
         if (!run.ok) errors.push(`schedule.sections[${i}] (${quoted(draft.schedule!.sections[i].title)}): ${failedQuery(run)}`)
       })
+      errors.push(...ran.chartProblems)
     }
   } else if (draft.kind === 'watch' && draft.watch && ctx.knownColumns) {
     checkColumns(draft, ctx.knownColumns, columnsNamed, errors)
@@ -227,7 +229,8 @@ function normalise(d: AutomationDraft): AutomationDraft {
     const s: AutomationScheduleSpec = {
       cadence: d.schedule.cadence,
       time: d.schedule.time.trim(),
-      sections: d.schedule.sections.map((x) => ({ title: oneLine(x.title), sql: x.sql.trim() })),
+      // A chart as asked for, until the trial run checks it against the section's result (reportBacktest).
+      sections: d.schedule.sections.map((x) => (x.chart ? { title: oneLine(x.title), sql: x.sql.trim(), chart: x.chart } : { title: oneLine(x.title), sql: x.sql.trim() })),
       summary: d.schedule.summary,
     }
     if (d.schedule.weekdays !== undefined) s.weekdays = [...new Set(d.schedule.weekdays)].sort((a, b) => a - b)
@@ -569,10 +572,11 @@ export function sectionSql(sql: string, period: { from: string; to: string } | n
 }
 
 /** A report run once over its period as of today: each section's first rows (no summary), and each section's run as it went. */
-async function reportBacktest(pool: pg.Pool, s: AutomationScheduleSpec, ctx: ValidationContext): Promise<{ backtest: AutomationBacktest; runs: QueryRun[] }> {
+async function reportBacktest(pool: pg.Pool, s: AutomationScheduleSpec, ctx: ValidationContext): Promise<{ backtest: AutomationBacktest; runs: QueryRun[]; chartProblems: string[] }> {
   const period = reportPeriodAt(s, ctx.now, ctx.timeZone)
   const sections: AiReportSectionRun[] = []
   const runs: QueryRun[] = []
+  const chartProblems: string[] = []
   for (const section of s.sections) {
     const run = await runReadOnlyQuery(pool, sectionSql(section.sql, period), {
       maxRows: Math.min(BACKTEST_SECTION_ROWS, AI_PREVIEW_ROWS),
@@ -593,9 +597,20 @@ async function reportBacktest(pool: pg.Pool, s: AutomationScheduleSpec, ctx: Val
     }
     // On the card of the person who asked for it.
     if (!run.ok) out.error = queryErrorForPeople(run, 'asker')
+    // Its chart, checked against what the section returns today: kept as it is drawn, or a problem for the model to fix.
+    if (section.chart && run.ok) {
+      const checked = checkChart(section.chart, preview)
+      if (checked.chart) {
+        section.chart = checked.chart
+        out.chart = checked.chart
+      } else {
+        delete section.chart
+        chartProblems.push(`schedule.sections[${sections.length}].chart (${quoted(section.title)}): ${checked.note ?? 'it cannot be drawn.'}`)
+      }
+    }
     sections.push(out)
   }
   const bt: AutomationBacktest = { ranAt: ctx.now.toISOString(), ok: sections.every((x) => x.ok), sections }
   if (period) bt.period = period
-  return { backtest: bt, runs }
+  return { backtest: bt, runs, chartProblems }
 }
