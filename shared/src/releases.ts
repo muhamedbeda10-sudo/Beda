@@ -32,7 +32,7 @@ export const RELEASES: readonly Release[] = [
     date: '2026-10-13',
     title: 'Panels open in the middle of the screen',
     items: [
-      { text: 'The bell, a follow-up, an order\'s details, an audit entry, your mentions in the chat, the automation editor and a person\'s assistant access now open as a window in the middle of the screen, no longer as a panel down the right side. The page stays behind it; press outside it, × or Esc to close it.' },
+      { text: 'The bell, a follow-up, an order\'s details, an audit entry, your mentions in the chat, the automation editor and a person\'s assistant access now open as a large window in the middle of the screen, the size of the assistant\'s large window, no longer as a panel down the right side. The page stays behind it; press outside it, × or Esc to close it.' },
       { text: 'On a phone they still slide up from the bottom, where your thumb reaches them.' },
     ],
   },
