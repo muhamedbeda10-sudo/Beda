@@ -21,6 +21,7 @@
 
 import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { GroupedBarChart, LineChart, PIE_CLASSES, PIE_STROKES, PieChart, StackedColumnChart } from '@/components/dashboard/charts'
+import { ChartOnly } from '@/components/dashboard/figureView'
 import { ComboChart, ControlChart, HeatmapChart, HorizontalBarChart, ParetoAiChart, ScatterChart, StackedAreaChart } from './AiChartKinds'
 import { DumbbellChart, FunnelChart, GanttChart, ProgressChart, TreemapChart, WaterfallChart } from './AiPlanCharts'
 import { aiChartWidth, chartFigure, percentStack, type ChartModel } from './chartData'
@@ -177,9 +178,10 @@ export const AiChart = memo(function AiChart({ model }: { model: ChartModel }) {
         <GroupedBarChart labels={labels} series={series.map((s, k) => ({ label: s.label, values: s.values, className: fillOf(k) }))} unit={unit} height={HEIGHT} width={width} format={chartFigure} goal={goal} />
       )
   }
+  // The figure, report or section around it switches between the chart and the query's own table.
   return (
     <div ref={ref} dir="ltr" className="min-w-0">
-      {chart}
+      <ChartOnly>{chart}</ChartOnly>
     </div>
   )
 })

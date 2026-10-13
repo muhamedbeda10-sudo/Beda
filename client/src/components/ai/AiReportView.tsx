@@ -46,6 +46,7 @@ import { useAi } from './AiAssistantProvider'
 import { AiCode } from './AiCode'
 import { Notice } from './AiNotice'
 import { DeleteReportModal, ReportTitleEditor } from './AiReportList'
+import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figureView'
 import { AiChart } from './AiChart'
 import { AiResultModal, PreviewTable } from './AiResultTable'
 import { queryChart } from './chartData'
@@ -414,8 +415,9 @@ const ReportSection = memo(function ReportSection({ part, templated, onExport, e
     ? `${part.rowCount.toLocaleString()}${part.truncated ? '+' : ''} ${part.rowCount === 1 && !part.truncated ? 'row' : 'rows'} · ${part.ms.toLocaleString()} ms`
     : `Failed · ${part.ms.toLocaleString()} ms`
   const placeholders = templated && /\{\{(from|to)\}\}/.test(part.sql)
-  // Drawn as the answer drew it, from this run's rows.
+  // Drawn as the answer drew it, from this run's rows; the switch shows it or the rows themselves.
   const chart = useMemo(() => queryChart(part), [part])
+  const [view, setView] = useState<FigureView>('chart')
 
   return (
     <section className={cn('overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', part.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
@@ -434,11 +436,13 @@ const ReportSection = memo(function ReportSection({ part, templated, onExport, e
             )}
           </p>
         </div>
+        {chart && part.ok && <ChartTableSwitch value={view} onChange={setView} className="mt-0.5" />}
       </header>
 
       <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
-        {chart && <AiChart model={chart} />}
-        {part.ok ? (
+        {chart && view === 'chart' ? (
+          <AiChart model={chart} />
+        ) : part.ok ? (
           <PreviewTable part={part} />
         ) : (
           <p dir="auto" className="whitespace-pre-wrap break-words rounded-lg bg-rose-50 px-2.5 py-2 text-xs text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
