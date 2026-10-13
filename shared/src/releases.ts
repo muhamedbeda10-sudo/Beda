@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.8',
+    date: '2026-10-13',
+    title: 'Six new charts for planning and production',
+    items: [
+      { text: 'The AI assistant draws six new kinds of chart: progress (how far each order or machine is toward its target), funnel (from required to produced to passed), waterfall (how the plan turned into what was made: downtime, rejects, overtime), gantt (plan and actual in time, by order line or machine), dumbbell (planned against actual hours, last month against this one) and treemap (the parts of a whole, grouped by factory or process).' },
+      { text: 'The assistant now answers about planning and production as well as quality: plan against actual, order progress, machine load and output, hours and efficiency, from the order sheet and the ERP production record you can read.' },
+      { text: 'They work in answers, in saved reports and in scheduled reports, like the other charts. Ask for one by name, or let the assistant choose.' },
+    ],
+  },
+  {
     id: '2026-10-13.7',
     date: '2026-10-13',
     title: 'The assistant remembers: your playbook',

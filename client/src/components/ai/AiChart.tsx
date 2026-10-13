@@ -4,8 +4,10 @@
 // axes and figures, hover read-outs, both themes. Lines and areas for days
 // and months, bars (upright or lying) to compare, stacks and pies for what a
 // whole is made of, bars with lines on two axes, a Pareto of causes, a
-// scatter with its trend, a heatmap, and an SPC control chart. Charts read
-// left to right, in an Arabic answer too.
+// scatter with its trend, a heatmap, an SPC control chart, and for planning
+// and production (./AiPlanCharts) progress toward targets, a funnel, a
+// waterfall, a gantt, a dumbbell and a treemap. Charts read left to right,
+// in an Arabic answer too.
 //
 // The dashboard draws on a 720-wide canvas scaled to its card; the answer's
 // column is narrower in the panel (about 420 px) and wider on the full page,
@@ -20,6 +22,7 @@
 import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { GroupedBarChart, LineChart, PIE_CLASSES, PIE_STROKES, PieChart, StackedColumnChart } from '@/components/dashboard/charts'
 import { ComboChart, ControlChart, HeatmapChart, HorizontalBarChart, ParetoAiChart, ScatterChart, StackedAreaChart } from './AiChartKinds'
+import { DumbbellChart, FunnelChart, GanttChart, ProgressChart, TreemapChart, WaterfallChart } from './AiPlanCharts'
 import { aiChartWidth, chartFigure, percentStack, type ChartModel } from './chartData'
 
 /** The series' colours, in order: the dashboard's pie colours, so a line, a bar and a slice of one series match. */
@@ -28,6 +31,12 @@ const strokeOf = (k: number) => PIE_STROKES[k % (PIE_STROKES.length - 1)]
 
 /** The plot's height, before the room slanted names take. */
 const HEIGHT = 220
+
+/** Now on this device's clock, read as a chart reads the factory's (parseChartDate): a gantt's "Today". */
+function wallNow(): number {
+  const n = new Date()
+  return Date.UTC(n.getFullYear(), n.getMonth(), n.getDate(), n.getHours(), n.getMinutes())
+}
 
 /**
  * The width to draw at, for the width the chart is shown at — read before the
@@ -97,6 +106,27 @@ export const AiChart = memo(function AiChart({ model }: { model: ChartModel }) {
       chart = model.control ? (
         <ControlChart labels={labels} values={series[0].values} limits={model.control} label={series[0].label} unit={unit} width={width} height={HEIGHT} format={chartFigure} goal={goal} />
       ) : null
+      break
+    case 'progress':
+      chart = <ProgressChart labels={labels} done={series[0].values} targets={model.targets ?? []} percentMode={!!model.percentMode} unit={unit} width={width} format={chartFigure} />
+      break
+    case 'funnel':
+      chart = <FunnelChart labels={labels} values={series[0].values} unit={unit} width={width} format={chartFigure} />
+      break
+    case 'waterfall':
+      chart = <WaterfallChart labels={labels} values={series[0].values} unit={unit} width={width} height={HEIGHT + 20} format={chartFigure} />
+      break
+    case 'gantt':
+      chart = model.gantt ? <GanttChart labels={labels} gantt={model.gantt} fills={fillOf} width={width} today={wallNow()} /> : null
+      break
+    case 'dumbbell':
+      chart =
+        series.length === 2 ? (
+          <DumbbellChart labels={labels} first={series[0].values} second={series[1].values} names={[series[0].label, series[1].label]} unit={unit} width={width} format={chartFigure} goal={goal} />
+        ) : null
+      break
+    case 'treemap':
+      chart = <TreemapChart labels={labels} series={series} grouped={!!model.splitBy} fills={fillOf} unit={unit} width={width} format={chartFigure} />
       break
     case 'stacked-bar-100': {
       const shares = percentStack(series, labels.length)

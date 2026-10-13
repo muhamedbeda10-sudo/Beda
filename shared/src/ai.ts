@@ -373,7 +373,12 @@ export interface AiQueryPart {
  * own axis. pareto: causes largest first with their running share. scatter:
  * how two measures move together, with a trend line. heatmap: a measure
  * across two categories (machine by day). control: an individuals control
- * chart (SPC) with its centre line and 3-sigma limits.
+ * chart (SPC) with its centre line and 3-sigma limits. progress: how far
+ * each item is toward its target (an order's pieces made of those required).
+ * funnel: what is left after each stage. waterfall: how a figure moves from
+ * a start to an end, step by step. gantt: bars in time, from a start to an
+ * end (a plan, a schedule). dumbbell: two values per category side by side
+ * (planned and actual). treemap: the parts of a whole as tiles, grouped.
  */
 export type AiChartType =
   | 'bar'
@@ -389,6 +394,12 @@ export type AiChartType =
   | 'scatter'
   | 'heatmap'
   | 'control'
+  | 'progress'
+  | 'funnel'
+  | 'waterfall'
+  | 'gantt'
+  | 'dumbbell'
+  | 'treemap'
 export const AI_CHART_TYPES: readonly AiChartType[] = [
   'bar',
   'horizontal-bar',
@@ -403,17 +414,46 @@ export const AI_CHART_TYPES: readonly AiChartType[] = [
   'scatter',
   'heatmap',
   'control',
+  'progress',
+  'funnel',
+  'waterfall',
+  'gantt',
+  'dumbbell',
+  'treemap',
 ]
 
-/** A chart of a query's result: `x` the category or day column, `y` 1–4 numeric columns, `series` a column to split by (long to wide). */
+/**
+ * A chart of a query's result: `x` the category or day column, `y` 1–4 numeric columns (a gantt's two: start and end
+ * dates), `series` a column to split by (long to wide; a gantt's bars' names, a treemap's groups).
+ */
 export interface AiChartSpec {
   type: AiChartType
   x: string
   y: string[]
   series?: string
   title?: string
-  /** A target drawn across the plot as a dashed line (bar, horizontal-bar, line, area, combo's line axis, control). */
+  /**
+   * A target drawn across the plot as a dashed line (bar, horizontal-bar, line, area, combo's line axis, control,
+   * dumbbell); a progress chart's target for every row, when it has one y column.
+   */
   goal?: number
+}
+
+/**
+ * A date or a time as a query writes it ("2026-10-13", "2026-10-13 08:30:00+03", "2026-10-13T08:30"), read as the
+ * clock on the wall reads it: the offset is set aside, since the assistant's queries run on the factory's clock and
+ * a chart shows what that clock read. `ms` orders and spaces the values (as if UTC); `dateOnly`, a day with no time.
+ * Null when it is no such text.
+ */
+export function parseChartDate(value: unknown): { ms: number; dateOnly: boolean } | null {
+  if (typeof value !== 'string') return null
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?\s*(?:Z|[+-]\d{2}(?::?\d{2})?)?$/.exec(value.trim())
+  if (!m) return null
+  const [y, mo, d, h, mi, sec] = m.slice(1).map((v) => (v === undefined ? undefined : Number(v)))
+  if (mo! < 1 || mo! > 12 || d! < 1 || d! > 31 || (h ?? 0) > 23 || (mi ?? 0) > 59 || (sec ?? 0) > 59) return null
+  const ms = Date.UTC(y!, mo! - 1, d!, h ?? 0, mi ?? 0, sec ?? 0)
+  if (new Date(ms).getUTCDate() !== d) return null
+  return { ms, dateOnly: h === undefined }
 }
 
 export type AiKpiTrend = 'up-good' | 'up-bad' | 'down-good' | 'down-bad' | 'flat'

@@ -13,7 +13,7 @@
 // read) is not drawn: the table under it says it all anyway.
 // ============================================================================
 
-import type { AiCell, AiChartSpec, AiChartType, AiQueryPart } from '@qc/shared/ai'
+import { parseChartDate, type AiCell, type AiChartSpec, type AiChartType, type AiQueryPart } from '@qc/shared/ai'
 import { monthLabel, shortDay } from '@/components/dashboard/period'
 import { cellNumber, cellText } from './tables'
 
@@ -54,6 +54,32 @@ export interface ScatterSeries {
   points: { x: number; y: number }[]
 }
 
+/** A gantt's bar: its row, its name (the series' value, when the chart has one), and when it starts and ends. */
+export interface GanttBar {
+  lane: number
+  /** Null without a series. */
+  name: string | null
+  /** The palette's index of its name. */
+  color: number
+  /** The wall clock's instants, as parseChartDate reads them; a day's end is the end of that day. */
+  start: number
+  end: number
+  /** As the query wrote them, for the read-out. */
+  from: string
+  to: string
+}
+
+export interface GanttModel {
+  bars: GanttBar[]
+  /** The names of the bars, in the order first met (the legend's). */
+  names: string[]
+  /** The earliest start and the latest end. */
+  min: number
+  max: number
+  /** True when every value is a day without a time: the axis counts days. */
+  dateOnly: boolean
+}
+
 /** An individuals control chart's centre line and limits (3 sigma, sigma from the average moving range). */
 export interface ControlLimits {
   mean: number
@@ -83,6 +109,11 @@ export interface ChartModel {
   control?: ControlLimits
   /** A Pareto's running share of the total at each bar, in %. */
   cumulative?: number[]
+  /** A progress chart's target of each row (its own, the goal, or 100 for percentages), and whether its figures are percentages already. */
+  targets?: (number | null)[]
+  percentMode?: boolean
+  /** A gantt's bars in time (its rows are `labels`). */
+  gantt?: GanttModel
   /** Series left out (the smallest), when there were more than a chart draws. */
   omitted: number
   /** When one column is split into series: the y column the values come from, and the column that splits it. */
@@ -296,6 +327,8 @@ export function shapeChart(spec: AiChartSpec | undefined, columns: readonly stri
   // returned, exactly — null and "", "A" and "A ", 1 and "1" are each two, however alike they are written.
   const keyOf = (v: AiCell | undefined) => JSON.stringify(v ?? null)
 
+  if (spec.type === 'gantt') return shapeGantt(spec, xi, ys, si, rows, titled)
+
   // The categories in the order the query returned them; a category met again adds to its own (a total per category).
   const order: string[] = []
   const at = new Map<string, number>()
@@ -387,16 +420,83 @@ export function shapeChart(spec: AiChartSpec | undefined, columns: readonly stri
     const lineNames = yNames.slice(1)
     extra.lineUnit = lineNames.every(isPercentName) ? '%' : ''
   }
+  let unit = (type === 'combo' || type === 'progress' ? yNames.slice(0, 1) : yNames).every(isPercentName) ? '%' : ''
+  if (type === 'progress') {
+    // Done of a target: each row's own (the second y), the goal for every row, or — neither — a percentage of 100.
+    if (drawn.length >= 2) {
+      extra.targets = drawn[1].values
+      extra.percentMode = false
+      drawn = [drawn[0]]
+    } else {
+      extra.percentMode = goal.goal === undefined
+      extra.targets = drawn[0].values.map(() => goal.goal ?? 100)
+      if (extra.percentMode) unit = '%'
+    }
+  }
+  if ((type === 'dumbbell' && drawn.length !== 2) || (type === 'treemap' && !drawn.some((sr) => sr.values.some((v) => v !== null && v > 0)))) return null
   return {
     type,
     ...titled,
     labels,
     series: drawn,
-    unit: (type === 'combo' ? yNames.slice(0, 1) : yNames).every(isPercentName) ? '%' : '',
+    unit,
     omitted,
     ...(si >= 0 ? { measure: humanizeColumn(columns[ys[0]]), splitBy: humanizeColumn(columns[si]) } : {}),
-    ...(type === 'pie' || type === 'stacked-bar' || type === 'stacked-bar-100' || type === 'stacked-area' || type === 'heatmap' || type === 'pareto' ? {} : goal),
+    ...(type === 'pie' || type === 'stacked-bar' || type === 'stacked-bar-100' || type === 'stacked-area' || type === 'heatmap' || type === 'pareto' || type === 'funnel' || type === 'waterfall' || type === 'treemap' ? {} : goal),
     ...extra,
+  }
+}
+
+/** A day in ms: a gantt bar of days runs to the end of its last. */
+const DAY_MS = 86_400_000
+
+/**
+ * A gantt's bars: one per row with both a start and an end (dates or times,
+ * the end not before the start), on the row its x names — several bars may
+ * share one — named and coloured by the series' value. A day with no time
+ * ends at the end of that day: a bar from the 5th to the 9th covers five days.
+ */
+function shapeGantt(spec: AiChartSpec, xi: number, ys: number[], si: number, rows: readonly (readonly AiCell[])[], titled: { title?: string }): ChartModel | null {
+  if (ys.length !== 2) return null
+  const keyOf = (v: AiCell | undefined) => JSON.stringify(v ?? null)
+  const lanes = new Map<string, number>()
+  const laneValues: AiCell[] = []
+  const names = new Map<string, number>()
+  const bars: GanttBar[] = []
+  let dateOnly = true
+  for (const r of rows) {
+    const [a, b] = ys.map((i) => r[i])
+    const from = parseChartDate(a)
+    const to = parseChartDate(b)
+    if ((a !== null && a !== undefined && !from) || (b !== null && b !== undefined && !to)) return null
+    if (!from || !to) continue
+    const end = to.dateOnly ? to.ms + DAY_MS : to.ms
+    if (end < from.ms) return null
+    dateOnly = dateOnly && from.dateOnly && to.dateOnly
+    let lane = lanes.get(keyOf(r[xi]))
+    if (lane === undefined) {
+      lane = laneValues.length
+      lanes.set(keyOf(r[xi]), lane)
+      laneValues.push(r[xi] ?? null)
+    }
+    const name = si >= 0 ? (r[si] === null || r[si] === undefined ? '(blank)' : cellText(r[si]).trim() || '(blank)') : null
+    let color = 0
+    if (name !== null) {
+      const known = names.get(name)
+      color = known ?? names.size
+      if (known === undefined) names.set(name, color)
+    }
+    bars.push({ lane, name, color, start: from.ms, end, from: cellText(a as AiCell), to: cellText(b as AiCell) })
+  }
+  if (bars.length === 0) return null
+  return {
+    type: 'gantt',
+    ...titled,
+    labels: uniqueLabels(chartLabels(laneValues)),
+    series: [],
+    unit: '',
+    omitted: 0,
+    gantt: { bars, names: [...names.keys()], min: Math.min(...bars.map((b) => b.start)), max: Math.max(...bars.map((b) => b.end)), dateOnly },
   }
 }
 
