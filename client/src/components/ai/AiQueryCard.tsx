@@ -12,7 +12,7 @@ import { AI_EXPORT_MAX_ROWS, AI_PREVIEW_ROWS, type AiQueryPart } from '@qc/share
 import { Badge } from '@/components/ui'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { cn } from '@/lib/utils'
-import { loadAiQueryExport } from '@/services/queries'
+import { loadAiQueryExport, useAiExcel } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 import { aiExportFilename, aiResultSheets } from './exportAiResult'
 import { AiCode } from './AiCode'
@@ -61,6 +61,8 @@ export const AiQueryCard = memo(function AiQueryCard({ part, question, writing =
   const running = pending && part.state === 'running'
   const done = pending ? null : part
   const { exporting, exportExcel } = useQueryExport(done, question, writing)
+  // Excel is for the people the assistant's owner allows (§20).
+  const excel = useAiExcel()
 
   const copySql = async () => {
     try {
@@ -128,7 +130,7 @@ export const AiQueryCard = memo(function AiQueryCard({ part, question, writing =
                   <TableTool onClick={() => setTable(true)} disabled={done.rows.length === 0} icon={<Table2 className="h-3.5 w-3.5" />}>
                     Open table
                   </TableTool>
-                  <ExportTool onExport={exportExcel} exporting={exporting} wait={writing ? EXPORT_WAIT : undefined} tip={EXPORT_TIP} />
+                  {excel && <ExportTool onExport={exportExcel} exporting={exporting} wait={writing ? EXPORT_WAIT : undefined} tip={EXPORT_TIP} />}
                 </>
               }
             />
@@ -137,7 +139,9 @@ export const AiQueryCard = memo(function AiQueryCard({ part, question, writing =
       )}
 
       {running && <span aria-hidden className="ai-progress block" />}
-      {table && done && <AiResultModal part={done} onClose={() => setTable(false)} onExport={exportExcel} exporting={exporting} exportWait={writing ? EXPORT_WAIT : undefined} />}
+      {table && done && (
+        <AiResultModal part={done} onClose={() => setTable(false)} onExport={excel ? exportExcel : undefined} exporting={exporting} exportWait={writing ? EXPORT_WAIT : undefined} />
+      )}
     </div>
   )
 })

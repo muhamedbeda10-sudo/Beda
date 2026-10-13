@@ -40,7 +40,7 @@ import { ApiError } from '@/lib/api'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { cn, formatDate, formatFullTimestamp, formatTime } from '@/lib/utils'
 import { deleteAiReport, renameAiReport } from '@/services/mutations'
-import { keys, loadAiReportExport, newerAiReport, useAiReport, useAiReportRun } from '@/services/queries'
+import { keys, loadAiReportExport, newerAiReport, useAiExcel, useAiReport, useAiReportRun } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 import { useAi } from './AiAssistantProvider'
 import { AiCode } from './AiCode'
@@ -147,6 +147,8 @@ export function AiReportView({
     }
   }, [id, override, qc, toast])
   const onExport = useCallback(() => void exportExcel(), [exportExcel])
+  // Excel is for the people the assistant's owner allows (§20).
+  const excel = useAiExcel()
 
   // Each section in the shape the answer's cards take, built once per run so the cards keep their state.
   const parts = useMemo(() => shown?.sections.map((s, i) => sectionAsQuery(s, shown.report.sections[i]?.sql ?? '', i)) ?? null, [shown])
@@ -221,9 +223,11 @@ export function AiReportView({
                 <button type="button" onClick={() => void run.refetch()} disabled={run.isFetching} className={SMALL_BTN} data-tip="Runs every section again now">
                   <RefreshCw className={cn('h-3.5 w-3.5', run.isFetching && 'animate-spin')} /> {run.isFetching ? 'Running…' : 'Run again'}
                 </button>
-                <button type="button" onClick={onExport} disabled={exporting || !report} className={SMALL_BTN} data-tip={EXPORT_TIP}>
-                  {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} {exporting ? 'Exporting…' : 'Export Excel'}
-                </button>
+                {excel && (
+                  <button type="button" onClick={onExport} disabled={exporting || !report} className={SMALL_BTN} data-tip={EXPORT_TIP}>
+                    {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} {exporting ? 'Exporting…' : 'Export Excel'}
+                  </button>
+                )}
                 {shown && <RunLine run={shown} running={run.isFetching ? (stale ? 'Running over the days chosen…' : 'Running again…') : null} />}
               </div>
 
@@ -257,7 +261,7 @@ export function AiReportView({
               {/* Other days' tables are dimmed and still while the asked-for ones come; the same days', only dimmed. */}
               <div className={cn('space-y-2 transition-opacity', stale ? 'pointer-events-none opacity-50' : run.isFetching && shown && 'opacity-70')} aria-busy={run.isFetching}>
                 {parts && shown
-                  ? parts.map((part, i) => <ReportSection key={i} part={part} templated={shown.report.adjustable} onExport={onExport} exporting={exporting} />)
+                  ? parts.map((part, i) => <ReportSection key={i} part={part} templated={shown.report.adjustable} onExport={excel ? onExport : undefined} exporting={exporting} />)
                   : run.isPending && Array.from({ length: Math.max(1, sectionCount) }, (_, i) => <SectionSkeleton key={i} title={full?.sections[i]?.title} />)}
               </div>
             </>
@@ -397,7 +401,7 @@ function SectionSkeleton({ title }: { title?: string }) {
  * once (they are what a report is for), the SQL on request. `templated`: the
  * SQL carries {{from}} and {{to}} for the period's first and last day.
  */
-const ReportSection = memo(function ReportSection({ part, templated, onExport, exporting }: { part: AiQueryPart; templated: boolean; onExport: () => void; exporting: boolean }) {
+const ReportSection = memo(function ReportSection({ part, templated, onExport, exporting }: { part: AiQueryPart; templated: boolean; onExport?: () => void; exporting: boolean }) {
   const { toast } = useApp()
   const [showSql, setShowSql] = useState(false)
   const [table, setTable] = useState(false)

@@ -84,7 +84,8 @@ export function AiResultModal({
 }: {
   part: AiQueryPart
   onClose: () => void
-  onExport: () => void
+  /** Export Excel; left out for someone not allowed Excel. */
+  onExport?: () => void
   exporting: boolean
   exportWait?: string
   exportLabel?: string
@@ -121,9 +122,11 @@ export function AiResultModal({
       }
       footer={
         <>
-          <Button onClick={onExport} disabled={exporting || !!exportWait} data-tip={exportWait ?? exportTip} className="sm:mr-auto">
-            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} {exporting ? 'Exporting…' : exportLabel}
-          </Button>
+          {onExport && (
+            <Button onClick={onExport} disabled={exporting || !!exportWait} data-tip={exportWait ?? exportTip} className="sm:mr-auto">
+              {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} {exporting ? 'Exporting…' : exportLabel}
+            </Button>
+          )}
           <Button variant="primary" onClick={onClose}>
             Close
           </Button>

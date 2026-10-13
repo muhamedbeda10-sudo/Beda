@@ -108,7 +108,8 @@ export const mayAutomate = (a: AccessRecord | null, owner: boolean): a is Access
 /**
  * Whether the person may have the assistant make Excel files (§20): given
  * the assistant, and its owner or allowed by the owner. Read again by the
- * tool and by every download: a permission taken away stops both at once.
+ * tool, by every download and by every Excel export of a query or a report:
+ * a permission taken away stops them all at once.
  */
 export const mayMakeExcel = (a: AccessRecord | null, owner: boolean): a is AccessRecord => isGranted(a) && (owner || a.excel)
 
@@ -340,7 +341,7 @@ export async function personAvailability(
   const model = access?.model ?? AI_MODEL
   const app = await loadAvailability(q, config, readerReady, model)
   const owner = ownerId !== null && ownerId === userId
-  const me: AiMeResponse = { granted: isGranted(access), owner, available: false, automations: mayAutomate(access, owner) }
+  const me: AiMeResponse = { granted: isGranted(access), owner, available: false, automations: mayAutomate(access, owner), excel: mayMakeExcel(access, owner) }
   if (!isGranted(access)) me.reason = 'not-granted'
   else if (app.status.reason === 'cap-reached') me.reason = 'cap-reached'
   else if (app.status.reason) me.reason = 'unavailable'

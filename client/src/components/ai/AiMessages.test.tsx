@@ -2,9 +2,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { AiMessage, AiQueryPart } from '@qc/shared/ai'
+import type { AiMeResponse, AiMessage, AiQueryPart } from '@qc/shared/ai'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import { PROPOSAL_WAIT } from '@/components/automations/AutomationProposalCard'
+import { keys } from '@/services/queries'
 import { AppProvider } from '@/store/AppContext'
 import { AiAssistantProvider } from './AiAssistantProvider'
 import { Answer, UserBubble } from './AiMessages'
@@ -32,9 +33,12 @@ afterAll(() => {
   vi.unstubAllGlobals()
 })
 
-function render(props: { message?: AiMessage; turn?: LiveTurn; noticesWait?: boolean }): string {
+/** An answer as the person sees it: by default someone the owner allows Excel (§20). */
+function render(props: { message?: AiMessage; turn?: LiveTurn; noticesWait?: boolean }, excel = true): string {
+  const client = new QueryClient()
+  client.setQueryData<AiMeResponse>(keys.aiMe, { granted: true, owner: false, available: true, automations: false, excel })
   return renderToStaticMarkup(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={client}>
       <AppProvider>
         <MemoryRouter>
           <AiAssistantProvider>
@@ -105,6 +109,18 @@ describe('an answer as it ended', () => {
     expect(figure).toMatch(/aria-pressed="true"[^>]*>.*?Chart/)
     expect(figure.indexOf('<svg')).toBeLessThan(figure.indexOf('Open table'))
     expect(figure).toContain('Excel')
+  })
+
+  it('offers no Excel to someone the owner has not allowed it: on the chart, the query cards or the answer’s tables', () => {
+    const table = { type: 'text' as const, text: '| Machine | Pieces |\n|---|---|\n| RF-01 | 12 |' }
+    const withTable = { ...saved, parts: [...saved.parts, table] }
+    // The export buttons: the chart's and the query cards' run the query again; the table's saves what it shows.
+    const exports = /Export <\/span>Excel|saves it as a workbook|Saves this table as a workbook/g
+    expect(render({ message: withTable }).match(exports)?.length).toBeGreaterThan(2)
+    const without = render({ message: withTable }, false)
+    expect(without).toContain('Open table')
+    expect(without).toContain('Copies the rows as tab-separated text')
+    expect(without).not.toMatch(exports)
   })
 
   it('folds its queries under “How I got this” at the end', () => {
