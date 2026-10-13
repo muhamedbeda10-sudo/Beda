@@ -658,6 +658,8 @@ export type AiStreamEvent =
   | { type: 'excel'; part: AiExcelPart }
   /** A saved table the assistant made, changed, computed again or removed. */
   | { type: 'saved-table'; part: AiSavedTablePart }
+  /** A new conversation's title, as the assistant gave it: a few words on what it is about. */
+  | { type: 'title'; conversation: AiConversation }
   | { type: 'done'; message: AiMessage; status: AiStatusResponse }
   | { type: 'error'; code: ApiErrorCode; message: string }
 

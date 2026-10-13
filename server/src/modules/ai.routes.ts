@@ -148,6 +148,7 @@ import { aiOwner } from '../ai/owner'
 import { conversationTitle, conversationTools, factoryDay, questionContent, renderSystemPrompt } from '../ai/prompt'
 import { conversationTitleProblem, createGroup, groupNameProblem, listGroups, oneLine, removeGroup, renameGroup, updateConversation } from '../ai/conversationOrganize'
 import { searchConversations } from '../ai/conversationSearch'
+import { giveConversationTitle } from '../ai/conversationTitle'
 import { rangeProblem } from '../ai/reportTemplate'
 import {
   AI_REPORT_TITLE_CHARS,
@@ -204,6 +205,8 @@ import {
 const uuid = z.string().uuid()
 /** A query run again for Excel may take this long. */
 const EXPORT_QUERY_TIMEOUT_MS = 30_000
+/** How long a finished answer waits for its conversation's title before it closes without it. */
+const TITLE_WAIT_MS = 3_000
 /** A turn still "running" after this long was cut off by a restart: the next question closes it. */
 const STALE_TURN_MINUTES = TURN_DEADLINE_MINUTES + 1
 /** Where the owner fixes what stops the assistant. */
@@ -820,6 +823,15 @@ export function aiRoutes(ctx: AppContext): Router {
     const { conversation, turnId } = started
     const sse = new SseStream(res)
     sse.open()
+    // A new conversation's title in a few words, asked beside the answer; sent as soon as it is kept.
+    const titled =
+      body.conversationId || !body.message.trim()
+        ? null
+        : giveConversationTitle({ db, model: ctx.ai, apiKey, userId: user.id, conversationId: conversation.id, turnId, question: body.message })
+            .then((c) => {
+              if (c) sse.send({ type: 'title', conversation: c })
+            })
+            .catch((e) => console.warn(`[ai] conversation ${conversation.id}: the title could not be kept:`, e instanceof Error ? e.message : String(e)))
     try {
       sse.send({ type: 'start', conversation: toConversation(conversation), userMessageId: started.questionId })
       const outcome = await answerQuestion({
@@ -875,6 +887,8 @@ export function aiRoutes(ctx: AppContext): Router {
           ...savedTableToolHandlers({ db, config: ctx.config, readers: ctx.aiReader, userId: user.id, userName: user.name, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
         },
       })
+      // The title is in before the answer closes (it is far quicker), so the list read then has it, and its cost is the turn's.
+      if (titled) await Promise.race([titled, new Promise((done) => setTimeout(done, TITLE_WAIT_MS).unref())])
       await finishTurn(db, turnId, outcome.stopReason, outcome.notice)
       const answer = (await loadDisplayMessages(db, conversation.id, turnId)).find((m) => m.role === 'assistant')!
       sse.send({ type: 'done', message: answer, status: await statusAfter(user.id) })

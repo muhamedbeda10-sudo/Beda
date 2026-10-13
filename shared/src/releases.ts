@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.108',
+    date: '2026-10-13',
+    title: 'Conversations named by the assistant',
+    items: [
+      { text: 'A new conversation with the assistant is given a short title of a few words on what it is about — in the language you asked in — instead of the start of your first question. It appears in the list and at the top of the conversation while the answer is being written.' },
+      { text: 'A title you gave a conversation yourself (Rename in its menu) is never changed. If the title cannot be made, the start of the first question stays, as before. It costs a tiny part of a cent a conversation, counted with the question.' },
+    ],
+  },
+  {
     id: '2026-10-13.107',
     date: '2026-10-13',
     title: 'The assistant changes a saved table in place',

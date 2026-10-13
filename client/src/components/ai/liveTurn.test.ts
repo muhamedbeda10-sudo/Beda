@@ -39,6 +39,17 @@ describe('the answer being written', () => {
     expect(applyEvent(done, { type: 'text', delta: 'late' })).toBe(done)
   })
 
+  it('takes the title the assistant gave the conversation, the answer as it was', () => {
+    const named = { ...conversation, title: 'Top defects this month' }
+    const t = run([{ type: 'start', conversation, userMessageId: 'u1' }, { type: 'text', delta: 'Weld' }, { type: 'title', conversation: named }])
+    expect(t.conversation).toEqual(named)
+    expect(t.parts).toEqual([{ type: 'text', text: 'Weld' }])
+    expect(t.phase).toBe('streaming')
+    // Another conversation's title is not this one's.
+    expect(run([{ type: 'start', conversation, userMessageId: 'u1' }, { type: 'title', conversation: { ...named, id: 'c2' } }]).conversation).toEqual(conversation)
+    expect(parseStreamEvent('title', JSON.stringify({ type: 'title', conversation: named }))).toEqual({ type: 'title', conversation: named })
+  })
+
   it('shows progress until text or a query takes over', () => {
     const t = run([{ type: 'start', conversation, userMessageId: 'u1' }, { type: 'progress', text: 'Checking holds' }])
     expect(t.progress).toBe('Checking holds')

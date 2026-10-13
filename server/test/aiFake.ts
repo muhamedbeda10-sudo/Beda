@@ -8,7 +8,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { AI_MODEL } from '@qc/shared/ai'
-import type { AiModelClient, KeyCheck, ModelMessage, ModelParams, ModelStream, ModelStreamEvent } from '../src/ai/model'
+import type { AiModelClient, CompleteParams, KeyCheck, ModelMessage, ModelParams, ModelStream, ModelStreamEvent } from '../src/ai/model'
 
 type Block = Anthropic.Beta.BetaContentBlock
 
@@ -199,6 +199,11 @@ class FakeStream implements ModelStream {
   }
 }
 
+/** A small call no test asked for: as if Anthropic could not be reached. */
+const NOT_SCRIPTED = (): never => {
+  throw new Anthropic.APIConnectionError({ message: 'Not scripted in this test.' })
+}
+
 /** The scripted model. Script replies with `reply()`; read what it was sent in `calls`. */
 export class ScriptedModel implements AiModelClient {
   calls: FakeCall[] = []
@@ -211,6 +216,10 @@ export class ScriptedModel implements AiModelClient {
   /** How it counts: a flat figure per call unless told otherwise; throw to refuse a file. */
   tokenCount: (params: { model: string; messages: Anthropic.Beta.BetaMessageParam[] }) => number = () => 1500
   private queue: FakeReply[] = []
+  /** The app's small calls (a conversation's title), apart from the answers' replies. */
+  completions: { apiKey: string; params: CompleteParams }[] = []
+  /** How a small call is answered: unreachable unless told otherwise (the title stays the question, nothing is spent); throw to fail it. */
+  completeWith: (params: CompleteParams) => string | Promise<string> = NOT_SCRIPTED
 
   reply(...replies: FakeReply[]): this {
     this.queue.push(...replies)
@@ -229,6 +238,24 @@ export class ScriptedModel implements AiModelClient {
     this.keyCheck = () => ({ ok: true })
     this.counted = []
     this.tokenCount = () => 1500
+    this.completions = []
+    this.completeWith = NOT_SCRIPTED
+  }
+
+  async complete(apiKey: string, params: CompleteParams, options: { signal: AbortSignal }): Promise<ModelMessage> {
+    this.completions.push({ apiKey, params: JSON.parse(JSON.stringify(params)) as CompleteParams })
+    const words = await this.completeWith(params)
+    options.signal.throwIfAborted()
+    return {
+      id: `msg_fake_complete_${this.completions.length}`,
+      type: 'message',
+      role: 'assistant',
+      model: params.model,
+      content: words ? [text(words)] : [],
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      usage: { input_tokens: 120, output_tokens: 8, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    } as unknown as ModelMessage
   }
 
   stream(apiKey: string, params: ModelParams, options: { signal: AbortSignal }): ModelStream {
