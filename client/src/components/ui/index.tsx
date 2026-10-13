@@ -244,9 +244,12 @@ export function Modal({
 
 // ---- Drawer ----------------------------------------------------------------
 /**
- * A panel that slides in from the right on a wide screen and up from the
- * bottom on a phone. For a record the user reads in full while the list it
- * came from stays in view behind it.
+ * A panel for a record the user reads in full, or a list of its own (the
+ * bell): a window in the middle of a wide screen, over the page it came from,
+ * and a sheet up from the bottom on a phone, where a thumb reaches it. On a
+ * wide screen it keeps a steady height between a floor and the window's, so
+ * a short record does not shrink it to a strip and switching its tabs does
+ * not make it jump; its header and footer stay in view and the body scrolls.
  */
 export function Drawer({
   open,
@@ -279,12 +282,12 @@ export function Drawer({
 
   if (!open) return null
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-end sm:items-stretch">
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in" {...backdrop} />
       <div
         role="dialog"
         aria-modal="true"
-        className="relative z-10 flex max-h-sheet w-full flex-col rounded-t-3xl bg-white shadow-lift ring-1 ring-slate-200 animate-slide-up dark:bg-slate-900 dark:ring-slate-800 sm:h-full sm:max-h-none sm:max-w-2xl sm:rounded-none sm:rounded-l-3xl sm:animate-slide-in-right"
+        className="relative z-10 flex max-h-sheet w-full flex-col rounded-t-3xl bg-white shadow-lift ring-1 ring-slate-200 animate-slide-up dark:bg-slate-900 dark:ring-slate-800 sm:max-h-[min(52rem,calc(100dvh-3rem))] sm:min-h-[min(32rem,calc(100dvh-3rem))] sm:max-w-2xl sm:rounded-3xl sm:animate-scale-in"
       >
         <div className="flex shrink-0 items-start gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
           {icon && <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-brand-600 text-white shadow-glow">{icon}</span>}
