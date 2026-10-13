@@ -20,7 +20,7 @@ vi.mock('@/lib/api', async () => ({ ...(await vi.importActual<typeof import('@/l
 const { deleteAiReport, markSavedReport, renameAiReport, saveAiReport, startSavingAiReport } = await import('./mutations')
 const { aiReportListOptions, keys, loadAiReportExport, loadAiReportsPage, newerAiReport, runAiReport } = await import('./queries')
 
-const conversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z' }
+const conversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z', pinnedAt: null, groupId: null, archivedAt: null }
 const question: AiMessage = { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Top defects?' }], createdAt: '2026-10-09T10:00:00Z', turnId: 't1' }
 const answer: AiMessage = { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'Weld porosity.' }], createdAt: '2026-10-09T10:00:05Z', turnId: 't1' }
 const other: AiMessage = { ...answer, id: 'a2', turnId: 't2' }

@@ -19,7 +19,7 @@ const card = (over: Partial<AiPlaybookPart> = {}): AiPlaybookPart => ({
 })
 
 const cached = (...parts: AiPlaybookPart[]): AiMessagesResponse => ({
-  conversation: { id: 'conv', title: 'Playbook', createdAt: '2026-10-13T08:00:00Z', lastMessageAt: '2026-10-13T08:00:00Z' },
+  conversation: { id: 'conv', title: 'Playbook', createdAt: '2026-10-13T08:00:00Z', lastMessageAt: '2026-10-13T08:00:00Z', pinnedAt: null, groupId: null, archivedAt: null },
   messages: [
     { id: 'q1', role: 'user', parts: [{ type: 'text', text: 'Remember this' }], createdAt: '2026-10-13T08:00:00Z' },
     { id: 'a1', role: 'assistant', parts: [...parts, { type: 'text', text: 'Saved.' }], createdAt: '2026-10-13T08:00:05Z' },

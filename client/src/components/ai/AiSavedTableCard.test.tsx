@@ -62,7 +62,7 @@ describe('the saved-table card', () => {
 
   it('is marked removed in every cached conversation once the table is removed', () => {
     const old: AiMessagesResponse = {
-      conversation: { id: 'c', title: 't', createdAt: '2026-10-13T10:00:00Z', lastMessageAt: '2026-10-13T10:00:00Z' },
+      conversation: { id: 'c', title: 't', createdAt: '2026-10-13T10:00:00Z', lastMessageAt: '2026-10-13T10:00:00Z', pinnedAt: null, groupId: null, archivedAt: null },
       messages: [
         { id: 'a', role: 'assistant', parts: [{ type: 'text', text: 'Saved.' }, card], createdAt: '2026-10-13T10:00:00Z' },
         { id: 'b', role: 'assistant', parts: [{ type: 'text', text: 'Nothing here.' }], createdAt: '2026-10-13T10:01:00Z' },

@@ -463,7 +463,7 @@ describe('the card in the cached conversation', () => {
     const proposed: AiAutomationPart = { type: 'automation', proposalId: 'p1', ok: true, state: 'proposed', draft: watch }
     const activated: AiAutomationPart = { ...proposed, state: 'activated', automationId: 'a1' }
     const old: AiMessagesResponse = {
-      conversation: { id: 'c1', title: 'Holds', createdAt: '2026-10-10T05:00:00Z', lastMessageAt: '2026-10-10T05:00:00Z' },
+      conversation: { id: 'c1', title: 'Holds', createdAt: '2026-10-10T05:00:00Z', lastMessageAt: '2026-10-10T05:00:00Z', pinnedAt: null, groupId: null, archivedAt: null },
       messages: [
         { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Watch holds' }], createdAt: '2026-10-10T05:00:00Z' },
         { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'Here it is.' }, proposed], createdAt: '2026-10-10T05:00:05Z' },
@@ -491,7 +491,7 @@ describe('the card in the cached conversation', () => {
   it('marks the card a newer version replaces, wherever it is, while it is still to be decided', () => {
     const first: AiAutomationPart = { type: 'automation', proposalId: 'p1', ok: true, state: 'proposed', draft: watch }
     const old: AiMessagesResponse = {
-      conversation: { id: 'c1', title: 'Holds', createdAt: '2026-10-10T05:00:00Z', lastMessageAt: '2026-10-10T05:00:00Z' },
+      conversation: { id: 'c1', title: 'Holds', createdAt: '2026-10-10T05:00:00Z', lastMessageAt: '2026-10-10T05:00:00Z', pinnedAt: null, groupId: null, archivedAt: null },
       messages: [
         { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Watch holds' }], createdAt: '2026-10-10T05:00:00Z' },
         { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'Here it is.' }, first], createdAt: '2026-10-10T05:00:05Z' },

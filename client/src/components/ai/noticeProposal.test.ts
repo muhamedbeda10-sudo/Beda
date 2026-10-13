@@ -198,7 +198,7 @@ describe('what a change changes', () => {
 
 describe('the card in the cached conversation', () => {
   const conversation = (parts: AiMessagesResponse['messages'][number]['parts']): AiMessagesResponse => ({
-    conversation: { id: 'c1', title: 'Notices', createdAt: '2026-10-10T05:00:00Z', lastMessageAt: '2026-10-10T05:00:00Z' },
+    conversation: { id: 'c1', title: 'Notices', createdAt: '2026-10-10T05:00:00Z', lastMessageAt: '2026-10-10T05:00:00Z', pinnedAt: null, groupId: null, archivedAt: null },
     messages: [
       { id: 'q', role: 'user', parts: [{ type: 'text', text: 'Warn RF-03 about the coating.' }], createdAt: '2026-10-10T05:00:00Z' },
       { id: 'a', role: 'assistant', parts, createdAt: '2026-10-10T05:00:05Z' },

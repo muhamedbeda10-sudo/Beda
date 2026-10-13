@@ -53,6 +53,9 @@ import type {
   AiAccess,
   AiAccessListResponse,
   AiAccessRequest,
+  AiConversation,
+  AiConversationGroup,
+  AiConversationUpdate,
   AiMessagesResponse,
   AiReport,
   AiReportRunResponse,
@@ -558,6 +561,36 @@ export async function removeAiAccess(qc: QueryClient, userId: string): Promise<v
   void qc.invalidateQueries({ queryKey: keys.aiPeople })
   void qc.invalidateQueries({ queryKey: keys.aiMe })
   await qc.invalidateQueries({ queryKey: keys.aiAccess })
+}
+
+/**
+ * Rename, pin or unpin, move to a group or out of one, archive or unarchive
+ * one of this person's conversations. The open conversation's title follows,
+ * and every list, group count and search is read again.
+ */
+export async function updateAiConversation(qc: QueryClient, id: string, update: AiConversationUpdate): Promise<AiConversation> {
+  const conversation = await api<AiConversation>(`/ai/conversations/${encodeURIComponent(id)}`, { method: 'PATCH', body: update })
+  qc.setQueryData<AiMessagesResponse>(keys.aiMessages(id), (old) => (old ? { ...old, conversation } : old))
+  await qc.invalidateQueries({ queryKey: keys.aiConversations })
+  return conversation
+}
+
+export async function createAiConversationGroup(qc: QueryClient, name: string): Promise<AiConversationGroup> {
+  const group = await api<AiConversationGroup>('/ai/conversation-groups', { method: 'POST', body: { name } })
+  await qc.invalidateQueries({ queryKey: keys.aiConversationGroups })
+  return group
+}
+
+export async function renameAiConversationGroup(qc: QueryClient, id: string, name: string): Promise<AiConversationGroup> {
+  const group = await api<AiConversationGroup>(`/ai/conversation-groups/${encodeURIComponent(id)}`, { method: 'PATCH', body: { name } })
+  await qc.invalidateQueries({ queryKey: keys.aiConversationGroups })
+  return group
+}
+
+/** Remove a group: its conversations go back to the list, so every list is read again. */
+export async function deleteAiConversationGroup(qc: QueryClient, id: string): Promise<void> {
+  await api<void>(`/ai/conversation-groups/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  await qc.invalidateQueries({ queryKey: keys.aiConversations })
 }
 
 /** Remove a conversation from this person's history (the server keeps it for the cost record). */

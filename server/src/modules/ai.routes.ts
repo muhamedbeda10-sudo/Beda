@@ -71,7 +71,15 @@ import {
   type AiAccessListResponse,
   type AiAccessRequest,
   type AiAttachment,
+  type AiConversation,
+  type AiConversationGroup,
+  type AiConversationGroupsResponse,
+  type AiConversationScope,
+  type AiConversationSearchResponse,
   type AiConversationsResponse,
+  AI_CONVERSATION_SCOPES,
+  AI_CONVERSATION_SEARCH_MAX,
+  AI_CONVERSATION_SEARCH_MIN,
   type AiMeResponse,
   type AiMessagesResponse,
   type AiQueryExportResponse,
@@ -138,6 +146,8 @@ import { canonicalDomains } from '../ai/domains'
 import { minCallWorstCaseUsd, worstCaseUsd } from '../ai/models'
 import { aiOwner } from '../ai/owner'
 import { conversationTitle, conversationTools, factoryDay, questionContent, renderSystemPrompt } from '../ai/prompt'
+import { conversationTitleProblem, createGroup, groupNameProblem, listGroups, oneLine, removeGroup, renameGroup, updateConversation } from '../ai/conversationOrganize'
+import { searchConversations } from '../ai/conversationSearch'
 import { rangeProblem } from '../ai/reportTemplate'
 import {
   AI_REPORT_TITLE_CHARS,
@@ -272,10 +282,57 @@ const sheetSchema = z
   })
   .strict()
 
-const conversationsQuery = z.object({
-  before: z.string().datetime({ offset: true }).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+const conversationsQuery = z
+  .object({
+    scope: z.enum(AI_CONVERSATION_SCOPES as [AiConversationScope, ...AiConversationScope[]]).default('all'),
+    /** For scope group: which. */
+    groupId: z.string().uuid().optional(),
+    before: z.string().datetime({ offset: true }).optional(),
+    /** With `before`, the last conversation of the page read: two at one millisecond are both reached. */
+    beforeId: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+  })
+  .refine((q) => q.scope !== 'group' || q.groupId !== undefined, { message: 'Say which group.', path: ['groupId'] })
+
+const conversationSearchQuery = z.object({
+  q: z
+    .string()
+    .transform((t) => t.replace(/\s+/g, ' ').trim())
+    .pipe(
+      z
+        .string()
+        .min(AI_CONVERSATION_SEARCH_MIN, `Search for at least ${AI_CONVERSATION_SEARCH_MIN} characters.`)
+        .max(AI_CONVERSATION_SEARCH_MAX, `Search for at most ${AI_CONVERSATION_SEARCH_MAX} characters.`),
+    ),
 })
+
+/** A conversation's title, or a group's name: on one line; its length counted as a person counts it. */
+const conversationTitleSchema = z
+  .string()
+  .transform(oneLine)
+  .superRefine((t, ctx) => {
+    const problem = conversationTitleProblem(t)
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem })
+  })
+const groupNameSchema = z
+  .string()
+  .transform(oneLine)
+  .superRefine((t, ctx) => {
+    const problem = groupNameProblem(t)
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem })
+  })
+
+const conversationUpdateSchema = z
+  .object({
+    title: conversationTitleSchema.optional(),
+    pinned: z.boolean().optional(),
+    groupId: z.string().uuid().nullable().optional(),
+    archived: z.boolean().optional(),
+  })
+  .strict()
+  .refine((u) => Object.values(u).some((v) => v !== undefined), 'Say what to change.')
+
+const groupSchema = z.object({ name: groupNameSchema }).strict()
 
 // Years 2000–2999 only: outside them a month's bounds are not timestamps PostgreSQL takes (or Date.UTC moves them).
 const usageQuery = z.object({ month: z.string().regex(/^2\d{3}-(0[1-9]|1[0-2])$/, 'A month is YYYY-MM, from 2000-01.').optional() })
@@ -592,8 +649,61 @@ export function aiRoutes(ctx: AppContext): Router {
   r.get('/conversations', async (req, res) => {
     const { user } = await aiUser(req)
     const q = parse(conversationsQuery, req.query)
-    const body: AiConversationsResponse = await listConversations(db, user.id, q.before ?? null, q.limit)
+    const body: AiConversationsResponse = await listConversations(db, user.id, {
+      scope: q.scope,
+      groupId: q.groupId ?? null,
+      before: q.before ?? null,
+      beforeId: q.beforeId ?? null,
+      limit: q.limit,
+    })
     res.json(body)
+  })
+
+  r.get('/conversations/search', async (req, res) => {
+    const { user } = await aiUser(req)
+    const { q } = parse(conversationSearchQuery, req.query)
+    const body: AiConversationSearchResponse = await searchConversations(db, user.id, q)
+    res.json(body)
+  })
+
+  /** Rename, pin or unpin, put in a group or take out, archive or unarchive one of the person's conversations. */
+  r.patch('/conversations/:id', async (req, res) => {
+    const { user } = await aiUser(req)
+    const id = parse(uuid, req.params.id)
+    const update = parse(conversationUpdateSchema, req.body)
+    const body: AiConversation = await withTransaction(db, (tx) => updateConversation(tx, user.id, id, update))
+    res.json(body)
+  })
+
+  // ---- Groups of conversations ---------------------------------------------------------
+
+  r.get('/conversation-groups', async (req, res) => {
+    const { user } = await aiUser(req)
+    const body: AiConversationGroupsResponse = { groups: await listGroups(db, user.id) }
+    res.json(body)
+  })
+
+  r.post('/conversation-groups', async (req, res) => {
+    const { user } = await aiUser(req)
+    const { name } = parse(groupSchema, req.body)
+    const body: AiConversationGroup = await withTransaction(db, (tx) => createGroup(tx, user.id, name))
+    res.status(201).json(body)
+  })
+
+  r.patch('/conversation-groups/:id', async (req, res) => {
+    const { user } = await aiUser(req)
+    const id = parse(uuid, req.params.id)
+    const { name } = parse(groupSchema, req.body)
+    const body: AiConversationGroup = await withTransaction(db, (tx) => renameGroup(tx, user.id, id, name))
+    res.json(body)
+  })
+
+  /** The group goes; its conversations go back to the list. */
+  r.delete('/conversation-groups/:id', async (req, res) => {
+    const { user } = await aiUser(req)
+    const id = parse(uuid, req.params.id)
+    await withTransaction(db, (tx) => removeGroup(tx, user.id, id))
+    res.status(204).end()
   })
 
   r.get('/conversations/:id/messages', async (req, res) => {
