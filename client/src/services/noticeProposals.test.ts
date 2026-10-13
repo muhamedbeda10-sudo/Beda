@@ -28,7 +28,7 @@ const card: AiNoticePart = {
   reach: { everyone: true, people: 42, placeBound: false },
 }
 const conversation = (id: string): AiMessagesResponse => ({
-  conversation: { id, title: 'Notices', createdAt: '2026-10-10T05:00:00Z', lastMessageAt: '2026-10-10T05:00:00Z' },
+  conversation: { id, title: 'Notices', createdAt: '2026-10-10T05:00:00Z', lastMessageAt: '2026-10-10T05:00:00Z', pinnedAt: null, groupId: null, archivedAt: null },
   messages: [{ id: `${id}-a`, role: 'assistant', parts: [{ type: 'text', text: 'Here it is.' }, card], createdAt: '2026-10-10T05:00:05Z' }],
 })
 const cardIn = (qc: QueryClient, id: string) => qc.getQueryData<AiMessagesResponse>(keys.aiMessages(id))?.messages[0].parts[1]

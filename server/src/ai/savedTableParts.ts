@@ -28,7 +28,7 @@ export async function loadSavedTableParts(q: Queryable, conversationId: string, 
             c.action, t.source, COALESCE(c.definition ->> 'refresh', t.refresh) AS refresh, c.row_count AS "rowCount", c.columns,
             (t.deleted_at IS NOT NULL) AS removed,
             NOT EXISTS (SELECT 1 FROM ai_saved_table_changes later
-                         WHERE later.table_id = c.table_id AND later.action <> 'refresh' AND (later.created_at, later.id) > (c.created_at, c.id)) AS latest
+                         WHERE later.table_id = c.table_id AND later.action IN ('replace', 'remove') AND (later.created_at, later.id) > (c.created_at, c.id)) AS latest
        FROM ai_saved_table_changes c JOIN ai_saved_tables t ON t.id = c.table_id
       WHERE c.conversation_id = $1 AND ($2::uuid IS NULL OR c.turn_id = $2)`,
     [conversationId, turnId ?? null],

@@ -342,14 +342,88 @@ export interface AiSettingsResponse {
 
 export interface AiConversation {
   id: string
-  /** The first question, shortened. */
+  /** The first question, shortened, or the name the person gave it. */
   title: string
   createdAt: string
   lastMessageAt: string
+  /** When it was pinned to the top of the list; null when it is not. */
+  pinnedAt: string | null
+  /** The person's group it is in; null for none. */
+  groupId: string | null
+  /** When it was archived out of the list; null when it is in it. */
+  archivedAt: string | null
 }
 
 export interface AiConversationsResponse {
   conversations: AiConversation[]
+  hasMore: boolean
+}
+
+/**
+ * Which conversations a page of the list holds:
+ *   • recent — in the list, neither pinned nor in a group;
+ *   • pinned — pinned, the latest pinned first (all of them, in one page);
+ *   • group — in one group (groupId), pinned or not;
+ *   • archived — archived;
+ *   • all — every one not archived (the list before groups).
+ * All but pinned are the latest first, a page at a time.
+ */
+export type AiConversationScope = 'recent' | 'pinned' | 'group' | 'archived' | 'all'
+export const AI_CONVERSATION_SCOPES: readonly AiConversationScope[] = ['recent', 'pinned', 'group', 'archived', 'all']
+
+/** A conversation's title at most, in characters. */
+export const AI_CONVERSATION_TITLE_MAX = 80
+/** Conversations one person may have pinned at once. */
+export const AI_MAX_PINNED_CONVERSATIONS = 30
+/** A group's name at most, in characters. */
+export const AI_CONVERSATION_GROUP_NAME_MAX = 60
+/** Groups one person may have. */
+export const AI_MAX_CONVERSATION_GROUPS = 100
+
+/** A change to one conversation: what is given changes, the rest stays. */
+export interface AiConversationUpdate {
+  title?: string
+  pinned?: boolean
+  /** A group of the person's, or null to take it out of its group. */
+  groupId?: string | null
+  archived?: boolean
+}
+
+/** A person's group of conversations. */
+export interface AiConversationGroup {
+  id: string
+  name: string
+  /** Its conversations not archived. */
+  conversationCount: number
+  /** The latest message in any of them; null for an empty group. */
+  lastMessageAt: string | null
+  createdAt: string
+}
+
+export interface AiConversationGroupsResponse {
+  groups: AiConversationGroup[]
+}
+
+/** The words searched for: at least this many characters, at most that many. */
+export const AI_CONVERSATION_SEARCH_MIN = 2
+export const AI_CONVERSATION_SEARCH_MAX = 100
+/** Conversations one search returns at most. */
+export const AI_CONVERSATION_SEARCH_LIMIT = 40
+
+/** A conversation a search found: where the words are, and the words around them. */
+export interface AiConversationSearchHit {
+  conversation: AiConversation
+  /** In its title, in a question asked in it, or in an answer (the latest such). */
+  where: 'title' | 'question' | 'answer'
+  /** For a question or an answer: the words around the match, cut with … where the text goes on. Empty for a title. */
+  snippet: string
+  /** Where the match is in the snippet (UTF-16 offsets), to mark it; null when it cannot be told. */
+  match: { start: number; length: number } | null
+}
+
+export interface AiConversationSearchResponse {
+  hits: AiConversationSearchHit[]
+  /** More conversations matched than were returned. */
   hasMore: boolean
 }
 

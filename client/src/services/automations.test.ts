@@ -20,7 +20,7 @@ const { keys } = await import('./queries')
 
 const card: AiAutomationPart = { type: 'automation', proposalId: 'p1', ok: true, state: 'proposed' }
 const conversation = (id: string): AiMessagesResponse => ({
-  conversation: { id, title: 'Holds', createdAt: '2026-10-10T05:00:00Z', lastMessageAt: '2026-10-10T05:00:00Z' },
+  conversation: { id, title: 'Holds', createdAt: '2026-10-10T05:00:00Z', lastMessageAt: '2026-10-10T05:00:00Z', pinnedAt: null, groupId: null, archivedAt: null },
   messages: [{ id: `${id}-a`, role: 'assistant', parts: [{ type: 'text', text: 'Here it is.' }, card], createdAt: '2026-10-10T05:00:05Z' }],
 })
 

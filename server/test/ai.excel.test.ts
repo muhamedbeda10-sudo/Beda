@@ -124,13 +124,13 @@ describe('who may have Excel files made', () => {
 
     app.model.reply({ content: [text('Hi.')] })
     await ask(app, p.owner, 'Hello')
-    expect(toolNames(app).at(-5)).toBe('make_excel')
+    expect(toolNames(app).at(-6)).toBe('make_excel')
 
     const allowed = await grant(app, p.owner, p.plain, { excel: true })
     expect(allowed.excel).toBe(true)
     app.model.reply({ content: [text('Hi.')] })
     await ask(app, p.plain, 'Hello')
-    expect(toolNames(app).at(-5)).toBe('make_excel')
+    expect(toolNames(app).at(-6)).toBe('make_excel')
     const system = systemOf(app)
     const section = system.slice(system.indexOf('# Excel files'), system.indexOf('\n#', system.indexOf('# Excel files') + 2))
     expect(section).toContain('you never see its rows')

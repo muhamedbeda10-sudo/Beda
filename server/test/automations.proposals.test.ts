@@ -109,17 +109,17 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
     await ask(app, p.plain, 'Hello')
     const plain = lastCall()
     // Everyone's new conversation reads notices (§23) and drafts tasks; the automations' tools come before those.
-    expect(toolsOf(plain)).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'refresh_saved_table', 'remove_saved_table'])
+    expect(toolsOf(plain)).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
     expect(systemOf(plain)).not.toContain('# Automations')
     await ask(app, p.creator, 'Hello')
     const creator = lastCall()
-    expect(toolsOf(creator)).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'refresh_saved_table', 'remove_saved_table'])
+    expect(toolsOf(creator)).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
     expect(creator.params.tools![2]).toMatchObject({ eager_input_streaming: true, input_schema: { additionalProperties: false } })
     // Not strict: together with run_sql's, its alternatives compile to a grammar the API refuses as too large.
     expect(creator.params.tools![2]).not.toHaveProperty('strict')
     await ask(app, p.owner, 'Hello')
     // The owner, an administrator, may also have notices written, and always may have Excel files made.
-    expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'make_excel', 'list_saved_tables', 'save_table', 'refresh_saved_table', 'remove_saved_table'])
+    expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'make_excel', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
 
     // Without automations the prompt is the one it always was, byte for byte; with them, one section more.
     const tz = app.config.FACTORY_TIMEZONE
@@ -183,18 +183,18 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
       // The earlier conversation goes on with the tools and prompt it began with, byte for byte.
       expect(JSON.stringify(lastCall().params.tools)).toBe(old.tools)
       expect(systemOf()).toBe(old.prompt)
-      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'refresh_saved_table', 'remove_saved_table'])
+      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
       // A propose_automation call there is a tool it never had.
       app.model.reply({ content: [propose('toolu_old', watchDraft())] }, { content: [text('I cannot.')] })
       await ask(app, p.plain, 'Watch the machines', before.conversationId)
       expect(resultsOf()).toEqual([
-        { type: 'tool_result', tool_use_id: 'toolu_old', is_error: true, content: 'Unknown tool "propose_automation". The tools are "run_sql", "list_notices", "notice_details", "find_people", "propose_task", "my_tasks", "update_playbook", "list_saved_tables", "save_table", "refresh_saved_table", "remove_saved_table".' },
+        { type: 'tool_result', tool_use_id: 'toolu_old', is_error: true, content: 'Unknown tool "propose_automation". The tools are "run_sql", "list_notices", "notice_details", "find_people", "propose_task", "my_tasks", "update_playbook", "list_saved_tables", "save_table", "update_saved_table", "refresh_saved_table", "remove_saved_table".' },
       ])
       expect((await app.db.query(`SELECT 1 FROM ai_automation_proposals WHERE tool_use_id = 'toolu_old'`)).rowCount).toBe(0)
 
       app.model.reply({ content: [text('Hi again.')] })
       const fresh = await ask(app, p.plain, 'A new conversation')
-      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'refresh_saved_table', 'remove_saved_table'])
+      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
       const freshStored = await stored(fresh.conversationId)
 
       // The permission withdrawn: the conversation keeps its tools, which now refuse; nothing is proposed or shown.
