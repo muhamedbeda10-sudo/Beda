@@ -83,6 +83,7 @@ import {
   type AiSaveReportResponse,
   type AiSettings,
   type AiSettingsResponse,
+  type AiTaskProposalResponse,
   type AiUsageResponse,
 } from '@qc/shared/ai'
 import { auditEvent } from '@qc/shared/audit'
@@ -163,6 +164,7 @@ import { AUTOMATION_TOOLS, PROPOSE_AUTOMATION_TOOL_NAME, automationToolHandlers 
 import { applyNoticeProposal, discardNoticeProposal } from '../noticeAssistant/lifecycle'
 import { noticeManager, noticePromptMode } from '../noticeAssistant/scope'
 import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS, noticeToolHandlers } from '../noticeAssistant/tools'
+import { TASK_TOOLS, discardTaskProposal, sendTaskProposal, taskToolHandlers } from '../tasks/assistant'
 import {
   appendMessages,
   createConversation,
@@ -594,11 +596,12 @@ export function aiRoutes(ctx: AppContext): Router {
     // A new conversation's prompt carries the data dictionary of the person's domains as the catalog has it now, for good,
     // and — for a person who may create automations as it starts — how to propose one, with the tools to do it (§21);
     // and what the person sees of notices, with the tools to read them, and — for an administrator the owner allows —
-    // how to draft one as a card, with the tools to do it (§23). Their role is the one this request was signed in with.
+    // how to draft one as a card, with the tools to do it (§23); and, as for everyone given the assistant, how to draft
+    // a task as a card and follow their tasks. Their role is the one this request was signed in with.
     const automations = avail.me.automations ? { id: user.id, name: user.name, role: user.role } : null
     const managesNotices = mayManageNotices(access, owner, user.role)
     const notices = noticePromptMode(user.role, managesNotices)
-    const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains, { automations, notices })
+    const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains, { automations, notices, tasks: true })
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return
     const askedAt = new Date()
@@ -622,7 +625,7 @@ export function aiRoutes(ctx: AppContext): Router {
           title: conversationTitle(body.message || (await firstAttachmentName(tx, user.id, body.attachmentIds))),
           model: access.model,
           systemPrompt: systemPrompt!,
-          tools: conversationTools(automations ? AUTOMATION_TOOLS : null, managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS),
+          tools: conversationTools(automations ? AUTOMATION_TOOLS : null, managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS, TASK_TOOLS),
         })
       }
       // The model and effort the owner set for the person now: an earlier conversation goes on with them too.
@@ -690,6 +693,8 @@ export function aiRoutes(ctx: AppContext): Router {
           }),
           // §23 — each reads the person's role again: what they see, and whether they may still have a notice written.
           ...noticeToolHandlers({ db, config: ctx.config, userId: user.id, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
+          // Tasks: drafting ones checks the person may still send tasks.
+          ...taskToolHandlers({ db, config: ctx.config, userId: user.id, userName: user.name, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
         },
       })
       await finishTurn(db, turnId, outcome.stopReason, outcome.notice)
@@ -1007,6 +1012,29 @@ export function aiRoutes(ctx: AppContext): Router {
     const user = await noticeWriter(req)
     const id = parse(uuid, req.params.id)
     const reply: AiNoticeDiscardResponse = await discardNoticeProposal(db, id, { id: user.id, name: user.name })
+    res.json(reply)
+  })
+
+  // ---- Task cards ---------------------------------------------------------------------------------
+
+  /**
+   * Send task from a card: the person who asked only (anyone else's is "not
+   * found"), while they may still send tasks, checked again as the Tasks page
+   * checks a new task. Each person it goes to is told; the card says so.
+   */
+  r.post('/task-proposals/:id/send', async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    const part = await withTransaction(db, (tx) => sendTaskProposal(tx, id, { id: user.id, name: user.name }, tz))
+    const reply: AiTaskProposalResponse = { part }
+    res.json(reply)
+  })
+
+  r.post('/task-proposals/:id/discard', async (req, res) => {
+    const user = requireUser(req)
+    const id = parse(uuid, req.params.id)
+    const part = await withTransaction(db, (tx) => discardTaskProposal(tx, id, user.id))
+    const reply: AiTaskProposalResponse = { part }
     res.json(reply)
   })
 

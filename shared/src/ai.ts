@@ -425,8 +425,35 @@ export interface AiKpi {
   trend?: AiKpiTrend
 }
 
-/** An answer's pieces in order. An automation proposal (§21) and a notice card (§23) are cards the person applies or discards. */
-export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart | AiNoticePart
+/** A task the assistant drafted, as its card shows it. */
+export interface AiTaskDraft {
+  title: string
+  description: string
+  priority: 'normal' | 'high' | 'urgent'
+  dueAt: string | null
+  assignees: { id: string; name: string }[]
+}
+
+/** A task card: Send task and Discard while proposed; then sent (with the task made), discarded, or replaced by a later draft. */
+export interface AiTaskPart {
+  type: 'task'
+  proposalId: string
+  ok: boolean
+  /** Why it was not proposed (the model fixes it and calls again). */
+  error?: string
+  draft?: AiTaskDraft
+  state: 'proposed' | 'sent' | 'discarded' | 'superseded'
+  taskId?: string
+  taskNumber?: number
+}
+
+/** A task card's Send task or Discard: the card as it stands after it. A refusal (409) carries it as `details.part`. */
+export interface AiTaskProposalResponse {
+  part: AiTaskPart
+}
+
+/** An answer's pieces in order. An automation proposal (§21), a notice card (§23) and a task card are cards the person applies or discards. */
+export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart | AiNoticePart | AiTaskPart
 
 /** How an answer ended. */
 export type AiStopReason =
@@ -494,6 +521,8 @@ export type AiStreamEvent =
   | { type: 'automation'; part: AiAutomationPart }
   /** A notice card (§23): a new notice, a change, a withdrawal or a deletion, waiting for its button. */
   | { type: 'notice'; part: AiNoticePart }
+  /** A task card: a task drafted, waiting for Send task. */
+  | { type: 'task'; part: AiTaskPart }
   | { type: 'done'; message: AiMessage; status: AiStatusResponse }
   | { type: 'error'; code: ApiErrorCode; message: string }
 

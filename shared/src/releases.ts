@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.6',
+    date: '2026-10-13',
+    title: 'The assistant drafts tasks for you',
+    items: [
+      { text: 'Ask the AI assistant to send a task, in your own words: "Send Cyril a task to recheck the coil stock in bay 3 by tomorrow 10:00". It finds the people by name and shows the task as a card: what is to be done, the details, who it goes to, how urgent and the deadline.' },
+      { text: 'Nothing is sent until you press "Send task" on the card; each person is then told in the bell. Ask for a change ("make it urgent", "add Sara too") and a new card replaces the old one. "Discard" sets it aside.' },
+      { text: 'Ask about your tasks too: "who has not finished the coil task?", "what is overdue?", "what was sent to me?". The assistant answers from your own tasks only, with links to them.' },
+      { text: 'This works in conversations started from now on.' },
+    ],
+  },
+  {
     id: '2026-10-13.5',
     date: '2026-10-13',
     title: 'Tasks: send work to people and follow it to the end',
