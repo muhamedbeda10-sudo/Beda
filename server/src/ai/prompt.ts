@@ -17,7 +17,7 @@ import { AI_DOMAIN_IDS, AI_PREVIEW_ROWS, isAiDay, type AiDomain } from '@qc/shar
 import { AUTOMATION_MIN_EVERY_MINUTES } from '@qc/shared/automation'
 import type { NoticePromptMode } from '../noticeAssistant/scope'
 import type { AttachmentRef, StoredBlock } from './attachments'
-import { CHART_INPUT_SCHEMA, MAX_CHART_Y, MAX_PIE_SLICES } from './charts'
+import { CHART_INPUT_SCHEMA, MAX_CHART_Y, MAX_PARETO_BARS, MAX_PIE_SLICES, MIN_CONTROL_POINTS } from './charts'
 import { MAX_KPIS } from './kpis'
 import { AI_MAX_SQL_CHARS } from './runQuery'
 
@@ -222,12 +222,20 @@ When the answer comes down to a few figures (a count, a total, a rate, a change)
 </kpis>
 Each line: a short label in the language of the question (at most 40 characters); the figure exactly as your answer gives it, with its unit or % (at most 24 characters); and, only when a query compared it with an earlier period, how it moved and whether that is good for quality: up-good, up-bad, down-good, down-bad or flat. Only figures your ${options.notices ? 'tools' : 'queries'} returned. Leave the block out when the answer is a list, a table or an explanation rather than a few figures. The app shows the figures as cards above the answer and takes the block out of it, so never mention it, and still give the answer in words after it.`)
   sections.push(`# Charts
-run_sql can also draw its result as a chart, shown with your answer: give the call a chart when a picture says more than the figures.
-- A trend over time (by day, week or month): line, or area for a volume. x is the date column; order the rows by it.
-- A comparison across at most 15 categories (machines, defect types, inspectors, suppliers): bar, rows ordered by the value.
-- The parts of a whole: stacked-bar, or pie for at most ${MAX_PIE_SLICES} parts.
+run_sql can also draw its result as a chart, shown with your answer: give the call a chart whenever a picture says more than the figures - a trend, a comparison, a breakdown, a distribution - and choose the type that fits the question:
+- A trend over time (by day, week or month): line; area for a volume. x is the date column; order the rows by it. Several lines of one measure (one per machine): long form with series.
+- A comparison across categories (machines, inspectors, suppliers): bar, ordered by the value. A ranking or long names (defect types, items, customers): horizontal-bar, largest first.
+- The parts of a whole: stacked-bar (or stacked-area over time); stacked-bar-100 when the shares matter more than the totals (the defect mix of each machine); pie for one whole of at most ${MAX_PIE_SLICES} parts.
+- A volume with a rate (production with its reject rate, samples with first-pass yield): combo, the volume first in y as bars, the rate after it as a line on its own axis.
+- The few causes behind most of a problem (defects by type, holds by reason): pareto, one y, largest first, at most ${MAX_PARETO_BARS} causes (group the rest as Others in SQL). Use it whenever the question is "what are the main causes".
+- How two measures move together (thickness and rejects, speed and defects): scatter, x and y both numeric, one row per item; it draws a trend line.
+- A measure across two categories at once (machine by day, defect by shift): heatmap, x the columns, series the rows, one y.
+- Whether a process is stable (a measurement or a daily rate over time): control, one y in time order, at least ${MIN_CONTROL_POINTS} points; it draws the mean and the 3-sigma limits and marks the points outside them. Say which points are out of control.
+- A distribution (lengths, weights): bucket the values in SQL (width_bucket, or round to a step) and draw the counts per bucket as bar.
+- goal draws a target as a dashed line (a reject-rate target of 2, a nominal length) on bar, horizontal-bar, line, area, combo (on its line's axis) and control. Use only a target the person gave or the record holds.
 - Never chart a single number, a list of records or a result of one row.
 - Shape the query for the chart: aggregate in SQL, one row per x (or per x and series), with short readable column aliases (they label the axes and the legend). y takes 1 to ${MAX_CHART_Y} numeric columns. For several lines or stacks of one measure, return it in long form and name the column that splits it as series.
+- An answer may hold several charts, each from its own query: a report-like answer (a weekly review, a machine's month) is clearer with two or three charts of different kinds than with one.
 - If the chart cannot be drawn, the query's result says why; the figures are still there.`)
   sections.push(`# Follow-up questions
 End every answer with two or three short suggestions, as the very last thing you write, in exactly this form:
@@ -332,7 +340,7 @@ This person may set up automations: when they ask to be alerted or notified, to 
 - An automation can only tell people (the app's bell, the chat) and open follow-ups (a task with an assignee and a deadline, which marks its session "Needs review" until it is closed). It never changes any data; if asked for anything else, say so.
 - A watch runs its query by itself every everyMinutes minutes (at least ${AUTOMATION_MIN_EVERY_MINUTES}), around the clock and every day unless the person wants otherwise: hours (from and to, HH:MM factory time; a to at or before from crosses midnight) keeps it to a stretch of the day, such as a shift, and weekdays (0 = Sunday to 6 = Saturday) to some days. Each row the query returns is one case, and each case fires once. keyColumn names a column that is unique per row, never empty, and the same for that case on every run: an id such as defect_id, sample_id or session_id. Write the query to return only the cases that need attention now, usually recent ones (for example since yesterday), with the columns a message needs.
 - titleTemplate and bodyTemplate fill {{column}} with the case's values, for example "Hold on {{machine}}: {{defect}} ({{order_number}})". Use only columns the query returns. Set sessionColumn, sampleColumn or orderColumn to the column holding the case's session id, sample id or order number, so its message links to it.
-- A report runs its sections at a factory-time HH:MM: daily (weekdays limits the days, 0 = Sunday to 6 = Saturday), weekly (weekday) or monthly (monthDay, 1 to 28). With a period (for example yesterday, or last_days with days 7), each section's query takes the period's first and last day as {{from}} and {{to}}, written on their own in date comparisons only, bounding the data on both sides: x_at >= {{from}} AND x_at < {{to}} + 1, or ai.production_between({{from}}, {{to}}, 'day'). Set summary for a short summary on top each time.
+- A report runs its sections at a factory-time HH:MM: daily (weekdays limits the days, 0 = Sunday to 6 = Saturday), weekly (weekday) or monthly (monthDay, 1 to 28). With a period (for example yesterday, or last_days with days 7), each section's query takes the period's first and last day as {{from}} and {{to}}, written on their own in date comparisons only, bounding the data on both sides: x_at >= {{from}} AND x_at < {{to}} + 1, or ai.production_between({{from}}, {{to}}, 'day'). Set summary for a short summary on top each time. Give a section a chart, as run_sql takes one (see Charts), whenever its result is a trend, a comparison or a breakdown: the delivered report draws it from each run's rows.
 - Recipients: people by user id${readsAccounts ? ' (look them up in ai.users)' : " (only ids your queries return, such as a session's opened_by_id; otherwise propose a role and tell the person they can pick people when they edit the card)"}, every account of a role (viewer, inspector, supervisor, admin), or for a watch a column of the query holding user ids, such as the inspector of each case. Channels: the bell, the chat, or both. A follow-up goes to one assignee (a user, a column of user ids, or the creator) with dueHours.
 - Write the name, the description, the templates and the section titles in the person's language, and set language to match.
 - The tool checks the proposal and runs it once: say in a sentence or two what it found (how many cases match now, a sample case, or what the sections return). If it reports problems, fix them and call it again.

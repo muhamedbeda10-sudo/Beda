@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.2',
+    date: '2026-10-13',
+    title: 'Every kind of chart, in answers and in reports',
+    items: [
+      { text: 'The AI assistant now draws many more kinds of chart, choosing the one that fits the question: horizontal bars for rankings and long names, 100% stacked bars for a mix of defects, stacked areas, a combo of bars and a line on two axes (production with its reject rate), a Pareto of the main causes, a scatter with its trend line (how two measures move together), a heatmap (machine by day) and an SPC control chart with its centre line and limits, marking the points out of control in red.' },
+      { text: 'A chart can carry a target line, for example a 2% reject-rate target or a nominal length. Ask for "charts" or "a dashboard of the week" and an answer can hold several charts of different kinds.' },
+      { text: 'Saved reports keep the charts their answer had and draw them from each run. Scheduled reports can have a chart in every section: the assistant proposes them, the card shows them before you activate it, and each delivered report draws them from its own figures.' },
+    ],
+  },
+  {
     id: '2026-10-13.1',
     date: '2026-10-13',
     title: 'The assistant reads photos, PDFs and Excel files',

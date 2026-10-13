@@ -9,6 +9,7 @@
 // ============================================================================
 
 import { z } from 'zod'
+import { CHART_INPUT_SCHEMA } from '../ai/charts'
 import { ROLES } from '@qc/shared/types'
 import type { AiReportPeriod } from '@qc/shared/ai'
 import type {
@@ -122,6 +123,7 @@ export const DRAFT_INPUT_SCHEMA = {
             properties: {
               title: { type: 'string', description: "The section's title, in the person's language." },
               sql: { type: 'string', description: 'One SELECT over ai.* views.' },
+              chart: { ...CHART_INPUT_SCHEMA, description: 'Optional. Draws the section\'s result as a chart in the delivered report, as run_sql\'s chart does (see "Charts").' },
             },
             required: ['title', 'sql'],
             additionalProperties: false,
@@ -248,7 +250,7 @@ const scheduleInput = z
     weekday: optional(z.number().int()),
     monthDay: optional(z.number().int()),
     period: optional(periodInput),
-    sections: z.array(z.object({ title: z.string(), sql: z.string() }).strict()),
+    sections: z.array(z.object({ title: z.string(), sql: z.string(), chart: optional(z.unknown()) }).strict()),
     summary: z.boolean(),
   })
   .strict()

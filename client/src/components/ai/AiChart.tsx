@@ -1,8 +1,11 @@
 // ============================================================================
-// §20 — a query's chart, drawn with the dashboard's own SVG charts (§15): its
-// palette, its axes and figures, its hover read-outs, both themes. Lines and
-// areas for days and months, bars to compare, stacked bars and pies for what
-// a whole is made of. Charts read left to right, in an Arabic answer too.
+// §20 — a query's chart, drawn with the dashboard's own SVG charts (§15) and
+// the assistant's own kinds beside them (./AiChartKinds): their palette,
+// axes and figures, hover read-outs, both themes. Lines and areas for days
+// and months, bars (upright or lying) to compare, stacks and pies for what a
+// whole is made of, bars with lines on two axes, a Pareto of causes, a
+// scatter with its trend, a heatmap, and an SPC control chart. Charts read
+// left to right, in an Arabic answer too.
 //
 // The dashboard draws on a 720-wide canvas scaled to its card; the answer's
 // column is narrower in the panel (about 420 px) and wider on the full page,
@@ -16,7 +19,8 @@
 
 import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { GroupedBarChart, LineChart, PIE_CLASSES, PIE_STROKES, PieChart, StackedColumnChart } from '@/components/dashboard/charts'
-import { aiChartWidth, chartFigure, type ChartModel } from './chartData'
+import { ComboChart, ControlChart, HeatmapChart, HorizontalBarChart, ParetoAiChart, ScatterChart, StackedAreaChart } from './AiChartKinds'
+import { aiChartWidth, chartFigure, percentStack, type ChartModel } from './chartData'
 
 /** The series' colours, in order: the dashboard's pie colours, so a line, a bar and a slice of one series match. */
 const fillOf = (k: number) => PIE_CLASSES[k % (PIE_CLASSES.length - 1)]
@@ -49,7 +53,7 @@ function useDrawingWidth() {
 
 export const AiChart = memo(function AiChart({ model }: { model: ChartModel }) {
   const { ref, width } = useDrawingWidth()
-  const { labels, series, unit } = model
+  const { labels, series, unit, goal } = model
   let chart
   switch (model.type) {
     case 'line':
@@ -65,9 +69,51 @@ export const AiChart = memo(function AiChart({ model }: { model: ChartModel }) {
           area={model.type === 'area'}
           fitted
           format={chartFigure}
+          goal={goal}
         />
       )
       break
+    case 'stacked-area':
+      chart = <StackedAreaChart labels={labels} series={series} strokes={strokeOf} unit={unit} width={width} height={HEIGHT} format={chartFigure} />
+      break
+    case 'horizontal-bar':
+      chart = <HorizontalBarChart labels={labels} series={series} classes={fillOf} unit={unit} width={width} format={chartFigure} goal={goal} />
+      break
+    case 'combo':
+      chart = <ComboChart labels={labels} series={series} fills={fillOf} strokes={strokeOf} unit={unit} lineUnit={model.lineUnit ?? ''} width={width} height={HEIGHT} format={chartFigure} goal={goal} />
+      break
+    case 'pareto':
+      chart = (
+        <ParetoAiChart labels={labels} values={series[0].values} cumulative={model.cumulative ?? []} label={series[0].label} unit={unit} width={width} height={HEIGHT} format={chartFigure} />
+      )
+      break
+    case 'scatter':
+      chart = <ScatterChart groups={model.scatter ?? []} fills={fillOf} xName={model.xName ?? ''} yName={model.yName ?? ''} unit={unit} width={width} height={HEIGHT} format={chartFigure} goal={goal} />
+      break
+    case 'heatmap':
+      chart = <HeatmapChart labels={labels} rows={series} unit={unit} width={width} format={chartFigure} />
+      break
+    case 'control':
+      chart = model.control ? (
+        <ControlChart labels={labels} values={series[0].values} limits={model.control} label={series[0].label} unit={unit} width={width} height={HEIGHT} format={chartFigure} goal={goal} />
+      ) : null
+      break
+    case 'stacked-bar-100': {
+      const shares = percentStack(series, labels.length)
+      chart = (
+        <StackedColumnChart
+          columns={labels.map((label, i) => ({ label, segments: shares.map((s, k) => ({ label: s.label, value: s.values[i] ?? 0, className: fillOf(k) })) }))}
+          legend={shares.map((s, k) => ({ label: s.label, className: fillOf(k) }))}
+          unit="%"
+          height={HEIGHT}
+          width={width}
+          fitted
+          format={chartFigure}
+          showTotals={false}
+        />
+      )
+      break
+    }
     case 'pie': {
       const values = series[0].values
       // The legend beside the pie, not across the whole width of the page: each figure stays near its name.
@@ -97,7 +143,9 @@ export const AiChart = memo(function AiChart({ model }: { model: ChartModel }) {
       )
       break
     default:
-      chart = <GroupedBarChart labels={labels} series={series.map((s, k) => ({ label: s.label, values: s.values, className: fillOf(k) }))} unit={unit} height={HEIGHT} width={width} format={chartFigure} />
+      chart = (
+        <GroupedBarChart labels={labels} series={series.map((s, k) => ({ label: s.label, values: s.values, className: fillOf(k) }))} unit={unit} height={HEIGHT} width={width} format={chartFigure} goal={goal} />
+      )
   }
   return (
     <div ref={ref} dir="ltr" className="min-w-0">

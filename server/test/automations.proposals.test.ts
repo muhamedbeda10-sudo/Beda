@@ -581,6 +581,17 @@ describe('§21 checking a draft', () => {
     }
   })
 
+  it('checks a section’s chart against what it returns today: keeps it as drawn, or names the problem', async () => {
+    const BY_CODE = 'SELECT machine_code, 1 AS n FROM ai.machines ORDER BY machine_code'
+    const good = await validateDraft(ctx, reportDraft({}, { sections: [{ title: 'By machine', sql: BY_CODE, chart: { type: 'Donut' as never, x: 'MACHINE_CODE', y: ['n'] } }] }))
+    expect(good.ok).toBe(true)
+    // Stored as it is drawn: the type and the columns as the result names them; the trial run's card draws it too.
+    expect(good.draft.schedule!.sections[0].chart).toEqual({ type: 'pie', x: 'machine_code', y: ['n'] })
+    expect(good.backtest?.sections?.[0].chart).toEqual({ type: 'pie', x: 'machine_code', y: ['n'] })
+    const bad = await errorsOf(reportDraft({}, { sections: [{ title: 'By machine', sql: BY_CODE, chart: { type: 'bar', x: 'machine_code', y: ['missing'] } }] }))
+    expect(bad).toEqual(['schedule.sections[0].chart ("By machine"): Chart not drawn: y "missing" is not a column of the result.'])
+  })
+
   it('refuses the system sender, inactive accounts, another kind replaced, and the 51st automation', async () => {
     const system = (await app.db.query<{ id: string }>(`SELECT id FROM users WHERE is_system`)).rows[0].id
     expect(await errorsOf(watchDraft({ recipients: [{ kind: 'user', userId: system }] }))).toEqual([`recipients[0].userId: no active account has the id ${system}.`])

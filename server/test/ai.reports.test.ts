@@ -611,6 +611,23 @@ describe('§20 running a report', () => {
   })
 })
 
+describe('§20 a report keeps its charts', () => {
+  it('draws each section as the answer drew it, from every run’s own rows', async () => {
+    const chart = { type: 'bar', x: 'day', y: ['changes'], title: 'Changes per day', goal: 1 }
+    app.model.reply(
+      { content: [text('Let me look.'), runSql('toolu_chart1', 'Changes per day', PER_DAY(factoryDay(-29), factoryDay(1)), chart)] },
+      { content: [text('Here it is.')] },
+    )
+    const { done } = await ask('Coil changes per day, with a chart')
+    const madeIt = await save({ turnId: done.message.turnId, adjustable: false })
+    expect(madeIt.status).toBe(201)
+    expect(madeIt.body.report.sections).toEqual([{ title: 'Changes per day', sql: PER_DAY(factoryDay(-29), factoryDay(1)), chart }])
+    const ran = await run(madeIt.body.report.id)
+    expect(ran.status).toBe(200)
+    expect(ran.body.sections[0].chart).toEqual(chart)
+  })
+})
+
 describe('§20 reports are personal', () => {
   it('hides one administrator’s reports from another, and from everyone else', async () => {
     const id = saved.id

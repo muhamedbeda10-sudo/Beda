@@ -208,6 +208,7 @@ export function sectionAsQuery(section: AiReportSectionRun, sql: string, index: 
     truncated: section.truncated,
     ms: section.ms,
     ...(section.error ? { error: section.error } : {}),
+    ...(section.chart ? { chart: section.chart } : {}),
   }
 }
 

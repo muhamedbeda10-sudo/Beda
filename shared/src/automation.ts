@@ -15,7 +15,7 @@
 // closed. It never changes the factory's record.
 // ============================================================================
 
-import type { AiCell, AiDayRange, AiReportPeriod, AiReportSectionRun } from './ai'
+import type { AiCell, AiChartSpec, AiDayRange, AiReportPeriod, AiReportSectionRun } from './ai'
 import type { Role } from './types'
 
 // ---- Limits ------------------------------------------------------------------------
@@ -100,6 +100,8 @@ export interface AutomationReportSection {
   title: string
   /** With a period, the SQL carries {{from}} and {{to}} like a saved report's. */
   sql: string
+  /** How its result is drawn in the delivered report; checked against each run's result. */
+  chart?: AiChartSpec
 }
 
 /** A scheduled report: when it runs (factory time) and what it covers. */

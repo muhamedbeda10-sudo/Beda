@@ -46,7 +46,9 @@ import { useAi } from './AiAssistantProvider'
 import { AiCode } from './AiCode'
 import { Notice } from './AiNotice'
 import { DeleteReportModal, ReportTitleEditor } from './AiReportList'
+import { AiChart } from './AiChart'
 import { AiResultModal, PreviewTable } from './AiResultTable'
+import { queryChart } from './chartData'
 import { aiReportExportMessage, aiReportFilename, aiReportSheets } from './exportAiReport'
 import {
   REPORT_PERIOD_SAVED,
@@ -412,6 +414,8 @@ const ReportSection = memo(function ReportSection({ part, templated, onExport, e
     ? `${part.rowCount.toLocaleString()}${part.truncated ? '+' : ''} ${part.rowCount === 1 && !part.truncated ? 'row' : 'rows'} · ${part.ms.toLocaleString()} ms`
     : `Failed · ${part.ms.toLocaleString()} ms`
   const placeholders = templated && /\{\{(from|to)\}\}/.test(part.sql)
+  // Drawn as the answer drew it, from this run's rows.
+  const chart = useMemo(() => queryChart(part), [part])
 
   return (
     <section className={cn('overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', part.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
@@ -433,6 +437,7 @@ const ReportSection = memo(function ReportSection({ part, templated, onExport, e
       </header>
 
       <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
+        {chart && <AiChart model={chart} />}
         {part.ok ? (
           <PreviewTable part={part} />
         ) : (

@@ -19,7 +19,9 @@ import type { AutomationDelivery } from '@qc/shared/automation'
 import { Badge, Button, Card } from '@/components/ui'
 import { AiMarkdown } from '@/components/ai/AiMarkdown'
 import { Notice } from '@/components/ai/AiNotice'
+import { AiChart } from '@/components/ai/AiChart'
 import { AiResultModal, PreviewTable } from '@/components/ai/AiResultTable'
+import { queryChart } from '@/components/ai/chartData'
 import { useAi } from '@/components/ai/AiAssistantProvider'
 import { sectionAsQuery } from '@/components/ai/reports'
 import { periodText } from '@/components/automations/parts'
@@ -137,6 +139,8 @@ function Delivery({ d }: { d: AutomationDelivery }) {
 const DeliveredSection = memo(function DeliveredSection({ part, onExport }: { part: AiQueryPart; onExport: () => void }) {
   const [table, setTable] = useState(false)
   const preview = useMemo(() => (part.rows.length > AI_PREVIEW_ROWS ? { ...part, rows: part.rows.slice(0, AI_PREVIEW_ROWS), truncated: true } : part), [part])
+  // The chart the section was given, drawn from every row it delivered.
+  const chart = useMemo(() => queryChart(part), [part])
   const meta = part.ok ? `${part.rowCount.toLocaleString('en-US')}${part.truncated ? '+' : ''} ${part.rowCount === 1 && !part.truncated ? 'row' : 'rows'}` : 'Failed'
   return (
     <section className={cn('overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', part.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
@@ -157,6 +161,7 @@ const DeliveredSection = memo(function DeliveredSection({ part, onExport }: { pa
         </div>
       </header>
       <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
+        {chart && <AiChart model={chart} />}
         {part.ok ? (
           <PreviewTable part={preview} />
         ) : (

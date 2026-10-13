@@ -165,7 +165,9 @@ describe('§20 charts: checking a chart against its result', () => {
     }
     expect(note({ type: 'bar', x: 'machine' })).toMatch(/^Chart not drawn: chart takes type, x and y/)
     expect(note({ type: 'bar', x: 'machine', y: [3] })).toMatch(/^Chart not drawn: chart takes/)
-    expect(note({ type: 'scatter', x: 'machine', y: ['samples'] })).toBe('Chart not drawn: its type must be one of bar, line, area, pie, stacked-bar.')
+    expect(note({ type: 'radar', x: 'machine', y: ['samples'] })).toBe(
+      'Chart not drawn: its type must be one of bar, horizontal-bar, stacked-bar, stacked-bar-100, line, area, stacked-area, pie, combo, pareto, scatter, heatmap, control.',
+    )
     expect(note({ type: 'bar', x: 'day', y: ['samples'] })).toBe('Chart not drawn: x "day" is not a column of the result.')
     expect(note({ type: 'bar', x: 'machine', y: ['defects'] })).toBe('Chart not drawn: y "defects" is not a column of the result.')
     expect(note({ type: 'bar', x: 'machine', y: [] })).toBe('Chart not drawn: y takes 1 to 4 columns.')
@@ -212,12 +214,71 @@ describe('§20 charts: checking a chart against its result', () => {
     })
   })
 
+  it('takes each kind of chart with what it needs, and draws one that cannot be as asked another way', () => {
+    // A ranking, a 100% stack, a combo with a target, a heatmap, a control chart; donut is a pie.
+    expect(checkChart({ type: 'horizontal-bar', x: 'machine', y: ['samples'], goal: 20 }, byMachine)).toEqual({ chart: { type: 'horizontal-bar', x: 'machine', y: ['samples'], goal: 20 } })
+    expect(checkChart({ type: 'Donut', x: 'machine', y: ['samples'] }, byMachine).chart?.type).toBe('pie')
+    expect(checkChart({ type: 'percent stacked bar', x: 'machine', y: ['samples', 'defect_pieces'] }, byMachine).chart?.type).toBe('stacked-bar-100')
+    const days = result(
+      ['day', 'produced', 'reject_pct'],
+      Array.from({ length: 6 }, (_, i) => [`2026-09-0${i + 1}`, 100 + i * 10, 1 + (i % 3) * 0.5]),
+    )
+    expect(checkChart({ type: 'combo', x: 'day', y: ['produced', 'reject_pct'], goal: 2 }, days)).toEqual({ chart: { type: 'combo', x: 'day', y: ['produced', 'reject_pct'], goal: 2 } })
+    expect(checkChart({ type: 'control', x: 'day', y: ['reject_pct'] }, days)).toEqual({ chart: { type: 'control', x: 'day', y: ['reject_pct'] } })
+    const grid = result(
+      ['day', 'machine', 'n'],
+      [
+        ['2026-09-01', '58', 1],
+        ['2026-09-01', '31', 4],
+        ['2026-09-02', '58', 2],
+      ],
+    )
+    expect(checkChart({ type: 'heatmap', x: 'day', y: ['n'], series: 'machine' }, grid)).toEqual({ chart: { type: 'heatmap', x: 'day', y: ['n'], series: 'machine' } })
+    // A scatter's points may share an x; its x is a number.
+    const pairs = result(['thickness', 'rejects'], [[1.5, 3], [1.5, 4], [2, 6], [2.5, 9]])
+    expect(checkChart({ type: 'scatter', x: 'thickness', y: ['rejects'] }, pairs)).toEqual({ chart: { type: 'scatter', x: 'thickness', y: ['rejects'] } })
+
+    // What each kind cannot take.
+    const why = (chart: unknown, r: QueryPreview) => checkChart(chart, r).note
+    expect(why({ type: 'combo', x: 'day', y: ['produced'] }, days)).toMatch(/a combo chart takes 2 to 4 y columns/)
+    expect(why({ type: 'heatmap', x: 'day', y: ['n'] }, grid)).toBe('Chart not drawn: a heatmap takes one y column and a series column for its rows.')
+    expect(why({ type: 'pareto', x: 'day', y: ['produced', 'reject_pct'] }, days)).toBe('Chart not drawn: a Pareto chart takes one y column and no series.')
+    expect(why({ type: 'control', x: 'machine', y: ['samples'] }, byMachine)).toBe('Chart not drawn: a control chart needs at least 5 points for its limits.')
+    expect(why({ type: 'scatter', x: 'machine', y: ['samples'] }, byMachine)).toMatch(/^Chart not drawn: a scatter chart's x column "machine" must be numeric/)
+    // Drawn another way, saying so; a goal on a chart that takes none is left out.
+    const change = result(['machine', 'a', 'b'], [['58', 3, 1], ['31', -2, 4]])
+    expect(checkChart({ type: 'stacked-bar', x: 'machine', y: ['a', 'b'] }, change)).toEqual({
+      chart: { type: 'bar', x: 'machine', y: ['a', 'b'] },
+      note: 'Chart drawn as bars side by side instead of stacked: a stack cannot show values below zero.',
+    })
+    expect(checkChart({ type: 'stacked-area', x: 'machine', y: ['a', 'b'] }, change).chart?.type).toBe('line')
+    expect(checkChart({ type: 'pareto', x: 'machine', y: ['a'] }, change).chart?.type).toBe('bar')
+    expect(checkChart({ type: 'pie', x: 'machine', y: ['samples'], goal: 3 }, byMachine)).toEqual({
+      chart: { type: 'pie', x: 'machine', y: ['samples'] },
+      note: 'The goal line is not drawn: a pie chart takes none.',
+    })
+  })
+
   it('is offered in the tool as an optional object the API can hold the model to', () => {
     const schema = RUN_SQL_TOOL.input_schema as { properties: Record<string, unknown>; required: string[] }
     expect(schema.required).toEqual(['purpose', 'sql'])
     expect(schema.properties.chart).toBe(CHART_INPUT_SCHEMA)
     expect(CHART_INPUT_SCHEMA).toMatchObject({ type: 'object', required: ['type', 'x', 'y'], additionalProperties: false })
-    expect(CHART_INPUT_SCHEMA.properties.type.enum).toEqual(['bar', 'line', 'area', 'pie', 'stacked-bar'])
+    expect(CHART_INPUT_SCHEMA.properties.type.enum).toEqual([
+      'bar',
+      'horizontal-bar',
+      'stacked-bar',
+      'stacked-bar-100',
+      'line',
+      'area',
+      'stacked-area',
+      'pie',
+      'combo',
+      'pareto',
+      'scatter',
+      'heatmap',
+      'control',
+    ])
     // Strict tool use takes no length or count limits: those are checked here instead.
     expect(JSON.stringify(RUN_SQL_TOOL)).not.toMatch(/"(minItems|maxItems|minLength|maxLength|minimum|maximum)"/)
   })

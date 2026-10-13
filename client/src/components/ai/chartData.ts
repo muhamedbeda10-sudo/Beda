@@ -19,6 +19,8 @@ import { cellNumber, cellText } from './tables'
 
 /** The most series one chart draws (the server's limit too); beyond it, the largest are drawn and the figure says so. */
 export const AI_CHART_MAX_SERIES = 8
+/** A heatmap's rows at most (the server's limit too). */
+export const AI_HEATMAP_MAX_ROWS = 25
 /** The most y columns a chart takes, as the tool allows. */
 export const AI_CHART_MAX_Y = 4
 /** A pie takes at most this many slices; with more, it is drawn as bars. */
@@ -46,6 +48,20 @@ export interface ChartSeries {
   values: (number | null)[]
 }
 
+/** A scatter chart's points of one series. */
+export interface ScatterSeries {
+  label: string
+  points: { x: number; y: number }[]
+}
+
+/** An individuals control chart's centre line and limits (3 sigma, sigma from the average moving range). */
+export interface ControlLimits {
+  mean: number
+  ucl: number
+  lcl: number
+  sigma: number
+}
+
 export interface ChartModel {
   /** What is drawn: a pie of too many slices is drawn as bars. */
   type: AiChartType
@@ -53,8 +69,20 @@ export interface ChartModel {
   /** The x column's values, in the order the query returned them, as shown. */
   labels: string[]
   series: ChartSeries[]
-  /** '%' when the figures are percentages (by the y column's name), else ''. */
+  /** '%' when the figures are percentages (by the y column's name), else ''. A combo's: its bars'. */
   unit: string
+  /** A combo's lines' unit. */
+  lineUnit?: string
+  /** A target drawn as a dashed line. */
+  goal?: number
+  /** A scatter chart's points, by series; the axes' names. */
+  scatter?: ScatterSeries[]
+  xName?: string
+  yName?: string
+  /** A control chart's centre line and limits. */
+  control?: ControlLimits
+  /** A Pareto's running share of the total at each bar, in %. */
+  cumulative?: number[]
   /** Series left out (the smallest), when there were more than a chart draws. */
   omitted: number
   /** When one column is split into series: the y column the values come from, and the column that splits it. */
@@ -135,7 +163,7 @@ export function axisOrder(xs: readonly AiCell[], type: AiChartType): number[] | 
   let key: ((v: AiCell) => string | number) | null = null
   // ISO days, months and midnight timestamps read in time's order as text.
   if (known.every((v) => typeof v === 'string' && (YMD.test(v.trim()) || YM.test(v.trim())))) key = (v) => String(v).trim()
-  else if ((type === 'line' || type === 'area') && known.every((v) => typeof v === 'number')) key = (v) => v as number
+  else if ((type === 'line' || type === 'area' || type === 'stacked-area' || type === 'control') && known.every((v) => typeof v === 'number')) key = (v) => v as number
   if (!key) return null
   const by = key
   const order = xs.map((_, i) => i)
@@ -149,6 +177,57 @@ export function axisOrder(xs: readonly AiCell[], type: AiChartType): number[] | 
     return ka < kb ? -1 : ka > kb ? 1 : a - b
   })
   return order.every((v, i) => v === i) ? null : order
+}
+
+/**
+ * An individuals (XmR) control chart's lines: the mean of the values, and
+ * limits 3 sigma either side, sigma estimated from the average moving range
+ * (MR-bar / 1.128, as SPC does: robust to a shift in the process, unlike the
+ * plain standard deviation). Null with fewer than two values.
+ */
+export function controlLimits(values: readonly (number | null)[]): ControlLimits | null {
+  const known = values.filter((v): v is number => v !== null && Number.isFinite(v))
+  if (known.length < 2) return null
+  const mean = known.reduce((t, v) => t + v, 0) / known.length
+  let ranges = 0
+  for (let i = 1; i < known.length; i++) ranges += Math.abs(known[i] - known[i - 1])
+  const sigma = ranges / (known.length - 1) / 1.128
+  return { mean, ucl: mean + 3 * sigma, lcl: mean - 3 * sigma, sigma }
+}
+
+/** Each category's share of the running total, in %, after ordering largest first (a Pareto's line). */
+export function cumulativeShares(values: readonly number[]): number[] {
+  const total = values.reduce((t, v) => t + Math.max(0, v), 0)
+  let run = 0
+  return values.map((v) => {
+    run += Math.max(0, v)
+    return total > 0 ? Math.min(100, (run / total) * 100) : 0
+  })
+}
+
+/** Each column's parts as shares of its total, in % (a 100% stacked chart); a column of nothing stays nothing. */
+export function percentStack(series: readonly ChartSeries[], n: number): ChartSeries[] {
+  const totals = Array.from({ length: n }, (_, i) => series.reduce((t, s) => t + Math.max(0, s.values[i] ?? 0), 0))
+  return series.map((s) => ({ label: s.label, values: s.values.map((v, i) => (v === null || totals[i] === 0 ? null : (Math.max(0, v) / totals[i]) * 100)) }))
+}
+
+/** A least-squares line through points, with r (Pearson's); null for fewer than two distinct x. */
+export function trendLine(points: readonly { x: number; y: number }[]): { slope: number; intercept: number; r: number } | null {
+  const n = points.length
+  if (n < 2) return null
+  const mx = points.reduce((t, p) => t + p.x, 0) / n
+  const my = points.reduce((t, p) => t + p.y, 0) / n
+  let sxy = 0
+  let sxx = 0
+  let syy = 0
+  for (const p of points) {
+    sxy += (p.x - mx) * (p.y - my)
+    sxx += (p.x - mx) ** 2
+    syy += (p.y - my) ** 2
+  }
+  if (sxx === 0) return null
+  const slope = sxy / sxx
+  return { slope, intercept: my - slope * mx, r: syy === 0 ? 0 : sxy / Math.sqrt(sxx * syy) }
 }
 
 /** Percentages by name: "reject_rate_pct", "share %", "Defect percent". */
@@ -170,6 +249,48 @@ export function shapeChart(spec: AiChartSpec | undefined, columns: readonly stri
 
   // Every value read once: a value that is not a number means the column is not one.
   const num = (v: AiCell | undefined): number | null | undefined => (v === null || v === undefined ? null : (cellNumber(v) ?? undefined))
+  const yNames = si >= 0 ? [columns[ys[0]]] : ys.map((i) => columns[i])
+  const goal = typeof spec.goal === 'number' && Number.isFinite(spec.goal) ? { goal: spec.goal } : {}
+  const titled = spec.title?.trim() ? { title: spec.title.trim() } : {}
+
+  if (spec.type === 'scatter') {
+    // Points, not categories: one per row, by series (each y column, or each value of the split column).
+    const groups = new Map<string, ScatterSeries>()
+    const add = (label: string, x: number, y: number) => {
+      let g = groups.get(label)
+      if (!g) groups.set(label, (g = { label, points: [] }))
+      g.points.push({ x, y })
+    }
+    for (const r of rows) {
+      const x = num(r[xi])
+      if (x === undefined) return null
+      if (x === null) continue
+      if (si >= 0) {
+        const y = num(r[ys[0]])
+        if (y === undefined) return null
+        if (y !== null) add(r[si] === null || r[si] === undefined ? '(blank)' : cellText(r[si]).trim() || '(blank)', x, y)
+      } else
+        for (const yi of ys) {
+          const y = num(r[yi])
+          if (y === undefined) return null
+          if (y !== null) add(humanizeColumn(columns[yi]), x, y)
+        }
+    }
+    const scatter = [...groups.values()].slice(0, AI_CHART_MAX_SERIES)
+    if (scatter.reduce((t, g) => t + g.points.length, 0) < 2) return null
+    return {
+      type: 'scatter',
+      ...titled,
+      labels: [],
+      series: [],
+      unit: yNames.every(isPercentName) ? '%' : '',
+      omitted: Math.max(0, groups.size - scatter.length),
+      scatter,
+      xName: humanizeColumn(columns[xi]),
+      yName: si >= 0 ? humanizeColumn(columns[ys[0]]) : ys.length === 1 ? humanizeColumn(columns[ys[0]]) : '',
+      ...goal,
+    }
+  }
 
   // A value of x or of the split column as the server tells them apart (server/src/ai/charts.ts): by what the query
   // returned, exactly — null and "", "A" and "A ", 1 and "1" are each two, however alike they are written.
@@ -230,29 +351,52 @@ export function shapeChart(spec: AiChartSpec | undefined, columns: readonly stri
   if (all.length === 0) return null
   const negative = all.some((v) => v < 0)
 
-  // The largest series first when one column is split; the y columns keep the order asked for.
+  // The largest series first when one column is split (a heatmap keeps its rows in the order they came); the y columns keep the order asked for.
   const total = (s: ChartSeries) => s.values.reduce<number>((t, v) => t + (v ?? 0), 0)
-  const ranked = si >= 0 ? [...values].sort((a, b) => total(b) - total(a)) : values
-  const kept = ranked.slice(0, AI_CHART_MAX_SERIES)
+  const ranked = si >= 0 && spec.type !== 'heatmap' ? [...values].sort((a, b) => total(b) - total(a)) : values
+  const kept = ranked.slice(0, spec.type === 'heatmap' ? AI_HEATMAP_MAX_ROWS : AI_CHART_MAX_SERIES)
   const omitted = ranked.length - kept.length
 
   let type = spec.type
   // As the server draws them: a pie of one series, a few slices, none below zero; a stack that does not cross zero.
   if (type === 'pie' && (kept.length > 1 || n > AI_PIE_MAX_SLICES || negative)) type = 'bar'
-  if (type === 'stacked-bar' && negative) type = 'bar'
+  if ((type === 'stacked-bar' || type === 'stacked-bar-100' || type === 'pareto') && negative) type = 'bar'
+  if (type === 'stacked-area' && negative) type = 'line'
+  if (type === 'combo' && kept.length < 2) type = 'bar'
+  if ((type === 'pareto' || type === 'control') && kept.length !== 1) type = type === 'pareto' ? 'bar' : 'line'
   // Bars and slices of nothing draw nothing; a line along zero still says something.
   const drawable = kept.flatMap((s) => s.values).some((v) => v !== null && v !== 0)
-  if (type !== 'line' && type !== 'area' && !drawable) return null
+  if (type !== 'line' && type !== 'area' && type !== 'control' && !drawable) return null
 
-  const yNames = si >= 0 ? [columns[ys[0]]] : ys.map((i) => columns[i])
+  let labels = uniqueLabels(chartLabels(arrange(xValues)))
+  let drawn: ChartSeries[] = kept
+  const extra: Partial<ChartModel> = {}
+  if (type === 'pareto') {
+    // Largest first, whatever order the rows came in; the running share over them.
+    const order = labels.map((_, i) => i).sort((a, b) => (kept[0].values[b] ?? 0) - (kept[0].values[a] ?? 0))
+    labels = order.map((i) => labels[i])
+    drawn = [{ label: kept[0].label, values: order.map((i) => kept[0].values[i]) }]
+    extra.cumulative = cumulativeShares(drawn[0].values.map((v) => v ?? 0))
+  }
+  if (type === 'control') {
+    const limits = controlLimits(drawn[0].values)
+    if (!limits) return null
+    extra.control = limits
+  }
+  if (type === 'combo') {
+    const lineNames = yNames.slice(1)
+    extra.lineUnit = lineNames.every(isPercentName) ? '%' : ''
+  }
   return {
     type,
-    ...(spec.title?.trim() ? { title: spec.title.trim() } : {}),
-    labels: uniqueLabels(chartLabels(arrange(xValues))),
-    series: kept,
-    unit: yNames.every(isPercentName) ? '%' : '',
+    ...titled,
+    labels,
+    series: drawn,
+    unit: (type === 'combo' ? yNames.slice(0, 1) : yNames).every(isPercentName) ? '%' : '',
     omitted,
     ...(si >= 0 ? { measure: humanizeColumn(columns[ys[0]]), splitBy: humanizeColumn(columns[si]) } : {}),
+    ...(type === 'pie' || type === 'stacked-bar' || type === 'stacked-bar-100' || type === 'stacked-area' || type === 'heatmap' || type === 'pareto' ? {} : goal),
+    ...extra,
   }
 }
 

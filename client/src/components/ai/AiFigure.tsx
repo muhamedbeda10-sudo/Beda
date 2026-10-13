@@ -6,8 +6,8 @@
 // ============================================================================
 
 import { memo, useState } from 'react'
-import { ChartColumnBig, ChartLine, ChartPie, Table2 } from 'lucide-react'
-import type { AiQueryPart } from '@qc/shared/ai'
+import { ChartBarBig, ChartColumnBig, ChartColumnStacked, ChartLine, ChartPie, ChartScatter, Grid3x3, Activity, ChartNoAxesCombined, Table2 } from 'lucide-react'
+import type { AiChartType, AiQueryPart } from '@qc/shared/ai'
 import { AiChart } from './AiChart'
 import { EXPORT_TIP, useQueryExport } from './AiQueryCard'
 import { AiResultModal, PreviewTable } from './AiResultTable'
@@ -15,7 +15,21 @@ import { ExportTool, TableTool } from './AiTable'
 import type { ChartModel } from './chartData'
 import { textDirection } from './tables'
 
-const ICON = { line: ChartLine, area: ChartLine, pie: ChartPie, bar: ChartColumnBig, 'stacked-bar': ChartColumnBig } as const
+const ICON: Record<AiChartType, typeof ChartLine> = {
+  line: ChartLine,
+  area: ChartLine,
+  'stacked-area': ChartLine,
+  pie: ChartPie,
+  bar: ChartColumnBig,
+  'horizontal-bar': ChartBarBig,
+  'stacked-bar': ChartColumnStacked,
+  'stacked-bar-100': ChartColumnStacked,
+  combo: ChartNoAxesCombined,
+  pareto: ChartNoAxesCombined,
+  scatter: ChartScatter,
+  heatmap: Grid3x3,
+  control: Activity,
+}
 
 export const AiFigure = memo(function AiFigure({ part, model, question }: { part: AiQueryPart; model: ChartModel; question?: string }) {
   const [table, setTable] = useState(false)
