@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { Sparkles } from 'lucide-react'
+import { ChevronDown, ChevronUp, Search, Sparkles } from 'lucide-react'
 import { RELEASES, latestReleaseId, unseenReleases, type Release } from '@qc/shared/releases'
 import { Button, Modal } from '@/components/ui'
 import { useReleaseState } from '@/services/queries'
@@ -43,6 +43,78 @@ export function ReleaseList({ unseenIds = new Set<string>() }: { unseenIds?: Set
     <div className="space-y-3">
       {RELEASES.map((r) => (
         <ReleaseCard key={r.id} release={r} fresh={unseenIds.has(r.id)} />
+      ))}
+    </div>
+  )
+}
+
+/** Notes open at first on the archive page: the newest few; the rest are their titles until opened. */
+const OPEN_AT_FIRST = 3
+
+/**
+ * The archive: every note, newest first, under its day, searchable; the newest few and any still to be read
+ * open, the others one line each (their title) that opens on a tap — a long history stays a page you can scan.
+ */
+export function ReleaseArchive({ unseenIds = new Set<string>() }: { unseenIds?: Set<string> }) {
+  const [term, setTerm] = useState('')
+  const [opened, setOpened] = useState<Set<string>>(() => new Set(RELEASES.slice(0, OPEN_AT_FIRST).map((r) => r.id)))
+  const needle = term.trim().toLowerCase()
+  const shown = needle ? RELEASES.filter((r) => [r.title, ...r.items.map((i) => i.text)].some((t) => t.toLowerCase().includes(needle))) : RELEASES
+  const days = new Map<string, Release[]>()
+  for (const r of shown) days.set(r.date, [...(days.get(r.date) ?? []), r])
+  const toggle = (id: string) =>
+    setOpened((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1 sm:max-w-md">
+          <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+          <input type="search" value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search the updates…" aria-label="Search the updates" className="input h-10 pl-9 text-sm touch:h-11" />
+        </div>
+        <Button className="h-10 min-h-0 px-3 py-0 text-13 touch:h-11" onClick={() => setOpened(new Set(shown.map((r) => r.id)))}>
+          Open all
+        </Button>
+        <Button className="h-10 min-h-0 px-3 py-0 text-13 touch:h-11" onClick={() => setOpened(new Set())}>
+          Fold all
+        </Button>
+        <span className="text-xs text-muted">{shown.length} of {RELEASES.length} updates</span>
+      </div>
+      {shown.length === 0 && <p className="py-8 text-center text-sm text-muted">No update mentions “{term.trim()}”.</p>}
+      {[...days.entries()].map(([day, releases]) => (
+        <section key={day} className="grid gap-2 lg:grid-cols-[9rem_1fr] lg:gap-4">
+          <h2 className="pt-2 text-xs font-bold uppercase tracking-wide text-muted lg:sticky lg:top-[calc(5rem+env(safe-area-inset-top))] lg:self-start">
+            <When iso={day} />
+          </h2>
+          <div className="space-y-2">
+            {releases.map((r) => {
+              const open = needle !== '' || opened.has(r.id) || unseenIds.has(r.id)
+              return (
+                <article key={r.id} className={cn('rounded-2xl ring-1', unseenIds.has(r.id) ? 'bg-brand-50/60 ring-brand-200 dark:bg-brand-500/10 dark:ring-brand-500/30' : 'bg-white ring-slate-200 dark:bg-slate-900 dark:ring-slate-800')}>
+                  <button type="button" onClick={() => toggle(r.id)} aria-expanded={open} className="flex w-full items-center gap-2 px-4 py-3 text-start touch:min-h-[48px]">
+                    <h3 className="min-w-0 flex-1 text-sm font-bold">{r.title}</h3>
+                    {unseenIds.has(r.id) && <span className="rounded-full bg-brand-600 px-2 py-0.5 text-[10px] font-bold uppercase text-white">New</span>}
+                    {open ? <ChevronUp aria-hidden className="h-4 w-4 shrink-0 text-muted" /> : <ChevronDown aria-hidden className="h-4 w-4 shrink-0 text-muted" />}
+                  </button>
+                  {open && (
+                    <ul className="space-y-1.5 px-4 pb-4">
+                      {r.items.map((item, i) => (
+                        <li key={i} className="flex gap-2 text-sm text-slate-700 dark:text-slate-200">
+                          <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
+                          <span>{item.text}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+              )
+            })}
+          </div>
+        </section>
       ))}
     </div>
   )

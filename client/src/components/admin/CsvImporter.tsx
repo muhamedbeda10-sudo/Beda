@@ -368,12 +368,13 @@ export function CsvImporter({ importer }: { importer: Importer }) {
     <div className="space-y-4">
       {/* ---- Source file ---- */}
       <Card className="space-y-4 p-4 sm:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
+        {/* The template beside what it is for, however long the description: the text takes the room left. */}
+        <div className="flex flex-wrap items-start justify-between gap-3 sm:flex-nowrap">
+          <div className="min-w-0 flex-1">
             <h3 className="text-base font-bold">{importer.title}</h3>
-            <p className="mt-0.5 text-sm text-muted">{importer.description}</p>
+            <p className="mt-0.5 max-w-4xl text-sm text-muted">{importer.description}</p>
           </div>
-          <Button className="min-h-[48px]" onClick={downloadTemplate}>
+          <Button className="min-h-[48px] shrink-0" onClick={downloadTemplate}>
             <FileDown className="h-4 w-4" /> Download CSV template
           </Button>
         </div>
