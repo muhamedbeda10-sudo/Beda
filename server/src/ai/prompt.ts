@@ -14,6 +14,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { AI_DOMAIN_IDS, AI_PREVIEW_ROWS, isAiDay, type AiDomain } from '@qc/shared/ai'
+import { AI_EXCEL_KEEP_DAYS, AI_EXCEL_MAX_ROWS, AI_EXCEL_MAX_SHEETS } from '@qc/shared/aiExcel'
 import { AUTOMATION_MIN_EVERY_MINUTES } from '@qc/shared/automation'
 import type { NoticePromptMode } from '../noticeAssistant/scope'
 import type { PromptPlaybook } from '../playbook/service'
@@ -184,20 +185,21 @@ export function conversationTools(
  * The system prompt of a new conversation: the rules, then the data
  * dictionary of the views the person may read. What it says depends only on
  * the time zone, the person's domains, what they may do with notices (§23),
- * whether they may send tasks, and — when they may create automations (§21)
+ * whether they may send tasks and have Excel files made, and — when they
+ * may create automations (§21)
  * — who they are, so the same person gets the same bytes (and the prompt
  * cache) conversation after conversation. Without automations it is the same
  * prompt, byte for byte, less the Automations section. Without `notices` it
  * is the prompt as before §23: no Notices section, and no word of notices in
- * the general rules; without `tasks`, no word of tasks; without `playbook`,
- * no Playbook section. The chat always passes all three: the playbook as it
- * is when the conversation begins.
+ * the general rules; without `tasks`, no word of tasks; without `excel`, no
+ * Excel files section; without `playbook`, no Playbook section. The chat
+ * always passes all four: the playbook as it is when the conversation begins.
  */
 export function renderSystemPrompt(
   factoryTimeZone: string,
   schemaDescription: string,
   domains: readonly AiDomain[],
-  options: { automations?: AutomationAsker | null; notices?: NoticePromptMode | null; tasks?: boolean; playbook?: PromptPlaybook | null } = {},
+  options: { automations?: AutomationAsker | null; notices?: NoticePromptMode | null; tasks?: boolean; excel?: boolean; playbook?: PromptPlaybook | null } = {},
 ): string {
   const granted = AI_DOMAIN_IDS.filter((d) => domains.includes(d))
   const has = (d: AiDomain) => granted.includes(d)
@@ -216,7 +218,7 @@ plus the machine register${options.notices ? ', and the notices this person can 
 - Prefer aggregates computed in SQL (count, sum, GROUP BY) to listing rows. Select only the columns you need and use LIMIT for listings: a result shows at most ${AI_PREVIEW_ROWS} rows.
 - If a query fails, read the error, fix the query and run it again. A permission error means the view is not among the data you can read for this person. Several queries for one question are fine.
 - Before you start, say in one line what you are about to check. Close with an answer that stands on its own; when you need something from the person first (a choice, a missing detail, their agreement to a plan), close with your questions instead.${
-    options.notices || options.automations || options.tasks || options.playbook
+    options.notices || options.automations || options.tasks || options.excel || options.playbook
       ? '\n- run_sql is ready from the start. The other tools this prompt names load on demand, to keep each question light: when a request needs one, first find it with tool_search_tool_bm25 (search by the tool\'s name, for example "list_notices"), then call it. A tool once found stays ready for the rest of the conversation. Never search for a tool the question does not need.'
       : ''
   }`)
@@ -226,7 +228,7 @@ Work like a consultant who knows the factory, not like a search box.
 - Before you say something cannot be done, or propose a plan, check what the record supports: the columns described under "The data", and, with run_sql, how often something is recorded and whether there is data for the period. A clear question needs no queries beyond the ones that answer it.
 - If it can be done as asked, do it. Most requests are clear: a detail left out that has a usual reading is not an ambiguity (no period given: the one the conversation settled, else this month so far; no machine named: all of them). Use that reading and state it. If the request can reasonably mean different things that would give different results (which of several machines "the welder" is, what "a lot" means), ask instead of guessing: at most three short questions, each with the choice you would make. A small ambiguity that does not change the result: go ahead and state the assumption.
 - If it cannot be done as asked, say plainly why, in terms of what the system records (for example: a session's produced pieces are recorded once, when it is closed, not while it runs). Then offer two or three ways forward, each with what it gives and what it misses: what the data can do now (a nearby measure, a different period, a comparison); and, when it is the real answer, what would need a change in the app (a new field to record, a new screen, a connection to the machines), marked clearly as needing development - something the assistant cannot do or arrange itself. Never pretend such a change exists, or offer to make it or to pass it on: nothing in this chat reaches the people who develop the app. A short table compares options well. Recommend one and say why, then ask what you need to go ahead.
-- Data outside what you can read for this person, and alerts or regular reports when you have no tool to set them up, may exist in the system for others: say it is not available to them here, and that the assistant's owner decides what each person gets. Never call it something that needs development.
+- Data outside what you can read for this person, and alerts, regular reports or Excel files when you have no tool to set them up or make them, may exist in the system for others: say it is not available to them here, and that the assistant's owner decides what each person gets. Never call it something that needs development.
 - If you see a better way to reach what the person wants than the one they asked for, say so briefly; then do what they decide.
 - Carry the conversation on until you agree on something useful: when the person answers, continue from what was settled, without starting over or repeating the options.`)
   sections.push(`# Time
@@ -279,6 +281,7 @@ When your answer asks the person something (to choose an option, to answer a que
   sections.push(ATTACHMENTS_SECTION)
   if (options.notices) sections.push(noticesSection(options.notices))
   if (options.tasks) sections.push(TASKS_SECTION)
+  if (options.excel) sections.push(EXCEL_SECTION)
   if (options.playbook) sections.push(playbookSection(options.playbook))
   if (options.automations) sections.push(automationsSection(options.automations, has('audit'), options.notices === 'manager'))
   sections.push(readOnlySection(options.notices === 'manager', !!options.tasks, !!options.playbook))
@@ -357,6 +360,20 @@ The person can send tasks to the app's people: what is to be done, to whom, how 
 - The title says what is to be done, as an action, in one line; the details say where, what to check or do, and what to send back (photos, figures). Write both in the person's language. priority: normal, unless the person says otherwise or it is a safety or quality risk that cannot wait (urgent). A deadline only when the person gave one or agreed to one, on the factory's clock.
 - When what you found calls for someone to act (a machine to check, a hold to clear), you may offer a task in a sentence or a suggestion; propose it once the person agrees.
 - Questions about tasks (who has not done it yet, what is overdue, what waits for their confirmation, what was sent to them) are answered from my_tasks, never from run_sql: the ai.* views do not hold tasks. Link a task as [T-12](/tasks/<id>), with the link my_tasks gives. Confirming a done, sending it back, replying and marking one's own part are done on the task's page.`
+
+/**
+ * Excel files: when to make one with make_excel, what to ask first, and how
+ * to lay it out as the person asks. The server builds the file: the model
+ * never sees its rows.
+ */
+const EXCEL_SECTION = `# Excel files
+When the person asks for data in Excel (a file, a sheet, "send it to me in Excel"), make it with make_excel. The server runs your queries, builds the file and shows it to them as a card with Download; you never see its rows, only each sheet's columns and how many rows it holds, so never give figures from it.
+- First be sure of what it should hold. When the period, the place (a department or section can be a factory, a process, a production line or a machine: ask which) or anything else that changes its rows is missing or unclear, ask before making it, in one short message, each question with the choice you would suggest. Never assume a period for a file.
+- Lay it out as they ask: the columns, their order and headings, how each is written, a totals row, a title and a line of notes, one sheet or several (up to ${AI_EXCEL_MAX_SHEETS}: per machine, per month, a summary and its details). What they leave out has a usual reading: headings in their language, the rows in a useful order (by date, or largest first), a sum of the counts and quantities of a list, the period and the filters in the notes. An Arabic file reads right to left.
+- Each sheet is one read-only query over the ai.* views, as run_sql takes it, returning every row the sheet should hold: no LIMIT unless they asked for the top few. Do not run it with run_sql to look at the data first; use run_sql only to look up a name or a code a filter needs (how a machine or a customer is written).
+- A sheet holds at most ${AI_EXCEL_MAX_ROWS.toLocaleString('en-US')} rows. With more, no file is made: tell the person and ask how to narrow it (a shorter period, a machine, a summary instead of every row).
+- A percentage is 0 to 100 (2.5 for 2.5%), format percent; a day or a time is selected as a date or a timestamp, format date or datetime; a code, or a number that names something (an order or a session number), is text.
+- If make_excel lists problems, fix all of them and call it again. Once it is made, say in a sentence or two what the file holds (its sheets, the period, the filters); it can be downloaded for ${AI_EXCEL_KEEP_DAYS} days.`
 
 /**
  * Files a question carries: photos (often of handwritten sheets), PDFs and
@@ -443,8 +460,8 @@ This person may set up automations: when they ask to be alerted or notified, to 
 - To change one of the person's automations, propose it again whole with replacesAutomationId set to its id; activating that proposal updates it.`
 }
 
-/** The date line a question carries: the system prompt has none, so its bytes never change. */
-export function contextLine(at: Date, timeZone: string): string {
+/** An instant on the factory's clock: "2026-10-13 08:30". */
+export function factoryClock(at: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
@@ -455,7 +472,12 @@ export function contextLine(at: Date, timeZone: string): string {
     hourCycle: 'h23',
   }).formatToParts(at)
   const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? ''
-  return `<context>Today: ${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')} (${timeZone})</context>`
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
+}
+
+/** The date line a question carries: the system prompt has none, so its bytes never change. */
+export function contextLine(at: Date, timeZone: string): string {
+  return `<context>Today: ${factoryClock(at, timeZone)} (${timeZone})</context>`
 }
 
 /** The factory day a question was asked on, read back from its date line; null for a line contextLine did not write. */

@@ -46,6 +46,7 @@ const row = (over: Partial<AiAccess>): AiAccess => ({
   owner: false,
   automations: false,
   notices: false,
+  excel: false,
   ...over,
 })
 
@@ -147,7 +148,7 @@ describe('the owner’s draft of one person’s access', () => {
   })
 
   it('starts a newcomer narrow: on, the inspection record, Sonnet at medium effort, a small cap within the app’s, no automations', () => {
-    expect(newAccessDraft(50)).toEqual({ enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', cap: '10', automations: false, notices: false })
+    expect(newAccessDraft(50)).toEqual({ enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', cap: '10', automations: false, notices: false, excel: false })
     expect(newAccessDraft(4).cap).toBe('4')
     // Never a cap they could not ask with, even under a tiny app-wide cap (the drawer names that one).
     expect(newAccessDraft(0.1).cap).toBe('0.64')
@@ -178,7 +179,7 @@ describe('the owner’s draft of one person’s access', () => {
   })
 
   it('sends the draft as the server takes it, domains in order', () => {
-    expect(accessRequest({ enabled: false, domains: ['audit', 'inspection'], model: 'claude-haiku-5-5', effort: 'low', cap: '12.50', automations: true, notices: true })).toEqual({
+    expect(accessRequest({ enabled: false, domains: ['audit', 'inspection'], model: 'claude-haiku-5-5', effort: 'low', cap: '12.50', automations: true, notices: true, excel: true })).toEqual({
       enabled: false,
       domains: ['inspection', 'audit'],
       model: 'claude-haiku-5-5',
@@ -186,6 +187,7 @@ describe('the owner’s draft of one person’s access', () => {
       monthlyCapUsd: 12.5,
       automations: true,
       notices: true,
+      excel: true,
     })
   })
 
@@ -193,6 +195,12 @@ describe('the owner’s draft of one person’s access', () => {
     expect(draftFromAccess(row({ automations: true })).automations).toBe(true)
     expect(draftFromAccess(row({})).automations).toBe(false)
     expect(draftFromAccess(row({ owner: true, automations: false })).automations).toBe(true)
+  })
+
+  it('reads the Excel permission back, the owner’s always on', () => {
+    expect(draftFromAccess(row({ excel: true })).excel).toBe(true)
+    expect(draftFromAccess(row({})).excel).toBe(false)
+    expect(draftFromAccess(row({ owner: true, excel: false })).excel).toBe(true)
   })
 
   it('reads the notices permission back: as stored, the owner’s on while an administrator', () => {
@@ -218,6 +226,7 @@ describe('the owner’s draft of one person’s access', () => {
     expect(accessChanged(saved, { ...d, effort: 'max' })).toBe(true)
     expect(accessChanged(saved, { ...d, automations: true })).toBe(true)
     expect(accessChanged(saved, { ...d, notices: true })).toBe(true)
+    expect(accessChanged(saved, { ...d, excel: true })).toBe(true)
   })
 })
 

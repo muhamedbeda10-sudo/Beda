@@ -19,6 +19,7 @@ const row = (over: Partial<AiAccess>): AiAccess => ({
   owner: false,
   automations: false,
   notices: false,
+  excel: false,
   ...over,
 })
 
@@ -39,14 +40,14 @@ describe('who can use it, as the owner reads it', () => {
       row({ userId: 'o', name: 'Mohamed Beda', username: 'beda', role: 'admin', owner: true, domains: ['inspection', 'orders', 'materials', 'audit'], monthlyCapUsd: 50, spentUsd: 12.5 }),
     ])
     // The owner's own row first, marked as theirs.
-    expect(t).toMatch(/Mohamed Beda You beda \| admin \| On \| Can create \| Can manage \| Inspections Orders & PDI Coils & master data Audit & accounts \| Claude Sonnet 5.5 \| Medium \| \$12.50 of \$50 \|/)
+    expect(t).toMatch(/Mohamed Beda You beda \| admin \| On \| Can create \| Can manage \| Can have made \| Inspections Orders & PDI Coils & master data Audit & accounts \| Claude Sonnet 5.5 \| Medium \| \$12.50 of \$50 \|/)
     // Domains in the app's order, whatever order they were stored in.
-    expect(t).toMatch(/Basem Fathy basem \| supervisor \| On \| No \| No \| Orders & PDI Audit & accounts \| Claude Haiku 5.5 \| Low \| \$0.0040 of \$5 \|/)
+    expect(t).toMatch(/Basem Fathy basem \| supervisor \| On \| No \| No \| No \| Orders & PDI Audit & accounts \| Claude Haiku 5.5 \| Low \| \$0.0040 of \$5 \|/)
   })
 
   it('says when a person cannot ask whatever is set: switched off, no data, or an account that cannot sign in', () => {
     const t = text([row({ enabled: false, domains: [], active: false })])
-    expect(t).toMatch(/Mona Adel Account off mona \| inspector \| Off \| No \| No \| None: cannot ask \|/)
+    expect(t).toMatch(/Mona Adel Account off mona \| inspector \| Off \| No \| No \| No \| None: cannot ask \|/)
   })
 
   it('says why someone whose cap is under one call to their model can never ask', () => {

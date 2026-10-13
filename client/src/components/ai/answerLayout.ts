@@ -9,11 +9,12 @@
 // query group (and the cards in it) moves rather than being drawn anew.
 //
 // An automation the assistant proposed (§21), a notice card (§23), a task
-// card or a playbook change is a card of its own, in its place among the text, written or settled: it is
+// card, a playbook change or an Excel file is a card of its own, in its place among the text, written or settled: it is
 // what the answer is for.
 // ============================================================================
 
 import type { AiTaskPart } from '@qc/shared/ai'
+import type { AiExcelPart } from '@qc/shared/aiExcel'
 import type { AiAutomationPart } from '@qc/shared/automation'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import type { AiPlaybookPart } from '@qc/shared/playbook'
@@ -23,10 +24,11 @@ type QueryLike = Extract<LivePart, { type: 'query' | 'pending-query' }>
 
 const isQuery = (p: LivePart): p is QueryLike => p.type === 'query' || p.type === 'pending-query'
 
-type InlinePart = Extract<LivePart, { type: 'text' | 'automation' | 'notice' | 'task' | 'playbook' }>
+type InlinePart = Extract<LivePart, { type: 'text' | 'automation' | 'notice' | 'task' | 'playbook' | 'excel' }>
 
 /** What reads in its place among the text: the text itself and the cards. */
-const isInline = (p: LivePart): p is InlinePart => p.type === 'text' || p.type === 'automation' || p.type === 'notice' || p.type === 'task' || p.type === 'playbook'
+const isInline = (p: LivePart): p is InlinePart =>
+  p.type === 'text' || p.type === 'automation' || p.type === 'notice' || p.type === 'task' || p.type === 'playbook' || p.type === 'excel'
 
 export type AnswerBlock =
   | { kind: 'text'; key: string; text: string }
@@ -37,6 +39,7 @@ export type AnswerBlock =
   | { kind: 'notice'; key: string; part: AiNoticePart }
   | { kind: 'task'; key: string; part: AiTaskPart }
   | { kind: 'playbook'; key: string; part: AiPlaybookPart }
+  | { kind: 'excel'; key: string; part: AiExcelPart }
 
 const QUERIES = 'queries' as const
 const KPIS = 'kpis' as const
@@ -56,8 +59,23 @@ export function answerBlocks(parts: readonly LivePart[], opts: { settled: boolea
   const notice = (p: AiNoticePart): AnswerBlock => ({ kind: 'notice', key: `notice:${p.proposalId}`, part: p })
   const task = (p: AiTaskPart): AnswerBlock => ({ kind: 'task', key: `task:${p.proposalId}`, part: p })
   const playbook = (p: AiPlaybookPart): AnswerBlock => ({ kind: 'playbook', key: `playbook:${p.changeId}`, part: p })
-  const inline = (p: InlinePart): AnswerBlock =>
-    p.type === 'text' ? text(p) : p.type === 'automation' ? automation(p) : p.type === 'notice' ? notice(p) : p.type === 'task' ? task(p) : playbook(p)
+  const excel = (p: AiExcelPart): AnswerBlock => ({ kind: 'excel', key: `excel:${p.fileId}`, part: p })
+  const inline = (p: InlinePart): AnswerBlock => {
+    switch (p.type) {
+      case 'text':
+        return text(p)
+      case 'automation':
+        return automation(p)
+      case 'notice':
+        return notice(p)
+      case 'task':
+        return task(p)
+      case 'playbook':
+        return playbook(p)
+      case 'excel':
+        return excel(p)
+    }
+  }
 
   const blocks: AnswerBlock[] = []
   let kpisPlaced = !opts.kpis

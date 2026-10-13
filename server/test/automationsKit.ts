@@ -51,6 +51,8 @@ export interface Grant {
   automations?: boolean
   /** §23 — may have the assistant write notices (while an administrator). */
   notices?: boolean
+  /** §20 — may have the assistant make Excel files. */
+  excel?: boolean
 }
 
 export async function grant(app: TestApp, owner: Session, person: Session, g: Grant = {}): Promise<AiAccess> {

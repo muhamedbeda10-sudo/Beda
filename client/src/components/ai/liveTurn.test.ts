@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AiConversation, AiMessage, AiMessagesResponse, AiQueryPart, AiStatusResponse } from '@qc/shared/ai'
 import type { AiAutomationPart, AutomationDraft } from '@qc/shared/automation'
+import type { AiExcelPart } from '@qc/shared/aiExcel'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import { answerText, applyEvent, endTurn, followsKeptRound, isInFlight, latestAnswerKey, liveAnnouncement, liveView, parseStreamEvent, sentAfter, settleMessages, startTurn, threadItems, type LiveTurn } from './liveTurn'
 
@@ -102,6 +103,27 @@ describe('the answer being written', () => {
     expect(applyEvent(applyEvent(t, { type: 'text', delta: 'Here it is.' }), { type: 'notice', part: second }).parts).toEqual([card, { type: 'text', text: 'Here it is.' }, second])
     expect(parseStreamEvent('notice', JSON.stringify({ type: 'notice', part: fixed }))).toEqual({ type: 'notice', part: fixed })
     expect(parseStreamEvent('automation', JSON.stringify({ type: 'notice', part: fixed }))).toBeNull()
+  })
+
+  it('puts an Excel file where it came, and the same file again in its place', () => {
+    const file: AiExcelPart = {
+      type: 'excel',
+      fileId: 'f1',
+      fileName: 'Scrap by machine',
+      sheets: [{ name: 'Scrap', columns: ['Machine', 'Pieces'], rows: 12 }],
+      byteSize: 7000,
+      expiresAt: '2026-11-12T08:30:00.000Z',
+    }
+    const t = run([{ type: 'start', conversation, userMessageId: 'u1' }, { type: 'progress', text: 'Laying out the file' }, { type: 'excel', part: file }])
+    expect(t.parts).toEqual([file])
+    expect(t.progress).toBeNull()
+    const again: AiExcelPart = { ...file, sheets: [{ ...file.sheets[0], rows: 13 }] }
+    expect(applyEvent(t, { type: 'excel', part: again }).parts).toEqual([again])
+    const second: AiExcelPart = { ...file, fileId: 'f2' }
+    expect(applyEvent(applyEvent(t, { type: 'text', delta: 'Here it is.' }), { type: 'excel', part: second }).parts).toEqual([file, { type: 'text', text: 'Here it is.' }, second])
+    expect(parseStreamEvent('excel', JSON.stringify({ type: 'excel', part: file }))).toEqual({ type: 'excel', part: file })
+    expect(parseStreamEvent('task', JSON.stringify({ type: 'excel', part: file }))).toBeNull()
+    expect(followsKeptRound({ type: 'excel', part: file })).toBe(false)
   })
 
   it('knows the round of the tools before an event is kept only once the model writes again', () => {

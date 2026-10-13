@@ -30,6 +30,7 @@ import { AutomationProposalCard } from '@/components/automations/AutomationPropo
 import { AiNoticeProposalCard } from './AiNoticeProposalCard'
 import { AiTaskProposalCard } from './AiTaskProposalCard'
 import { AiPlaybookCard } from './AiPlaybookCard'
+import { AiExcelCard } from './AiExcelCard'
 import { answerBlocks, type AnswerBlock } from './answerLayout'
 import { queryChart, type ChartModel } from './chartData'
 import { kpiCards, liveKpis } from './kpis'
@@ -263,6 +264,8 @@ export const Answer = memo(function Answer({
             return <AiTaskProposalCard key={b.key} part={b.part} writing={writing || tasksWait} />
           case 'playbook':
             return <AiPlaybookCard key={b.key} part={b.part} />
+          case 'excel':
+            return <AiExcelCard key={b.key} part={b.part} />
         }
       })}
       {working && <Working text={working} />}

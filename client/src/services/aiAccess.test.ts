@@ -30,6 +30,7 @@ const access = (userId: string, over: Partial<AiAccess> = {}): AiAccess => ({
   owner: false,
   automations: false,
   notices: false,
+  excel: false,
   ...over,
 })
 
