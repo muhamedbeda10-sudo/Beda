@@ -3,6 +3,7 @@ import type { AiConversation, AiMessage, AiMessagesResponse, AiQueryPart, AiStat
 import type { AiAutomationPart, AutomationDraft } from '@qc/shared/automation'
 import type { AiExcelPart } from '@qc/shared/aiExcel'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
+import type { AiSavedTablePart } from '@qc/shared/savedTables'
 import { answerText, applyEvent, endTurn, followsKeptRound, isInFlight, latestAnswerKey, liveAnnouncement, liveView, parseStreamEvent, sentAfter, settleMessages, startTurn, threadItems, type LiveTurn } from './liveTurn'
 
 const conversation: AiConversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z' }
@@ -124,6 +125,31 @@ describe('the answer being written', () => {
     expect(parseStreamEvent('excel', JSON.stringify({ type: 'excel', part: file }))).toEqual({ type: 'excel', part: file })
     expect(parseStreamEvent('task', JSON.stringify({ type: 'excel', part: file }))).toBeNull()
     expect(followsKeptRound({ type: 'excel', part: file })).toBe(false)
+  })
+
+  it('puts a saved table where it came, and the same change again in its place', () => {
+    const table: AiSavedTablePart = {
+      type: 'saved-table',
+      changeId: 's1',
+      tableId: 't1',
+      name: 'routing_steps',
+      title: 'Routing by item family',
+      action: 'create',
+      source: 'query',
+      refresh: 'daily',
+      rowCount: 120,
+      columns: ['family', 'step_no', 'work_center'],
+      state: 'current',
+    }
+    const t = run([{ type: 'start', conversation, userMessageId: 'u1' }, { type: 'progress', text: 'Saving the routing' }, { type: 'saved-table', part: table }])
+    expect(t.parts).toEqual([table])
+    expect(t.progress).toBeNull()
+    const again: AiSavedTablePart = { ...table, rowCount: 121 }
+    expect(applyEvent(t, { type: 'saved-table', part: again }).parts).toEqual([again])
+    const second: AiSavedTablePart = { ...table, changeId: 's2', action: 'refresh' }
+    expect(applyEvent(applyEvent(t, { type: 'text', delta: 'Saved.' }), { type: 'saved-table', part: second }).parts).toEqual([table, { type: 'text', text: 'Saved.' }, second])
+    expect(parseStreamEvent('saved-table', JSON.stringify({ type: 'saved-table', part: table }))).toEqual({ type: 'saved-table', part: table })
+    expect(parseStreamEvent('excel', JSON.stringify({ type: 'saved-table', part: table }))).toBeNull()
   })
 
   it('knows the round of the tools before an event is kept only once the model writes again', () => {

@@ -17,6 +17,7 @@ import { AnthropicModelClient } from './ai/model'
 import { AiReader } from './ai/reader'
 import { aiOwner } from './ai/owner'
 import { AutomationEngine } from './automations/engine'
+import { SavedTableRefresher } from './ai/savedTables'
 import { PushDispatcher } from './push/dispatcher'
 import { ExcelFileSweeper } from './ai/excel'
 
@@ -109,6 +110,11 @@ if (push) {
 const excelFiles = config.NODE_ENV !== 'test' ? new ExcelFileSweeper({ db, store: images }) : null
 excelFiles?.start()
 
+// §20 — the assistant's saved tables, computed again when due (every hour, or
+// every night), on every instance: a lease keeps each computation to one.
+const savedTables = config.NODE_ENV !== 'test' ? new SavedTableRefresher({ db, readers: aiReader, timeZone: config.FACTORY_TIMEZONE }) : null
+savedTables?.start()
+
 // App Service sends SIGTERM on restart/scale-in: stop accepting, finish
 // in-flight requests, then release the pools.
 function shutdown(signal: string) {
@@ -118,8 +124,9 @@ function shutdown(signal: string) {
   const engineStopped = automations?.stop() ?? Promise.resolve()
   const pushStopped = push?.stop() ?? Promise.resolve()
   const sweeperStopped = excelFiles?.stop() ?? Promise.resolve()
+  const tablesStopped = savedTables?.stop() ?? Promise.resolve()
   server.close(() => {
-    Promise.allSettled([engineStopped, pushStopped, sweeperStopped])
+    Promise.allSettled([engineStopped, pushStopped, sweeperStopped, tablesStopped])
       .then(() => Promise.allSettled([db.end(), aiReader.end()]))
       .finally(() => process.exit(0))
   })

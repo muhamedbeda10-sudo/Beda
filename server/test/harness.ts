@@ -98,7 +98,7 @@ export class TestApp {
 
   /** Drop everything and re-run the migrations from scratch, then set up the assistant's reader as the API does at start. */
   async resetDatabase(): Promise<void> {
-    await this.db.query('DROP SCHEMA IF EXISTS ai CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
+    await this.db.query('DROP SCHEMA IF EXISTS ai_saved CASCADE; DROP SCHEMA IF EXISTS ai CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
     await migrate(this.db)
     await this.aiReader.provision(this.db, this.config)
   }

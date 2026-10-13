@@ -103,6 +103,12 @@ export function applyEvent(t: LiveTurn, e: AiStreamEvent): LiveTurn {
       const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
       return { ...t, phase: 'streaming', progress: null, parts }
     }
+    case 'saved-table': {
+      // A saved table made, replaced, computed or removed, where it came; the same card again (sent twice) takes its place.
+      const at = t.parts.findIndex((p) => p.type === 'saved-table' && p.changeId === e.part.changeId)
+      const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
+      return { ...t, phase: 'streaming', progress: null, parts }
+    }
     case 'task': {
       // A task card, where it came; the same card again (sent twice) takes its place. A card it replaced in an earlier
       // answer is marked so in the saved conversation, fetched again once the server keeps this one (AiAssistantProvider);
@@ -155,7 +161,7 @@ export function parseStreamEvent(event: string, data: string): AiStreamEvent | n
   return value as AiStreamEvent
 }
 
-const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'automation', 'notice', 'task', 'playbook', 'excel', 'done', 'error'])
+const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'automation', 'notice', 'task', 'playbook', 'excel', 'saved-table', 'done', 'error'])
 
 /**
  * What a question is sent after (LiveTurn.after): the last message this device

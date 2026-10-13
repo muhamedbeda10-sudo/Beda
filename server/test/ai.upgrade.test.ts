@@ -24,7 +24,7 @@ async function migrateToPhase2(): Promise<void> {
     for (const file of await readdir(all)) {
       if (/^\d{4}_.+\.sql$/.test(file) && file < '0033') await copyFile(path.join(all, file), path.join(dir, file))
     }
-    await app.db.query('DROP SCHEMA IF EXISTS ai CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
+    await app.db.query('DROP SCHEMA IF EXISTS ai_saved CASCADE; DROP SCHEMA IF EXISTS ai CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
     await migrate(app.db, dir)
   } finally {
     await rm(dir, { recursive: true, force: true })

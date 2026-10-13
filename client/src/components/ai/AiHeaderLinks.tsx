@@ -1,13 +1,13 @@
 // ============================================================================
-// §20 — the assistant's own pages, from its header: the Playbook, for
-// everyone given the assistant, Automations (§21) for the people who may
+// §20 — the assistant's own pages, from its header: the Playbook and the
+// saved tables, for everyone given the assistant, Automations (§21) for the people who may
 // create them, and its settings (the gear) for its owner alone. They open inside the popup (its own router: AiPopup), with the
 // way back to the conversation, rather than as tabs of the app's bar. Tasks
 // are not here: they are the bell's, though the assistant still drafts them.
 // ============================================================================
 
 import { useLocation, useNavigate } from 'react-router-dom'
-import { BookMarked, Settings, Zap } from 'lucide-react'
+import { BookMarked, Settings, Table2, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAi } from './AiAssistantProvider'
 
@@ -17,13 +17,19 @@ export function AiHeaderLinks({ buttonClass, onClass }: { buttonClass: string; o
   const { pathname } = useLocation()
   const onAutomations = pathname.startsWith('/automations')
   const onPlaybook = pathname.startsWith('/playbook')
+  const onTables = pathname.startsWith('/saved-tables')
   const onSettings = pathname.startsWith('/admin/ai')
   return (
     <>
       {enabled && (
-      <button type="button" onClick={() => navigate('/playbook')} className={cn(buttonClass, onPlaybook && onClass)} aria-label="Playbook" aria-current={onPlaybook ? 'page' : undefined} data-tip="Playbook: what the assistant always follows">
-        <BookMarked className="h-5 w-5" />
-      </button>
+        <button type="button" onClick={() => navigate('/playbook')} className={cn(buttonClass, onPlaybook && onClass)} aria-label="Playbook" aria-current={onPlaybook ? 'page' : undefined} data-tip="Playbook: what the assistant always follows">
+          <BookMarked className="h-5 w-5" />
+        </button>
+      )}
+      {enabled && (
+        <button type="button" onClick={() => navigate('/saved-tables')} className={cn(buttonClass, onTables && onClass)} aria-label="Saved tables" aria-current={onTables ? 'page' : undefined} data-tip="Saved tables: what the assistant keeps to build on">
+          <Table2 className="h-5 w-5" />
+        </button>
       )}
       {automations && (
         <button type="button" onClick={() => navigate('/automations')} className={cn(buttonClass, onAutomations && onClass)} aria-label="Automations" aria-current={onAutomations ? 'page' : undefined} data-tip="Automations: watches and scheduled reports">

@@ -56,7 +56,7 @@ import { isAttachmentRef, type AttachmentExpander, type StoredMessage } from './
 import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
 import { MAX_TOKENS, MAX_TOKENS_RETRY, modelRequest, systemBlocks, worstCaseUsd } from './models'
-import { RUN_SQL_TOOL_NAME, RunSqlInput } from './prompt'
+import { MAX_STEPS_PER_ANSWER, RUN_SQL_TOOL_NAME, RunSqlInput } from './prompt'
 import { AI_QUERY_STOPPED, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
 import { appendMessages, insertQueries, queryPart, recordUsage, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
 
@@ -65,16 +65,17 @@ type ContentBlockParam = Anthropic.Beta.BetaContentBlockParam
 type ToolUse = Anthropic.Beta.BetaToolUseBlock
 type ToolResult = Anthropic.Beta.BetaToolResultBlockParam
 
-/** Calls to the model one question may take. */
-const MAX_CALLS = 10
+/** Calls to the model one question may take: enough for an analysis built in steps (prompt.ts tells the model). */
+const MAX_CALLS = MAX_STEPS_PER_ANSWER
 /** pause_turn continuations (server tools only; there are none, so this is a guard). */
 const MAX_CONTINUATIONS = 5
 /** Wall-clock time one question may take. */
-const TURN_DEADLINE_MS = 5 * 60_000
+export const TURN_DEADLINE_MINUTES = 15
+const TURN_DEADLINE_MS = TURN_DEADLINE_MINUTES * 60_000
 /** Tool input the SDK could not parse at all: the call is made again, this many times. */
 const JSON_RETRIES = 2
-/** A query the assistant runs may take this long. */
-export const CHAT_QUERY_TIMEOUT_MS = 10_000
+/** A query the assistant runs may take this long: the most the runner allows, so an analysis over years of the record can finish. */
+export const CHAT_QUERY_TIMEOUT_MS = 30_000
 /** At most this often a line on what the model is doing. */
 const PROGRESS_EVERY_MS = 250
 const PROGRESS_CHARS = 200
@@ -91,7 +92,7 @@ const CONTINUE_PROMPT = 'Please continue.'
 const NOTICE = {
   stopped: 'Stopped before the answer was finished.',
   steps: 'This question needed more steps than one answer may take. Ask a narrower question.',
-  time: 'This answer took longer than 5 minutes and was stopped. Ask a narrower question.',
+  time: `This answer took longer than ${TURN_DEADLINE_MINUTES} minutes and was stopped. Ask a narrower question.`,
   tooLong: 'This conversation is too long to go on. Start a new one.',
   cutOff: 'The answer was cut off at its maximum length.',
   empty: 'Claude returned an empty answer. Ask again, or rephrase the question.',
@@ -151,7 +152,7 @@ export interface Question {
   emit: (event: AiStreamEvent) => void
   /** Aborts when the asker presses Stop or leaves. */
   signal: AbortSignal
-  /** How long the answer may take; 5 minutes unless a test needs it shorter. */
+  /** How long the answer may take; TURN_DEADLINE_MINUTES unless a test needs it shorter. */
   deadlineMs?: number
   /** Handlers of the conversation's tools besides run_sql, by name; one the conversation was not given never runs. */
   tools?: Record<string, ToolHandler>

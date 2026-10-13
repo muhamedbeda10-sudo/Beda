@@ -22,6 +22,7 @@ import { apiError, fallback, runSql, text, thinking, type FakeReply } from './ai
 import { ACCESS_NOTICE } from '../src/ai/access'
 import { KEY_REFUSED_MESSAGE, answerQuestion, toReplayContent } from '../src/ai/assistant'
 import { minCallWorstCaseUsd } from '../src/ai/models'
+import { MAX_STEPS_PER_ANSWER } from '../src/ai/prompt'
 import { appendMessages, findConversation, finishTurn, loadReplay } from '../src/ai/transcript'
 
 // §20 — asking: the answer streams as Server-Sent Events while the model
@@ -224,6 +225,11 @@ describe('§20 asking a question', () => {
       expect.objectContaining({ name: 'update_playbook', eager_input_streaming: true, defer_loading: true }),
       // And has Excel files made.
       expect.objectContaining({ name: 'make_excel', eager_input_streaming: true, defer_loading: true }),
+      // And saves tables to build on.
+      expect.objectContaining({ name: 'list_saved_tables', defer_loading: true }),
+      expect.objectContaining({ name: 'save_table', eager_input_streaming: true, defer_loading: true }),
+      expect.objectContaining({ name: 'refresh_saved_table', defer_loading: true }),
+      expect.objectContaining({ name: 'remove_saved_table', defer_loading: true }),
     ])
     expect(p.tools![0]).not.toHaveProperty('defer_loading')
     // None of the notices' or tasks' tools is strict: each strict schema adds to one grammar, and the server reads their input itself.
@@ -360,7 +366,7 @@ describe('§20 one answer at a time', () => {
 
   it('closes an answer a restart cut off, when the next question comes', async () => {
     const stale = await app.db.query<{ id: string }>(
-      `INSERT INTO ai_turns (conversation_id, user_id, client_id, question, created_at) VALUES ($1, $2, $3, 'cut off', now() - interval '7 minutes') RETURNING id`,
+      `INSERT INTO ai_turns (conversation_id, user_id, client_id, question, created_at) VALUES ($1, $2, $3, 'cut off', now() - interval '17 minutes') RETURNING id`,
       [first.conversationId, admin.user.id, randomUUID()],
     )
     app.model.reply({ content: [text('Here.')] })
@@ -564,7 +570,7 @@ describe('§20 how answers end', () => {
         tool_use_id: 'toolu_other',
         is_error: true,
         content:
-          'Unknown tool "drop_everything". The tools are "run_sql", "propose_automation", "my_automations", "list_notices", "notice_details", "find_notice_targets", "propose_notice_change", "find_people", "propose_task", "my_tasks", "update_playbook", "make_excel".',
+          'Unknown tool "drop_everything". The tools are "run_sql", "propose_automation", "my_automations", "list_notices", "notice_details", "find_notice_targets", "propose_notice_change", "find_people", "propose_task", "my_tasks", "update_playbook", "make_excel", "list_saved_tables", "save_table", "refresh_saved_table", "remove_saved_table".',
       },
       { type: 'tool_result', tool_use_id: 'toolu_case', is_error: true, content: expect.stringMatching(/permission denied/) },
     ])
@@ -774,14 +780,14 @@ describe('§20 the loop’s guards', () => {
     expect(full.done!.message).toMatchObject({ stopReason: 'limit', notice: 'This conversation is too long to go on. Start a new one.' })
   })
 
-  it('stops after ten calls to the model for one question', async () => {
-    for (let i = 0; i < 10; i++) app.model.reply({ content: [runSql(`toolu_loop_${i}`, `Step ${i}`, `SELECT ${i} AS step`)] })
+  it('stops after MAX_STEPS_PER_ANSWER calls to the model for one question', async () => {
+    for (let i = 0; i < MAX_STEPS_PER_ANSWER; i++) app.model.reply({ content: [runSql(`toolu_loop_${i}`, `Step ${i}`, `SELECT ${i} AS step`)] })
     const calls = app.model.calls.length
     const res = await ask('Never satisfied')
-    expect(app.model.calls.length - calls).toBe(10)
+    expect(app.model.calls.length - calls).toBe(MAX_STEPS_PER_ANSWER)
     expect(res.done!.message.stopReason).toBe('limit')
     expect(res.done!.message.notice).toMatch(/more steps than one answer may take/)
-    expect(res.done!.message.parts.filter((p) => p.type === 'query')).toHaveLength(10)
+    expect(res.done!.message.parts.filter((p) => p.type === 'query')).toHaveLength(MAX_STEPS_PER_ANSWER)
   })
 
   it('asks again when the tool input could not be parsed at all, recording what the failed call used', async () => {
@@ -829,8 +835,8 @@ describe('§20 the loop’s guards', () => {
       deadlineMs: 500,
     })
     await finishTurn(app.db, turnId, outcome.stopReason, outcome.notice)
-    expect(outcome).toEqual({ stopReason: 'limit', notice: 'This answer took longer than 5 minutes and was stopped. Ask a narrower question.' })
-    // The query was cancelled at the deadline, not left to its own 10 s.
+    expect(outcome).toEqual({ stopReason: 'limit', notice: 'This answer took longer than 15 minutes and was stopped. Ask a narrower question.' })
+    // The query was cancelled at the deadline, not left to its own 30 s.
     expect(Date.now() - started).toBeLessThan(3000)
     expect(events.filter((e) => e.type === 'query_start')).toHaveLength(1)
     const results = await app.db.query(`SELECT content FROM ai_messages WHERE turn_id = $1 AND kind = 'tool_results'`, [turnId])

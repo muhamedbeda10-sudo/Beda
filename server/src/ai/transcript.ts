@@ -13,7 +13,8 @@
 //     it stands now too: proposed, applied, discarded, superseded or stale)
 //     and of the tasks it drafted (proposed, sent, discarded or superseded)
 //     and the playbook changes it made (each entry as it stands now) and
-//     the Excel files it made (each as checked when it was made),
+//     the Excel files it made (each as checked when it was made) and the
+//     saved tables it made, changed, computed or removed (each as it stands now),
 //     the blocks the model wrote for the app (its headline figures, its
 //     follow-up questions) taken out of the text and handed over on their
 //     own. Thinking and the tool plumbing stay out of sight.
@@ -27,6 +28,7 @@ import { loadNoticeParts } from '../noticeAssistant/proposals'
 import { loadPlaybookParts } from '../playbook/parts'
 import { loadTaskParts } from '../tasks/proposals'
 import { loadTurnAttachments, type StoredBlock, type StoredMessage } from './attachments'
+import { loadSavedTableParts } from './savedTableParts'
 import { stripBlocks } from './blocks'
 import { loadExcelParts } from './excelParts'
 import { KPIS_BLOCK, parseKpis } from './kpis'
@@ -342,6 +344,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
   const taskByToolUse = await loadTaskParts(q, conversationId, turnId)
   const playbookByToolUse = await loadPlaybookParts(q, conversationId, turnId)
   const excelByToolUse = await loadExcelParts(q, conversationId, turnId)
+  const savedTableByToolUse = await loadSavedTableParts(q, conversationId, turnId)
   const attachmentsByTurn = await loadTurnAttachments(q, conversationId, turnId)
   const byTurn = new Map<string, MessageRow[]>()
   for (const m of messages.rows) {
@@ -377,12 +380,14 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
           const task = taskByToolUse.get(block.id)
           const playbook = playbookByToolUse.get(block.id)
           const excel = excelByToolUse.get(block.id)
+          const savedTable = savedTableByToolUse.get(block.id)
           if (run) parts.push(queryPart(run))
           else if (proposal) parts.push(proposal)
           else if (notice) parts.push(notice)
           else if (task) parts.push(task)
           else if (playbook) parts.push(playbook)
           else if (excel) parts.push(excel)
+          else if (savedTable) parts.push(savedTable)
         }
       }
     }

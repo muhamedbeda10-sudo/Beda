@@ -10,6 +10,7 @@
 //                                   automations (a delivered report for
 //                                   anyone it was sent to, as in the app);
 //   /playbook                       what the assistant always follows;
+//   /saved-tables                   the tables it keeps to build on;
 //   /admin/ai                       its settings, for its owner alone (the gear).
 //
 // Every other path is a page of the app: the app goes there, the popup steps
@@ -32,6 +33,7 @@ const AutomationsPage = lazy(() => import('@/pages/AutomationsPage').then((m) =>
 const AutomationPage = lazy(() => import('@/pages/AutomationPage').then((m) => ({ default: m.AutomationPage })))
 const AutomationDeliveryPage = lazy(() => import('@/pages/AutomationDeliveryPage').then((m) => ({ default: m.AutomationDeliveryPage })))
 const PlaybookPage = lazy(() => import('@/pages/PlaybookPage').then((m) => ({ default: m.PlaybookPage })))
+const SavedTablesPage = lazy(() => import('@/pages/SavedTablesPage').then((m) => ({ default: m.SavedTablesPage })))
 const AiSettings = lazy(() => import('@/pages/admin/AiAssistantPage').then((m) => ({ default: m.AiSettings })))
 
 const HEAD_BTN = 'icon-btn h-10 w-10 touch:h-11 touch:w-11'
@@ -49,6 +51,7 @@ export default function AiPopup() {
       <Route path="/automations/deliveries/:id" element={<PopupPage title="Scheduled report" page={<AutomationDeliveryPage />} />} />
       <Route path="/automations/:id" element={automator(<PopupPage title="Automation" page={<AutomationPage />} />)} />
       <Route path="/playbook" element={enabled ? <PopupPage title="Playbook" page={<PlaybookPage />} /> : <Navigate to="/admin/ai" replace />} />
+      <Route path="/saved-tables" element={enabled ? <PopupPage title="Saved tables" page={<SavedTablesPage />} /> : <Navigate to="/admin/ai" replace />} />
       {/* The settings are the owner's alone, as on the server; anyone else finds the conversation. */}
       <Route path="/admin/ai" element={owner ? <PopupPage title="AI settings" page={<AiSettings />} /> : <Navigate to={AI_WORKSPACE_PATH} replace />} />
       <Route path="*" element={<LeaveForApp />} />

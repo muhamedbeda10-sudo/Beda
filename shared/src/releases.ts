@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.102',
+    date: '2026-10-13',
+    title: 'The assistant takes on bigger analyses, and keeps what it builds',
+    items: [
+      { text: 'Ask for an analysis that takes real work — a routing drawn from two years of production, a normal scrap range per item, a ranking of suppliers — and the assistant works it out in steps, checking its figures as it goes. One answer may now take many more steps and up to 15 minutes, and a query up to 30 seconds.' },
+      { text: 'What is worth building on, it keeps as a saved table, shown as a card in its answer. A table drawn from the record is computed again by itself (every night, or every hour); questions, reports and automations then build on it — for example, an alert when an item passes a work center its routing does not have.' },
+      { text: 'The new table icon in the assistant\'s header opens Saved tables: what each table holds, how often it is computed, its first rows, Compute now, and Remove for whoever made it. A table is shown only to people who may read everything it is built from.' },
+    ],
+  },
+  {
     id: '2026-10-13.101',
     date: '2026-10-13',
     title: 'The order sheet brings the ERP\'s other columns',

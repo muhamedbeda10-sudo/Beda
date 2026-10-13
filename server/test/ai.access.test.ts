@@ -326,7 +326,7 @@ describe('§20 a person asks on the model and effort the owner set', () => {
     )
     const res = await ask(insp, 'How many accounts and order lines?')
     const results = lastCall().params.messages[2].content as Anthropic.Beta.BetaToolResultBlockParam[]
-    expect(results[0]).toMatchObject({ tool_use_id: 'toolu_d1', is_error: true, content: expect.stringMatching(/permission denied for view users.*Only the views and functions in schema ai can be read/) })
+    expect(results[0]).toMatchObject({ tool_use_id: 'toolu_d1', is_error: true, content: expect.stringMatching(/permission denied for view users.*Only the views and functions in schema ai, and the saved tables in schema ai_saved, can be read/) })
     expect(results[1]).toEqual({ type: 'tool_result', tool_use_id: 'toolu_d2', content: '{"columns":["n"],"rows":[[0]],"rowCount":1,"truncated":false}' })
     expect(res.done!.message.parts.filter((p) => p.type === 'query').map((p) => (p as AiQueryPart).ok)).toEqual([false, true])
   })
