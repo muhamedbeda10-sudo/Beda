@@ -5,6 +5,8 @@
 //
 //   list_saved_tables     the tables this person may read, or one in full
 //   save_table            make or replace one, computed at once
+//   update_saved_table    change one in place: its words, notes or schedule
+//                         at once; its query or rows, computed again
 //   refresh_saved_table   compute one again now
 //   remove_saved_table    remove one
 //
@@ -42,7 +44,9 @@ import {
   refreshTable,
   removeTable,
   saveTable,
+  updateTable,
   type SavedTableActor,
+  type SavedTableChanges,
   type SavedTableDefinition,
   type SavedTableOutcome,
   type SavedTableReaders,
@@ -52,6 +56,7 @@ type ToolUse = Anthropic.Beta.BetaToolUseBlock
 
 export const LIST_SAVED_TABLES_TOOL_NAME = 'list_saved_tables'
 export const SAVE_TABLE_TOOL_NAME = 'save_table'
+export const UPDATE_SAVED_TABLE_TOOL_NAME = 'update_saved_table'
 export const REFRESH_SAVED_TABLE_TOOL_NAME = 'refresh_saved_table'
 export const REMOVE_SAVED_TABLE_TOOL_NAME = 'remove_saved_table'
 
@@ -117,9 +122,58 @@ export const SAVE_TABLE_TOOL: Anthropic.Beta.BetaTool = {
         description: 'For source rows: the rows, each an array of values in the order of columns (null for none). Dates as YYYY-MM-DD.',
         items: { type: 'array', items: {} },
       },
-      replace: { type: 'boolean', description: 'true to replace the table of this name (one this person made, or any for the assistant\'s owner); otherwise a name already used is refused.' },
+      replace: {
+        type: 'boolean',
+        description:
+          'true to replace the table of this name with a whole new definition (one this person made, or any for the assistant\'s owner); otherwise a name already used is refused. To change part of a table — its words, notes, schedule, query or rows — use update_saved_table instead.',
+      },
     },
     required: ['name', 'title', 'summary', 'description', 'source'],
+    additionalProperties: false,
+  },
+}
+
+export const UPDATE_SAVED_TABLE_TOOL: Anthropic.Beta.BetaTool = {
+  name: UPDATE_SAVED_TABLE_TOOL_NAME,
+  description:
+    'Change a saved table in place, keeping its name (whatever reads ai_saved.<name> goes on reading it) and its history: give only what changes. ' +
+    'title, summary, description, columnNotes and refresh change at once; its rows stay as they are. ' +
+    'A new sql (a query\'s table), or new rows, rows added or new columns (rows written out), compute it again now and are checked like save_table. ' +
+    'The name itself never changes: to give a table another name, save a new one and remove the old one when nothing reads it. ' +
+    'Whoever made the table, or the assistant\'s owner, may change it. Returns the table as it is now, or why nothing changed. The person sees it as a card.',
+  eager_input_streaming: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      name: NAME_PROPERTY,
+      title: { type: 'string', description: `A new title, in the person's language (at most ${SAVED_TABLE_TITLE_MAX} characters).` },
+      summary: { type: 'string', description: `A new summary: one or two plain sentences for the person, no SQL or column names (at most ${SAVED_TABLE_SUMMARY_MAX} characters).` },
+      description: { type: 'string', description: `A new description, in full: what one row is, where the rows come from, the rules applied (at most ${SAVED_TABLE_DESCRIPTION_MAX} characters).` },
+      columnNotes: {
+        type: 'object',
+        additionalProperties: { type: 'string' },
+        description: `Notes by column name, merged into the table's: an empty one removes that column's note (at most ${SAVED_TABLE_NOTE_MAX} characters each).`,
+      },
+      refresh: { type: 'string', enum: [...SAVED_TABLE_REFRESHES], description: 'For a query\'s table: never, hourly or daily (every night).' },
+      sql: { type: 'string', description: 'For a query\'s table: the new SELECT, whole, as save_table takes it. Computed at once.' },
+      columns: {
+        type: 'array',
+        description: 'For rows written out: the new columns, in order; give rows with them.',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            type: { type: 'string', enum: [...SAVED_TABLE_COLUMN_TYPES] },
+            note: { type: 'string' },
+          },
+          required: ['name', 'type'],
+          additionalProperties: false,
+        },
+      },
+      rows: { type: 'array', description: 'For rows written out: every row, in place of the table\'s (each an array in the order of the columns).', items: { type: 'array', items: {} } },
+      addRows: { type: 'array', description: 'For rows written out: rows to add after the table\'s.', items: { type: 'array', items: {} } },
+    },
+    required: ['name'],
     additionalProperties: false,
   },
 }
@@ -137,7 +191,7 @@ export const REMOVE_SAVED_TABLE_TOOL: Anthropic.Beta.BetaTool = {
   input_schema: { type: 'object', properties: { name: NAME_PROPERTY }, required: ['name'], additionalProperties: false },
 }
 
-export const SAVED_TABLE_TOOLS: readonly Anthropic.Beta.BetaTool[] = [LIST_SAVED_TABLES_TOOL, SAVE_TABLE_TOOL, REFRESH_SAVED_TABLE_TOOL, REMOVE_SAVED_TABLE_TOOL]
+export const SAVED_TABLE_TOOLS: readonly Anthropic.Beta.BetaTool[] = [LIST_SAVED_TABLES_TOOL, SAVE_TABLE_TOOL, UPDATE_SAVED_TABLE_TOOL, REFRESH_SAVED_TABLE_TOOL, REMOVE_SAVED_TABLE_TOOL]
 
 const NameInput = z.object({ name: z.string().trim().min(1).max(64) }).passthrough()
 const ListInput = z.object({ name: z.string().trim().min(1).max(64).nullish() }).passthrough()
@@ -159,6 +213,22 @@ const SaveInput = z
   })
   .passthrough()
 
+const LiteralColumnInput = z.object({ name: z.string().trim(), type: z.enum(['text', 'number', 'integer', 'date', 'timestamp', 'boolean']), note: z.string().max(SAVED_TABLE_NOTE_MAX * 2).nullish() })
+const UpdateInput = z
+  .object({
+    name: z.string().trim().min(1).max(64),
+    title: z.string().trim().min(1).max(SAVED_TABLE_TITLE_MAX).nullish(),
+    summary: z.string().trim().max(SAVED_TABLE_SUMMARY_MAX).nullish(),
+    description: z.string().trim().max(SAVED_TABLE_DESCRIPTION_MAX).nullish(),
+    columnNotes: z.record(z.string().max(SAVED_TABLE_NOTE_MAX * 2)).nullish(),
+    refresh: z.enum(['never', 'hourly', 'daily']).nullish(),
+    sql: z.string().max(AI_MAX_SQL_CHARS).nullish(),
+    columns: z.array(LiteralColumnInput).nullish(),
+    rows: z.array(z.array(z.unknown())).nullish(),
+    addRows: z.array(z.array(z.unknown())).nullish(),
+  })
+  .passthrough()
+
 export interface SavedTableToolContext {
   db: Db
   config: Config
@@ -177,6 +247,7 @@ export function savedTableToolHandlers(ctx: SavedTableToolContext): Record<strin
   return {
     [LIST_SAVED_TABLES_TOOL_NAME]: { run: (tu) => list(ctx, tu) },
     [SAVE_TABLE_TOOL_NAME]: { run: (tu) => save(ctx, tu) },
+    [UPDATE_SAVED_TABLE_TOOL_NAME]: { run: (tu) => update(ctx, tu) },
     [REFRESH_SAVED_TABLE_TOOL_NAME]: { run: (tu) => refresh(ctx, tu) },
     [REMOVE_SAVED_TABLE_TOOL_NAME]: { run: (tu) => remove(ctx, tu) },
   }
@@ -266,6 +337,41 @@ async function save(ctx: SavedTableToolContext, tu: ToolUse): Promise<ToolOutcom
       `Saved as ai_saved.${t.name} with ${t.rowCount ?? 0} rows; read it with run_sql like a view. ` +
       (t.refresh === 'never' ? 'It is kept as computed now. ' : `It is computed again ${t.refresh === 'hourly' ? 'every hour' : 'every night'}. `) +
       'Check a few rows and the totals before you rely on it. The person sees it as a card; tell them in a sentence what it holds and what it is for.',
+  })
+}
+
+async function update(ctx: SavedTableToolContext, tu: ToolUse): Promise<ToolOutcome> {
+  const parsed = UpdateInput.safeParse(tu.input ?? {})
+  if (!parsed.success) return failed(tu, ['Nothing was changed. Fix these and call update_saved_table again:', ...describeIssues(parsed.error).map((p) => `- ${p}`)].join('\n'))
+  const i = parsed.data
+  const actor = await actorOf(ctx)
+  if (!actor) return failed(tu, NOT_GRANTED)
+  const name = bareName(i.name)!
+  const table = await findSavedTable(ctx.db, actor, { name })
+  if (!table) return failed(tu, `There is no saved table named ${name} that this person may read.`)
+  const given = <T>(v: T | null | undefined): T | undefined => (v === null ? undefined : v)
+  const changes: SavedTableChanges = {
+    title: given(i.title),
+    summary: given(i.summary),
+    description: given(i.description),
+    columnNotes: given(i.columnNotes),
+    refresh: given(i.refresh),
+    sql: given(i.sql),
+    columns: i.columns ? i.columns.map((c) => ({ name: c.name, type: c.type, note: c.note ?? undefined })) : undefined,
+    rows: given(i.rows),
+    addRows: given(i.addRows),
+  }
+  const outcome = await updateTable({ db: ctx.db, readers: ctx.readers, timeZone: ctx.config.FACTORY_TIMEZONE }, actor, table.id, changes, origin(ctx, tu))
+  if (!outcome.ok) return failed(tu, `Nothing was changed: ${outcome.error}`)
+  emitCard(ctx, outcome, outcome.dataChanged ? 'replace' : 'update')
+  const t = outcome.table
+  return answered(tu, {
+    changed: true,
+    computedAgain: !!outcome.dataChanged,
+    ...described(t, false),
+    note: outcome.dataChanged
+      ? `Computed again as ai_saved.${t.name}: ${t.rowCount ?? 0} rows. Check a few rows and the totals before you rely on it. The person sees it as a card; tell them in a sentence what changed.`
+      : 'Changed in place; its rows are as they were. The person sees it as a card; tell them in a sentence what changed.',
   })
 }
 

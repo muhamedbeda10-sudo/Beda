@@ -95,7 +95,7 @@ export const AiConversationRow = memo(function AiConversationRow({
             <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
             {groups.map((g) => (
               <MenuItem key={g.id} icon={c.groupId === g.id ? <Check className="h-4 w-4 text-brand-600" /> : <span className="h-4 w-4" />} onClick={run(() => c.groupId !== g.id && actions.move(c, g.id))} checked={c.groupId === g.id}>
-                <span dir="auto" className="min-w-0 flex-1 truncate">
+                <span dir="auto" className="min-w-0 truncate">
                   {g.name}
                 </span>
               </MenuItem>

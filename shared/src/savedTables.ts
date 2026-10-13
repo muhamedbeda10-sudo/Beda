@@ -113,7 +113,8 @@ export interface AiSavedTablePart {
   tableId: string
   name: string
   title: string
-  action: 'create' | 'replace' | 'refresh' | 'remove'
+  /** update: its words, notes or schedule changed in place; replace: what it holds changed, computed again. */
+  action: 'create' | 'replace' | 'update' | 'refresh' | 'remove'
   source: SavedTableSource
   refresh: SavedTableRefresh
   /** As the change left it. */

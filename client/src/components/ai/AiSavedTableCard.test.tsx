@@ -43,9 +43,9 @@ describe('the saved-table card', () => {
     expect(renderToStaticMarkup(<MemoryRouter><AiSavedTableCard part={card} /></MemoryRouter>)).toContain('href="/saved-tables"')
   })
 
-  it('says when the table was replaced or removed since, and what a removal card is', () => {
+  it('says when the table was changed or removed since, and what a removal card is', () => {
     expect(savedTableCardSince(card)).toBeNull()
-    expect(savedTableCardSince({ ...card, state: 'changed' })).toBe('Replaced since')
+    expect(savedTableCardSince({ ...card, state: 'changed' })).toBe('Changed since')
     expect(savedTableCardSince({ ...card, state: 'removed' })).toBe('Removed since')
     expect(savedTableCardSince({ action: 'remove', state: 'removed' })).toBeNull()
     expect(text({ ...card, state: 'removed' })).toContain('Removed since')

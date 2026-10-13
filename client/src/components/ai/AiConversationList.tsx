@@ -439,10 +439,10 @@ function GroupSection({
         <button type="button" onClick={onToggle} aria-expanded={open} className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 rounded-2xl px-2.5 text-start">
           <ChevronRight className={cn('h-4 w-4 shrink-0 text-muted transition-transform rtl:rotate-180', open && 'rotate-90 rtl:rotate-90')} />
           {open ? <FolderOpen className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" /> : <Folder className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />}
-          <span dir="auto" className="min-w-0 flex-1 truncate text-sm font-semibold">
+          <span dir="auto" className="min-w-0 truncate text-sm font-semibold">
             {g.name}
           </span>
-          <span className="shrink-0 text-xs tabular-nums text-muted">{g.conversationCount}</span>
+          <span className="ms-auto shrink-0 text-xs tabular-nums text-muted">{g.conversationCount}</span>
         </button>
         <button
           ref={anchor}

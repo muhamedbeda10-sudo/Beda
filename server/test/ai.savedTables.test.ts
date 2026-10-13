@@ -19,6 +19,7 @@ import {
   type SavedTableActor,
   type SavedTableDefinition,
   type SavedTableOutcome,
+  updateTable,
 } from '../src/ai/savedTables'
 
 // The assistant's saved tables: results kept to build on, computed again by
@@ -252,7 +253,110 @@ describe('rows written out', () => {
     expect(wrong).toEqual({ ok: false, error: 'Nothing was saved: Row 1, column target_pct: "lots" is not a number.' })
     const short = await saveTable(deps(), actor(insp, ['materials']), { ...def, name: 'short', rows: [['x']] })
     expect(short).toMatchObject({ ok: false, error: expect.stringMatching(/Row 1 has 1 values; each row needs 3/) })
-    expect(await refreshTable(deps(), t.id, { id: insp.user.id, name: insp.user.name })).toEqual({ ok: false, error: 'Rows written out are not computed: replace the table to change them.' })
+    expect(await refreshTable(deps(), t.id, { id: insp.user.id, name: insp.user.name })).toEqual({ ok: false, error: 'Rows written out are not computed: change them with update_saved_table.' })
+  })
+})
+
+describe('changing a table in place', () => {
+  const comment = async (name: string, column?: string) =>
+    (
+      await app.db.query<{ c: string | null }>(
+        column ? `SELECT col_description($1::regclass, (SELECT attnum FROM pg_attribute WHERE attrelid = $1::regclass AND attname = $2)::int) AS c` : `SELECT obj_description($1::regclass, 'pg_class') AS c`,
+        column ? [`ai_saved.${name}`, column] : [`ai_saved.${name}`],
+      )
+    ).rows[0].c
+
+  it('changes its words, notes and schedule at once, its rows and version as they were', async () => {
+    const before = saved(await saveTable(deps(), actor(insp, ['materials']), queryTable('machine_list', 'SELECT machine_code AS code, machine AS name FROM ai.machines ORDER BY 1', 'daily', { code: 'The code.' })))
+    const t = saved(
+      await updateTable(deps(), actor(insp, ['materials']), before.id, {
+        title: 'Machines by code',
+        summary: '  Every machine,\n by its code. ',
+        description: 'One row per machine.',
+        columnNotes: { name: 'As the floor calls it.', code: '' },
+        refresh: 'never',
+      }),
+    )
+    expect(t).toMatchObject({ id: before.id, version: 1, rowCount: 4, title: 'Machines by code', summary: 'Every machine, by its code.', description: 'One row per machine.', refresh: 'never', nextRefreshAt: null, refreshedAt: before.refreshedAt })
+    expect(t.columns).toEqual([
+      { name: 'code', type: 'text', note: '' },
+      { name: 'name', type: 'text', note: 'As the floor calls it.' },
+    ])
+    expect(await comment('machine_list')).toBe('Machines by code')
+    expect(await comment('machine_list', 'name')).toBe('As the floor calls it.')
+    expect(await comment('machine_list', 'code')).toBeNull()
+    const { rows } = await app.db.query<{ action: string; definition: Record<string, unknown>; version: number }>(
+      `SELECT action, definition, version FROM ai_saved_table_changes WHERE table_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [t.id],
+    )
+    expect(rows[0]).toMatchObject({ action: 'update', version: 1, definition: { title: 'Machines by code', refresh: 'never' } })
+    // Daily again: scheduled again.
+    expect(saved(await updateTable(deps(), actor(insp, ['materials']), t.id, { refresh: 'daily' })).nextRefreshAt).not.toBeNull()
+  })
+
+  it('computes it again under the same name for a new query, only of the table as it was read', async () => {
+    const t = (await listSavedTables(app.db, actor(insp, ['materials']))).find((x) => x.name === 'machine_list')!
+    const changed = await updateTable(deps(), actor(insp, ['materials']), t.id, { sql: `SELECT machine_code AS code FROM ai.machines WHERE machine_code <> '12' ORDER BY 1` })
+    expect(changed).toMatchObject({ ok: true, dataChanged: true, table: { id: t.id, name: 'machine_list', version: 2, rowCount: 3, title: 'Machines by code', summary: 'Every machine, by its code.' } })
+    expect((await readAs(['materials'], 'SELECT count(*) FROM ai_saved.machine_list')).rows).toEqual([[3]])
+    // A replace of the version read only: one made since stands.
+    const stale = await saveTable(deps(), actor(insp, ['materials']), queryTable('machine_list', 'SELECT 1 AS one'), true, undefined, 1)
+    expect(stale).toMatchObject({ ok: false, error: expect.stringMatching(/changed by someone else meanwhile/) })
+    // A query that fails changes nothing.
+    expect(await updateTable(deps(), actor(insp, ['materials']), t.id, { sql: 'SELECT nope FROM ai.machines' })).toMatchObject({ ok: false, error: expect.stringMatching(/column "nope" does not exist/) })
+    expect((await readAs(['materials'], 'SELECT count(*) FROM ai_saved.machine_list')).rows).toEqual([[3]])
+    // Rows are not a query's.
+    expect(await updateTable(deps(), actor(insp, ['materials']), t.id, { addRows: [['x']] })).toMatchObject({ ok: false, error: expect.stringMatching(/change its sql/) })
+  })
+
+  it('adds rows, replaces them or changes the columns of rows written out', async () => {
+    const def: SavedTableDefinition = {
+      name: 'shift_targets',
+      title: 'Shift targets',
+      description: 'Pieces per shift.',
+      source: 'rows',
+      columns: [
+        { name: 'shift', type: 'text' },
+        { name: 'pieces', type: 'integer', note: 'Pieces a shift.' },
+      ],
+      rows: [['A', 100]],
+    }
+    const t = saved(await saveTable(deps(), actor(insp, ['materials']), def))
+    const added = saved(await updateTable(deps(), actor(insp, ['materials']), t.id, { addRows: [['B', 120], ['C', 90]] }))
+    expect(added).toMatchObject({ rowCount: 3, version: 2 })
+    expect(added.columns[1]).toEqual({ name: 'pieces', type: 'bigint', note: 'Pieces a shift.' })
+    expect((await readAs(['audit'], 'SELECT shift, pieces FROM ai_saved.shift_targets ORDER BY 1')).rows).toEqual([
+      ['A', 100],
+      ['B', 120],
+      ['C', 90],
+    ])
+    const replaced = saved(await updateTable(deps(), actor(insp, ['materials']), t.id, { rows: [['A', 110]] }))
+    expect(replaced.rowCount).toBe(1)
+    const reshaped = saved(
+      await updateTable(deps(), actor(insp, ['materials']), t.id, {
+        columns: [
+          { name: 'shift', type: 'text' },
+          { name: 'pieces', type: 'integer' },
+          { name: 'line', type: 'integer', note: 'The line.' },
+        ],
+        rows: [['A', 110, 3]],
+      }),
+    )
+    expect(reshaped.columns.map((c) => [c.name, c.note])).toEqual([
+      ['shift', ''],
+      ['pieces', ''],
+      ['line', 'The line.'],
+    ])
+    expect(await updateTable(deps(), actor(insp, ['materials']), t.id, { addRows: [['B', 'many', 1]] })).toMatchObject({ ok: false, error: expect.stringMatching(/"many" is not a whole number/) })
+    expect(await updateTable(deps(), actor(insp, ['materials']), t.id, { refresh: 'daily' })).toMatchObject({ ok: false, error: expect.stringMatching(/kept as written/) })
+    expect(await updateTable(deps(), actor(insp, ['materials']), t.id, { columns: [{ name: 'x', type: 'text' }] })).toMatchObject({ ok: false, error: expect.stringMatching(/give the rows with them/) })
+    expect(await updateTable(deps(), actor(insp, ['materials']), t.id, {})).toMatchObject({ ok: false, error: expect.stringMatching(/Say what to change/) })
+  })
+
+  it('is for whoever made it, or the owner', async () => {
+    const t = (await listSavedTables(app.db, ownerActor())).find((x) => x.name === 'shift_targets')!
+    expect(await updateTable(deps(), actor(sup, ['inspection', 'audit']), t.id, { title: 'Mine' })).toMatchObject({ ok: false, error: expect.stringMatching(/only they, or the assistant's owner, may change it/) })
+    expect(saved(await updateTable(deps(), ownerActor(), t.id, { title: 'Targets per shift' })).title).toBe('Targets per shift')
   })
 })
 
@@ -321,7 +425,7 @@ describe('in a conversation', () => {
     const res = await ask(insp, 'Keep the machine list as a table')
     const first = app.model.calls[calls].params
     const names = (first.tools as { name: string }[]).map((t) => t.name)
-    expect(names).toEqual(expect.arrayContaining(['list_saved_tables', 'save_table', 'refresh_saved_table', 'remove_saved_table']))
+    expect(names).toEqual(expect.arrayContaining(['list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table']))
     const system = (first.system as { text: string }[])[0].text
     expect(system).toContain('# Heavy work and saved tables')
     expect(system).toContain('### ai_saved.machines_hourly')
@@ -341,5 +445,24 @@ describe('in a conversation', () => {
     saved(await removeTable(deps(), actor(insp, ['materials']), t.id))
     const reread = await app.api<AiMessagesResponse>('GET', `/api/ai/conversations/${res.conversationId}/messages`, { token: insp.token })
     expect(reread.body.messages.find((m) => m.role === 'assistant')!.parts[0]).toMatchObject({ state: 'removed' })
+  })
+
+  it('changes a table in place with update_saved_table, as a card that says so', async () => {
+    app.model.reply(
+      tool('toolu_update_1', 'update_saved_table', { name: 'ai_saved.machine_list', title: 'The machine list', summary: 'Every machine.' }),
+      { content: [text('Renamed it.')] },
+    )
+    const calls = app.model.calls.length
+    const res = await ask(insp, 'Call the machine table "The machine list"')
+    const card = res.events.find((e): e is Extract<AiStreamEvent, { type: 'saved-table' }> => e.type === 'saved-table')!
+    expect(card.part).toMatchObject({ name: 'machine_list', title: 'The machine list', action: 'update', state: 'current', rowCount: 3 })
+    const result = app.model.calls[calls + 1].params.messages.at(-1)!.content as { type: string; content: string }[]
+    expect(JSON.parse(result[0].content)).toMatchObject({ changed: true, computedAgain: false, title: 'The machine list', summary: 'Every machine.' })
+
+    app.model.reply(tool('toolu_update_2', 'update_saved_table', { name: 'machine_list', addRows: [['x']] }), { content: [text('Could not.')] })
+    const before = app.model.calls.length
+    await ask(insp, 'Add a row')
+    const refused = app.model.calls[before + 1].params.messages.at(-1)!.content as { is_error?: boolean; content: string }[]
+    expect(refused[0]).toMatchObject({ is_error: true, content: expect.stringMatching(/^Nothing was changed: .*change its sql/) })
   })
 })

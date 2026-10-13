@@ -28,6 +28,26 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.107',
+    date: '2026-10-13',
+    title: 'The assistant changes a saved table in place',
+    items: [
+      { text: 'Ask the assistant to change a saved table — its title, summary or description, a column\'s note, how often it is computed, its query, or the rows written in it (add rows, replace them, change the columns) — and it changes that table where it is, without removing it and making it again. Its name stays, so questions, reports and automations that read it go on reading it.' },
+      { text: 'A change to its words or schedule keeps its rows as they are; a change to its query or rows computes it again at once. The card in the answer says "Saved table updated" or "Saved table changed".' },
+    ],
+  },
+  {
+    id: '2026-10-13.106',
+    date: '2026-10-13',
+    title: 'Your conversations with the assistant, kept in order',
+    items: [
+      { text: 'Pin conversations to the top of the list (up to 30), rename any of them, and put them in groups of your own — each conversation in one group. A group opens in place in the list; removing a group sends its conversations back to the list, none deleted.' },
+      { text: 'Archive a conversation to keep it out of the way without deleting it: it is under Archived at the end of the list, and asking in it again brings it back.' },
+      { text: 'The search now reads every conversation, archived ones too — titles, questions and answers — and shows the words around what it found. Arabic is found however it is written: اجابة finds إجابة.' },
+      { text: 'All of it is in the menu (⋯) beside each conversation and each group. Your groups and pins are yours alone.' },
+    ],
+  },
+  {
     id: '2026-10-13.105',
     date: '2026-10-13',
     title: 'Saved tables, simpler to read',
