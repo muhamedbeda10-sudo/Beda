@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.3',
+    date: '2026-10-13',
+    title: 'The assistant costs less per question',
+    items: [
+      { text: 'The AI assistant now loads only the tools a question needs. A question about inspections, orders or production carries just its query tool; the tools for automations and notices are looked up and loaded only when you ask about them, and stay ready for the rest of that conversation. Each answer sends Claude less, so it costs less and the assistant picks the right tool more reliably.' },
+      { text: 'This applies to conversations started from now on; earlier conversations go on as they were.' },
+    ],
+  },
+  {
     id: '2026-10-13.2',
     date: '2026-10-13',
     title: 'Every kind of chart, in answers and in reports',

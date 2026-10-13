@@ -143,7 +143,7 @@ describe('§23 who may have notices written', () => {
     // An administrator not allowed, and an inspector whose row allows it: no writing tools; a call to one is unknown.
     for (const who of [p.admin2, p.inspFlag]) {
       const { result } = await proposeInChat(who, { action: 'create', draft: draft() })
-      expect(toolNames(app)).toEqual(['run_sql', 'list_notices', 'notice_details'])
+      expect(toolNames(app)).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details'])
       expect(result).toMatchObject({ is_error: true, content: 'Unknown tool "propose_notice_change". The tools are "run_sql", "list_notices", "notice_details".' })
     }
     expect((await app.db.query(`SELECT 1 FROM ai_notice_proposals`)).rowCount).toBe(0)

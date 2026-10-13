@@ -106,17 +106,17 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
     await ask(app, p.plain, 'Hello')
     const plain = lastCall()
     // Everyone's new conversation reads notices (§23); the automations' tools come before those.
-    expect(toolsOf(plain)).toEqual(['run_sql', 'list_notices', 'notice_details'])
+    expect(toolsOf(plain)).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details'])
     expect(systemOf(plain)).not.toContain('# Automations')
     await ask(app, p.creator, 'Hello')
     const creator = lastCall()
-    expect(toolsOf(creator)).toEqual(['run_sql', 'propose_automation', 'my_automations', 'list_notices', 'notice_details'])
-    expect(creator.params.tools![1]).toMatchObject({ eager_input_streaming: true, input_schema: { additionalProperties: false } })
+    expect(toolsOf(creator)).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details'])
+    expect(creator.params.tools![2]).toMatchObject({ eager_input_streaming: true, input_schema: { additionalProperties: false } })
     // Not strict: together with run_sql's, its alternatives compile to a grammar the API refuses as too large.
-    expect(creator.params.tools![1]).not.toHaveProperty('strict')
+    expect(creator.params.tools![2]).not.toHaveProperty('strict')
     await ask(app, p.owner, 'Hello')
     // The owner, an administrator, may also have notices written.
-    expect(toolsOf()).toEqual(['run_sql', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change'])
+    expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change'])
 
     // Without automations the prompt is the one it always was, byte for byte; with them, one section more.
     const tz = app.config.FACTORY_TIMEZONE
@@ -158,7 +158,7 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
     expect(section).toContain('Call propose_automation only after they agree, in a later message, and pass their words of agreement as confirmation, exactly as they wrote them')
     expect(section).toContain('set revisesProposalId to its proposalId: its card is marked as replaced by the new one. Keep everything they did not ask to change, replacesAutomationId included.')
     // The tool asks for the person's words first, as the prompt does.
-    const input = (creator.params.tools![1] as { input_schema: { properties: Record<string, { description?: string }>; required: string[] } }).input_schema
+    const input = (creator.params.tools![2] as { input_schema: { properties: Record<string, { description?: string }>; required: string[] } }).input_schema
     expect(Object.keys(input.properties)[0]).toBe('confirmation')
     expect(input.required).toContain('confirmation')
     expect(input.properties.confirmation.description).toContain('copied exactly as they wrote them in their latest message')
@@ -180,7 +180,7 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
       // The earlier conversation goes on with the tools and prompt it began with, byte for byte.
       expect(JSON.stringify(lastCall().params.tools)).toBe(old.tools)
       expect(systemOf()).toBe(old.prompt)
-      expect(toolsOf()).toEqual(['run_sql', 'list_notices', 'notice_details'])
+      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details'])
       // A propose_automation call there is a tool it never had.
       app.model.reply({ content: [propose('toolu_old', watchDraft())] }, { content: [text('I cannot.')] })
       await ask(app, p.plain, 'Watch the machines', before.conversationId)
@@ -191,7 +191,7 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
 
       app.model.reply({ content: [text('Hi again.')] })
       const fresh = await ask(app, p.plain, 'A new conversation')
-      expect(toolsOf()).toEqual(['run_sql', 'propose_automation', 'my_automations', 'list_notices', 'notice_details'])
+      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details'])
       const freshStored = await stored(fresh.conversationId)
 
       // The permission withdrawn: the conversation keeps its tools, which now refuse; nothing is proposed or shown.
@@ -850,7 +850,7 @@ describe('§22 agreed in words before the card', () => {
 
   it('goes on without the check in a conversation begun before it, whose tool asks for no confirmation, sent as it was', async () => {
     type Schema = { properties: Record<string, unknown>; required: string[] }
-    const earlier = conversationTools(AUTOMATION_TOOLS).map((t) => {
+    const earlier = (conversationTools(AUTOMATION_TOOLS) as Anthropic.Beta.BetaTool[]).map((t) => {
       if (t.name !== PROPOSE_AUTOMATION_TOOL_NAME) return t
       const schema = t.input_schema as unknown as Schema
       const { confirmation: _words, revisesProposalId: _revision, ...properties } = schema.properties

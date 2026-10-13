@@ -151,15 +151,31 @@ const MEANINGS: { domains: AiDomain[]; all?: boolean; text: string }[] = [
 ]
 
 /**
- * The tools of a new conversation: run_sql, the automations' own for a person
- * allowed to create them (§21), then the notices' (§23): the reading ones for
- * everyone, the writing ones for a person who may have notices written.
+ * Anthropic's tool search (server-side, BM25): the one tool besides run_sql
+ * that is in Claude's context from the start. The other tools of a
+ * conversation are sent with every request but deferred, and load only once
+ * Claude searches for them — so a question about inspections pays for
+ * run_sql alone, and one about an automation or a notice for the tools it
+ * needs. A tool found stays loaded for the rest of the conversation.
+ */
+export const TOOL_SEARCH_TOOL: Anthropic.Beta.Messages.BetaToolSearchToolBm25_20251119 = { type: 'tool_search_tool_bm25_20251119', name: 'tool_search_tool_bm25' }
+export const TOOL_SEARCH_TOOL_NAME = TOOL_SEARCH_TOOL.name
+
+/** A tool loaded only when Claude finds it with the tool search. */
+export const deferred = (tool: Anthropic.Beta.BetaTool): Anthropic.Beta.BetaTool => ({ ...tool, defer_loading: true })
+
+/**
+ * The tools of a new conversation: run_sql and the tool search, loaded from
+ * the start; then, deferred, the automations' own for a person allowed to
+ * create them (§21) and the notices' (§23): the reading ones for everyone,
+ * the writing ones for a person who may have notices written.
  */
 export function conversationTools(
   automationTools: readonly Anthropic.Beta.BetaTool[] | null,
   noticeTools: readonly Anthropic.Beta.BetaTool[] = [],
-): Anthropic.Beta.BetaTool[] {
-  return [RUN_SQL_TOOL, ...(automationTools ?? []), ...noticeTools]
+): Anthropic.Beta.BetaToolUnion[] {
+  const onDemand = [...(automationTools ?? []), ...noticeTools].map(deferred)
+  return onDemand.length > 0 ? [RUN_SQL_TOOL, TOOL_SEARCH_TOOL, ...onDemand] : [RUN_SQL_TOOL]
 }
 
 /**
@@ -193,7 +209,11 @@ plus the machine register${options.notices ? ', and the notices this person can 
 - Every factual statement about the factory's record must come from run_sql queries over the ai.* views${options.notices ? ' (for notices, from list_notices and notice_details)' : ''} that you run in this conversation - never from memory, assumption or general knowledge, even when you feel sure. If the views cannot answer the question, say what is missing.
 - Prefer aggregates computed in SQL (count, sum, GROUP BY) to listing rows. Select only the columns you need and use LIMIT for listings: a result shows at most ${AI_PREVIEW_ROWS} rows.
 - If a query fails, read the error, fix the query and run it again. A permission error means the view is not among the data you can read for this person. Several queries for one question are fine.
-- Before you start, say in one line what you are about to check. Close with an answer that stands on its own; when you need something from the person first (a choice, a missing detail, their agreement to a plan), close with your questions instead.`)
+- Before you start, say in one line what you are about to check. Close with an answer that stands on its own; when you need something from the person first (a choice, a missing detail, their agreement to a plan), close with your questions instead.${
+    options.notices || options.automations
+      ? '\n- run_sql is ready from the start. The other tools this prompt names load on demand, to keep each question light: when a request needs one, first find it with tool_search_tool_bm25 (search by the tool\'s name, for example "list_notices"), then call it. A tool once found stays ready for the rest of the conversation. Never search for a tool the question does not need.'
+      : ''
+  }`)
   sections.push(`# When a request is unclear or cannot be met as asked
 Work like a consultant who knows the factory, not like a search box.
 - Understand what the person is trying to achieve: the problem on the floor behind the request.
