@@ -39,12 +39,25 @@
 // discarded here by the person who asked, while they still may — their role
 // read again at the press (403 to a person who may not, 404 for a card not
 // theirs).
+//
+// A question may carry files for Claude to read (ai/attachments.ts): photos,
+// PDFs and spreadsheets, attached first — counted by Anthropic on the
+// person's model, which refuses a file Claude cannot read — then taken by the
+// question they are sent with. Each is the attaching person's alone to read
+// back, while its conversation is theirs.
 // ============================================================================
 
+import { randomUUID } from 'node:crypto'
+import Anthropic from '@anthropic-ai/sdk'
 import { Router, type Request, type RequestHandler, type Response } from 'express'
+import multer from 'multer'
 import { z } from 'zod'
 import {
   AI_DOMAIN_IDS,
+  AI_MAX_ATTACHMENTS_PER_QUESTION,
+  AI_MAX_IMAGE_BYTES,
+  AI_MAX_PDF_BYTES,
+  AI_MAX_SHEET_CHARS,
   AI_EXPORT_MAX_ROWS,
   AI_MAX_MESSAGE_CHARS,
   AI_MAX_MONTHLY_CAP_USD,
@@ -56,6 +69,7 @@ import {
   isAiModel,
   type AiAccessListResponse,
   type AiAccessRequest,
+  type AiAttachment,
   type AiConversationsResponse,
   type AiMeResponse,
   type AiMessagesResponse,
@@ -75,7 +89,7 @@ import { auditEvent } from '@qc/shared/audit'
 import type { AutomationActivateResponse, AutomationDiscardResponse } from '@qc/shared/automation'
 import type { AiNoticeApplyResponse, AiNoticeDiscardResponse } from '@qc/shared/noticeAssistant'
 import type { AppContext } from '../context'
-import { PG, pgCode, withTransaction } from '../db/pool'
+import { PG, pgCode, withTransaction, type Queryable } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { requireUser, type AuthUser } from '../auth/middleware'
@@ -95,6 +109,22 @@ import {
   type PersonAvailability,
 } from '../ai/access'
 import { answerQuestion, describeModelFailure } from '../ai/assistant'
+import {
+  AttachmentExpander,
+  attachmentBlocks,
+  buildAiAttachmentKey,
+  checkPending,
+  checkTokens,
+  findOwnAttachment,
+  insertAttachment,
+  isThumbnail,
+  readAll,
+  removePending,
+  sha256Hex,
+  sniffAttachment,
+  takeAttachments,
+  type AttachmentRecord,
+} from '../ai/attachments'
 import { auditKeyLabel, last4, removeApiKey, storeApiKey, storedKeyTail } from '../ai/credentials'
 import { canonicalDomains } from '../ai/domains'
 import { minCallWorstCaseUsd, worstCaseUsd } from '../ai/models'
@@ -199,11 +229,32 @@ const accessSchema = z
 /** §21 — what activating a proposal may carry: changes made on its card, and whether to tell about the cases matching now. */
 const activateSchema = z.object({ edits: EditsInput.optional(), notifyExisting: z.boolean().optional() }).strict()
 
-const chatSchema = z.object({
-  conversationId: uuid.optional(),
-  message: z.string().trim().min(1, 'Write a question.').max(AI_MAX_MESSAGE_CHARS, `A question is at most ${AI_MAX_MESSAGE_CHARS} characters.`),
-  clientId: z.string().min(8).max(80),
-})
+const chatSchema = z
+  .object({
+    conversationId: uuid.optional(),
+    message: z.string().trim().max(AI_MAX_MESSAGE_CHARS, `A question is at most ${AI_MAX_MESSAGE_CHARS} characters.`),
+    clientId: z.string().min(8).max(80),
+    attachmentIds: z
+      .array(uuid)
+      .max(AI_MAX_ATTACHMENTS_PER_QUESTION, `A question may carry at most ${AI_MAX_ATTACHMENTS_PER_QUESTION} files.`)
+      .refine((ids) => new Set(ids).size === ids.length, 'Each file once.')
+      .default([]),
+  })
+  // Files alone are a question too: Claude reads them and says what they hold.
+  .refine((b) => b.message !== '' || b.attachmentIds.length > 0, { message: 'Write a question.', path: ['message'] })
+
+/** A spreadsheet read on the device: its text as Claude will read it, and its outline. */
+const sheetSchema = z
+  .object({
+    name: z.string().trim().min(1, 'The file has no name.').max(255),
+    text: z
+      .string()
+      .min(1, 'The spreadsheet is empty.')
+      .max(AI_MAX_SHEET_CHARS, `A spreadsheet's text may be at most ${AI_MAX_SHEET_CHARS.toLocaleString('en-US')} characters. Attach only the sheets or rows you need.`)
+      .refine((t) => t.trim() !== '', 'The spreadsheet is empty.'),
+    summary: z.string().trim().max(300).default(''),
+  })
+  .strict()
 
 const conversationsQuery = z.object({
   before: z.string().datetime({ offset: true }).optional(),
@@ -307,6 +358,13 @@ function tooClose(which: 'app' | 'personal', what: string, owner: boolean, hint 
 function monthRange(month: string): { from: string; to: string } {
   const [y, m] = month.split('-').map(Number)
   return { from: new Date(Date.UTC(y, m - 1, 1)).toISOString(), to: new Date(Date.UTC(y, m, 1)).toISOString() }
+}
+
+/** A conversation begun with files alone is named after the first of them. */
+async function firstAttachmentName(q: Queryable, userId: string, ids: readonly string[]): Promise<string> {
+  if (ids.length === 0) return 'Attached files'
+  const { rows } = await q.query<{ name: string }>(`SELECT original_filename AS name FROM ai_attachments WHERE id = $1 AND user_id = $2`, [ids[0], userId])
+  return rows[0]?.name ?? 'Attached files'
 }
 
 export function aiRoutes(ctx: AppContext): Router {
@@ -561,7 +619,7 @@ export function aiRoutes(ctx: AppContext): Router {
       } else {
         conversation = await createConversation(tx, {
           userId: user.id,
-          title: conversationTitle(body.message),
+          title: conversationTitle(body.message || (await firstAttachmentName(tx, user.id, body.attachmentIds))),
           model: access.model,
           systemPrompt: systemPrompt!,
           tools: conversationTools(automations ? AUTOMATION_TOOLS : null, managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS),
@@ -574,7 +632,9 @@ export function aiRoutes(ctx: AppContext): Router {
       )
       const turnId = rows[0].id
       await repairDanglingToolUse(tx, conversation.id, turnId)
-      const [question] = await appendMessages(tx, conversation.id, turnId, [{ role: 'user', kind: 'question', content: questionContent(body.message, askedAt, tz) }])
+      // The question's files, taken for it in order: each the asker's, attached and not yet sent.
+      const files = await takeAttachments(tx, { userId: user.id, conversationId: conversation.id, turnId, ids: body.attachmentIds })
+      const [question] = await appendMessages(tx, conversation.id, turnId, [{ role: 'user', kind: 'question', content: questionContent(body.message, askedAt, tz, files) }])
       const replay = await loadReplay(tx, conversation.id)
       const asked = (await findConversation(tx, conversation.id, user.id))!
       // The loop's own test before its first call (on what the loop is handed), made before anything is kept
@@ -611,6 +671,8 @@ export function aiRoutes(ctx: AppContext): Router {
         conversation,
         turnId,
         messages: started.replay,
+        // The conversation's files, read from the store once for this answer.
+        attachments: new AttachmentExpander(db, ctx.images),
         emit: (event) => sse.send(event),
         signal: ac.signal,
         // Run only for a conversation that was given these tools; each checks the person may still use them.
@@ -640,6 +702,153 @@ export function aiRoutes(ctx: AppContext): Router {
     } finally {
       sse.end()
     }
+  })
+
+  // ---- Files a question carries ----------------------------------------------------------
+  //
+  // Attached before the question is sent: checked by their bytes, counted by Anthropic on the
+  // person's model (which proves Claude can read them), then kept. Only someone the owner gave
+  // the assistant to, while it can answer, may attach one: counting needs the key.
+
+  // A name in Arabic arrives as UTF-8: read it so, not as Latin-1 (multer's default; its types do not list the option yet).
+  const attachOptions: multer.Options & { defParamCharset: string } = {
+    storage: multer.memoryStorage(),
+    defParamCharset: 'utf8',
+    limits: { fileSize: AI_MAX_PDF_BYTES, files: 1, fields: 2 },
+  }
+  const attachUpload = multer(attachOptions)
+  /** Read only for someone given the assistant: the bytes of anyone else are never taken in. */
+  const grantedOnly: RequestHandler = async (req, _res, next) => {
+    await aiUser(req)
+    next()
+  }
+  const receiveFile: RequestHandler = (req, res, next) =>
+    attachUpload.single('file')(req, res, (err: unknown) => {
+      if ((err as { code?: string } | undefined)?.code === 'LIMIT_FILE_SIZE') {
+        return next(new HttpError(413, 'payload_too_large', `A file may be at most ${AI_MAX_PDF_BYTES / 1024 / 1024} MB.`))
+      }
+      next(err)
+    })
+
+  /** What Claude makes of a file, counted on the person's model; a file it cannot read is refused with a word on why. */
+  async function countFile(apiKey: string, model: string, owner: boolean, file: AttachmentRecord, bytes: Buffer | null): Promise<number> {
+    try {
+      return await ctx.ai.countTokens(apiKey, { model, messages: [{ role: 'user', content: attachmentBlocks(file, bytes) }] })
+    } catch (e) {
+      if (e instanceof Anthropic.BadRequestError) {
+        throw badRequest(
+          file.kind === 'pdf'
+            ? 'Claude cannot read this PDF. It may be damaged, password-protected or too long: attach another copy, or only the pages you need.'
+            : file.kind === 'image'
+              ? 'Claude cannot read this photo. Take it again, or attach another one.'
+              : 'Claude cannot read this spreadsheet as it is. Attach only the sheets or rows you need.',
+        )
+      }
+      const failure = describeModelFailure(e, 'none (counting an attached file)', owner)
+      const status = failure.code === 'rate_limited' ? 429 : failure.code === 'ai_unavailable' ? 503 : 502
+      throw new HttpError(status, failure.code, failure.message)
+    }
+  }
+
+  /** A photo (as the app prepares it: a JPEG at most AI_IMAGE_LONG_EDGE on its long side) or a PDF. */
+  r.post('/attachments', grantedOnly, receiveFile, async (req, res) => {
+    const { user, access, avail } = await asker(req)
+    if (!avail.me.available || !avail.app.apiKey) throw unavailable(avail)
+    if (!req.file) throw badRequest('Attach the file as the "file" field.')
+    const bytes = req.file.buffer
+    const sniffed = sniffAttachment(bytes)
+    if (sniffed.kind === 'image' && bytes.length > AI_MAX_IMAGE_BYTES) throw new HttpError(413, 'payload_too_large', `A photo may be at most ${AI_MAX_IMAGE_BYTES / 1024 / 1024} MB.`)
+    const thumbnail = typeof req.body?.thumbnail === 'string' && sniffed.kind === 'image' && isThumbnail(req.body.thumbnail) ? req.body.thumbnail : null
+    await checkPending(db, user.id)
+    const id = randomUUID()
+    const name = (req.file.originalname || (sniffed.kind === 'pdf' ? 'document.pdf' : 'photo.jpg')).replace(/[\u0000-\u001f]/g, '').slice(0, 255) || 'file'
+    const record: AttachmentRecord = { id, kind: sniffed.kind, name, mimeType: sniffed.mimeType, storageKey: null, contentText: null, summary: null }
+    const tokens = await countFile(avail.app.apiKey, access.model, avail.me.owner, record, bytes)
+    checkTokens(tokens)
+    const key = buildAiAttachmentKey(id, sniffed.kind)
+    await ctx.images.put(key, bytes, sniffed.mimeType)
+    try {
+      const body: AiAttachment = await insertAttachment(db, {
+        id,
+        userId: user.id,
+        kind: sniffed.kind,
+        name,
+        mimeType: sniffed.mimeType,
+        byteSize: bytes.length,
+        sha256: sha256Hex(bytes),
+        storageKey: key,
+        driver: ctx.images.driver,
+        width: sniffed.width,
+        height: sniffed.height,
+        thumbnailDataUrl: thumbnail,
+        tokens,
+        tokenModel: access.model,
+      })
+      res.status(201).json(body)
+    } catch (e) {
+      await ctx.images.remove(key).catch(() => undefined)
+      throw e
+    }
+  })
+
+  /** A spreadsheet, read on the device into the text Claude reads (one block per sheet). */
+  r.post('/attachments/sheet', async (req, res) => {
+    const { user, access, avail } = await asker(req)
+    if (!avail.me.available || !avail.app.apiKey) throw unavailable(avail)
+    const body = parse(sheetSchema, req.body)
+    await checkPending(db, user.id)
+    const id = randomUUID()
+    const name = body.name.replace(/[\u0000-\u001f]/g, '').slice(0, 255) || 'spreadsheet'
+    const record: AttachmentRecord = { id, kind: 'sheet', name, mimeType: 'text/plain', storageKey: null, contentText: body.text, summary: body.summary || null }
+    const tokens = await countFile(avail.app.apiKey, access.model, avail.me.owner, record, null)
+    checkTokens(tokens)
+    const saved: AiAttachment = await insertAttachment(db, {
+      id,
+      userId: user.id,
+      kind: 'sheet',
+      name,
+      mimeType: 'text/plain; charset=utf-8',
+      byteSize: Buffer.byteLength(body.text, 'utf8'),
+      sha256: sha256Hex(body.text),
+      storageKey: null,
+      driver: null,
+      contentText: body.text,
+      summary: body.summary || undefined,
+      tokens,
+      tokenModel: access.model,
+    })
+    res.status(201).json(saved)
+  })
+
+  /** Taken off a question before it was sent; a file sent with a question stays with it. */
+  r.delete('/attachments/:id', async (req, res) => {
+    const { user } = await aiUser(req)
+    const id = parse(uuid, req.params.id)
+    if (!(await removePending(db, user.id, id))) throw notFound('That file')
+    res.status(204).end()
+  })
+
+  /** A file's bytes (a spreadsheet's text), for the person who attached it, while its conversation is theirs. */
+  r.get('/attachments/:id/content', async (req, res) => {
+    const { user } = await aiUser(req)
+    const id = parse(uuid, req.params.id)
+    const meta = await findOwnAttachment(db, user.id, id)
+    if (!meta) throw notFound('That file')
+    const etag = `"${meta.sha256}"`
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable')
+    res.setHeader('ETag', etag)
+    if (req.headers['if-none-match'] === etag) return res.status(304).end()
+    if (!meta.storageKey) {
+      const { rows } = await db.query<{ text: string }>(`SELECT content_text AS text FROM ai_attachments WHERE id = $1`, [id])
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+      return res.send(rows[0]?.text ?? '')
+    }
+    const bytes = await readAll(ctx.images, meta.storageKey)
+    if (!bytes) throw new HttpError(404, 'not_found', 'The file bytes are missing from storage. The record and its hash are still kept.')
+    const safeName = meta.name.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '')
+    res.setHeader('Content-Type', meta.mimeType)
+    res.setHeader('Content-Disposition', `inline; filename="${safeName}"`)
+    res.send(bytes)
   })
 
   // ---- Excel ----------------------------------------------------------------------------

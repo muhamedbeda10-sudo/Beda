@@ -145,7 +145,7 @@ export function AiThread({
             {items.map((item) =>
               item.kind === 'saved' ? (
                 item.message.role === 'user' ? (
-                  <UserBubble key={item.key} text={answerText(item.message.parts)} at={item.message.createdAt} />
+                  <UserBubble key={item.key} text={answerText(item.message.parts)} at={item.message.createdAt} attachments={item.message.attachments} />
                 ) : (
                   <Answer
                     key={item.key}
@@ -159,7 +159,7 @@ export function AiThread({
                   />
                 )
               ) : item.kind === 'question' ? (
-                <UserBubble key={item.key} text={live!.question} />
+                <UserBubble key={item.key} text={live!.question} attachments={live!.attachments} />
               ) : (
                 <Answer
                   key={item.key}

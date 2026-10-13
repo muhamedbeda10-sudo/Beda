@@ -6,7 +6,7 @@
 // ============================================================================
 
 import type { ApiErrorCode } from '@qc/shared/api'
-import type { AiConversation, AiMessage, AiMessagesResponse, AiPart, AiStreamEvent } from '@qc/shared/ai'
+import type { AiAttachment, AiConversation, AiMessage, AiMessagesResponse, AiPart, AiStreamEvent } from '@qc/shared/ai'
 import { revisedProposalId, supersedeParts } from '@/components/automations/wording'
 
 /** A query the model asked for that has not come back: running, or cut off when the answer ended. */
@@ -29,6 +29,8 @@ export interface LiveTurn {
   conversationId: string | null
   conversation: AiConversation | null
   question: string
+  /** The files the question carries, in order. */
+  attachments: AiAttachment[]
   /** When it was sent, by this device's clock. */
   sentAt: string
   /** A message the question was sent after (sentAfter): the question, saved, comes after it. */
@@ -44,8 +46,8 @@ export interface LiveTurn {
   message: AiMessage | null
 }
 
-export function startTurn(key: string, conversationId: string | null, question: string, sentAt: string, after: string | null = null): LiveTurn {
-  return { key, conversationId, conversation: null, question, sentAt, after, userMessageId: null, parts: [], progress: null, phase: 'sending', error: null, message: null }
+export function startTurn(key: string, conversationId: string | null, question: string, sentAt: string, after: string | null = null, attachments: AiAttachment[] = []): LiveTurn {
+  return { key, conversationId, conversation: null, question, attachments, sentAt, after, userMessageId: null, parts: [], progress: null, phase: 'sending', error: null, message: null }
 }
 
 export const isInFlight = (t: LiveTurn | null): boolean => !!t && (t.phase === 'sending' || t.phase === 'streaming')

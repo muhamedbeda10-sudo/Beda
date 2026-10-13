@@ -206,6 +206,10 @@ export class ScriptedModel implements AiModelClient {
   checkedKeys: string[] = []
   /** How it answers a key check: accepted unless told otherwise. */
   keyCheck: (apiKey: string) => KeyCheck = () => ({ ok: true })
+  /** What it was asked to count, as sent. */
+  counted: { apiKey: string; model: string; messages: Anthropic.Beta.BetaMessageParam[] }[] = []
+  /** How it counts: a flat figure per call unless told otherwise; throw to refuse a file. */
+  tokenCount: (params: { model: string; messages: Anthropic.Beta.BetaMessageParam[] }) => number = () => 1500
   private queue: FakeReply[] = []
 
   reply(...replies: FakeReply[]): this {
@@ -223,6 +227,8 @@ export class ScriptedModel implements AiModelClient {
     this.checkedKeys = []
     this.queue = []
     this.keyCheck = () => ({ ok: true })
+    this.counted = []
+    this.tokenCount = () => 1500
   }
 
   stream(apiKey: string, params: ModelParams, options: { signal: AbortSignal }): ModelStream {
@@ -237,6 +243,11 @@ export class ScriptedModel implements AiModelClient {
   async verifyKey(apiKey: string): Promise<KeyCheck> {
     this.checkedKeys.push(apiKey)
     return this.keyCheck(apiKey)
+  }
+
+  async countTokens(apiKey: string, params: { model: string; messages: Anthropic.Beta.BetaMessageParam[] }): Promise<number> {
+    this.counted.push({ apiKey, ...(JSON.parse(JSON.stringify(params)) as typeof params) })
+    return this.tokenCount(params)
   }
 }
 

@@ -15,9 +15,10 @@
 
 import { memo, useId, useMemo, useState, type ReactNode } from 'react'
 import { Bot, ChevronRight, Copy, Loader2, RotateCcw } from 'lucide-react'
-import type { AiKpi, AiMessage } from '@qc/shared/ai'
+import type { AiAttachment, AiKpi, AiMessage } from '@qc/shared/ai'
 import { formatFullTimestamp, formatTime, cn } from '@/lib/utils'
 import { useApp } from '@/store/AppContext'
+import { AiAttachmentList } from './AiAttachments'
 import { AiFigure } from './AiFigure'
 import { AiKpiCards } from './AiKpiCards'
 import { AiMarkdown } from './AiMarkdown'
@@ -44,13 +45,16 @@ export function BotMark({ size = 'sm', className }: { size?: 'sm' | 'md' | 'lg';
   )
 }
 
-export const UserBubble = memo(function UserBubble({ text, at }: { text: string; at?: string }) {
+export const UserBubble = memo(function UserBubble({ text, at, attachments }: { text: string; at?: string; attachments?: readonly AiAttachment[] }) {
   return (
     <div className="flex justify-end">
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-brand-600 px-3 py-2 text-sm text-white shadow-sm">
-        <p dir="auto" className="whitespace-pre-wrap break-words">
-          {text}
-        </p>
+        {attachments && attachments.length > 0 && <AiAttachmentList attachments={attachments} />}
+        {text && (
+          <p dir="auto" className="whitespace-pre-wrap break-words">
+            {text}
+          </p>
+        )}
         {at && (
           <time dateTime={at} data-tip={formatFullTimestamp(at)} className="mt-0.5 block text-end text-[10px] tabular-nums text-white/70">
             {formatTime(at)}

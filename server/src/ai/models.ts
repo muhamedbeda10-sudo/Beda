@@ -32,6 +32,7 @@ import {
   type AiModelId,
   type AiPrice,
 } from '@qc/shared/ai'
+import { attachmentTokens, type StoredMessage } from './attachments'
 import type { ModelParams } from './model'
 
 /** Room for thinking and the reply; once more at the larger size when a tool call was cut off. */
@@ -76,17 +77,19 @@ function attemptUsd(model: string, inputTokens: number, outputTokens: number): n
   return (inputTokens * Math.max(price.input, price.cacheWrite5m) + outputTokens * price.output) / 1_000_000
 }
 
-type CostedParams = Pick<ModelParams, 'model' | 'system' | 'tools' | 'messages' | 'max_tokens' | 'fallbacks'>
+type CostedParams = Pick<ModelParams, 'model' | 'system' | 'tools' | 'max_tokens' | 'fallbacks'> & { messages: ModelParams['messages'] | StoredMessage[] }
 
 /**
  * The most a call could cost: its attempt, and when it may fall back, every
  * attempt after it too — a refusal mid-reply is billed for what it wrote, so
  * each may use its whole output. "default" hands it on once, to the dearest
- * model it could pick; a list, down the list.
+ * model it could pick; a list, down the list. The request as stored: its
+ * files by reference, each at its counted tokens.
  */
 export function worstCaseUsd(params: CostedParams): number {
-  // About three characters a token, rounded the dear way.
-  return callWorstCaseUsd(params, Math.ceil(JSON.stringify([params.system, params.tools, params.messages]).length / 3))
+  // About three characters a token, rounded the dear way; the files at what they were counted, with a margin.
+  const textTokens = Math.ceil(JSON.stringify([params.system, params.tools, params.messages]).length / 3)
+  return callWorstCaseUsd(params, textTokens + attachmentTokens(params.messages))
 }
 
 function callWorstCaseUsd(params: Pick<CostedParams, 'model' | 'max_tokens' | 'fallbacks'>, inputTokens: number): number {
@@ -119,7 +122,7 @@ export const systemBlocks = (systemPrompt: string): Anthropic.Beta.BetaTextBlock
  */
 export function minCallWorstCaseUsd(
   model: string = AI_MODEL,
-  start?: { conversation: { systemPrompt: string; tools: Anthropic.Beta.BetaToolUnion[] }; messages: Anthropic.Beta.BetaMessageParam[] },
+  start?: { conversation: { systemPrompt: string; tools: Anthropic.Beta.BetaToolUnion[] }; messages: StoredMessage[] },
 ): number {
   // Shaped as the loop shapes it (the effort and the conversation check change no price).
   const shape = isAiModel(model) ? modelRequest(model, 'medium', 'drop_block') : { model }

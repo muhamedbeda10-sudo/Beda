@@ -30,6 +30,9 @@
 //     (a proposal, a notice card) is stored in the same transaction as the
 //     call and its result. A tool the conversation was never given is
 //     answered as unknown.
+//   • a question's files are stored by reference and become what Claude reads
+//     right before each call (attachments.ts), read once per answer; the caps
+//     price them at their counted tokens.
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'
@@ -49,6 +52,7 @@ import type { ApiErrorCode } from '@qc/shared/api'
 import type { Config } from '../config'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
 import { ACCESS_NOTICE, checkCall, isGranted, loadAccess } from './access'
+import { isAttachmentRef, type AttachmentExpander, type StoredMessage } from './attachments'
 import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
 import { MAX_TOKENS, MAX_TOKENS_RETRY, modelRequest, systemBlocks, worstCaseUsd } from './models'
@@ -56,7 +60,6 @@ import { RUN_SQL_TOOL_NAME, RunSqlInput } from './prompt'
 import { AI_QUERY_STOPPED, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
 import { appendMessages, insertQueries, queryPart, recordUsage, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
 
-type MessageParam = Anthropic.Beta.BetaMessageParam
 type ContentBlock = Anthropic.Beta.BetaContentBlock
 type ContentBlockParam = Anthropic.Beta.BetaContentBlockParam
 type ToolUse = Anthropic.Beta.BetaToolUseBlock
@@ -141,8 +144,10 @@ export interface Question {
   owner?: boolean
   conversation: { id: string; systemPrompt: string; tools: Anthropic.Beta.BetaToolUnion[] }
   turnId: string
-  /** The replay, ending with this question. */
-  messages: MessageParam[]
+  /** The replay, ending with this question; files by reference. */
+  messages: StoredMessage[]
+  /** What the files referenced in the replay are read as; needed whenever it references any. */
+  attachments?: AttachmentExpander
   emit: (event: AiStreamEvent) => void
   /** Aborts when the asker presses Stop or leaves. */
   signal: AbortSignal
@@ -306,7 +311,10 @@ export async function answerQuestion(qn: Question): Promise<Outcome> {
   }
 }
 
-function requestParams(qn: Question, messages: MessageParam[], maxTokens: number): ModelParams {
+/** A call's request as stored: the replay's files by reference. The caps price it so (worstCaseUsd). */
+type StoredParams = Omit<ModelParams, 'messages'> & { messages: StoredMessage[] }
+
+function requestParams(qn: Question, messages: StoredMessage[], maxTokens: number): StoredParams {
   return {
     // In tests an edited history must fail loudly; in production it costs the thinking, not the answer.
     ...modelRequest(qn.modelId, qn.effort, qn.config.NODE_ENV === 'test' ? 'error' : 'drop_block'),
@@ -317,6 +325,13 @@ function requestParams(qn: Question, messages: MessageParam[], maxTokens: number
     tools: qn.conversation.tools,
     messages: [...messages],
   }
+}
+
+/** The request as Claude receives it: every file's reference replaced by what Claude reads for it. */
+async function wireParams(qn: Question, params: StoredParams): Promise<ModelParams> {
+  if (qn.attachments) return { ...params, messages: await qn.attachments.expand(params.messages) }
+  if (params.messages.some((m) => m.content.some(isAttachmentRef))) throw new Error('A conversation with files was asked without a way to read them.')
+  return params as ModelParams
 }
 
 async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Promise<Outcome> {
@@ -336,9 +351,11 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
     // The asker's access and both caps, as they stand now: the owner may have changed them since the answer began.
     const stop = await checkCall(qn.db, qn.userId, worstCaseUsd(params))
     if (stop) return stop
+    const wire = await wireParams(qn, params)
+    if (signal.aborted) return stopped()
     calls++
 
-    const stream = qn.model.stream(qn.apiKey, params, { signal })
+    const stream = qn.model.stream(qn.apiKey, wire, { signal })
     const watch = watchStream(stream, qn.emit)
     let message: ModelMessage
     try {
@@ -489,7 +506,7 @@ function toolHandler(qn: Question, name: string): ToolHandler | null {
 const hasText = (content: ContentBlockParam[]) => content.some((b) => b.type === 'text' && b.text.trim() !== '')
 
 /** Store messages of this answer; returns them as they will be replayed. */
-async function persist(qn: Question, messages: NewMessage[]): Promise<MessageParam[]> {
+async function persist(qn: Question, messages: NewMessage[]): Promise<StoredMessage[]> {
   const stored = await withTransaction(qn.db, (tx) => appendMessages(tx, qn.conversation.id, qn.turnId, messages))
   return stored.filter((_, i) => messages[i].inReplay !== false).map((s) => s.param)
 }

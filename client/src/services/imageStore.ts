@@ -120,9 +120,11 @@ function drawScaled(img: HTMLImageElement, longEdge: number): HTMLCanvasElement 
 
 /**
  * Validate, compress and hash a picked file, entirely on the device.
- * A multi-megabyte phone photo is never sent raw (§10.1).
+ * A multi-megabyte phone photo is never sent raw (§10.1). `longEdge`: the
+ * size it is brought down to (§20's assistant reads handwriting, and takes
+ * more pixels than evidence photos keep).
  */
-export async function prepareImage(file: File, quality = 0.72): Promise<PreparedImage> {
+export async function prepareImage(file: File, quality = 0.72, longEdge = COMPRESS_LONG_EDGE): Promise<PreparedImage> {
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new ImageRejected(
       `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. The maximum is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
@@ -138,7 +140,7 @@ export async function prepareImage(file: File, quality = 0.72): Promise<Prepared
   const dataUrl = await readAsDataUrl(file)
   const img = await loadImage(dataUrl)
 
-  const canvas = drawScaled(img, COMPRESS_LONG_EDGE)
+  const canvas = drawScaled(img, longEdge)
   const blob = await canvasToBlob(canvas, 'image/jpeg', quality)
   const thumbCanvas = drawScaled(img, THUMBNAIL_LONG_EDGE)
   const thumbnailDataUrl = thumbCanvas.toDataURL('image/jpeg', 0.6)
