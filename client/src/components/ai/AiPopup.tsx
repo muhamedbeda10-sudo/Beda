@@ -9,7 +9,8 @@
 //                                   §21's pages, for those who may create
 //                                   automations (a delivered report for
 //                                   anyone it was sent to, as in the app);
-//   /playbook                       what the assistant always follows.
+//   /playbook                       what the assistant always follows;
+//   /admin/ai                       its settings, for its owner alone (the gear).
 //
 // Every other path is a page of the app: the app goes there, the popup steps
 // aside (leaveForPage) and stays where it was.
@@ -31,11 +32,12 @@ const AutomationsPage = lazy(() => import('@/pages/AutomationsPage').then((m) =>
 const AutomationPage = lazy(() => import('@/pages/AutomationPage').then((m) => ({ default: m.AutomationPage })))
 const AutomationDeliveryPage = lazy(() => import('@/pages/AutomationDeliveryPage').then((m) => ({ default: m.AutomationDeliveryPage })))
 const PlaybookPage = lazy(() => import('@/pages/PlaybookPage').then((m) => ({ default: m.PlaybookPage })))
+const AiSettings = lazy(() => import('@/pages/admin/AiAssistantPage').then((m) => ({ default: m.AiSettings })))
 
 const HEAD_BTN = 'icon-btn h-10 w-10 touch:h-11 touch:w-11'
 
 export default function AiPopup() {
-  const { automations } = useAi()
+  const { automations, owner, enabled } = useAi()
   // Someone who may not create automations has no Automations pages here, as in the app: the conversation instead.
   const automator = (page: ReactElement) => (automations ? page : <Navigate to={AI_WORKSPACE_PATH} replace />)
   return (
@@ -46,7 +48,9 @@ export default function AiPopup() {
       <Route path="/automations" element={automator(<PopupPage title="Automations" page={<AutomationsPage />} />)} />
       <Route path="/automations/deliveries/:id" element={<PopupPage title="Scheduled report" page={<AutomationDeliveryPage />} />} />
       <Route path="/automations/:id" element={automator(<PopupPage title="Automation" page={<AutomationPage />} />)} />
-      <Route path="/playbook" element={<PopupPage title="Playbook" page={<PlaybookPage />} />} />
+      <Route path="/playbook" element={enabled ? <PopupPage title="Playbook" page={<PlaybookPage />} /> : <Navigate to="/admin/ai" replace />} />
+      {/* The settings are the owner's alone, as on the server; anyone else finds the conversation. */}
+      <Route path="/admin/ai" element={owner ? <PopupPage title="AI settings" page={<AiSettings />} /> : <Navigate to={AI_WORKSPACE_PATH} replace />} />
       <Route path="*" element={<LeaveForApp />} />
     </Routes>
   )
@@ -54,7 +58,9 @@ export default function AiPopup() {
 
 /** The conversation: the card's panel, or the workspace in the large window (a phone has the panel, its whole screen). */
 function AiHome() {
-  const { size, phone } = useAi()
+  const { size, phone, enabled } = useAi()
+  // The owner without the assistant given to them has no conversation here: its settings instead (where they can give it).
+  if (!enabled) return <Navigate to="/admin/ai" replace />
   return size === 'large' && !phone ? <AiWorkspace /> : <AiPanel />
 }
 
@@ -79,11 +85,9 @@ function PopupPage({ title, page }: { title: string; page: ReactElement }) {
         <button type="button" onClick={back} className={HEAD_BTN} aria-label="Back" data-tip="Back">
           <ArrowLeft className="h-5 w-5 rtl:rotate-180" />
         </button>
-        <BotMark size="md" className="me-1 hidden sm:grid" />
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-bold leading-tight">AI assistant</h2>
-          <p className="truncate text-xs text-muted">{title}</p>
-        </div>
+        <BotMark size="md" />
+        <h2 className="sr-only">AI assistant: {title}</h2>
+        <span className="min-w-0 flex-1" />
         <button type="button" onClick={() => navigate(AI_WORKSPACE_PATH)} className={HEAD_BTN} aria-label="Back to the conversation" data-tip="Back to the conversation">
           <MessagesSquare className="h-5 w-5" />
         </button>

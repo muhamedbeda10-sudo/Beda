@@ -4,13 +4,12 @@ import { ADMIN_NAV, NAV, TOOLS_NAV, visibleNav } from './navItems'
 const paths = (items: { to: string }[]) => items.map((n) => n.to)
 
 describe('the sections each person sees', () => {
-  it('lists the AI assistant’s settings for its owner alone, whatever the role', () => {
-    expect(paths(visibleNav(ADMIN_NAV, 'admin', true))).toContain('/admin/ai')
-    // Another administrator does not even see that it exists.
-    expect(paths(visibleNav(ADMIN_NAV, 'admin', false))).not.toContain('/admin/ai')
-    // An owner who is not an administrator sees that one entry, and no other administration.
-    expect(paths(visibleNav(ADMIN_NAV, 'inspector', true))).toEqual(['/admin/ai'])
-    expect(visibleNav(ADMIN_NAV, 'inspector', false)).toEqual([])
+  it('has no entry for the AI assistant’s settings, for its owner or anyone: they open from the gear in its popup', () => {
+    for (const owner of [true, false]) {
+      expect(paths(visibleNav(ADMIN_NAV, 'admin', owner))).not.toContain('/admin/ai')
+      // An owner who is not an administrator has no administration at all.
+      expect(visibleNav(ADMIN_NAV, 'inspector', owner)).toEqual([])
+    }
   })
 
   it('keeps every other entry to its capability', () => {

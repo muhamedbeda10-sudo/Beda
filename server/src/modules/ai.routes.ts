@@ -1052,9 +1052,15 @@ export function aiRoutes(ctx: AppContext): Router {
       [from, to],
     )
     const questions = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_turns WHERE created_at >= $1 AND created_at < $2`, [from, to])
+    // Each day's spend and calls, and the questions asked that day (a day may have spend and no question: a summary).
     const byDay = await db.query<AiUsageResponse['byDay'][number]>(
-      `SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, sum(cost_usd)::numeric(14, 6) AS "costUsd", count(*)::int AS calls
-         FROM ai_usage WHERE created_at >= $1 AND created_at < $2 GROUP BY 1 ORDER BY 1`,
+      `WITH spend AS (SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, sum(cost_usd) AS cost, count(*) AS calls
+                        FROM ai_usage WHERE created_at >= $1 AND created_at < $2 GROUP BY 1),
+            asked AS (SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*) AS n
+                        FROM ai_turns WHERE created_at >= $1 AND created_at < $2 GROUP BY 1)
+       SELECT COALESCE(s.day, a.day) AS day, COALESCE(s.cost, 0)::numeric(14, 6) AS "costUsd", COALESCE(s.calls, 0)::int AS calls, COALESCE(a.n, 0)::int AS questions
+         FROM spend s FULL JOIN asked a ON a.day = s.day
+        ORDER BY 1`,
       [from, to],
     )
     const byUser = await db.query<AiUsageResponse['byUser'][number]>(

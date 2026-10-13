@@ -25,12 +25,11 @@ import { AiHeaderLinks } from './AiHeaderLinks'
 import { BotMark } from './AiMessages'
 import { AiReportList } from './AiReportList'
 import { AiReportView } from './AiReportView'
-import { AiConversationTitle, AiThread } from './AiThread'
+import { AiThread } from './AiThread'
 import { AI_WORKSPACE_PATH, aiWorkspaceHref, workspaceConversationId, workspaceReportId, type AiWorkspaceList, type AiWorkspaceState } from './workspace'
 
 const HEAD_BTN = 'icon-btn h-10 w-10 touch:h-11 touch:w-11'
 const HEAD_ON = 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
-const HEAD_TEXT_BTN = 'btn-secondary h-10 min-h-0 gap-1.5 px-3 py-0 text-13 touch:h-11'
 
 export function AiWorkspace() {
   const { conversationId, openConversation, setSize, setOpen } = useAi()
@@ -123,15 +122,13 @@ export function AiWorkspace() {
   return (
     <div className="ai-type ai-workspace flex flex-col bg-white dark:bg-slate-900">
       <header className="flex shrink-0 items-center gap-1.5 border-b border-slate-200 px-3 py-2.5 dark:border-slate-800 sm:px-4">
-        <BotMark size="md" className="me-1 hidden sm:grid" />
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-bold leading-tight sm:text-base">AI assistant</h2>
-          {/* A title in Arabic reads right to left (and, too long, is cut at its own end), but sits under the heading. */}
-          <p dir="auto" className="truncate text-left text-xs text-muted">
-            {pane === 'list' ? <span className="md:hidden">{list === 'reports' ? 'Your saved reports' : 'Your conversations'}</span> : null}
-            <span className={cn(pane === 'list' && 'hidden md:inline')}>{reportId ? 'A saved report' : <AiConversationTitle />}</span>
-          </p>
-        </div>
+        {/* The assistant's mark alone, no words: the buttons say the rest (each has its name as a tooltip). */}
+        <BotMark size="md" />
+        <h2 className="sr-only">AI assistant</h2>
+        <span className="min-w-0 flex-1" />
+        <button type="button" onClick={newChat} className={HEAD_BTN} aria-label="New chat" data-tip="New chat">
+          <SquarePen className="h-5 w-5" />
+        </button>
         <button
           type="button"
           onClick={() => (pane === 'list' ? setPane('main') : showList(list))}
@@ -143,12 +140,6 @@ export function AiWorkspace() {
           <History className="h-5 w-5" />
         </button>
         <AiHeaderLinks buttonClass={HEAD_BTN} onClass={HEAD_ON} />
-        <button type="button" onClick={newChat} className={cn(HEAD_BTN, 'sm:hidden')} aria-label="New chat" data-tip="New chat">
-          <SquarePen className="h-5 w-5" />
-        </button>
-        <button type="button" onClick={newChat} className={cn(HEAD_TEXT_BTN, 'hidden sm:inline-flex')}>
-          <SquarePen className="h-4 w-4" /> New chat
-        </button>
         {/* Back to the card in the corner, the report open here still open there. */}
         <button type="button" onClick={() => setSize('compact')} className={HEAD_BTN} aria-label="Shrink to the corner" data-tip="Shrink to the corner">
           <Minimize2 className="h-[18px] w-[18px]" />

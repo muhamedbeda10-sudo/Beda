@@ -74,12 +74,12 @@ export function AiAccessSection({ appCapUsd }: { appCapUsd: number | undefined }
 
   return (
     <Card className="space-y-4 p-4 sm:p-5" role="region" aria-labelledby="ai-access-title">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3 sm:flex-nowrap">
         <div className="flex min-w-0 items-start gap-3">
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200">
             <UsersRound className="h-5 w-5" />
           </span>
-          <div className="min-w-0">
+          <div className="min-w-0 max-w-4xl">
             <h3 id="ai-access-title" className="text-base font-bold">
               Who can use it
             </h3>
@@ -89,7 +89,7 @@ export function AiAccessSection({ appCapUsd }: { appCapUsd: number | undefined }
             </p>
           </div>
         </div>
-        <Button variant="primary" className="min-h-[44px]" onClick={() => setEditing({ kind: 'add' })} disabled={!data}>
+        <Button variant="primary" className="min-h-[44px] shrink-0" onClick={() => setEditing({ kind: 'add' })} disabled={!data}>
           <UserPlus className="h-4 w-4" /> Add person
         </Button>
       </div>

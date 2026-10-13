@@ -1,11 +1,13 @@
 // ============================================================================
-// §20 — the AI assistant, administered by its one owner (the server pins the
-// account; nobody else, administrators included, sees this page or its data):
+// §20 — the AI assistant's settings, for its one owner (the server pins the
+// account; nobody else, administrators included, sees them or their data),
+// opened from the gear in the assistant's popup (AiPopup: /admin/ai):
 // the Anthropic API key (set here, verified with Anthropic before it is kept,
 // stored encrypted and never shown again), the switch and the app-wide
 // monthly cap, who may use it and with what, and what it cost by day, by
 // person and by automation (§21: scheduled reports' summaries), this month or
-// the last — and Activity: each question, word for word, and what it cost. Amounts live here alone: the chat and the Automations pages show
+// the last — and Activity: each question, word for word, and what it cost.
+// The figures at a glance sit on top; the sections, one at a time, under them. Amounts live here alone: the chat and the Automations pages show
 // none, to anyone.
 // ============================================================================
 
@@ -13,88 +15,151 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Activity, Bot, ChevronDown, Coins, Eye, EyeOff, Hash, KeyRound, Loader2, MessageSquareText, Save, SlidersHorizontal, Trash2, Zap } from 'lucide-react'
 import { AI_MAX_MONTHLY_CAP_USD, type AiKeyState, type AiSettingsResponse, type AiStatusResponse, type AiUsageResponse } from '@qc/shared/ai'
-import { AdminLayout } from '@/components/admin/AdminLayout'
 import { CAP_RANGE_TEXT, parseCapUsd } from '@/components/ai/access'
 import { AiAccessSection } from '@/components/ai/AiAccessSection'
 import { AiActivitySection } from '@/components/ai/AiActivitySection'
-import { useAi } from '@/components/ai/AiAssistantProvider'
 import { Notice, UnavailableNotice } from '@/components/ai/AiNotice'
 import { AiSwitch } from '@/components/ai/AiSwitch'
 import { formatCap, formatMonth, formatTokens, formatUsd, formatUtcDay, spendBarClass, spendShare, utcMonth } from '@/components/ai/format'
 import { Badge, Button, Card, Field, Input, Modal, Stat } from '@/components/ui'
 import { Segmented } from '@/components/ui/PageShell'
 import { ApiError } from '@/lib/api'
-import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn, formatDateTime } from '@/lib/utils'
 import { removeAiKey, saveAiSettings, setAiKey } from '@/services/mutations'
-import { useAiMe, useAiSettings, useAiUsage } from '@/services/queries'
+import { useAiAccess, useAiMe, useAiSettings, useAiUsage } from '@/services/queries'
+import { usePersistedState } from '@/lib/usePersistedState'
 import { useApp } from '@/store/AppContext'
 
 /** The server's own rule for a key: an Anthropic API key, nothing else. */
 const KEY_PATTERN = /^sk-ant-[A-Za-z0-9_-]+$/
 
-export function AiAssistantPage() {
-  const ai = useAi()
-  // The route lets only the owner in; asked again here so nothing is fetched for anyone else, whatever the route does.
+export function AiSettings() {
+  // The popup lets only the owner in; asked again here so nothing is fetched for anyone else, whatever the route does.
   const { data: me } = useAiMe()
   const owner = me?.owner ?? false
   const { data, isLoading, isError, refetch } = useAiSettings(owner)
-  // On a phone the ten-line introduction folds under "What is this?", so the key and the switch come first.
-  const phone = useMediaQuery(PHONE)
-  const intro =
-    "Only you see this page. The people you choose ask about the factory's record in plain words, in English or Arabic; Claude answers by running read-only queries over curated views of the record, and every query is shown with its rows and can be taken to Excel. It cannot change anything. You decide who may ask, about which data, on which model and effort, and up to what each may spend a month; the app-wide cap stops everyone before the bill runs away. Nobody sees a price or an amount in the chat — the figures are here alone."
+  const [tab, setTab] = usePersistedState<SettingsTab>('qc-ai-settings-tab', 'settings')
+  const shown: SettingsTab = SETTINGS_TABS.some((t) => t.value === tab) ? tab : 'settings'
 
+  if (!owner) return null
   return (
-    <AdminLayout
-      title="AI assistant"
-      allowed={owner}
-      actions={
-        // The owner uses the assistant only if they gave it to themselves too (Who can use it).
-        ai.enabled && (
-          <Button variant="primary" className="min-h-[44px]" onClick={() => ai.setOpen(true)}>
-            <Bot className="h-4 w-4" /> Open the assistant
-          </Button>
-        )
-      }
-    >
-      <div className="space-y-4">
-        {phone ? (
-          <details className="group rounded-xl bg-white/60 ring-1 ring-slate-200/70 dark:bg-slate-900/60 dark:ring-slate-800">
-            <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 px-3 text-sm font-semibold text-slate-700 dark:text-slate-200 [&::-webkit-details-marker]:hidden">
-              <ChevronDown className="h-4 w-4 shrink-0 text-muted transition-transform group-open:rotate-180" /> What is this?
-            </summary>
-            <p className="px-3 pb-3 text-sm text-muted">{intro}</p>
-          </details>
-        ) : (
-          <p className="text-sm text-muted">{intro}</p>
-        )}
+    <div className="mx-auto max-w-[88rem] space-y-4">
+      <SettingsHeading data={data} />
 
-        {isLoading && (
-          <p className="flex items-center gap-2 text-sm text-muted">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      {isLoading && (
+        <p className="flex items-center gap-2 text-sm text-muted">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        </p>
+      )}
+      {isError && !data && (
+        <Notice tone="red" action={<Button className="h-8 min-h-0 px-3 py-0 text-xs" onClick={() => void refetch()}>Try again</Button>}>
+          The assistant's settings could not be loaded.
+        </Notice>
+      )}
+      {data && !data.status.available && <StatusLine status={data.status} />}
+
+      {data && <OverviewStrip status={data.status} />}
+
+      <Segmented label="Settings section" value={shown} onChange={setTab} options={SETTINGS_TABS} />
+
+      {shown === 'settings' && data && (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <KeyCard data={data} />
+          <SettingsCard data={data} />
+        </div>
+      )}
+      {shown === 'people' && <AiAccessSection appCapUsd={data?.settings.monthlyCapUsd} />}
+      {shown === 'usage' && <UsageSection enabled={owner} />}
+      {shown === 'activity' && <AiActivitySection enabled={owner} />}
+    </div>
+  )
+}
+
+type SettingsTab = 'settings' | 'people' | 'usage' | 'activity'
+
+/** The page's sections, one at a time under the figures: the setup, the people, what it cost, what was asked. */
+const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
+  { value: 'settings', label: 'Key and cap' },
+  { value: 'people', label: 'Who can use it' },
+  { value: 'usage', label: 'Usage' },
+  { value: 'activity', label: 'Activity' },
+]
+
+const INTRO =
+  "Only you see this page. The people you choose ask about the factory's record in plain words, in English or Arabic; Claude answers by running read-only queries over curated views of the record, and every query is shown with its rows and can be taken to Excel. It cannot change anything. You decide who may ask, about which data, on which model and effort, and up to what each may spend a month; the app-wide cap stops everyone before the bill runs away. Nobody sees a price or an amount in the chat — the figures are here alone."
+
+/** The heading: what this is, whether the assistant is answering, who changed its settings last; what it is, folded. */
+function SettingsHeading({ data }: { data: AiSettingsResponse | undefined }) {
+  const state = !data ? null : !data.settings.enabled ? { tone: 'neutral' as const, text: 'Off' } : data.status.available ? { tone: 'green' as const, text: 'Open to the team' } : { tone: 'amber' as const, text: 'Not answering' }
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <Bot aria-hidden className="h-5 w-5 shrink-0 text-brand-700 dark:text-brand-300" />
+          <h3 className="text-lg font-extrabold tracking-tight">AI settings</h3>
+          {state && <Badge tone={state.tone}>{state.text}</Badge>}
+        </div>
+        {data?.updatedByName && (
+          <p className="text-xs text-muted">
+            Last change by {data.updatedByName}
+            {data.updatedAt ? `, ${formatDateTime(data.updatedAt)}` : ''}
           </p>
         )}
-        {isError && !data && (
-          <Notice tone="red" action={<Button className="h-8 min-h-0 px-3 py-0 text-xs" onClick={() => void refetch()}>Try again</Button>}>
-            The assistant's settings could not be loaded.
-          </Notice>
-        )}
-        {data && <StatusLine status={data.status} />}
-
-        {data && (
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <KeyCard data={data} />
-            <SettingsCard data={data} />
-          </div>
-        )}
-
-        {owner && <AiAccessSection appCapUsd={data?.settings.monthlyCapUsd} />}
-
-        <UsageSection enabled={owner} />
-
-        <AiActivitySection enabled={owner} />
       </div>
-    </AdminLayout>
+      <details className="group rounded-xl bg-white/60 ring-1 ring-slate-200/70 dark:bg-slate-900/60 dark:ring-slate-800">
+        <summary className="flex min-h-[40px] cursor-pointer list-none items-center gap-2 px-3 text-13 font-semibold text-slate-600 dark:text-slate-300 touch:min-h-[44px] [&::-webkit-details-marker]:hidden">
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted transition-transform group-open:rotate-180" /> About the assistant and this page
+        </summary>
+        <p className="px-3 pb-3 text-sm text-muted">{INTRO}</p>
+      </details>
+    </div>
+  )
+}
+
+/**
+ * The figures at a glance, side by side: today, this month against the cap, the month's questions, last month, and
+ * the people given the assistant. Today's and the month's spend are the server's, as the cap reads them.
+ */
+function OverviewStrip({ status }: { status: AiStatusResponse }) {
+  const thisMonth = utcMonth(0)
+  const { data: now } = useAiUsage(thisMonth, true)
+  const { data: last } = useAiUsage(utcMonth(-1), true)
+  const { data: access } = useAiAccess(true)
+  const today = now?.byDay.find((d) => d.day === new Date().toISOString().slice(0, 10))
+  const share = spendShare(status.spentUsd, status.capUsd)
+  const people = access?.people.filter((p) => p.enabled).length
+  const cells: { label: string; value: ReactNode; sub: ReactNode }[] = [
+    { label: 'Today', value: formatUsd(today?.costUsd ?? 0), sub: `${today?.questions ?? 0} question${today?.questions === 1 ? '' : 's'}` },
+    {
+      label: 'This month',
+      value: formatUsd(status.spentUsd),
+      sub: (
+        <>
+          <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+            <span className={cn('block h-full rounded-full', spendBarClass(status.spentUsd, status.capUsd))} style={{ width: `${Math.min(100, share * 100)}%` }} />
+          </span>
+          <span className="mt-1 block">of {formatCap(status.capUsd)} cap · {Math.round(share * 100)}%</span>
+        </>
+      ),
+    },
+    {
+      label: 'Questions this month',
+      value: now ? now.questions.toLocaleString() : '—',
+      sub: now && now.questions > 0 ? `${formatUsd(now.spentUsd / now.questions)} each` : 'None asked yet',
+    },
+    { label: 'Last month', value: last ? formatUsd(last.spentUsd) : '—', sub: last ? `${last.questions.toLocaleString()} questions` : ' ' },
+    { label: 'People', value: people ?? '—', sub: 'with the assistant' },
+  ]
+  return (
+    <Card className="grid grid-cols-2 divide-slate-100 overflow-hidden sm:grid-cols-3 xl:grid-cols-5 xl:divide-x dark:divide-slate-800">
+      {cells.map((c, i) => (
+        <div key={c.label} className={cn('min-w-0 p-4', i < cells.length - 1 && 'border-b border-slate-100 dark:border-slate-800 xl:border-b-0')}>
+          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-muted">{c.label}</p>
+          <p className="mt-1 text-2xl font-extrabold tabular-nums tracking-tight">{c.value}</p>
+          <div className="text-xs text-muted">{c.sub}</div>
+        </div>
+      ))}
+    </Card>
   )
 }
 
@@ -355,9 +420,6 @@ function SettingsCard({ data }: { data: AiSettingsResponse }) {
             </p>
           </div>
         </div>
-        <Button variant="primary" className="min-h-[44px]" onClick={() => void save()} disabled={saving || !dirty}>
-          <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save'}
-        </Button>
       </div>
 
       {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</p>}
@@ -392,6 +454,13 @@ function SettingsCard({ data }: { data: AiSettingsResponse }) {
           className="max-w-[12rem] tabular-nums"
         />
       </Field>
+
+      {/* Saved together, under what is saved: the switch and the cap are one change in the audit log. */}
+      <div className="flex justify-end border-t border-slate-100 pt-4 dark:border-slate-800">
+        <Button variant="primary" className="min-h-[44px]" onClick={() => void save()} disabled={saving || !dirty}>
+          <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </div>
     </Card>
   )
 }

@@ -422,7 +422,8 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       owner,
       automations,
       revoked,
-      open: (enabled || revoked) && open,
+      // The owner has the popup for its settings even without the assistant given to them.
+      open: (enabled || revoked || owner) && open,
       setOpen,
       toggle,
       size,

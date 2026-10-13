@@ -4,7 +4,7 @@
 // the assistant. Automations (§21) open from the assistant's header, and
 // follow-ups (§21) from the bell, beside the notices: neither is a tab here.
 
-import { BellRing, Bot, ClipboardCheck, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
+import { BellRing, ClipboardCheck, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
 import { can, type Capability } from '@qc/shared/rules'
 import type { Role } from '@qc/shared/types'
 
@@ -45,7 +45,6 @@ export const ADMIN_NAV: NavItem[] = [
   { to: '/admin/users', label: 'Users', icon: Users, needs: 'manage-admin-data', hint: 'Accounts and roles' },
   { to: '/admin/notices', label: 'Notices', icon: BellRing, needs: 'manage-admin-data', hint: 'Targeted messages and who read them' },
   { to: '/admin/audit', label: 'Audit log', icon: ScrollText, needs: 'edit-closed-session', hint: 'Who changed what, and when' },
-  { to: '/admin/ai', label: 'AI assistant', icon: Bot, aiOwner: true, hint: 'Who can use it, the key, caps and usage' },
   { to: '/admin/whats-new', label: "What's new", icon: Sparkles, needs: 'manage-admin-data', hint: 'Every update, newest first' },
 ]
 

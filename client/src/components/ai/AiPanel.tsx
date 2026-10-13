@@ -18,9 +18,10 @@ import { useAi } from './AiAssistantProvider'
 import { AiComposer, useComposerDraft } from './AiComposer'
 import { AiConversationList } from './AiConversationList'
 import { AiHeaderLinks } from './AiHeaderLinks'
+import { BotMark } from './AiMessages'
 import { AiReportList } from './AiReportList'
 import { AiReportView } from './AiReportView'
-import { AiConversationTitle, AiThread } from './AiThread'
+import { AiThread } from './AiThread'
 import { AI_WORKSPACE_PATH, aiWorkspaceHref, workspaceReportId, type AiOpenReport, type AiWorkspaceState } from './workspace'
 
 type View = 'thread' | 'history' | 'reports'
@@ -114,14 +115,10 @@ export default function AiPanel() {
   return (
     <>
       <header className="flex shrink-0 items-center gap-1 border-b border-slate-100 px-3 py-2.5 dark:border-slate-800 sm:gap-1.5">
-        {/* No mark here: in the card the title needs the room beside seven buttons. */}
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-bold leading-tight">AI assistant</h2>
-          {/* A title in Arabic reads right to left (and, too long, is cut at its own end), but sits under the heading. */}
-          <p dir="auto" className="truncate text-left text-xs text-muted">
-            {view === 'history' ? 'Your conversations' : view === 'reports' ? 'Your saved reports' : <AiConversationTitle />}
-          </p>
-        </div>
+        {/* The assistant's mark alone, no words: the buttons say the rest (each has its name as a tooltip). */}
+        <BotMark size="md" />
+        <h2 className="sr-only">AI assistant</h2>
+        <span className="min-w-0 flex-1" />
         <button type="button" onClick={newChat} className={HEAD_BTN} aria-label="New chat" data-tip="New chat">
           <SquarePen className="h-5 w-5" />
         </button>

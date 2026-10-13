@@ -341,7 +341,7 @@ function Shell({ children }: { children: ReactNode }) {
       </main>
       {/* §20 — the assistant: its floating button in the bottom corner, and its popup. Outside <main>, which remounts
           on every route: an answer keeps streaming while its asker moves around. */}
-      {ai.enabled && <AiButton />}
+      {(ai.enabled || ai.owner) && <AiButton />}
       <AiPanelHost />
       <ToastHost />
       <WhatsNewPrompt />
