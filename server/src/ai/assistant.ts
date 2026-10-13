@@ -351,8 +351,9 @@ export async function answerQuestion(qn: Question): Promise<Outcome> {
   // One signal for everything this answer starts: the asker's Stop, and the clock.
   const ac = new AbortController()
   let overTime = false
-  const onAbort = () => ac.abort()
-  if (qn.signal.aborted) ac.abort()
+  // The asker's reason goes on to what the answer runs: a tool told it was handed over keeps nothing of its own.
+  const onAbort = () => ac.abort(qn.signal.reason)
+  if (qn.signal.aborted) ac.abort(qn.signal.reason)
   qn.signal.addEventListener('abort', onAbort)
   const deadlineMs = qn.deadlineMs ?? TURN_DEADLINE_MS
   const deadlineAt = Date.now() + deadlineMs
@@ -595,10 +596,12 @@ async function runStep(
   if (signal.aborted && cause() === 'handover') return { outcome: HANDED_OVER_OUTCOME }
   const stored = await withTransaction(qn.db, async (tx) => {
     await qn.control?.fence(tx)
-    await settleStep(tx, step.id)
+    // Settled already: another run finished this step. Its results are the step's; these are not.
+    if (!(await settleStep(tx, step.id))) throw new TurnLost()
     // A note from the app, when there is one, after the results (the API wants the results first). Not on a step cut
     // short: that answer ends here, and the note would only be replayed to later questions.
-    const content: StoredBlock[] = note && !signal.aborted ? [...results, { type: 'text', text: note }] : results
+    const data = results.map(asData)
+    const content: StoredBlock[] = note && !signal.aborted ? [...data, { type: 'text', text: note }] : data
     const appended = await appendMessages(tx, qn.conversation.id, qn.turnId, [{ role: 'user', kind: 'tool_results', content }])
     await insertQueries(tx, qn.conversation.id, qn.turnId, queries)
     for (const s of stores) await s(tx)
@@ -617,6 +620,20 @@ export function wrapUpNote(stepsLeft: number, minutesLeft: number): string {
 }
 
 const notRun = (tu: ToolUse, why: string): ToolResult => ({ type: 'tool_result', tool_use_id: tu.id, is_error: true, content: why })
+
+/** The note's tag, opening or closing, however spaced or cased. */
+const NOTE_TAG = new RegExp(`<(\\s*/?\\s*)${WRAP_UP_TAG}`, 'gi')
+
+/**
+ * A result as the model reads it: never carrying the app's note. Text other people typed (a task, a remark, a cell)
+ * reaches the results as it is; the tag in it is made plain, so only the note after the results reads as the app's.
+ */
+export function asData(result: ToolResult): ToolResult {
+  const plain = (text: string) => text.replace(NOTE_TAG, `‹$1${WRAP_UP_TAG}`)
+  if (typeof result.content === 'string') return { ...result, content: plain(result.content) }
+  if (!result.content) return result
+  return { ...result, content: result.content.map((b) => (b.type === 'text' ? { ...b, text: plain(b.text) } : b)) }
+}
 
 /** The conversation's own tools that the model calls and this server runs, by name, as it was given them: not the tool search, which Anthropic runs. */
 const toolNames = (qn: Question): string[] =>

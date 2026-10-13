@@ -58,8 +58,17 @@ export const MAX_RESUMES = 3
 const SWEEP_MS = 10_000
 /** Answers taken over in one look. */
 const SWEEP_BATCH = 10
-/** An answer left running by the version before hand-overs (no heartbeat ever) is continued only when this recent. */
-const UNTRACKED_MAX_MINUTES = 30
+/**
+ * An answer left running by the version before hand-overs (no heartbeat ever) may still be written by it until its
+ * own limit passed (its 15 minutes, and one more): never taken before, never continued after — closed as cut off.
+ */
+export const UNTRACKED_STALE_MINUTES = 16
+/**
+ * A running turn lost with its instance, over ai_turns: its heartbeat older than the lease (or handed back), or — left
+ * by the version before hand-overs, with no heartbeat ever — past that version's own limit.
+ */
+export const LOST_TURN = `status = 'running' AND (heartbeat_at < now() - make_interval(secs => ${LEASE_MS / 1000})
+  OR (heartbeat_at IS NULL AND created_at < now() - make_interval(mins => ${UNTRACKED_STALE_MINUTES})))`
 /** Someone polling the conversation this recently is watching the answer: no bell. */
 const WATCHING_SECONDS = 15
 /** A heartbeat after the server stopped: older than any lease, so the answer is taken over at once. */
@@ -94,6 +103,8 @@ interface LocalRun {
   subscribers: Set<(event: AiStreamEvent) => void>
   /** What it is doing now, written with the heartbeat. */
   progress: string | null
+  /** The line last written, so an unchanged one is not written again. */
+  progressWritten: string | null
   /** When its running time was last added to the turn. */
   countedAt: number
   /** The asker controls the assistant: told precisely why it failed. */
@@ -116,6 +127,8 @@ export class AnswerRunner {
   private beatTimer: NodeJS.Timeout | null = null
   private sweepTimer: NodeJS.Timeout | null = null
   private lastBeatOk = Date.now()
+  /** A beat under way: the clock's next is skipped, rather than count the same time twice or pile up on a slow pool. */
+  private beating: Promise<void> | null = null
   private stopping = false
   private sweeping: Promise<number> | null = null
 
@@ -142,9 +155,12 @@ export class AnswerRunner {
     this.stopping = true
     if (this.sweepTimer) clearInterval(this.sweepTimer)
     this.sweepTimer = null
+    for (const run of this.runs.values()) run.ac.abort(HANDED_OVER)
+    // A look under way takes no more once it sees `stopping`; what it took meanwhile is handed back below, with the rest.
+    await this.sweeping?.catch(() => undefined)
     const runs = [...this.runs.values()]
     for (const run of runs) run.ac.abort(HANDED_OVER)
-    await Promise.allSettled([this.sweeping, ...runs.map((r) => r.done)])
+    await Promise.allSettled(runs.map((r) => r.done))
     this.stopBeat()
     await this.deps.db
       .query(`UPDATE ai_turns SET runner = NULL, heartbeat_at = $2::timestamptz WHERE runner = $1 AND status = 'running'`, [this.id, HANDED_BACK])
@@ -225,22 +241,33 @@ export class AnswerRunner {
     let taken = 0
     while (taken < SWEEP_BATCH && !this.stopping) {
       // One at a time, each under its row's lock: two instances never take the same answer.
+      // Never one still written here: an answer cut short whose tool is still running keeps its place until it ends.
       const { rows } = await this.deps.db.query<{ id: string; conversationId: string; userId: string; resumes: number; untracked: boolean }>(
         `WITH lost AS (
            SELECT id, heartbeat_at FROM ai_turns
-            WHERE status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < now() - make_interval(secs => $2))
+            WHERE ${LOST_TURN} AND NOT (id = ANY($2::uuid[]))
             ORDER BY heartbeat_at NULLS FIRST, created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
          UPDATE ai_turns t SET runner = $1, heartbeat_at = now(), resumes = t.resumes + 1
            FROM lost WHERE t.id = lost.id
-         RETURNING t.id, t.conversation_id AS "conversationId", t.user_id AS "userId", t.resumes,
-                   (lost.heartbeat_at IS NULL AND t.created_at < now() - make_interval(mins => $3)) AS untracked`,
-        [this.id, LEASE_MS / 1000, UNTRACKED_MAX_MINUTES],
+         RETURNING t.id, t.conversation_id AS "conversationId", t.user_id AS "userId", t.resumes, (lost.heartbeat_at IS NULL) AS untracked`,
+        [this.id, [...this.runs.keys()]],
       )
       const turn = rows[0]
       if (!turn) break
       taken++
+      if (this.stopping) {
+        // Stopping since it was taken: given back as it was, for the next instance, without counting a hand-over.
+        await this.deps.db
+          .query(`UPDATE ai_turns SET runner = NULL, heartbeat_at = $2::timestamptz, resumes = resumes - 1 WHERE id = $1 AND runner = $3 AND status = 'running'`, [
+            turn.id,
+            HANDED_BACK,
+            this.id,
+          ])
+          .catch((e) => console.warn('[ai] an answer could not be handed back:', e instanceof Error ? e.message : String(e)))
+        break
+      }
       if (turn.untracked) {
-        // Left by the version before hand-overs, long ago: closed as it would have been, without a word in the bell.
+        // Left by the version before hand-overs, past its own limit: closed as it would have been, without a word in the bell.
         await this.close(this.bare(turn), { stopReason: 'error', notice: CUT_OFF_NOTICE }, false)
       } else if (turn.resumes > MAX_RESUMES) {
         await this.close(this.bare(turn), { stopReason: 'error', notice: TOO_MANY_RESUMES_NOTICE })
@@ -265,6 +292,7 @@ export class AnswerRunner {
       ac: new AbortController(),
       subscribers: new Set(),
       progress: null,
+      progressWritten: null,
       countedAt: Date.now(),
       owner: false,
       done: Promise.resolve({ kind: 'handed-over' }),
@@ -272,7 +300,7 @@ export class AnswerRunner {
     this.runs.set(turnId, run)
     this.startBeat()
     run.done = this.execute(run).finally(() => {
-      this.runs.delete(turnId)
+      if (this.runs.get(turnId) === run) this.runs.delete(turnId)
       if (this.runs.size === 0) this.stopBeat()
     })
     return run
@@ -326,7 +354,13 @@ export class AnswerRunner {
     if (!pending) await withTransaction(db, (tx) => repairDanglingToolUse(tx, run.conversationId, run.turnId))
     const messages = await loadReplay(db, run.conversationId)
     const retried = await db.query(`SELECT 1 FROM ai_messages WHERE turn_id = $1 AND kind = 'repair' AND content::text LIKE '%"type":"text"%' LIMIT 1`, [run.turnId])
-    const wrapped = await db.query(`SELECT 1 FROM ai_messages WHERE turn_id = $1 AND kind = 'tool_results' AND content::text LIKE $2 LIMIT 1`, [run.turnId, `%<${WRAP_UP_TAG}>%`])
+    // Told to close already: the app's note is the text after a step's results, never inside one.
+    const wrapped = await db.query(
+      `SELECT 1 FROM ai_messages
+        WHERE turn_id = $1 AND kind = 'tool_results' AND json_typeof(content) = 'array'
+          AND content -> -1 ->> 'type' = 'text' AND starts_with(content -> -1 ->> 'text', $2) LIMIT 1`,
+      [run.turnId, `<${WRAP_UP_TAG}>`],
+    )
 
     const emit = (event: AiStreamEvent) => {
       run.progress = progressOf(event) ?? run.progress
@@ -430,7 +464,7 @@ export class AnswerRunner {
   private startBeat(): void {
     if (this.beatTimer) return
     this.lastBeatOk = Date.now()
-    this.beatTimer = setInterval(() => void this.heartbeat(), HEARTBEAT_MS)
+    this.beatTimer = setInterval(() => void this.beatNow(), HEARTBEAT_MS)
     this.beatTimer.unref()
   }
 
@@ -440,33 +474,64 @@ export class AnswerRunner {
   }
 
   /**
-   * Say the answers here are alive, with how long each has run and what it is doing; learn which were stopped, and
-   * which are no longer this instance's (taken over), and stop those here.
+   * Say the answers here are alive, with how long each has run; learn which were stopped, and which are no longer this
+   * instance's (taken over), and stop those here. Then, apart, what each is doing: a line of the model's own words
+   * never stands in the way of the lease.
    */
   async heartbeat(): Promise<void> {
+    // Asked for (the tests beat themselves): after the beat under way, one of its own.
+    while (this.beating) await this.beating
+    await this.beatNow()
+  }
+
+  private async beatNow(): Promise<void> {
     const runs = [...this.runs.values()]
     if (runs.length === 0) return
     const now = Date.now()
+    // Silent too long (the beats failing, or hanging): they will be taken over, so stop writing them here first.
+    if (now - this.lastBeatOk > GIVE_UP_MS) for (const run of runs) run.ac.abort(HANDED_OVER)
+    if (this.beating) return
+    this.beating = this.beat(runs, now).finally(() => {
+      this.beating = null
+    })
+    await this.beating
+  }
+
+  private async beat(runs: LocalRun[], now: number): Promise<void> {
+    let alive: Map<string, boolean>
     try {
       const { rows } = await this.deps.db.query<{ id: string; stop: boolean }>(
-        `UPDATE ai_turns t SET heartbeat_at = now(), elapsed_ms = LEAST(t.elapsed_ms + u.add, 86400000), progress = u.progress
-           FROM unnest($2::uuid[], $3::int[], $4::text[]) AS u(id, add, progress)
+        `UPDATE ai_turns t SET heartbeat_at = now(), elapsed_ms = LEAST(t.elapsed_ms + u.add, 86400000)
+           FROM unnest($2::uuid[], $3::int[]) AS u(id, add)
           WHERE t.id = u.id AND t.runner = $1 AND t.status = 'running'
           RETURNING t.id, (t.stop_requested_at IS NOT NULL) AS stop`,
-        [this.id, runs.map((r) => r.turnId), runs.map((r) => Math.max(0, now - r.countedAt)), runs.map((r) => r.progress)],
+        [this.id, runs.map((r) => r.turnId), runs.map((r) => Math.max(0, now - r.countedAt))],
       )
       this.lastBeatOk = now
-      const alive = new Map(rows.map((r) => [r.id, r.stop]))
-      for (const run of runs) {
-        run.countedAt = now
-        const stop = alive.get(run.turnId)
-        if (stop === undefined) run.ac.abort(HANDED_OVER)
-        else if (stop) run.ac.abort(STOPPED)
-      }
+      alive = new Map(rows.map((r) => [r.id, r.stop]))
     } catch (e) {
-      console.warn('[ai] the answers\' heartbeat failed:', e instanceof Error ? e.message : String(e))
-      // Unable to say they are alive, they will be taken over: stop writing them here first.
-      if (now - this.lastBeatOk > GIVE_UP_MS) for (const run of runs) run.ac.abort(HANDED_OVER)
+      console.warn("[ai] the answers' heartbeat failed:", e instanceof Error ? e.message : String(e))
+      if (Date.now() - this.lastBeatOk > GIVE_UP_MS) for (const run of runs) run.ac.abort(HANDED_OVER)
+      return
+    }
+    for (const run of runs) {
+      run.countedAt = now
+      const stop = alive.get(run.turnId)
+      if (stop === undefined) run.ac.abort(HANDED_OVER)
+      else if (stop) run.ac.abort(STOPPED)
+    }
+    const changed = runs.filter((r) => alive.has(r.turnId) && r.progress !== r.progressWritten)
+    if (changed.length === 0) return
+    const lines = changed.map((r) => r.progress)
+    try {
+      await this.deps.db.query(
+        `UPDATE ai_turns t SET progress = u.progress FROM unnest($2::uuid[], $3::text[]) AS u(id, progress)
+          WHERE t.id = u.id AND t.runner = $1 AND t.status = 'running'`,
+        [this.id, changed.map((r) => r.turnId), lines],
+      )
+      changed.forEach((r, i) => (r.progressWritten = lines[i]))
+    } catch (e) {
+      console.warn("[ai] what the answers are doing could not be written:", e instanceof Error ? e.message : String(e))
     }
   }
 }
@@ -475,15 +540,20 @@ export class AnswerRunner {
 export function progressOf(event: AiStreamEvent): string | null {
   switch (event.type) {
     case 'progress':
-      return clipText(event.text.replace(/\s+/g, ' ').trim(), 300)
+      return clipText(oneLine(event.text), 300)
     case 'query_start':
-      return clipText(`Looking it up: ${event.purpose.replace(/\s+/g, ' ').trim()}`, 300)
+      return clipText(`Looking it up: ${oneLine(event.purpose)}`, 300)
     case 'text':
       return 'Writing the answer…'
     default:
       return null
   }
 }
+
+/** The model's words as one line of text: no control characters (Postgres keeps no NUL), no runs of spaces. */
+const oneLine = (text: string) =>
+  // eslint-disable-next-line no-control-regex
+  text.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim()
 
 /** The opening of an answer as a bell line: its words, without the markdown. */
 export function answerExcerpt(markdown: string): string {

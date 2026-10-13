@@ -117,7 +117,7 @@ import {
   type AccessRecord,
   type PersonAvailability,
 } from '../ai/access'
-import { LEASE_MS } from '../ai/answerRunner'
+import { LOST_TURN } from '../ai/answerRunner'
 import { describeModelFailure } from '../ai/assistant'
 import {
   attachmentBlocks,
@@ -633,9 +633,12 @@ export function aiRoutes(ctx: AppContext): Router {
     // asked it (listened for from the start; not req's close, which fires as soon as the body is read); once it is
     // kept the answer goes on without them, and only POST /conversations/:id/stop ends it early.
     const ac = new AbortController()
-    res.on('close', () => {
-      if (!res.writableEnded) ac.abort()
-    })
+    const left = new Promise<'left'>((resolve) =>
+      res.on('close', () => {
+        if (!res.writableEnded) ac.abort()
+        resolve('left')
+      }),
+    )
     const { user, access, avail } = await asker(req)
     const owner = avail.me.owner
     const body = parse(chatSchema, req.body)
@@ -672,10 +675,7 @@ export function aiRoutes(ctx: AppContext): Router {
         conversation = found
         // An answer still being written comes first, wherever it is written. One whose instance went silent is
         // taken over and continued (answerRunner.ts): look for it now rather than at the next sweep.
-        const running = await tx.query<{ lost: boolean }>(
-          `SELECT (heartbeat_at IS NULL OR heartbeat_at < now() - make_interval(secs => $2)) AS lost FROM ai_turns WHERE conversation_id = $1 AND status = 'running'`,
-          [conversation.id, LEASE_MS / 1000],
-        )
+        const running = await tx.query<{ lost: boolean }>(`SELECT (${LOST_TURN}) AS lost FROM ai_turns WHERE conversation_id = $1 AND status = 'running'`, [conversation.id])
         if (running.rows[0]?.lost) ctx.answers.kick()
         if (running.rows[0]) throw new HttpError(409, 'conflict', 'Still answering the previous question. Wait for it, or stop it.')
       } else {
@@ -725,12 +725,17 @@ export function aiRoutes(ctx: AppContext): Router {
     const { conversation, turnId } = started
     // The answer is written by the runner, whatever happens to this response; the response watches it while it is open.
     const run = ctx.answers.begin({ turnId, conversationId: conversation.id, userId: user.id })
+    // Gone while the question was kept (a Stop before the asker heard it was, or the connection lost): the asker never
+    // learnt it was asked, so it is not answered — stopped at once, as their Stop would.
+    if (ac.signal.aborted) {
+      await ctx.answers.requestStop(conversation.id, user.id)
+      return
+    }
     const sse = new SseStream(res)
     sse.open()
     const unsubscribe = run.subscribe((event) => sse.send(event))
     sse.send({ type: 'start', conversation: toConversation(conversation), userMessageId: started.questionId, turnId })
     // Left: the answer goes on, and the bell tells the asker when it is ready. Stay only to end the stream politely.
-    const left = new Promise<'left'>((resolve) => res.on('close', () => resolve('left')))
     try {
       const end = await Promise.race([run.done, left])
       if (end === 'left') return

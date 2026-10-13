@@ -203,7 +203,10 @@ another instance takes it over and continues it from its last stored step —
 a step is stored before its tools run, so it is finished from there, each
 tool once, never asked of the model again. Its model calls and running time
 are counted on the turn, so its limits hold across hand-overs. A stopping
-instance hands its answers back at once. An answer that ends while nobody
+instance hands its answers back at once. An answer begun by the version
+before (no heartbeat) is never continued: it is left to that version while
+it may still be writing it, and closed as cut off once past its limit
+(16 minutes). An answer that ends while nobody
 has it on screen puts an alert in the bell (kind `ai-answer`), which is
 pushed like any other.
 

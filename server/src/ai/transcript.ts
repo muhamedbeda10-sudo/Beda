@@ -310,8 +310,9 @@ export async function pendingStep(q: Queryable, turnId: string): Promise<{ id: s
 }
 
 /** A pending step with its results: it joins the replay. */
-export async function settleStep(q: Queryable, messageId: string): Promise<void> {
-  await q.query(`UPDATE ai_messages SET pending = false, in_replay = true WHERE id = $1 AND pending`, [messageId])
+export async function settleStep(q: Queryable, messageId: string): Promise<boolean> {
+  const { rowCount } = await q.query(`UPDATE ai_messages SET pending = false, in_replay = true WHERE id = $1 AND pending`, [messageId])
+  return (rowCount ?? 0) > 0
 }
 
 /** The answer being written in a conversation now, as whoever reopens it is told; null when none is. */

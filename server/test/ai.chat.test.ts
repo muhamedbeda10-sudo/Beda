@@ -517,6 +517,43 @@ describe('§20 one answer at a time', () => {
     expect((await app.db.query(`SELECT 1 FROM ai_turns WHERE question = $1`, [question])).rowCount).toBe(0)
     expect(app.model.calls).toHaveLength(calls)
   })
+
+  it('stops, before a word of it, a question whose asker left while it was being kept: they never heard it was asked', async () => {
+    app.model.reply({ content: [text('Begun.')] })
+    const first = await ask('Before the one being kept')
+    const question = 'Gone while it was kept'
+    // The conversation is held while the question is kept: the asker leaves meanwhile (a Stop before `start`, a tab closed).
+    const lock = await app.db.connect()
+    await lock.query('BEGIN')
+    await lock.query('SELECT 1 FROM ai_conversations WHERE id = $1 FOR UPDATE', [first.conversationId])
+    const ac = new AbortController()
+    const calls = app.model.calls.length
+    try {
+      const sent = fetch(`${app.baseUrl}/api/ai/chat`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${admin.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ message: question, clientId: randomUUID(), conversationId: first.conversationId }),
+        signal: ac.signal,
+      }).catch((e: unknown) => e)
+      const waiting = async () =>
+        ((await app.db.query(`SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`)).rowCount ?? 0) > 0
+      await waitFor(waiting, 'the question to wait for its conversation')
+      ac.abort()
+      expect(await sent).toBeInstanceOf(Error)
+      await new Promise((r) => setTimeout(r, 200))
+    } finally {
+      await lock.query('COMMIT')
+      lock.release()
+    }
+    // Kept, then stopped at once: no call made, nothing in the bell, the conversation free for the next question.
+    await waitFor(async () => (await app.db.query(`SELECT 1 FROM ai_turns WHERE question = $1 AND status = 'done'`, [question])).rowCount === 1, 'the answer to stop')
+    const turn = await app.db.query<{ id: string; stop_reason: string }>(`SELECT id, stop_reason FROM ai_turns WHERE question = $1`, [question])
+    expect(turn.rows[0].stop_reason).toBe('stopped')
+    expect(app.model.calls).toHaveLength(calls)
+    expect((await app.db.query(`SELECT 1 FROM user_notifications WHERE ai_turn_id = $1`, [turn.rows[0].id])).rowCount).toBe(0)
+    app.model.reply({ content: [text('Answered.')] })
+    expect((await ask('And the next one', { conversationId: first.conversationId })).done!.message.stopReason).toBe('end_turn')
+  })
 })
 
 describe('§20 how answers end', () => {

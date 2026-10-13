@@ -19,7 +19,7 @@ import { AI_MAX_ATTACHMENTS_PER_QUESTION, AI_MAX_MESSAGE_CHARS, type AiAttachmen
 import { isCoarsePointer } from '@/lib/media'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/store/AppContext'
-import { useAiMe, useAiMessages } from '@/services/queries'
+import { aiConversationGone, useAiMe, useAiMessages } from '@/services/queries'
 import { aiBlock } from './access'
 import { useAi, useAiLive } from './AiAssistantProvider'
 import { ATTACH_ACCEPT, formatBytes, readyIds, type PendingAttachment } from './attachments'
@@ -89,7 +89,7 @@ export function AiComposer({
   const { send, stop, stopConversation, busy, conversationId, openConversation, attachments, attach, detach, enabled } = useAi()
   const live = useAiLive()
   const { data: me } = useAiMe()
-  const { data: thread } = useAiMessages(conversationId, enabled)
+  const { data: thread, error: threadError } = useAiMessages(conversationId, enabled)
   const { toast } = useApp()
   const area = useRef<HTMLTextAreaElement>(null)
   const picker = useRef<HTMLInputElement>(null)
@@ -101,8 +101,10 @@ export function AiComposer({
   // The answer this device reads is in the conversation on screen; else the server is writing one there, as the
   // conversation says, or as a stream this device let go of left it until the conversation is fetched again.
   const readingHere = busy && !elsewhere
-  const running = thread?.running ?? null
-  const runningHere = !readingHere && (running !== null || letGoOf(live, conversationId, thread?.messages ?? []))
+  // Deleted elsewhere (or the assistant taken away): nothing runs there to stop.
+  const gone = aiConversationGone(threadError)
+  const running = gone ? null : (thread?.running ?? null)
+  const runningHere = !readingHere && !gone && (running !== null || letGoOf(live, conversationId, thread?.messages ?? []))
   // Stop pressed already: the answer ends at its next step.
   const stopping = running && !readingHere ? running.stopping : !!live?.stopping
   const filesReady = readyIds(attachments) !== null

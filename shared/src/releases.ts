@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.105',
+    date: '2026-10-13',
+    title: 'The assistant finishes its answers on its own',
+    items: [
+      { text: 'An answer now goes on when you close the page, refresh it or put the phone away: only Stop ends it early. Open the conversation again, here or on another device, and it shows how far the answer has got, with its Stop.' },
+      { text: 'When an answer ends while you are not looking at it, the bell says so (AI assistant), and it reaches your phone like any other alert; tapping it opens the conversation.' },
+      { text: 'If the server restarts in the middle of an answer, the answer goes on from the step it had reached, without starting again.' },
+      { text: 'One answer may take up to 30 minutes. As it nears its time or its steps, the assistant saves what is worth keeping and closes with what it found and what remains, so you can ask it to go on.' },
+    ],
+  },
+  {
     id: '2026-10-13.104',
     date: '2026-10-13',
     title: 'The assistant expands to the full screen',

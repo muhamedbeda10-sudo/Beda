@@ -143,7 +143,17 @@ interface Reading {
   conversationId: string | null
   started: boolean
   stopAsked: boolean
+  /** Waiting to ask again after a refusal (retryAfterStop): nothing of the question is with the server. */
+  pausing: boolean
+  /** Stop pressed before `start`: the stream is let go of only if neither `start` nor a refusal comes by then. */
+  letGo: ReturnType<typeof setTimeout> | null
 }
+
+/** Stop pressed before `start`: how long to wait for it (or a refusal) before letting go of the request. */
+const STOP_BEFORE_START_MS = 10_000
+
+/** Whether an answer that ended says it was answered, as the bell does: not stopped, limited or refused. */
+const answered = (m: AiMessage) => m.stopReason === 'end_turn' || m.stopReason === 'max_tokens'
 
 /** Narrower than sm (640 px): a phone, where the popup fills the screen. */
 const AI_PHONE = '(max-width: 639.98px)'
@@ -212,15 +222,17 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
     [qc, toast],
   )
   const stopConversation = useCallback((id: string) => void askToStop(id), [askToStop])
-  // Stop on the answer this device reads, once the server has it: the server is told, and the stream goes on until
-  // its `done` says the answer stopped. Pressed before `start`, the request is let go of instead, which keeps nothing
-  // the server had not kept yet; a stream that brings `start` all the same is stopped then (see stream).
+  // Stop on the answer this device reads: the server is told, and the stream goes on until its `done` says the answer
+  // stopped. Pressed before `start`, the server may be keeping the question this very moment, and letting go of the
+  // request then would leave its answer running: the stream is read on, and `start` brings the conversation to stop
+  // (see stream); a refusal kept nothing. Only while waiting to ask again, with nothing sent, is the request let go
+  // of at once — or, as a last resort, when neither comes.
   const stop = useCallback(() => {
     const r = reading.current
     if (!r || r.stopAsked) return
     r.stopAsked = true
+    setLive((t) => (t && t.key === r.key ? askedToStop(t) : t))
     if (r.started && r.conversationId) {
-      setLive((t) => (t && t.key === r.key ? askedToStop(t) : t))
       void askToStop(r.conversationId).then((told) => {
         if (told) return
         r.stopAsked = false
@@ -228,8 +240,9 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       })
       return
     }
-    r.ac.abort()
     if (r.conversationId) lastStop.current = { conversationId: r.conversationId, at: Date.now() }
+    if (r.pausing) r.ac.abort()
+    else r.letGo = setTimeout(() => r.ac.abort(), STOP_BEFORE_START_MS)
   }, [askToStop])
   const openAt = useCallback((path: string, next?: AiPopupSize) => {
     if (next) setSize(next)
@@ -357,12 +370,17 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       }
 
       // Refused as "still answering" just after a stop here: that stopped answer is winding down, so ask again
-      // shortly — with the same key, which a refused send never kept.
+      // shortly — with the same key, which a refused send never kept. Not once this question is stopped too.
       const settling = () => {
         const stopped = lastStop.current
-        return from !== null && stopped?.conversationId === from && Date.now() - stopped.at < STOP_SETTLE_MS
+        handle.pausing = !handle.stopAsked && from !== null && stopped?.conversationId === from && Date.now() - stopped.at < STOP_SETTLE_MS
+        return handle.pausing
       }
-      const connect = (request: AiChatRequest) => retryAfterStop(() => apiStream('/ai/chat', { body: request, signal: ac.signal }), settling, ac.signal)
+      const attempt = (request: AiChatRequest) => {
+        handle.pausing = false
+        return apiStream('/ai/chat', { body: request, signal: ac.signal })
+      }
+      const connect = (request: AiChatRequest) => retryAfterStop(() => attempt(request), settling, ac.signal)
 
       // The answer has ended, or this device let go of it: another question may be asked at once, even while the
       // connection winds down.
@@ -382,6 +400,8 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       let ended = false
       // The server answered the request with a refusal: nothing of the question was kept.
       let refused = false
+      // Refused as still answering: an answer this device did not know of runs in the conversation.
+      let conflict = false
       try {
         const request: AiChatRequest = { message: question, clientId: key }
         if (from) request.conversationId = from
@@ -403,11 +423,17 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
             userMessageId = e.userMessageId
             handle.started = true
             handle.conversationId = e.conversation.id
-            // Stop was pressed before the server named the conversation, and the stream came all the same: the
-            // server has the answer now, so it is told to stop it.
+            // Stop was pressed before the server named the conversation: the server has the answer now, so it is
+            // told to stop it; the stream goes on until its `done` says it stopped.
             if (handle.stopAsked) {
+              if (handle.letGo) clearTimeout(handle.letGo)
+              handle.letGo = null
               update((t) => askedToStop(t))
-              void askToStop(e.conversation.id)
+              void askToStop(e.conversation.id).then((told) => {
+                if (told) return
+                handle.stopAsked = false
+                update((t) => askedToStop(t, false))
+              })
             }
             // A first question opens its conversation: nothing in it needs fetching yet, and the thread follows it there.
             const id = e.conversation.id
@@ -443,8 +469,12 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
               if (sent.length > 0) asked.attachments = sent
               settle(conversation, asked, e.message)
             }
-            // Finished while the popup was closed: a word, wherever the person is in the app — not for one they stopped.
-            if (!shown.current && !handle.stopAsked) toast('The assistant finished answering.', 'success')
+            // Ended while the popup was closed: a word, wherever the person is in the app — none for one stopped, here
+            // or wherever else they stopped it.
+            if (!shown.current && !handle.stopAsked && e.message.stopReason !== 'stopped') {
+              if (answered(e.message)) toast('The assistant finished answering.', 'success')
+              else toast('The assistant could not finish its answer.', 'warning')
+            }
             break
           } else if (e.type === 'error') {
             ended = true
@@ -460,10 +490,11 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
         flush()
         if (!ac.signal.aborted && err instanceof ApiError) {
           // A refusal before the stream began (a cap, the switch, access taken away, a conflict) kept nothing:
-          // its files go back to the box, ahead of any attached since.
+          // its files go back to the box, ahead of any attached since. Stopped meanwhile, it ends as stopped.
           refused = !conversation && err.status > 0
+          conflict = refused && err.status === 409 && err.code === 'conflict'
           if (refused && files.length > 0) setAttachments((list) => [...files.filter((f) => !list.some((p) => p.key === f.key)), ...list])
-          update((t) => endTurn(t, 'error', { code: err.code, message: err.message }))
+          update((t) => (refused && handle.stopAsked ? endTurn(t, 'stopped') : endTurn(t, 'error', { code: err.code, message: err.message })))
         } else {
           // Let go of (Stop before `start`, signing out, access taken away) or cut off: only that Stop ends the turn
           // as stopped, and only before the server had the answer; otherwise it goes on there (streamEnded).
@@ -471,6 +502,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
         }
       } finally {
         if (frame) cancelAnimationFrame(frame)
+        if (handle.letGo) clearTimeout(handle.letGo)
         release()
         // The saved conversation and the history catch up with what happened.
         if (conversation) {
@@ -479,9 +511,10 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
           void qc.invalidateQueries({ queryKey: keys.aiSettings })
           void qc.invalidateQueries({ queryKey: keys.aiAccess })
           void qc.invalidateQueries({ queryKey: ['ai', 'usage'] })
-        } else if (from && !refused) {
+        } else if (from && (!refused || conflict)) {
           // Ended before the stream began: the server may still have kept the question, and its answer (stopped, or
-          // going on there), which the thread then draws from the saved conversation.
+          // going on there), which the thread then draws from the saved conversation. Refused as still answering, the
+          // conversation is fetched too: the answer it is writing (asked elsewhere) shows, with its Stop.
           void qc.invalidateQueries({ queryKey: keys.aiMessages(from) })
         }
         void qc.invalidateQueries({ queryKey: keys.aiConversations })
@@ -504,7 +537,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       const sentAt = new Date().toISOString()
       // What this device had of the conversation (and of the answer before): the question, once saved, comes after it.
       const cached = from ? qc.getQueryData<AiMessagesResponse>(keys.aiMessages(from))?.messages : undefined
-      const handle: Reading = { key, ac: new AbortController(), conversationId: from, started: false, stopAsked: false }
+      const handle: Reading = { key, ac: new AbortController(), conversationId: from, started: false, stopAsked: false, pausing: false, letGo: null }
       reading.current = handle
       setLive((prev) => startTurn(key, from, question, sentAt, sentAfter(prev, from, cached), files.map((f) => f.attachment!)))
       setAttachments(() => [])

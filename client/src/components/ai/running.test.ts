@@ -34,6 +34,18 @@ describe('asking again while an answer runs', () => {
     expect(aiMessagesPoll(undefined)).toBe(false)
   })
 
+  it('keeps asking while this device follows an answer whose stream it lost, through failed fetches, until the conversation is gone', async () => {
+    const { ApiError } = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
+    const stale: AiMessagesResponse = { conversation, messages: [question] }
+    // The server restarting: the fetch after the stream failed, the copy from before says nothing runs.
+    expect(aiMessagesPoll(stale, new ApiError(503, 'internal', 'Restarting'), true)).toBe(2000)
+    expect(aiMessagesPoll(stale, new TypeError('Failed to fetch'), true)).toBe(2000)
+    expect(aiMessagesPoll(stale, null, false)).toBe(false)
+    // Deleted elsewhere, or the assistant taken away: never again, whatever the copy says.
+    expect(aiMessagesPoll(writing, new ApiError(404, 'not_found', 'That conversation was not found.'))).toBe(false)
+    expect(aiMessagesPoll(stale, new ApiError(403, 'forbidden', 'No assistant.'), true)).toBe(false)
+  })
+
   it('asks the list again every 5 s while one of its conversations is answered, and not otherwise', () => {
     const list = (...answering: (boolean | undefined)[]): AiConversationsResponse => ({ conversations: answering.map((a, i) => ({ ...conversation, id: `c${i}`, answering: a })), hasMore: false })
     expect(AI_ANSWERING_POLL_MS).toBe(5000)

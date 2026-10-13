@@ -47,7 +47,7 @@ import { notFound } from '../lib/errors'
 import type { RateLimiter } from '../lib/rateLimit'
 import { describeIssues } from '../automations/draft'
 import { isGranted, loadAccess, mayMakeExcel } from './access'
-import type { Readers, ToolHandler, ToolOutcome } from './assistant'
+import { HANDED_OVER, type Readers, type ToolHandler, type ToolOutcome } from './assistant'
 import { buildWorkbook, type BookSheet } from './excelBook'
 import { currentAiOwner } from './owner'
 import { factoryClock } from './prompt'
@@ -451,6 +451,15 @@ async function fault(ctx: ExcelToolContext, tu: ToolUse, who: Asker, why: string
   return failed(tu, `No file was made: ${why}`)
 }
 
+/**
+ * Cut short while it ran: by the asker's Stop or the clock, logged as failed; handed over to another run, nothing is
+ * logged — the step is not kept, and the run that continues it makes the file.
+ */
+async function cutShort(ctx: ExcelToolContext, tu: ToolUse, who: Asker, signal: AbortSignal): Promise<ToolOutcome> {
+  if (signal.reason === HANDED_OVER) return failed(tu, 'No file was made: the answer was handed over.')
+  return fault(ctx, tu, who, 'stopped before the file was made.')
+}
+
 /** The person as they are now, as the log keeps them: their name and role. */
 async function askerNow(q: Queryable, userId: string): Promise<Asker | null> {
   const { rows } = await q.query<Asker>(`SELECT name, role::text AS role FROM users WHERE id = $1 AND deleted_at IS NULL AND is_active`, [userId])
@@ -507,7 +516,7 @@ async function make(ctx: ExcelToolContext, tu: ToolUse, signal: AbortSignal): Pr
       for (const row of run.rows) for (const c of row) room -= typeof c === 'string' ? c.length : 8
       return run
     })
-    if (signal.aborted) return await fault(ctx, tu, who, 'stopped before the file was made.')
+    if (signal.aborted) return await cutShort(ctx, tu, who, signal)
     if ('errors' in checked) return await refuse(ctx, tu, who, checked.errors)
 
     const created = new Date()
@@ -544,6 +553,8 @@ async function make(ctx: ExcelToolContext, tu: ToolUse, signal: AbortSignal): Pr
     }
     return { result: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(content) } }
   } catch (e) {
+    // What failed only because the answer was cut short is no fault of the server.
+    if (signal.aborted) return await cutShort(ctx, tu, who, signal)
     console.error('[ai] an Excel file could not be made', e)
     return await fault(ctx, tu, who, 'a fault on the server. Say so to the person; they may ask again.')
   }

@@ -57,6 +57,7 @@ import type {
   AiConversationsResponse,
   AiDayRange,
   AiMeResponse,
+  AiMessage,
   AiMessagesResponse,
   AiQueryExportResponse,
   AiReport,
@@ -67,7 +68,7 @@ import type {
   AiActivityResponse,
   AiUsageResponse,
 } from '@qc/shared/ai'
-import { api, apiBlob, qs } from '@/lib/api'
+import { ApiError, api, apiBlob, qs } from '@/lib/api'
 
 export const keys = {
   openBoard: ['sessions', 'open'] as const,
@@ -877,8 +878,16 @@ export function useAiPeople(enabled: boolean) {
 export const AI_RUNNING_POLL_MS = 2_000
 export const AI_ANSWERING_POLL_MS = 5_000
 
-/** How often a conversation is asked again: while the server says an answer in it runs, and not otherwise. */
-export const aiMessagesPoll = (data: AiMessagesResponse | undefined): number | false => (data?.running ? AI_RUNNING_POLL_MS : false)
+/** A conversation refused as not found or forbidden: deleted (here or elsewhere), or the assistant taken away. */
+export const aiConversationGone = (error: unknown): boolean => error instanceof ApiError && (error.status === 403 || error.status === 404)
+
+/**
+ * How often a conversation is asked again: while the server says an answer in it runs, or while this device follows
+ * one whose stream it lost (`following`) — through failed fetches too, as a server restarting fails them for a while.
+ * Never once the conversation is gone.
+ */
+export const aiMessagesPoll = (data: AiMessagesResponse | undefined, error: unknown = null, following = false): number | false =>
+  aiConversationGone(error) ? false : data?.running || following ? AI_RUNNING_POLL_MS : false
 
 /** How often the list is asked again: while a conversation in it is being answered, and not otherwise. */
 export const aiConversationsPoll = (data: AiConversationsResponse | undefined): number | false => (data?.conversations.some((c) => c.answering) ? AI_ANSWERING_POLL_MS : false)
@@ -901,13 +910,13 @@ export function loadOlderAiConversations(before: string): Promise<AiConversation
 }
 
 /** One conversation, every question and answer with the queries they ran; and the answer the server is writing in it, if any. */
-export function useAiMessages(conversationId: string | null, enabled = true) {
+export function useAiMessages(conversationId: string | null, enabled = true, following?: (saved: readonly AiMessage[]) => boolean) {
   return useQuery({
     queryKey: keys.aiMessages(conversationId ?? ''),
     queryFn: () => api<AiMessagesResponse>(`/ai/conversations/${encodeURIComponent(conversationId ?? '')}/messages`),
     enabled: enabled && conversationId !== null,
     staleTime: 60_000,
-    refetchInterval: (q) => aiMessagesPoll(q.state.data),
+    refetchInterval: (q) => aiMessagesPoll(q.state.data, q.state.error, following?.(q.state.data?.messages ?? []) ?? false),
     refetchIntervalInBackground: false,
   })
 }

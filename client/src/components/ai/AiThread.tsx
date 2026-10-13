@@ -13,11 +13,11 @@ import { ChevronDown, MessageSquarePlus } from 'lucide-react'
 import type { AiMessage } from '@qc/shared/ai'
 import { Button, EmptyState } from '@/components/ui'
 import { cn } from '@/lib/utils'
-import { useAiMessages } from '@/services/queries'
+import { aiConversationGone, useAiMessages } from '@/services/queries'
 import { useAi, useAiLive } from './AiAssistantProvider'
 import { Answer, BotMark, UserBubble } from './AiMessages'
 import { Notice } from './AiNotice'
-import { answerText, latestAnswerKey, liveView, threadAnnouncement, threadItems } from './liveTurn'
+import { answerText, latestAnswerKey, letGoOf, liveView, threadAnnouncement, threadItems } from './liveTurn'
 import { noticeCardsWait } from './noticeProposal'
 import { taskCardsWait } from './taskProposal'
 import { AI_STARTER_QUESTIONS } from './suggestions'
@@ -40,16 +40,21 @@ export function AiThread({
   wide?: boolean
 }) {
   const { conversationId, openConversation, enabled } = useAi()
-  const live = useAiLive()
-  const { data, isLoading, isError, refetch } = useAiMessages(conversationId, enabled)
-  const saved = data?.messages ?? NONE
+  const followed = useAiLive()
+  // Asked again every few seconds while this device follows an answer whose stream it lost, until the conversation
+  // holds it (or says it runs): a server restarting fails the first fetches.
+  const { data, isLoading, isError, error, refetch } = useAiMessages(conversationId, enabled, (messages) => letGoOf(followed, conversationId, messages))
+  // Deleted elsewhere (or the assistant taken away) while on screen: what was fetched before is not drawn as going on.
+  const gone = conversationId !== null && aiConversationGone(error)
+  const live = gone ? null : followed
+  const saved = gone ? NONE : (data?.messages ?? NONE)
   const view = liveView(live, conversationId, saved)
   const items = threadItems(live, view)
   // Follow-up questions are offered under the conversation's last answer only: once something is asked after it, they go.
   const latestAnswer = latestAnswerKey(items)
   const empty = conversationId === null && !view.question
   // Read out when the answer on screen changes phase; the turn of another conversation says nothing here.
-  const announcement = threadAnnouncement(live, conversationId, view, data?.running)
+  const announcement = threadAnnouncement(live, conversationId, view, gone ? null : data?.running)
   // §23 — the answer being written here drafted a notice card: the saved answers' cards wait for it to end.
   const noticesWait = noticeCardsWait(live, conversationId, saved)
   // The same for a task card.
@@ -128,7 +133,7 @@ export function AiThread({
           )}
 
           {conversationId !== null && isLoading && <ThreadSkeleton />}
-          {conversationId !== null && isError && !data && (
+          {conversationId !== null && isError && (!data || gone) && (
             <Notice
               tone="red"
               action={
