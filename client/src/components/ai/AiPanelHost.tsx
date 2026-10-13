@@ -5,9 +5,9 @@
 //
 //   • compact — a card in the bottom corner of a desktop, the page beside it
 //     still usable (no backdrop); above any bar along the bottom (bottomBar);
-//   • large — a window in the middle with a backdrop, the full workspace in
-//     it (the conversations beside the thread); also what the Automations and
-//     Playbook pages open in, as they need the room;
+//   • large — the whole screen, the full workspace in it (the conversations
+//     beside the thread); also what the Automations and Playbook pages open
+//     in, as they need the room;
 //   • a phone — the whole screen, whatever the size.
 //
 // The popup has its own router, in memory, apart from the app's address: its
@@ -173,15 +173,14 @@ function AiPopupFrame({ children }: { children: ReactNode }) {
     return () => document.removeEventListener('keydown', onKey)
   }, [modal, setOpen])
 
-  // Over the page (the large window, a phone's) it stops the page scrolling underneath — counted with any modal opened from it.
+  // Over the page (the full screen, a phone's) it stops the page scrolling underneath — counted with any modal opened from it.
   useEffect(() => {
     if (!modal) return
     return lockBodyScroll()
   }, [modal])
 
   return (
-    <div className={cn('print:hidden', modal ? 'fixed inset-0 z-50 flex items-center justify-center sm:p-6' : 'contents')}>
-      {shape === 'large' && <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in" onClick={() => setOpen(false)} />}
+    <div className={cn('print:hidden', modal ? 'fixed inset-0 z-50 flex' : 'contents')}>
       <section
         ref={panel}
         role="dialog"
@@ -191,7 +190,7 @@ function AiPopupFrame({ children }: { children: ReactNode }) {
         className={cn(
           'ai-type flex min-h-0 flex-col overflow-hidden bg-white dark:bg-slate-900',
           shape === 'compact' && 'ai-popup-compact fixed z-40 rounded-3xl shadow-lift ring-1 ring-slate-200 animate-slide-up dark:ring-slate-800',
-          shape === 'large' && 'relative z-10 h-full max-h-[60rem] w-full max-w-[90rem] rounded-3xl shadow-lift ring-1 ring-slate-200 animate-page-in dark:ring-slate-800',
+          shape === 'large' && 'relative z-10 h-full w-full animate-page-in safe-top',
           shape === 'phone' && 'relative z-10 h-full w-full animate-slide-up safe-top',
         )}
       >

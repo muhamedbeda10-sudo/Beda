@@ -50,7 +50,7 @@ import { applyEvent, endTurn, followsKeptRound, isInFlight, parseStreamEvent, se
 import { STOP_SETTLE_MS, retryAfterStop } from './retryAfterStop'
 import { AI_WORKSPACE_PATH } from './workspace'
 
-/** The popup's two sizes on a desktop: the card in the corner, or the large window in the middle. */
+/** The popup's two sizes on a desktop: the card in the corner, or the whole screen. */
 export type AiPopupSize = 'compact' | 'large'
 
 export interface AiControls {

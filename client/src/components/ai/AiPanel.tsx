@@ -131,7 +131,7 @@ export default function AiPanel() {
         <AiHeaderLinks buttonClass={HEAD_BTN} onClass={HEAD_ON} />
         {/* A phone's popup is its whole screen already. */}
         {!phone && (
-          <button type="button" onClick={expand} className={HEAD_BTN} aria-label="Expand to a large window" data-tip="Expand to a large window">
+          <button type="button" onClick={expand} className={HEAD_BTN} aria-label="Full screen" data-tip="Full screen">
             <Maximize2 className="h-[18px] w-[18px]" />
           </button>
         )}
