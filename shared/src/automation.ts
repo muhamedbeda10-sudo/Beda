@@ -506,6 +506,10 @@ export type UserNotificationKind =
   | 'follow-up-assigned'
   | 'follow-up-overdue'
   | 'follow-up-updated'
+  | 'task-assigned'
+  | 'task-updated'
+  | 'task-done'
+  | 'task-reopened'
 
 export interface UserNotification {
   id: string

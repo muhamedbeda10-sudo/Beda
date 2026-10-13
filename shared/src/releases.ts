@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.5',
+    date: '2026-10-13',
+    title: 'Tasks: send work to people and follow it to the end',
+    items: [
+      { text: 'New: Tasks. If you have the AI assistant, open Tasks from the list icon at the top of the chat, then "New task": what is to be done, details, one or more people, the priority and a deadline. Each person is told at once in the bell (and on their phone).' },
+      { text: 'The people it was sent to find it in the bell, in its new Tasks tab. They press Start, write on the task and add photos, then Mark done with a word on what they did.' },
+      { text: 'You are told when someone marks it done. Press "Confirm done" and it leaves their list, or "Not yet" with what is still to do, and it stays on their list. The task closes by itself once everyone is confirmed. You can also change it, close it for everyone, or withdraw it.' },
+      { text: 'Only the sender and the people it went to see a task. Every step is written on its thread with who did it and when.' },
+    ],
+  },
+  {
     id: '2026-10-13.4',
     date: '2026-10-13',
     title: 'Automations and Follow-ups have moved',

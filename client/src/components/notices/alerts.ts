@@ -18,6 +18,10 @@ export const ALERT_KIND_LABEL: Record<UserNotificationKind, string> = {
   'follow-up-assigned': 'Follow-up assigned',
   'follow-up-overdue': 'Follow-up overdue',
   'follow-up-updated': 'Follow-up updated',
+  'task-assigned': 'New task',
+  'task-updated': 'Task updated',
+  'task-done': 'Task done: confirm it',
+  'task-reopened': 'Task sent back',
 }
 
 /** The number on the bell: notices still to read and alerts not opened yet. */

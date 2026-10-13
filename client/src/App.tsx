@@ -35,6 +35,8 @@ const AutomationPage = lazy(() => import('@/pages/AutomationPage').then((m) => (
 const AutomationDeliveryPage = lazy(() => import('@/pages/AutomationDeliveryPage').then((m) => ({ default: m.AutomationDeliveryPage })))
 // §21 — follow-ups: the list and, over it, the one opened (/follow-ups/<id>); the server says whose each person sees.
 const FollowUpsPage = lazy(() => import('@/pages/FollowUpsPage').then((m) => ({ default: m.FollowUpsPage })))
+const TasksPage = lazy(() => import('@/pages/TasksPage').then((m) => ({ default: m.TasksPage })))
+const TaskPage = lazy(() => import('@/pages/TaskPage').then((m) => ({ default: m.TaskPage })))
 
 /** A page for a capability the signed-in role lacks sends the reader home; the API refuses it anyway. */
 function Only({ cap, children }: { cap: Capability; children: ReactElement }) {
@@ -138,6 +140,8 @@ export default function App() {
         <Route path="/automations/deliveries/:id" element={<LazyPage what="This report"><AutomationDeliveryPage /></LazyPage>} />
         <Route path="/automations/:id" element={<OnlyAutomator><LazyPage what="This page"><AutomationPage /></LazyPage></OnlyAutomator>} />
         <Route path="/follow-ups/:id?" element={<LazyPage what="Follow-ups"><FollowUpsPage /></LazyPage>} />
+        <Route path="/tasks" element={<LazyPage what="Tasks"><TasksPage /></LazyPage>} />
+        <Route path="/tasks/:id" element={<LazyPage what="The task"><TaskPage /></LazyPage>} />
         {/* Administration lives behind the gear; every section keeps its own address. */}
         <Route path="/admin" element={<Navigate to="/admin/configuration" replace />} />
         <Route path="/admin/configuration/:section?" element={<Only cap="manage-admin-data"><ConfigurationPage /></Only>} />

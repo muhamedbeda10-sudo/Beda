@@ -33,6 +33,7 @@ import { releasesRoutes } from './modules/releases.routes'
 import { aiRoutes } from './modules/ai.routes'
 import { notificationsRoutes } from './modules/notifications.routes'
 import { followUpsRoutes } from './modules/followUps.routes'
+import { tasksRoutes } from './modules/tasks.routes'
 import { automationsRoutes } from './modules/automations.routes'
 import { productionRecordsRoutes } from './modules/productionRecords.routes'
 import { pushRoutes } from './modules/push.routes'
@@ -101,6 +102,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/ai', guard, aiRoutes(ctx))
   app.use('/api/notifications', guard, notificationsRoutes(ctx))
   app.use('/api/follow-ups', guard, followUpsRoutes(ctx))
+  app.use('/api/tasks', guard, tasksRoutes(ctx))
   app.use('/api/automations', guard, automationsRoutes(ctx))
   app.use('/api/production-records', guard, productionRecordsRoutes(ctx))
   app.use('/api/push', guard, pushRoutes(ctx))
