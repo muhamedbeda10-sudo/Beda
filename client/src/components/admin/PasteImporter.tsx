@@ -291,7 +291,10 @@ export function planRows(
     const messages: string[] = []
     importer.fields.forEach((f, c) => {
       const raw = (row[c] ?? '').trim()
-      if (raw === '') return
+      if (raw === '') {
+        if (f.clearsWhenEmpty) values[f.key] = null
+        return
+      }
       const cell = coerceCell(f, raw)
       if ('error' in cell) {
         cols.add(f.key)

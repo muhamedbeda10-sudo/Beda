@@ -37,6 +37,16 @@ import { NORMALISED_CODE } from './sessions.routes'
 import { loadOrderNotes } from './notes'
 import { itemFilterSql } from '../lib/itemMatch'
 import { cancelledSql } from '../lib/orderStatus'
+import {
+  DETAIL_INSERT_COLUMNS,
+  DETAIL_INSERT_VALUES,
+  DETAIL_RECORD_COLUMNS,
+  DETAIL_UPDATE_SET,
+  detailListColumns,
+  detailPayload,
+  detailSelect,
+  orderDetailShape,
+} from './orderDetails'
 
 export const ORDER_SELECT = `
   id, line_key AS "lineKey", order_number AS "orderNumber", item, item_code AS "itemCode", work_center_code AS "workCenterCode",
@@ -47,6 +57,10 @@ export const ORDER_SELECT = `
 /** The same columns qualified with the table alias `o`, for a query that joins. */
 const ORDER_SELECT_O = ORDER_SELECT.replace(/(^|,)(\s*)(?=[a-z_]+)/g, '$1$2o.')
 
+/**
+ * One order line as an import sends it: the core fields, where absent means
+ * "leave it", then the ERP details (§7.7.1), where null clears one.
+ */
 export const importRow = z.object({
   lineKey: z.string().trim().min(1).max(120),
   orderNumber: z.string().trim().min(1).max(120).optional(),
@@ -70,6 +84,7 @@ export const importRow = z.object({
     .optional()
     .transform((v) => (v ? new Date(v) : undefined))
     .refine((d) => d === undefined || !Number.isNaN(d.getTime()), 'date is not a valid date'),
+  ...orderDetailShape,
 })
 
 export type OrderImportRow = z.infer<typeof importRow>
@@ -97,6 +112,8 @@ export async function fetchOrdersByIds(q: Queryable, ids: string[]): Promise<Pro
  * not carry leaves the stored value alone; a line that had been marked
  * deleted comes back, because the ERP says it is current. A line seen for the
  * first time must name its order number. A sync run stamps the lines it saw.
+ * The ERP details (§7.7.1) differ in one way: a detail the row carries as
+ * null is cleared, as the ERP no longer has it.
  */
 export async function upsertOrderLines(tx: Queryable, rows: OrderImportRow[], syncRunId: string | null = null): Promise<{ inserted: number; updated: number }> {
   // Last occurrence of a key wins, so a file that repeats a line key is
@@ -134,12 +151,15 @@ export async function upsertOrderLines(tx: Queryable, rows: OrderImportRow[], sy
       colour: o.colour ?? null,
       erp_status: o.erpStatus ?? null,
       order_date: o.date ? o.date.toISOString() : null,
+      ...detailPayload(o),
     })),
   )
-  const recordset = `jsonb_to_recordset($1::jsonb) AS i(
+  // Each row's JSON object (`j`, so the details can tell "carried as null" from "not carried") and its record (`i`).
+  const recordset = `jsonb_array_elements($1::jsonb) AS e(j), jsonb_to_record(e.j) AS i(
     line_key text, order_number text, item text, item_code text, work_center_code text, required_qty numeric,
     finished_qty numeric, drawing text, drawing_alt text, issue text, material text,
-    expected_grade text, customer text, type text, colour text, erp_status text, order_date timestamptz)`
+    expected_grade text, customer text, type text, colour text, erp_status text, order_date timestamptz,
+    ${DETAIL_RECORD_COLUMNS})`
 
   const updated = await tx.query<{ id: string }>(
     `UPDATE production_orders p SET
@@ -159,6 +179,7 @@ export async function upsertOrderLines(tx: Queryable, rows: OrderImportRow[], sy
         colour = COALESCE(i.colour, p.colour),
         erp_status = COALESCE(i.erp_status, p.erp_status),
         order_date = COALESCE(i.order_date, p.order_date),
+        ${DETAIL_UPDATE_SET},
         deleted_at = NULL, deleted_by_id = NULL,
         last_sync_run_id = COALESCE($2::uuid, p.last_sync_run_id)
       FROM ${recordset}
@@ -169,11 +190,13 @@ export async function upsertOrderLines(tx: Queryable, rows: OrderImportRow[], sy
   const inserted = await tx.query<{ id: string }>(
     `INSERT INTO production_orders
         (line_key, order_number, item, item_code, work_center_code, required_qty, finished_qty, drawing, drawing_alt,
-         issue, material, expected_grade, customer, type, colour, erp_status, order_date, last_sync_run_id)
+         issue, material, expected_grade, customer, type, colour, erp_status, order_date, last_sync_run_id,
+         ${DETAIL_INSERT_COLUMNS})
      SELECT i.line_key, i.order_number, COALESCE(i.item, ''), COALESCE(i.item_code, ''), COALESCE(i.work_center_code, ''),
             COALESCE(i.required_qty, 0), COALESCE(i.finished_qty, 0), COALESCE(i.drawing, ''), i.drawing_alt,
             i.issue, COALESCE(i.material, ''), COALESCE(i.expected_grade, ''), COALESCE(i.customer, ''),
-            COALESCE(i.type, ''), COALESCE(i.colour, ''), COALESCE(i.erp_status, ''), COALESCE(i.order_date, now()), $2::uuid
+            COALESCE(i.type, ''), COALESCE(i.colour, ''), COALESCE(i.erp_status, ''), COALESCE(i.order_date, now()), $2::uuid,
+            ${DETAIL_INSERT_VALUES}
        FROM ${recordset}
       WHERE NOT EXISTS (SELECT 1 FROM production_orders p WHERE lower(p.line_key) = lower(i.line_key))
      RETURNING id`,
@@ -256,6 +279,7 @@ export function ordersRoutes(ctx: AppContext): Router {
     const figure = (sql: string) => ({ text: `trim_scale((${sql})::numeric)::text`, sort: `(${sql})` })
     const day = (sql: string) => ({ text: `to_char((${sql}) AT TIME ZONE '${tz.replace(/'/g, "''")}', 'YYYY-MM-DD')`, sort: `(${sql})` })
     return {
+      ...detailListColumns(),
       orderNumber: { text: 'btrim(o.order_number)' },
       lineKey: { text: 'btrim(o.line_key)' },
       item: { text: 'btrim(o.item)' },
@@ -324,7 +348,7 @@ export function ordersRoutes(ctx: AppContext): Router {
     const limit = p(q.limit + 1)
     const offset = p(q.offset)
     const { rows } = await ctx.db.query<OrderListRow & { total: number }>(
-      `SELECT ${ORDER_SELECT_O}, COALESCE(m.factory, '') AS factory,
+      `SELECT ${ORDER_SELECT_O}, ${detailSelect('o')}, COALESCE(m.factory, '') AS factory,
               GREATEST(0, o.required_qty - o.finished_qty) AS "remainingQty",
               COALESCE(ss.n, 0) AS sessions,
               COALESCE(sm.n, 0) AS samples,

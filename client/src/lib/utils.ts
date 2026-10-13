@@ -42,6 +42,11 @@ export function formatDate(iso?: string | null): string {
   return (thisYear(d) ? DAY : DAY_YEAR).format(d)
 }
 
+/** A calendar day with no time zone (YYYY-MM-DD, a due date): read at local midnight, so no device shifts it to the day before. */
+export function formatDay(day?: string | null): string {
+  return formatDate(day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${day}T00:00:00` : day)
+}
+
 /** A moment: "Oct 5, 15:05" this year, "Oct 5, 2025" another. */
 export function formatDateTime(iso?: string | null): string {
   const d = parse(iso)

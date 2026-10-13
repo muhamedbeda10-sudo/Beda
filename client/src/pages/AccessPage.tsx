@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, ChevronRight, Table2 } from 'lucide-react'
 import { orderLineProblems } from '@qc/shared/rules'
+import { ORDER_DETAIL_FIELDS, type OrderDetailKey } from '@qc/shared/orderImport'
 import type { OrderListFilters, OrderListRow } from '@qc/shared/api'
 import { Badge, Button, Card, EmptyState, Field, Input, Select } from '@/components/ui'
 import { SessionGroupModal, type GroupSpec } from '@/components/history/SessionGroupModal'
@@ -19,7 +20,7 @@ import { useServerColumns } from '@/components/ui/ColumnFilter'
 import { matchesMedia, useCoarsePointer, useMediaQuery } from '@/lib/media'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useApp } from '@/store/AppContext'
-import { cn, formatDate, formatDateTime } from '@/lib/utils'
+import { cn, formatDate, formatDateTime, formatDay } from '@/lib/utils'
 import { sessionDetailPath } from '@/lib/links'
 
 /**
@@ -52,12 +53,29 @@ const ACCESS_COLUMNS: ColumnDef[] = [
   { key: 'samples', label: 'Samples', width: 116, min: 96, align: 'right', defaultHidden: true },
   { key: 'defectPieces', label: 'Defect pcs', width: 104, min: 80, align: 'right', defaultHidden: true },
   { key: 'lastInspected', label: 'Last inspected', width: 150, min: 90, defaultHidden: true },
+  // §7.7.1 — the ERP's further columns, hidden until the reader picks them from Columns.
+  ...ORDER_DETAIL_FIELDS.map(
+    (f): ColumnDef =>
+      f.kind === 'number'
+        ? { key: f.key, label: f.label, width: 124, min: 80, align: 'right', defaultHidden: true }
+        : f.kind === 'day'
+          ? { key: f.key, label: f.label, width: 120, min: 90, defaultHidden: true }
+          : { key: f.key, label: f.label, width: 150, min: 80, defaultHidden: true },
+  ),
   { key: 'open', label: '', width: 48, min: 40, hideable: false },
 ]
 
+/** The ERP details by key, for their cells. */
+const DETAIL_KIND = new Map<string, (typeof ORDER_DETAIL_FIELDS)[number]['kind']>(ORDER_DETAIL_FIELDS.map((f) => [f.key, f.kind]))
+
 /** The columns that hold figures, and those that hold days: they sort as such, and a day reads "Oct 6" in its menu. */
-const ACCESS_FIGURES = new Set(['requiredQty', 'finishedQty', 'remainingQty', 'sessions', 'samples', 'defectPieces'])
+const ACCESS_FIGURES = new Set([
+  'requiredQty', 'finishedQty', 'remainingQty', 'sessions', 'samples', 'defectPieces',
+  ...ORDER_DETAIL_FIELDS.filter((f) => f.kind === 'number').map((f) => f.key),
+])
 const ACCESS_DAYS = new Set(['date', 'lastInspected'])
+/** Calendar days with no time zone (the ERP's due, planned and shipping days): never shifted by the device's zone. */
+const ACCESS_PLAIN_DAYS = new Set<string>(ORDER_DETAIL_FIELDS.filter((f) => f.kind === 'day').map((f) => f.key))
 
 /**
  * Below a tablet the sheet is cards and the column menus are out of reach: the sorts a phone wants most, sent as a
@@ -255,8 +273,14 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
           {o.sessions > 0 && <ChevronRight className="ml-auto h-4 w-4 text-muted opacity-0 transition-opacity group-hover:opacity-100" />}
         </td>
       )
-    default:
-      return null
+    default: {
+      const kind = DETAIL_KIND.get(key)
+      if (!kind) return null
+      const v = o[key as OrderDetailKey]
+      if (kind === 'number') return number(typeof v === 'number' ? v : null)
+      if (kind === 'day') return text(typeof v === 'string' ? formatDay(v) : '', 'tabular-nums')
+      return text(typeof v === 'string' ? v : '')
+    }
   }
 }
 
@@ -411,9 +435,9 @@ export function AccessPage() {
     c.key === 'open'
       ? null
       : columnsView.menu(c.key, c.label, (search) => loadOrderListValues(filters, c.key, search), {
-          numeric: ACCESS_FIGURES.has(c.key) || ACCESS_DAYS.has(c.key),
+          numeric: ACCESS_FIGURES.has(c.key) || ACCESS_DAYS.has(c.key) || ACCESS_PLAIN_DAYS.has(c.key),
           align: c.align === 'right' ? 'right' : 'left',
-          formatValue: ACCESS_DAYS.has(c.key) ? (v) => formatDate(v) : undefined,
+          formatValue: ACCESS_PLAIN_DAYS.has(c.key) ? (v) => formatDay(v) : ACCESS_DAYS.has(c.key) ? (v) => formatDate(v) : undefined,
         })
   const moreCount = [factory !== 'all', item.trim() !== '', inspected !== 'all'].filter(Boolean).length
 
