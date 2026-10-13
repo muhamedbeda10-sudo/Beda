@@ -53,6 +53,7 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import multer from 'multer'
 import { z } from 'zod'
 import {
+  AI_ACTIVITY_PAGE,
   AI_DOMAIN_IDS,
   AI_MAX_ATTACHMENTS_PER_QUESTION,
   AI_MAX_IMAGE_BYTES,
@@ -84,6 +85,8 @@ import {
   type AiSettings,
   type AiSettingsResponse,
   type AiTaskProposalResponse,
+  type AiActivityItem,
+  type AiActivityResponse,
   type AiUsageResponse,
 } from '@qc/shared/ai'
 import { auditEvent } from '@qc/shared/audit'
@@ -273,6 +276,15 @@ const conversationsQuery = z.object({
 
 // Years 2000–2999 only: outside them a month's bounds are not timestamps PostgreSQL takes (or Date.UTC moves them).
 const usageQuery = z.object({ month: z.string().regex(/^2\d{3}-(0[1-9]|1[0-2])$/, 'A month is YYYY-MM, from 2000-01.').optional() })
+/** The Activity list: a month, perhaps one person or one kind, and where the page starts (the last one's `next`). */
+const activityQuery = usageQuery.extend({
+  userId: z.string().uuid().optional(),
+  kind: z.enum(['question', 'automation']).optional(),
+  before: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\|[0-9a-f-]{1,36}$/, 'Not a place in the list.')
+    .optional(),
+})
 
 /** A report's title: one line, 1 to 120 characters. */
 const reportTitleSchema = z
@@ -319,7 +331,7 @@ const reportRunQuery = z
  * The owner's routes, by path: every request under them, whatever its method,
  * is the owner's alone. A route of the owner's goes under one of these.
  */
-const OWNER_PATHS = ['/status', '/settings', '/key', '/access', '/people', '/usage']
+const OWNER_PATHS = ['/status', '/settings', '/key', '/access', '/people', '/usage', '/activity']
 
 /** What anyone but the owner gets from the owner's routes: what an endpoint that does not exist answers. */
 const noSuchEndpoint = () => new HttpError(404, 'not_found', 'No such endpoint.')
@@ -954,6 +966,71 @@ export function aiRoutes(ctx: AppContext): Router {
   })
 
   // ---- The owner's: usage -----------------------------------------------------------------
+
+  /**
+   * Activity: each question of the month and what its answer cost (a report saved from it included, being the
+   * same turn's), and each scheduled report's summary, newest first, a page at a time. The page is cut before the
+   * costs are added up, so a month of thousands reads one page's worth. Its place is the row's time to the
+   * microsecond and its id, so a page never repeats or skips a row that shares a second with another.
+   */
+  r.get('/activity', async (req, res) => {
+    const q = parse(activityQuery, req.query)
+    const month = q.month ?? new Date().toISOString().slice(0, 7)
+    const { from, to } = monthRange(month)
+    const params: unknown[] = [from, to, q.userId ?? null, q.kind ?? null, AI_ACTIVITY_PAGE + 1]
+    let after = ''
+    if (q.before) {
+      const [at, id] = q.before.split('|')
+      after = `WHERE (i.at, i.id) < ($${params.push(at)}::timestamptz, $${params.push(id)}::text)`
+    }
+    const page = await db.query<AiActivityItem & { place: string }>(
+      `WITH items AS (
+         SELECT 'question'::text AS kind, t.id::text AS id, t.created_at AS at, t.user_id, t.question AS text,
+                CASE WHEN t.status = 'done' THEN t.stop_reason END AS stop_reason, t.id AS turn_id, NULL::bigint AS usage_id
+           FROM ai_turns t
+          WHERE t.created_at >= $1 AND t.created_at < $2 AND ($3::uuid IS NULL OR t.user_id = $3) AND ($4::text IS NULL OR $4 = 'question')
+         UNION ALL
+         SELECT 'automation', g.id::text, g.created_at, g.user_id, a.name, NULL, NULL, g.id
+           FROM ai_usage g JOIN ai_automations a ON a.id = g.automation_id
+          WHERE g.turn_id IS NULL AND g.created_at >= $1 AND g.created_at < $2 AND ($3::uuid IS NULL OR g.user_id = $3) AND ($4::text IS NULL OR $4 = 'automation')
+       ),
+       page AS (SELECT * FROM items i ${after} ORDER BY i.at DESC, i.id DESC LIMIT $5)
+       SELECT p.kind, p.id, p.at, to_char(p.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') || '|' || p.id AS place,
+              p.user_id AS "userId", u.name AS "userName", p.text, p.stop_reason AS "stopReason",
+              COALESCE(c.cost, 0)::numeric(14, 6) AS "costUsd", COALESCE(c.models, '{}') AS models, COALESCE(c.partial, false) AS partial,
+              COALESCE(n.lookups, 0)::int AS lookups
+         FROM page p
+         JOIN users u ON u.id = p.user_id
+         LEFT JOIN LATERAL (
+           SELECT sum(m.cost) AS cost, bool_or(m.partial) AS partial, array_agg(m.model ORDER BY m.first) AS models
+             FROM (SELECT g.model, sum(g.cost_usd) AS cost, bool_or(g.partial) AS partial, min(g.id) AS first
+                     FROM (SELECT model, cost_usd, partial, id FROM ai_usage WHERE turn_id = p.turn_id
+                           UNION ALL
+                           SELECT model, cost_usd, partial, id FROM ai_usage WHERE id = p.usage_id) g
+                    GROUP BY g.model) m
+         ) c ON true
+         LEFT JOIN LATERAL (SELECT count(*) AS lookups FROM ai_queries WHERE turn_id = p.turn_id) n ON true
+        ORDER BY p.at DESC, p.id DESC`,
+      params,
+    )
+    const people = await db.query<{ id: string; name: string }>(
+      `SELECT u.id, u.name
+         FROM (SELECT user_id FROM ai_turns WHERE created_at >= $1 AND created_at < $2
+               UNION
+               SELECT user_id FROM ai_usage WHERE automation_id IS NOT NULL AND turn_id IS NULL AND created_at >= $1 AND created_at < $2) x
+         JOIN users u ON u.id = x.user_id
+        ORDER BY u.name, u.id`,
+      [from, to],
+    )
+    const rows = page.rows.slice(0, AI_ACTIVITY_PAGE)
+    const body: AiActivityResponse = {
+      month,
+      items: rows.map(({ place: _place, ...item }) => item),
+      next: page.rows.length > AI_ACTIVITY_PAGE ? rows[rows.length - 1].place : null,
+      people: people.rows,
+    }
+    res.json(body)
+  })
 
   r.get('/usage', async (req, res) => {
     const q = parse(usageQuery, req.query)

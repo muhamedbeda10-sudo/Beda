@@ -64,6 +64,7 @@ import type {
   AiReportRunResponse,
   AiReportsResponse,
   AiSettingsResponse,
+  AiActivityResponse,
   AiUsageResponse,
 } from '@qc/shared/ai'
 import { api, apiBlob, qs } from '@/lib/api'
@@ -129,6 +130,7 @@ export const keys = {
   aiConversations: ['ai', 'conversations'] as const,
   aiMessages: (id: string) => ['ai', 'messages', id] as const,
   aiUsage: (month: string) => ['ai', 'usage', month] as const,
+  aiActivity: (month: string, userId: string, kind: string) => ['ai', 'activity', month, userId, kind] as const,
   /** Every list of this person's reports, whatever its search. */
   aiReports: ['ai', 'reports'] as const,
   /** The list of reports matching a search ('' for all of them), page after page. */
@@ -897,6 +899,22 @@ export function useAiUsage(month: string, enabled: boolean) {
   return useQuery({
     queryKey: keys.aiUsage(month),
     queryFn: () => api<AiUsageResponse>(`/ai/usage${qs({ month })}`),
+    enabled,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/**
+ * The owner's Activity: each question of a month (and each scheduled report's summary) with what it cost, newest
+ * first; "Load more" is fetchNextPage. One person ('' for everyone) and one kind ('' for both) narrow it.
+ */
+export function useAiActivity(month: string, userId: string, kind: '' | 'question' | 'automation', enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: keys.aiActivity(month, userId, kind),
+    queryFn: ({ pageParam }) => api<AiActivityResponse>(`/ai/activity${qs({ month, userId, kind, before: pageParam })}`),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last: AiActivityResponse) => last.next,
     enabled,
     staleTime: 60_000,
     placeholderData: keepPreviousData,

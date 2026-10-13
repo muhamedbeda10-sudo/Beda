@@ -610,6 +610,48 @@ export interface AiUsageResponse {
   byAutomation: { automationId: string; name: string; creatorName: string; costUsd: number; runs: number }[]
 }
 
+// ---- Activity: each question and what it cost (the owner's) ----------------------------
+
+/**
+ * One thing the assistant was asked to do in a month, newest first: a person's
+ * question (with everything its answer cost, a report saved from it
+ * included), or a scheduled report's summary (§21). What the owner reads on
+ * the settings page, and nobody else.
+ */
+export interface AiActivityItem {
+  /** The question's turn id, or the summary's usage row (as text). Unique within its kind. */
+  id: string
+  kind: 'question' | 'automation'
+  /** ISO time it was asked (or the summary written). */
+  at: string
+  userId: string
+  userName: string
+  /** The question as asked, or the automation's name. */
+  text: string
+  costUsd: number
+  /** The models that served it, in the order first used (a refusal's fallback adds one). */
+  models: string[]
+  /** Queries run on the record to answer it. */
+  lookups: number
+  /** A call was cut off: part of the cost is an estimate. */
+  partial: boolean
+  /** How the answer ended; null while it is still being written, and for a summary. */
+  stopReason: AiStopReason | null
+}
+
+export interface AiActivityResponse {
+  /** YYYY-MM, UTC. */
+  month: string
+  items: AiActivityItem[]
+  /** Where the next page starts (pass back as before), or null at the end. */
+  next: string | null
+  /** Everyone with activity in the month, for the filter. */
+  people: { id: string; name: string }[]
+}
+
+/** Rows an Activity page brings. */
+export const AI_ACTIVITY_PAGE = 50
+
 // ---- Saved reports -------------------------------------------------------------------
 
 /** A report's period, kept as it was asked, so "last 30 days" stays the last 30 days. */

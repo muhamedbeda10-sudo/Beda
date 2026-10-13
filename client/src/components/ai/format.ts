@@ -5,11 +5,12 @@
 // says it, and how an answer ended.
 // ============================================================================
 
-import type { AiStopReason, AiUnavailableReason } from '@qc/shared/ai'
+import { AI_MODELS, type AiStopReason, type AiUnavailableReason } from '@qc/shared/ai'
 import type { BadgeTone } from '@/components/ui'
 
 const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const USD_SMALL = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 4, maximumFractionDigits: 4 })
+const USD_MILLS = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 3, maximumFractionDigits: 3 })
 const USD_WHOLE = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 
@@ -84,4 +85,25 @@ export const STOP_TEXT: Record<Exclude<AiStopReason, 'end_turn'>, string> = {
   limit: 'Stopped: this question took too many queries or too long. Ask a narrower one.',
   cap: "Stopped: this month's limit for the assistant is reached.",
   error: 'Something went wrong before the answer finished.',
+}
+
+/** One answer's cost on the owner's Activity list: to a tenth of a cent, "$0.070", so answers compare at a glance. */
+export function formatAnswerCost(usd: number): string {
+  if (!Number.isFinite(usd)) return '—'
+  return usd > 0 && usd < 0.001 ? USD_SMALL.format(usd) : USD_MILLS.format(usd)
+}
+
+/** A model as people name it, "Claude Sonnet 5.5"; one not offered here (a refusal's fallback) by its id. */
+export function aiModelName(id: string): string {
+  return AI_MODELS.find((m) => m.id === id)?.name ?? id
+}
+
+/** How an answer ended, in a word or two beside it on the Activity list; an answer that simply finished says nothing. */
+export const ACTIVITY_STOP_LABEL: Record<Exclude<AiStopReason, 'end_turn'>, string> = {
+  max_tokens: 'cut at its length',
+  refusal: 'declined',
+  stopped: 'stopped',
+  limit: 'too many queries',
+  cap: 'cap reached',
+  error: 'failed',
 }

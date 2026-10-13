@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import type { ApiErrorBody } from '@qc/shared/api'
 import {
+  AI_ACTIVITY_PAGE,
   AI_EXPORT_MAX_ROWS,
   AI_MODEL,
   aiCostUsd,
@@ -13,6 +14,7 @@ import {
   type AiQueryPart,
   type AiStatusResponse,
   type AiStreamEvent,
+  type AiActivityResponse,
   type AiUsageResponse,
 } from '@qc/shared/ai'
 import { TestApp, type Session } from './harness'
@@ -984,6 +986,61 @@ describe('§20 Excel and usage', () => {
     const far = await app.api<AiUsageResponse>('GET', '/api/ai/usage?month=2999-12', { token: admin.token })
     expect(far.status).toBe(200)
     expect(far.body).toMatchObject({ month: '2999-12', spentUsd: 0, calls: 0, questions: 0 })
+  })
+
+  it('lists each question of the month with what its answer cost, newest first, a page at a time', async () => {
+    const month = new Date().toISOString().slice(0, 7)
+    const res = await app.api<AiActivityResponse>('GET', '/api/ai/activity', { token: admin.token })
+    expect(res.status).toBe(200)
+    expect(res.body.month).toBe(month)
+    const turns = (
+      await app.db.query<{ id: string; question: string; cost: number; lookups: number; models: string[] }>(
+        `SELECT t.id, t.question,
+                COALESCE((SELECT sum(cost_usd) FROM ai_usage g WHERE g.turn_id = t.id), 0)::numeric(14, 6) AS cost,
+                (SELECT count(*) FROM ai_queries q WHERE q.turn_id = t.id)::int AS lookups,
+                COALESCE((SELECT array_agg(model ORDER BY f) FROM (SELECT model, min(id) AS f FROM ai_usage g WHERE g.turn_id = t.id GROUP BY model) m), '{}') AS models
+           FROM ai_turns t ORDER BY t.created_at DESC, t.id::text DESC`,
+      )
+    ).rows
+    // Each question once, as asked, by whom, with every call its answer made added up and the queries it ran.
+    expect(res.body.items.map((i) => i.id)).toEqual(turns.slice(0, AI_ACTIVITY_PAGE).map((t) => t.id))
+    for (const [i, t] of turns.slice(0, AI_ACTIVITY_PAGE).entries()) {
+      expect(res.body.items[i], t.question).toMatchObject({ kind: 'question', text: t.question, userId: admin.user.id, userName: 'Admin', costUsd: t.cost, lookups: t.lookups, models: t.models })
+    }
+    expect(res.body.items.some((i) => i.lookups > 0)).toBe(true)
+    expect(res.body.people).toEqual([{ id: admin.user.id, name: 'Admin' }])
+
+    // More than a page, many in the same instant: the pages follow one another, never repeating or skipping one.
+    const conversationId = (await app.db.query<{ id: string }>(`SELECT conversation_id AS id FROM ai_turns LIMIT 1`)).rows[0].id
+    await app.db.query(
+      `INSERT INTO ai_turns (conversation_id, user_id, client_id, question, status, stop_reason, finished_at, created_at)
+       SELECT $1, $2, 'paging-' || n, 'Paging ' || n, 'done', 'end_turn', now(), date_trunc('second', now())
+         FROM generate_series(1, ${AI_ACTIVITY_PAGE + 5}) n`,
+      [conversationId, admin.user.id],
+    )
+    const all = (await app.db.query<{ id: string }>(`SELECT id FROM ai_turns`)).rows.map((r) => r.id)
+    const seen: string[] = []
+    let before: string | null = null
+    do {
+      const page: { status: number; body: AiActivityResponse } = await app.api<AiActivityResponse>('GET', `/api/ai/activity${before ? `?before=${encodeURIComponent(before)}` : ''}`, { token: admin.token })
+      expect(page.status).toBe(200)
+      expect(page.body.items.length).toBeLessThanOrEqual(AI_ACTIVITY_PAGE)
+      seen.push(...page.body.items.map((i) => i.id))
+      before = page.body.next
+    } while (before)
+    expect(new Set(seen).size).toBe(seen.length)
+    expect([...seen].sort()).toEqual([...all].sort())
+
+    // One person, one kind, another month; and nothing taken that is not a month, a person, a kind or a place.
+    const mine = await app.api<AiActivityResponse>('GET', `/api/ai/activity?userId=${admin.user.id}&kind=question`, { token: admin.token })
+    expect(mine.body.items.length).toBe(AI_ACTIVITY_PAGE)
+    const nobody = await app.api<AiActivityResponse>('GET', `/api/ai/activity?userId=${randomUUID()}`, { token: admin.token })
+    expect(nobody.body).toMatchObject({ items: [], next: null })
+    expect((await app.api<AiActivityResponse>('GET', '/api/ai/activity?kind=automation', { token: admin.token })).body.items).toEqual([])
+    expect((await app.api<AiActivityResponse>('GET', '/api/ai/activity?month=2020-01', { token: admin.token })).body).toEqual({ month: '2020-01', items: [], next: null, people: [] })
+    for (const bad of ['month=2020-13', 'userId=me', 'kind=everything', "before=x';--"]) {
+      expect((await app.api('GET', `/api/ai/activity?${bad}`, { token: admin.token })).status, bad).toBe(400)
+    }
   })
 
   it('limits how many questions one person sends in a short time', async () => {
