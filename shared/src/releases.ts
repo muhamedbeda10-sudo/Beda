@@ -28,6 +28,14 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.104',
+    date: '2026-10-13',
+    title: 'The assistant expands to the full screen',
+    items: [
+      { text: 'Expanding the AI assistant (the arrows at the top of its card, now "Full screen") fills the whole screen instead of a large window in the middle, with your conversations and reports beside the chat. Shrink puts it back in the corner.' },
+    ],
+  },
+  {
     id: '2026-10-13.103',
     date: '2026-10-13',
     title: 'The dashboard, tidied',
