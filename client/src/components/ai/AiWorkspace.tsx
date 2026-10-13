@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
 import { useAi } from './AiAssistantProvider'
 import { AiComposer, useComposerDraft } from './AiComposer'
 import { AiConversationList } from './AiConversationList'
+import { AiHeaderLinks } from './AiHeaderLinks'
 import { BotMark } from './AiMessages'
 import { REVOKED_TEXT } from './AiPanelHost'
 import { AiReportList } from './AiReportList'
@@ -168,6 +169,7 @@ function Workspace() {
         >
           <History className="h-5 w-5" />
         </button>
+        <AiHeaderLinks buttonClass={HEAD_BTN} onClass={HEAD_ON} />
         <button type="button" onClick={newChat} className={cn(HEAD_BTN, 'sm:hidden')} aria-label="New chat" data-tip="New chat">
           <SquarePen className="h-5 w-5" />
         </button>

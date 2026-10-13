@@ -16,7 +16,6 @@ import { AiAssistantProvider, useAi } from '@/components/ai/AiAssistantProvider'
 import { AiButton } from '@/components/ai/AiButton'
 import { AiPanelHost } from '@/components/ai/AiPanelHost'
 import { isAiWorkspacePath } from '@/components/ai/workspace'
-import { useFollowUpCounts } from '@/services/followUps'
 import { useNavFit } from '@/components/layout/navFit'
 import { useCoarsePointer } from '@/lib/media'
 
@@ -84,21 +83,6 @@ function ChatButton() {
   )
 }
 
-/** §21 — the count on Follow-ups: the reader's open ones, red once one of them is overdue. */
-function NavCount({ count, overdue }: { count: number; overdue: number }) {
-  if (count <= 0) return null
-  return (
-    <span
-      className={cn(
-        'grid min-w-[18px] shrink-0 place-items-center rounded-full px-1 text-[10px] font-bold leading-[18px] tabular-nums',
-        overdue > 0 ? 'bg-rose-600 text-white' : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-100',
-      )}
-    >
-      <span aria-hidden>{count > 99 ? '99+' : count}</span>
-      <span className="sr-only">{`, ${count} open${overdue > 0 ? `, ${overdue} overdue` : ''}`}</span>
-    </span>
-  )
-}
 
 /** The gear: an icon-only control on the far right that opens administration. */
 function AdminMenu({ items }: { items: NavItem[] }) {
@@ -193,17 +177,14 @@ function Shell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
 
-  // §21 — Automations is in the bar for the people who may create them, whatever their role; Follow-ups for
-  // whoever has some or may see everyone's, with the count of their own open ones (polled like the bell).
-  const { data: followUps } = useFollowUpCounts(!!profile)
-  const nav = visibleNav(NAV, role, false, ai.automations, followUps?.visible ?? false)
+  // §21 — Automations open from the assistant's header and Follow-ups from the bell: neither is a tab.
+  const nav = visibleNav(NAV, role, false)
   const tools = visibleNav(TOOLS_NAV, role, false)
-  const navCount = (n: NavItem) => (n.followUps && followUps ? { count: followUps.mineOpen, overdue: followUps.mineOverdue } : null)
   // The tabs keep their names while those fit beside the brand and the icons; then tighter padding; then icons alone, the
   // names in tooltips. Measured on this bar, for these tabs and this window (navFit), not guessed from how many there are.
   const barRef = useRef<HTMLDivElement>(null)
   const navRef = useRef<HTMLElement>(null)
-  const fit = useNavFit(barRef, navRef, `${nav.map((n) => n.to).join(' ')}${followUps?.mineOpen ? ' #' : ''}`)
+  const fit = useNavFit(barRef, navRef, nav.map((n) => n.to).join(' '))
   // A finger gets no tooltip, so on a touch screen the tabs never stand as bare icons: where only icons would fit (a
   // landscape tablet, six tabs), the bar keeps the menu button, as on a portrait tablet, and the menu names them. The
   // tabs stay laid out, out of sight and out of the row, so navFit goes on measuring them and the names come back as
@@ -246,7 +227,6 @@ function Shell({ children }: { children: ReactNode }) {
           >
             {nav.map((n) => {
               const active = isActive(n)
-              const count = navCount(n)
               return (
                 <NavLink
                   key={n.to}
@@ -264,7 +244,6 @@ function Shell({ children }: { children: ReactNode }) {
                 >
                   <n.icon className={cn('h-4 w-4 transition-transform duration-200 group-hover:-translate-y-0.5', active && 'text-accent-500')} />
                   <span className={cn(fit === 'icons' && 'sr-only')}>{n.label}</span>
-                  {count && <NavCount count={count.count} overdue={count.overdue} />}
                 </NavLink>
               )
             })}
@@ -311,7 +290,7 @@ function Shell({ children }: { children: ReactNode }) {
             <nav className="flex flex-col gap-1 p-3">
               {/* The assistant is the header's own button on every screen, so the menu does not offer it a second time. */}
               {nav.map((n) => (
-                <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} count={navCount(n)} />
+                <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
               ))}
               {tools.length > 0 && (
                 <>
@@ -375,7 +354,7 @@ function Shell({ children }: { children: ReactNode }) {
 }
 
 /** `hint`: the entry's line under its name (administration), as the gear's menu shows it. */
-function DrawerLink({ item, active, onClick, count, hint = false }: { item: NavItem; active: boolean; onClick: () => void; count?: { count: number; overdue: number } | null; hint?: boolean }) {
+function DrawerLink({ item, active, onClick, hint = false }: { item: NavItem; active: boolean; onClick: () => void; hint?: boolean }) {
   const sub = hint ? item.hint : undefined
   return (
     <NavLink
@@ -397,7 +376,6 @@ function DrawerLink({ item, active, onClick, count, hint = false }: { item: NavI
       ) : (
         <span className="flex-1">{item.label}</span>
       )}
-      {count && <NavCount count={count.count} overdue={count.overdue} />}
     </NavLink>
   )
 }

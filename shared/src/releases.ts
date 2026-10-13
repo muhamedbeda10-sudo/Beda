@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.4',
+    date: '2026-10-13',
+    title: 'Automations and Follow-ups have moved',
+    items: [
+      { text: 'Automations now open from the AI assistant: the lightning icon at the top of the chat, beside My reports. The tab in the bar at the top of the app is gone.' },
+      { text: 'Follow-ups now open from the bell, in its own Follow-ups tab beside Notices and Alerts: your open follow-ups, overdue first, with the number on the tab (red when one is overdue). "Open the Follow-ups page" there shows them all, with the filters. The tab in the top bar is gone.' },
+    ],
+  },
+  {
     id: '2026-10-13.3',
     date: '2026-10-13',
     title: 'The assistant costs less per question',

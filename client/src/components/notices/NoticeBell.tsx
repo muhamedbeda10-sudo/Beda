@@ -6,27 +6,33 @@
 // §21 — beside the notices, the person's alerts: what automations and
 // follow-ups told them (AlertList). The count on the bell is both together;
 // the notices themselves read and acknowledge exactly as before. Someone who
-// receives no notices (a viewer) has the alerts alone.
+// receives no notices (a viewer) has the alerts alone. And their follow-ups
+// not done (BellFollowUps), for whoever has some: the bell is where the
+// Follow-ups page is opened from, with the count of their open ones on its
+// tab (red once one is overdue). That count is not in the bell's own: an
+// open follow-up is work, not something unread.
 // ============================================================================
 
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Bell, BellRing, Check, ChevronDown, ChevronUp, Loader2, Megaphone } from 'lucide-react'
+import { Bell, BellRing, Check, ChevronDown, ChevronUp, ListChecks, Loader2, Megaphone } from 'lucide-react'
 import type { NoticeForUser } from '@qc/shared/types'
 import { Badge, Button, Drawer, EmptyState } from '@/components/ui'
-import { Segmented } from '@/components/ui/PageShell'
 import { useNoticeInbox } from '@/services/queries'
 import { acknowledgeNotice, markNoticeSeen } from '@/services/mutations'
 import { trimNotifications, useNotifications } from '@/services/notifications'
-import { followUpKeys } from '@/services/followUps'
+import { followUpKeys, useFollowUpCounts } from '@/services/followUps'
+import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { cn, timeAgo } from '@/lib/utils'
 import { textDirection } from '@/lib/direction'
 import { NoticeCard, SEVERITY_META, validityText } from './NoticeCard'
 import { AlertList } from './AlertList'
+import { BellFollowUps } from './BellFollowUps'
+import { BellTabs, type BellTabItem } from './BellTabs'
 import { badgeText, bellCount, unreadAlerts } from './alerts'
 
-type BellTab = 'notices' | 'alerts'
+type BellTab = 'notices' | 'alerts' | 'follow-ups'
 
 function InboxRow({ notice, open, onToggle }: { notice: NoticeForUser; open: boolean; onToggle: () => void }) {
   const qc = useQueryClient()
@@ -96,8 +102,10 @@ function InboxRow({ notice, open, onToggle }: { notice: NoticeForUser; open: boo
 /** `notices`: this person receives notices (by role); without, the bell holds their alerts alone. */
 export function NoticeBell({ className, notices: receivesNotices = true }: { className?: string; notices?: boolean }) {
   const qc = useQueryClient()
+  const { profile } = useAuth()
   const { data, isLoading } = useNoticeInbox(receivesNotices)
   const { data: alertPages } = useNotifications()
+  const { data: followUps } = useFollowUpCounts(!!profile)
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<BellTab>('notices')
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -107,7 +115,13 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
   const notices = data?.notices ?? []
   const attention = notices.filter((n) => n.pending)
   const earlier = notices.filter((n) => !n.pending)
-  const shown: BellTab = receivesNotices ? tab : 'alerts'
+  const hasFollowUps = followUps?.visible ?? false
+  const tabs: BellTabItem<BellTab>[] = [
+    ...(receivesNotices ? [{ value: 'notices' as const, label: 'Notices', icon: <Megaphone className="h-4 w-4" />, count: pending }] : []),
+    { value: 'alerts', label: 'Alerts', icon: <BellRing className="h-4 w-4" />, count: unread },
+    ...(hasFollowUps ? [{ value: 'follow-ups' as const, label: 'Follow-ups', icon: <ListChecks className="h-4 w-4" />, count: followUps?.mineOpen ?? 0, urgent: (followUps?.mineOverdue ?? 0) > 0 }] : []),
+  ]
+  const shown: BellTab = tabs.some((t) => t.value === tab) ? tab : tabs[0].value
 
   // A new alert is often a follow-up just given to this person: the navigation's count is asked again with it.
   const lastUnread = useRef(unread)
@@ -123,9 +137,9 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
     if (next && n.pending && !n.requiresAck) void markNoticeSeen(qc, n.id).catch(() => undefined)
   }
 
-  // Notices waiting come first (one may need acknowledging); otherwise the alerts not opened.
+  // Notices waiting come first (one may need acknowledging); then the alerts not opened; then overdue follow-ups.
   const openBell = () => {
-    setTab(pending === 0 && unread > 0 ? 'alerts' : 'notices')
+    setTab(pending > 0 ? 'notices' : unread > 0 ? 'alerts' : hasFollowUps && (followUps?.mineOverdue ?? 0) > 0 ? 'follow-ups' : 'notices')
     setOpen(true)
   }
   const close = () => {
@@ -135,8 +149,22 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
   }
 
   const label = receivesNotices ? 'Notices and alerts' : 'Alerts'
+  const open_ = followUps?.mineOpen ?? 0
+  const overdue = followUps?.mineOverdue ?? 0
   const subtitle =
-    shown === 'notices' ? (pending > 0 ? `${pending} to read` : 'Nothing waiting for you') : unread > 0 ? `${unread} not opened yet` : 'Nothing new for you'
+    shown === 'notices'
+      ? pending > 0
+        ? `${pending} to read`
+        : 'Nothing waiting for you'
+      : shown === 'alerts'
+        ? unread > 0
+          ? `${unread} not opened yet`
+          : 'Nothing new for you'
+        : open_ > 0
+          ? `${open_} open${overdue > 0 ? `, ${overdue} overdue` : ''}`
+          : 'None open'
+  const title = shown === 'notices' ? 'Notices' : shown === 'alerts' ? 'Alerts' : 'Follow-ups'
+  const icon = shown === 'notices' ? <Bell className="h-5 w-5" /> : shown === 'alerts' ? <BellRing className="h-5 w-5" /> : <ListChecks className="h-5 w-5" />
 
   return (
     <>
@@ -148,22 +176,12 @@ export function NoticeBell({ className, notices: receivesNotices = true }: { cla
           </span>
         )}
       </button>
-      <Drawer open={open} onClose={close} title={shown === 'notices' ? 'Notices' : 'Alerts'} subtitle={subtitle} icon={shown === 'notices' ? <Bell className="h-5 w-5" /> : <BellRing className="h-5 w-5" />}>
-        {receivesNotices && (
-          <div className="mb-4">
-            <Segmented
-              label="Notices or alerts"
-              value={tab}
-              onChange={setTab}
-              options={[
-                { value: 'notices', label: pending > 0 ? `Notices · ${badgeText(pending)}` : 'Notices', icon: <Megaphone className="h-4 w-4" /> },
-                { value: 'alerts', label: unread > 0 ? `Alerts · ${badgeText(unread)}` : 'Alerts', icon: <BellRing className="h-4 w-4" /> },
-              ]}
-            />
-          </div>
-        )}
+      <Drawer open={open} onClose={close} title={title} subtitle={subtitle} icon={icon}>
+        {tabs.length > 1 && <BellTabs label="What the bell holds" tabs={tabs} value={shown} onChange={setTab} className="mb-4" />}
         {shown === 'alerts' ? (
           <AlertList onLeave={close} />
+        ) : shown === 'follow-ups' ? (
+          <BellFollowUps onLeave={close} />
         ) : (
           <>
             {isLoading && (
