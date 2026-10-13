@@ -26,7 +26,7 @@ import {
 } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
 import { HttpError, badRequest, duplicate, notFound } from '../lib/errors'
-import { CONVERSATION_SELECT, toConversation } from './transcript'
+import { ANSWERING, CONVERSATION_SELECT, toConversation } from './transcript'
 
 /** A title or a group's name as it is kept: on one line, without spaces at its ends. */
 export const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
@@ -113,7 +113,7 @@ export async function updateConversation(tx: Queryable, userId: string, id: stri
   if (!archive && now.archivedAt !== null) set('archived_at = NULL')
 
   if (sets.length > 0) await tx.query(`UPDATE ai_conversations SET ${sets.join(', ')} WHERE id = $1`, values)
-  const { rows: after } = await tx.query<AiConversation>(`SELECT ${CONVERSATION_SELECT} FROM ai_conversations c WHERE c.id = $1`, [id])
+  const { rows: after } = await tx.query<AiConversation>(`SELECT ${CONVERSATION_SELECT}, ${ANSWERING} FROM ai_conversations c WHERE c.id = $1`, [id])
   return toConversation(after[0])
 }
 

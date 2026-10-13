@@ -187,9 +187,12 @@ export function askOnFirstTap(userId: string): () => void {
   return stop
 }
 
-/** What a push changes on screen, refreshed at once. */
+/**
+ * What a push changes on screen, refreshed at once. An alert may say an answer of the assistant is ready (§20): its
+ * conversation and the list of them catch up too.
+ */
 const REFRESH: Record<PushPayload['kind'], readonly (readonly string[])[]> = {
-  alert: [['notifications']],
+  alert: [['notifications'], ['ai', 'conversations'], ['ai', 'messages']],
   chat: [['chat']],
   notice: [['notices']],
 }

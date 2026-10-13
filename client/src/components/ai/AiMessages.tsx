@@ -11,11 +11,16 @@
 // place, to activate, edit or discard; so is a notice it drafted (§23), to
 // publish, change, withdraw or delete, or discard. A saved message changes only when it is saved as a
 // report, so it is memoised; the answer being written redraws once per frame.
+//
+// An answer the server is still writing while this device only follows it
+// (the conversation reopened, or a stream let go of) reads as being written
+// too: what it has done so far, and the server's latest word on what it is
+// doing; it settles once the conversation, fetched again, says it has ended.
 // ============================================================================
 
 import { memo, useId, useMemo, useState, type ReactNode } from 'react'
 import { Bot, ChevronRight, Copy, Loader2, Printer, RotateCcw } from 'lucide-react'
-import type { AiAttachment, AiKpi, AiMessage } from '@qc/shared/ai'
+import type { AiAttachment, AiKpi, AiMessage, AiRunningAnswer } from '@qc/shared/ai'
 import { formatFullTimestamp, formatTime, cn } from '@/lib/utils'
 import { useApp } from '@/store/AppContext'
 import { AiAttachmentList } from './AiAttachments'
@@ -195,9 +200,11 @@ const NO_CHARTS: ReadonlyMap<string, ChartModel> = new Map()
  * An answer: saved (`message`), or being written (`turn`). One component for
  * both, drawn at one key (threadItems), so the hand-over when it is saved
  * keeps its query cards as they were — opened, or showing their table with
- * its filters. `question` is the question it replies to, for its exports and
- * Ask again. `latest`: the conversation's last answer, the one that offers
- * its follow-up questions (`onSuggestion` puts one in the box).
+ * its filters. A saved one marked running is still being written on the
+ * server; `running` is the server's word on it (what it is doing, whether
+ * Stop was pressed). `question` is the question it replies to, for its
+ * exports and Ask again. `latest`: the conversation's last answer, the one
+ * that offers its follow-up questions (`onSuggestion` puts one in the box).
  * `noticesWait`: a later answer, still being written, drafted a notice card
  * that may replace one of this answer's (noticeCardsWait), so they wait;
  * `tasksWait` the same for task cards (taskCardsWait).
@@ -205,6 +212,7 @@ const NO_CHARTS: ReadonlyMap<string, ChartModel> = new Map()
 export const Answer = memo(function Answer({
   message,
   turn,
+  running,
   question,
   onAskAgain,
   latest = false,
@@ -215,6 +223,7 @@ export const Answer = memo(function Answer({
 }: {
   message?: AiMessage
   turn?: LiveTurn
+  running?: AiRunningAnswer | null
   question?: string
   onAskAgain?: (q: string) => void
   latest?: boolean
@@ -223,11 +232,16 @@ export const Answer = memo(function Answer({
   noticesWait?: boolean
   tasksWait?: boolean
 }) {
-  const writing = !!turn && isInFlight(turn)
-  // The answer as it ended: the saved one, or the turn's once done; until then, the parts as streamed,
-  // without the blocks the model writes for the app (follow-up questions, headline figures), which the saved answer has apart.
-  const ended = turn ? (turn.phase === 'done' ? turn.message : null) : (message ?? null)
-  const streamed = turn?.parts ?? NO_PARTS
+  // Read here word by word as it is written; or written on the server while this device follows it: a turn it let go
+  // of, until the saved conversation takes over, or a saved answer marked running.
+  const reading = !!turn && isInFlight(turn)
+  const following = turn ? turn.phase === 'detached' : !!message?.running
+  const writing = reading || following
+  // The answer as it ended: the saved one once the server says it has, or the turn's once done; until then, the parts
+  // so far, without the blocks the model writes for the app (follow-up questions, headline figures), which the saved
+  // answer has apart.
+  const ended = turn ? (turn.phase === 'done' ? turn.message : null) : message && !message.running ? message : null
+  const streamed = turn?.parts ?? message?.parts ?? NO_PARTS
   const parts: readonly LivePart[] = useMemo(() => (ended ? ended.parts : liveDisplayParts(streamed)), [ended, streamed])
   const kpis = useMemo(() => (ended ? kpiCards(ended.kpis) : liveKpis(streamed)), [ended, streamed])
   // Charts once the answer has ended: drawn while it is written, they would move about under the text still coming.
@@ -248,11 +262,16 @@ export const Answer = memo(function Answer({
   const last = parts.at(-1)
   // Between queries and before the first word, say what the model is doing: its latest word on it, or "Thinking…".
   // While a query runs, its card says so with its own spinner. Not a live region: it changes several times a
-  // second; the thread's status line says when the phase changes.
+  // second; the thread's status line says when the phase changes. An answer followed from the server shows its words
+  // a step at a time, so the line stays while the model writes the next one; and once Stop is pressed, it says so.
   const querying = last?.type === 'pending-query' && last.state === 'running'
-  const working = writing && (turn.progress ?? (querying || last?.type === 'text' ? null : turn.phase === 'sending' ? 'Sending…' : 'Thinking…'))
+  const stopping = turn ? turn.stopping : !!running?.stopping
+  let working: string | null = null
+  if (writing && stopping) working = 'Stopping…'
+  else if (reading) working = turn.progress ?? (querying || last?.type === 'text' ? null : turn.phase === 'sending' ? 'Sending…' : 'Thinking…')
+  else if (following) working = running?.progress ?? (querying ? null : 'Thinking…')
   // The caret follows the text as it is written: the last block, while text is what is arriving.
-  const caretAt = writing && last?.type === 'text' && !working ? blocks.at(-1)?.key : undefined
+  const caretAt = reading && last?.type === 'text' && !working ? blocks.at(-1)?.key : undefined
   const retry = ended?.stopReason && ended.stopReason !== 'end_turn' && ended.stopReason !== 'refusal'
   const queryOf = (id: string) => parts.find((p): p is Extract<LivePart, { type: 'query' }> => p.type === 'query' && p.queryId === id)
   // Each child keeps its place whichever kind of answer this is, so the parts (and their cards) are never redrawn from scratch.

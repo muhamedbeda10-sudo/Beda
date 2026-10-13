@@ -4,10 +4,10 @@
 // written. Pure, so it is tested without a browser.
 // ============================================================================
 
-import type { AiMessagesResponse, AiTaskPart } from '@qc/shared/ai'
+import type { AiMessage, AiMessagesResponse, AiTaskPart } from '@qc/shared/ai'
 import type { BadgeTone } from '@/components/ui'
 import { ApiError } from '@/lib/api'
-import { isInFlight, type LiveTurn } from './liveTurn'
+import { partsBeingWritten, type LiveTurn } from './liveTurn'
 
 export const TASK_CARD_STATE_LABEL: Record<AiTaskPart['state'], string> = { proposed: 'Not sent yet', sent: 'Sent', discarded: 'Discarded', superseded: 'Replaced' }
 export const TASK_CARD_STATE_TONE: Record<AiTaskPart['state'], BadgeTone> = { proposed: 'amber', sent: 'green', discarded: 'neutral', superseded: 'neutral' }
@@ -53,15 +53,16 @@ export function hasOpenTaskCard(old: AiMessagesResponse | undefined, except: str
 
 /**
  * Whether the task cards of a conversation's saved answers wait before they
- * can be sent: the answer being written in it has drafted a task card that
- * passed, which may be a newer version of one of them. The server marks the
- * one it replaces only as it keeps the round that drafted it — and a card
- * sent before then would go out next to its replacement. So their buttons
- * wait until the answer ends; the conversation fetched meanwhile says which
- * one it replaced.
+ * can be sent: the answer being written in it (streamed here, or written by
+ * the server while this device follows it in `saved`, partsBeingWritten) has
+ * drafted a task card that passed, which may be a newer version of one of
+ * them. The server marks the one it replaces only as it keeps the round that
+ * drafted it — and a card sent before then would go out next to its
+ * replacement. So their buttons wait until the answer ends; the conversation
+ * fetched meanwhile says which one it replaced.
  */
-export function taskCardsWait(live: LiveTurn | null, conversationId: string | null): boolean {
-  return !!live && conversationId !== null && live.conversationId === conversationId && isInFlight(live) && live.parts.some((p) => p.type === 'task' && p.ok)
+export function taskCardsWait(live: LiveTurn | null, conversationId: string | null, saved: readonly AiMessage[]): boolean {
+  return partsBeingWritten(live, conversationId, saved).some((p) => p.type === 'task' && p.ok)
 }
 
 /** The card as a refusal says it stands now (sent already, discarded, replaced), when the server sent it along. */

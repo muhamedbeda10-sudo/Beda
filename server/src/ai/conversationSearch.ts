@@ -15,7 +15,7 @@
 
 import { AI_CONVERSATION_SEARCH_LIMIT, type AiConversation, type AiConversationSearchHit, type AiConversationSearchResponse } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
-import { CONVERSATION_SELECT, toConversation } from './transcript'
+import { ANSWERING, CONVERSATION_SELECT, toConversation } from './transcript'
 
 /** The marks left out: the short vowels (U+064B–U+0652), the superscript alef and the tatweel. */
 const ARABIC_MARK = /^[ً-ْٰـ]$/u
@@ -108,7 +108,7 @@ interface HitRow extends AiConversation {
 /** The person's conversations that have the words, the latest first. */
 export async function searchConversations(q: Queryable, userId: string, words: string, limit = AI_CONVERSATION_SEARCH_LIMIT): Promise<AiConversationSearchResponse> {
   const { rows } = await q.query<HitRow>(
-    `SELECT ${CONVERSATION_SELECT}, hit.w AS "where", hit.txt AS "text"
+    `SELECT ${CONVERSATION_SELECT}, ${ANSWERING}, hit.w AS "where", hit.txt AS "text"
        FROM ai_conversations c
        CROSS JOIN LATERAL (
          SELECT h.w, h.txt FROM (

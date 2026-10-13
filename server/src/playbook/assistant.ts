@@ -20,6 +20,7 @@ import type { ToolHandler, ToolOutcome } from '../ai/assistant'
 import { isAiOwner } from '../ai/owner'
 import { describeIssues } from '../automations/draft'
 import { HttpError } from '../lib/errors'
+import { loadPlaybookParts } from './parts'
 import { addEntry, changeEntry, removeEntry, type PlaybookChange } from './service'
 
 type ToolUse = Anthropic.Beta.BetaToolUseBlock
@@ -83,6 +84,12 @@ export function playbookToolHandlers(ctx: PlaybookToolContext): Record<string, T
 }
 
 async function update(ctx: PlaybookToolContext, tu: ToolUse): Promise<ToolOutcome> {
+  // A step finished after the answer was cut short runs its calls again: a change already made is not made twice.
+  const made = (await loadPlaybookParts(ctx.db, ctx.conversationId, ctx.turnId)).get(tu.id)
+  if (made) {
+    const content = { [{ add: 'saved', change: 'changed', remove: 'removed' }[made.action]]: true, entryId: made.entryId, kind: made.kind, text: made.text, note: 'Done before the answer was interrupted; the person sees it as a card.' }
+    return { result: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(content) } }
+  }
   const parsed = Input.safeParse(tu.input ?? {})
   if (!parsed.success) return failed(tu, describeIssues(parsed.error).join('\n'))
   const i = parsed.data

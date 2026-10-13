@@ -33,6 +33,16 @@
 //   • a question's files are stored by reference and become what Claude reads
 //     right before each call (attachments.ts), read once per answer; the caps
 //     price them at their counted tokens.
+//   • an answer outlives its request (answerRunner.ts). Run under a TurnControl,
+//     its limits (model calls, pauses) are counted on the turn, so they hold
+//     across a hand-over; every transaction that stores part of it first checks
+//     the turn is still this instance's (the fence); a step is stored before
+//     its tools run, so a step cut short is finished from there, each tool run
+//     once; and the transaction that stores the answer's last message closes
+//     the turn too, so a hand-over never mistakes a finished answer for one to
+//     go on with. Handed over (the server stopping, or the turn taken over), the
+//     loop stops where it is and keeps nothing half-done: the instance that
+//     continues it starts from what is stored.
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'
@@ -52,13 +62,13 @@ import type { ApiErrorCode } from '@qc/shared/api'
 import type { Config } from '../config'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
 import { ACCESS_NOTICE, checkCall, isGranted, loadAccess } from './access'
-import { isAttachmentRef, type AttachmentExpander, type StoredMessage } from './attachments'
+import { isAttachmentRef, type AttachmentExpander, type StoredBlock, type StoredMessage } from './attachments'
 import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
 import { MAX_TOKENS, MAX_TOKENS_RETRY, modelRequest, systemBlocks, worstCaseUsd } from './models'
-import { MAX_STEPS_PER_ANSWER, RUN_SQL_TOOL_NAME, RunSqlInput } from './prompt'
+import { MAX_STEPS_PER_ANSWER, RUN_SQL_TOOL_NAME, RunSqlInput, TURN_DEADLINE_MINUTES, WRAP_UP_STEPS, WRAP_UP_TAG, WRAP_UP_TIME_SHARE } from './prompt'
 import { AI_QUERY_STOPPED, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
-import { appendMessages, insertQueries, queryPart, recordUsage, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
+import { appendMessages, insertQueries, queryPart, recordUsage, settleStep, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
 
 type ContentBlock = Anthropic.Beta.BetaContentBlock
 type ContentBlockParam = Anthropic.Beta.BetaContentBlockParam
@@ -70,8 +80,8 @@ const MAX_CALLS = MAX_STEPS_PER_ANSWER
 /** pause_turn continuations (server tools only; there are none, so this is a guard). */
 const MAX_CONTINUATIONS = 5
 /** Wall-clock time one question may take. */
-export const TURN_DEADLINE_MINUTES = 15
-const TURN_DEADLINE_MS = TURN_DEADLINE_MINUTES * 60_000
+export { TURN_DEADLINE_MINUTES }
+export const TURN_DEADLINE_MS = TURN_DEADLINE_MINUTES * 60_000
 /** Tool input the SDK could not parse at all: the call is made again, this many times. */
 const JSON_RETRIES = 2
 /** A query the assistant runs may take this long: the most the runner allows, so an analysis over years of the record can finish. */
@@ -98,14 +108,24 @@ const NOTICE = {
   empty: 'Claude returned an empty answer. Ask again, or rephrase the question.',
 }
 
-/** What cut an answer short: the asker (Stop, or leaving) or the clock. */
-type Cause = 'user' | 'time'
+/** What cut an answer short: the asker (Stop), the clock, or a hand-over to another run (the server stopping, the turn lost). */
+type Cause = 'user' | 'time' | 'handover'
+
+/** The reason a run's signal is aborted with when the answer is handed over rather than stopped: it continues elsewhere. */
+export const HANDED_OVER = 'handed-over'
+
+/** Thrown by a TurnControl's fence when the turn is no longer this instance's: nothing more of it is stored here. */
+export class TurnLost extends Error {
+  constructor() {
+    super('The answer is being written by another run.')
+  }
+}
 
 /**
  * The result a query gets when the answer is cut short, by cause. It stays in
  * the replay for good, so it says what really happened.
  */
-const INTERRUPTED: Record<Cause, { running: string; notRun: string }> = {
+const INTERRUPTED: Record<Exclude<Cause, 'handover'>, { running: string; notRun: string }> = {
   user: { running: 'Interrupted by the user.', notRun: 'Interrupted by the user.' },
   time: { running: 'Stopped: the answer reached its time limit.', notRun: 'Not run: the answer reached its time limit.' },
 }
@@ -156,12 +176,41 @@ export interface Question {
   deadlineMs?: number
   /** Handlers of the conversation's tools besides run_sql, by name; one the conversation was not given never runs. */
   tools?: Record<string, ToolHandler>
+  /** The turn's run (answerRunner.ts): its limits across hand-overs, Stop, and the fence on every write. Without one the loop keeps its limits itself. */
+  control?: TurnControl
+  /** A step stored before its tools ran, when the answer was cut short there: its tools run first, once each, then it goes on. */
+  pending?: { messageId: string; content: ContentBlockParam[] }
+}
+
+/**
+ * What a turn's run keeps on the turn itself, so it holds wherever the answer is written: the model calls made, the
+ * pauses, Stop, and that the turn is still this instance's.
+ */
+export interface TurnControl {
+  /** Model calls the turn has made already, its pauses, and whether it has already asked the model to go on after an empty answer. */
+  readonly calls: number
+  readonly pauses: number
+  readonly emptyRetried: boolean
+  /** It has been told to close already (WRAP_UP_TAG): once per answer. */
+  readonly wrappedUp: boolean
+  /** Right before each call: counted. Null when the turn is no longer this instance's; stopRequested when Stop was pressed. */
+  beforeCall(): Promise<{ calls: number; stopRequested: boolean } | null>
+  /** A pause_turn, counted. */
+  paused(): Promise<void>
+  /** First in every transaction that stores part of the answer: throws TurnLost when the turn is no longer this instance's. */
+  fence(tx: Queryable): Promise<void>
+  /** The answer ends with what this transaction stores: the turn is closed in it. */
+  finish(tx: Queryable, outcome: Outcome): Promise<void>
 }
 
 export interface Outcome {
   stopReason: AiStopReason
   notice: string | null
+  /** Handed over, not ended: nothing was closed, and another run continues it from what is stored. */
+  handedOver?: true
 }
+
+const HANDED_OVER_OUTCOME: Outcome = { stopReason: 'stopped', notice: null, handedOver: true }
 
 // ---- Content as it is replayed -----------------------------------------------------
 
@@ -302,17 +351,23 @@ export async function answerQuestion(qn: Question): Promise<Outcome> {
   // One signal for everything this answer starts: the asker's Stop, and the clock.
   const ac = new AbortController()
   let overTime = false
-  const onAbort = () => ac.abort()
-  if (qn.signal.aborted) ac.abort()
+  // The asker's reason goes on to what the answer runs: a tool told it was handed over keeps nothing of its own.
+  const onAbort = () => ac.abort(qn.signal.reason)
+  if (qn.signal.aborted) ac.abort(qn.signal.reason)
   qn.signal.addEventListener('abort', onAbort)
+  const deadlineMs = qn.deadlineMs ?? TURN_DEADLINE_MS
+  const deadlineAt = Date.now() + deadlineMs
   const deadline = setTimeout(() => {
     // The first to stop it is the cause: a Stop the clock overtakes stays the asker's.
     if (!ac.signal.aborted) overTime = true
     ac.abort()
-  }, qn.deadlineMs ?? TURN_DEADLINE_MS)
+  }, deadlineMs)
   deadline.unref()
   try {
-    return await loop(qn, ac.signal, () => (overTime ? 'time' : 'user'))
+    return await loop(qn, ac.signal, () => (overTime ? 'time' : qn.signal.reason === HANDED_OVER ? 'handover' : 'user'), deadlineAt)
+  } catch (e) {
+    if (e instanceof TurnLost) return HANDED_OVER_OUTCOME
+    throw e
   } finally {
     clearTimeout(deadline)
     qn.signal.removeEventListener('abort', onAbort)
@@ -342,15 +397,38 @@ async function wireParams(qn: Question, params: StoredParams): Promise<ModelPara
   return params as ModelParams
 }
 
-async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Promise<Outcome> {
-  const stopped = (): Outcome => (cause() === 'time' ? { stopReason: 'limit', notice: NOTICE.time } : { stopReason: 'stopped', notice: NOTICE.stopped })
+async function loop(qn: Question, signal: AbortSignal, cause: () => Cause, deadlineAt: number): Promise<Outcome> {
+  const stopped = (): Outcome => {
+    const c = cause()
+    if (c === 'handover') return HANDED_OVER_OUTCOME
+    return c === 'time' ? { stopReason: 'limit', notice: NOTICE.time } : { stopReason: 'stopped', notice: NOTICE.stopped }
+  }
   const messages = [...qn.messages]
   let maxTokens = MAX_TOKENS
-  let calls = 0
-  let continuations = 0
+  // Counted on the turn when it has a run, so a hand-over does not start them again.
+  let calls = qn.control?.calls ?? 0
+  let continuations = qn.control?.pauses ?? 0
   let jsonRetries = 0
   let streamRetries = 0
-  let emptyRetries = 0
+  let emptyRetries = qn.control?.emptyRetried ? EMPTY_RETRIES : 0
+  let wrappedUp = qn.control?.wrappedUp ?? false
+  /** The note telling the answer to close, when either limit is near and it has not been told yet; then it has. */
+  const wrapUp = (): string | null => {
+    const minutesLeft = Math.max(0, Math.floor((deadlineAt - Date.now()) / 60_000))
+    const stepsLeft = Math.max(0, MAX_CALLS - calls)
+    if (wrappedUp || (stepsLeft > WRAP_UP_STEPS && deadlineAt - Date.now() > TURN_DEADLINE_MS * WRAP_UP_TIME_SHARE)) return null
+    wrappedUp = true
+    return wrapUpNote(stepsLeft, minutesLeft)
+  }
+
+  // A step cut short after it was stored: its tools run now, once each, and the answer goes on from its results.
+  if (qn.pending) {
+    const toolUses = qn.pending.content.filter((b): b is ToolUse => b.type === 'tool_use')
+    const step = { id: qn.pending.messageId, param: { role: 'assistant' as const, content: qn.pending.content as StoredBlock[] } }
+    const done = await runStep(qn, step, toolUses, signal, cause, wrapUp())
+    if (done.outcome) return done.outcome
+    messages.push(...done.stored)
+  }
 
   for (;;) {
     if (signal.aborted) return stopped()
@@ -361,7 +439,15 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
     if (stop) return stop
     const wire = await wireParams(qn, params)
     if (signal.aborted) return stopped()
-    calls++
+    if (qn.control) {
+      // Counted before it is made, so a call cut off with its instance still counts; and Stop, pressed on any instance, is seen here.
+      const turn = await qn.control.beforeCall()
+      if (!turn) return HANDED_OVER_OUTCOME
+      if (turn.stopRequested) return { stopReason: 'stopped', notice: NOTICE.stopped }
+      calls = turn.calls
+    } else {
+      calls++
+    }
 
     const stream = qn.model.stream(qn.apiKey, wire, { signal })
     const watch = watchStream(stream, qn.emit)
@@ -410,21 +496,20 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
     switch (message.stop_reason) {
       case 'refusal': {
         // A refusal can cut a tool call off mid-input: nothing of it runs, and it is never replayed.
-        await persist(qn, [answerMessage(false)])
         const category = message.stop_details?.category
-        return {
+        return persistFinal(qn, [answerMessage(false)], {
           stopReason: 'refusal',
           notice: `Claude declined to answer this${category ? ` (${category.replace(/_/g, ' ')})` : ''}. Rephrase the question, or ask something else.`,
-        }
+        })
       }
       case 'pause_turn':
         if (++continuations > MAX_CONTINUATIONS) return { stopReason: 'limit', notice: NOTICE.steps }
+        await qn.control?.paused()
         // Sent again as it is, with no new message: the model carries on.
         messages.push(...(await persist(qn, [answerMessage()])))
         continue
       case 'model_context_window_exceeded':
-        messages.push(...(await persist(qn, [answerMessage()])))
-        return { stopReason: 'limit', notice: NOTICE.tooLong }
+        return persistFinal(qn, [answerMessage()], { stopReason: 'limit', notice: NOTICE.tooLong })
     }
 
     const toolUses = replay.filter((b): b is ToolUse => b.type === 'tool_use')
@@ -437,14 +522,10 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
         }
         return { stopReason: 'max_tokens', notice: NOTICE.cutOff }
       }
-      messages.push(...(await persist(qn, [answerMessage()])))
-      return { stopReason: 'max_tokens', notice: NOTICE.cutOff }
+      return persistFinal(qn, [answerMessage()], { stopReason: 'max_tokens', notice: NOTICE.cutOff })
     }
     if (toolUses.length === 0) {
-      if (hasText(replay)) {
-        messages.push(...(await persist(qn, [answerMessage()])))
-        return { stopReason: 'end_turn', notice: null }
-      }
+      if (hasText(replay)) return persistFinal(qn, [answerMessage()], { stopReason: 'end_turn', notice: null })
       // Nothing written (it happens, mostly right after query results). Kept for the record, never
       // replayed: the model has decided it is done, so it is asked to go on in a message of its own.
       if (emptyRetries++ < EMPTY_RETRIES) {
@@ -452,54 +533,107 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
         messages.push(...(await persist(qn, [answerMessage(false), goOn])))
         continue
       }
-      await persist(qn, [answerMessage(false)])
-      return { stopReason: 'end_turn', notice: NOTICE.empty }
+      return persistFinal(qn, [answerMessage(false)], { stopReason: 'end_turn', notice: NOTICE.empty })
     }
 
-    // Every call is answered, in one message, in order; once the answer is cut short the rest are not run.
-    const results: ToolResult[] = []
-    const queries: QueryRecord[] = []
-    const stores: ((tx: Queryable) => Promise<void>)[] = []
-    let withdrawn = false
-    for (const tu of toolUses) {
-      if (signal.aborted) {
-        results.push(notRun(tu, INTERRUPTED[cause()].notRun))
-        continue
-      }
-      // The asker's domains as they are now, not as they were before the call: the owner may have
-      // changed them, or taken the assistant away, while the model was writing. One indexed read.
-      const access = withdrawn ? null : await loadAccess(qn.db, qn.userId)
-      if (!isGranted(access)) {
-        withdrawn = true
-        results.push(notRun(tu, WITHDRAWN_NOT_RUN))
-        continue
-      }
-      const handler = toolHandler(qn, tu.name)
-      if (!handler) {
-        results.push(await runToolUse(qn, qn.readers.poolFor(access.domains), tu, queries, signal, cause))
-        continue
-      }
-      const outcome = await handler.run(tu, signal)
-      // Cut short while it ran: what it found is not kept, and the replay says why.
-      if (signal.aborted) results.push(notRun(tu, INTERRUPTED[cause()].running))
-      else {
-        results.push(outcome.result)
-        if (outcome.store) stores.push(outcome.store)
-      }
-    }
-    const stored = await withTransaction(qn.db, async (tx) => {
-      const appended = await appendMessages(tx, qn.conversation.id, qn.turnId, [answerMessage(), { role: 'user', kind: 'tool_results', content: results }])
-      await insertQueries(tx, qn.conversation.id, qn.turnId, queries)
-      for (const store of stores) await store(tx)
-      return appended
-    })
-    // Kept whole, results included, so the conversation can go on should the owner give it back.
-    if (withdrawn) return { stopReason: 'stopped', notice: ACCESS_NOTICE.withdrawn }
-    messages.push(...stored.map((s) => s.param))
+    // The step is stored before its tools run: cut short now, it is finished from here, not asked of the model again.
+    const [step] = await store(qn, [{ ...answerMessage(), pending: true }])
+    const done = await runStep(qn, step, toolUses, signal, cause, wrapUp())
+    if (done.outcome) return done.outcome
+    messages.push(...done.stored)
   }
 }
 
+/**
+ * One step's tools, then the step with their results into the replay, in one transaction. Every call is answered, in
+ * one message, in order; once the answer is cut short the rest are not run — unless it is handed over, when nothing of
+ * the step is kept and the run that continues it runs them.
+ */
+async function runStep(
+  qn: Question,
+  step: { id: string; param: StoredMessage },
+  toolUses: ToolUse[],
+  signal: AbortSignal,
+  cause: () => Cause,
+  note: string | null,
+): Promise<{ stored: StoredMessage[]; outcome?: undefined } | { outcome: Outcome }> {
+  const results: ToolResult[] = []
+  const queries: QueryRecord[] = []
+  const stores: ((tx: Queryable) => Promise<void>)[] = []
+  let withdrawn = false
+  for (const tu of toolUses) {
+    if (signal.aborted) {
+      const c = cause()
+      if (c === 'handover') return { outcome: HANDED_OVER_OUTCOME }
+      results.push(notRun(tu, INTERRUPTED[c].notRun))
+      continue
+    }
+    // The asker's domains as they are now, not as they were before the call: the owner may have
+    // changed them, or taken the assistant away, while the model was writing. One indexed read.
+    const access = withdrawn ? null : await loadAccess(qn.db, qn.userId)
+    if (!isGranted(access)) {
+      withdrawn = true
+      results.push(notRun(tu, WITHDRAWN_NOT_RUN))
+      continue
+    }
+    const handler = toolHandler(qn, tu.name)
+    if (!handler) {
+      results.push(await runToolUse(qn, qn.readers.poolFor(access.domains), tu, queries, signal, cause))
+      continue
+    }
+    const outcome = await handler.run(tu, signal)
+    // Cut short while it ran: what it found is not kept, and the replay says why.
+    if (signal.aborted) {
+      const c = cause()
+      if (c === 'handover') return { outcome: HANDED_OVER_OUTCOME }
+      results.push(notRun(tu, INTERRUPTED[c].running))
+    } else {
+      results.push(outcome.result)
+      if (outcome.store) stores.push(outcome.store)
+    }
+  }
+  // Handed over while the last tool ran: its results are not kept here either.
+  if (signal.aborted && cause() === 'handover') return { outcome: HANDED_OVER_OUTCOME }
+  const stored = await withTransaction(qn.db, async (tx) => {
+    await qn.control?.fence(tx)
+    // Settled already: another run finished this step. Its results are the step's; these are not.
+    if (!(await settleStep(tx, step.id))) throw new TurnLost()
+    // A note from the app, when there is one, after the results (the API wants the results first). Not on a step cut
+    // short: that answer ends here, and the note would only be replayed to later questions.
+    const data = results.map(asData)
+    const content: StoredBlock[] = note && !signal.aborted ? [...data, { type: 'text', text: note }] : data
+    const appended = await appendMessages(tx, qn.conversation.id, qn.turnId, [{ role: 'user', kind: 'tool_results', content }])
+    await insertQueries(tx, qn.conversation.id, qn.turnId, queries)
+    for (const s of stores) await s(tx)
+    return appended
+  })
+  // Kept whole, results included, so the conversation can go on should the owner give it back.
+  if (withdrawn) return { outcome: { stopReason: 'stopped', notice: ACCESS_NOTICE.withdrawn } }
+  return { stored: [step.param, ...stored.map((m) => m.param)] }
+}
+
+/** What the answer is told near its limits: in a tag the prompt names, so it reads as the app's, not as data. */
+export function wrapUpNote(stepsLeft: number, minutesLeft: number): string {
+  const steps = `${stepsLeft} ${stepsLeft === 1 ? 'step' : 'steps'}`
+  const minutes = minutesLeft < 1 ? 'less than a minute' : `about ${minutesLeft} ${minutesLeft === 1 ? 'minute' : 'minutes'}`
+  return `<${WRAP_UP_TAG}>This answer is close to its limits: ${steps} and ${minutes} are left. Start nothing new. Save with save_table what is worth keeping and not saved yet, then close the answer: what you found, what you checked, and what remains to be done, so the person can ask you to go on.</${WRAP_UP_TAG}>`
+}
+
 const notRun = (tu: ToolUse, why: string): ToolResult => ({ type: 'tool_result', tool_use_id: tu.id, is_error: true, content: why })
+
+/** The note's tag, opening or closing, however spaced or cased. */
+const NOTE_TAG = new RegExp(`<(\\s*/?\\s*)${WRAP_UP_TAG}`, 'gi')
+
+/**
+ * A result as the model reads it: never carrying the app's note. Text other people typed (a task, a remark, a cell)
+ * reaches the results as it is; the tag in it is made plain, so only the note after the results reads as the app's.
+ */
+export function asData(result: ToolResult): ToolResult {
+  const plain = (text: string) => text.replace(NOTE_TAG, `‹$1${WRAP_UP_TAG}`)
+  if (typeof result.content === 'string') return { ...result, content: plain(result.content) }
+  if (!result.content) return result
+  return { ...result, content: result.content.map((b) => (b.type === 'text' ? { ...b, text: plain(b.text) } : b)) }
+}
 
 /** The conversation's own tools that the model calls and this server runs, by name, as it was given them: not the tool search, which Anthropic runs. */
 const toolNames = (qn: Question): string[] =>
@@ -514,10 +648,28 @@ function toolHandler(qn: Question, name: string): ToolHandler | null {
 /** Whether a reply wrote anything the asker can read. */
 const hasText = (content: ContentBlockParam[]) => content.some((b) => b.type === 'text' && b.text.trim() !== '')
 
+/** Store messages of this answer, behind the fence; returns each with its id. */
+async function store(qn: Question, messages: NewMessage[]): Promise<{ id: string; param: StoredMessage }[]> {
+  return withTransaction(qn.db, async (tx) => {
+    await qn.control?.fence(tx)
+    return appendMessages(tx, qn.conversation.id, qn.turnId, messages)
+  })
+}
+
 /** Store messages of this answer; returns them as they will be replayed. */
 async function persist(qn: Question, messages: NewMessage[]): Promise<StoredMessage[]> {
-  const stored = await withTransaction(qn.db, (tx) => appendMessages(tx, qn.conversation.id, qn.turnId, messages))
-  return stored.filter((_, i) => messages[i].inReplay !== false).map((s) => s.param)
+  const stored = await store(qn, messages)
+  return stored.filter((_, i) => messages[i].inReplay !== false && !messages[i].pending).map((s) => s.param)
+}
+
+/** Store the answer's last messages and, with a run, close the turn in the same transaction: the answer ends here. */
+async function persistFinal(qn: Question, messages: NewMessage[], outcome: Outcome): Promise<Outcome> {
+  await withTransaction(qn.db, async (tx) => {
+    await qn.control?.fence(tx)
+    await appendMessages(tx, qn.conversation.id, qn.turnId, messages)
+    await qn.control?.finish(tx, outcome)
+  })
+  return outcome
 }
 
 /**
@@ -550,7 +702,8 @@ async function runToolUse(
   qn.emit({ type: 'query_start', queryId, purpose, sql })
   const run = await runReadOnlyQuery(reader, sql, { maxRows: AI_PREVIEW_ROWS, timeoutMs: CHAT_QUERY_TIMEOUT_MS, timeZone: qn.config.FACTORY_TIMEZONE, signal })
   // Stopped through the signal (not a failure of its own that came first): the replay keeps why.
-  if (!run.ok && run.error === AI_QUERY_STOPPED) run.error = INTERRUPTED[cause()].running
+  // (Handed over, the step is not kept at all; the words never reach the replay.)
+  if (!run.ok && run.error === AI_QUERY_STOPPED) run.error = INTERRUPTED[cause() === 'time' ? 'time' : 'user'].running
   const preview = previewOf(run)
   // A failed query has nothing to draw: its chart goes unmentioned, the error is what the model needs.
   const chart = run.ok ? checkChart(askedChart, preview) : {}

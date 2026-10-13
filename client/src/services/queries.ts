@@ -8,7 +8,7 @@
 // search, a lookup by id, or a capped page. Nothing loads a whole table.
 // ============================================================================
 
-import { infiniteQueryOptions, keepPreviousData, useInfiniteQuery, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { infiniteQueryOptions, keepPreviousData, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import type {
   AuditFilters,
@@ -60,6 +60,7 @@ import type {
   AiConversationsResponse,
   AiDayRange,
   AiMeResponse,
+  AiMessage,
   AiMessagesResponse,
   AiQueryExportResponse,
   AiReport,
@@ -70,7 +71,7 @@ import type {
   AiActivityResponse,
   AiUsageResponse,
 } from '@qc/shared/ai'
-import { api, apiBlob, qs } from '@/lib/api'
+import { ApiError, api, apiBlob, qs } from '@/lib/api'
 import { AI_CONVERSATION_SEARCH_MAX, AI_CONVERSATION_SEARCH_MIN } from '@qc/shared/ai'
 
 export const keys = {
@@ -878,6 +879,44 @@ export function useAiPeople(enabled: boolean) {
   return useQuery({ queryKey: keys.aiPeople, queryFn: () => api<AiPerson[]>('/ai/people'), enabled, staleTime: 30_000 })
 }
 
+/**
+ * An answer goes on on the server whether or not anyone watches (§20). While one runs, its conversation is asked
+ * again every 2 s for its progress, and the list of conversations every 5 s, so its spinner stops when it ends —
+ * only while the tab is visible, never in the background.
+ */
+export const AI_RUNNING_POLL_MS = 2_000
+export const AI_ANSWERING_POLL_MS = 5_000
+
+/** A conversation refused as not found or forbidden: deleted (here or elsewhere), or the assistant taken away. */
+export const aiConversationGone = (error: unknown): boolean => error instanceof ApiError && (error.status === 403 || error.status === 404)
+
+/**
+ * How often a conversation is asked again: while the server says an answer in it runs, or while this device follows
+ * one whose stream it lost (`following`) — through failed fetches too, as a server restarting fails them for a while.
+ * Never once the conversation is gone.
+ */
+export const aiMessagesPoll = (data: AiMessagesResponse | undefined, error: unknown = null, following = false): number | false =>
+  aiConversationGone(error) ? false : data?.running || following ? AI_RUNNING_POLL_MS : false
+
+/** How often a list of conversations is asked again: while a conversation in it is being answered, and not otherwise. */
+export const aiConversationsPoll = (data: AiConversationsResponse | undefined): number | false => (data?.conversations.some((c) => c.answering) ? AI_ANSWERING_POLL_MS : false)
+
+/** The same for a list read page after page: any of the pages read. */
+const aiConversationPagesPoll = (data: InfiniteData<AiConversationsResponse> | undefined): number | false =>
+  data?.pages.some((page) => aiConversationsPoll(page) !== false) ? AI_ANSWERING_POLL_MS : false
+
+/** This person's latest conversations, whatever their place in the list: whether one is being answered (the floating button). */
+export function useAiConversations(enabled: boolean) {
+  return useQuery({
+    queryKey: keys.aiConversationList('all', null),
+    queryFn: () => api<AiConversationsResponse>(`/ai/conversations${qs({ scope: 'all', limit: AI_CONVERSATIONS_PAGE })}`),
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: (q) => aiConversationsPoll(q.state.data),
+    refetchIntervalInBackground: false,
+  })
+}
+
 /** A page of the conversations list starts after the last one of the page before: its latest message, its id breaking a tie. */
 type ConversationCursor = { lastMessageAt: string; id: string } | null
 
@@ -896,6 +935,8 @@ export function aiConversationListOptions(scope: Exclude<AiConversationScope, 'p
       return last.hasMore && end ? { lastMessageAt: end.lastMessageAt, id: end.id } : null
     },
     staleTime: 60_000,
+    refetchInterval: (q) => aiConversationPagesPoll(q.state.data),
+    refetchIntervalInBackground: false,
   })
 }
 
@@ -910,6 +951,8 @@ export function useAiPinnedConversations(enabled: boolean) {
     queryFn: () => api<AiConversationsResponse>(`/ai/conversations${qs({ scope: 'pinned' })}`),
     enabled,
     staleTime: 60_000,
+    refetchInterval: (q) => aiConversationsPoll(q.state.data),
+    refetchIntervalInBackground: false,
   })
 }
 
@@ -935,13 +978,15 @@ export function useAiConversationSearch(words: string, enabled: boolean) {
   })
 }
 
-/** One conversation, every question and answer with the queries they ran. */
-export function useAiMessages(conversationId: string | null, enabled = true) {
+/** One conversation, every question and answer with the queries they ran; and the answer the server is writing in it, if any. */
+export function useAiMessages(conversationId: string | null, enabled = true, following?: (saved: readonly AiMessage[]) => boolean) {
   return useQuery({
     queryKey: keys.aiMessages(conversationId ?? ''),
     queryFn: () => api<AiMessagesResponse>(`/ai/conversations/${encodeURIComponent(conversationId ?? '')}/messages`),
     enabled: enabled && conversationId !== null,
     staleTime: 60_000,
+    refetchInterval: (q) => aiMessagesPoll(q.state.data, q.state.error, following?.(q.state.data?.messages ?? []) ?? false),
+    refetchIntervalInBackground: false,
   })
 }
 

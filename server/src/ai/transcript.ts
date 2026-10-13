@@ -21,7 +21,7 @@
 // ============================================================================
 
 import type Anthropic from '@anthropic-ai/sdk'
-import type { AiCell, AiChartSpec, AiConversation, AiConversationScope, AiKpi, AiMessage, AiPart, AiQueryPart, AiStopReason, AiTokenUsage } from '@qc/shared/ai'
+import type { AiCell, AiChartSpec, AiConversation, AiConversationScope, AiKpi, AiMessage, AiPart, AiQueryPart, AiRunningAnswer, AiStopReason, AiTokenUsage } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
 import { loadProposalParts } from '../automations/proposals'
 import { loadNoticeParts } from '../noticeAssistant/proposals'
@@ -44,6 +44,8 @@ export interface ConversationRecord extends AiConversation {
 
 export const CONVERSATION_SELECT = `c.id, c.title, c.created_at AS "createdAt", c.last_message_at AS "lastMessageAt",
   c.pinned_at AS "pinnedAt", c.group_id AS "groupId", c.archived_at AS "archivedAt"`
+/** Whether an answer is being written in the conversation now (one at most: ai_turns_one_running), as lists show it. */
+export const ANSWERING = `EXISTS (SELECT 1 FROM ai_turns t WHERE t.conversation_id = c.id AND t.status = 'running') AS answering`
 
 const iso = (v: string | Date | null) => (v === null ? null : new Date(v).toISOString())
 
@@ -55,6 +57,7 @@ export const toConversation = (c: AiConversation): AiConversation => ({
   pinnedAt: iso(c.pinnedAt),
   groupId: c.groupId,
   archivedAt: iso(c.archivedAt),
+  ...(c.answering ? { answering: true } : {}),
 })
 
 /** The person's own conversation, unless it was deleted. Someone else's is "not found", never a hint that it exists. */
@@ -103,13 +106,13 @@ export async function listConversations(
 ): Promise<{ conversations: AiConversation[]; hasMore: boolean }> {
   if (opts.scope === 'pinned') {
     const { rows } = await q.query<AiConversation>(
-      `SELECT ${CONVERSATION_SELECT} FROM ai_conversations c WHERE c.user_id = $1 AND c.deleted_at IS NULL AND ${SCOPE_WHERE.pinned} ORDER BY c.pinned_at DESC, c.id DESC`,
+      `SELECT ${CONVERSATION_SELECT}, ${ANSWERING} FROM ai_conversations c WHERE c.user_id = $1 AND c.deleted_at IS NULL AND ${SCOPE_WHERE.pinned} ORDER BY c.pinned_at DESC, c.id DESC`,
       [userId],
     )
     return { conversations: rows.map(toConversation), hasMore: false }
   }
   const { rows } = await q.query<AiConversation>(
-    `SELECT ${CONVERSATION_SELECT} FROM ai_conversations c
+    `SELECT ${CONVERSATION_SELECT}, ${ANSWERING} FROM ai_conversations c
       WHERE c.user_id = $1 AND c.deleted_at IS NULL AND ${SCOPE_WHERE[opts.scope]}
         AND ($2::timestamptz IS NULL
              OR ($4::uuid IS NULL AND date_trunc('milliseconds', c.last_message_at) < $2)
@@ -131,6 +134,11 @@ export interface NewMessage {
   rawContent?: Anthropic.Beta.BetaContentBlock[]
   /** False: kept for display only (a refused answer), never sent again. */
   inReplay?: boolean
+  /**
+   * An answer's step stored before its tools run (never in the replay yet): should the answer be cut short, it is
+   * finished from here, each tool run once, rather than asked of the model again. It joins the replay with its results.
+   */
+  pending?: boolean
   model?: string
 }
 
@@ -139,16 +147,24 @@ export interface NewMessage {
  * each message as it will be replayed — read back from its stored JSON, so
  * what the loop sends next is what a later request will send.
  */
+/**
+ * A message as the database keeps it: JSON whose every string Postgres can read. A NUL — which the model can write in
+ * a tool's input — is left out: kept, it would make the message unreadable to the database's JSON operators (a turn's
+ * words for the search, read as it closes, among them).
+ */
+// eslint-disable-next-line no-control-regex
+const storable = (value: unknown): string => JSON.stringify(value, (_key, v: unknown) => (typeof v === 'string' ? v.replace(/\u0000/g, '') : v))
+
 export async function appendMessages(q: Queryable, conversationId: string, turnId: string, messages: NewMessage[]): Promise<{ id: string; param: StoredMessage }[]> {
   const { rows } = await q.query<{ next: number }>(`SELECT COALESCE(max(seq), 0) + 1 AS next FROM ai_messages WHERE conversation_id = $1`, [conversationId])
   let seq = rows[0].next
   const out: { id: string; param: StoredMessage }[] = []
   for (const m of messages) {
-    const content = JSON.stringify(m.content)
+    const content = storable(m.content)
     const { rows: inserted } = await q.query<{ id: string }>(
-      `INSERT INTO ai_messages (conversation_id, turn_id, seq, role, kind, content, raw_content, in_replay, model)
-       VALUES ($1, $2, $3, $4, $5, $6::json, $7::json, $8, $9) RETURNING id`,
-      [conversationId, turnId, seq++, m.role, m.kind, content, m.rawContent ? JSON.stringify(m.rawContent) : null, m.inReplay ?? true, m.model ?? null],
+      `INSERT INTO ai_messages (conversation_id, turn_id, seq, role, kind, content, raw_content, in_replay, pending, model)
+       VALUES ($1, $2, $3, $4, $5, $6::json, $7::json, $8, $9, $10) RETURNING id`,
+      [conversationId, turnId, seq++, m.role, m.kind, content, m.rawContent ? storable(m.rawContent) : null, m.pending ? false : (m.inReplay ?? true), !!m.pending, m.model ?? null],
     )
     out.push({ id: inserted[0].id, param: { role: m.role, content: JSON.parse(content) as StoredBlock[] } })
   }
@@ -312,15 +328,56 @@ export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
 
 // ---- Turns ---------------------------------------------------------------------------
 
-/** Close a question's turn with how it ended and everything it cost. */
-export async function finishTurn(q: Queryable, turnId: string, stopReason: AiStopReason, notice: string | null): Promise<void> {
-  await q.query(
+/** Close a question's turn with how it ended and everything it cost. Whether this call closed it: the first to close it wins. */
+export async function finishTurn(q: Queryable, turnId: string, stopReason: AiStopReason, notice: string | null): Promise<boolean> {
+  const { rowCount } = await q.query(
     `UPDATE ai_turns
-        SET status = 'done', stop_reason = $2, notice = $3, finished_at = now(), answer_text = ai_turn_answer_text($1),
+        SET status = 'done', stop_reason = $2, notice = $3, finished_at = now(), progress = NULL, answer_text = ai_turn_answer_text_or_null($1),
             cost_usd = (SELECT COALESCE(sum(u.cost_usd), 0) FROM ai_usage u WHERE u.turn_id = $1)
       WHERE id = $1 AND status = 'running'`,
     [turnId, stopReason, notice],
   )
+  return (rowCount ?? 0) > 0
+}
+
+/**
+ * The step of a turn stored before its tools ran, when the turn was cut short there: the message, and what the model
+ * is sent for it. Only the conversation's last message can be one.
+ */
+export async function pendingStep(q: Queryable, turnId: string): Promise<{ id: string; content: Anthropic.Beta.BetaContentBlockParam[] } | null> {
+  const { rows } = await q.query<{ id: string; content: Anthropic.Beta.BetaContentBlockParam[]; last: boolean }>(
+    `SELECT m.id, m.content, NOT EXISTS (SELECT 1 FROM ai_messages later WHERE later.conversation_id = m.conversation_id AND later.seq > m.seq) AS last
+       FROM ai_messages m WHERE m.turn_id = $1 AND m.pending ORDER BY m.seq DESC LIMIT 1`,
+    [turnId],
+  )
+  return rows[0]?.last ? { id: rows[0].id, content: rows[0].content } : null
+}
+
+/** A pending step with its results: it joins the replay. */
+export async function settleStep(q: Queryable, messageId: string): Promise<boolean> {
+  const { rowCount } = await q.query(`UPDATE ai_messages SET pending = false, in_replay = true WHERE id = $1 AND pending`, [messageId])
+  return (rowCount ?? 0) > 0
+}
+
+/** The answer being written in a conversation now, as whoever reopens it is told; null when none is. */
+export async function runningAnswer(q: Queryable, conversationId: string): Promise<AiRunningAnswer | null> {
+  const { rows } = await q.query<{
+    turnId: string
+    clientId: string
+    question: string
+    questionMessageId: string | null
+    askedAt: string
+    progress: string | null
+    stopping: boolean
+  }>(
+    `SELECT t.id AS "turnId", t.client_id AS "clientId", t.question, t.created_at AS "askedAt", t.progress,
+            (t.stop_requested_at IS NOT NULL) AS stopping,
+            (SELECT m.id FROM ai_messages m WHERE m.turn_id = t.id AND m.kind = 'question' ORDER BY m.seq LIMIT 1) AS "questionMessageId"
+       FROM ai_turns t WHERE t.conversation_id = $1 AND t.status = 'running'`,
+    [conversationId],
+  )
+  const r = rows[0]
+  return r ? { ...r, askedAt: new Date(r.askedAt).toISOString() } : null
 }
 
 // ---- The display -------------------------------------------------------------------
@@ -433,13 +490,17 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
       }
     }
     const { parts: shown, suggestions, kpis } = withoutBlocks(parts)
-    if (shown.length === 0 && t.status !== 'done') continue
     const answer: AiMessage = { id: t.id, role: 'assistant', parts: shown, createdAt: t.finishedAt ?? lastAt ?? t.createdAt, turnId: t.id }
-    // What an answer cost is the owner's to see, on the settings page: never in the chat.
-    if (t.status === 'done') {
-      if (t.stopReason) answer.stopReason = t.stopReason
-      if (t.notice) answer.notice = t.notice
+    if (t.status !== 'done') {
+      // Still being written, on the server: shown as far as it has got, even before its first step, so whoever
+      // reopens the conversation sees it is under way. How it ends, its figures and its suggestions come when it does.
+      answer.running = true
+      out.push(answer)
+      continue
     }
+    // What an answer cost is the owner's to see, on the settings page: never in the chat.
+    if (t.stopReason) answer.stopReason = t.stopReason
+    if (t.notice) answer.notice = t.notice
     if (suggestions.length > 0) answer.suggestions = suggestions
     if (kpis.length > 0) answer.kpis = kpis
     const savedReportId = reportByTurn.get(t.id)

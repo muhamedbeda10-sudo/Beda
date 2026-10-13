@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { InfiniteData } from '@tanstack/react-query'
 import type { UserNotification, UserNotificationsResponse } from '@qc/shared/automation'
-import { alertTarget, alertsOf, badgeText, bellCount, firstAlertPage, splitAlerts, unreadAlerts, withAlertRead, withAllAlertsRead } from './alerts'
+import { ALERT_KIND_LABEL, alertTarget, alertsOf, badgeText, bellCount, firstAlertPage, splitAlerts, unreadAlerts, withAlertRead, withAllAlertsRead } from './alerts'
 
 const alert = (id: string, createdAt: string, readAt: string | null = null, link: string | null = `/follow-ups/${id}`): UserNotification => ({
   id,
@@ -78,6 +78,14 @@ describe('the alerts list', () => {
     expect(firstAlertPage(data)).toEqual({ pages: [data.pages[0]], pageParams: [null] })
     const single = pages({ list: [a], unread: 1 })
     expect(firstAlertPage(single)).toBe(single)
+  })
+})
+
+describe('what kind of alert it is', () => {
+  it('names an answer of the assistant that ended while its asker was away, and leads to its conversation', () => {
+    // Its title says whether it is ready or could not be finished; the kind says only where it comes from.
+    expect(ALERT_KIND_LABEL['ai-answer']).toBe('AI assistant')
+    expect(alertTarget({ link: '/ai?c=c1' })).toBe('/ai?c=c1')
   })
 })
 
