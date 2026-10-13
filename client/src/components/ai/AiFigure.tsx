@@ -6,7 +6,24 @@
 // ============================================================================
 
 import { memo, useState } from 'react'
-import { ChartBarBig, ChartColumnBig, ChartColumnStacked, ChartLine, ChartPie, ChartScatter, Grid3x3, Activity, ChartNoAxesCombined, Table2 } from 'lucide-react'
+import {
+  Activity,
+  ChartBarBig,
+  ChartColumnBig,
+  ChartColumnDecreasing,
+  ChartColumnStacked,
+  ChartGantt,
+  ChartLine,
+  ChartNoAxesCombined,
+  ChartPie,
+  ChartScatter,
+  Filter,
+  Gauge,
+  Grid3x3,
+  LayoutDashboard,
+  SlidersHorizontal,
+  Table2,
+} from 'lucide-react'
 import type { AiChartType, AiQueryPart } from '@qc/shared/ai'
 import { AiChart } from './AiChart'
 import { EXPORT_TIP, useQueryExport } from './AiQueryCard'
@@ -29,6 +46,12 @@ const ICON: Record<AiChartType, typeof ChartLine> = {
   scatter: ChartScatter,
   heatmap: Grid3x3,
   control: Activity,
+  progress: Gauge,
+  funnel: Filter,
+  waterfall: ChartColumnDecreasing,
+  gantt: ChartGantt,
+  dumbbell: SlidersHorizontal,
+  treemap: LayoutDashboard,
 }
 
 export const AiFigure = memo(function AiFigure({ part, model, question }: { part: AiQueryPart; model: ChartModel; question?: string }) {
