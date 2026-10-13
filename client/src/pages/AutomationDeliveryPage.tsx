@@ -13,7 +13,7 @@
 import '@/components/ai/fonts'
 import { memo, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, OctagonX, Sparkles, Table2 } from 'lucide-react'
+import { ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, OctagonX, Printer, Sparkles, Table2 } from 'lucide-react'
 import { AI_PREVIEW_ROWS, type AiQueryPart } from '@qc/shared/ai'
 import type { AutomationDelivery } from '@qc/shared/automation'
 import { Badge, Button, Card } from '@/components/ui'
@@ -30,6 +30,8 @@ import { deliveryExportMessage, deliveryFilename, deliverySheets } from '@/compo
 import { factoryMoment, factoryTimestamp } from '@/components/automations/wording'
 import { ApiError } from '@/lib/api'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
+import { ReportPrint } from '@/components/print/reportPrints'
+import { usePrint } from '@/components/print/usePrint'
 import { cn } from '@/lib/utils'
 import { useAutomationDelivery } from '@/services/automations'
 import { mayOpenAutomation } from '@/components/followUps/wording'
@@ -73,6 +75,17 @@ function Delivery({ d }: { d: AutomationDelivery }) {
   const parts = useMemo(() => d.sections.map((s, i) => sectionAsQuery(s, '', i)), [d.sections])
   const failed = d.sections.filter((s) => !s.ok).length
   const days = periodText(d.period)
+  const printer = usePrint()
+  const print = () =>
+    printer.print(
+      <ReportPrint
+        kind="Scheduled report"
+        title={d.automationName}
+        lines={[`Delivered ${factoryTimestamp(d.ranAt, factoryTimeZone)}`, days ? `Covers ${days}` : ''].filter(Boolean)}
+        summary={d.summary}
+        parts={parts}
+      />,
+    )
 
   const exportExcel = () => {
     try {
@@ -85,6 +98,7 @@ function Delivery({ d }: { d: AutomationDelivery }) {
 
   return (
     <>
+      {printer.node}
       <header className="space-y-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge tone="violet">Scheduled report</Badge>
@@ -102,6 +116,9 @@ function Delivery({ d }: { d: AutomationDelivery }) {
         <div className="flex flex-wrap items-center gap-2">
           <Button className="h-10 min-h-0 gap-1.5 px-3 py-0 text-13 touch:h-11" onClick={exportExcel} data-tip="The whole report as it was delivered: a sheet on the report, then a sheet per section">
             <FileSpreadsheet className="h-4 w-4" /> Export Excel
+          </Button>
+          <Button className="h-10 min-h-0 gap-1.5 px-3 py-0 text-13 touch:h-11" onClick={print} data-tip="Print the report as it was delivered, or save it as a PDF from the print window">
+            <Printer className="h-4 w-4" /> Print
           </Button>
           {canOpenAutomation && (
             <Link to={`/automations/${encodeURIComponent(d.automationId)}`} className="inline-flex min-h-[40px] items-center gap-1 text-13 font-semibold text-brand-700 hover:underline dark:text-brand-300">

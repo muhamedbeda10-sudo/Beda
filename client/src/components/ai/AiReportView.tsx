@@ -20,6 +20,7 @@ import {
   MessageSquareText,
   OctagonX,
   Pencil,
+  Printer,
   RefreshCw,
   Table2,
   Trash2,
@@ -41,6 +42,8 @@ import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { cn, formatDate, formatFullTimestamp, formatTime } from '@/lib/utils'
 import { deleteAiReport, renameAiReport } from '@/services/mutations'
 import { keys, loadAiReportExport, newerAiReport, useAiExcel, useAiReport, useAiReportRun } from '@/services/queries'
+import { ReportPrint } from '@/components/print/reportPrints'
+import { usePrint } from '@/components/print/usePrint'
 import { useApp } from '@/store/AppContext'
 import { useAi } from './AiAssistantProvider'
 import { AiCode } from './AiCode'
@@ -149,6 +152,8 @@ export function AiReportView({
   const onExport = useCallback(() => void exportExcel(), [exportExcel])
   // Excel is for the people the assistant's owner allows (§20).
   const excel = useAiExcel()
+  // Printed as run on screen: these days, these rows.
+  const printer = usePrint()
 
   // Each section in the shape the answer's cards take, built once per run so the cards keep their state.
   const parts = useMemo(() => shown?.sections.map((s, i) => sectionAsQuery(s, shown.report.sections[i]?.sql ?? '', i)) ?? null, [shown])
@@ -183,6 +188,7 @@ export function AiReportView({
         )}
       </div>
 
+      {printer.node}
       <div className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4', wide && 'sm:px-6 lg:px-8 lg:py-5')}>
         <div className={cn('space-y-3', wide && 'mx-auto w-full max-w-[1100px]')}>
           {gone ? (
@@ -226,6 +232,31 @@ export function AiReportView({
                 {excel && (
                   <button type="button" onClick={onExport} disabled={exporting || !report} className={SMALL_BTN} data-tip={EXPORT_TIP}>
                     {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} {exporting ? 'Exporting…' : 'Export Excel'}
+                  </button>
+                )}
+                {shown && parts && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      printer.print(
+                        <ReportPrint
+                          kind="Saved report"
+                          title={shown.report.title}
+                          lines={[
+                            // The question it came from, unless it is the title already.
+                            shown.report.question.trim() !== shown.report.title.trim() ? shown.report.question : '',
+                            shown.period ? `Covers ${shown.period.label}` : '',
+                            `Data read ${formatFullTimestamp(shown.ranAt)}`,
+                          ].filter(Boolean)}
+                          parts={parts}
+                        />,
+                      )
+                    }
+                    disabled={run.isFetching}
+                    className={SMALL_BTN}
+                    data-tip="Print the report as run here, or save it as a PDF from the print window"
+                  >
+                    <Printer className="h-3.5 w-3.5" /> Print
                   </button>
                 )}
                 {shown && <RunLine run={shown} running={run.isFetching ? (stale ? 'Running over the days chosen…' : 'Running again…') : null} />}
