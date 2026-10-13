@@ -13,10 +13,15 @@
 // change rarely, and the answer being written, which changes every frame
 // while text streams — so the header's button does not redraw with each word.
 //
-// The assistant has two places, one state: the panel beside any page, and
-// the full page at /ai (./workspace). Expand and Dock move between them with
-// the conversation, the draft and the answer being written as they are — the
-// stream never notices. On /ai the panel steps aside.
+// The assistant lives in one popup over the app, opened from the floating
+// button at the bottom right (AiPanelHost). It has two sizes on a desktop: a
+// small card in the corner that leaves the page usable (compact), and a large
+// window in the middle (large); on a phone it fills the screen. The popup has
+// places of its own (the conversation, a saved report, the Automations and
+// Playbook pages), kept here as the path it shows, so it reopens where it was
+// left and a link (/ai?c=…) or another page can open it on one of them.
+// Changing size keeps the conversation, the draft and the answer being
+// written as they are — the stream never notices.
 //
 // Another page may start a new conversation with the question box filled in
 // (compose: §21's "Edit in chat" on the Automations page), for the person to
@@ -29,7 +34,6 @@
 // ============================================================================
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AiAttachment, AiChatRequest, AiConversation, AiMessage, AiMessagesResponse } from '@qc/shared/ai'
 import { ApiError, apiStream } from '@/lib/api'
@@ -44,7 +48,10 @@ import { hasOpenNoticeCard } from './noticeProposal'
 import { hasOpenTaskCard } from './taskProposal'
 import { applyEvent, endTurn, followsKeptRound, isInFlight, parseStreamEvent, sentAfter, settleMessages, startTurn, type LiveTurn } from './liveTurn'
 import { STOP_SETTLE_MS, retryAfterStop } from './retryAfterStop'
-import { aiWorkspaceHref, isAiWorkspacePath, type AiOpenReport, type AiWorkspaceList, type AiWorkspaceState } from './workspace'
+import { AI_WORKSPACE_PATH } from './workspace'
+
+/** The popup's two sizes on a desktop: the card in the corner, or the large window in the middle. */
+export type AiPopupSize = 'compact' | 'large'
 
 export interface AiControls {
   /** The owner gave the signed-in person the assistant (/ai/me): its button, its menu entry and its panel are there. */
@@ -58,8 +65,22 @@ export interface AiControls {
   open: boolean
   setOpen: (open: boolean) => void
   toggle: () => void
-  /** A wide desktop (AI_DOCKED, 2xl and up): the panel docks beside the page instead of covering it as a sheet. */
-  docked: boolean
+  /** The popup's size on a desktop. */
+  size: AiPopupSize
+  setSize: (size: AiPopupSize) => void
+  /** A phone (narrower than sm): the popup fills the screen, whatever its size. */
+  phone: boolean
+  /** Opens the popup on one of its places (/ai?c=…, /ai/reports/<id>, /automations…), in `size` when given. */
+  openAt: (path: string, size?: AiPopupSize) => void
+  /**
+   * A link from the popup to a page of the app: the popup steps aside so the page is in view — a phone's closes,
+   * the large window becomes the card in the corner, and the card stays where it is, beside the page.
+   */
+  leaveForPage: () => void
+  /** Where the popup is (its own path): it reopens there. Written by the popup as it moves. */
+  popupPath: MutableRefObject<string>
+  /** The popup's own navigate while it is open, so openAt moves it rather than reopening it. */
+  popupNavigate: MutableRefObject<((to: string) => void) | null>
   /** The conversation on screen; null for a new one. */
   conversationId: string | null
   openConversation: (id: string | null) => void
@@ -87,14 +108,6 @@ export interface AiControls {
   compose: (text: string) => void
   /** Counts compose()'s calls: a question box on screen takes the new text when it moves (useComposerDraft). */
   composed: number
-  /** The full page (/ai) is on screen: the panel steps aside for it. */
-  workspace: boolean
-  /** From the panel to the full page: the conversation on screen, or the report (`report`) or list (`list`) the panel shows. */
-  expand: (target?: { report?: AiOpenReport; list?: AiWorkspaceList }) => void
-  /** From the full page back to the panel, beside the page the person came from; a report open there opens in the panel. */
-  dock: (report?: AiOpenReport) => void
-  /** What the panel opens on, once, after Dock: the report the page had open. */
-  handoff: MutableRefObject<AiOpenReport | null>
 }
 
 const ControlsContext = createContext<AiControls | null>(null)
@@ -102,26 +115,23 @@ const LiveContext = createContext<LiveTurn | null>(null)
 
 const LOST = { code: 'internal' as const, message: 'The connection was lost before the answer finished.' }
 
-/**
- * Where the panel docks beside the page instead of lying over it as a sheet: from 2xl (1536 px), where the shell
- * makes room for it (AppShell's 2xl:pr-[32rem]). Narrower — a landscape tablet, a laptop — a docked panel would
- * cover a third or more of the page with nothing to close it but its own button.
- */
-const AI_DOCKED = '(min-width: 1536px)'
+/** Narrower than sm (640 px): a phone, where the popup fills the screen. */
+const AI_PHONE = '(max-width: 639.98px)'
 
 /** A refusal that may mean the assistant was taken away (or never given): /ai/me is asked again, and says which. */
 const mayBeRevoked = (err: unknown) => err instanceof ApiError && (err.status === 403 || err.status === 404)
 
 export function AiAssistantProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
-  const location = useLocation()
-  const navigate = useNavigate()
   const { data: me } = useAiMe()
   const enabled = me?.granted ?? false
   const owner = me?.owner ?? false
   const automations = me?.automations ?? false
-  const docked = useMediaQuery(AI_DOCKED)
+  const phone = useMediaQuery(AI_PHONE)
   const [open, setOpenState] = useState(false)
+  const [size, setSize] = useState<AiPopupSize>('compact')
+  const popupPath = useRef(AI_WORKSPACE_PATH)
+  const popupNavigate = useRef<((to: string) => void) | null>(null)
   const [revoked, setRevoked] = useState(false)
   // Whether it was ever given in this sign-in: losing it then is "taken away", not "never there".
   const given = useRef(false)
@@ -143,19 +153,6 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   // The last answer stopped here, and when: a question right after it may meet that answer still winding down.
   const lastStop = useRef<{ conversationId: string; at: number } | null>(null)
 
-  // The full page, and where the person was before it: Dock goes back there.
-  const workspace = isAiWorkspacePath(location.pathname)
-  const cameFrom = useRef<string | null>(null)
-  const handoff = useRef<AiOpenReport | null>(null)
-  useEffect(() => {
-    if (!workspace) cameFrom.current = `${location.pathname}${location.search}${location.hash}`
-  }, [workspace, location.pathname, location.search, location.hash])
-  // Arriving on the page puts the panel away: the same conversation is not shown twice, and leaving the page
-  // other than by Dock does not bring it back unasked.
-  useEffect(() => {
-    if (workspace) setOpenState(false)
-  }, [workspace])
-
   const setOpen = useCallback((next: boolean) => setOpenState(next), [])
   const toggle = useCallback(() => setOpenState((o) => !o), [])
   const openConversation = useCallback((id: string | null) => {
@@ -163,33 +160,27 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
     setConversationId(id)
   }, [])
   const stop = useCallback(() => controller.current?.abort(), [])
+  const openAt = useCallback((path: string, next?: AiPopupSize) => {
+    if (next) setSize(next)
+    if (popupNavigate.current) popupNavigate.current(path)
+    else popupPath.current = path
+    setOpenState(true)
+  }, [])
   const compose = useCallback(
     (text: string) => {
       draft.current = text
       active.current = null
       setConversationId(null)
       setComposed((n) => n + 1)
-      // On the full page the box is on screen already; anywhere else the panel opens on it.
-      if (!workspace) setOpenState(true)
+      // The popup opens on the conversation, from wherever it was (the Automations page in it, or closed).
+      openAt(AI_WORKSPACE_PATH)
     },
-    [workspace],
+    [openAt],
   )
-  const expand = useCallback(
-    (target?: { report?: AiOpenReport; list?: AiWorkspaceList }) => {
-      setOpenState(false)
-      const state: AiWorkspaceState = { known: target?.report?.known, list: target?.list }
-      navigate(aiWorkspaceHref({ conversationId: active.current, reportId: target?.report?.id }), { state })
-    },
-    [navigate],
-  )
-  const dock = useCallback(
-    (report?: AiOpenReport) => {
-      handoff.current = report ?? null
-      navigate(cameFrom.current ?? '/')
-      setOpenState(true)
-    },
-    [navigate],
-  )
+  const leaveForPage = useCallback(() => {
+    if (phone) setOpenState(false)
+    else setSize('compact')
+  }, [phone])
 
   // Losing access stops an answer (the server would stop it at its next call anyway); an open panel stays to say why.
   // Unmounting (signing out) stops it too.
@@ -434,7 +425,13 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       open: (enabled || revoked) && open,
       setOpen,
       toggle,
-      docked,
+      size,
+      setSize,
+      phone,
+      openAt,
+      leaveForPage,
+      popupPath,
+      popupNavigate,
       conversationId,
       openConversation,
       busy,
@@ -446,12 +443,8 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       draft,
       compose,
       composed,
-      workspace,
-      expand,
-      dock,
-      handoff,
     }),
-    [enabled, owner, automations, revoked, open, setOpen, toggle, docked, conversationId, openConversation, busy, send, attachments, attach, detach, stop, compose, composed, workspace, expand, dock],
+    [enabled, owner, automations, revoked, open, setOpen, toggle, size, phone, openAt, leaveForPage, conversationId, openConversation, busy, send, attachments, attach, detach, stop, compose, composed],
   )
 
   return (

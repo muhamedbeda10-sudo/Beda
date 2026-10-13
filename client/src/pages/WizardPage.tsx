@@ -42,6 +42,7 @@ import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn, uid, newSubmissionId } from '@/lib/utils'
 import { PHONE, isCoarsePointer, matchesMedia, useMediaQuery } from '@/lib/media'
+import { useBottomBarRef } from '@/lib/bottomBar'
 import { SHORT_LANDSCAPE, isBlankLength, keptLengths, keyboardLikelyOpen, opensKeyboard, renumberLengthIssues } from './wizardHelpers'
 import {
   DISPOSITIONS,
@@ -344,7 +345,16 @@ export function WizardPage() {
   const short = useMediaQuery(SHORT_LANDSCAPE)
   const keyboard = useKeyboardOpen()
   const stickyRef = useRef<HTMLDivElement>(null)
-  const barRef = useRef<HTMLDivElement>(null)
+  const barRef = useRef<HTMLDivElement | null>(null)
+  // The bar also lifts what floats in the bottom corner (the assistant's button) above Back and Next.
+  const bottomBar = useBottomBarRef<HTMLDivElement>()
+  const setBar = useCallback(
+    (el: HTMLDivElement | null) => {
+      barRef.current = el
+      bottomBar(el)
+    },
+    [bottomBar],
+  )
   useScrollPadding(stickyRef, barRef, `${!!draft} ${short} ${keyboard}`, keyboard)
   const stuck = useStuck(stickyRef, `${!!draft} ${short} ${keyboard}`)
   /** Set when a save is refused for the sample quantity: the review step then puts the cursor in it. */
@@ -768,7 +778,7 @@ export function WizardPage() {
 
       {/* Sticky navigation. With the keyboard up it shrinks to a strip just tall enough for a finger, so the field being
           typed in stays in sight above it; on a short landscape screen it is a little lower than on a tall one. */}
-      <div ref={barRef} className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 safe-bottom">
+      <div ref={setBar} className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 safe-bottom">
         <div className={cn('mx-auto flex max-w-5xl items-center gap-2 px-4', keyboard ? 'py-1' : short ? 'py-2' : 'py-3')}>
           <Button variant="secondary" className={cn(navHeight, 'flex-1 sm:flex-none')} disabled={stepIndex === 0} onClick={back}>
             <ArrowLeft className="h-4 w-4" /> Back

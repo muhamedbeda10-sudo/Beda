@@ -3213,7 +3213,7 @@ export function DashboardPage() {
       )}
 
       {isFetching && !isLoading && (
-        <div className="print-hidden fixed bottom-4 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-slate-900/90 px-3 py-1.5 text-xs font-semibold text-white shadow-lg dark:bg-white/90 dark:text-slate-900">
+        <div className="print-hidden fixed bottom-4 left-1/2 z-30 inline-flex -translate-x-1/2 items-center gap-2 rounded-full bg-slate-900/90 px-3 py-1.5 text-xs font-semibold text-white shadow-lg dark:bg-white/90 dark:text-slate-900">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> Updating
         </div>
       )}

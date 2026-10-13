@@ -1,85 +1,164 @@
 // ============================================================================
-// §20 — where the assistant's panel sits. On a desktop it docks at the right
-// under the header and leaves the page usable beside it; below that it is a
-// sheet over the page with a backdrop. This frame is small and always in the
-// bundle; what fills it (the markdown renderer, the result tables) is fetched
-// the first time it opens, so it never weighs on a phone that does not use
-// it. Access taken away while it is open leaves only a word saying so. On
-// the assistant's full page (/ai) it is not drawn: the page is the assistant.
+// §20 — the assistant's popup, over whatever page is open, opened from the
+// floating button in the bottom corner (AiButton). Three shapes, one tree, so
+// changing shape keeps the conversation, the scroll and the draft:
+//
+//   • compact — a card in the bottom corner of a desktop, the page beside it
+//     still usable (no backdrop); above any bar along the bottom (bottomBar);
+//   • large — a window in the middle with a backdrop, the full workspace in
+//     it (the conversations beside the thread); also what the Automations and
+//     Playbook pages open in, as they need the room;
+//   • a phone — the whole screen, whatever the size.
+//
+// The popup has its own router, in memory, apart from the app's address: its
+// places are the conversation (/ai, ?c=…), a saved report (/ai/reports/<id>),
+// the Automations pages and the Playbook, each a path as the app knows it, so
+// the links inside them (to an automation, a delivered report, back to the
+// list) move within the popup. A link to any other page (a session, a task,
+// the follow-ups) leaves it: the app goes there and the popup steps aside
+// (AiAssistantProvider's leaveForPage). It reopens where it was left.
+//
+// This frame is small and always in the bundle; what fills it is fetched the
+// first time it opens. Access taken away while it is open leaves only a word
+// saying so.
 // ============================================================================
 
-import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react'
+import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState, type ContextType, type ReactNode } from 'react'
+import { MemoryRouter, UNSAFE_LocationContext, useLocation, useNavigate, type NavigateFunction } from 'react-router-dom'
 import { Loader2, ShieldOff, X } from 'lucide-react'
 import { Button } from '@/components/ui'
 import { ErrorBoundary, LoadFailed } from '@/components/ui/ErrorBoundary'
 import { cn, lockBodyScroll } from '@/lib/utils'
 import { useAi } from './AiAssistantProvider'
+import { isAiWorkspacePath } from './workspace'
 
-const AiPanel = lazy(() => import('./AiPanel'))
+const AiPopup = lazy(() => import('./AiPopup'))
 
-/** Said once the owner has taken the assistant away (kept here, not in the panel's file, so it shows without fetching it). */
+/** Said once the owner has taken the assistant away (kept here, not in the popup's file, so it shows without fetching it). */
 export const REVOKED_TEXT = 'You no longer have access to the assistant.'
 
+/** The shape the popup is drawn in. */
+export type AiPopupShape = 'compact' | 'large' | 'phone'
+
+/** The app's own navigate, for a link inside the popup that leaves it for a page of the app. */
+const AppNavigateContext = createContext<NavigateFunction | null>(null)
+
+export function useAppNavigate(): NavigateFunction {
+  const navigate = useContext(AppNavigateContext)
+  if (!navigate) throw new Error('useAppNavigate must be used inside the assistant popup')
+  return navigate
+}
+
+/** The shape for where the popup is: a page of its own (Automations, the Playbook) takes the large window. */
+export function popupShape(pathname: string, size: 'compact' | 'large', phone: boolean): AiPopupShape {
+  if (phone) return 'phone'
+  return isAiWorkspacePath(pathname) ? size : 'large'
+}
+
 export function AiPanelHost() {
-  const { open, revoked, setOpen, workspace } = useAi()
-  if (!open || workspace) return null
+  const { open, revoked, setOpen } = useAi()
+  const appNavigate = useNavigate()
+  if (!open) return null
   if (revoked) {
     return (
-      <AiPanelFrame>
-        <header className="flex shrink-0 items-center gap-2 border-b border-slate-100 px-3 py-2.5 dark:border-slate-800">
-          <h2 className="min-w-0 flex-1 truncate text-sm font-bold">AI assistant</h2>
-          <button type="button" onClick={() => setOpen(false)} className="icon-btn h-10 w-10 touch:h-11 touch:w-11" aria-label="Close the assistant" data-tip="Close (Esc)">
-            <X className="h-5 w-5" />
-          </button>
-        </header>
-        <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-            <ShieldOff aria-hidden className="h-6 w-6" />
-          </span>
-          <p className="font-semibold text-slate-700 dark:text-slate-200">{REVOKED_TEXT}</p>
-          <Button className="min-h-[44px]" onClick={() => setOpen(false)}>
-            <X className="h-4 w-4" /> Close
-          </Button>
-        </div>
-      </AiPanelFrame>
+      <PopupRouter>
+        <AiPopupFrame>
+          <header className="flex shrink-0 items-center gap-2 border-b border-slate-100 px-3 py-2.5 dark:border-slate-800">
+            <h2 className="min-w-0 flex-1 truncate text-sm font-bold">AI assistant</h2>
+            <button type="button" onClick={() => setOpen(false)} className="icon-btn h-10 w-10 touch:h-11 touch:w-11" aria-label="Close the assistant" data-tip="Close (Esc)">
+              <X className="h-5 w-5" />
+            </button>
+          </header>
+          <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
+            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+              <ShieldOff aria-hidden className="h-6 w-6" />
+            </span>
+            <p className="font-semibold text-slate-700 dark:text-slate-200">{REVOKED_TEXT}</p>
+            <Button className="min-h-[44px]" onClick={() => setOpen(false)}>
+              <X className="h-4 w-4" /> Close
+            </Button>
+          </div>
+        </AiPopupFrame>
+      </PopupRouter>
     )
   }
   return (
-    <AiPanelFrame>
-      {/* The panel's file not arriving (a deploy since the page opened, a dropped connection) leaves the page as it was. */}
-      <ErrorBoundary
-        fallback={
-          <LoadFailed
-            what="The assistant"
-            action={
-              <Button className="min-h-[44px]" onClick={() => setOpen(false)}>
-                <X className="h-4 w-4" /> Close
-              </Button>
+    <AppNavigateContext.Provider value={appNavigate}>
+      <PopupRouter>
+        <AiPopupFrame>
+          {/* The popup's file not arriving (a deploy since the page opened, a dropped connection) leaves the page as it was. */}
+          <ErrorBoundary
+            fallback={
+              <LoadFailed
+                what="The assistant"
+                action={
+                  <Button className="min-h-[44px]" onClick={() => setOpen(false)}>
+                    <X className="h-4 w-4" /> Close
+                  </Button>
+                }
+              />
             }
-          />
-        }
-      >
-        <Suspense
-          fallback={
-            <p className="flex flex-1 items-center justify-center gap-2 text-sm text-muted">
-              <Loader2 className="h-4 w-4 animate-spin" /> Opening the assistant…
-            </p>
-          }
-        >
-          <AiPanel />
-        </Suspense>
-      </ErrorBoundary>
-    </AiPanelFrame>
+          >
+            <Suspense
+              fallback={
+                <p className="flex flex-1 items-center justify-center gap-2 text-sm text-muted">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Opening the assistant…
+                </p>
+              }
+            >
+              <AiPopup />
+            </Suspense>
+          </ErrorBoundary>
+        </AiPopupFrame>
+      </PopupRouter>
+    </AppNavigateContext.Provider>
   )
 }
 
-function AiPanelFrame({ children }: { children: ReactNode }) {
-  const { docked, setOpen } = useAi()
-  const panel = useRef<HTMLElement>(null)
+/**
+ * The popup's own router, in memory, starting where the popup was last left. React Router refuses a router inside
+ * another; the popup's is a world of its own, so the app's location is hidden from it here (the app's navigate
+ * reaches it through AppNavigateContext, set above this).
+ */
+function PopupRouter({ children }: { children: ReactNode }) {
+  const { popupPath } = useAi()
+  const [entries] = useState(() => [popupPath.current])
+  return (
+    <UNSAFE_LocationContext.Provider value={null as unknown as ContextType<typeof UNSAFE_LocationContext>}>
+      <MemoryRouter initialEntries={entries}>
+        <PopupPlace />
+        {children}
+      </MemoryRouter>
+    </UNSAFE_LocationContext.Provider>
+  )
+}
 
-  // Escape closes the panel — but a dialog opened over it (a result table, a
-  // column's filter menu) is closed first, and when docked only a key pressed
-  // inside the panel counts: the page beside it keeps its own Escape.
+/** Keeps the provider told where the popup is (it reopens there), and lets it move the popup while it is open. */
+function PopupPlace() {
+  const { popupPath, popupNavigate } = useAi()
+  const location = useLocation()
+  const navigate = useNavigate()
+  useEffect(() => {
+    popupPath.current = `${location.pathname}${location.search}${location.hash}`
+  }, [popupPath, location.pathname, location.search, location.hash])
+  useEffect(() => {
+    popupNavigate.current = (to) => navigate(to)
+    return () => {
+      popupNavigate.current = null
+    }
+  }, [popupNavigate, navigate])
+  return null
+}
+
+function AiPopupFrame({ children }: { children: ReactNode }) {
+  const { setOpen, size, phone } = useAi()
+  const { pathname } = useLocation()
+  const shape = popupShape(pathname, size, phone)
+  const panel = useRef<HTMLElement>(null)
+  const modal = shape !== 'compact'
+
+  // Escape closes the popup — but a dialog opened over it (a result table, a column's filter menu) is closed first,
+  // and the card in the corner, which leaves the page usable, closes only for a key pressed inside it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
@@ -87,33 +166,33 @@ function AiPanelFrame({ children }: { children: ReactNode }) {
       if (!el) return
       const above = Array.from(document.querySelectorAll('[role="dialog"]')).some((d) => d !== el && !el.contains(d))
       if (above) return
-      if (docked && !el.contains(document.activeElement)) return
+      if (!modal && !el.contains(document.activeElement)) return
       setOpen(false)
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [docked, setOpen])
+  }, [modal, setOpen])
 
-  // As a sheet it covers the page, which stops scrolling underneath — counted with any modal opened from it.
+  // Over the page (the large window, a phone's) it stops the page scrolling underneath — counted with any modal opened from it.
   useEffect(() => {
-    if (docked) return
+    if (!modal) return
     return lockBodyScroll()
-  }, [docked])
+  }, [modal])
 
-  // One tree for both shapes, so crossing the breakpoint keeps the conversation, the scroll and the draft.
   return (
-    <div className={cn('print:hidden', docked ? 'contents' : 'fixed inset-0 z-50 flex items-end justify-end sm:items-stretch')}>
-      {!docked && <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in" onClick={() => setOpen(false)} />}
+    <div className={cn('print:hidden', modal ? 'fixed inset-0 z-50 flex items-center justify-center sm:p-6' : 'contents')}>
+      {shape === 'large' && <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in" onClick={() => setOpen(false)} />}
       <section
         ref={panel}
         role="dialog"
-        aria-modal={docked ? undefined : true}
+        aria-modal={modal ? true : undefined}
         aria-label="AI assistant"
+        data-shape={shape}
         className={cn(
           'ai-type flex min-h-0 flex-col overflow-hidden bg-white dark:bg-slate-900',
-          docked
-            ? 'fixed bottom-0 right-0 top-[calc(4rem+env(safe-area-inset-top))] z-30 w-[30rem] border-l border-slate-200 shadow-lift animate-slide-in-right dark:border-slate-800'
-            : 'relative z-10 h-[92dvh] w-full rounded-t-3xl shadow-lift ring-1 ring-slate-200 animate-slide-up dark:ring-slate-800 sm:h-full sm:max-w-xl sm:rounded-none sm:rounded-l-3xl sm:pt-[env(safe-area-inset-top)] sm:animate-slide-in-right',
+          shape === 'compact' && 'ai-popup-compact fixed z-40 rounded-3xl shadow-lift ring-1 ring-slate-200 animate-slide-up dark:ring-slate-800',
+          shape === 'large' && 'relative z-10 h-full max-h-[60rem] w-full max-w-[90rem] rounded-3xl shadow-lift ring-1 ring-slate-200 animate-page-in dark:ring-slate-800',
+          shape === 'phone' && 'relative z-10 h-full w-full animate-slide-up safe-top',
         )}
       >
         {children}

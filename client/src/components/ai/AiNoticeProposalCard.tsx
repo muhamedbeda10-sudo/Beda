@@ -36,7 +36,6 @@ import { cn, formatDateTime, formatFullTimestamp } from '@/lib/utils'
 import { applyNoticeProposal, discardNoticeProposal } from '@/services/noticeProposals'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
-import { useAi } from './AiAssistantProvider'
 import {
   NOTICE_ACTION_BUSY,
   NOTICE_ACTION_BUTTON,
@@ -90,7 +89,6 @@ function Proposal({ part, notice, writing, onDecided }: { part: AiNoticePart; no
   const qc = useQueryClient()
   const { toast } = useApp()
   const { role } = useAuth()
-  const { docked, setOpen } = useAi()
   const [busy, setBusy] = useState<'apply' | 'discard' | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [problems, setProblems] = useState<string[] | null>(null)
@@ -160,10 +158,6 @@ function Proposal({ part, notice, writing, onDecided }: { part: AiNoticePart; no
     }
   }
 
-  // Opening the Notices page from a sheet over the page puts the sheet away, so the page is in view.
-  const leaveForPage = () => {
-    if (!docked) setOpen(false)
-  }
 
   return (
     <article
@@ -269,7 +263,7 @@ function Proposal({ part, notice, writing, onDecided }: { part: AiNoticePart; no
                 <span aria-hidden className="text-muted">
                   ·
                 </span>
-                <Link to="/admin/notices" onClick={leaveForPage} className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
+                <Link to="/admin/notices" className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline dark:text-brand-300 touch:min-h-[44px]">
                   Open in Notices <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
                 </Link>
               </>

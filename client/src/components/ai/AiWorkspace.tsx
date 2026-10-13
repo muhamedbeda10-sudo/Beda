@@ -1,66 +1,39 @@
 // ============================================================================
-// §20 — the assistant's full page, /ai, for the people given the assistant
-// (the route asks /ai/me first). The same conversation, draft and answer
-// being written as the panel — Expand there opens it here, Dock here goes
-// back to the panel beside the page the person came from, and neither ever
-// interrupts an answer. A column of 280 px holds the conversations and My
-// reports; the thread (or a report run) is a centred column of at most
-// 1100 px, wide enough for tables and charts, with the question box pinned
-// under it. On a phone the page is the sheet: the list or the thread.
+// §20 — the assistant in its large window (AiPopup draws it at /ai and
+// /ai/reports/<id> when the popup is large). The same conversation, draft
+// and answer being written as the card in the corner — Expand there opens it
+// here, Shrink here goes back to the card, and neither ever interrupts an
+// answer. A column of 280 px holds the conversations and My reports; the
+// thread (or a report run) is a centred column of at most 1100 px, wide
+// enough for tables and charts, with the question box pinned under it.
 //
-// Its addresses (./workspace): /ai?c=<conversation> follows the conversation
-// on screen, and /ai/reports/<id> opens a saved report — either can be
-// shared or bookmarked.
+// Its places (./workspace), in the popup's own router: /ai?c=<conversation>
+// follows the conversation on screen, and /ai/reports/<id> opens a saved
+// report. The same addresses opened in the app (a link, a bookmark) open the
+// popup here (AiAddress).
 // ============================================================================
 
 import './fonts'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { FileChartColumn, History, MessagesSquare, PanelRightClose, ShieldOff, SquarePen } from 'lucide-react'
-import { Button } from '@/components/ui'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { FileChartColumn, History, MessagesSquare, Minimize2, SquarePen, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAi } from './AiAssistantProvider'
 import { AiComposer, useComposerDraft } from './AiComposer'
 import { AiConversationList } from './AiConversationList'
 import { AiHeaderLinks } from './AiHeaderLinks'
 import { BotMark } from './AiMessages'
-import { REVOKED_TEXT } from './AiPanelHost'
 import { AiReportList } from './AiReportList'
 import { AiReportView } from './AiReportView'
 import { AiConversationTitle, AiThread } from './AiThread'
-import { AI_WORKSPACE_PATH, aiWorkspaceHref, isKnownWorkspacePath, workspaceConversationId, workspaceReportId, type AiWorkspaceList, type AiWorkspaceState } from './workspace'
+import { AI_WORKSPACE_PATH, aiWorkspaceHref, workspaceConversationId, workspaceReportId, type AiWorkspaceList, type AiWorkspaceState } from './workspace'
 
 const HEAD_BTN = 'icon-btn h-10 w-10 touch:h-11 touch:w-11'
 const HEAD_ON = 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
 const HEAD_TEXT_BTN = 'btn-secondary h-10 min-h-0 gap-1.5 px-3 py-0 text-13 touch:h-11'
 
-export default function AiWorkspace() {
-  const { revoked } = useAi()
-  const location = useLocation()
-  // An address under /ai the page does not know reads as /ai.
-  if (!isKnownWorkspacePath(location.pathname)) return <Navigate to={`${AI_WORKSPACE_PATH}${location.search}`} replace />
-  if (revoked) return <WorkspaceRevoked />
-  return <Workspace />
-}
-
-/** The assistant was taken away while the page was open: it says so, and offers the way out. */
-function WorkspaceRevoked() {
-  const navigate = useNavigate()
-  return (
-    <div role="alert" className="ai-type ai-workspace flex flex-col items-center justify-center gap-3 px-6 text-center">
-      <span className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-        <ShieldOff aria-hidden className="h-6 w-6" />
-      </span>
-      <p className="font-semibold text-slate-700 dark:text-slate-200">{REVOKED_TEXT}</p>
-      <Button className="min-h-[44px]" onClick={() => navigate('/', { replace: true })}>
-        Back to the app
-      </Button>
-    </div>
-  )
-}
-
-function Workspace() {
-  const { conversationId, openConversation, dock } = useAi()
+export function AiWorkspace() {
+  const { conversationId, openConversation, setSize, setOpen } = useAi()
   const location = useLocation()
   const navigate = useNavigate()
   const [, setParams] = useSearchParams()
@@ -152,7 +125,7 @@ function Workspace() {
       <header className="flex shrink-0 items-center gap-1.5 border-b border-slate-200 px-3 py-2.5 dark:border-slate-800 sm:px-4">
         <BotMark size="md" className="me-1 hidden sm:grid" />
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-bold leading-tight sm:text-base">AI assistant</h1>
+          <h2 className="truncate text-sm font-bold leading-tight sm:text-base">AI assistant</h2>
           {/* A title in Arabic reads right to left (and, too long, is cut at its own end), but sits under the heading. */}
           <p dir="auto" className="truncate text-left text-xs text-muted">
             {pane === 'list' ? <span className="md:hidden">{list === 'reports' ? 'Your saved reports' : 'Your conversations'}</span> : null}
@@ -176,16 +149,12 @@ function Workspace() {
         <button type="button" onClick={newChat} className={cn(HEAD_TEXT_BTN, 'hidden sm:inline-flex')}>
           <SquarePen className="h-4 w-4" /> New chat
         </button>
-        <button type="button" onClick={() => dock(reportId ? { id: reportId, known: arrived.known } : undefined)} className={cn(HEAD_BTN, 'sm:hidden')} aria-label="Dock beside the page" data-tip="Dock beside the page">
-          <PanelRightClose className="h-5 w-5" />
+        {/* Back to the card in the corner, the report open here still open there. */}
+        <button type="button" onClick={() => setSize('compact')} className={HEAD_BTN} aria-label="Shrink to the corner" data-tip="Shrink to the corner">
+          <Minimize2 className="h-[18px] w-[18px]" />
         </button>
-        <button
-          type="button"
-          onClick={() => dock(reportId ? { id: reportId, known: arrived.known } : undefined)}
-          className={cn(HEAD_TEXT_BTN, 'hidden sm:inline-flex')}
-          data-tip="Back to the page you were on, with the assistant beside it"
-        >
-          <PanelRightClose className="h-4 w-4" /> Dock
+        <button type="button" onClick={() => setOpen(false)} className={HEAD_BTN} aria-label="Close the assistant" data-tip="Close (Esc)">
+          <X className="h-5 w-5" />
         </button>
       </header>
 

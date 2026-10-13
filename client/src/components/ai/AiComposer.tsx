@@ -83,7 +83,7 @@ export function AiComposer({
   /** The full page: the box keeps to the thread's centred column. */
   wide?: boolean
 }) {
-  const { send, stop, busy, conversationId, openConversation, docked, setOpen, attachments, attach, detach } = useAi()
+  const { send, stop, busy, conversationId, openConversation, attachments, attach, detach } = useAi()
   const live = useAiLive()
   const { data: me } = useAiMe()
   const { toast } = useApp()
@@ -166,7 +166,7 @@ export function AiComposer({
 
   // The owner alone has somewhere to go about it: the settings page says precisely why, and holds the switch, the key and the caps.
   const settings = blocked && me?.owner && (
-    <Link to="/admin/ai" onClick={() => !docked && setOpen(false)} className="inline-flex items-center text-xs font-semibold underline underline-offset-2 touch:min-h-[44px]">
+    <Link to="/admin/ai" className="inline-flex items-center text-xs font-semibold underline underline-offset-2 touch:min-h-[44px]">
       Open the assistant's settings
     </Link>
   )

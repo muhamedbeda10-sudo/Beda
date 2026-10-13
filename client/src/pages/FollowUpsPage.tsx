@@ -246,7 +246,7 @@ export function FollowUpsPage() {
             ))}
           </div>
 
-          {/* From xl (1280 px): one line each, slim enough to fit a laptop beside the docked assistant — its status and
+          {/* From xl (1280 px): one line each, slim enough for a laptop — its status and
               automation under the title, which stays in view while the rest scrolls under it; what does not fit is in
               the tooltips. */}
           <Card className="hidden overflow-hidden xl:block">
