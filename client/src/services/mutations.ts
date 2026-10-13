@@ -61,6 +61,7 @@ import type {
   AiSetKeyRequest,
   AiSettings,
   AiSettingsResponse,
+  AiStopResponse,
 } from '@qc/shared/ai'
 import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
 import { api } from '@/lib/api'
@@ -565,6 +566,26 @@ export async function deleteAiConversation(qc: QueryClient, id: string): Promise
   await api<void>(`/ai/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' })
   qc.removeQueries({ queryKey: keys.aiMessages(id) })
   await qc.invalidateQueries({ queryKey: keys.aiConversations })
+}
+
+/** A conversation as cached, its running answer marked as stopping. Nothing running, the same object comes back. */
+export function withStopping(old: AiMessagesResponse | undefined): AiMessagesResponse | undefined {
+  if (!old?.running || old.running.stopping) return old
+  return { ...old, running: { ...old.running, stopping: true } }
+}
+
+/**
+ * Stop the answer the server is writing in a conversation, whoever's device asked it: it ends at its next step and
+ * is kept as stopped. A conversation cached with the answer running says "Stopping…" at once, and goes on being asked
+ * again until the answer has ended; otherwise (none was being written any more, or the copy here is older than the
+ * answer) it is fetched again, to show where it stands.
+ */
+export async function stopAiAnswer(qc: QueryClient, conversationId: string): Promise<void> {
+  const res = await api<AiStopResponse>(`/ai/conversations/${encodeURIComponent(conversationId)}/stop`, { method: 'POST' })
+  const key = keys.aiMessages(conversationId)
+  const cached = qc.getQueryData<AiMessagesResponse>(key)
+  if (res.stopping && cached?.running) qc.setQueryData(key, withStopping(cached))
+  else void qc.invalidateQueries({ queryKey: key })
 }
 
 /**

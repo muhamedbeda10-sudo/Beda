@@ -869,6 +869,20 @@ export function useAiPeople(enabled: boolean) {
   return useQuery({ queryKey: keys.aiPeople, queryFn: () => api<AiPerson[]>('/ai/people'), enabled, staleTime: 30_000 })
 }
 
+/**
+ * An answer goes on on the server whether or not anyone watches (§20). While one runs, its conversation is asked
+ * again every 2 s for its progress, and the list of conversations every 5 s, so its spinner stops when it ends —
+ * only while the tab is visible, never in the background.
+ */
+export const AI_RUNNING_POLL_MS = 2_000
+export const AI_ANSWERING_POLL_MS = 5_000
+
+/** How often a conversation is asked again: while the server says an answer in it runs, and not otherwise. */
+export const aiMessagesPoll = (data: AiMessagesResponse | undefined): number | false => (data?.running ? AI_RUNNING_POLL_MS : false)
+
+/** How often the list is asked again: while a conversation in it is being answered, and not otherwise. */
+export const aiConversationsPoll = (data: AiConversationsResponse | undefined): number | false => (data?.conversations.some((c) => c.answering) ? AI_ANSWERING_POLL_MS : false)
+
 /** This person's conversations, the latest first: the first page. */
 export function useAiConversations(enabled: boolean) {
   return useQuery({
@@ -876,6 +890,8 @@ export function useAiConversations(enabled: boolean) {
     queryFn: () => api<AiConversationsResponse>(`/ai/conversations${qs({ limit: AI_CONVERSATIONS_PAGE })}`),
     enabled,
     staleTime: 60_000,
+    refetchInterval: (q) => aiConversationsPoll(q.state.data),
+    refetchIntervalInBackground: false,
   })
 }
 
@@ -884,13 +900,15 @@ export function loadOlderAiConversations(before: string): Promise<AiConversation
   return api<AiConversationsResponse>(`/ai/conversations${qs({ before, limit: AI_CONVERSATIONS_PAGE })}`)
 }
 
-/** One conversation, every question and answer with the queries they ran. */
+/** One conversation, every question and answer with the queries they ran; and the answer the server is writing in it, if any. */
 export function useAiMessages(conversationId: string | null, enabled = true) {
   return useQuery({
     queryKey: keys.aiMessages(conversationId ?? ''),
     queryFn: () => api<AiMessagesResponse>(`/ai/conversations/${encodeURIComponent(conversationId ?? '')}/messages`),
     enabled: enabled && conversationId !== null,
     staleTime: 60_000,
+    refetchInterval: (q) => aiMessagesPoll(q.state.data),
+    refetchIntervalInBackground: false,
   })
 }
 

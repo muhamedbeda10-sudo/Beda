@@ -1,9 +1,11 @@
 // ============================================================================
 // §20 — the question box. Enter sends on a keyboard and Shift+Enter breaks
 // the line; on a touch screen Enter breaks the line and the button sends.
-// While an answer is written the button stops it. When the assistant cannot
-// answer the box says so plainly — this month's limit, or "not available" —
-// and only its owner is offered the settings, where the precise reason is.
+// While an answer is written the button stops it: the one this device asked
+// and reads, or the one the server is writing in the conversation on screen
+// (reopened while it runs, or let go of). When the assistant cannot answer
+// the box says so plainly — this month's limit, or "not available" — and
+// only its owner is offered the settings, where the precise reason is.
 //
 // Files go with a question: the paperclip, a photo pasted into the box, or
 // files dropped on it. Each shows as a chip while it uploads, and the
@@ -17,11 +19,12 @@ import { AI_MAX_ATTACHMENTS_PER_QUESTION, AI_MAX_MESSAGE_CHARS, type AiAttachmen
 import { isCoarsePointer } from '@/lib/media'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/store/AppContext'
-import { useAiMe } from '@/services/queries'
+import { useAiMe, useAiMessages } from '@/services/queries'
 import { aiBlock } from './access'
 import { useAi, useAiLive } from './AiAssistantProvider'
 import { ATTACH_ACCEPT, formatBytes, readyIds, type PendingAttachment } from './attachments'
 import { BlockedNotice } from './AiNotice'
+import { letGoOf } from './liveTurn'
 import { spentFocus, takesCaret, type ComposerFocus } from './suggestions'
 
 function caretAtEnd(el: HTMLTextAreaElement) {
@@ -83,9 +86,10 @@ export function AiComposer({
   /** The full page: the box keeps to the thread's centred column. */
   wide?: boolean
 }) {
-  const { send, stop, busy, conversationId, openConversation, attachments, attach, detach } = useAi()
+  const { send, stop, stopConversation, busy, conversationId, openConversation, attachments, attach, detach, enabled } = useAi()
   const live = useAiLive()
   const { data: me } = useAiMe()
+  const { data: thread } = useAiMessages(conversationId, enabled)
   const { toast } = useApp()
   const area = useRef<HTMLTextAreaElement>(null)
   const picker = useRef<HTMLInputElement>(null)
@@ -94,8 +98,15 @@ export function AiComposer({
   const blocked = aiBlock(me)
   // One answer at a time: one being written in another conversation holds this box too.
   const elsewhere = busy && !!live && live.conversationId !== conversationId
+  // The answer this device reads is in the conversation on screen; else the server is writing one there, as the
+  // conversation says, or as a stream this device let go of left it until the conversation is fetched again.
+  const readingHere = busy && !elsewhere
+  const running = thread?.running ?? null
+  const runningHere = !readingHere && (running !== null || letGoOf(live, conversationId, thread?.messages ?? []))
+  // Stop pressed already: the answer ends at its next step.
+  const stopping = running && !readingHere ? running.stopping : !!live?.stopping
   const filesReady = readyIds(attachments) !== null
-  const canSend = !busy && !blocked && filesReady && (value.trim().length > 0 || attachments.length > 0)
+  const canSend = !busy && !runningHere && !blocked && filesReady && (value.trim().length > 0 || attachments.length > 0)
   const room = AI_MAX_ATTACHMENTS_PER_QUESTION - attachments.length
 
   /** Attach what was picked, pasted or dropped, as many as the question has room for; says what it could not take. */
@@ -156,6 +167,10 @@ export function AiComposer({
   const submit = () => {
     if (!canSend) return
     if (send(value)) onChange('')
+  }
+  const stopHere = () => {
+    if (readingHere) stop()
+    else if (conversationId) stopConversation(conversationId)
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -238,8 +253,15 @@ export function AiComposer({
             aria-label="Your question"
             className="input min-h-[44px] flex-1 resize-none rounded-2xl py-2.5 leading-snug disabled:cursor-not-allowed disabled:opacity-60"
           />
-          {busy && !elsewhere ? (
-            <button type="button" onClick={stop} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-slate-800 text-white shadow-card transition hover:bg-slate-900 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white" aria-label="Stop the answer" data-tip="Stop">
+          {readingHere || runningHere ? (
+            <button
+              type="button"
+              onClick={stopHere}
+              disabled={stopping}
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-slate-800 text-white shadow-card transition hover:bg-slate-900 disabled:opacity-40 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white"
+              aria-label={stopping ? 'Stopping the answer' : 'Stop the answer'}
+              data-tip={stopping ? 'Stopping…' : 'Stop'}
+            >
               <Square className="h-4 w-4 fill-current" />
             </button>
           ) : (

@@ -139,6 +139,8 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
  * the route runs, so sending again is safe. A refusal (no key, the monthly
  * cap, a bad request) is an ordinary JSON error, thrown as ApiError before any
  * of the body is read; once the headers are OK the caller reads the stream.
+ * Aborting `signal` closes the connection, which lets go of an answer the
+ * server has begun rather than stopping it.
  */
 export async function apiStream(path: string, opts: RequestOptions = {}): Promise<ReadableStream<Uint8Array>> {
   const request: RequestOptions = { method: 'POST', ...opts }

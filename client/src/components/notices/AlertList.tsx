@@ -1,5 +1,6 @@
 // ============================================================================
-// §21 — the bell's alerts: what automations and follow-ups told this person.
+// §21 — the bell's alerts: what automations and follow-ups told this person,
+// and the assistant's answers that finished while they were away (§20).
 // The ones not opened yet first, then the earlier ones, newest first, a page
 // at a time. Opening one reads it and goes where it leads (a follow-up, a
 // session, a delivered report); one that leads nowhere opens in place.
@@ -92,7 +93,7 @@ const WORDING: Record<UserNotificationCategory, { icon: ReactNode; loadFailed: s
     icon: <BellRing className="h-10 w-10" />,
     loadFailed: 'The alerts could not be loaded',
     empty: 'No alerts',
-    emptyHint: 'What automations find for you, and follow-ups given to you, show here.',
+    emptyHint: 'What automations find for you, follow-ups given to you, and the assistant’s answers that finish while you are away show here.',
     markFailed: 'Could not mark the alerts as read.',
   },
   reports: {

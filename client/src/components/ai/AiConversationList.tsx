@@ -1,6 +1,9 @@
 // ============================================================================
 // §20 — this person's conversations with the assistant, the latest
 // first: search their titles, open one, remove one, page back through older.
+// One whose answer is being written — streamed here, or going on on the
+// server with no one reading it — says so, and cannot be removed until it
+// has ended.
 // ============================================================================
 
 import { useMemo, useState } from 'react'
@@ -53,6 +56,7 @@ export function AiConversationList({ onPicked, onNew }: { onPicked: () => void; 
     return q ? all.filter((c) => c.title.toLowerCase().includes(q)) : all
   }, [all, term])
 
+  // The answer this device reads: the list may not say so yet (it is fetched again as the answer starts).
   const writingIn = isInFlight(live) ? live?.conversationId : undefined
 
   const loadMore = async () => {
@@ -127,7 +131,7 @@ export function AiConversationList({ onPicked, onNew }: { onPicked: () => void; 
         )}
         {list.map((c) => {
           const active = c.id === conversationId
-          const writing = c.id === writingIn
+          const writing = !!c.answering || c.id === writingIn
           return (
             <li key={c.id} className={cn('group flex items-center gap-1 rounded-2xl pe-1 transition-colors', active ? 'bg-brand-50 ring-1 ring-brand-200 dark:bg-brand-500/15 dark:ring-brand-500/30' : 'hover:bg-slate-100 dark:hover:bg-slate-800')}>
               <button

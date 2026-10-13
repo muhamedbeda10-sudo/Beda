@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { AiMessagesResponse } from '@qc/shared/ai'
+import type { AiMessage, AiMessagesResponse } from '@qc/shared/ai'
 import type { AiNoticeDraft, AiNoticePart } from '@qc/shared/noticeAssistant'
 import { ApiError } from '@/lib/api'
 import { applyEvent, endTurn, startTurn, type LiveTurn } from './liveTurn'
@@ -226,16 +226,28 @@ describe('the card in the cached conversation', () => {
   it('holds the saved cards while the answer being written in their conversation has drafted a notice card', () => {
     const asking: LiveTurn = { ...startTurn('k1', 'c1', 'Make it until Friday.', '2026-10-10T05:02:00Z'), phase: 'streaming' }
     const drafted = applyEvent(asking, { type: 'notice', part: card({ proposalId: 'n2' }) })
-    expect(noticeCardsWait(drafted, 'c1')).toBe(true)
+    expect(noticeCardsWait(drafted, 'c1', [])).toBe(true)
     // Not before it drafts one, nor for a draft the server did not accept (it replaces nothing), nor once it ended.
-    expect(noticeCardsWait(asking, 'c1')).toBe(false)
-    expect(noticeCardsWait(applyEvent(asking, { type: 'notice', part: card({ proposalId: 'n2', ok: false, error: 'validTo: before validFrom' }) }), 'c1')).toBe(false)
-    expect(noticeCardsWait(endTurn(drafted, 'stopped'), 'c1')).toBe(false)
-    expect(noticeCardsWait({ ...drafted, phase: 'done' }, 'c1')).toBe(false)
+    expect(noticeCardsWait(asking, 'c1', [])).toBe(false)
+    expect(noticeCardsWait(applyEvent(asking, { type: 'notice', part: card({ proposalId: 'n2', ok: false, error: 'validTo: before validFrom' }) }), 'c1', [])).toBe(false)
+    expect(noticeCardsWait(endTurn(drafted, 'stopped'), 'c1', [])).toBe(false)
+    expect(noticeCardsWait({ ...drafted, phase: 'done' }, 'c1', [])).toBe(false)
     // A card replaces only one of its own conversation; a first question has none before it.
-    expect(noticeCardsWait(drafted, 'c2')).toBe(false)
-    expect(noticeCardsWait({ ...drafted, conversationId: null }, null)).toBe(false)
-    expect(noticeCardsWait(null, 'c1')).toBe(false)
+    expect(noticeCardsWait(drafted, 'c2', [])).toBe(false)
+    expect(noticeCardsWait({ ...drafted, conversationId: null }, null, [])).toBe(false)
+    expect(noticeCardsWait(null, 'c1', [])).toBe(false)
+  })
+
+  it('holds them too while the server writes that answer and this device only follows it', () => {
+    const asked: AiMessage = { id: 'u2', role: 'user', parts: [{ type: 'text', text: 'Make it until Friday.' }], createdAt: '2026-10-10T05:02:00Z' }
+    const writing: AiMessage = { id: 't2', role: 'assistant', parts: [{ type: 'text', text: 'Here is the change.' }, card({ proposalId: 'n2' })], createdAt: '2026-10-10T05:02:09Z', running: true }
+    const saved = [...conversation([card()]).messages, asked, writing]
+    // Reopened while it runs: no turn of this device at all.
+    expect(noticeCardsWait(null, 'c1', saved)).toBe(true)
+    // Ended on the server: they can be decided again.
+    expect(noticeCardsWait(null, 'c1', [...saved.slice(0, -1), { ...writing, running: undefined, stopReason: 'end_turn' }])).toBe(false)
+    // A refused draft replaces nothing.
+    expect(noticeCardsWait(null, 'c1', [...saved.slice(0, -1), { ...writing, parts: [card({ proposalId: 'n2', ok: false, error: 'title: blank' })] }])).toBe(false)
   })
 
   it('reads the card a refusal carries, only when it is this card', () => {

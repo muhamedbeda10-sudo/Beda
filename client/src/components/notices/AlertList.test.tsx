@@ -80,4 +80,12 @@ describe('the bell’s alerts', () => {
     expect(html([], 'reports')).toContain('Scheduled reports sent to you show here.')
     expect(html([], 'alerts')).toContain('No alerts')
   })
+
+  it('leads an answer of the assistant that finished while its asker was away to its conversation', () => {
+    const h = html([alert({ id: 'n4', kind: 'ai-answer', title: 'Your answer is ready: Top defects this week', link: '/ai?c=c1' })])
+    expect(h).toContain('href="/ai?c=c1"')
+    expect(h).toContain('Assistant answer ready')
+    // With none yet, the list says these come here too.
+    expect(html([], 'alerts')).toContain('the assistant’s answers that finish while you are away')
+  })
 })

@@ -1,5 +1,6 @@
 // ============================================================================
-// §21 — the bell's alerts: what automations and follow-ups tell one person
+// §21 — the bell's alerts: what automations, follow-ups, tasks and the
+// assistant (an answer ready that its asker left) tell one person
 // (UserNotification), beside the quality office's notices. Each is read when
 // opened and leads to a page of the app; the bell's count is the notices to
 // read and the alerts not opened yet together. Pure helpers, so the bell and
@@ -22,6 +23,7 @@ export const ALERT_KIND_LABEL: Record<UserNotificationKind, string> = {
   'task-updated': 'Task updated',
   'task-done': 'Task done: confirm it',
   'task-reopened': 'Task sent back',
+  'ai-answer': 'Assistant answer ready',
 }
 
 /** The number on the bell: notices still to read and alerts not opened yet. */

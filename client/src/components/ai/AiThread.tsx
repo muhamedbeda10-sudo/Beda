@@ -1,9 +1,11 @@
 // ============================================================================
 // §20 — one conversation: what was asked and answered, then the answer being
-// written. It keeps to the bottom while text streams — unless the reader has
-// scrolled up to read, when it stays put and offers a way back down. While a
-// conversation loads, the shape of one stands in for it. On the full page
-// (`wide`) the thread is a centred column, wide enough for tables and charts.
+// written — streamed here, or written by the server while this device follows
+// it (the conversation asks again every few seconds while it runs). It keeps
+// to the bottom while text streams — unless the reader has scrolled up to
+// read, when it stays put and offers a way back down. While a conversation
+// loads, the shape of one stands in for it. On the full page (`wide`) the
+// thread is a centred column, wide enough for tables and charts.
 // ============================================================================
 
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -15,7 +17,7 @@ import { useAiMessages } from '@/services/queries'
 import { useAi, useAiLive } from './AiAssistantProvider'
 import { Answer, BotMark, UserBubble } from './AiMessages'
 import { Notice } from './AiNotice'
-import { answerText, latestAnswerKey, liveAnnouncement, liveView, threadItems } from './liveTurn'
+import { answerText, latestAnswerKey, liveView, threadAnnouncement, threadItems } from './liveTurn'
 import { noticeCardsWait } from './noticeProposal'
 import { taskCardsWait } from './taskProposal'
 import { AI_STARTER_QUESTIONS } from './suggestions'
@@ -40,17 +42,18 @@ export function AiThread({
   const { conversationId, openConversation, enabled } = useAi()
   const live = useAiLive()
   const { data, isLoading, isError, refetch } = useAiMessages(conversationId, enabled)
-  const view = liveView(live, conversationId, data?.messages ?? NONE)
+  const saved = data?.messages ?? NONE
+  const view = liveView(live, conversationId, saved)
   const items = threadItems(live, view)
   // Follow-up questions are offered under the conversation's last answer only: once something is asked after it, they go.
   const latestAnswer = latestAnswerKey(items)
   const empty = conversationId === null && !view.question
   // Read out when the answer on screen changes phase; the turn of another conversation says nothing here.
-  const announcement = live && live.conversationId === conversationId ? liveAnnouncement(live) : ''
+  const announcement = threadAnnouncement(live, conversationId, view, data?.running)
   // §23 — the answer being written here drafted a notice card: the saved answers' cards wait for it to end.
-  const noticesWait = noticeCardsWait(live, conversationId)
+  const noticesWait = noticeCardsWait(live, conversationId, saved)
   // The same for a task card.
-  const tasksWait = taskCardsWait(live, conversationId)
+  const tasksWait = taskCardsWait(live, conversationId, saved)
 
   // The question each answer replies to: the user message before it.
   const questions = useMemo(() => {
@@ -153,6 +156,7 @@ export function AiThread({
                   <Answer
                     key={item.key}
                     message={item.message}
+                    running={item.message.running ? data?.running : undefined}
                     question={questions.get(item.message.id)}
                     onAskAgain={onAskAgain}
                     latest={item.key === latestAnswer}

@@ -47,7 +47,8 @@ export function createSseParser(): SseParser {
     if (value.startsWith(' ')) value = value.slice(1)
     if (field === 'event') event = value
     else if (field === 'data') data.push(value)
-    // `id` and `retry` are not used: an answer is never resumed.
+    // `id` and `retry` are not used: an answer is never resumed over its stream. A device that lost one follows it
+    // in its saved conversation instead (§20), which the server goes on writing.
   }
 
   const push = (text: string): SseEvent[] => {
@@ -79,7 +80,9 @@ export function createSseParser(): SseParser {
 /**
  * The events of a streamed body, in order. Leaving the loop early (a break,
  * a throw) cancels the stream, which closes the connection; an abort of the
- * fetch's signal surfaces here as the AbortError the read rejects with.
+ * fetch's signal surfaces here as the AbortError the read rejects with. For
+ * the assistant, a closed connection only lets go of the answer: it goes on
+ * on the server, and only its Stop ends it.
  */
 export async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent, void, undefined> {
   const reader = body.getReader()

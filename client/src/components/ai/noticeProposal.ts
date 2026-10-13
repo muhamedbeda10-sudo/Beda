@@ -8,13 +8,13 @@
 // Pure, so it is tested without a browser.
 // ============================================================================
 
-import type { AiMessagesResponse } from '@qc/shared/ai'
+import type { AiMessage, AiMessagesResponse } from '@qc/shared/ai'
 import type { AiNoticeAction, AiNoticeDraft, AiNoticePart, AiNoticeProposalState, AiNoticeReach } from '@qc/shared/noticeAssistant'
 import { NOTICE_TARGET_KINDS, NOTICE_TARGET_LABEL, type Notice, type NoticeSeverity, type NoticeTarget, type NoticeTargetKind } from '@qc/shared/types'
 import type { BadgeTone } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { formatDate } from '@/lib/utils'
-import { isInFlight, type LiveTurn } from './liveTurn'
+import { partsBeingWritten, type LiveTurn } from './liveTurn'
 
 // ---- What it does, and how it stands ------------------------------------------------------
 
@@ -280,15 +280,17 @@ export function hasOpenNoticeCard(old: AiMessagesResponse | undefined, except: s
 
 /**
  * Whether the cards of a conversation's saved answers wait before they can be
- * decided: the answer being written in it has drafted a notice card that
- * passed, which may be a newer version of one of them. The server marks the
- * one it replaces only as it keeps the round that drafted it, after every
- * call of that round — and a card pressed before then would go out just
- * before its replacement is kept. So their buttons wait until the answer
- * ends; the conversation fetched meanwhile says which one it replaced.
+ * decided: the answer being written in it (streamed here, or written by the
+ * server while this device follows it in `saved`, partsBeingWritten) has
+ * drafted a notice card that passed, which may be a newer version of one of
+ * them. The server marks the one it replaces only as it keeps the round that
+ * drafted it, after every call of that round — and a card pressed before then
+ * would go out just before its replacement is kept. So their buttons wait
+ * until the answer ends; the conversation fetched meanwhile says which one it
+ * replaced.
  */
-export function noticeCardsWait(live: LiveTurn | null, conversationId: string | null): boolean {
-  return !!live && conversationId !== null && live.conversationId === conversationId && isInFlight(live) && live.parts.some((p) => p.type === 'notice' && p.ok)
+export function noticeCardsWait(live: LiveTurn | null, conversationId: string | null, saved: readonly AiMessage[]): boolean {
+  return partsBeingWritten(live, conversationId, saved).some((p) => p.type === 'notice' && p.ok)
 }
 
 /** The card as a refusal says it stands now (out of date, applied already), when the server sent it along. */
