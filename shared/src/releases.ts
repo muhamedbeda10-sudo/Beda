@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.96',
+    date: '2026-10-13',
+    title: 'Panels open in the middle of the screen',
+    items: [
+      { text: 'The bell, a follow-up, an order\'s details, an audit entry, your mentions in the chat, the automation editor and a person\'s assistant access now open as a large window in the middle of the screen, the size of the assistant\'s large window, no longer as a panel down the right side. The page stays behind it; press outside it, × or Esc to close it.' },
+      { text: 'On a phone they still slide up from the bottom, where your thumb reaches them.' },
+    ],
+  },
+  {
     id: '2026-10-13.95',
     date: '2026-10-13',
     title: 'Excel from the assistant follows its permission',
