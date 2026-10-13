@@ -1,7 +1,8 @@
 // ============================================================================
 // §20 — the assistant's panel, loaded the first time it opens (AiPanelHost
 // frames it). The header carries the mark, New chat, History, My reports,
-// Expand (to the full page, /ai, with everything as it is) and Close — no
+// the assistant's own pages (Automations: AiHeaderLinks), Expand (to the
+// full page, /ai, with everything as it is) and Close — no
 // amounts: what the assistant costs is on its owner's page alone. Below it
 // the conversation and the question box, the list of conversations, or the
 // saved reports — their list, or one report run.
@@ -14,6 +15,7 @@ import { cn } from '@/lib/utils'
 import { useAi } from './AiAssistantProvider'
 import { AiComposer, useComposerDraft } from './AiComposer'
 import { AiConversationList } from './AiConversationList'
+import { AiHeaderLinks } from './AiHeaderLinks'
 import { BotMark } from './AiMessages'
 import { AiReportList } from './AiReportList'
 import { AiReportView } from './AiReportView'
@@ -104,6 +106,7 @@ export default function AiPanel() {
         <button type="button" onClick={toReports} className={cn(HEAD_BTN, view === 'reports' && HEAD_ON)} aria-label="My reports" aria-pressed={view === 'reports'} data-tip="My reports">
           <FileChartColumn className="h-5 w-5" />
         </button>
+        <AiHeaderLinks buttonClass={HEAD_BTN} onClass={HEAD_ON} fromPanel />
         {/* On a phone too: the full page has a phone's shape (the list, then the conversation). */}
         <button type="button" onClick={toPage} className={HEAD_BTN} aria-label="Expand to a full page" data-tip="Expand to a full page">
           <Maximize2 className="h-[18px] w-[18px]" />
