@@ -443,6 +443,11 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
               setConversationId(id)
             }
             void qc.invalidateQueries({ queryKey: keys.aiConversations })
+          } else if (e.type === 'title') {
+            // The assistant named the new conversation: its header and the list say so at once.
+            conversation = e.conversation
+            qc.setQueryData<AiMessagesResponse>(keys.aiMessages(e.conversation.id), (old) => (old ? { ...old, conversation: e.conversation } : old))
+            void qc.invalidateQueries({ queryKey: keys.aiConversations })
           } else if (e.type === 'automation') {
             // §22 — a newer version of a card of an earlier answer: that card says at once it was replaced (the server
             // marked it so as it kept this one, and the conversation fetched once the answer ends says the same).

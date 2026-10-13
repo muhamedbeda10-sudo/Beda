@@ -124,6 +124,9 @@ export function applyEvent(t: LiveTurn, e: AiStreamEvent): LiveTurn {
       const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
       return { ...t, phase: 'streaming', progress: null, parts }
     }
+    case 'title':
+      // The conversation renamed by the assistant: nothing of the answer changes.
+      return t.conversationId === e.conversation.id ? { ...t, conversation: e.conversation } : t
     case 'done':
       return { ...t, phase: 'done', progress: null, message: e.message, parts: interrupt(t.parts) }
     case 'error':
@@ -193,7 +196,7 @@ export function parseStreamEvent(event: string, data: string): AiStreamEvent | n
   return value as AiStreamEvent
 }
 
-const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'automation', 'notice', 'task', 'playbook', 'excel', 'saved-table', 'done', 'error'])
+const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'automation', 'notice', 'task', 'playbook', 'excel', 'saved-table', 'title', 'done', 'error'])
 
 /**
  * What a question is sent after (LiveTurn.after): the last message this device

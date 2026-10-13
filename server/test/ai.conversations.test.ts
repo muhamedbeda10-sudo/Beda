@@ -14,6 +14,7 @@ import {
 import { TestApp, type Session } from './harness'
 import { text } from './aiFake'
 import { foldForSearch, likePattern, snippetAround } from '../src/ai/conversationSearch'
+import { cleanTitle, giveConversationTitle, titleRequest } from '../src/ai/conversationTitle'
 
 // §20 — keeping one's conversations in order (migration 0052): renamed,
 // pinned, in groups, archived, and found again by what was said in them.
@@ -299,5 +300,95 @@ describe('folding and snippets', () => {
     expect(snippetAround('short text', 'nothing')).toEqual({ snippet: 'short text', match: null })
     const emoji = snippetAround('🔧 wrench 🔧 here', 'here')
     expect(emoji.snippet.slice(emoji.match!.start, emoji.match!.start + emoji.match!.length)).toBe('here')
+  })
+})
+
+describe('a title by the assistant', () => {
+  /** Ask a first question and read every event of its answer. */
+  async function askNew(question: string) {
+    app.aiLimiter.reset(admin.user.id)
+    app.model.reply({ content: [text('Here is the answer.')] })
+    const res = await app.api<string>('POST', '/api/ai/chat', { token: admin.token, body: { message: question, clientId: randomUUID() } })
+    expect(res.status).toBe(200)
+    return res.body
+      .split('\n\n')
+      .filter((f) => f.startsWith('event: '))
+      .map((f) => JSON.parse(f.slice(f.indexOf('data: ') + 6)) as AiStreamEvent)
+  }
+  const sourceOf = async (id: string) => (await app.db.query<{ title_source: string; title: string }>(`SELECT title, title_source FROM ai_conversations WHERE id = $1`, [id])).rows[0]
+
+  it('names a new conversation in a few words, before its answer closes, at the cheapest model’s cost', async () => {
+    app.model.completeWith = () => '"Scrap by machine, last week."'
+    const events = await askNew('  what was the scrap   on each machine last week? I need it for the morning meeting ')
+    const start = events.find((e): e is Extract<AiStreamEvent, { type: 'start' }> => e.type === 'start')!
+    const titled = events.findIndex((e) => e.type === 'title')
+    expect(titled).toBeGreaterThan(-1)
+    expect(titled).toBeLessThan(events.findIndex((e) => e.type === 'done'))
+    expect(events[titled]).toMatchObject({ type: 'title', conversation: { id: start.conversation.id, title: 'Scrap by machine, last week' } })
+    expect(await sourceOf(start.conversation.id)).toEqual({ title: 'Scrap by machine, last week', title_source: 'assistant' })
+
+    const call = app.model.completions.at(-1)!
+    expect(call.params).toMatchObject({ model: 'claude-haiku-5-5', max_tokens: 60, messages: [{ role: 'user', content: 'what was the scrap on each machine last week? I need it for the morning meeting' }] })
+    expect(String(call.params.system)).toMatch(/language and the script of the question/)
+    const { rows } = await app.db.query<{ model: string; turn: boolean; cost: number }>(
+      `SELECT model, turn_id IS NOT NULL AS turn, cost_usd::float AS cost FROM ai_usage WHERE conversation_id = $1 ORDER BY created_at`,
+      [start.conversation.id],
+    )
+    expect(rows.find((r) => r.model === 'claude-haiku-5-5')).toMatchObject({ turn: true })
+    // The turn's cost has the title's in it.
+    const turn = await app.db.query<{ cost: number }>(`SELECT cost_usd::float AS cost FROM ai_turns WHERE conversation_id = $1`, [start.conversation.id])
+    expect(turn.rows[0].cost).toBeCloseTo(rows.reduce((s, r) => s + r.cost, 0), 6)
+
+    // A later question in it asks for no title.
+    const asked = app.model.completions.length
+    await ask('And this week?', 'Lower.', { conversationId: start.conversation.id })
+    expect(app.model.completions).toHaveLength(asked)
+    app.model.completeWith = () => {
+      throw new Error('unused')
+    }
+  })
+
+  it('leaves the first question as the title when the call fails or says nothing', async () => {
+    app.model.completeWith = () => {
+      throw new Error('overloaded')
+    }
+    let events = await askNew('Which coils are on hold?')
+    expect(events.some((e) => e.type === 'title')).toBe(false)
+    let id = (events[0] as Extract<AiStreamEvent, { type: 'start' }>).conversation.id
+    expect(await sourceOf(id)).toEqual({ title: 'Which coils are on hold?', title_source: 'question' })
+
+    app.model.completeWith = () => '  ""  '
+    events = await askNew('Late orders this month')
+    id = (events[0] as Extract<AiStreamEvent, { type: 'start' }>).conversation.id
+    expect(await sourceOf(id)).toEqual({ title: 'Late orders this month', title_source: 'question' })
+  })
+
+  it('never replaces a title the person gave', async () => {
+    const { rows } = await app.db.query<{ id: string; turn: string }>(
+      `WITH c AS (INSERT INTO ai_conversations (user_id, title, model, system_prompt, tools, title_source) VALUES ($1, 'My own name', $2, '', '[]', 'person') RETURNING id)
+       INSERT INTO ai_turns (conversation_id, user_id, client_id, question) SELECT c.id, $1, $3, 'q' FROM c RETURNING conversation_id AS id, id AS turn`,
+      [admin.user.id, AI_MODEL, randomUUID()],
+    )
+    app.model.completeWith = () => 'Something else'
+    const kept = await giveConversationTitle({ db: app.db, model: app.model, apiKey: KEY, userId: admin.user.id, conversationId: rows[0].id, turnId: rows[0].turn, question: 'q' })
+    expect(kept).toBeNull()
+    expect(await sourceOf(rows[0].id)).toEqual({ title: 'My own name', title_source: 'person' })
+    // Renamed after the assistant named it: the person's name stands.
+    expect((await patch(rows[0].id, { title: 'Mine again' })).body.title).toBe('Mine again')
+    app.model.completeWith = () => {
+      throw new Error('unused')
+    }
+  })
+
+  it('takes the model’s reply as a title: one line, no quotes, label or full stop, at most 80 characters', () => {
+    expect(cleanTitle('Title: "Welding gaps on line 3".')).toBe('Welding gaps on line 3')
+    expect(cleanTitle('العنوان: «هالك ماكينة 58»\nسطر تاني')).toBe('هالك ماكينة 58')
+    expect(cleanTitle('**Order 4512 status**')).toBe('Order 4512 status')
+    expect(cleanTitle('   \n  ')).toBeNull()
+    expect(cleanTitle('“”')).toBeNull()
+    const long = cleanTitle('🔧'.repeat(100))!
+    expect(Array.from(long)).toHaveLength(80)
+    expect(long.endsWith('…')).toBe(true)
+    expect(titleRequest(`  a\n\nb ${'x'.repeat(2000)}`)).toHaveLength(1500)
   })
 })

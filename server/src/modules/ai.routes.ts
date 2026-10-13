@@ -149,6 +149,7 @@ import { aiOwner } from '../ai/owner'
 import { conversationTitle, conversationTools, factoryDay, questionContent, renderSystemPrompt } from '../ai/prompt'
 import { conversationTitleProblem, createGroup, groupNameProblem, listGroups, oneLine, removeGroup, renameGroup, updateConversation } from '../ai/conversationOrganize'
 import { searchConversations } from '../ai/conversationSearch'
+import { giveConversationTitle } from '../ai/conversationTitle'
 import { rangeProblem } from '../ai/reportTemplate'
 import {
   AI_REPORT_TITLE_CHARS,
@@ -204,6 +205,8 @@ import {
 const uuid = z.string().uuid()
 /** A query run again for Excel may take this long. */
 const EXPORT_QUERY_TIMEOUT_MS = 30_000
+/** How long a finished answer waits for its conversation's title before it closes without it. */
+const TITLE_WAIT_MS = 3_000
 /** Where the owner fixes what stops the assistant. */
 const SETTINGS_PAGE = 'Administration → AI assistant'
 
@@ -843,6 +846,16 @@ export function aiRoutes(ctx: AppContext): Router {
     }
     const sse = new SseStream(res)
     sse.open()
+    // A new conversation's title in a few words, asked beside the answer: kept whoever watches, and sent on this
+    // stream as soon as it is. Not stopped with the request, nor by Stop.
+    const titled =
+      body.conversationId || !body.message.trim()
+        ? null
+        : giveConversationTitle({ db, model: ctx.ai, apiKey: avail.app.apiKey, userId: user.id, conversationId: conversation.id, turnId, question: body.message })
+            .then((c) => {
+              if (c) sse.send({ type: 'title', conversation: c })
+            })
+            .catch((e) => console.warn(`[ai] conversation ${conversation.id}: the title could not be kept:`, e instanceof Error ? e.message : String(e)))
     const unsubscribe = run.subscribe((event) => sse.send(event))
     sse.send({ type: 'start', conversation: toConversation(conversation), userMessageId: started.questionId, turnId })
     // Left: the answer goes on, and the bell tells the asker when it is ready. Stay only to end the stream politely.
@@ -850,6 +863,8 @@ export function aiRoutes(ctx: AppContext): Router {
       const end = await Promise.race([run.done, left])
       if (end === 'left') return
       if (end.kind === 'done') {
+        // The title is in before the answer closes for this stream (it is far quicker), so the list read then has it.
+        if (titled) await Promise.race([titled, new Promise((done) => setTimeout(done, TITLE_WAIT_MS).unref())])
         const answer = (await loadDisplayMessages(db, conversation.id, turnId)).find((m) => m.role === 'assistant')!
         sse.send({ type: 'done', message: answer, status: await statusAfter(user.id) })
       } else if (end.kind === 'error') {

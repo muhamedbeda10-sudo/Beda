@@ -12,6 +12,7 @@ import { AI_MODEL } from '@qc/shared/ai'
 export type ModelParams = BetaMessageStreamParams
 export type ModelMessage = Anthropic.Beta.BetaMessage
 export type ModelStreamEvent = Anthropic.Beta.BetaRawMessageStreamEvent
+export type CompleteParams = Anthropic.Beta.MessageCreateParamsNonStreaming
 
 /** What the answer loop reads from one streamed call: the SDK's BetaMessageStream, as much of it as is used. */
 export interface ModelStream {
@@ -38,6 +39,8 @@ export type KeyCheck =
 
 export interface AiModelClient {
   stream(apiKey: string, params: ModelParams, options: { signal: AbortSignal }): ModelStream
+  /** One short call, not streamed, for the app's own small requests (a conversation's title): the whole message. */
+  complete(apiKey: string, params: CompleteParams, options: { signal: AbortSignal }): Promise<ModelMessage>
   /** Ask Anthropic whether the key works, before it is saved. */
   verifyKey(apiKey: string): Promise<KeyCheck>
   /**
@@ -50,6 +53,8 @@ export interface AiModelClient {
 
 /** How long checking a key may take. */
 const VERIFY_TIMEOUT_MS = 15_000
+/** How long one of the app's small calls may take. */
+const COMPLETE_TIMEOUT_MS = 20_000
 /** How long counting a file may take: Anthropic reads a whole PDF to count it. */
 const COUNT_TIMEOUT_MS = 60_000
 
@@ -80,6 +85,10 @@ export class AnthropicModelClient implements AiModelClient {
 
   stream(apiKey: string, params: ModelParams, options: { signal: AbortSignal }): ModelStream {
     return this.client(apiKey).beta.messages.stream(params, { signal: options.signal })
+  }
+
+  complete(apiKey: string, params: CompleteParams, options: { signal: AbortSignal }): Promise<ModelMessage> {
+    return this.client(apiKey).beta.messages.create(params, { signal: options.signal, timeout: COMPLETE_TIMEOUT_MS, maxRetries: 1 })
   }
 
   async countTokens(apiKey: string, params: { model: string; messages: Anthropic.Beta.BetaMessageParam[] }): Promise<number> {
