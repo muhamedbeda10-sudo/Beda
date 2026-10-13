@@ -82,8 +82,9 @@ describe('the alerts list', () => {
 })
 
 describe('what kind of alert it is', () => {
-  it('names an answer of the assistant that finished while its asker was away, and leads to its conversation', () => {
-    expect(ALERT_KIND_LABEL['ai-answer']).toBe('Assistant answer ready')
+  it('names an answer of the assistant that ended while its asker was away, and leads to its conversation', () => {
+    // Its title says whether it is ready or could not be finished; the kind says only where it comes from.
+    expect(ALERT_KIND_LABEL['ai-answer']).toBe('AI assistant')
     expect(alertTarget({ link: '/ai?c=c1' })).toBe('/ai?c=c1')
   })
 })

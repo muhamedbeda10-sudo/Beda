@@ -23,7 +23,7 @@ import { apiError, fallback, runSql, text, thinking, type FakeReply } from './ai
 import { ACCESS_NOTICE } from '../src/ai/access'
 import { KEY_REFUSED_MESSAGE, answerQuestion, toReplayContent } from '../src/ai/assistant'
 import { minCallWorstCaseUsd } from '../src/ai/models'
-import { MAX_STEPS_PER_ANSWER } from '../src/ai/prompt'
+import { MAX_STEPS_PER_ANSWER, WRAP_UP_STEPS } from '../src/ai/prompt'
 import { appendMessages, findConversation, finishTurn, loadReplay } from '../src/ai/transcript'
 
 // §20 — asking: the answer streams as Server-Sent Events while the model
@@ -835,6 +835,13 @@ describe('§20 the loop’s guards', () => {
     expect(res.done!.message.stopReason).toBe('limit')
     expect(res.done!.message.notice).toMatch(/more steps than one answer may take/)
     expect(res.done!.message.parts.filter((p) => p.type === 'query')).toHaveLength(MAX_STEPS_PER_ANSWER)
+    // With WRAP_UP_STEPS left it was told, once, after that step's results, to close.
+    const lastOf = (n: number) => JSON.stringify(app.model.calls[calls + n].params.messages.at(-1))
+    const toldAt = MAX_STEPS_PER_ANSWER - WRAP_UP_STEPS
+    expect(lastOf(toldAt - 1)).not.toContain('<wrap_up>')
+    expect(lastOf(toldAt)).toContain(`<wrap_up>This answer is close to its limits: ${WRAP_UP_STEPS} steps and about`)
+    const told = await app.db.query(`SELECT count(*)::int AS n FROM ai_messages WHERE turn_id = $1 AND kind = 'tool_results' AND content::text LIKE '%<wrap_up>%'`, [res.done!.message.turnId])
+    expect(told.rows).toEqual([{ n: 1 }])
   })
 
   it('asks again when the tool input could not be parsed at all, recording what the failed call used', async () => {
@@ -882,7 +889,7 @@ describe('§20 the loop’s guards', () => {
       deadlineMs: 500,
     })
     await finishTurn(app.db, turnId, outcome.stopReason, outcome.notice)
-    expect(outcome).toEqual({ stopReason: 'limit', notice: 'This answer took longer than 15 minutes and was stopped. Ask a narrower question.' })
+    expect(outcome).toEqual({ stopReason: 'limit', notice: 'This answer took longer than 30 minutes and was stopped. Ask a narrower question.' })
     // The query was cancelled at the deadline, not left to its own 30 s.
     expect(Date.now() - started).toBeLessThan(3000)
     expect(events.filter((e) => e.type === 'query_start')).toHaveLength(1)
@@ -896,6 +903,46 @@ describe('§20 the loop’s guards', () => {
       },
     ])
     expect(JSON.stringify(results.rows)).not.toContain('by the user')
+  })
+
+  it('tells an answer within the last fifth of its time to close, once, after a step that ran whole', async () => {
+    app.model.reply({ content: [text('Ready.')] })
+    const res = await ask('A conversation near its time')
+    const conversation = (await findConversation(app.db, res.conversationId, admin.user.id))!
+    const turn = await app.db.query<{ id: string }>(
+      `INSERT INTO ai_turns (conversation_id, user_id, client_id, question) VALUES ($1, $2, $3, 'Near the end') RETURNING id`,
+      [conversation.id, admin.user.id, randomUUID()],
+    )
+    const turnId = turn.rows[0].id
+    await appendMessages(app.db, conversation.id, turnId, [{ role: 'user', kind: 'question', content: [{ type: 'text', text: 'Near the end' }] }])
+    app.model.reply(
+      { content: [runSql('toolu_near_1', 'One', 'SELECT 1 AS one')] },
+      { content: [runSql('toolu_near_2', 'Two', 'SELECT 2 AS two')] },
+      { content: [text('Closed: one and two; nothing remains.')] },
+    )
+    const calls = app.model.calls.length
+    const outcome = await answerQuestion({
+      db: app.db,
+      readers: app.aiReader,
+      model: app.model,
+      apiKey: KEY,
+      config: app.config,
+      userId: admin.user.id,
+      conversation,
+      turnId,
+      messages: await loadReplay(app.db, conversation.id),
+      modelId: AI_MODEL,
+      effort: 'medium',
+      emit: () => undefined,
+      signal: new AbortController().signal,
+      // Five minutes left of the thirty: within the last fifth.
+      deadlineMs: 5 * 60_000,
+    })
+    await finishTurn(app.db, turnId, outcome.stopReason, outcome.notice)
+    expect(outcome).toEqual({ stopReason: 'end_turn', notice: null })
+    const lastOf = (n: number) => JSON.stringify(app.model.calls[calls + n].params.messages.at(-1))
+    expect(lastOf(1)).toMatch(/<wrap_up>This answer is close to its limits: \d+ steps and about [45] minutes are left\./)
+    expect(lastOf(2)).not.toContain('<wrap_up>')
   })
 
   it('a Stop the clock overtakes is still the asker’s', async () => {

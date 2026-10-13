@@ -66,7 +66,7 @@ import { isAttachmentRef, type AttachmentExpander, type StoredBlock, type Stored
 import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
 import { MAX_TOKENS, MAX_TOKENS_RETRY, modelRequest, systemBlocks, worstCaseUsd } from './models'
-import { MAX_STEPS_PER_ANSWER, RUN_SQL_TOOL_NAME, RunSqlInput } from './prompt'
+import { MAX_STEPS_PER_ANSWER, RUN_SQL_TOOL_NAME, RunSqlInput, TURN_DEADLINE_MINUTES, WRAP_UP_STEPS, WRAP_UP_TAG, WRAP_UP_TIME_SHARE } from './prompt'
 import { AI_QUERY_STOPPED, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
 import { appendMessages, insertQueries, queryPart, recordUsage, settleStep, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
 
@@ -80,7 +80,7 @@ const MAX_CALLS = MAX_STEPS_PER_ANSWER
 /** pause_turn continuations (server tools only; there are none, so this is a guard). */
 const MAX_CONTINUATIONS = 5
 /** Wall-clock time one question may take. */
-export const TURN_DEADLINE_MINUTES = 15
+export { TURN_DEADLINE_MINUTES }
 export const TURN_DEADLINE_MS = TURN_DEADLINE_MINUTES * 60_000
 /** Tool input the SDK could not parse at all: the call is made again, this many times. */
 const JSON_RETRIES = 2
@@ -191,6 +191,8 @@ export interface TurnControl {
   readonly calls: number
   readonly pauses: number
   readonly emptyRetried: boolean
+  /** It has been told to close already (WRAP_UP_TAG): once per answer. */
+  readonly wrappedUp: boolean
   /** Right before each call: counted. Null when the turn is no longer this instance's; stopRequested when Stop was pressed. */
   beforeCall(): Promise<{ calls: number; stopRequested: boolean } | null>
   /** A pause_turn, counted. */
@@ -352,14 +354,16 @@ export async function answerQuestion(qn: Question): Promise<Outcome> {
   const onAbort = () => ac.abort()
   if (qn.signal.aborted) ac.abort()
   qn.signal.addEventListener('abort', onAbort)
+  const deadlineMs = qn.deadlineMs ?? TURN_DEADLINE_MS
+  const deadlineAt = Date.now() + deadlineMs
   const deadline = setTimeout(() => {
     // The first to stop it is the cause: a Stop the clock overtakes stays the asker's.
     if (!ac.signal.aborted) overTime = true
     ac.abort()
-  }, qn.deadlineMs ?? TURN_DEADLINE_MS)
+  }, deadlineMs)
   deadline.unref()
   try {
-    return await loop(qn, ac.signal, () => (overTime ? 'time' : qn.signal.reason === HANDED_OVER ? 'handover' : 'user'))
+    return await loop(qn, ac.signal, () => (overTime ? 'time' : qn.signal.reason === HANDED_OVER ? 'handover' : 'user'), deadlineAt)
   } catch (e) {
     if (e instanceof TurnLost) return HANDED_OVER_OUTCOME
     throw e
@@ -392,7 +396,7 @@ async function wireParams(qn: Question, params: StoredParams): Promise<ModelPara
   return params as ModelParams
 }
 
-async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Promise<Outcome> {
+async function loop(qn: Question, signal: AbortSignal, cause: () => Cause, deadlineAt: number): Promise<Outcome> {
   const stopped = (): Outcome => {
     const c = cause()
     if (c === 'handover') return HANDED_OVER_OUTCOME
@@ -406,12 +410,21 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
   let jsonRetries = 0
   let streamRetries = 0
   let emptyRetries = qn.control?.emptyRetried ? EMPTY_RETRIES : 0
+  let wrappedUp = qn.control?.wrappedUp ?? false
+  /** The note telling the answer to close, when either limit is near and it has not been told yet; then it has. */
+  const wrapUp = (): string | null => {
+    const minutesLeft = Math.max(0, Math.floor((deadlineAt - Date.now()) / 60_000))
+    const stepsLeft = Math.max(0, MAX_CALLS - calls)
+    if (wrappedUp || (stepsLeft > WRAP_UP_STEPS && deadlineAt - Date.now() > TURN_DEADLINE_MS * WRAP_UP_TIME_SHARE)) return null
+    wrappedUp = true
+    return wrapUpNote(stepsLeft, minutesLeft)
+  }
 
   // A step cut short after it was stored: its tools run now, once each, and the answer goes on from its results.
   if (qn.pending) {
     const toolUses = qn.pending.content.filter((b): b is ToolUse => b.type === 'tool_use')
     const step = { id: qn.pending.messageId, param: { role: 'assistant' as const, content: qn.pending.content as StoredBlock[] } }
-    const done = await runStep(qn, step, toolUses, signal, cause)
+    const done = await runStep(qn, step, toolUses, signal, cause, wrapUp())
     if (done.outcome) return done.outcome
     messages.push(...done.stored)
   }
@@ -524,7 +537,7 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause): Prom
 
     // The step is stored before its tools run: cut short now, it is finished from here, not asked of the model again.
     const [step] = await store(qn, [{ ...answerMessage(), pending: true }])
-    const done = await runStep(qn, step, toolUses, signal, cause)
+    const done = await runStep(qn, step, toolUses, signal, cause, wrapUp())
     if (done.outcome) return done.outcome
     messages.push(...done.stored)
   }
@@ -541,6 +554,7 @@ async function runStep(
   toolUses: ToolUse[],
   signal: AbortSignal,
   cause: () => Cause,
+  note: string | null,
 ): Promise<{ stored: StoredMessage[]; outcome?: undefined } | { outcome: Outcome }> {
   const results: ToolResult[] = []
   const queries: QueryRecord[] = []
@@ -582,7 +596,10 @@ async function runStep(
   const stored = await withTransaction(qn.db, async (tx) => {
     await qn.control?.fence(tx)
     await settleStep(tx, step.id)
-    const appended = await appendMessages(tx, qn.conversation.id, qn.turnId, [{ role: 'user', kind: 'tool_results', content: results }])
+    // A note from the app, when there is one, after the results (the API wants the results first). Not on a step cut
+    // short: that answer ends here, and the note would only be replayed to later questions.
+    const content: StoredBlock[] = note && !signal.aborted ? [...results, { type: 'text', text: note }] : results
+    const appended = await appendMessages(tx, qn.conversation.id, qn.turnId, [{ role: 'user', kind: 'tool_results', content }])
     await insertQueries(tx, qn.conversation.id, qn.turnId, queries)
     for (const s of stores) await s(tx)
     return appended
@@ -590,6 +607,13 @@ async function runStep(
   // Kept whole, results included, so the conversation can go on should the owner give it back.
   if (withdrawn) return { outcome: { stopReason: 'stopped', notice: ACCESS_NOTICE.withdrawn } }
   return { stored: [step.param, ...stored.map((m) => m.param)] }
+}
+
+/** What the answer is told near its limits: in a tag the prompt names, so it reads as the app's, not as data. */
+export function wrapUpNote(stepsLeft: number, minutesLeft: number): string {
+  const steps = `${stepsLeft} ${stepsLeft === 1 ? 'step' : 'steps'}`
+  const minutes = minutesLeft < 1 ? 'less than a minute' : `about ${minutesLeft} ${minutesLeft === 1 ? 'minute' : 'minutes'}`
+  return `<${WRAP_UP_TAG}>This answer is close to its limits: ${steps} and ${minutes} are left. Start nothing new. Save with save_table what is worth keeping and not saved yet, then close the answer: what you found, what you checked, and what remains to be done, so the person can ask you to go on.</${WRAP_UP_TAG}>`
 }
 
 const notRun = (tu: ToolUse, why: string): ToolResult => ({ type: 'tool_result', tool_use_id: tu.id, is_error: true, content: why })

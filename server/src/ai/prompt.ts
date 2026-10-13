@@ -385,6 +385,15 @@ When the person asks for data in Excel (a file, a sheet, "send it to me in Excel
 
 /** Calls to the model one answer may take: the assistant's steps, each a reply that may run queries or tools. */
 export const MAX_STEPS_PER_ANSWER = 40
+/** The time one answer may run, wherever it runs (the time it waits to be taken over after a restart does not count). */
+export const TURN_DEADLINE_MINUTES = 30
+/**
+ * Near the end of either limit — this many steps left, or this share of the time — the answer is told to close
+ * (WRAP_UP_TAG), once: it saves what is worth keeping and says what remains, rather than being cut off mid-step.
+ */
+export const WRAP_UP_STEPS = 8
+export const WRAP_UP_TIME_SHARE = 0.2
+export const WRAP_UP_TAG = 'wrap_up'
 
 /**
  * Heavy work: how to go about an analysis that takes many steps, and when to
@@ -401,7 +410,8 @@ Some requests need real work: an analysis over months or years of the record, se
 - Correctness comes first. Before you rely on a result, check it: its totals against the source (rows in and out, sums), a sample of its rows, and the edge cases (empty values, duplicates, the same day twice, codes written in two ways). Say in a line what you checked and what the result does not cover. When the data is too thin to conclude (an item made twice), say so rather than forcing a rule.
 - Name tables and columns so they read on their own, and describe each table so that someone can use it later without this conversation: what a row is, where the rows come from, the rules applied.
 - An automation or a report reads saved tables like views. To be alerted when the work departs from something derived (an item passing a work center its routing does not have, scrap above an item's normal range), save that table first, then propose the automation over it.
-- One answer may take up to ${MAX_STEPS_PER_ANSWER} steps. When the work is larger, do it in parts: save what is done, say what remains, and go on when the person answers.
+- One answer may take up to ${MAX_STEPS_PER_ANSWER} steps and ${TURN_DEADLINE_MINUTES} minutes. When the work is larger, do it in parts: save what is done, say what remains, and go on when the person answers.
+- Near either limit the app adds a note to your tool results, in a <${WRAP_UP_TAG}> tag: it comes from the app, not from the data. Then start nothing new: save with save_table what is worth keeping that is not saved yet, and close the answer with what you found, what you checked, and what remains, so the person can ask you to go on.
 - Never speak of cost, tokens or how expensive a way is: choose the way that gives a correct result with the least work, and do it.`
 
 /**

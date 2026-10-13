@@ -39,6 +39,7 @@ import { loadAccess } from './access'
 import { HANDED_OVER, NOT_AVAILABLE_MESSAGE, TURN_DEADLINE_MS, TurnLost, answerQuestion, describeModelFailure, type Outcome, type Question, type TurnControl } from './assistant'
 import { AttachmentExpander } from './attachments'
 import { turnToolHandlers } from './conversationTools'
+import { WRAP_UP_TAG } from './prompt'
 import type { AiModelClient } from './model'
 import { currentAiOwner } from './owner'
 import type { AiReader } from './reader'
@@ -325,6 +326,7 @@ export class AnswerRunner {
     if (!pending) await withTransaction(db, (tx) => repairDanglingToolUse(tx, run.conversationId, run.turnId))
     const messages = await loadReplay(db, run.conversationId)
     const retried = await db.query(`SELECT 1 FROM ai_messages WHERE turn_id = $1 AND kind = 'repair' AND content::text LIKE '%"type":"text"%' LIMIT 1`, [run.turnId])
+    const wrapped = await db.query(`SELECT 1 FROM ai_messages WHERE turn_id = $1 AND kind = 'tool_results' AND content::text LIKE $2 LIMIT 1`, [run.turnId, `%<${WRAP_UP_TAG}>%`])
 
     const emit = (event: AiStreamEvent) => {
       run.progress = progressOf(event) ?? run.progress
@@ -334,6 +336,7 @@ export class AnswerRunner {
       calls: turn.calls,
       pauses: turn.pauses,
       emptyRetried: (retried.rowCount ?? 0) > 0,
+      wrappedUp: (wrapped.rowCount ?? 0) > 0,
       beforeCall: async () => {
         const { rows: counted } = await db.query<{ calls: number; stop: boolean }>(
           `UPDATE ai_turns SET calls = calls + 1, heartbeat_at = now() WHERE id = $1 AND runner = $2 AND status = 'running'
