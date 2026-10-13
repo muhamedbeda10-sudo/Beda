@@ -22,6 +22,8 @@ export interface NewNotification {
   automationId?: string
   followUpId?: string
   deliveryId?: string
+  /** A task it is about. */
+  taskId?: string
 }
 
 export const NOTIFICATION_RETENTION_DAYS = 90
@@ -37,6 +39,10 @@ const FALLBACK_TITLES: Record<UserNotificationKind, string> = {
   'follow-up-assigned': 'A follow-up was assigned to you',
   'follow-up-overdue': 'A follow-up is overdue',
   'follow-up-updated': 'A follow-up was updated',
+  'task-assigned': 'A task was sent to you',
+  'task-updated': 'A task was updated',
+  'task-done': 'A task was marked done',
+  'task-reopened': 'A task was sent back to you',
 }
 
 const KINDS = new Set(Object.keys(FALLBACK_TITLES))
@@ -60,7 +66,7 @@ export async function createNotifications(q: Queryable, userIds: string[], n: Ne
   if (!KINDS.has(n.kind)) throw new Error(`Unknown notification kind: ${String(n.kind)}`)
   if (!SEVERITIES.has(n.severity)) throw new Error(`Unknown notification severity: ${String(n.severity)}`)
   if (n.link !== null && !IN_APP_LINK.test(n.link)) throw new Error(`A notification links inside the app only: ${n.link}`)
-  for (const [field, id] of [['automationId', n.automationId], ['followUpId', n.followUpId], ['deliveryId', n.deliveryId]] as const) {
+  for (const [field, id] of [['automationId', n.automationId], ['followUpId', n.followUpId], ['deliveryId', n.deliveryId], ['taskId', n.taskId]] as const) {
     if (id !== undefined && !isUuid(id)) throw new Error(`A notification's ${field} must be a uuid: ${id}`)
   }
   const ids = distinctIds(userIds)
@@ -68,10 +74,10 @@ export async function createNotifications(q: Queryable, userIds: string[], n: Ne
   const title = clipText(n.title.replace(/\s+/g, ' ').trim(), NOTIFICATION_TITLE_MAX) || FALLBACK_TITLES[n.kind]
   const body = clipText(n.body.trim(), NOTIFICATION_BODY_MAX)
   const { rowCount } = await q.query(
-    `INSERT INTO user_notifications (user_id, kind, severity, title, body, link, automation_id, follow_up_id, delivery_id)
-     SELECT u.id, $2, $3, $4, $5, $6, $7, $8, $9 FROM users u
+    `INSERT INTO user_notifications (user_id, kind, severity, title, body, link, automation_id, follow_up_id, delivery_id, task_id)
+     SELECT u.id, $2, $3, $4, $5, $6, $7, $8, $9, $10 FROM users u
       WHERE u.id = ANY($1::uuid[]) AND ${LIVE_PERSON}`,
-    [ids, n.kind, n.severity, title, body, n.link, n.automationId ?? null, n.followUpId ?? null, n.deliveryId ?? null],
+    [ids, n.kind, n.severity, title, body, n.link, n.automationId ?? null, n.followUpId ?? null, n.deliveryId ?? null, n.taskId ?? null],
   )
   return rowCount ?? 0
 }
