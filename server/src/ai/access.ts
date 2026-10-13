@@ -6,9 +6,10 @@
 // call to the model and before every query, so a change the owner makes — or
 // an account being deactivated — takes effect at once.
 //
-// Two permissions on top, both the owner's to give: creating automations
-// (§21), and having the assistant write notices (§23) — the latter only ever
-// while the account is an administrator, its role read as it is now.
+// Three permissions on top, all the owner's to give: creating automations
+// (§21), having the assistant write notices (§23) — only ever while the
+// account is an administrator, its role read as it is now — and having it
+// make Excel files (§20).
 // ============================================================================
 
 import {
@@ -50,6 +51,8 @@ export interface AccessRecord {
   automations: boolean
   /** May have the assistant write notices (§23), while an administrator; the owner may whatever this says. */
   notices: boolean
+  /** May have the assistant make Excel files (§20); the owner may whatever this says. */
+  excel: boolean
   /** The account is active and not removed. */
   active: boolean
 }
@@ -63,6 +66,7 @@ interface AccessRow {
   monthlyCapUsd: number
   automations: boolean
   notices: boolean
+  excel: boolean
   active: boolean
 }
 
@@ -77,12 +81,13 @@ function toRecord(r: AccessRow): AccessRecord {
     monthlyCapUsd: Number(r.monthlyCapUsd),
     automations: r.automations,
     notices: r.notices,
+    excel: r.excel,
     active: r.active,
   }
 }
 
 const ACCESS_COLUMNS = `a.user_id AS "userId", a.enabled, a.domains, a.model, a.effort, a.monthly_cap_usd AS "monthlyCapUsd",
-       a.automations, a.notices, (u.is_active AND u.deleted_at IS NULL) AS active`
+       a.automations, a.notices, a.excel, (u.is_active AND u.deleted_at IS NULL) AS active`
 
 /** A person's row, or null when the owner never gave them the assistant. */
 export async function loadAccess(q: Queryable, userId: string): Promise<AccessRecord | null> {
@@ -99,6 +104,13 @@ export const isGranted = (a: AccessRecord | null): a is AccessRecord => !!a && a
  * access itself: a permission taken away stops the tools and the routes at once.
  */
 export const mayAutomate = (a: AccessRecord | null, owner: boolean): a is AccessRecord => isGranted(a) && (owner || a.automations)
+
+/**
+ * Whether the person may have the assistant make Excel files (§20): given
+ * the assistant, and its owner or allowed by the owner. Read again by the
+ * tool and by every download: a permission taken away stops both at once.
+ */
+export const mayMakeExcel = (a: AccessRecord | null, owner: boolean): a is AccessRecord => isGranted(a) && (owner || a.excel)
 
 /**
  * Whether the person may have the assistant write notices (§23): given the
@@ -152,6 +164,7 @@ export async function listAccess(q: Queryable, ownerId: string | null, userId?: 
       // The owner may create automations whatever their row says (§21), and write notices while an administrator (§23).
       automations: a.automations || a.userId === ownerId,
       notices: a.notices || a.userId === ownerId,
+      excel: a.excel || a.userId === ownerId,
       updatedAt: r.updatedAt,
     }
     if (r.updatedByName) out.updatedByName = r.updatedByName
@@ -185,13 +198,14 @@ function auditSnapshot(a: Omit<AccessRecord, 'userId' | 'active'>): Record<strin
     monthlyCapUsd: a.monthlyCapUsd.toFixed(2),
     automations: a.automations ? 'may create' : 'may not create',
     notices: a.notices ? 'may manage' : 'may not manage',
+    excel: a.excel ? 'may have made' : 'may not have made',
   }
 }
 
-/** The whole row in one line, for the audit entry of its creation or removal; the automations and notices permissions only when given. */
+/** The whole row in one line, for the audit entry of its creation or removal; the automations, notices and Excel permissions only when given. */
 const auditLine = (who: { name: string; username: string }, a: Omit<AccessRecord, 'userId' | 'active'>) => {
   const s = auditSnapshot(a)
-  return `${who.name} (${who.username}): ${s.enabled}; ${s.domains}; ${s.model}; ${s.effort}; $${s.monthlyCapUsd} a month${a.automations ? '; may create automations' : ''}${a.notices ? '; may manage notices' : ''}`
+  return `${who.name} (${who.username}): ${s.enabled}; ${s.domains}; ${s.model}; ${s.effort}; $${s.monthlyCapUsd} a month${a.automations ? '; may create automations' : ''}${a.notices ? '; may manage notices' : ''}${a.excel ? '; may have Excel files made' : ''}`
 }
 
 export interface Editor {
@@ -201,9 +215,9 @@ export interface Editor {
 
 /**
  * Create or change a person's row, in the caller's transaction, and audit
- * it: its creation in one line, a change field by field. The automations and
- * notices permissions left out of `next` stay as they are (off for a new
- * row). The notices permission is kept whatever the person's role: it takes
+ * it: its creation in one line, a change field by field. The automations,
+ * notices and Excel permissions left out of `next` stay as they are (off for
+ * a new row). The notices permission is kept whatever the person's role: it takes
  * effect only while they are an administrator (mayManageNotices).
  */
 export async function saveAccess(
@@ -219,12 +233,13 @@ export async function saveAccess(
   const ctx = { userId: by.id, userName: by.name, entity: 'AiAccess', entityId: person.id }
   const automations = next.automations ?? before.rows[0]?.automations ?? false
   const notices = next.notices ?? before.rows[0]?.notices ?? false
-  const wanted = { ...next, automations, notices }
-  const values = [person.id, next.enabled, next.domains, next.model, next.effort, next.monthlyCapUsd, by.id, by.name, automations, notices]
+  const excel = next.excel ?? before.rows[0]?.excel ?? false
+  const wanted = { ...next, automations, notices, excel }
+  const values = [person.id, next.enabled, next.domains, next.model, next.effort, next.monthlyCapUsd, by.id, by.name, automations, notices, excel]
   if (!before.rows[0]) {
     await tx.query(
-      `INSERT INTO ai_access (user_id, enabled, domains, model, effort, monthly_cap_usd, updated_by_id, updated_by_name, automations, notices)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `INSERT INTO ai_access (user_id, enabled, domains, model, effort, monthly_cap_usd, updated_by_id, updated_by_name, automations, notices, excel)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       values,
     )
     await writeAudit(tx, [auditEvent('create', ctx, new Date().toISOString(), { field: 'access', newValue: auditLine(person, wanted) })])
@@ -235,7 +250,7 @@ export async function saveAccess(
   if (changed === 0) return 'unchanged'
   await tx.query(
     `UPDATE ai_access SET enabled = $2, domains = $3, model = $4, effort = $5, monthly_cap_usd = $6, updated_by_id = $7, updated_by_name = $8,
-            automations = $9, notices = $10
+            automations = $9, notices = $10, excel = $11
       WHERE user_id = $1`,
     values,
   )

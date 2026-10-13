@@ -128,6 +128,17 @@ export function parseCSV(text: string): string[][] {
   return rows.filter((r) => r.some((c) => c.trim() !== ''))
 }
 
+/** Hands a file the API gave to the browser as a download, under `filename`. */
+export function saveBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  // Some browsers read the URL only after the click returns.
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 export function downloadText(filename: string, text: string, mime = 'text/csv') {
   const blob = new Blob([text], { type: mime })
   const url = URL.createObjectURL(blob)

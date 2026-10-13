@@ -113,7 +113,8 @@ describe('§23 reading notices: the tools and the prompt of a new conversation',
     for (const manager of [p.boss, p.owner]) {
       app.model.reply({ content: [text('Hi.')] })
       await ask(app, manager, 'Hello')
-      expect(toolNames(app).slice(-8, -4)).toEqual(['list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change'])
+      // The owner also has make_excel, at the end.
+      expect(toolNames(app).filter((t) => t !== 'make_excel').slice(-8, -4)).toEqual(['list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change'])
       const prompt = systemOf(app)
       expect(prompt).toContain('This person may also have you write notices')
       expect(prompt).toContain('Nothing changes until they press it. You cannot press it or see it pressed: never say that what a card does has happened')

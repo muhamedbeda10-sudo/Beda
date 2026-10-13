@@ -160,6 +160,7 @@ describe('§20 the owner gives the assistant, person by person', () => {
       owner: false,
       automations: false,
       notices: false,
+      excel: false,
       updatedAt: expect.any(String),
       updatedByName: 'Owner Admin',
     })

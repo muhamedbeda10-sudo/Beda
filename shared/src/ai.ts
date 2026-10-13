@@ -12,6 +12,7 @@ import type { ApiErrorCode } from './api'
 import type { AiAutomationPart } from './automation'
 import type { AiNoticePart } from './noticeAssistant'
 import type { AiPlaybookPart } from './playbook'
+import type { AiExcelPart } from './aiExcel'
 
 /** The model the assistant runs on. */
 export const AI_MODEL = 'claude-sonnet-5-5'
@@ -242,6 +243,8 @@ export interface AiAccess {
   automations: boolean
   /** May have the assistant add, change, withdraw and delete notices (§23). Takes effect only while the account is an administrator. */
   notices: boolean
+  /** May have the assistant make Excel files (§20); always true for the owner. */
+  excel: boolean
   updatedAt?: string
   updatedByName?: string
 }
@@ -260,6 +263,8 @@ export interface AiAccessRequest {
   automations?: boolean
   /** May manage notices through the assistant (§23), while an administrator. Absent: unchanged (false for a new row). */
   notices?: boolean
+  /** May have the assistant make Excel files (§20). Absent: unchanged (false for a new row). */
+  excel?: boolean
 }
 
 /** What anyone signed in learns about the assistant: no amounts, no models, no settings. */
@@ -495,9 +500,9 @@ export interface AiTaskProposalResponse {
 
 /**
  * An answer's pieces in order. An automation proposal (§21), a notice card (§23) and a task card are cards the person
- * applies or discards; a playbook card says what the assistant saved, with Remove.
+ * applies or discards; a playbook card says what the assistant saved, with Remove; an Excel card is a file to download.
  */
-export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart | AiNoticePart | AiTaskPart | AiPlaybookPart
+export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart | AiNoticePart | AiTaskPart | AiPlaybookPart | AiExcelPart
 
 /** How an answer ended. */
 export type AiStopReason =
@@ -569,6 +574,8 @@ export type AiStreamEvent =
   | { type: 'task'; part: AiTaskPart }
   /** A playbook card: an instruction or conclusion saved, changed or removed. */
   | { type: 'playbook'; part: AiPlaybookPart }
+  /** An Excel file the assistant made, ready to download. */
+  | { type: 'excel'; part: AiExcelPart }
   | { type: 'done'; message: AiMessage; status: AiStatusResponse }
   | { type: 'error'; code: ApiErrorCode; message: string }
 

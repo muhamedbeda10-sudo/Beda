@@ -66,7 +66,7 @@ import type {
   AiSettingsResponse,
   AiUsageResponse,
 } from '@qc/shared/ai'
-import { api, qs } from '@/lib/api'
+import { api, apiBlob, qs } from '@/lib/api'
 
 export const keys = {
   openBoard: ['sessions', 'open'] as const,
@@ -898,6 +898,11 @@ export function useAiUsage(month: string, enabled: boolean) {
 /** A query of an answer run again now, in full (up to AI_EXPORT_MAX_ROWS rows), for Excel. */
 export function loadAiQueryExport(queryId: string): Promise<AiQueryExportResponse> {
   return api<AiQueryExportResponse>(`/ai/queries/${encodeURIComponent(queryId)}/export`)
+}
+
+/** An Excel file the assistant made, as the server made and keeps it. */
+export function loadAiExcelFile(fileId: string): Promise<Blob> {
+  return apiBlob(`/ai/excel-files/${encodeURIComponent(fileId)}/download`)
 }
 
 /** How many reports a page of "My reports" holds. */

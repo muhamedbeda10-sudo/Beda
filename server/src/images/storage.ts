@@ -28,7 +28,7 @@ export interface ImageStorage {
   put(key: string, bytes: Buffer, contentType: string): Promise<void>
   /** Bytes for a stored key, or null when nothing is stored there. */
   get(key: string): Promise<StoredImage | null>
-  /** Remove bytes — only ever called to roll back a failed upload. */
+  /** Remove bytes — called to roll back a failed upload, and for the assistant's Excel files once their time is over. */
   remove(key: string): Promise<void>
 }
 

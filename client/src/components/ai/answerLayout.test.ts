@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AiQueryPart } from '@qc/shared/ai'
 import type { AiAutomationPart } from '@qc/shared/automation'
+import type { AiExcelPart } from '@qc/shared/aiExcel'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import { answerBlocks } from './answerLayout'
 import type { LivePart, PendingQuery } from './liveTurn'
@@ -10,8 +11,9 @@ const running = (id: string): PendingQuery => ({ type: 'pending-query', queryId:
 const t = (text: string): LivePart => ({ type: 'text', text })
 const a = (id: string): AiAutomationPart => ({ type: 'automation', proposalId: id, ok: true, state: 'proposed' })
 const n = (id: string): AiNoticePart => ({ type: 'notice', proposalId: id, ok: true, action: 'create', state: 'proposed' })
+const file = (id: string): AiExcelPart => ({ type: 'excel', fileId: id, fileName: 'Scrap', sheets: [{ name: 'Scrap', columns: ['Machine'], rows: 3 }], byteSize: 7000, expiresAt: '2026-11-12T08:30:00.000Z' })
 const NONE = new Set<string>()
-const shape = (blocks: ReturnType<typeof answerBlocks>) => blocks.map((b) => (b.kind === 'text' ? `text:${b.text}` : b.kind === 'figure' ? `figure:${b.queryId}` : b.kind === 'queries' ? `queries:${b.queries.map((x) => x.queryId).join(',')}` : b.kind === 'automation' ? `automation:${b.part.proposalId}` : b.kind === 'notice' ? `notice:${b.part.proposalId}` : 'kpis'))
+const shape = (blocks: ReturnType<typeof answerBlocks>) => blocks.map((b) => (b.kind === 'text' ? `text:${b.text}` : b.kind === 'figure' ? `figure:${b.queryId}` : b.kind === 'queries' ? `queries:${b.queries.map((x) => x.queryId).join(',')}` : b.kind === 'automation' ? `automation:${b.part.proposalId}` : b.kind === 'notice' ? `notice:${b.part.proposalId}` : b.kind === 'excel' ? `excel:${b.part.fileId}` : 'kpis'))
 
 describe('the layout of an answer', () => {
   it('reads in the order it comes while it is written: the queries as one open group where the first ran', () => {
@@ -62,5 +64,12 @@ describe('the layout of an answer', () => {
     expect(shape(answerBlocks(queried, { settled: false, kpis: false, charted: NONE }))).toEqual(['text:Checking the machines.', 'queries:q1', 'notice:n1'])
     expect(shape(answerBlocks(queried, { settled: true, kpis: false, charted: NONE }))).toEqual(['text:Checking the machines.', 'notice:n1', 'queries:q1'])
     expect(answerBlocks(parts, { settled: true, kpis: false, charted: NONE }).find((b) => b.kind === 'notice')?.key).toBe('notice:n1')
+  })
+
+  it('keeps an Excel file in its place among the text, written and settled, out of the queries', () => {
+    const parts = [t('Checking the scrap.'), q('q1'), file('f1'), t('The file has one sheet.')]
+    expect(shape(answerBlocks(parts, { settled: false, kpis: false, charted: NONE }))).toEqual(['text:Checking the scrap.', 'queries:q1', 'excel:f1', 'text:The file has one sheet.'])
+    expect(shape(answerBlocks(parts, { settled: true, kpis: false, charted: NONE }))).toEqual(['text:Checking the scrap.', 'excel:f1', 'text:The file has one sheet.', 'queries:q1'])
+    expect(answerBlocks(parts, { settled: true, kpis: false, charted: NONE }).find((b) => b.kind === 'excel')?.key).toBe('excel:f1')
   })
 })

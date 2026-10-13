@@ -20,6 +20,7 @@
     "@azure/storage-blob": "^12.26.0",
     "@qc/shared": "*",
     "cookie-parser": "^1.4.7",
+    "exceljs": "4.4.0",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",

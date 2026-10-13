@@ -87,6 +87,7 @@ import {
   type AiUsageResponse,
 } from '@qc/shared/ai'
 import { auditEvent } from '@qc/shared/audit'
+import { AI_EXCEL_KEEP_DAYS } from '@qc/shared/aiExcel'
 import type { AutomationActivateResponse, AutomationDiscardResponse } from '@qc/shared/automation'
 import type { AiNoticeApplyResponse, AiNoticeDiscardResponse } from '@qc/shared/noticeAssistant'
 import { PLAYBOOK_BASIS_MAX, PLAYBOOK_TEXT_MAX, type PlaybookEntry, type PlaybookResponse } from '@qc/shared/playbook'
@@ -101,6 +102,7 @@ import {
   listAccess,
   loadAccess,
   mayAutomate,
+  mayMakeExcel,
   mayManageNotices,
   personAvailability,
   removeAccess,
@@ -167,6 +169,7 @@ import { noticeManager, noticePromptMode } from '../noticeAssistant/scope'
 import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS, noticeToolHandlers } from '../noticeAssistant/tools'
 import { TASK_TOOLS, discardTaskProposal, sendTaskProposal, taskToolHandlers } from '../tasks/assistant'
 import { PLAYBOOK_TOOLS, playbookToolHandlers } from '../playbook/assistant'
+import { EXCEL_TOOLS, XLSX_CONTENT_TYPE, excelToolHandlers, findExcelFile, logExcelDownload } from '../ai/excel'
 import { addEntry, changeEntry, listPlaybook, mayUsePlaybook, promptPlaybook, removeEntry } from '../playbook/service'
 import {
   appendMessages,
@@ -228,6 +231,8 @@ const accessSchema = z
      * takes effect only while the account is an administrator (the owner's page greys it out for the others).
      */
     notices: z.boolean().optional(),
+    /** §20 — may have the assistant make Excel files; left out, unchanged (off for a new row). */
+    excel: z.boolean().optional(),
   })
   .strict()
 
@@ -320,6 +325,13 @@ const OWNER_PATHS = ['/status', '/settings', '/key', '/access', '/people', '/usa
 const noSuchEndpoint = () => new HttpError(404, 'not_found', 'No such endpoint.')
 /** What someone the owner has not given the assistant (or has stopped) gets from its routes. */
 const notGranted = () => new HttpError(403, 'forbidden', 'You do not have access to the assistant.')
+
+/** A download's Content-Disposition: the name as written (RFC 5987), and a plain one for clients that read only that. */
+function attachmentDisposition(name: string): string {
+  const plain = name.replace(/[^\x20-\x7e]/g, '').replace(/["\\]/g, '').trim()
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+  return `attachment; filename="${plain === '.xlsx' || plain === '' ? 'file.xlsx' : plain}"; filename*=UTF-8''${encoded}`
+}
 
 const LIMIT = {
   app: "The assistant's monthly limit is reached. It is available again on the 1st.",
@@ -604,8 +616,10 @@ export function aiRoutes(ctx: AppContext): Router {
     // the one this request was signed in with.
     const automations = avail.me.automations ? { id: user.id, name: user.name, role: user.role } : null
     const managesNotices = mayManageNotices(access, owner, user.role)
+    // Excel files, for the people the owner allows (and the owner).
+    const excel = mayMakeExcel(access, owner)
     const notices = noticePromptMode(user.role, managesNotices)
-    const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains, { automations, notices, tasks: true, playbook: await promptPlaybook(db, user.id, tz) })
+    const systemPrompt = body.conversationId ? null : renderSystemPrompt(tz, await describeAiSchema(db, access.domains), access.domains, { automations, notices, tasks: true, excel, playbook: await promptPlaybook(db, user.id, tz) })
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return
     const askedAt = new Date()
@@ -629,7 +643,7 @@ export function aiRoutes(ctx: AppContext): Router {
           title: conversationTitle(body.message || (await firstAttachmentName(tx, user.id, body.attachmentIds))),
           model: access.model,
           systemPrompt: systemPrompt!,
-          tools: conversationTools(automations ? AUTOMATION_TOOLS : null, managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS, [...TASK_TOOLS, ...PLAYBOOK_TOOLS]),
+          tools: conversationTools(automations ? AUTOMATION_TOOLS : null, managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS, [...TASK_TOOLS, ...PLAYBOOK_TOOLS, ...(excel ? EXCEL_TOOLS : [])]),
         })
       }
       // The model and effort the owner set for the person now: an earlier conversation goes on with them too.
@@ -701,6 +715,19 @@ export function aiRoutes(ctx: AppContext): Router {
           ...taskToolHandlers({ db, config: ctx.config, userId: user.id, userName: user.name, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
           // The playbook: changed at once, at the person's word; the owner alone sets instructions for everyone.
           ...playbookToolHandlers({ db, config: ctx.config, userId: user.id, userName: user.name, conversationId: conversation.id, turnId, emit: (event) => sse.send(event) }),
+          // Excel files: whether the person may still have them made, and their domains, read again; every request logged, made or not.
+          ...excelToolHandlers({
+            db,
+            config: ctx.config,
+            readers: ctx.aiReader,
+            store: ctx.images,
+            limiter: ctx.aiReportLimiter,
+            userId: user.id,
+            userName: user.name,
+            conversationId: conversation.id,
+            turnId,
+            emit: (event) => sse.send(event),
+          }),
         },
       })
       await finishTurn(db, turnId, outcome.stopReason, outcome.notice)
@@ -887,6 +914,33 @@ export function aiRoutes(ctx: AppContext): Router {
     if (!run.ok) throw badRequest(`The query could not be run again: ${run.code === '42501' ? 'you no longer have access to this data.' : run.error}`)
     const body: AiQueryExportResponse = { purpose: query.purpose, sql: query.sql, columns: run.columns, rows: exportRows(run), truncated: run.truncated, ranAt }
     res.json(body)
+  })
+
+  /**
+   * An Excel file the assistant made (make_excel): that very file, as it was
+   * made, for the person who asked, while it is kept (AI_EXCEL_KEEP_DAYS) and
+   * while they may still have Excel files made. Every download is logged.
+   */
+  r.get('/excel-files/:id/download', async (req, res) => {
+    const { user, access } = await aiUser(req)
+    if (!mayMakeExcel(access, (await ownerId()) === user.id)) throw new HttpError(403, 'forbidden', "The assistant's owner has not given you Excel files.")
+    const id = parse(uuid, req.params.id)
+    const file = await findExcelFile(db, user.id, id)
+    const gone = () => new HttpError(410, 'not_found', `This file is no longer kept (files are kept ${AI_EXCEL_KEEP_DAYS} days). Ask the assistant for it again.`)
+    if (file.expired) throw gone()
+    const stored = await ctx.images.get(file.storageKey)
+    if (!stored) throw gone()
+    await logExcelDownload(db, id, user.id)
+    res.setHeader('Content-Type', XLSX_CONTENT_TYPE)
+    res.setHeader('Content-Disposition', attachmentDisposition(`${file.fileName}.xlsx`))
+    res.setHeader('Cache-Control', 'private, no-store')
+    res.setHeader('Content-Length', String(stored.byteSize ?? file.byteSize))
+    stored.stream.on('error', (e) => {
+      console.error('[ai] an Excel file could not be read from storage', e)
+      if (!res.headersSent) res.status(500).end()
+      else res.destroy()
+    })
+    stored.stream.pipe(res)
   })
 
   // ---- The owner's: usage -----------------------------------------------------------------

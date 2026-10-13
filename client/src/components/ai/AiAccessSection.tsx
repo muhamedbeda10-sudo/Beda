@@ -2,18 +2,20 @@
 // §20 — Who can use it, on the owner's page: the people the owner gave the
 // assistant to, each with the data they may ask about, the model and effort
 // their questions use, and their own monthly cap against what they spent of
-// it this month, whether they may create automations (§21), and whether they
-// may have it write notices (§23: administrators only — the switch says so
-// for anyone else). Add a person (any active account, any role), change what
-// one has, or take it away.
+// it this month, whether they may create automations (§21), whether they may
+// have it write notices (§23: administrators only — the switch says so for
+// anyone else), and whether they may have it make Excel files (§20). Add a
+// person (any active account, any role), change what one has, or take it
+// away.
 // Nobody but the owner ever sees this: the server answers anyone else 404,
 // and the page is not even listed for them.
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { BellRing, Loader2, Pencil, Save, Trash2, UserPlus, UsersRound, Zap } from 'lucide-react'
+import { BellRing, FileSpreadsheet, Loader2, Pencil, Save, Trash2, UserPlus, UsersRound, Zap } from 'lucide-react'
 import { AI_DOMAINS, AI_EFFORTS, AI_MAX_MONTHLY_CAP_USD, AI_MODELS, type AiAccess } from '@qc/shared/ai'
+import { AI_EXCEL_KEEP_DAYS } from '@qc/shared/aiExcel'
 import { Badge, Button, Card, Drawer, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { ScrollX } from '@/components/ui/ScrollX'
 import { STICKY_TH, clickedControl } from '@/components/admin/MasterDataPanel'
@@ -53,6 +55,9 @@ import {
 import { Notice } from './AiNotice'
 import { AiSwitch } from './AiSwitch'
 import { formatCap, formatUsd, spendBarClass, spendShare } from './format'
+
+/** What the Excel permission lets someone do, in a line. */
+const EXCEL_TIP = 'May ask the assistant for Excel files of the data they may ask about'
 
 /** The same tones as the Users page: administrators stand out, supervisors a little. */
 const ROLE_TONE: Record<string, BadgeTone> = { viewer: 'neutral', inspector: 'neutral', supervisor: 'blue', admin: 'violet' }
@@ -138,7 +143,7 @@ export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; 
   }
   return (
     <ScrollX className="rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800" innerClassName="rounded-2xl" shadows="start">
-      <table className="table-sticky-last w-full min-w-[52rem] text-sm xl:min-w-[66rem]">
+      <table className="table-sticky-last w-full min-w-[58rem] text-sm xl:min-w-[72rem]">
         <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
           <tr>
             <th className={th}>Person</th>
@@ -146,6 +151,7 @@ export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; 
             <th className={th}>Access</th>
             <th className={th}>Automations</th>
             <th className={th}>Notices</th>
+            <th className={th}>Excel</th>
             <th className={th}>Data</th>
             <th className={cn(th, 'hidden xl:table-cell')}>Model</th>
             <th className={cn(th, 'hidden xl:table-cell')}>Effort</th>
@@ -238,6 +244,11 @@ function AccessCard({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => vo
           </Badge>
         )}
         {notices.key === 'held' && <span className="text-xs font-medium text-amber-700 dark:text-amber-300">Notices allowed, not in effect</span>}
+        {(row.owner || row.excel) && (
+          <Badge tone="blue" icon={<FileSpreadsheet className="h-3 w-3" />}>
+            Excel
+          </Badge>
+        )}
       </div>
       <div className="mt-2">
         <DomainBadges domains={domains} />
@@ -304,6 +315,15 @@ function AccessRow({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => voi
           <span className="text-xs text-muted" data-tip={notices.tip}>
             No
           </span>
+        )}
+      </td>
+      <td className="px-3 py-2.5">
+        {row.owner || row.excel ? (
+          <Badge tone="blue" icon={<FileSpreadsheet className="h-3 w-3" />} tip={row.owner ? 'You always can, as the assistant’s owner' : EXCEL_TIP}>
+            Can have made
+          </Badge>
+        ) : (
+          <span className="text-xs text-muted">No</span>
         )}
       </td>
       <td className="px-3 py-2.5">
@@ -507,6 +527,20 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
             </p>
           </div>
           <AiSwitch on={draft.automations} onChange={(on) => patch({ automations: on })} labelledBy="ai-access-automations" disabled={saving || !!row?.owner} />
+        </label>
+
+        <label className={SWITCH_ROW}>
+          <div className="min-w-0">
+            <p id="ai-access-excel" className="font-semibold">
+              Can have Excel files made
+            </p>
+            <p className="mt-0.5 text-xs text-muted">
+              {row?.owner
+                ? 'You always can, as the assistant’s owner.'
+                : `They may ask the assistant for Excel files of the data they may ask about, laid out their way. The server builds each file from the record (the assistant never sees its rows) and keeps it ${AI_EXCEL_KEEP_DAYS} days; every request and download is logged. Off: they can no longer have files made or download the ones made.`}
+            </p>
+          </div>
+          <AiSwitch on={draft.excel} onChange={(on) => patch({ excel: on })} labelledBy="ai-access-excel" disabled={saving || !!row?.owner} />
         </label>
 
         <label className={cn(SWITCH_ROW, !admin && 'bg-slate-50/70 dark:bg-slate-800/30')}>

@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.94',
+    date: '2026-10-13',
+    title: 'Excel files from the AI assistant',
+    items: [
+      { text: 'Ask the AI assistant for data in Excel, laid out your way: the columns, their order and headings, totals, a title and a line of notes, on one sheet or several (per machine, per month, a summary and its details). When the period or the place is not clear, it asks first.' },
+      { text: 'The file is made on the server from the record and comes as a card in the answer, with Download: a bold header frozen at the top with filters, real numbers, percentages and dates, totals that follow the filter, right to left for Arabic, and ready to print. The assistant never sees the rows.' },
+      { text: 'A sheet holds up to 50,000 rows; for more, the assistant asks you to narrow it. Files are kept 30 days.' },
+      { text: 'The assistant\'s owner decides who may have files made, person by person: "Can have Excel files made" in Who can use it, on the assistant\'s settings. Every request and every download is logged.' },
+    ],
+  },
+  {
     id: '2026-10-13.93',
     date: '2026-10-13',
     title: 'The AI assistant floats in the corner',

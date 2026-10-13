@@ -18,6 +18,7 @@ import { AiReader } from './ai/reader'
 import { aiOwner } from './ai/owner'
 import { AutomationEngine } from './automations/engine'
 import { PushDispatcher } from './push/dispatcher'
+import { ExcelFileSweeper } from './ai/excel'
 
 function readVersion(): string {
   try {
@@ -103,6 +104,11 @@ if (push) {
   console.log('[push] dispatcher started')
 }
 
+// §20 — Excel files the assistant made are kept 30 days: their bytes are taken
+// out of storage once their time is over, every hour (the log stays).
+const excelFiles = config.NODE_ENV !== 'test' ? new ExcelFileSweeper({ db, store: images }) : null
+excelFiles?.start()
+
 // App Service sends SIGTERM on restart/scale-in: stop accepting, finish
 // in-flight requests, then release the pools.
 function shutdown(signal: string) {
@@ -111,8 +117,9 @@ function shutdown(signal: string) {
   // way are cut short and handed back at once, so another instance takes them.
   const engineStopped = automations?.stop() ?? Promise.resolve()
   const pushStopped = push?.stop() ?? Promise.resolve()
+  const sweeperStopped = excelFiles?.stop() ?? Promise.resolve()
   server.close(() => {
-    Promise.allSettled([engineStopped, pushStopped])
+    Promise.allSettled([engineStopped, pushStopped, sweeperStopped])
       .then(() => Promise.allSettled([db.end(), aiReader.end()]))
       .finally(() => process.exit(0))
   })

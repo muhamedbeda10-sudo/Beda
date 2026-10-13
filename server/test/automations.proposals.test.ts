@@ -118,8 +118,8 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
     // Not strict: together with run_sql's, its alternatives compile to a grammar the API refuses as too large.
     expect(creator.params.tools![2]).not.toHaveProperty('strict')
     await ask(app, p.owner, 'Hello')
-    // The owner, an administrator, may also have notices written.
-    expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change', 'find_people', 'propose_task', 'my_tasks', 'update_playbook'])
+    // The owner, an administrator, may also have notices written, and always may have Excel files made.
+    expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'make_excel'])
 
     // Without automations the prompt is the one it always was, byte for byte; with them, one section more.
     const tz = app.config.FACTORY_TIMEZONE

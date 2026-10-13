@@ -141,6 +141,8 @@ export interface AccessDraft {
   automations: boolean
   /** §23 — may manage notices through the assistant, while an administrator (the owner always may, while one). */
   notices: boolean
+  /** §20 — may have the assistant make Excel files (the owner always may). */
+  excel: boolean
 }
 
 /** A newcomer's monthly cap: a fifth of the default app-wide cap, never above the app-wide cap set now. The owner raises it. */
@@ -156,7 +158,7 @@ export const AI_NEW_PERSON_CAP_USD = 10
 export function newAccessDraft(appCapUsd: number): AccessDraft {
   const model: AiModelId = 'claude-sonnet-5-5'
   const cap = Math.max(minCapUsd(model), Math.min(AI_NEW_PERSON_CAP_USD, appCapUsd))
-  return { enabled: true, domains: ['inspection'], model, effort: 'medium', cap: String(cap), automations: false, notices: false }
+  return { enabled: true, domains: ['inspection'], model, effort: 'medium', cap: String(cap), automations: false, notices: false, excel: false }
 }
 
 /** A person's access as it is saved, to edit. The owner's notices switch reads on while they are an administrator, as it then holds. */
@@ -169,6 +171,7 @@ export function draftFromAccess(a: AiAccess): AccessDraft {
     cap: String(a.monthlyCapUsd),
     automations: a.owner || a.automations,
     notices: a.notices || (a.owner && isAdministrator(a.role)),
+    excel: a.owner || a.excel,
   }
 }
 
@@ -184,7 +187,16 @@ export function checkAccessDraft(d: AccessDraft): string | null {
 
 /** The draft as the server takes it. Call checkAccessDraft first: an unreadable cap goes as 0. */
 export function accessRequest(d: AccessDraft): AiAccessRequest {
-  return { enabled: d.enabled, domains: orderDomains(d.domains), model: d.model, effort: d.effort, monthlyCapUsd: parseCapUsd(d.cap) ?? 0, automations: d.automations, notices: d.notices }
+  return {
+    enabled: d.enabled,
+    domains: orderDomains(d.domains),
+    model: d.model,
+    effort: d.effort,
+    monthlyCapUsd: parseCapUsd(d.cap) ?? 0,
+    automations: d.automations,
+    notices: d.notices,
+    excel: d.excel,
+  }
 }
 
 /** Whether the draft says anything other than the saved access. */
@@ -197,6 +209,7 @@ export function accessChanged(a: AiAccess, d: AccessDraft): boolean {
     saved.effort !== d.effort ||
     saved.automations !== d.automations ||
     saved.notices !== d.notices ||
+    saved.excel !== d.excel ||
     cap !== a.monthlyCapUsd ||
     saved.domains.join() !== orderDomains(d.domains).join()
   )

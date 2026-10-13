@@ -82,6 +82,8 @@ export type QueryFailure = 'rejected' | 'unavailable' | 'stopped' | 'timeout' | 
 export interface QueryRun {
   ok: boolean
   columns: string[]
+  /** Each column's PostgreSQL type (its OID), by position: known once the query ran. */
+  types?: number[]
   rows: AiCell[][]
   /** Not every matching row was kept: more than `maxRows` matched, or the rows kept reached `maxChars`. */
   truncated: boolean
@@ -495,6 +497,7 @@ export async function runReadOnlyQuery(pool: pg.Pool | null, rawSql: string, opt
     const batch = Math.max(1, Math.min(FETCH_ROWS_MAX, Math.floor(maxChars / wireLimit)))
     const rows: AiCell[][] = []
     let columns: string[] = []
+    let types: number[] = []
     let chars = 0
     let truncated = false
     while (!truncated) {
@@ -503,6 +506,7 @@ export async function runReadOnlyQuery(pool: pg.Pool | null, rawSql: string, opt
       const result = await client.query(fetch)
       // By position: two columns may share a name.
       columns = result.fields.map((f) => f.name)
+      types = result.fields.map((f) => f.dataTypeID)
       for (const read of result.rows as unknown[][]) {
         const row = read.map(toCell)
         chars += charsOf(row)
@@ -515,7 +519,7 @@ export async function runReadOnlyQuery(pool: pg.Pool | null, rawSql: string, opt
       // Fewer than asked for: the cursor has no more.
       if (result.rows.length < want) break
     }
-    return { ok: true, columns, rows, truncated, ms: Date.now() - started }
+    return { ok: true, columns, types, rows, truncated, ms: Date.now() - started }
   } catch (e) {
     if (interrupted !== null) return fail(interrupted)
     return fail(describeError(e, { timeoutMs: opts.timeoutMs, maxRowBytes }, at))
