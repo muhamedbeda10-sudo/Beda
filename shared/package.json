@@ -17,7 +17,8 @@
     "./automation": "./src/automation.ts",
     "./noticeAssistant": "./src/noticeAssistant.ts",
     "./productionImport": "./src/productionImport.ts",
-    "./tasks": "./src/tasks.ts"
+    "./tasks": "./src/tasks.ts",
+    "./playbook": "./src/playbook.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",

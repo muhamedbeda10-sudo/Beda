@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.7',
+    date: '2026-10-13',
+    title: 'The assistant remembers: your playbook',
+    items: [
+      { text: 'Tell the AI assistant how you want it to work, and it remembers: "from now on, give rates as % with last month beside them", "always answer in Arabic", "remember that machine 58 is the old welder". It follows them in every new conversation.' },
+      { text: 'Ask it to analyse the data and keep what you concluded: "keep this conclusion". It saves the conclusion with what it was drawn from (the data and the period), bears it in mind in later answers, and checks it against the data when an answer rests on it.' },
+      { text: 'Each thing it saves shows in the chat as a small card with Remove. The new Playbook page (the book icon at the top of the chat) lists your instructions and conclusions: add, change or remove them there too.' },
+      { text: "The assistant's owner can also set instructions for everyone from the Playbook page." },
+    ],
+  },
+  {
     id: '2026-10-13.6',
     date: '2026-10-13',
     title: 'The assistant drafts tasks for you',

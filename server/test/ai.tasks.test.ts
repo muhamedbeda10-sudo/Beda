@@ -98,8 +98,8 @@ describe('the tools and the prompt', () => {
   it('gives everyone given the assistant the task tools, loaded on demand, and says how to use them', async () => {
     app.model.reply({ content: [text('Hi.')] })
     await ask(app, p.plain, 'Hello')
-    expect(toolNames(app).slice(-3)).toEqual(['find_people', 'propose_task', 'my_tasks'])
-    for (const tool of app.model.calls[0].params.tools!.slice(-3)) expect(tool).toMatchObject({ defer_loading: true, eager_input_streaming: true })
+    expect(toolNames(app).slice(-4)).toEqual(['find_people', 'propose_task', 'my_tasks', 'update_playbook'])
+    for (const tool of app.model.calls[0].params.tools!.slice(-4, -1)) expect(tool).toMatchObject({ defer_loading: true, eager_input_streaming: true })
     const system = systemOf(app)
     expect(system).toContain('# Tasks')
     expect(system).toContain('never say a task was sent; say the card is ready')

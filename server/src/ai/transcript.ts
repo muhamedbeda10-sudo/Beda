@@ -11,7 +11,8 @@
 //     as it stands now: proposed, activated, discarded, or superseded by a
 //     newer version of it — §22) and of the notice cards it made (§23, each as
 //     it stands now too: proposed, applied, discarded, superseded or stale)
-//     and of the tasks it drafted (proposed, sent, discarded or superseded),
+//     and of the tasks it drafted (proposed, sent, discarded or superseded)
+//     and the playbook changes it made (each entry as it stands now),
 //     the blocks the model wrote for the app (its headline figures, its
 //     follow-up questions) taken out of the text and handed over on their
 //     own. Thinking and the tool plumbing stay out of sight.
@@ -22,6 +23,7 @@ import type { AiCell, AiChartSpec, AiConversation, AiKpi, AiMessage, AiPart, AiQ
 import type { Queryable } from '../db/pool'
 import { loadProposalParts } from '../automations/proposals'
 import { loadNoticeParts } from '../noticeAssistant/proposals'
+import { loadPlaybookParts } from '../playbook/parts'
 import { loadTaskParts } from '../tasks/proposals'
 import { loadTurnAttachments, type StoredBlock, type StoredMessage } from './attachments'
 import { stripBlocks } from './blocks'
@@ -336,6 +338,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
   const proposalByToolUse = await loadProposalParts(q, conversationId, turnId)
   const noticeByToolUse = await loadNoticeParts(q, conversationId, turnId)
   const taskByToolUse = await loadTaskParts(q, conversationId, turnId)
+  const playbookByToolUse = await loadPlaybookParts(q, conversationId, turnId)
   const attachmentsByTurn = await loadTurnAttachments(q, conversationId, turnId)
   const byTurn = new Map<string, MessageRow[]>()
   for (const m of messages.rows) {
@@ -369,10 +372,12 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
           const proposal = proposalByToolUse.get(block.id)
           const notice = noticeByToolUse.get(block.id)
           const task = taskByToolUse.get(block.id)
+          const playbook = playbookByToolUse.get(block.id)
           if (run) parts.push(queryPart(run))
           else if (proposal) parts.push(proposal)
           else if (notice) parts.push(notice)
           else if (task) parts.push(task)
+          else if (playbook) parts.push(playbook)
         }
       }
     }
