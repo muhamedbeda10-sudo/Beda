@@ -13,7 +13,7 @@
 // itself. Each field below carries the names the ERP gives its column.
 // ============================================================================
 
-import type { OrderImportField } from './orderImport'
+import { parseDay, type OrderImportField } from './orderImport'
 
 export type ProductionRecordField = OrderImportField
 
@@ -87,32 +87,13 @@ export function parseWeek(value: string | null | undefined): { week: number; yea
   return week >= 1 && week <= 53 ? { week, year: Number(m[2]) } : null
 }
 
-const isRealDay = (y: number, mo: number, d: number): boolean => {
-  const t = new Date(Date.UTC(y, mo - 1, d))
-  return t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d
-}
-const ymd = (y: number, mo: number, d: number): string => `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-
 /**
  * The day a record is for, as the export writes it: ISO ("2026-01-05", with
  * or without a time), or the day-first form Access and Excel write in Egypt
- * ("05/01/2026", "5-1-2026"). The day only; no time zone is applied.
+ * ("05/01/2026", "5-1-2026"). The day only; no time zone is applied. The
+ * order sheet reads its days the same way.
  */
-export function parseWorkDay(value: string | null | undefined): string | null {
-  if (!value) return null
-  const s = value.trim()
-  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ].*)?$/.exec(s)
-  if (m) {
-    const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
-    return isRealDay(y, mo, d) ? ymd(y, mo, d) : null
-  }
-  m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})(?:[T ].*)?$/.exec(s)
-  if (m) {
-    const [d, mo, y] = [Number(m[1]), Number(m[2]), Number(m[3])]
-    return isRealDay(y, mo, d) ? ymd(y, mo, d) : null
-  }
-  return null
-}
+export const parseWorkDay = parseDay
 
 /** The people on the machine that day, in their columns' order, blanks left out and a name once. */
 export function workersOf(names: readonly (string | null | undefined)[]): string[] {

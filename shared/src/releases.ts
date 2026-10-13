@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.100',
+    date: '2026-10-13',
+    title: 'The order sheet brings the ERP\'s other columns',
+    items: [
+      { text: 'Data import → Production orders now reads the whole of the ERP\'s Tasks sheet: besides the columns it already read, 42 more — due, refined and planned dates, the planning week, the ERP\'s remaining, cancelled, accepted and stock quantities, size and weight, painting area and powder, raw material, QC totals, shipping status and days, and delays. Import the same file again to fill them in on the lines already there.' },
+      { text: 'For these new columns the file is the truth: a cell left empty clears what was stored. An empty cell in the columns read before still leaves the stored value alone.' },
+      { text: 'Access has each of them under Columns, ready to filter and sort like the others; the planning week sorts by year, then week. The AI assistant can read them too, in the order lines.' },
+    ],
+  },
+  {
     id: '2026-10-13.99',
     date: '2026-10-13',
     title: 'Administration pages, tidied',

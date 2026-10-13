@@ -261,7 +261,11 @@ export function CsvImporter({ importer }: { importer: Importer }) {
         const col = mapping[f.key] ?? -1
         if (col < 0) continue
         const raw = (row[col] ?? '').trim()
-        if (raw === '') continue
+        if (raw === '') {
+          // Left out, the stored value stays; null clears it (the ERP removed it).
+          if (f.clearsWhenEmpty) values[f.key] = null
+          continue
+        }
         const cell = coerceCell(f, raw)
         if ('error' in cell) problems.push(cell.error)
         else values[f.key] = cell.value
@@ -583,7 +587,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
                           <div key={f.key} className="flex gap-2">
                             <dt className="w-[7rem] shrink-0 truncate text-xs leading-5 text-muted">{f.label}</dt>
                             <dd dir="auto" className="min-w-0 flex-1 break-words">
-                              {p.values[f.key] === undefined ? '—' : String(p.values[f.key])}
+                              {p.values[f.key] == null ? '—' : String(p.values[f.key])}
                             </dd>
                           </div>
                         ))}
@@ -615,7 +619,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
                           </td>
                           {mappedFields.map((f) => (
                             <td key={f.key} dir="auto" className="whitespace-nowrap px-3 py-2.5">
-                              {p.values[f.key] === undefined ? '—' : String(p.values[f.key])}
+                              {p.values[f.key] == null ? '—' : String(p.values[f.key])}
                             </td>
                           ))}
                         </tr>

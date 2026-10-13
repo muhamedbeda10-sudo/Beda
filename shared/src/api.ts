@@ -8,6 +8,7 @@
 // a sample together with its children, and so on).
 // ============================================================================
 
+import type { OrderLineErpDetails } from './orderImport'
 import type { DashboardLayouts, KpiThresholds } from './kpi'
 import type {
   ChatConversation,
@@ -1105,7 +1106,8 @@ export interface OrderListFilters {
 }
 
 /** One imported line with what the inspection record adds to it. */
-export interface OrderListRow extends ProductionOrder {
+/** A line of the Access list: the line, its ERP details (§7.7.1; a detail the ERP has no value for is absent), and what the inspection record adds. */
+export interface OrderListRow extends ProductionOrder, Partial<OrderLineErpDetails> {
   factory: string
   remainingQty: number
   sessions: number

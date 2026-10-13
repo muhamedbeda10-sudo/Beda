@@ -4,22 +4,25 @@
 // ============================================================================
 
 import { type ImportTarget } from '@/services/mutations'
-import { ORDER_IMPORT_FIELDS, deriveOrderValues, gradeFromMaterial, normaliseHeader } from '@qc/shared/orderImport'
+import {
+  ORDER_IMPORT_FIELDS,
+  deriveOrderValues,
+  gradeFromMaterial,
+  normaliseHeader,
+  readOrderCell,
+  type OrderCellValue,
+  type OrderImportField,
+} from '@qc/shared/orderImport'
 import { PRODUCTION_RECORD_FIELDS, PRODUCTION_RECORD_KEYS } from '@qc/shared/productionImport'
 
 export { gradeFromMaterial, normaliseHeader }
 
 
-export type CellValue = string | number
+/** A cell as sent; null only for a field that clears when empty (ImportField.clearsWhenEmpty). */
+export type CellValue = OrderCellValue
 
-export interface ImportField {
-  /** Also the CSV template header, and the name error messages use. */
-  key: string
-  label: string
-  kind: 'text' | 'number' | 'date'
-  aliases?: string[]
-  sample: string
-}
+/** One column an importer reads: the same shape the order sheet's shared fields have. */
+export type ImportField = OrderImportField
 
 export interface Importer {
   id: string
@@ -54,18 +57,11 @@ export function normaliseKeyPart(v: unknown): string {
 /**
  * A cell's value as the API receives it, or the reason it cannot be sent.
  * Numbers drop thousands separators; dates become ISO timestamps so the
- * server never has to guess a spreadsheet's date format.
+ * server never has to guess a spreadsheet's date format; days stay days
+ * (YYYY-MM-DD). The same reading the Access sync applies.
  */
 export function coerceCell(field: ImportField, raw: string): { value: CellValue } | { error: string } {
-  if (field.kind === 'number') {
-    const n = Number(raw.replace(/,/g, ''))
-    return Number.isFinite(n) ? { value: n } : { error: `${field.label} is not a number ("${raw}")` }
-  }
-  if (field.kind === 'date') {
-    const d = new Date(raw)
-    return Number.isNaN(d.getTime()) ? { error: `${field.label} is not a date ("${raw}")` } : { value: d.toISOString() }
-  }
-  return { value: raw }
+  return readOrderCell(field, raw)
 }
 
 export function csvCell(v: string): string {
@@ -76,7 +72,7 @@ export const ORDERS_IMPORTER: Importer = {
   id: 'orders',
   title: 'Production orders',
   description:
-    'One row per order line: an item on a machine under an order. Lines are matched and updated on the Order ID; the order number repeats across the lines of one order.',
+    "One row per order line: an item on a machine under an order. Lines are matched and updated on the Order ID; the order number repeats across the lines of one order. The ERP's further columns (due and planned dates, shipping, QC totals, delays…) are read too; for those an empty cell clears the stored value, while an empty cell in the main columns leaves it as it is.",
   target: 'orders',
   templateFile: 'production-orders-template.csv',
   businessKeys: ['lineKey'],
