@@ -17,6 +17,7 @@ import { Answer, BotMark, UserBubble } from './AiMessages'
 import { Notice } from './AiNotice'
 import { answerText, latestAnswerKey, liveAnnouncement, liveView, threadItems } from './liveTurn'
 import { noticeCardsWait } from './noticeProposal'
+import { taskCardsWait } from './taskProposal'
 import { AI_STARTER_QUESTIONS } from './suggestions'
 
 const NONE: AiMessage[] = []
@@ -48,6 +49,8 @@ export function AiThread({
   const announcement = live && live.conversationId === conversationId ? liveAnnouncement(live) : ''
   // §23 — the answer being written here drafted a notice card: the saved answers' cards wait for it to end.
   const noticesWait = noticeCardsWait(live, conversationId)
+  // The same for a task card.
+  const tasksWait = taskCardsWait(live, conversationId)
 
   // The question each answer replies to: the user message before it.
   const questions = useMemo(() => {
@@ -156,6 +159,7 @@ export function AiThread({
                     onSuggestion={onSuggestion}
                     onOpenReport={onOpenReport}
                     noticesWait={noticesWait}
+                    tasksWait={tasksWait}
                   />
                 )
               ) : item.kind === 'question' ? (

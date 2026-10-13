@@ -105,25 +105,25 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
     app.model.reply({ content: [text('Hello.')] }, { content: [text('Hello.')] }, { content: [text('Hello.')] })
     await ask(app, p.plain, 'Hello')
     const plain = lastCall()
-    // Everyone's new conversation reads notices (§23); the automations' tools come before those.
-    expect(toolsOf(plain)).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details'])
+    // Everyone's new conversation reads notices (§23) and drafts tasks; the automations' tools come before those.
+    expect(toolsOf(plain)).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks'])
     expect(systemOf(plain)).not.toContain('# Automations')
     await ask(app, p.creator, 'Hello')
     const creator = lastCall()
-    expect(toolsOf(creator)).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details'])
+    expect(toolsOf(creator)).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks'])
     expect(creator.params.tools![2]).toMatchObject({ eager_input_streaming: true, input_schema: { additionalProperties: false } })
     // Not strict: together with run_sql's, its alternatives compile to a grammar the API refuses as too large.
     expect(creator.params.tools![2]).not.toHaveProperty('strict')
     await ask(app, p.owner, 'Hello')
     // The owner, an administrator, may also have notices written.
-    expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change'])
+    expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change', 'find_people', 'propose_task', 'my_tasks'])
 
     // Without automations the prompt is the one it always was, byte for byte; with them, one section more.
     const tz = app.config.FACTORY_TIMEZONE
     const schema = await describeAiSchema(app.db, ['inspection'])
-    expect(systemOf(plain)).toBe(renderSystemPrompt(tz, schema, ['inspection'], { notices: 'reader' }))
+    expect(systemOf(plain)).toBe(renderSystemPrompt(tz, schema, ['inspection'], { notices: 'reader', tasks: true }))
     const asker = { id: p.creator.user.id, name: p.creator.user.name, role: p.creator.user.role }
-    const withSection = renderSystemPrompt(tz, schema, ['inspection'], { automations: asker, notices: 'reader' })
+    const withSection = renderSystemPrompt(tz, schema, ['inspection'], { automations: asker, notices: 'reader', tasks: true })
     expect(systemOf(creator)).toBe(withSection)
     const section = withSection.slice(withSection.indexOf('# Automations'), withSection.indexOf('# Read-only'))
     expect(section).toContain('Nothing runs until the person presses Activate')
@@ -180,18 +180,18 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
       // The earlier conversation goes on with the tools and prompt it began with, byte for byte.
       expect(JSON.stringify(lastCall().params.tools)).toBe(old.tools)
       expect(systemOf()).toBe(old.prompt)
-      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details'])
+      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks'])
       // A propose_automation call there is a tool it never had.
       app.model.reply({ content: [propose('toolu_old', watchDraft())] }, { content: [text('I cannot.')] })
       await ask(app, p.plain, 'Watch the machines', before.conversationId)
       expect(resultsOf()).toEqual([
-        { type: 'tool_result', tool_use_id: 'toolu_old', is_error: true, content: 'Unknown tool "propose_automation". The tools are "run_sql", "list_notices", "notice_details".' },
+        { type: 'tool_result', tool_use_id: 'toolu_old', is_error: true, content: 'Unknown tool "propose_automation". The tools are "run_sql", "list_notices", "notice_details", "find_people", "propose_task", "my_tasks".' },
       ])
       expect((await app.db.query(`SELECT 1 FROM ai_automation_proposals WHERE tool_use_id = 'toolu_old'`)).rowCount).toBe(0)
 
       app.model.reply({ content: [text('Hi again.')] })
       const fresh = await ask(app, p.plain, 'A new conversation')
-      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details'])
+      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks'])
       const freshStored = await stored(fresh.conversationId)
 
       // The permission withdrawn: the conversation keeps its tools, which now refuse; nothing is proposed or shown.
