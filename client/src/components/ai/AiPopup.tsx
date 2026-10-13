@@ -27,7 +27,7 @@ import { useAppNavigate } from './AiPanelHost'
 import { BotMark } from './AiMessages'
 import AiPanel from './AiPanel'
 import { AiWorkspace } from './AiWorkspace'
-import { AI_WORKSPACE_PATH } from './workspace'
+import { AI_WORKSPACE_PATH, workspaceConversationId } from './workspace'
 
 const AutomationsPage = lazy(() => import('@/pages/AutomationsPage').then((m) => ({ default: m.AutomationsPage })))
 const AutomationPage = lazy(() => import('@/pages/AutomationPage').then((m) => ({ default: m.AutomationPage })))
@@ -61,10 +61,21 @@ export default function AiPopup() {
 
 /** The conversation: the card's panel, or the workspace in the large window (a phone has the panel, its whole screen). */
 function AiHome() {
-  const { size, phone, enabled } = useAi()
+  const { size, phone, enabled, openConversation } = useAi()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const workspace = size === 'large' && !phone
+  // A conversation named in the address (/ai?c=<id>: a link, the bell, a phone notification): the workspace reads it
+  // itself; the card and a phone's panel open it here, once, and drop it from the address so it is not opened again.
+  const named = workspaceConversationId(location.search)
+  useEffect(() => {
+    if (!enabled || workspace || !named) return
+    openConversation(named)
+    navigate(AI_WORKSPACE_PATH, { replace: true })
+  }, [enabled, workspace, named, openConversation, navigate])
   // The owner without the assistant given to them has no conversation here: its settings instead (where they can give it).
   if (!enabled) return <Navigate to="/admin/ai" replace />
-  return size === 'large' && !phone ? <AiWorkspace /> : <AiPanel />
+  return workspace ? <AiWorkspace /> : <AiPanel />
 }
 
 /**
