@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.103',
+    date: '2026-10-13',
+    title: 'The dashboard, tidied',
+    items: [
+      { text: 'The filters are together at the top: the view and the period on the first row; By factory, Comparisons or Details with the factories beside them on the second, the page\'s buttons at its end. Every control on a row is the same height.' },
+      { text: 'The plant and its factories are one row of cards side by side on a wide screen, each the same size with its figures level with the next card\'s; on a phone they are one under another.' },
+    ],
+  },
+  {
     id: '2026-10-13.102',
     date: '2026-10-13',
     title: 'The assistant takes on bigger analyses, and keeps what it builds',

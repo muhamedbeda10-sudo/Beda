@@ -210,13 +210,13 @@ export function PeriodSlicer({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         {leading}
-        {/* The two dates share a line on a phone, the count of days under them below 400 px. */}
-        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5" role="group" aria-label="Period">
-          <input type="date" aria-label="First day of the period" value={value.from} max={today} onChange={(e) => typed('from', e.target.value)} className="input h-9 min-w-0 max-w-[9.25rem] flex-1 basis-[8.5rem] px-2 py-0 text-13 tabular-nums touch:h-11" />
+        {/* The two dates share a line on a phone, the count of days under them below 400 px; from a tablet up the count stays on their line. */}
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 sm:shrink-0 sm:flex-nowrap" role="group" aria-label="Period">
+          <input type="date" aria-label="First day of the period" value={value.from} max={today} onChange={(e) => typed('from', e.target.value)} className="input h-9 min-w-0 max-w-[9.25rem] flex-1 basis-[8.5rem] px-2 py-0 text-13 tabular-nums sm:w-[9.25rem] sm:flex-none touch:h-11" />
           <span className="text-muted" aria-hidden>
             –
           </span>
-          <input type="date" aria-label="Last day of the period" value={value.to} max={today} onChange={(e) => typed('to', e.target.value)} className="input h-9 min-w-0 max-w-[9.25rem] flex-1 basis-[8.5rem] px-2 py-0 text-13 tabular-nums touch:h-11" />
+          <input type="date" aria-label="Last day of the period" value={value.to} max={today} onChange={(e) => typed('to', e.target.value)} className="input h-9 min-w-0 max-w-[9.25rem] flex-1 basis-[8.5rem] px-2 py-0 text-13 tabular-nums sm:w-[9.25rem] sm:flex-none touch:h-11" />
           <span className="basis-full whitespace-nowrap text-xs font-semibold tabular-nums text-muted min-[400px]:basis-auto">
             {days} day{days === 1 ? '' : 's'}
           </span>

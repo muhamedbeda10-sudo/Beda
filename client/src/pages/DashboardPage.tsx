@@ -104,6 +104,8 @@ const DISPOSITION_CLASS: Record<Disposition, string> = {
 
 /** Narrower than 400 px: the smallest phones, where the page's switch takes its short words. */
 const NARROW_PHONE = 'not all and (min-width: 400px)'
+/** Wide enough for the plant and every factory side by side in one row. */
+const WIDE = '(min-width: 1280px)'
 /** From Tailwind's md (768 px): a filter row has room for every filter of a chart. */
 const TABLET = '(min-width: 768px)'
 
@@ -623,7 +625,7 @@ function monthTrend(rates: (number | null)[], labels: string[]): MonthTrend {
  * on the card, not only in the tooltip a finger never sees; the tooltip adds
  * the change in percentage points.
  */
-function TrendMark({ trend }: { trend: MonthTrend }) {
+function TrendMark({ trend, align = 'end' }: { trend: MonthTrend; align?: 'start' | 'end' }) {
   const { delta } = trend
   const up = delta !== null && delta > 0
   const flat = delta !== null && Math.abs(delta) < 0.005
@@ -633,7 +635,7 @@ function TrendMark({ trend }: { trend: MonthTrend }) {
       ? 'No earlier month to compare with'
       : `Relative change of the reject rate: ${pctStr(trend.last)} in ${trend.lastLabel} against ${pctStr(trend.before)} in ${trend.beforeLabel} (${delta > 0 ? '+' : delta < 0 ? '−' : ''}${Math.abs(delta).toFixed(2)}% relative, ${trend.last - trend.before >= 0 ? '+' : '−'}${Math.abs(trend.last - trend.before).toFixed(2)} pp)`
   return (
-    <span className="inline-flex min-w-0 shrink-0 flex-col items-end text-right" data-tip={tip}>
+    <span className={cn('inline-flex min-w-0 shrink-0 flex-col', align === 'end' ? 'items-end text-right' : 'items-start text-left')} data-tip={tip}>
       <span className={cn('inline-flex items-center gap-0.5 whitespace-nowrap text-xs font-semibold tabular-nums', delta === null ? 'text-muted' : flat ? 'text-muted' : up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}>
         {delta === null || flat ? <Minus className="h-3 w-3" /> : up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
         {delta === null ? '—' : flat ? 'flat' : `${Math.abs(delta).toFixed(2)}%`}
@@ -707,16 +709,18 @@ function ScopeNote({ leftOut }: { leftOut: { code: string; displayName: string }
 }
 
 /**
- * `strip`: one row of cards that swipes sideways — on the details, on a phone, where the analysis and its filters
- * come next rather than a screen further down.
+ * The plant and its factories: on a wide screen side by side in one row, divided between them, each card the same width
+ * and height, its parts at the same height as the next card's; on a phone one under another, the whole width; between
+ * the two, two or three a row. On paper a grid of three.
  */
-function GeneralOverview({ data, loading, error, leftOut, strip = false }: { data: KpiGeneral | null; loading: boolean; error: string | null; leftOut: { code: string; displayName: string }[]; strip?: boolean }) {
+function GeneralOverview({ data, loading, error, leftOut }: { data: KpiGeneral | null; loading: boolean; error: string | null; leftOut: { code: string; displayName: string }[] }) {
+  const wide = useMediaQuery(WIDE)
   if (error) return <Card className="border border-rose-200 p-4 text-sm text-rose-700 dark:border-rose-500/30 dark:text-rose-300">{error}</Card>
   if (!data) {
     return loading ? (
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {Array.from({ length: 4 }, (_, i) => (
-          <div key={i} className="skeleton h-28" />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 md:grid-cols-3 xl:grid-cols-6">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className={cn('skeleton h-36', i > 0 && 'max-sm:hidden')} />
         ))}
       </div>
     ) : null
@@ -730,10 +734,11 @@ function GeneralOverview({ data, loading, error, leftOut, strip = false }: { dat
     { key: '__plant', label: 'Whole plant', sub: `${num(data.totals.factories)} factories · ${num(data.totals.machines)} machines`, rate: data.totals.defectRatePct, months: data.months },
     ...[...data.factories].sort((a, b) => byName(a.factory, b.factory)).map((f) => ({ key: f.factory, label: f.factory, sub: Array.from(new Set(data.machines.filter((m) => m.factory === f.factory).map((m) => PROCESS_LABEL[m.process]))).join(' · ') || 'no process', rate: f.defectRatePct, months: f.months })),
   ]
-  // Two cards a row from a phone up, compact there; on a wide screen the row holds them all when it can, so no card is left alone on a row of its own.
-  const wide = cards.length === 3 ? 'lg:grid-cols-3' : cards.length >= 4 ? 'xl:grid-cols-4' : ''
-  const grid = (
-    <div className={strip ? 'flex snap-x gap-3 p-0.5' : cn('grid grid-cols-1 gap-3 min-[340px]:grid-cols-2 sm:gap-4', wide)}>
+  const row = (
+    <div
+      className={cn('grid gap-3 sm:gap-4', !wide && 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3', 'print:grid-cols-3 print:gap-3')}
+      style={wide ? { gridTemplateColumns: `repeat(${cards.length}, minmax(0, 1fr))` } : undefined}
+    >
       {cards.map((c) => {
         const tone = toneLowIsGood(c.rate, t.defectRateGreen, t.defectRateAmber)
         const trend = monthTrend(
@@ -741,34 +746,35 @@ function GeneralOverview({ data, loading, error, leftOut, strip = false }: { dat
           c.months.map((m) => monthLabel(m.month, false)),
         )
         return (
-          <Card key={c.key} className={cn('min-w-0 p-3 ring-1 sm:p-4', TONE_RING[tone], c.key === '__plant' && 'bg-slate-50 dark:bg-slate-800/40', strip && 'w-[11.5rem] shrink-0 snap-start')}>
-            <div className="min-w-0">
-              <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                <span className="min-w-0 break-words">{c.label}</span>
-                {c.key === '__plant' && <InfoTip text={`${about}\n\n${scopeWords}`} label="How these figures are counted" />}
-              </p>
-              <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted">
-                <span>{c.sub}</span>
-                {c.key === '__plant' && leftOut.length > 0 && (
-                  <Badge tone="amber" tip={scopeWords} className="h-[18px] px-1.5 text-[10px]">
-                    {leftOut.length} left out
-                  </Badge>
-                )}
-              </p>
+          // Every card has the same lines in the same order, each one line high, so they line up across the row.
+          <Card key={c.key} className={cn('flex min-w-0 flex-col p-3 ring-1 sm:p-4', TONE_RING[tone], c.key === '__plant' && 'bg-slate-50 dark:bg-slate-800/40')}>
+            <p className="flex h-5 min-w-0 items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+              <span className="min-w-0 truncate" title={c.label}>
+                {c.label}
+              </span>
+              {c.key === '__plant' && <InfoTip text={`${about}\n\n${scopeWords}`} label="How these figures are counted" />}
+              {c.key === '__plant' && leftOut.length > 0 && (
+                <Badge tone="amber" tip={scopeWords} className="ml-auto h-[18px] shrink-0 px-1.5 text-[10px] normal-case tracking-normal">
+                  {leftOut.length} left out
+                </Badge>
+              )}
+            </p>
+            <p className="truncate text-[11px] text-muted" title={c.sub}>
+              {c.sub}
+            </p>
+            <p className={cn('mt-2 whitespace-nowrap text-2xl font-extrabold tabular-nums tracking-tight', TONE_TEXT[tone])}>
+              {pctStr(c.rate)}
+              <span className="ml-1 text-[11px] font-semibold uppercase text-muted">reject</span>
+            </p>
+            <div className="mt-1 min-h-[2rem]">
+              <TrendMark trend={trend} align="start" />
             </div>
-            <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
-              <p className={cn('text-xl font-extrabold tabular-nums tracking-tight sm:text-2xl', TONE_TEXT[tone])}>
-                {pctStr(c.rate)}
-                <span className="ml-1 text-[11px] font-semibold uppercase text-muted">reject</span>
-              </p>
-              <TrendMark trend={trend} />
-            </div>
-            <div className="mt-1 flex flex-wrap items-end justify-between gap-x-2 gap-y-1">
-              <p className="text-xs text-muted">
+            <div className="mt-auto flex items-end justify-between gap-2 pt-2">
+              <p className="shrink-0 text-xs text-muted">
                 <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{ppmStr(c.rate)}</span> PPM
                 <span className="block text-[11px]">{period}</span>
               </p>
-              <Sparkline width={120} height={36} values={c.months.map((m) => m.defectRatePct)} svgClassName="h-auto w-full min-w-[4rem] max-w-[120px] flex-1 basis-16" className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
+              <Sparkline width={120} height={36} values={c.months.map((m) => m.defectRatePct)} svgClassName="h-auto w-full min-w-[3rem] max-w-[120px] flex-1" className={tone === 'red' ? 'stroke-rose-500' : tone === 'amber' ? 'stroke-amber-500' : tone === 'green' ? 'stroke-emerald-500' : 'stroke-brand-500'} />
             </div>
           </Card>
         )
@@ -777,7 +783,7 @@ function GeneralOverview({ data, loading, error, leftOut, strip = false }: { dat
   )
   return (
     <div className="space-y-4">
-      {strip ? <ScrollX label="The plant and its factories">{grid}</ScrollX> : grid}
+      {row}
       {/* On paper the explanation is printed; on screen it is behind the (i) on the first card. */}
       <p className="hidden text-xs text-muted print:block">{about}</p>
       <div className="hidden print:block">
@@ -801,27 +807,61 @@ interface ScopePicks {
 }
 const NO_PICKS: ScopePicks = { factories: [], processes: [], machines: {} }
 
+/** The factories (or processes) a pick can be made of, in order. */
+function scopeOptions(kind: 'factory' | 'process', general: KpiGeneral, factories: string[]): { key: string; label: string }[] {
+  return kind === 'factory'
+    ? Array.from(new Set([...factories, ...general.factories.map((f) => f.factory)])).sort(byName).map((f) => ({ key: f, label: f }))
+    : PROCESSES.map((p) => ({ key: p, label: PROCESS_LABEL[p] }))
+}
+
+/** What is chosen of them; none means all of them together. */
+const scopeChosen = (kind: 'factory' | 'process', picks: ScopePicks, options: { key: string }[]): string[] =>
+  (kind === 'factory' ? picks.factories : picks.processes).filter((k) => options.some((o) => o.key === k))
+
+/** The factory (or process) buttons of a pick: all of them, or several at once. On the page's second row, beside the switch. */
+function ScopeChips({ kind, general, factories, picks, setPicks }: { kind: 'factory' | 'process'; general: KpiGeneral; factories: string[]; picks: ScopePicks; setPicks: (next: ScopePicks | ((prev: ScopePicks) => ScopePicks)) => void }) {
+  const options = scopeOptions(kind, general, factories)
+  const chosen = scopeChosen(kind, picks, options)
+  const toggle = (key: string) =>
+    setPicks((prev) =>
+      kind === 'factory'
+        ? { ...prev, factories: prev.factories.includes(key) ? prev.factories.filter((k) => k !== key) : [...prev.factories, key] }
+        : { ...prev, processes: prev.processes.includes(key as Process) ? prev.processes.filter((k) => k !== key) : [...prev.processes, key as Process] },
+    )
+  const all = () => setPicks((prev) => (kind === 'factory' ? { ...prev, factories: [] } : { ...prev, processes: [] }))
+  const chip = (on: boolean) =>
+    cn(
+      'inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-13 font-semibold ring-1 transition-colors touch:h-11',
+      on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800',
+    )
+  if (options.length === 0) return <p className="text-sm text-muted">No {kind === 'factory' ? 'factory' : 'process'} in the machine register yet.</p>
+  return (
+    <div className="scrollbar-none flex min-w-0 items-center gap-1.5 max-sm:-mx-1 max-sm:overflow-x-auto max-sm:px-1 max-sm:py-0.5 sm:flex-wrap" role="group" aria-label={kind === 'factory' ? 'Factory: tap several to see them together' : 'Process: tap several to see them together'} data-tip="Tap several to see them together">
+      <button type="button" aria-pressed={chosen.length === 0} onClick={all} className={chip(chosen.length === 0)}>
+        {kind === 'factory' ? 'All factories' : 'All processes'}
+      </button>
+      {options.map((o) => {
+        const on = chosen.includes(o.key)
+        return (
+          <button key={o.key} type="button" aria-pressed={on} onClick={() => toggle(o.key)} className={chip(on)}>
+            {on && <Check className="h-3.5 w-3.5" />}
+            {o.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'factory' | 'process'; general: KpiGeneral; factories: string[]; t: KpiThresholds; picks: ScopePicks; setPicks: (next: ScopePicks | ((prev: ScopePicks) => ScopePicks)) => void }) {
   const navigate = useNavigate()
   /** The machines of the first-part widgets, several at once, kept on the device. */
   const [fpMachines, setFpMachines] = usePersistedState<string[]>('qc-dash:fp-machines', [])
-  const chosenFactories = picks.factories
-  const chosenProcesses = picks.processes
   const pickedByScope = picks.machines
-  const setChosenFactories = (f: (prev: string[]) => string[]) => setPicks((prev) => ({ ...prev, factories: f(prev.factories) }))
-  const setChosenProcesses = (f: (prev: Process[]) => Process[]) => setPicks((prev) => ({ ...prev, processes: f(prev.processes) }))
   const setPickedByScope = (f: (prev: Record<string, string[]>) => Record<string, string[]>) => setPicks((prev) => ({ ...prev, machines: f(prev.machines) }))
-  const options: { key: string; label: string }[] =
-    kind === 'factory'
-      ? Array.from(new Set([...factories, ...general.factories.map((f) => f.factory)])).sort(byName).map((f) => ({ key: f, label: f }))
-      : PROCESSES.map((p) => ({ key: p, label: PROCESS_LABEL[p] }))
-  // Several at once; none chosen means all of them together.
-  const chosen = (kind === 'factory' ? chosenFactories : chosenProcesses).filter((k) => options.some((o) => o.key === k))
-  const toggleScope = (key: string) => {
-    if (kind === 'factory') setChosenFactories((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
-    else setChosenProcesses((prev) => (prev.includes(key as Process) ? prev.filter((k) => k !== key) : [...prev, key as Process]))
-  }
-  const allScopes = () => (kind === 'factory' ? setChosenFactories(() => []) : setChosenProcesses(() => []))
+  const options = scopeOptions(kind, general, factories)
+  // Several at once, chosen on the page's second row (ScopeChips); none chosen means all of them together.
+  const chosen = scopeChosen(kind, picks, options)
   const inScope = (key: string) => chosen.length === 0 || chosen.includes(key)
   const scopeLabel = chosen.length === 0 ? (kind === 'factory' ? 'All factories' : 'All processes') : chosen.map((k) => options.find((o) => o.key === k)?.label ?? k).join(', ')
   const scopeKey = `${kind}:${[...chosen].sort().join('|') || '*'}`
@@ -877,34 +917,6 @@ function ScopeView({ kind, general, factories, t, picks, setPicks }: { kind: 'fa
   const detailTitle = picked.length ? `${picked.length === 1 ? 'Machine' : `${picked.length} machines`}: ${machines.filter((m) => picked.includes(m.workCenterCode)).map((m) => m.label).join(', ')}` : scopeLabel
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label={kind === 'factory' ? 'Factory' : 'Process'}>
-        <button
-          type="button"
-          aria-pressed={chosen.length === 0}
-          onClick={allScopes}
-          className={cn('min-h-[40px] rounded-xl px-3 text-sm font-semibold ring-1 transition-colors touch:min-h-[44px]', chosen.length === 0 ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
-        >
-          {kind === 'factory' ? 'All factories' : 'All processes'}
-        </button>
-        {options.map((o) => {
-          const on = chosen.includes(o.key)
-          return (
-            <button
-              key={o.key}
-              type="button"
-              aria-pressed={on}
-              onClick={() => toggleScope(o.key)}
-              className={cn('inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3 text-sm font-semibold ring-1 transition-colors touch:min-h-[44px]', on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800')}
-            >
-              {on && <Check className="h-3.5 w-3.5" />}
-              {o.label}
-            </button>
-          )
-        })}
-        <span className="text-xs text-muted">Tap several to see them together.</span>
-        {options.length === 0 && <p className="text-sm text-muted">No {kind === 'factory' ? 'factory' : 'process'} in the machine register yet.</p>}
-      </div>
-
       <Board
         page="general"
         className={cn('transition-opacity', isFetching && 'opacity-70')}
@@ -2561,6 +2573,44 @@ export function DashboardPage() {
     </div>
   )
 
+  // The page's actions: on the period's line on a phone and beside the inspector ranking; from a tablet up on the general page at the end of the second row, so the first holds the period whole.
+  const pageActions = (
+    <>
+      {data && (
+        <button
+          type="button"
+          onClick={() => setInsightsOpen(true)}
+          className={cn(
+            'relative grid h-9 w-9 place-items-center rounded-lg ring-1 transition-colors touch:h-11 touch:w-11',
+            attention > 0 ? 'bg-amber-50 text-amber-700 ring-amber-200 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30' : 'bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30',
+          )}
+          aria-label={`Insights, ${visibleInsights.length} ${visibleInsights.length === 1 ? 'note' : 'notes'}${hiddenInsights.length ? `, ${hiddenInsights.length} hidden` : ''}`}
+          data-tip="Insights: what the numbers say"
+        >
+          <Lightbulb className="h-4 w-4" />
+          <span className={cn('absolute -right-1.5 -top-1.5 grid min-w-[18px] place-items-center rounded-full px-1 text-[10px] font-bold leading-[18px] text-white ring-2 ring-white dark:ring-slate-900', attention > 0 ? 'bg-rose-600' : 'bg-emerald-600')}>
+            {attention > 0 ? attention : '✓'}
+          </span>
+        </button>
+      )}
+      {/* Offered where there is a grid to arrange: a stacked board (a phone, a tablet upright) has nothing to drag. */}
+      {canArrange && view === 'general' && !editingLayout && !stacked && (
+        <button type="button" onClick={startArranging} aria-label="Arrange the charts" data-tip="Arrange the charts" className="grid h-9 w-9 place-items-center rounded-lg text-muted ring-1 ring-slate-200 transition-colors hover:bg-white hover:text-slate-700 dark:ring-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
+          <LayoutDashboard className="h-4 w-4" />
+        </button>
+      )}
+      <button type="button" onClick={() => void refetch()} disabled={isFetching} aria-label="Refresh" data-tip="Refresh the figures" className="grid h-9 w-9 place-items-center rounded-lg text-muted ring-1 ring-slate-200 transition-colors hover:bg-white hover:text-slate-700 disabled:opacity-60 dark:ring-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
+        <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
+      </button>
+      <ExportMenu
+        items={[
+          { label: 'Excel workbook', onClick: exportExcel, disabled: !data, icon: <FileSpreadsheet className="h-4 w-4" /> },
+          { label: 'PDF (print)', onClick: () => window.print(), disabled: !data, icon: <Printer className="h-4 w-4" /> },
+        ]}
+      />
+    </>
+  )
+
   return (
     <BoardContext.Provider value={boardState}>
     <PeriodBadgeContext.Provider value={shortRange(range)}>
@@ -2599,6 +2649,7 @@ export function DashboardPage() {
             <>
               {canRank && (
                 <Segmented
+                  iconsWhenTight
                   label="Dashboard view"
                   value={view}
                   onChange={setView}
@@ -2611,42 +2662,7 @@ export function DashboardPage() {
               <InfoTip text={about} label="What this page reads" />
             </>
           }
-          trailing={
-            <>
-              {data && (
-                <button
-                  type="button"
-                  onClick={() => setInsightsOpen(true)}
-                  className={cn(
-                    'relative grid h-9 w-9 place-items-center rounded-lg ring-1 transition-colors touch:h-11 touch:w-11',
-                    attention > 0 ? 'bg-amber-50 text-amber-700 ring-amber-200 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30' : 'bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30',
-                  )}
-                  aria-label={`Insights, ${visibleInsights.length} ${visibleInsights.length === 1 ? 'note' : 'notes'}${hiddenInsights.length ? `, ${hiddenInsights.length} hidden` : ''}`}
-                  data-tip="Insights: what the numbers say"
-                >
-                  <Lightbulb className="h-4 w-4" />
-                  <span className={cn('absolute -right-1.5 -top-1.5 grid min-w-[18px] place-items-center rounded-full px-1 text-[10px] font-bold leading-[18px] text-white ring-2 ring-white dark:ring-slate-900', attention > 0 ? 'bg-rose-600' : 'bg-emerald-600')}>
-                    {attention > 0 ? attention : '✓'}
-                  </span>
-                </button>
-              )}
-              {/* Offered where there is a grid to arrange: a stacked board (a phone, a tablet upright) has nothing to drag. */}
-              {canArrange && view === 'general' && !editingLayout && !stacked && (
-                <button type="button" onClick={startArranging} aria-label="Arrange the charts" data-tip="Arrange the charts" className="grid h-9 w-9 place-items-center rounded-lg text-muted ring-1 ring-slate-200 transition-colors hover:bg-white hover:text-slate-700 dark:ring-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
-                  <LayoutDashboard className="h-4 w-4" />
-                </button>
-              )}
-              <button type="button" onClick={() => void refetch()} disabled={isFetching} aria-label="Refresh" data-tip="Refresh the figures" className="grid h-9 w-9 place-items-center rounded-lg text-muted ring-1 ring-slate-200 transition-colors hover:bg-white hover:text-slate-700 disabled:opacity-60 dark:ring-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
-                <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
-              </button>
-              <ExportMenu
-                items={[
-                  { label: 'Excel workbook', onClick: exportExcel, disabled: !data, icon: <FileSpreadsheet className="h-4 w-4" /> },
-                  { label: 'PDF (print)', onClick: () => window.print(), disabled: !data, icon: <Printer className="h-4 w-4" /> },
-                ]}
-              />
-            </>
-          }
+          trailing={phone || view !== 'general' ? pageActions : undefined}
         />
       </div>
       {canArrange && view === 'general' && editingLayout && (
@@ -2666,33 +2682,39 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* §15 — the general page: the plant and its factories on three figures, then one angle to read it from. */}
+      {/* §15 — the second row, under the period: on the general page the angle to read it from and, by factory, the
+          factories picked; at its end the page's actions (on a phone they stay on the period's line) and Reset, all one
+          height. Then the filters of the details, then the plant and its factories. */}
       {view === 'general' && (
-        <>
-          <GeneralOverview data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} leftOut={leftOut} strip={pick === 'details' && phone} />
-          {/* One row whatever the width: the switch (its short words on the smallest phones), and Reset at its end. */}
-          <div className="print-hidden flex items-center gap-2">
-            <Segmented
-              label="Read it"
-              value={pick}
-              onChange={setPick}
-              options={[
-                { value: 'factory', label: narrowPhone ? 'Factory' : 'By factory', icon: narrowPhone ? undefined : <Factory className="h-4 w-4" /> },
-                { value: 'process', label: narrowPhone ? 'Compare' : 'Comparisons', icon: narrowPhone ? undefined : <Layers className="h-4 w-4" /> },
-                { value: 'details', label: 'Details', icon: narrowPhone ? undefined : <LayoutGrid className="h-4 w-4" /> },
-              ]}
-            />
-            {pick === 'details' && <InfoTip text="The full analysis: the filters below narrow it." label="About the details" />}
-            <button type="button" onClick={resetAll} disabled={!anythingSet} aria-label="Reset all filters and picks" data-tip="Reset all filters and picks" className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-200/70 hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
+        <div className="print-hidden flex flex-wrap items-center gap-2">
+          <Segmented
+            label="Read it"
+            value={pick}
+            onChange={setPick}
+            options={[
+              { value: 'factory', label: narrowPhone ? 'Factory' : 'By factory', icon: narrowPhone ? undefined : <Factory className="h-4 w-4" /> },
+              { value: 'process', label: narrowPhone ? 'Compare' : 'Comparisons', icon: narrowPhone ? undefined : <Layers className="h-4 w-4" /> },
+              { value: 'details', label: 'Details', icon: narrowPhone ? undefined : <LayoutGrid className="h-4 w-4" /> },
+            ]}
+          />
+          {pick === 'details' && <InfoTip text="The full analysis: the filters below narrow it." label="About the details" />}
+          {general && pick === 'factory' && (
+            <>
+              <span aria-hidden className="mx-1 hidden h-6 w-px bg-slate-200 dark:bg-slate-700 sm:block" />
+              {/* On a phone the factories take a line of their own, under the switch. */}
+              <div className="order-last min-w-0 basis-full sm:order-none sm:basis-auto">
+                <ScopeChips kind="factory" general={general} factories={factories} picks={picks} setPicks={setPicks} />
+              </div>
+            </>
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {!phone && pageActions}
+            <button type="button" onClick={resetAll} disabled={!anythingSet} aria-label="Reset all filters and picks" data-tip="Reset all filters and picks" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted ring-1 ring-slate-200 transition-colors hover:bg-white hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent dark:ring-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-11 touch:w-11">
               <RotateCcw className="h-4 w-4" />
             </button>
           </div>
-          {general && pick === 'factory' && <ScopeView kind="factory" general={general} factories={factories} t={general.thresholds} picks={picks} setPicks={setPicks} />}
-          {/* The pick keeps its stored key, 'process', so a device that read By process opens on Comparisons. */}
-          {general && pick === 'process' && <ComparisonsView general={general} t={general.thresholds} />}
-        </>
+        </div>
       )}
-
 
       {/* Filters — for the details and the inspector ranking. On a phone a Filters button and a sheet holding them, the filters in force as chips under it. */}
       <Card className={cn('print-hidden space-y-3 p-4', !showDetails && 'hidden')}>
@@ -2726,6 +2748,16 @@ export function DashboardPage() {
       <Modal open={filtersOpen && phone} onClose={() => setFiltersOpen(false)} title="Filters" icon={<SlidersHorizontal className="h-5 w-5" />} footer={<Button variant="primary" onClick={() => setFiltersOpen(false)}>Done</Button>}>
         {filterFields}
       </Modal>
+
+      {/* §15 — the general page: the plant and its factories on three figures, then the angle picked above. */}
+      {view === 'general' && (
+        <>
+          <GeneralOverview data={general ?? null} loading={generalLoading} error={generalError instanceof ApiError ? generalError.message : generalError ? 'The general page could not be loaded.' : null} leftOut={leftOut} />
+          {general && pick === 'factory' && <ScopeView kind="factory" general={general} factories={factories} t={general.thresholds} picks={picks} setPicks={setPicks} />}
+          {/* The pick keeps its stored key, 'process', so a device that read By process opens on Comparisons. */}
+          {general && pick === 'process' && <ComparisonsView general={general} t={general.thresholds} />}
+        </>
+      )}
 
       {error && showDetails && (
         <Card className="border border-rose-200 p-4 text-sm text-rose-700 dark:border-rose-500/30 dark:text-rose-300">
