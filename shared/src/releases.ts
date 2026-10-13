@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.98',
+    date: '2026-10-13',
+    title: 'Activity: what each person asked the assistant, and what it cost',
+    items: [
+      { text: 'For the assistant\'s owner only: Administration > AI assistant now has Activity under Usage. It lists every question of the month word for word, newest first, with who asked it, when, the model, how many look-ups it ran and what its answer cost. A report saved from an answer is counted with it.' },
+      { text: 'Each scheduled report\'s summary is listed too, under its automation\'s name, with what it cost.' },
+      { text: 'Filter by person, by questions or scheduled reports, and by this month or the last. Press a row to read a long question in full; Load more shows older ones.' },
+    ],
+  },
+  {
     id: '2026-10-13.97',
     date: '2026-10-13',
     title: 'Print reports from the assistant',

@@ -64,6 +64,7 @@ describe('§20 who may see the settings', () => {
       ['PUT', '/api/ai/key', { apiKey: KEY }],
       ['DELETE', '/api/ai/key'],
       ['GET', '/api/ai/usage'],
+      ['GET', '/api/ai/activity'],
       ['GET', '/api/ai/access'],
       ['GET', '/api/ai/people'],
       ['PUT', `/api/ai/access/${id}`, { enabled: true, domains: ['inspection'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 }],

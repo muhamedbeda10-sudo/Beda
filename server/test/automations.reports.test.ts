@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
-import { aiCostUsd, type AiUsageResponse } from '@qc/shared/ai'
+import { aiCostUsd, type AiActivityResponse, type AiUsageResponse } from '@qc/shared/ai'
 import type { AutomationDelivery } from '@qc/shared/automation'
 import { TestApp, factoryDay } from './harness'
 import { apiError, text } from './aiFake'
@@ -281,6 +281,12 @@ describe('§21 what summaries cost: the owner’s page only', () => {
     expect(usage.body.byAutomation.find((a) => a.automationId === id)).toEqual({ automationId: id, name: 'Machine register', creatorName: 'Cara Creator', costUsd: cost, runs: 1 })
     expect(usage.body.byUser.find((u) => u.userId === p.creator.user.id)!.costUsd).toBeGreaterThanOrEqual(cost)
     for (const s of [p.creator, p.plain, p.admin2]) expect((await app.api('GET', `/api/ai/usage?month=${month}`, { token: s.token })).status, s.user.name).toBe(404)
+    // The owner's Activity lists the summary under its automation's name, as its creator's, with what it cost.
+    const activity = await app.api<AiActivityResponse>('GET', `/api/ai/activity?month=${month}&kind=automation`, { token: p.owner.token })
+    expect(activity.status).toBe(200)
+    expect(activity.body.items[0]).toMatchObject({ kind: 'automation', text: 'Machine register', userId: p.creator.user.id, userName: 'Cara Creator', costUsd: cost, models: ['claude-haiku-5-5'], lookups: 0, stopReason: null })
+    expect(activity.body.items.every((i) => i.kind === 'automation')).toBe(true)
+    for (const s of [p.creator, p.plain, p.admin2]) expect((await app.api('GET', `/api/ai/activity?month=${month}`, { token: s.token })).status, s.user.name).toBe(404)
     // Nor in the run's history or the delivery.
     const runs = await app.api<{ runs: Record<string, unknown>[] }>('GET', `/api/automations/${id}/runs`, { token: p.creator.token })
     expect(JSON.stringify(runs.body)).not.toMatch(/cost/i)

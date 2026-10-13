@@ -5,7 +5,7 @@
 // stored encrypted and never shown again), the switch and the app-wide
 // monthly cap, who may use it and with what, and what it cost by day, by
 // person and by automation (§21: scheduled reports' summaries), this month or
-// the last. Amounts live here alone: the chat and the Automations pages show
+// the last — and Activity: each question, word for word, and what it cost. Amounts live here alone: the chat and the Automations pages show
 // none, to anyone.
 // ============================================================================
 
@@ -16,6 +16,7 @@ import { AI_MAX_MONTHLY_CAP_USD, type AiKeyState, type AiSettingsResponse, type 
 import { AdminLayout } from '@/components/admin/AdminLayout'
 import { CAP_RANGE_TEXT, parseCapUsd } from '@/components/ai/access'
 import { AiAccessSection } from '@/components/ai/AiAccessSection'
+import { AiActivitySection } from '@/components/ai/AiActivitySection'
 import { useAi } from '@/components/ai/AiAssistantProvider'
 import { Notice, UnavailableNotice } from '@/components/ai/AiNotice'
 import { AiSwitch } from '@/components/ai/AiSwitch'
@@ -90,6 +91,8 @@ export function AiAssistantPage() {
         {owner && <AiAccessSection appCapUsd={data?.settings.monthlyCapUsd} />}
 
         <UsageSection enabled={owner} />
+
+        <AiActivitySection enabled={owner} />
       </div>
     </AdminLayout>
   )
