@@ -7,7 +7,7 @@ import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import { PROPOSAL_WAIT } from '@/components/automations/AutomationProposalCard'
 import { AppProvider } from '@/store/AppContext'
 import { AiAssistantProvider } from './AiAssistantProvider'
-import { Answer } from './AiMessages'
+import { Answer, UserBubble } from './AiMessages'
 import { startTurn, type LivePart, type LiveTurn } from './liveTurn'
 
 // A notice card asks the signed-in person's role (its link to the Notices page is an administrator's).
@@ -184,5 +184,36 @@ describe('a saved answer’s notice card while a later answer is written', () =>
   it('waits, Publish and Discard alike, when that answer drafted a notice card that may replace it', () => {
     expect(render({ message: drafted, noticesWait: true }).match(new RegExp(`disabled="" data-tip="${PROPOSAL_WAIT}"`, 'g'))).toHaveLength(2)
     expect(render({ message: drafted })).not.toContain(PROPOSAL_WAIT)
+  })
+})
+
+describe('a question with files', () => {
+  const drawn = (attachments: AiMessage['attachments'], text = 'What does this sheet say?') =>
+    renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <AppProvider>
+          <UserBubble text={text} attachments={attachments} />
+        </AppProvider>
+      </QueryClientProvider>,
+    )
+
+  it('shows photos as previews and other files as named chips, above the words', () => {
+    const html = drawn([
+      { id: 'a1', kind: 'image', name: 'sheet.jpg', byteSize: 400_000, tokens: 1800, width: 2000, height: 1500, thumbnailDataUrl: 'data:image/jpeg;base64,AAAA' },
+      { id: 'a2', kind: 'pdf', name: 'certificate.pdf', byteSize: 2_100_000, tokens: 9000 },
+      { id: 'a3', kind: 'sheet', name: 'orders.xlsx', byteSize: 3000, tokens: 900, summary: '40 rows × 6 columns' },
+    ])
+    expect(html).toContain('aria-label="Open the photo sheet.jpg"')
+    expect(html).toContain('src="data:image/jpeg;base64,AAAA"')
+    expect(html).toContain('certificate.pdf')
+    expect(html).toContain('2.0 MB')
+    expect(html).toContain('40 rows × 6 columns')
+    expect(html.indexOf('orders.xlsx')).toBeLessThan(html.indexOf('What does this sheet say?'))
+  })
+
+  it('shows files alone without an empty line of text', () => {
+    const html = drawn([{ id: 'a1', kind: 'pdf', name: 'report.pdf', byteSize: 1000, tokens: 500 }], '')
+    expect(html).toContain('report.pdf')
+    expect(html).not.toContain('whitespace-pre-wrap')
   })
 })

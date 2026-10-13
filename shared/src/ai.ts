@@ -27,6 +27,63 @@ export const AI_PREVIEW_ROWS = 200
 /** Rows an Excel export of a query takes at most. */
 export const AI_EXPORT_MAX_ROWS = 50_000
 
+// ---- Attachments ------------------------------------------------------------------
+//
+// A question may carry files for Claude to read: photos (handwritten sheets
+// too) and PDFs, sent as they are, and spreadsheets (.xlsx, .csv), read on the
+// device into text. Each is counted in tokens when it is attached, on the
+// model of the person attaching it, so the caps price it before it is sent.
+// A conversation sends its files again with every question (read from the
+// cache, at a tenth of the price), so it holds a bounded number of them.
+
+export type AiAttachmentKind = 'image' | 'pdf' | 'sheet'
+export const AI_ATTACHMENT_KINDS: readonly AiAttachmentKind[] = ['image', 'pdf', 'sheet']
+
+/** Files one question may carry. */
+export const AI_MAX_ATTACHMENTS_PER_QUESTION = 5
+/** Files one conversation may carry in all (Claude reads at most 20 large images in one request). */
+export const AI_MAX_ATTACHMENTS_PER_CONVERSATION = 20
+/** A photo's long edge as it is sent: the most Claude reads, which handwriting needs. */
+export const AI_IMAGE_LONG_EDGE = 2576
+/** A photo's bytes after it is prepared on the device. */
+export const AI_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+export const AI_MAX_PDF_BYTES = 15 * 1024 * 1024
+/** The bytes of photos and PDFs one conversation carries: each request must stay well under Anthropic's 32 MB. */
+export const AI_MAX_CONVERSATION_ATTACHMENT_BYTES = 18 * 1024 * 1024
+/** A spreadsheet's text as Claude reads it. */
+export const AI_MAX_SHEET_CHARS = 300_000
+/** What one file may take of Claude's reading, in tokens (a PDF of roughly 60 pages and more is over it). */
+export const AI_MAX_ATTACHMENT_TOKENS = 200_000
+/** What the files of one conversation may take together. */
+export const AI_MAX_CONVERSATION_ATTACHMENT_TOKENS = 400_000
+
+/** A file attached to a question, as the app shows it. */
+export interface AiAttachment {
+  id: string
+  kind: AiAttachmentKind
+  /** The file's name as it was picked. */
+  name: string
+  byteSize: number
+  /** What Claude reads of it, as counted when it was attached. */
+  tokens: number
+  /** A photo's size in pixels, as sent. */
+  width?: number
+  height?: number
+  /** A photo's small preview (a JPEG data URL). */
+  thumbnailDataUrl?: string
+  /** A spreadsheet's outline: its sheets, rows and columns. */
+  summary?: string
+}
+
+/** A spreadsheet read on the device, to attach. */
+export interface AiSheetAttachmentRequest {
+  name: string
+  /** The sheets as text, as Claude will read them. */
+  text: string
+  /** Its sheets, rows and columns in a line, shown on its chip. */
+  summary: string
+}
+
 /** USD per million tokens, by model, as Anthropic bills them. */
 export interface AiPrice {
   input: number
@@ -366,6 +423,8 @@ export interface AiMessage {
   kpis?: AiKpi[]
   /** The report this answer was saved as, when it was. */
   savedReportId?: string
+  /** A question's files, in the order they were attached. */
+  attachments?: AiAttachment[]
 }
 
 export interface AiMessagesResponse {
@@ -376,9 +435,12 @@ export interface AiMessagesResponse {
 export interface AiChatRequest {
   /** Absent: a new conversation. */
   conversationId?: string
+  /** The question; may be empty when it carries files. */
   message: string
   /** The sender's key for this send: sent twice, it is asked once. */
   clientId: string
+  /** Files attached for this question (POST /ai/attachments), in order. */
+  attachmentIds?: string[]
 }
 
 /** The answer as it is written: one JSON object per Server-Sent Event, its `type` the event name. */

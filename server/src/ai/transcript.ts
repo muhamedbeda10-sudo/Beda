@@ -21,11 +21,10 @@ import type { AiCell, AiChartSpec, AiConversation, AiKpi, AiMessage, AiPart, AiQ
 import type { Queryable } from '../db/pool'
 import { loadProposalParts } from '../automations/proposals'
 import { loadNoticeParts } from '../noticeAssistant/proposals'
+import { loadTurnAttachments, type StoredBlock, type StoredMessage } from './attachments'
 import { stripBlocks } from './blocks'
 import { KPIS_BLOCK, parseKpis } from './kpis'
 import { SUGGESTIONS_BLOCK, parseSuggestions } from './suggestions'
-
-type MessageParam = Anthropic.Beta.BetaMessageParam
 
 // ---- Conversations -------------------------------------------------------------
 
@@ -78,8 +77,8 @@ export async function listConversations(q: Queryable, userId: string, before: st
 export interface NewMessage {
   role: 'user' | 'assistant'
   kind: 'question' | 'assistant' | 'tool_results' | 'repair'
-  /** Exactly what is sent to the model for this message. */
-  content: Anthropic.Beta.BetaContentBlockParam[]
+  /** Exactly what is sent to the model for this message; a question's files by reference (attachments.ts). */
+  content: StoredBlock[]
   /** The answer as received, when what is replayed differs from it. */
   rawContent?: Anthropic.Beta.BetaContentBlock[]
   /** False: kept for display only (a refused answer), never sent again. */
@@ -92,10 +91,10 @@ export interface NewMessage {
  * each message as it will be replayed — read back from its stored JSON, so
  * what the loop sends next is what a later request will send.
  */
-export async function appendMessages(q: Queryable, conversationId: string, turnId: string, messages: NewMessage[]): Promise<{ id: string; param: MessageParam }[]> {
+export async function appendMessages(q: Queryable, conversationId: string, turnId: string, messages: NewMessage[]): Promise<{ id: string; param: StoredMessage }[]> {
   const { rows } = await q.query<{ next: number }>(`SELECT COALESCE(max(seq), 0) + 1 AS next FROM ai_messages WHERE conversation_id = $1`, [conversationId])
   let seq = rows[0].next
-  const out: { id: string; param: MessageParam }[] = []
+  const out: { id: string; param: StoredMessage }[] = []
   for (const m of messages) {
     const content = JSON.stringify(m.content)
     const { rows: inserted } = await q.query<{ id: string }>(
@@ -103,15 +102,15 @@ export async function appendMessages(q: Queryable, conversationId: string, turnI
        VALUES ($1, $2, $3, $4, $5, $6::json, $7::json, $8, $9) RETURNING id`,
       [conversationId, turnId, seq++, m.role, m.kind, content, m.rawContent ? JSON.stringify(m.rawContent) : null, m.inReplay ?? true, m.model ?? null],
     )
-    out.push({ id: inserted[0].id, param: { role: m.role, content: JSON.parse(content) as Anthropic.Beta.BetaContentBlockParam[] } })
+    out.push({ id: inserted[0].id, param: { role: m.role, content: JSON.parse(content) as StoredBlock[] } })
   }
   await q.query(`UPDATE ai_conversations SET last_message_at = now() WHERE id = $1`, [conversationId])
   return out
 }
 
-/** Everything the next request sends before its own question, oldest first. */
-export async function loadReplay(q: Queryable, conversationId: string): Promise<MessageParam[]> {
-  const { rows } = await q.query<{ role: 'user' | 'assistant'; content: Anthropic.Beta.BetaContentBlockParam[] }>(
+/** Everything the next request sends before its own question, oldest first; files by reference. */
+export async function loadReplay(q: Queryable, conversationId: string): Promise<StoredMessage[]> {
+  const { rows } = await q.query<{ role: 'user' | 'assistant'; content: StoredBlock[] }>(
     `SELECT role, content FROM ai_messages WHERE conversation_id = $1 AND in_replay ORDER BY seq`,
     [conversationId],
   )
@@ -125,7 +124,7 @@ export async function loadReplay(q: Queryable, conversationId: string): Promise<
  * appended, never by editing what is there.
  */
 export async function repairDanglingToolUse(q: Queryable, conversationId: string, turnId: string): Promise<boolean> {
-  const { rows } = await q.query<{ role: string; content: Anthropic.Beta.BetaContentBlockParam[] }>(
+  const { rows } = await q.query<{ role: string; content: StoredBlock[] }>(
     `SELECT role, content FROM ai_messages WHERE conversation_id = $1 AND in_replay ORDER BY seq DESC LIMIT 1`,
     [conversationId],
   )
@@ -334,6 +333,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
   const queryByToolUse = new Map(queries.rows.map((r) => [r.toolUseId, r]))
   const proposalByToolUse = await loadProposalParts(q, conversationId, turnId)
   const noticeByToolUse = await loadNoticeParts(q, conversationId, turnId)
+  const attachmentsByTurn = await loadTurnAttachments(q, conversationId, turnId)
   const byTurn = new Map<string, MessageRow[]>()
   for (const m of messages.rows) {
     const list = byTurn.get(m.turnId)
@@ -345,7 +345,10 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
   for (const t of turns.rows) {
     const rows = byTurn.get(t.id) ?? []
     const question = rows.find((m) => m.kind === 'question')
-    out.push({ id: question?.id ?? `${t.id}:q`, role: 'user', parts: [{ type: 'text', text: t.question }], createdAt: question?.createdAt ?? t.createdAt, turnId: t.id })
+    const asked: AiMessage = { id: question?.id ?? `${t.id}:q`, role: 'user', parts: [{ type: 'text', text: t.question }], createdAt: question?.createdAt ?? t.createdAt, turnId: t.id }
+    const files = attachmentsByTurn.get(t.id)
+    if (files) asked.attachments = files
+    out.push(asked)
 
     const parts: AiPart[] = []
     let lastAt: string | null = null

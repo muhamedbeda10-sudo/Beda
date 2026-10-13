@@ -21,18 +21,25 @@
 // Another page may start a new conversation with the question box filled in
 // (compose: §21's "Edit in chat" on the Automations page), for the person to
 // finish and send.
+//
+// Files attached to the next question (photos, PDFs, spreadsheets) are kept
+// here with the draft: each is uploaded as soon as it is picked, and the
+// question takes them once every one is kept. A question refused before its
+// answer began gives them back to the box.
 // ============================================================================
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import type { AiChatRequest, AiConversation, AiMessage, AiMessagesResponse } from '@qc/shared/ai'
+import type { AiAttachment, AiChatRequest, AiConversation, AiMessage, AiMessagesResponse } from '@qc/shared/ai'
 import { ApiError, apiStream } from '@/lib/api'
+import { AttachRejected, attachFile, detachFile } from '@/services/aiAttachments'
 import { useMediaQuery } from '@/lib/media'
 import { readSse } from '@/lib/sse'
 import { newSubmissionId } from '@/lib/utils'
 import { keys, useAiMe } from '@/services/queries'
 import { revisedProposalId, supersedeAutomationPart } from '@/components/automations/wording'
+import { pickedKind, readyIds, type PendingAttachment } from './attachments'
 import { hasOpenNoticeCard } from './noticeProposal'
 import { applyEvent, endTurn, followsKeptRound, isInFlight, parseStreamEvent, sentAfter, settleMessages, startTurn, type LiveTurn } from './liveTurn'
 import { STOP_SETTLE_MS, retryAfterStop } from './retryAfterStop'
@@ -57,8 +64,17 @@ export interface AiControls {
   openConversation: (id: string | null) => void
   /** An answer is being written. */
   busy: boolean
-  /** Asks a question in the conversation on screen. False when it was not sent (empty, or an answer is still being written). */
+  /**
+   * Asks a question in the conversation on screen, with the files attached to it. False when it was not sent
+   * (nothing to ask, a file still on its way or failed, or an answer is still being written).
+   */
   send: (question: string) => boolean
+  /** Files attached to the next question, kept while the panel is closed or moves (Expand, Dock). */
+  attachments: PendingAttachment[]
+  /** Attach picked files to the next question, each uploaded at once. Returns the names of those it cannot take. */
+  attach: (files: readonly File[]) => string[]
+  /** Take a file off the next question. */
+  detach: (key: string) => void
   stop: () => void
   /** The composer's unsent text, kept while the panel is closed; a ref, so typing redraws nothing up here. */
   draft: MutableRefObject<string>
@@ -115,6 +131,14 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
   const controller = useRef<AbortController | null>(null)
   const draft = useRef('')
   const [composed, setComposed] = useState(0)
+  // The next question's files: the state draws the box, the ref is what send reads.
+  const [attachments, setAttachmentsState] = useState<PendingAttachment[]>([])
+  const attached = useRef<PendingAttachment[]>([])
+  const uploads = useRef(new Map<string, AbortController>())
+  const setAttachments = useCallback((fn: (list: PendingAttachment[]) => PendingAttachment[]) => {
+    attached.current = fn(attached.current)
+    setAttachmentsState(attached.current)
+  }, [])
   // The last answer stopped here, and when: a question right after it may meet that answer still winding down.
   const lastStop = useRef<{ conversationId: string; at: number } | null>(null)
 
@@ -191,8 +215,51 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
     [qc],
   )
 
+  const attach = useCallback(
+    (files: readonly File[]): string[] => {
+      const refused: string[] = []
+      for (const file of files) {
+        const kind = pickedKind(file)
+        if (!kind) {
+          refused.push(file.name || 'file')
+          continue
+        }
+        const key = newSubmissionId()
+        const ac = new AbortController()
+        uploads.current.set(key, ac)
+        setAttachments((list) => [...list, { key, name: file.name || 'file', kind, state: 'uploading' }])
+        const settleFile = (patch: Partial<PendingAttachment>) => setAttachments((list) => list.map((p) => (p.key === key ? { ...p, ...patch } : p)))
+        attachFile(file, kind, ac.signal)
+          .then((attachment) => {
+            // Taken off while it uploaded: the server's copy is let go too.
+            if (ac.signal.aborted) void detachFile(attachment.id).catch(() => undefined)
+            else settleFile({ state: 'ready', attachment, name: attachment.name })
+          })
+          .catch((e: unknown) => {
+            if (ac.signal.aborted) return
+            const message = e instanceof AttachRejected || e instanceof ApiError ? e.message : 'The file could not be attached. Try again.'
+            settleFile({ state: 'failed', error: message })
+          })
+          .finally(() => uploads.current.delete(key))
+      }
+      return refused
+    },
+    [setAttachments],
+  )
+  const detach = useCallback(
+    (key: string) => {
+      const file = attached.current.find((p) => p.key === key)
+      if (!file) return
+      uploads.current.get(key)?.abort()
+      if (file.attachment) void detachFile(file.attachment.id).catch(() => undefined)
+      setAttachments((list) => list.filter((p) => p.key !== key))
+    },
+    [setAttachments],
+  )
+
   const stream = useCallback(
-    async (key: string, from: string | null, question: string, sentAt: string, ac: AbortController) => {
+    async (key: string, from: string | null, question: string, sentAt: string, ac: AbortController, files: PendingAttachment[]) => {
+      const sent: AiAttachment[] = files.map((f) => f.attachment!)
       // Every change goes to this turn only: a later question has its own.
       const update = (fn: (t: LiveTurn) => LiveTurn) => setLive((t) => (t && t.key === key ? fn(t) : t))
       // Text arrives a few characters at a time; it is drawn once per frame, not once per piece.
@@ -238,7 +305,9 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       // The server answered the request with a refusal: nothing of the question was kept.
       let refused = false
       try {
-        const request: AiChatRequest = from ? { conversationId: from, message: question, clientId: key } : { message: question, clientId: key }
+        const request: AiChatRequest = { message: question, clientId: key }
+        if (from) request.conversationId = from
+        if (sent.length > 0) request.attachmentIds = sent.map((a) => a.id)
         const body = await connect(request)
         for await (const raw of readSse(body)) {
           const e = parseStreamEvent(raw.event, raw.data)
@@ -279,7 +348,11 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
             // The event also carries the month's figures: the chat shows no amounts, so they are left where they are.
             ended = true
             release()
-            if (conversation && userMessageId) settle(conversation, { id: userMessageId, role: 'user', parts: [{ type: 'text', text: question }], createdAt: sentAt }, e.message)
+            if (conversation && userMessageId) {
+              const asked: AiMessage = { id: userMessageId, role: 'user', parts: [{ type: 'text', text: question }], createdAt: sentAt }
+              if (sent.length > 0) asked.attachments = sent
+              settle(conversation, asked, e.message)
+            }
             break
           } else if (e.type === 'error') {
             ended = true
@@ -296,8 +369,10 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
           const stoppedIn = conversation?.id ?? from
           if (stoppedIn) lastStop.current = { conversationId: stoppedIn, at: Date.now() }
         } else if (err instanceof ApiError) {
-          // A refusal before the stream began (a cap, the switch, access taken away, a conflict) kept nothing.
+          // A refusal before the stream began (a cap, the switch, access taken away, a conflict) kept nothing:
+          // its files go back to the box, ahead of any attached since.
           refused = !conversation && err.status > 0
+          if (refused && files.length > 0) setAttachments((list) => [...files.filter((f) => !list.some((p) => p.key === f.key)), ...list])
           update((t) => endTurn(t, 'error', { code: err.code, message: err.message }))
         } else update((t) => endTurn(t, 'error', LOST))
       } finally {
@@ -319,13 +394,16 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
         void qc.invalidateQueries({ queryKey: keys.aiMe })
       }
     },
-    [qc],
+    [qc, setAttachments],
   )
 
   const send = useCallback(
     (text: string): boolean => {
       const question = text.trim()
-      if (!question || controller.current) return false
+      const files = attached.current
+      const ids = readyIds(files)
+      // A file still on its way, or one that failed, holds the question until it is kept or taken off.
+      if (ids === null || (!question && ids.length === 0) || controller.current) return false
       const key = newSubmissionId()
       const from = active.current
       const sentAt = new Date().toISOString()
@@ -333,11 +411,12 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       const cached = from ? qc.getQueryData<AiMessagesResponse>(keys.aiMessages(from))?.messages : undefined
       const ac = new AbortController()
       controller.current = ac
-      setLive((prev) => startTurn(key, from, question, sentAt, sentAfter(prev, from, cached)))
-      void stream(key, from, question, sentAt, ac)
+      setLive((prev) => startTurn(key, from, question, sentAt, sentAfter(prev, from, cached), files.map((f) => f.attachment!)))
+      setAttachments(() => [])
+      void stream(key, from, question, sentAt, ac, files)
       return true
     },
-    [qc, stream],
+    [qc, stream, setAttachments],
   )
 
   const busy = isInFlight(live)
@@ -355,6 +434,9 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       openConversation,
       busy,
       send,
+      attachments,
+      attach,
+      detach,
       stop,
       draft,
       compose,
@@ -364,7 +446,7 @@ export function AiAssistantProvider({ children }: { children: ReactNode }) {
       dock,
       handoff,
     }),
-    [enabled, owner, automations, revoked, open, setOpen, toggle, docked, conversationId, openConversation, busy, send, stop, compose, composed, workspace, expand, dock],
+    [enabled, owner, automations, revoked, open, setOpen, toggle, docked, conversationId, openConversation, busy, send, attachments, attach, detach, stop, compose, composed, workspace, expand, dock],
   )
 
   return (

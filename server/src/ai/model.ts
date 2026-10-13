@@ -40,10 +40,18 @@ export interface AiModelClient {
   stream(apiKey: string, params: ModelParams, options: { signal: AbortSignal }): ModelStream
   /** Ask Anthropic whether the key works, before it is saved. */
   verifyKey(apiKey: string): Promise<KeyCheck>
+  /**
+   * What these messages come to in input tokens on the model: Anthropic's own
+   * count (free). It reads the files in them too, so a file Claude cannot read
+   * is refused here (a BadRequestError).
+   */
+  countTokens(apiKey: string, params: { model: string; messages: Anthropic.Beta.BetaMessageParam[] }): Promise<number>
 }
 
 /** How long checking a key may take. */
 const VERIFY_TIMEOUT_MS = 15_000
+/** How long counting a file may take: Anthropic reads a whole PDF to count it. */
+const COUNT_TIMEOUT_MS = 60_000
 
 /** The real thing: the Anthropic SDK, one client per key. */
 export class AnthropicModelClient implements AiModelClient {
@@ -72,6 +80,11 @@ export class AnthropicModelClient implements AiModelClient {
 
   stream(apiKey: string, params: ModelParams, options: { signal: AbortSignal }): ModelStream {
     return this.client(apiKey).beta.messages.stream(params, { signal: options.signal })
+  }
+
+  async countTokens(apiKey: string, params: { model: string; messages: Anthropic.Beta.BetaMessageParam[] }): Promise<number> {
+    const counted = await this.client(apiKey).beta.messages.countTokens(params, { timeout: COUNT_TIMEOUT_MS, maxRetries: 1 })
+    return counted.input_tokens
   }
 
   async verifyKey(apiKey: string): Promise<KeyCheck> {

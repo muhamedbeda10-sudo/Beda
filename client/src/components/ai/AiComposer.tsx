@@ -4,17 +4,23 @@
 // While an answer is written the button stops it. When the assistant cannot
 // answer the box says so plainly — this month's limit, or "not available" —
 // and only its owner is offered the settings, where the precise reason is.
+//
+// Files go with a question: the paperclip, a photo pasted into the box, or
+// files dropped on it. Each shows as a chip while it uploads, and the
+// question waits until every one is kept (or taken off).
 // ============================================================================
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowUp, Square } from 'lucide-react'
-import { AI_MAX_MESSAGE_CHARS } from '@qc/shared/ai'
+import { AlertCircle, ArrowUp, FileSpreadsheet, FileText, Image as ImageIcon, Loader2, Paperclip, Square, X } from 'lucide-react'
+import { AI_MAX_ATTACHMENTS_PER_QUESTION, AI_MAX_MESSAGE_CHARS, type AiAttachmentKind } from '@qc/shared/ai'
 import { isCoarsePointer } from '@/lib/media'
 import { cn } from '@/lib/utils'
+import { useApp } from '@/store/AppContext'
 import { useAiMe } from '@/services/queries'
 import { aiBlock } from './access'
 import { useAi, useAiLive } from './AiAssistantProvider'
+import { ATTACH_ACCEPT, formatBytes, readyIds, type PendingAttachment } from './attachments'
 import { BlockedNotice } from './AiNotice'
 import { spentFocus, takesCaret, type ComposerFocus } from './suggestions'
 
@@ -77,15 +83,50 @@ export function AiComposer({
   /** The full page: the box keeps to the thread's centred column. */
   wide?: boolean
 }) {
-  const { send, stop, busy, conversationId, openConversation, docked, setOpen } = useAi()
+  const { send, stop, busy, conversationId, openConversation, docked, setOpen, attachments, attach, detach } = useAi()
   const live = useAiLive()
   const { data: me } = useAiMe()
+  const { toast } = useApp()
   const area = useRef<HTMLTextAreaElement>(null)
+  const picker = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
 
   const blocked = aiBlock(me)
   // One answer at a time: one being written in another conversation holds this box too.
   const elsewhere = busy && !!live && live.conversationId !== conversationId
-  const canSend = !busy && !blocked && value.trim().length > 0
+  const filesReady = readyIds(attachments) !== null
+  const canSend = !busy && !blocked && filesReady && (value.trim().length > 0 || attachments.length > 0)
+  const room = AI_MAX_ATTACHMENTS_PER_QUESTION - attachments.length
+
+  /** Attach what was picked, pasted or dropped, as many as the question has room for; says what it could not take. */
+  const take = (files: readonly File[]) => {
+    if (files.length === 0 || blocked) return
+    if (room <= 0) {
+      toast(`A question may carry at most ${AI_MAX_ATTACHMENTS_PER_QUESTION} files.`, 'warning')
+      return
+    }
+    const refused = attach(files.slice(0, room))
+    if (files.length > room) toast(`A question may carry at most ${AI_MAX_ATTACHMENTS_PER_QUESTION} files: the rest were left out.`, 'warning')
+    if (refused.length > 0) toast(`Only photos, PDFs and spreadsheets (.xlsx, .csv) can be attached: ${refused.join(', ')}.`, 'error')
+  }
+
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files)
+    if (files.length === 0) return
+    e.preventDefault()
+    take(files)
+  }
+  const onDragOver = (e: DragEvent) => {
+    if (blocked || !Array.from(e.dataTransfer.types).includes('Files')) return
+    e.preventDefault()
+    setDragging(true)
+  }
+  const onDrop = (e: DragEvent) => {
+    setDragging(false)
+    if (blocked || e.dataTransfer.files.length === 0) return
+    e.preventDefault()
+    take(Array.from(e.dataTransfer.files))
+  }
 
   // Grows with the text up to 160 px, then scrolls.
   useEffect(() => {
@@ -131,7 +172,16 @@ export function AiComposer({
   )
 
   return (
-    <div className={cn('shrink-0 border-t border-slate-200 bg-white/95 px-3 pb-3 pt-2 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 safe-bottom', wide && 'sm:px-6 lg:px-8 lg:pb-4 lg:pt-3')}>
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+      className={cn(
+        'shrink-0 border-t border-slate-200 bg-white/95 px-3 pb-3 pt-2 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 safe-bottom',
+        wide && 'sm:px-6 lg:px-8 lg:pb-4 lg:pt-3',
+        dragging && 'bg-brand-50/95 ring-2 ring-inset ring-brand-400 dark:bg-brand-950/60',
+      )}
+    >
       <div className={cn(wide && 'mx-auto w-full max-w-[1100px]')}>
         {blocked && <BlockedNotice reason={blocked} action={settings || undefined} />}
         {elsewhere && (
@@ -145,7 +195,35 @@ export function AiComposer({
             </button>
           </p>
         )}
+        {attachments.length > 0 && (
+          <ul className="-mx-1 mb-2 flex gap-1.5 overflow-x-auto px-1 pb-0.5 sm:flex-wrap sm:overflow-visible" aria-label="Files attached to the question">
+            {attachments.map((a) => (
+              <AttachmentChip key={a.key} file={a} onRemove={() => detach(a.key)} />
+            ))}
+          </ul>
+        )}
         <div className={cn('flex items-end gap-2', blocked && 'mt-2')}>
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            accept={ATTACH_ACCEPT}
+            className="hidden"
+            onChange={(e) => {
+              take(Array.from(e.target.files ?? []))
+              e.target.value = ''
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => picker.current?.click()}
+            disabled={!!blocked || room <= 0}
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-brand-700 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-brand-300"
+            aria-label="Attach photos, PDFs or spreadsheets"
+            data-tip="Attach a photo, PDF or spreadsheet"
+          >
+            <Paperclip className="h-5 w-5" />
+          </button>
           <textarea
             ref={area}
             value={value}
@@ -153,9 +231,10 @@ export function AiComposer({
             dir="auto"
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
             maxLength={AI_MAX_MESSAGE_CHARS}
             disabled={!!blocked}
-            placeholder={blocked ? 'The assistant cannot answer right now' : 'Ask about inspections, orders, coils…'}
+            placeholder={blocked ? 'The assistant cannot answer right now' : attachments.length > 0 ? 'Ask about the attached files…' : 'Ask about inspections, orders, coils…'}
             aria-label="Your question"
             className="input min-h-[44px] flex-1 resize-none rounded-2xl py-2.5 leading-snug disabled:cursor-not-allowed disabled:opacity-60"
           />
@@ -176,5 +255,47 @@ export function AiComposer({
         )}
       </div>
     </div>
+  )
+}
+
+const KIND_ICON: Record<AiAttachmentKind, typeof ImageIcon> = { image: ImageIcon, pdf: FileText, sheet: FileSpreadsheet }
+
+/** A file on the question: uploading, kept (with its size or outline) or failed (with why), and a way to take it off. */
+function AttachmentChip({ file, onRemove }: { file: PendingAttachment; onRemove: () => void }) {
+  const Icon = KIND_ICON[file.kind]
+  const detail = file.state === 'failed' ? file.error : file.state === 'uploading' ? 'Attaching…' : file.attachment?.summary ?? (file.attachment ? formatBytes(file.attachment.byteSize) : '')
+  const thumb = file.attachment?.thumbnailDataUrl
+  return (
+    <li
+      className={cn(
+        'flex max-w-full shrink-0 items-center gap-2 rounded-xl border py-1 pe-1 ps-1.5 text-xs',
+        file.state === 'failed'
+          ? 'border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/50 dark:text-rose-200'
+          : 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200',
+      )}
+      title={file.state === 'failed' ? file.error : file.name}
+    >
+      {thumb ? (
+        <img src={thumb} alt="" className="h-8 w-8 shrink-0 rounded-md object-cover" />
+      ) : (
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-white text-slate-500 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700">
+          {file.state === 'uploading' ? <Loader2 className="h-4 w-4 animate-spin" /> : file.state === 'failed' ? <AlertCircle className="h-4 w-4 text-rose-600" /> : <Icon className="h-4 w-4" />}
+        </span>
+      )}
+      <span className="min-w-0">
+        <span dir="auto" className="block max-w-[8rem] truncate font-medium sm:max-w-[11rem]">
+          {file.name}
+        </span>
+        {detail && <span className={cn('block max-w-[10rem] truncate text-[11px] sm:max-w-[14rem]', file.state === 'failed' ? '' : 'text-muted')}>{detail}</span>}
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100 touch:h-10 touch:w-10"
+        aria-label={`Remove ${file.name}`}
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </li>
   )
 }

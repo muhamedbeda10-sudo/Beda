@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.1',
+    date: '2026-10-13',
+    title: 'The assistant reads photos, PDFs and Excel files',
+    items: [
+      { text: 'In the AI assistant, tap the paperclip beside the question box to attach up to 5 files to a question: photos (a handwritten inspection sheet, a label, a screen), PDFs (a mill certificate, a drawing, a report) and spreadsheets (.xlsx or .csv). You can also paste a photo into the box, or drop files on it.' },
+      { text: 'Ask about them in words, or send the files alone and the assistant says what they hold. It copies handwriting figure by figure and marks anything it cannot read as [unclear] rather than guessing; it can also compare a file with the factory record, for example a handwritten sheet with the session in the system.' },
+      { text: 'The files stay with the question: tap a photo to see it full size, or a PDF to open it. Old Excel files (.xls) must be saved as .xlsx first; a very long PDF or spreadsheet is refused with a word on what to attach instead.' },
+    ],
+  },
+  {
     id: '2026-10-12.3',
     date: '2026-10-12',
     title: 'A tidier Automations page',
