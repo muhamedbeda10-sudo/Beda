@@ -27,7 +27,6 @@ import { lazy, Suspense, type ReactElement } from 'react'
 import { usePushBridge } from '@/lib/push'
 
 // §20 — the assistant's settings are its owner's alone: fetched when first opened, in nobody else's bundle.
-const AiAssistantPage = lazy(() => import('@/pages/admin/AiAssistantPage').then((m) => ({ default: m.AiAssistantPage })))
 // §20 — the assistant's full page, for the people given it: fetched when first opened, like its panel.
 // §21 — automations: their pages for the few who may create them, a delivered report for whoever it went to.
 const AutomationsPage = lazy(() => import('@/pages/AutomationsPage').then((m) => ({ default: m.AutomationsPage })))
@@ -153,7 +152,8 @@ export default function App() {
         <Route path="/admin/audit" element={<Only cap="edit-closed-session"><AuditPage /></Only>} />
         <Route path="/admin/notices" element={<Only cap="manage-admin-data"><NoticesPage /></Only>} />
         <Route path="/admin/whats-new" element={<Only cap="manage-admin-data"><WhatsNewPage /></Only>} />
-        <Route path="/admin/ai" element={<OnlyAiOwner><ErrorBoundary fallback={<LoadFailed what="This page" />}><Suspense fallback={<PageLoading />}><AiAssistantPage /></Suspense></ErrorBoundary></OnlyAiOwner>} />
+        {/* §20 — the assistant's settings live in its popup (the gear): this address opens them there, large. */}
+        <Route path="/admin/ai" element={<OnlyAiOwner><AiAddress /></OnlyAiOwner>} />
         <Route path="/audit" element={<Navigate to="/admin/audit" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

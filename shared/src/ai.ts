@@ -604,7 +604,8 @@ export interface AiUsageResponse {
   outputTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
-  byDay: { day: string; costUsd: number; calls: number }[]
+  /** Each UTC day with spend or a question: what it cost, the calls to the model, the questions asked. */
+  byDay: { day: string; costUsd: number; calls: number; questions: number }[]
   byUser: { userId: string; userName: string; costUsd: number; questions: number }[]
   /** Scheduled reports' summaries (§21), by automation. Also counted in byDay and in their creator's byUser. */
   byAutomation: { automationId: string; name: string; creatorName: string; costUsd: number; runs: number }[]

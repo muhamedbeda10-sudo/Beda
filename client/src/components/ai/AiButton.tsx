@@ -6,12 +6,13 @@ import { Bot } from 'lucide-react'
 import { useAi } from './AiAssistantProvider'
 
 export function AiButton() {
-  const { open, setOpen, busy } = useAi()
+  const { open, setOpen, openAt, busy, enabled } = useAi()
   if (open) return null
   return (
     <button
       type="button"
-      onClick={() => setOpen(true)}
+      // The owner without the assistant given to them has its settings alone: the button opens on them.
+      onClick={() => (enabled ? setOpen(true) : openAt('/admin/ai', 'large'))}
       className="ai-fab fixed z-40 grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-white shadow-lift ring-4 ring-white transition-transform duration-200 hover:scale-105 focus:outline-none focus-visible:ring-brand-300 active:scale-95 animate-fade-in print:hidden dark:ring-slate-900"
       aria-label={busy ? 'AI assistant, answering' : 'AI assistant'}
       aria-haspopup="dialog"

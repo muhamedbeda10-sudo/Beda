@@ -974,7 +974,7 @@ describe('§20 Excel and usage', () => {
     expect(res.body).toMatchObject({ month, spentUsd: totals.spent, capUsd: 50, calls: totals.calls, questions, inputTokens: totals.input, outputTokens: totals.output })
     expect(res.body.cacheReadTokens).toBe(7000)
     expect(res.body.cacheWriteTokens).toBe(8200)
-    expect(res.body.byDay).toEqual([{ day: new Date().toISOString().slice(0, 10), costUsd: totals.spent, calls: totals.calls }])
+    expect(res.body.byDay).toEqual([{ day: new Date().toISOString().slice(0, 10), costUsd: totals.spent, calls: totals.calls, questions }])
     expect(res.body.byUser).toEqual([{ userId: admin.user.id, userName: 'Admin', costUsd: totals.spent, questions: expect.any(Number) }])
     const empty = await app.api<AiUsageResponse>('GET', '/api/ai/usage?month=2020-01', { token: admin.token })
     expect(empty.body).toMatchObject({ month: '2020-01', spentUsd: 0, calls: 0, questions: 0, byDay: [], byUser: [] })
