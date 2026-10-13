@@ -24,6 +24,8 @@ export interface NewNotification {
   deliveryId?: string
   /** A task it is about. */
   taskId?: string
+  /** The answer of the AI assistant it says is ready ('ai-answer' only): one alert per answer, however often it is told. */
+  aiTurnId?: string
 }
 
 export const NOTIFICATION_RETENTION_DAYS = 90
@@ -43,6 +45,7 @@ const FALLBACK_TITLES: Record<UserNotificationKind, string> = {
   'task-updated': 'A task was updated',
   'task-done': 'A task was marked done',
   'task-reopened': 'A task was sent back to you',
+  'ai-answer': 'Your answer is ready',
 }
 
 const KINDS = new Set(Object.keys(FALLBACK_TITLES))
@@ -66,18 +69,20 @@ export async function createNotifications(q: Queryable, userIds: string[], n: Ne
   if (!KINDS.has(n.kind)) throw new Error(`Unknown notification kind: ${String(n.kind)}`)
   if (!SEVERITIES.has(n.severity)) throw new Error(`Unknown notification severity: ${String(n.severity)}`)
   if (n.link !== null && !IN_APP_LINK.test(n.link)) throw new Error(`A notification links inside the app only: ${n.link}`)
-  for (const [field, id] of [['automationId', n.automationId], ['followUpId', n.followUpId], ['deliveryId', n.deliveryId], ['taskId', n.taskId]] as const) {
+  for (const [field, id] of [['automationId', n.automationId], ['followUpId', n.followUpId], ['deliveryId', n.deliveryId], ['taskId', n.taskId], ['aiTurnId', n.aiTurnId]] as const) {
     if (id !== undefined && !isUuid(id)) throw new Error(`A notification's ${field} must be a uuid: ${id}`)
   }
+  if ((n.kind === 'ai-answer') !== (n.aiTurnId !== undefined)) throw new Error('An ai-answer notification names its answer (aiTurnId), and only it does.')
   const ids = distinctIds(userIds)
   if (ids.length === 0) return 0
   const title = clipText(n.title.replace(/\s+/g, ' ').trim(), NOTIFICATION_TITLE_MAX) || FALLBACK_TITLES[n.kind]
   const body = clipText(n.body.trim(), NOTIFICATION_BODY_MAX)
   const { rowCount } = await q.query(
-    `INSERT INTO user_notifications (user_id, kind, severity, title, body, link, automation_id, follow_up_id, delivery_id, task_id)
-     SELECT u.id, $2, $3, $4, $5, $6, $7, $8, $9, $10 FROM users u
-      WHERE u.id = ANY($1::uuid[]) AND ${LIVE_PERSON}`,
-    [ids, n.kind, n.severity, title, body, n.link, n.automationId ?? null, n.followUpId ?? null, n.deliveryId ?? null, n.taskId ?? null],
+    `INSERT INTO user_notifications (user_id, kind, severity, title, body, link, automation_id, follow_up_id, delivery_id, task_id, ai_turn_id)
+     SELECT u.id, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 FROM users u
+      WHERE u.id = ANY($1::uuid[]) AND ${LIVE_PERSON}${n.aiTurnId ? `
+     ON CONFLICT (ai_turn_id) WHERE kind = 'ai-answer' DO NOTHING` : ''}`,
+    [ids, n.kind, n.severity, title, body, n.link, n.automationId ?? null, n.followUpId ?? null, n.deliveryId ?? null, n.taskId ?? null, n.aiTurnId ?? null],
   )
   return rowCount ?? 0
 }

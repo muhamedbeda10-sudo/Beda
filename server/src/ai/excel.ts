@@ -466,6 +466,23 @@ export function excelToolHandlers(ctx: ExcelToolContext): Record<string, ToolHan
 async function make(ctx: ExcelToolContext, tu: ToolUse, signal: AbortSignal): Promise<ToolOutcome> {
   let who: Asker = { name: ctx.userName, role: 'none' }
   try {
+    // A step finished after the answer was cut short runs its calls again: one already logged is not made twice.
+    const before = await ctx.db.query<{ status: 'made' | 'refused' | 'failed'; card: AiExcelPart['sheets']; fileName: string; problems: string | null }>(
+      `SELECT status, card, file_name AS "fileName", problems FROM ai_excel_files WHERE conversation_id = $1 AND tool_use_id = $2`,
+      [ctx.conversationId, tu.id],
+    )
+    const logged = before.rows[0]
+    if (logged?.status === 'made') {
+      const content = {
+        made: true,
+        fileName: logged.fileName,
+        sheets: logged.card.map((s) => ({ name: s.name, columns: s.columns, rows: s.rows })),
+        note: 'Made before the answer was interrupted; it is the card the person has. You have not seen its rows: never give figures from it.',
+      }
+      return { result: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(content) } }
+    }
+    if (logged) return { result: { type: 'tool_result', tool_use_id: tu.id, is_error: true, content: `No file was made, before the answer was interrupted: ${logged.problems ?? logged.status}` } }
+
     const person = await askerNow(ctx.db, ctx.userId)
     if (person) who = person
     const access = await loadAccess(ctx.db, ctx.userId)

@@ -30,6 +30,7 @@ import {
 } from '@qc/shared/savedTables'
 import type { Config } from '../config'
 import type { Db } from '../db/pool'
+import { loadSavedTableParts } from './savedTableParts'
 import { describeIssues } from '../automations/draft'
 import type { ToolHandler, ToolOutcome } from './assistant'
 import { isGranted, loadAccess } from './access'
@@ -170,10 +171,18 @@ const answered = (tu: ToolUse, content: unknown): ToolOutcome => ({ result: { ty
 export function savedTableToolHandlers(ctx: SavedTableToolContext): Record<string, ToolHandler> {
   return {
     [LIST_SAVED_TABLES_TOOL_NAME]: { run: (tu) => list(ctx, tu) },
-    [SAVE_TABLE_TOOL_NAME]: { run: (tu) => save(ctx, tu) },
-    [REFRESH_SAVED_TABLE_TOOL_NAME]: { run: (tu) => refresh(ctx, tu) },
-    [REMOVE_SAVED_TABLE_TOOL_NAME]: { run: (tu) => remove(ctx, tu) },
+    [SAVE_TABLE_TOOL_NAME]: { run: (tu) => once(ctx, tu, save) },
+    [REFRESH_SAVED_TABLE_TOOL_NAME]: { run: (tu) => once(ctx, tu, refresh) },
+    [REMOVE_SAVED_TABLE_TOOL_NAME]: { run: (tu) => once(ctx, tu, remove) },
   }
+}
+
+/** A step finished after the answer was cut short runs its calls again: a change already made is not made twice. */
+async function once(ctx: SavedTableToolContext, tu: ToolUse, run: (ctx: SavedTableToolContext, tu: ToolUse) => Promise<ToolOutcome>): Promise<ToolOutcome> {
+  const made = (await loadSavedTableParts(ctx.db, ctx.conversationId, ctx.turnId)).get(tu.id)
+  if (!made) return run(ctx, tu)
+  const content = { [made.action === 'remove' ? 'removed' : made.action === 'refresh' ? 'computed' : 'saved']: true, name: `ai_saved.${made.name}`, rowCount: made.rowCount, note: 'Done before the answer was interrupted; the person sees it as a card.' }
+  return { result: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(content) } }
 }
 
 /** The person as they stand now; null when the assistant is no longer theirs. */

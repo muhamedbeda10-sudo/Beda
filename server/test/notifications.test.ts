@@ -76,6 +76,29 @@ describe('§21 — writing alerts', () => {
   })
 })
 
+describe('§20 — an answer of the assistant, ready', () => {
+  it('names its answer, and is written once per answer however often it is told', async () => {
+    const conv = await app.db.query<{ id: string }>(`INSERT INTO ai_conversations (user_id, title, model, system_prompt, tools) VALUES ($1, 'Rejects', 'claude-sonnet-5-5', 'x', '[]') RETURNING id`, [admin.user.id])
+    const turn = await app.db.query<{ id: string }>(
+      `INSERT INTO ai_turns (conversation_id, user_id, client_id, question, status, stop_reason, finished_at) VALUES ($1, $2, $3, 'Rejects?', 'done', 'end_turn', now()) RETURNING id`,
+      [conv.rows[0].id, admin.user.id, randomUUID()],
+    )
+    const ready = alert({ kind: 'ai-answer', title: 'Answer ready: Rejects', body: 'Machine 58 leads.', link: `/ai?c=${conv.rows[0].id}`, aiTurnId: turn.rows[0].id })
+    expect(await createNotifications(app.db, [admin.user.id], ready)).toBe(1)
+    // Told again (another instance closing the same answer): nothing more.
+    expect(await createNotifications(app.db, [admin.user.id], ready)).toBe(0)
+    expect((await app.db.query(`SELECT kind, title FROM user_notifications WHERE ai_turn_id = $1`, [turn.rows[0].id])).rows).toEqual([{ kind: 'ai-answer', title: 'Answer ready: Rejects' }])
+    // Every ai-answer names its answer, and nothing else names one.
+    await expect(createNotifications(app.db, [admin.user.id], alert({ kind: 'ai-answer' }))).rejects.toThrow(/aiTurnId/)
+    await expect(createNotifications(app.db, [admin.user.id], alert({ aiTurnId: turn.rows[0].id }))).rejects.toThrow(/aiTurnId/)
+    await expect(createNotifications(app.db, [admin.user.id], { ...ready, aiTurnId: 'x' })).rejects.toThrow(/uuid/)
+    await expect(app.db.query(`INSERT INTO user_notifications (user_id, kind, severity, title) VALUES ($1, 'ai-answer', 'info', 'x')`, [admin.user.id])).rejects.toThrow()
+    // It is an alert, in the Alerts list.
+    const alerts = await list(admin, '?category=alerts')
+    expect(alerts.body.notifications.some((n) => n.kind === 'ai-answer' && n.link === `/ai?c=${conv.rows[0].id}`)).toBe(true)
+  })
+})
+
 describe('§21 — reading alerts', () => {
   it('lists the reader’s own, newest first, a page at a time', async () => {
     // 34 more for the inspector, a second apart, so 35 in all.

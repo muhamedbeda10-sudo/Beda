@@ -18,6 +18,7 @@ import { createApp } from '../src/app'
 import { LocalImageStorage } from '../src/images/storage'
 import { RateLimiter } from '../src/lib/rateLimit'
 import type { AiModelClient } from '../src/ai/model'
+import { AnswerRunner } from '../src/ai/answerRunner'
 import { AiReader } from '../src/ai/reader'
 import { ScriptedModel } from './aiFake'
 import type { PushSender } from '../src/push/send'
@@ -50,6 +51,8 @@ export class TestApp {
   aiLimiter = new RateLimiter(30, 10 * 60_000)
   /** §20 — saved reports run or exported per person, as in production (60 per 10 minutes). */
   aiReportLimiter = new RateLimiter(60, 10 * 60_000)
+  /** §20 — the assistant's answers, written whatever happens to the request (answerRunner.ts). */
+  answers!: AnswerRunner
   /** §24 — the pushes the app sent, as a push service would have received them; an endpoint listed in `gone` answers 410. */
   pushes: { endpoint: string; payload: PushPayload }[] = []
   gonePushEndpoints = new Set<string>()
@@ -77,6 +80,8 @@ export class TestApp {
     this.db = createPool(this.config.DATABASE_URL, 5)
     this.tmpDir = await mkdtemp(path.join(os.tmpdir(), 'qc-images-'))
     this.images = new LocalImageStorage(this.tmpDir)
+    // §20 — the answers' runner, as in production; it never looks for lost answers by itself here: tests sweep.
+    this.answers = new AnswerRunner({ db: this.db, config: this.config, readers: this.aiReader, model: options.ai ?? this.model, images: this.images, reportLimiter: this.aiReportLimiter })
     const app = createApp({
       config: this.config,
       db: this.db,
@@ -87,6 +92,7 @@ export class TestApp {
       aiReader: this.aiReader,
       aiLimiter: this.aiLimiter,
       aiReportLimiter: this.aiReportLimiter,
+      answers: this.answers,
     })
     await new Promise<void>((resolve) => {
       this.server = app.listen(0, '127.0.0.1', () => resolve())
@@ -104,6 +110,8 @@ export class TestApp {
   }
 
   async stop(): Promise<void> {
+    // Answers still being written are handed back first, as a stopping server does, so nothing writes into a closed pool.
+    await this.answers.stop()
     await new Promise<void>((resolve) => this.server.close(() => resolve()))
     await this.aiReader.end()
     await this.db.end()

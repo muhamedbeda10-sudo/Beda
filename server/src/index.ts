@@ -16,6 +16,7 @@ import type { AppContext } from './context'
 import { AnthropicModelClient } from './ai/model'
 import { AiReader } from './ai/reader'
 import { aiOwner } from './ai/owner'
+import { AnswerRunner } from './ai/answerRunner'
 import { AutomationEngine } from './automations/engine'
 import { SavedTableRefresher } from './ai/savedTables'
 import { PushDispatcher } from './push/dispatcher'
@@ -63,16 +64,22 @@ const images: ImageStorage =
     ? new AzureBlobImageStorage(config.AZURE_STORAGE_CONNECTION_STRING!, config.AZURE_STORAGE_CONTAINER)
     : new LocalImageStorage(path.resolve(config.IMAGE_LOCAL_DIR))
 
+const ai = new AnthropicModelClient()
+const aiReportLimiter = new RateLimiter(60, 10 * 60_000)
+// §20 — the assistant's answers, written on the server whatever happens to the request that asked for them; an
+// answer lost with another instance (or with this one, before a restart) is taken over and continued.
+const answers = new AnswerRunner({ db, config, readers: aiReader, model: ai, images, reportLimiter: aiReportLimiter })
 const ctx: AppContext = {
   config,
   db,
   images,
   loginLimiter: new RateLimiter(10, 15 * 60_000),
   version: readVersion(),
-  ai: new AnthropicModelClient(),
+  ai,
   aiReader,
   aiLimiter: new RateLimiter(30, 10 * 60_000),
-  aiReportLimiter: new RateLimiter(60, 10 * 60_000),
+  aiReportLimiter,
+  answers,
 }
 const app = createApp(ctx)
 
@@ -87,6 +94,10 @@ try {
 const server = app.listen(config.PORT, () => {
   console.log(`[api] listening on :${config.PORT} (${config.NODE_ENV}, images=${config.IMAGE_STORAGE_DRIVER})`)
 })
+
+// §20 — answers left by an instance that went (a restart, a deploy) are taken over and continued, here as on every
+// instance; never in tests, which sweep themselves.
+if (config.NODE_ENV !== 'test') answers.start()
 
 // §21 — the automations engine: watches, scheduled reports and follow-up
 // escalation, on every instance (a database lease keeps each run to one).
@@ -119,14 +130,16 @@ savedTables?.start()
 // in-flight requests, then release the pools.
 function shutdown(signal: string) {
   console.log(`[api] ${signal} received, shutting down`)
-  // The engine first, while requests drain: it takes nothing more, and the runs under
+  // The answers being written are handed back at once, for the next instance to continue; their streams end,
+  // so the server can close. Then the engine, while requests drain: it takes nothing more, and the runs under
   // way are cut short and handed back at once, so another instance takes them.
+  const answersStopped = answers.stop()
   const engineStopped = automations?.stop() ?? Promise.resolve()
   const pushStopped = push?.stop() ?? Promise.resolve()
   const sweeperStopped = excelFiles?.stop() ?? Promise.resolve()
   const tablesStopped = savedTables?.stop() ?? Promise.resolve()
   server.close(() => {
-    Promise.allSettled([engineStopped, pushStopped, sweeperStopped, tablesStopped])
+    Promise.allSettled([answersStopped, engineStopped, pushStopped, sweeperStopped, tablesStopped])
       .then(() => Promise.allSettled([db.end(), aiReader.end()]))
       .finally(() => process.exit(0))
   })

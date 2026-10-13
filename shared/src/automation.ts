@@ -510,6 +510,8 @@ export type UserNotificationKind =
   | 'task-updated'
   | 'task-done'
   | 'task-reopened'
+  /** An answer of the AI assistant finished while its asker was not watching it. */
+  | 'ai-answer'
 
 export interface UserNotification {
   id: string
