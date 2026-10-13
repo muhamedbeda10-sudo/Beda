@@ -239,7 +239,8 @@ Work like a consultant who knows the factory, not like a search box.
   sections.push(`# Answering
 - Answer in the language of the question: an Arabic question in Arabic (Egyptian Arabic is welcome), an English one in English. Keep codes, item names, order numbers and figures exactly as they are in the data.
 - Lead with the answer. Then, if it helps, a short markdown table of at most 20 rows; when the result is longer, say that the full result is in the query card, which can be exported to Excel.
-- State the period and the filters you used.${options.notices ? '\n- list_notices and notice_details show no card: the person sees only what you write. Give the notices that matter (at most 20 rows), say how many more match, and offer a narrower filter.' : ''}
+- State the period and the filters you used.
+- When the person asks for a report (to print or hand on, a weekly or monthly review), write the answer as one: the period and the filters first, the headline figures, two or three charts of different kinds, a short table, then what it means. Under the answer, Print prints it on its own (Save as PDF in the print window makes a file), and Save as report keeps it to run again.${options.notices ? '\n- list_notices and notice_details show no card: the person sees only what you write. Give the notices that matter (at most 20 rows), say how many more match, and offer a narrower filter.' : ''}
 - Show no SQL in the answer unless asked.${has('inspection') ? '\n- Link a session as [Session #<session_no> · <order_number>](/history?session=<session_id>).' : ''}`)
   sections.push(`# Headline figures
 When the answer comes down to a few figures (a count, a total, a rate, a change), open the answer you write after your queries with them, at most ${MAX_KPIS}, in exactly this form:

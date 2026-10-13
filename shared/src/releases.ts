@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.97',
+    date: '2026-10-13',
+    title: 'Print reports from the assistant',
+    items: [
+      { text: 'Print, under any answer of the AI assistant, prints it on its own, laid out for paper: the question as its title, the headline figures, the text, and each chart with its rows. In the print window, Save as PDF makes a PDF file.' },
+      { text: 'A saved report has Print beside Run again (it prints the days and rows on screen), and a report delivered by an automation has Print beside Export Excel.' },
+      { text: 'Each printed page says what it is, the period, when its data was read, and who printed it and when. Ask the assistant for a report to print, and it writes the answer as one.' },
+    ],
+  },
+  {
     id: '2026-10-13.96',
     date: '2026-10-13',
     title: 'Panels open in the middle of the screen',

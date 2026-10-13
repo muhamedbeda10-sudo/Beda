@@ -459,3 +459,42 @@ fieldset {
     padding: 0 !important;
   }
 }
+
+/* Printed on its own (components/print/usePrint): drawn off the screen at the paper's width — A4 lying down, less its
+   margins — so its charts measure it before the browser prints; on paper, alone, as it is laid out, every row shown. */
+.print-root {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  width: 273mm;
+  background: #fff;
+  color: #0f172a;
+}
+@media print {
+  body.printing > :not(.print-root) {
+    display: none !important;
+  }
+  body.printing .print-root {
+    position: static;
+    width: auto;
+  }
+  .print-root button {
+    display: none !important;
+  }
+  .print-root * {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  .print-root .print-keep {
+    break-inside: avoid;
+  }
+  .print-root .print-keep-with-next {
+    break-after: avoid;
+  }
+  .print-root thead {
+    display: table-header-group;
+  }
+  .print-root tr {
+    break-inside: avoid;
+  }
+}

@@ -14,7 +14,7 @@
 // ============================================================================
 
 import { memo, useId, useMemo, useState, type ReactNode } from 'react'
-import { Bot, ChevronRight, Copy, Loader2, RotateCcw } from 'lucide-react'
+import { Bot, ChevronRight, Copy, Loader2, Printer, RotateCcw } from 'lucide-react'
 import type { AiAttachment, AiKpi, AiMessage } from '@qc/shared/ai'
 import { formatFullTimestamp, formatTime, cn } from '@/lib/utils'
 import { useApp } from '@/store/AppContext'
@@ -33,6 +33,8 @@ import { AiPlaybookCard } from './AiPlaybookCard'
 import { AiExcelCard } from './AiExcelCard'
 import { AiTableExcel } from './AiTable'
 import { useAiExcel } from '@/services/queries'
+import { AnswerPrint } from '@/components/print/reportPrints'
+import { usePrint } from '@/components/print/usePrint'
 import { answerBlocks, type AnswerBlock } from './answerLayout'
 import { queryChart, type ChartModel } from './chartData'
 import { kpiCards, liveKpis } from './kpis'
@@ -148,8 +150,13 @@ export function answerCopyText(parts: readonly LivePart[], kpis: readonly AiKpi[
   return [figures, answerText(parts)].filter(Boolean).join('\n\n')
 }
 
-/** `extra`: what else the answer offers, beside Copy (Save as report). No cost: the chat shows no amounts, to anyone. */
-function AnswerFooter({ parts, kpis, at, extra }: { parts: readonly LivePart[]; kpis: readonly AiKpi[]; at: string; extra?: ReactNode }) {
+const FOOTER_BTN = 'inline-flex h-7 items-center gap-1 rounded-md px-1.5 font-semibold hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-10 touch:px-2.5'
+
+/**
+ * `extra`: what else the answer offers, beside Copy and Print (Save as report). `onPrint`: prints it on its own, laid out
+ * for paper (Save as PDF in the browser's print makes a file). No cost: the chat shows no amounts, to anyone.
+ */
+function AnswerFooter({ parts, kpis, at, extra, onPrint }: { parts: readonly LivePart[]; kpis: readonly AiKpi[]; at: string; extra?: ReactNode; onPrint?: () => void }) {
   const { toast } = useApp()
   const text = answerCopyText(parts, kpis)
   const copy = async () => {
@@ -167,13 +174,13 @@ function AnswerFooter({ parts, kpis, at, extra }: { parts: readonly LivePart[]; 
       </time>
       {extra && <span className="ms-auto inline-flex">{extra}</span>}
       {text && (
-        <button
-          type="button"
-          onClick={() => void copy()}
-          className={cn('inline-flex h-7 items-center gap-1 rounded-md px-1.5 font-semibold hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 touch:h-10 touch:px-2.5', !extra && 'ms-auto')}
-          aria-label="Copy the answer"
-        >
+        <button type="button" onClick={() => void copy()} className={cn(FOOTER_BTN, !extra && 'ms-auto')} aria-label="Copy the answer">
           <Copy className="h-3.5 w-3.5" /> Copy
+        </button>
+      )}
+      {text && onPrint && (
+        <button type="button" onClick={onPrint} className={FOOTER_BTN} aria-label="Print the answer" data-tip="Print it, or save it as a PDF from the print window">
+          <Printer className="h-3.5 w-3.5" /> Print
         </button>
       )}
     </div>
@@ -235,6 +242,7 @@ export const Answer = memo(function Answer({
   }, [parts, writing])
   const blocks = useMemo(() => answerBlocks(parts, { settled: !writing, kpis: kpis.length > 0, charted: new Set(charts.keys()) }), [parts, writing, kpis.length, charts])
   const save = useSaveAsReport(ended, onOpenReport)
+  const printer = usePrint()
   const chips = latest && ended && onSuggestion ? suggestionChips(ended.suggestions) : []
   const last = parts.at(-1)
   // Between queries and before the first word, say what the model is doing: its latest word on it, or "Thinking…".
@@ -282,7 +290,16 @@ export const Answer = memo(function Answer({
         </Notice>
       )}
       {ended && <StopNotice reason={ended.stopReason} notice={ended.notice} action={retry ? <AskAgain question={question} onAskAgain={onAskAgain} /> : undefined} />}
-      {ended && <AnswerFooter parts={ended.parts} kpis={kpis} at={ended.createdAt} extra={save.button} />}
+      {ended && (
+        <AnswerFooter
+          parts={ended.parts}
+          kpis={kpis}
+          at={ended.createdAt}
+          extra={save.button}
+          onPrint={() => printer.print(<AnswerPrint question={question} at={ended.createdAt} parts={ended.parts} kpis={kpis} />)}
+        />
+      )}
+      {printer.node}
       {save.notice}
       {chips.length > 0 && onSuggestion && <AiSuggestions questions={chips} onPick={onSuggestion} />}
     </AnswerFrame>

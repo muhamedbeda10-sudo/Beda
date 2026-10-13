@@ -123,6 +123,11 @@ describe('an answer as it ended', () => {
     expect(without).not.toMatch(exports)
   })
 
+  it('offers Print under an answer that has ended, beside Copy', () => {
+    expect(html).toContain('aria-label="Print the answer"')
+    expect(html.indexOf('aria-label="Copy the answer"')).toBeLessThan(html.indexOf('aria-label="Print the answer"'))
+  })
+
   it('folds its queries under “How I got this” at the end', () => {
     expect(html).toContain('How I got this (2 queries)')
     expect(html).toMatch(/aria-expanded="false"[^>]*>.*How I got this/)
