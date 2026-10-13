@@ -15,7 +15,7 @@ import { ConfigurationPage } from '@/pages/admin/ConfigurationPage'
 import { DataImportPage } from '@/pages/admin/DataImportPage'
 import { UsersPage } from '@/pages/admin/UsersPage'
 import { AuditPage } from '@/pages/admin/AuditPage'
-import { NoticesPage } from '@/pages/admin/NoticesPage'
+import { NoticesPage } from '@/pages/NoticesPage'
 import { WhatsNewPage } from '@/pages/admin/WhatsNewPage'
 import { ErrorBoundary, LoadFailed } from '@/components/ui/ErrorBoundary'
 import { useAuth } from '@/store/AuthContext'
@@ -150,7 +150,9 @@ export default function App() {
         <Route path="/admin/import" element={<Only cap="manage-admin-data"><DataImportPage /></Only>} />
         <Route path="/admin/users" element={<Only cap="manage-admin-data"><UsersPage /></Only>} />
         <Route path="/admin/audit" element={<Only cap="edit-closed-session"><AuditPage /></Only>} />
-        <Route path="/admin/notices" element={<Only cap="manage-admin-data"><NoticesPage /></Only>} />
+        {/* §16 — notices have a page of their own, opened from the bell; the old address under Administration leads there. */}
+        <Route path="/notices" element={<Only cap="manage-admin-data"><NoticesPage /></Only>} />
+        <Route path="/admin/notices" element={<Navigate to="/notices" replace />} />
         <Route path="/admin/whats-new" element={<Only cap="manage-admin-data"><WhatsNewPage /></Only>} />
         {/* §20 — the assistant's settings live in its popup (the gear): this address opens them there, large. */}
         <Route path="/admin/ai" element={<OnlyAiOwner><AiAddress /></OnlyAiOwner>} />

@@ -17,6 +17,7 @@ import { ApiError } from '@/lib/api'
 import { isCoarsePointer } from '@/lib/media'
 import { cn, newSubmissionId } from '@/lib/utils'
 import { messageDirection } from '@/lib/direction'
+import { useBottomBarRef } from '@/lib/bottomBar'
 import { EmojiPicker } from './EmojiPicker'
 import { mentionToken, plainText, triggerAt } from './mentions'
 
@@ -180,6 +181,7 @@ export function Composer({
     }
   }
 
+  const bottomBar = useBottomBarRef<HTMLDivElement>()
   const canSend = !busy && uploading === 0 && (text.trim().length > 0 || imageIds.length > 0 || files.length > 0)
 
   const submit = async () => {
@@ -217,7 +219,8 @@ export function Composer({
   }
 
   return (
-    <div className="relative border-t border-slate-200 bg-white/95 px-2 pb-2 pt-2 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 safe-bottom">
+    // At the foot of the chat page: its height lifts the assistant's floating button above Send (lib/bottomBar).
+    <div ref={bottomBar} className="relative border-t border-slate-200 bg-white/95 px-2 pb-2 pt-2 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 safe-bottom">
       {(replyTo || editing) && (
         <div className="mb-2 flex items-start gap-2 rounded-xl border-l-4 border-brand-500 bg-slate-50 px-3 py-1.5 text-xs dark:bg-slate-800">
           {editing ? <Pencil className="mt-0.5 h-3.5 w-3.5 text-brand-600" /> : <span className="mt-0.5 font-bold text-brand-700 dark:text-brand-300">{replyTo?.senderName}</span>}

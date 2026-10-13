@@ -132,9 +132,9 @@ beforeEach(() => {
 describe('§20 what anyone signed in learns', () => {
   it('only whether to show the assistant and whether it can answer: no amounts, no model', async () => {
     expect((await app.api('GET', '/api/ai/me')).status).toBe(401)
-    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true })
+    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true, notices: true })
     for (const s of [admin2, insp, sup, viewer]) {
-      expect(await me(s), s.user.role).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false })
+      expect(await me(s), s.user.role).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false })
     }
   })
 })
@@ -172,7 +172,7 @@ describe('§20 the owner gives the assistant, person by person', () => {
       ['admin', true],
       ['insp', false],
     ])
-    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false })
+    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false })
   })
 
   it('audits every change: a person given it in one line, a change field by field', async () => {
@@ -477,7 +477,7 @@ describe('§20 when the owner changes a person’s data', () => {
     const reachable = async () => (await app.api('GET', '/api/ai/conversations', { token: insp.token })).status
     for (const g of [{ enabled: false }, { domains: [] }]) {
       await grant(insp, { domains: ['orders'], ...g })
-      expect(await me(insp)).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false })
+      expect(await me(insp)).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false })
       expect(await reachable()).toBe(403)
       expect((await ask(insp, 'Still there?')).status).toBe(403)
       expect((await app.api('GET', `/api/ai/reports/${reportId}/run`, { token: insp.token })).status).toBe(403)
@@ -551,7 +551,7 @@ describe('§20 when the owner changes a person’s data', () => {
     expect((await app.api<AiAccessListResponse>('GET', '/api/ai/access', { token: owner.token })).body.people.find((p) => p.userId === insp.user.id)).toMatchObject({ active: false, enabled: true })
     expect((await app.api('PATCH', `/api/users/${insp.user.id}`, { token: owner.token, body: { isActive: true } })).status).toBe(200)
     insp = await app.login('insp')
-    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false })
+    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false })
   })
 })
 
@@ -562,11 +562,11 @@ describe('§20 the caps, a person’s own and the assistant’s', () => {
   it('holds a person to their own cap, saying so without an amount, and leaves the others be', async () => {
     await grant(insp, { domains: ['inspection'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 1 })
     await app.db.query(`INSERT INTO ai_usage (user_id, model, output_tokens, cost_usd) VALUES ($1, 'claude-haiku-5-5', 0, $2)`, [insp.user.id, 1 - (await spentBy(insp.user.id)) - 0.001])
-    expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'personal-cap', automations: false, excel: false })
+    expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'personal-cap', automations: false, excel: false, notices: false })
     const refused = await ask(insp, 'One more?')
     expect(refused.status).toBe(402)
     expect(refused.error).toEqual({ code: 'ai_budget_reached', message: "You have reached this month's limit for the assistant. It is available again on the 1st." })
-    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true })
+    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true, notices: true })
     // The owner sees the figures on the settings page.
     const listed = (await app.api<AiAccessListResponse>('GET', '/api/ai/access', { token: owner.token })).body.people.find((p) => p.userId === insp.user.id)!
     expect(listed.spentUsd).toBeCloseTo(0.999, 6)
@@ -577,7 +577,7 @@ describe('§20 the caps, a person’s own and the assistant’s', () => {
     const status = (await app.api<AiStatusResponse>('GET', '/api/ai/status', { token: owner.token })).body
     await app.api('PUT', '/api/ai/settings', { token: owner.token, body: { enabled: true, monthlyCapUsd: Math.ceil((status.spentUsd + 0.005) * 100) / 100 } })
     try {
-      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'cap-reached', automations: false, excel: false })
+      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'cap-reached', automations: false, excel: false, notices: false })
       const refused = await ask(insp, 'At the cap?')
       expect(refused.error).toEqual({ code: 'ai_budget_reached', message: "The assistant's monthly limit is reached. It is available again on the 1st." })
       const ownerAsks = await ask(owner, 'At the cap?')
@@ -587,7 +587,7 @@ describe('§20 the caps, a person’s own and the assistant’s', () => {
       })
       // Switched off: a person is told only that it is not available.
       await app.api('PUT', '/api/ai/settings', { token: owner.token, body: { enabled: false, monthlyCapUsd: 50 } })
-      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'unavailable', automations: false, excel: false })
+      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'unavailable', automations: false, excel: false, notices: false })
       expect((await ask(insp, 'Off?')).error).toEqual({ code: 'ai_unavailable', message: 'The assistant is not available right now. Try again later.' })
       expect((await ask(owner, 'Off?')).error?.message).toMatch(/switched off/)
     } finally {

@@ -282,6 +282,8 @@ export interface AiMeResponse {
   automations: boolean
   /** May have Excel from the assistant (§20): its files, and Excel of its queries, tables and reports. The owner, and people the owner allowed. */
   excel: boolean
+  /** May have the assistant write notices (§23): an administrator by role now, given the assistant, the owner or allowed by the owner. */
+  notices: boolean
 }
 
 // ---- Settings ----------------------------------------------------------------

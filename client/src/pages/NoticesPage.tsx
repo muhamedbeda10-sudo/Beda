@@ -2,11 +2,17 @@
 // §16 — the administrator's notices: write one, aim it, attach photos and
 // documents, see who has read it, withdraw it. Targets are alternatives
 // within a kind and combine across kinds; that rule is written on the form.
+// A page of its own at /notices, opened from the bell's Notices tab (for
+// those who may manage them), not from Administration. A new notice is
+// written by the assistant (§23): "New in the assistant" opens it on a new
+// conversation to draft one as a card; this page keeps the notices written —
+// who read them, a change, withdrawing or removing one.
 // ============================================================================
 
 import { useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { BellPlus, Check, ClipboardList, Eye, FileUp, Loader2, Pencil, Plus, Trash2, Undo2, Users, X } from 'lucide-react'
+import { BellPlus, Check, ClipboardList, Eye, FileUp, Loader2, Megaphone, Pencil, Plus, Sparkles, Trash2, Undo2, Users, X } from 'lucide-react'
+import { useAi } from '@/components/ai/AiAssistantProvider'
 import type { SaveNoticeRequest } from '@qc/shared/api'
 import {
   NOTICE_TARGET_KINDS,
@@ -22,7 +28,6 @@ import {
   type NoticeMatchMode,
 } from '@qc/shared/types'
 import { can, normaliseMachineCode, shiftName } from '@qc/shared/rules'
-import { AdminLayout } from '@/components/admin/AdminLayout'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { NoticeCard, NoticeFileRow, SeverityBadge, TargetChips, validityText } from '@/components/notices/NoticeCard'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
@@ -45,7 +50,6 @@ interface Draft extends SaveNoticeRequest {
   files: NoticeFile[]
 }
 
-const EMPTY: Draft = { title: '', body: '', severity: 'warning', requiresAck: true, matchMode: 'all', validFrom: today(), validTo: null, targets: [], imageIds: [], fileIds: [], files: [] }
 
 const CONTEXT_KINDS: NoticeTargetKind[] = ['factory', 'machine', 'process', 'order-number', 'order-line', 'item-code', 'customer', 'shift']
 
@@ -569,7 +573,11 @@ function AcksModal({ notice, onClose }: { notice: NoticeAdminRow; onClose: () =>
 
 // ---- The page --------------------------------------------------------------
 
+/** What the assistant's question box holds for a new notice: the person finishes the sentence. */
+export const NEW_NOTICE_TEXT = 'Write a notice: '
+
 export function NoticesPage() {
+  const ai = useAi()
   const qc = useQueryClient()
   const { toast } = useApp()
   const { data: notices = [], isLoading } = useAdminNotices()
@@ -637,20 +645,27 @@ export function NoticesPage() {
   )
 
   return (
-    <AdminLayout
-      title="Notices"
-      description="A notice reaches the people it is aimed at through the bell, and comes up before they start a session where it applies. Each reader sees it once; when it must be acknowledged, their name and the time are kept."
-      needs="manage-admin-data"
-      actions={
-        <Button variant="primary" className="min-h-[44px]" onClick={() => setForm({ id: null, draft: { ...EMPTY, validFrom: today() } })}>
-          <BellPlus className="h-4 w-4" /> New notice
-        </Button>
-      }
-    >
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+          <Megaphone className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-2xl font-extrabold tracking-tight">Notices</h1>
+          <p className="max-w-4xl text-13 text-muted">
+            A notice reaches the people it is aimed at through the bell, and comes up before they start a session where it applies. Each reader sees it once; when it must be acknowledged, their name and the time are kept.
+          </p>
+        </div>
+        {ai.notices && (
+          <Button variant="primary" className="min-h-[44px]" onClick={() => ai.compose(NEW_NOTICE_TEXT)} data-tip="Opens the assistant in a new conversation: say what to tell whom, and for how long">
+            <Sparkles className="h-4 w-4" /> New in the assistant
+          </Button>
+        )}
+      </div>
       <div className="space-y-4">
         {isLoading && <p className="text-sm text-muted">Loading…</p>}
         {!isLoading && notices.length === 0 && (
-          <EmptyState icon={<ClipboardList className="h-10 w-10" />} title="No notices yet" hint="Write the first one for a machine, an order, a customer or a shift." action={<Button variant="primary" onClick={() => setForm({ id: null, draft: { ...EMPTY, validFrom: today() } })}><BellPlus className="h-4 w-4" /> New notice</Button>} />
+          <EmptyState icon={<ClipboardList className="h-10 w-10" />} title="No notices yet" hint={ai.notices ? 'Ask the assistant for the first one: for a machine, an order, a customer or a shift.' : "Notices are written with the AI assistant. Ask the assistant's owner to let you write them."} action={ai.notices ? <Button variant="primary" onClick={() => ai.compose(NEW_NOTICE_TEXT)}><Sparkles className="h-4 w-4" /> New in the assistant</Button> : undefined} />
         )}
         {active.length > 0 && (
           <section className="space-y-2">
@@ -698,6 +713,6 @@ export function NoticesPage() {
           </p>
         </Modal>
       )}
-    </AdminLayout>
+    </div>
   )
 }

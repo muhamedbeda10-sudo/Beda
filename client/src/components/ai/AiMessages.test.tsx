@@ -36,7 +36,7 @@ afterAll(() => {
 /** An answer as the person sees it: by default someone the owner allows Excel (§20). */
 function render(props: { message?: AiMessage; turn?: LiveTurn; noticesWait?: boolean }, excel = true): string {
   const client = new QueryClient()
-  client.setQueryData<AiMeResponse>(keys.aiMe, { granted: true, owner: false, available: true, automations: false, excel })
+  client.setQueryData<AiMeResponse>(keys.aiMe, { granted: true, owner: false, available: true, automations: false, excel, notices: false })
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <AppProvider>
