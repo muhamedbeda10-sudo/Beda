@@ -40,6 +40,7 @@ import {
   SAVED_TABLE_NAME_PATTERN,
   SAVED_TABLE_PREVIEW_ROWS,
   SAVED_TABLE_SCHEMA,
+  SAVED_TABLE_SUMMARY_MAX,
   type SavedTable,
   type SavedTableColumn,
   type SavedTableColumnType,
@@ -112,6 +113,8 @@ export interface LiteralColumn {
 export type SavedTableDefinition = {
   name: string
   title: string
+  /** What the table shows, plainly; none leaves it empty. */
+  summary?: string
   description: string
 } & (
   | { source: 'query'; sql: string; refresh: SavedTableRefresh; notes: Record<string, string> }
@@ -131,6 +134,7 @@ interface TableRow {
   id: string
   name: string
   title: string
+  summary: string
   description: string
   source: SavedTableSource
   sql: string | null
@@ -154,7 +158,7 @@ interface TableRow {
   updatedAt: string
 }
 
-const TABLE_SELECT = `t.id, t.name, t.title, t.description, t.source, t.sql, t.literal, t.column_notes AS "columnNotes", t.refresh,
+const TABLE_SELECT = `t.id, t.name, t.title, t.summary, t.description, t.source, t.sql, t.literal, t.column_notes AS "columnNotes", t.refresh,
   t.domains, t.depends_on AS "dependsOn", t.version, t.columns, t.row_count AS "rowCount", t.refreshed_at AS "refreshedAt",
   t.next_refresh_at AS "nextRefreshAt", t.last_error AS "lastError", t.last_error_at AS "lastErrorAt", t.failures,
   t.created_by_id AS "createdById", t.created_by_name AS "createdByName", t.created_at AS "createdAt",
@@ -170,6 +174,7 @@ function toTable(r: TableRow, viewer: { id: string; owner: boolean } | null): Sa
     id: r.id,
     name: r.name,
     title: r.title,
+    summary: r.summary,
     description: r.description,
     source: r.source,
     sql: r.sql,
@@ -502,7 +507,7 @@ async function recordChange(
 
 /** The definition as kept in the history: what the assistant gave, nothing computed. */
 function definitionRecord(def: SavedTableDefinition): Record<string, unknown> {
-  const base = { name: def.name, title: def.title, description: def.description, source: def.source }
+  const base = { name: def.name, title: def.title, summary: def.summary ?? '', description: def.description, source: def.source }
   return def.source === 'query' ? { ...base, sql: def.sql, refresh: def.refresh, notes: def.notes } : { ...base, columns: def.columns, rows: def.rows }
 }
 
@@ -571,6 +576,7 @@ export async function saveTable(
         actor.id,
         actor.name,
         deps.timeZone,
+        oneLineSummary(def.summary),
       ]
       const schedule = nextRefreshSql('$7::text', '$15::text')
       let id: string
@@ -580,16 +586,16 @@ export async function saveTable(
           `UPDATE ai_saved_tables SET title = $1, description = $2, source = $3, sql = $4, literal = $5, column_notes = $6, refresh = $7,
                   domains = $8, depends_on = $9, columns = $10, row_count = $11, refresh_ms = $12, refreshed_at = now(),
                   last_error = NULL, last_error_at = NULL, failures = 0, next_refresh_at = ${schedule},
-                  updated_by_id = $13, updated_by_name = $14, version = version + 1
-            WHERE id = $16 RETURNING id, version`,
+                  updated_by_id = $13, updated_by_name = $14, version = version + 1, summary = $16
+            WHERE id = $17 RETURNING id, version`,
           [...values, now.id],
         )
         ;({ id, version } = rows[0])
       } else {
         const { rows } = await tx.query<{ id: string; version: number }>(
           `INSERT INTO ai_saved_tables (title, description, source, sql, literal, column_notes, refresh, domains, depends_on, columns, row_count,
-                                        refresh_ms, refreshed_at, next_refresh_at, created_by_id, created_by_name, updated_by_id, updated_by_name, name)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), ${schedule}, $13, $14, $13, $14, $16) RETURNING id, version`,
+                                        refresh_ms, refreshed_at, next_refresh_at, created_by_id, created_by_name, updated_by_id, updated_by_name, summary, name)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), ${schedule}, $13, $14, $13, $14, $16, $17) RETURNING id, version`,
           [...values, def.name],
         )
         ;({ id, version } = rows[0])
@@ -608,6 +614,11 @@ export async function saveTable(
   } catch (e) {
     return writeFailure(e)
   }
+}
+
+/** A summary as it is kept: on one line, cut to its length. */
+function oneLineSummary(summary: string | undefined): string {
+  return (summary ?? '').replace(/\s+/g, ' ').trim().slice(0, SAVED_TABLE_SUMMARY_MAX)
 }
 
 /** The query's text as it is kept: trimmed, without its trailing semicolon. */

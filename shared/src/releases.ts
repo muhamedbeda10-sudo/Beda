@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-13.105',
+    date: '2026-10-13',
+    title: 'Saved tables, simpler to read',
+    items: [
+      { text: 'Each table on the Saved tables page now shows its title, a sentence or two on what it shows, how many rows it has and when they were computed, and the table itself, open at once. The full description, the columns, who may read it, who made it and how it is computed are under Details.' },
+      { text: 'The assistant writes that short summary when it saves or replaces a table. A table saved before this shows the first sentence of its description until the assistant replaces it.' },
+    ],
+  },
+  {
     id: '2026-10-13.104',
     date: '2026-10-13',
     title: 'The assistant expands to the full screen',

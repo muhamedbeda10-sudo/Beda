@@ -24,6 +24,7 @@ import {
   SAVED_TABLE_MAX_ROWS,
   SAVED_TABLE_NOTE_MAX,
   SAVED_TABLE_REFRESHES,
+  SAVED_TABLE_SUMMARY_MAX,
   SAVED_TABLE_TITLE_MAX,
   type AiSavedTablePart,
   type SavedTable,
@@ -77,6 +78,10 @@ export const SAVE_TABLE_TOOL: Anthropic.Beta.BetaTool = {
     properties: {
       name: { type: 'string', description: 'Lowercase letters, digits and _, starting with a letter, 2 to 48 characters, saying what a row is: routing_steps, scrap_normal_range.' },
       title: { type: 'string', description: `What the table is, in a few words, in the person's language (at most ${SAVED_TABLE_TITLE_MAX} characters).` },
+      summary: {
+        type: 'string',
+        description: `What the table shows, in one or two short, plain sentences in the person's language, for someone on the floor who reads neither SQL nor column names: no view, column or rule names (at most ${SAVED_TABLE_SUMMARY_MAX} characters). It leads the table on the Saved tables page; the description stays under Details.`,
+      },
       description: {
         type: 'string',
         description: `What one row is, where the rows come from (the data and the period, the rules applied) and what the table is for, written to be read later on its own (at most ${SAVED_TABLE_DESCRIPTION_MAX} characters).`,
@@ -114,7 +119,7 @@ export const SAVE_TABLE_TOOL: Anthropic.Beta.BetaTool = {
       },
       replace: { type: 'boolean', description: 'true to replace the table of this name (one this person made, or any for the assistant\'s owner); otherwise a name already used is refused.' },
     },
-    required: ['name', 'title', 'description', 'source'],
+    required: ['name', 'title', 'summary', 'description', 'source'],
     additionalProperties: false,
   },
 }
@@ -140,6 +145,7 @@ const SaveInput = z
   .object({
     name: z.string().trim(),
     title: z.string().trim().min(1).max(SAVED_TABLE_TITLE_MAX),
+    summary: z.string().trim().max(SAVED_TABLE_SUMMARY_MAX).default(''),
     description: z.string().trim().max(SAVED_TABLE_DESCRIPTION_MAX).default(''),
     source: z.enum(['query', 'rows']),
     sql: z.string().max(AI_MAX_SQL_CHARS).nullish(),
@@ -190,6 +196,7 @@ function described(t: SavedTable, full: boolean) {
   return {
     name: `ai_saved.${t.name}`,
     title: t.title,
+    summary: t.summary,
     description: t.description,
     source: t.source,
     ...(full && t.sql ? { sql: t.sql } : {}),
@@ -243,7 +250,7 @@ async function save(ctx: SavedTableToolContext, tu: ToolUse): Promise<ToolOutcom
   const actor = await actorOf(ctx)
   if (!actor) return failed(tu, NOT_GRANTED)
   const name = bareName(i.name) ?? ''
-  const base = { name, title: i.title, description: i.description }
+  const base = { name, title: i.title, summary: i.summary, description: i.description }
   const def: SavedTableDefinition =
     i.source === 'query'
       ? { ...base, source: 'query', sql: i.sql!, refresh: i.refresh!, notes: i.columnNotes ?? {} }

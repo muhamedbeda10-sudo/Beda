@@ -130,6 +130,8 @@ describe('saving a table from a query', () => {
       { name: 'created_at', type: 'timestamp with time zone', note: '' },
     ])
     expect(t.nextRefreshAt).not.toBeNull()
+    // Saved without a summary: none, until a replace gives one.
+    expect(t.summary).toBe('')
 
     // Only roles holding the audit domain read it.
     expect((await readAs(['audit'], 'SELECT name FROM ai_saved.people ORDER BY 1')).rows).toEqual([['Inspector One'], ['Owner Admin'], ['Super Visor']])
@@ -170,8 +172,9 @@ describe('saving a table from a query', () => {
     const before = (await listSavedTables(app.db, ownerActor())).find((x) => x.name === 'people')!
     const notTheirs = await saveTable(deps(), actor(sup, ['inspection', 'audit']), queryTable('people', 'SELECT name FROM ai.users'), true)
     expect(notTheirs).toMatchObject({ ok: false, error: expect.stringMatching(/only they, or the assistant's owner, may replace it/) })
-    const t = saved(await saveTable(deps(), ownerActor(), queryTable('people', `SELECT name, role FROM ai.users WHERE role <> 'admin'`), true))
-    expect(t).toMatchObject({ id: before.id, version: 2, rowCount: 2 })
+    const replacing = { ...queryTable('people', `SELECT name, role FROM ai.users WHERE role <> 'admin'`), summary: 'Everyone but the administrators, with their role.' }
+    const t = saved(await saveTable(deps(), ownerActor(), replacing, true))
+    expect(t).toMatchObject({ id: before.id, version: 2, rowCount: 2, summary: 'Everyone but the administrators, with their role.' })
     expect(t.columns.map((c) => c.name)).toEqual(['name', 'role'])
     const missing = await saveTable(deps(), ownerActor(), queryTable('nothing_here', 'SELECT 1 AS one'), true)
     expect(missing).toMatchObject({ ok: false, error: expect.stringMatching(/no saved table named nothing_here to replace/) })
@@ -306,6 +309,7 @@ describe('in a conversation', () => {
       tool('toolu_save_1', 'save_table', {
         name: 'machine_register',
         title: 'Machine register',
+        summary: '  Every machine,\n with its code. ',
         description: 'Every machine with its code.',
         source: 'query',
         sql: 'SELECT machine_code AS code, machine AS name FROM ai.machines ORDER BY 1',
@@ -326,7 +330,7 @@ describe('in a conversation', () => {
     const card = res.events.find((e): e is Extract<AiStreamEvent, { type: 'saved-table' }> => e.type === 'saved-table')!
     expect(card.part).toMatchObject({ type: 'saved-table', name: 'machine_register', action: 'create', rowCount: 4, columns: ['code', 'name'], state: 'current' })
     const result = app.model.calls[calls + 1].params.messages.at(-1)!.content as { type: string; content: string }[]
-    expect(JSON.parse(result[0].content)).toMatchObject({ saved: true, name: 'ai_saved.machine_register', rowCount: 4, readableBy: 'everyone given the assistant' })
+    expect(JSON.parse(result[0].content)).toMatchObject({ saved: true, name: 'ai_saved.machine_register', summary: 'Every machine, with its code.', rowCount: 4, readableBy: 'everyone given the assistant' })
 
     const messages = await app.api<AiMessagesResponse>('GET', `/api/ai/conversations/${res.conversationId}/messages`, { token: insp.token })
     const answer = messages.body.messages.find((m) => m.role === 'assistant')!
