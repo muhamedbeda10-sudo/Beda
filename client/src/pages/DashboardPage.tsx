@@ -52,6 +52,7 @@ import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { InspectorRanking } from '@/components/dashboard/InspectorRanking'
 import { PeriodSlicer } from '@/components/dashboard/PeriodSlicer'
+import { ChartTableSwitch, FigureScope, useFigureScope } from '@/components/dashboard/figureView'
 import { ChartFillContext, ColumnChart, DonutChart, HorizontalBars, LINE_CLASSES, LineChart, PairedBarChart, ParetoChart, PieChart, Sparkline, StackedColumnChart, TrendChart, slicesOf, PIE_CLASSES, PIE_STROKES, SERIES_STROKES, type HBar, type PieSlice } from '@/components/dashboard/charts'
 import { Board, BoardContext, ChartGallery, WidgetLabelContext, useBoardsStacked, type BoardState, type BoardWidget } from '@/components/dashboard/Board'
 import { DrillModal, type DrillSpec } from '@/components/dashboard/DrillModal'
@@ -536,6 +537,8 @@ function Section({ title: ownTitle, hint: ownHint, icon, children, className, ac
   const grid = useContext(ChartFillContext)
   const [body, setBody] = useState<HTMLDivElement | null>(null)
   const more = useMoreBelow(body, grid)
+  // Its charts' one switch: drawn, or their figures as a table.
+  const figures = useFigureScope()
   const title = label.title || ownTitle
   const hint = label.title || label.hint ? label.hint || undefined : ownHint
   const badge = period === undefined ? pagePeriod : period
@@ -547,7 +550,7 @@ function Section({ title: ownTitle, hint: ownHint, icon, children, className, ac
           <h2 className="min-w-0 break-words text-base font-bold leading-tight">{title}</h2>
           {hint && <InfoTip text={hint} label={`About ${title}`} />}
         </div>
-        {(badge || action) && (
+        {(badge || action || figures.hasCharts) && (
           <div className={cn('flex min-w-0 max-w-full flex-wrap items-center gap-2 sm:justify-end', !!action && 'max-sm:w-full')}>
             {badge && (
               <Badge tone="neutral" tip="The period this chart covers">
@@ -555,6 +558,7 @@ function Section({ title: ownTitle, hint: ownHint, icon, children, className, ac
               </Badge>
             )}
             {action}
+            {figures.hasCharts && <ChartTableSwitch value={figures.view} onChange={figures.setView} />}
           </div>
         )}
       </div>
@@ -562,7 +566,7 @@ function Section({ title: ownTitle, hint: ownHint, icon, children, className, ac
       {/* On paper there is no tooltip: the explanation is printed under the title. */}
       {hint && <p className="mb-2 hidden text-xs text-muted print:block">{hint}</p>}
       <div ref={setBody} className={cn('min-w-0', grid && 'min-h-0 flex-1 overflow-auto overscroll-contain')}>
-        {children}
+        <FigureScope scope={figures.scope}>{children}</FigureScope>
       </div>
       {grid && <div aria-hidden className={cn('pointer-events-none absolute inset-x-0 bottom-0 h-10 rounded-b-2xl bg-gradient-to-t from-white to-transparent transition-opacity duration-150 dark:from-slate-900', more ? 'opacity-100' : 'opacity-0')} />}
     </Card>
@@ -1686,7 +1690,7 @@ function scopeDetailWidgets({
     ) },
     { id: 'g.pareto', title: 'Pareto of defects', node: (
         <Section title="Pareto of defects" hint="Rejected pieces by defect, largest first, with the running share: the few defects that make most of the pieces." icon={<AlertTriangle className="h-4 w-4" />} className="xl:col-span-2">
-          <ParetoChart bars={paretoOf(data.defects.map((d) => ({ label: d.defectName, value: d.pieces })))} onPick={(label) => openRejects(`${label}: rejected pieces`, { defect: label })} />
+          <ParetoChart bars={paretoOf(data.defects.map((d) => ({ label: d.defectName, value: d.pieces })))} valueLabel="Pieces" onPick={(label) => openRejects(`${label}: rejected pieces`, { defect: label })} />
         </Section>
     ) },
     { id: 'g.defectsByMonth', title: 'Defects by month', node: (
@@ -2904,6 +2908,7 @@ export function DashboardPage() {
                         ...(data.paretoOthers ? [{ label: `Others (${data.paretoOthers.types})`, value: data.paretoOthers.pieces, cumulativePct: 100 }] : []),
                       ]
                 }
+                valueLabel="Pieces"
                 onPick={(label) => openDetail(`${label}${machinePareto ? ` on ${machinePareto.label}` : ''}`, { defect: label, ...(machinePareto ? { workCenterCodes: [machinePareto.workCenterCode] } : {}) })}
               />
             </Section>

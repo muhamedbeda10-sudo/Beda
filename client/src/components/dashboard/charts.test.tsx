@@ -118,8 +118,8 @@ describe('the assistant’s stacked columns', () => {
 
 /** Every type size a drawing writes in (its texts' and their groups'). */
 const typeSizes = (html: string) => [...html.matchAll(/font-size="([\d.]+)"/g)].map((m) => Number(m[1]))
-/** The drawing's own width, from its viewBox. */
-const drawnWidth = (html: string) => Number(/viewBox="0 0 ([\d.]+) /.exec(html)?.[1])
+/** The drawing's own width, from its viewBox (the Chart / Table switch's icons aside). */
+const drawnWidth = (html: string) => Number([...html.matchAll(/viewBox="0 0 ([\d.]+) ([\d.]+)"/g)].find((m) => !(m[1] === '24' && m[2] === '24'))?.[1])
 
 describe('the dashboard’s charts, drawn at the size they are shown', () => {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']

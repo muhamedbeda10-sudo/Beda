@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { downloadWorkbook, sheetName } from '@/lib/xlsxWrite'
 import { useApp } from '@/store/AppContext'
 import { AiChart } from '@/components/ai/AiChart'
+import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figureView'
 import { AiResultModal, PreviewTable } from '@/components/ai/AiResultTable'
 import { queryChart } from '@/components/ai/chartData'
 import { sectionAsQuery } from '@/components/ai/reports'
@@ -278,8 +279,9 @@ function SectionPreview({ section, index, initiallyOpen }: { section: AiReportSe
   const [open, setOpen] = useState(initiallyOpen)
   const meta = section.ok ? `${section.rowCount.toLocaleString('en-US')}${section.truncated ? '+' : ''} ${section.rowCount === 1 && !section.truncated ? 'row' : 'rows'}` : 'Failed'
   const shown = section.rows.slice(0, AI_PREVIEW_ROWS)
-  // The chart the delivered report will draw, as this run would draw it.
+  // The chart the delivered report will draw, as this run would draw it; the switch shows it or the rows themselves.
   const chart = useMemo(() => (section.ok ? queryChart(sectionAsQuery(section, '', index)) : null), [section, index])
+  const [view, setView] = useState<FigureView>('chart')
   return (
     <section className={cn('overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', section.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-2 px-3 py-2 text-start hover:bg-slate-50 dark:hover:bg-slate-800/60 touch:min-h-[44px]">
@@ -292,8 +294,14 @@ function SectionPreview({ section, index, initiallyOpen }: { section: AiReportSe
       </button>
       {open && (
         <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
-          {chart && <AiChart model={chart} />}
-          {section.ok ? (
+          {chart && (
+            <div className="flex justify-end">
+              <ChartTableSwitch value={view} onChange={setView} />
+            </div>
+          )}
+          {chart && view === 'chart' ? (
+            <AiChart model={chart} />
+          ) : section.ok ? (
             <CasesTable title={section.title} columns={section.columns} rows={shown} more={section.truncated || section.rows.length > shown.length} />
           ) : (
             <p dir="auto" className="whitespace-pre-wrap break-words rounded-lg bg-rose-50 px-2.5 py-2 text-xs text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">

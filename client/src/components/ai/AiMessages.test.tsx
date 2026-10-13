@@ -94,12 +94,17 @@ describe('an answer as it ended', () => {
     expect(html.indexOf('Headline figures')).toBeLessThan(html.indexOf('defect pieces on two machines'))
   })
 
-  it('draws the chart its query asked for, with the query’s table under it, after the text', () => {
+  it('draws the chart its query asked for after the text, with a switch to the query’s table and its tools under it', () => {
     expect(html).toContain('class="ai-figure')
     expect(html).toContain('Defects by machine')
     expect(html).toMatch(/<svg[^>]*role="img"/)
     expect(html.indexOf('defect pieces on two machines')).toBeLessThan(html.indexOf('ai-figure'))
-    expect(html.indexOf('ai-figure')).toBeLessThan(html.indexOf('Copies the rows as tab-separated text'))
+    // The chart first; its table a press away, Open table and Export Excel under either.
+    const figure = html.slice(html.indexOf('ai-figure'))
+    expect(figure).toMatch(/aria-label="Show as"/)
+    expect(figure).toMatch(/aria-pressed="true"[^>]*>.*?Chart/)
+    expect(figure.indexOf('<svg')).toBeLessThan(figure.indexOf('Open table'))
+    expect(figure).toContain('Excel')
   })
 
   it('folds its queries under “How I got this” at the end', () => {

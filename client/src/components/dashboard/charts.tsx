@@ -8,16 +8,13 @@
 // a finger by tapping.
 // ============================================================================
 
-import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { useCoarsePointer } from '@/lib/media'
 import { CHAR_WIDTH, CHAR_WIDTH_BOLD, CHAR_WIDTH_WIDE, axisNames, labelEvery, slantRoom, spreadLabels } from './labels'
+import { ChartFillContext, Figure, shareOf, type FigureColumn } from './figureView'
 
-/**
- * True inside a board: the chart fills the box it was given, height and
- * width alike. Outside a board a chart takes the height it asks for.
- */
-export const ChartFillContext = createContext(false)
+export { ChartFillContext }
 
 /** The type a dashboard chart writes in, in px as shown: its axes, names and figures, and the smaller second figures. */
 const TEXT = 11
@@ -303,7 +300,7 @@ export interface TrendPoint {
  * to the next known point. On a phone the rate's axis is left out: its figures
  * are on the points while they fit, and in the read-out of the one tapped.
  */
-export function TrendChart({ points, barLabel, lineLabel, lineUnit = '%', height = 220, lines = [], connectGaps = false, width }: { points: TrendPoint[]; barLabel: string; lineLabel: string; lineUnit?: string; height?: number; lines?: LineSeries[]; connectGaps?: boolean; width?: number }) {
+function TrendDrawing({ points, barLabel, lineLabel, lineUnit = '%', height = 220, lines = [], connectGaps = false, width }: { points: TrendPoint[]; barLabel: string; lineLabel: string; lineUnit?: string; height?: number; lines?: LineSeries[]; connectGaps?: boolean; width?: number }) {
   const d = useDrawing(width, height)
   const readout = useReadout(d.figure)
   const hover = readout.at
@@ -462,7 +459,7 @@ export interface ParetoBar {
  * listed under the chart against their numbers, and the share's axis gives
  * way to a mark on its 80% line.
  */
-export function ParetoChart({ bars, height = 240, onPick, width }: { bars: ParetoBar[]; height?: number; onPick?: (label: string) => void; width?: number }) {
+function ParetoDrawing({ bars, height = 240, onPick, width }: { bars: ParetoBar[]; height?: number; onPick?: (label: string) => void; width?: number }) {
   const d = useDrawing(width, height)
   const coarse = useCoarsePointer()
   const readout = useReadout(d.figure)
@@ -595,7 +592,7 @@ export interface Slice {
 }
 
 /** A donut with the total in the middle and the legend beside it. */
-export function DonutChart({ slices, centerLabel, size = 160, onPick }: { slices: Slice[]; centerLabel: string; size?: number; onPick?: (label: string) => void }) {
+function DonutDrawing({ slices, centerLabel, size = 160, onPick }: { slices: Slice[]; centerLabel: string; size?: number; onPick?: (label: string) => void }) {
   const total = slices.reduce((n, s) => n + s.value, 0)
   const r = 46
   const c = 2 * Math.PI * r
@@ -682,7 +679,7 @@ export function slicesOf(rows: { key?: string; label: string; sub?: string; valu
  * legend, with an Open button there — a second tap on it opens it too. A
  * legend row opens at once: it already says what it is.
  */
-export function PieChart({ slices, centerLabel, unit = '', onPick, format = fmt }: { slices: PieSlice[]; centerLabel: string; unit?: string; onPick?: (slice: PieSlice) => void; format?: FigureFormat }) {
+function PieDrawing({ slices, centerLabel, unit = '', onPick, format = fmt }: { slices: PieSlice[]; centerLabel: string; unit?: string; onPick?: (slice: PieSlice) => void; format?: FigureFormat }) {
   const fill = useContext(ChartFillContext)
   const [wrap, setWrap] = useState<HTMLElement | null>(null)
   const [svg, setSvg] = useState<SVGSVGElement | null>(null)
@@ -817,7 +814,7 @@ const TONE_BAR: Record<HBar['tone'], string> = {
  * target. A row's name takes two lines rather than being cut, and its second
  * line ("1,815 made · 24 rejected") a line of its own under it.
  */
-export function HorizontalBars({ rows, max, unit = '' }: { rows: HBar[]; max?: number; unit?: string }) {
+function HorizontalBarsDrawing({ rows, max, unit = '' }: { rows: HBar[]; max?: number; unit?: string }) {
   if (rows.length === 0) return <ChartEmpty height={80} />
   const top = max ?? niceMax(Math.max(...rows.map((r) => r.value ?? 0)))
   return (
@@ -886,7 +883,7 @@ export interface PairedPoint {
  * With `weekly` (the same points a week each), a chart too narrow for a bar a
  * day — a long period on a phone — draws a bar a week instead.
  */
-export function PairedBarChart({ points: days, totalLabel, partLabel, height = 220, weekly, width }: { points: PairedPoint[]; totalLabel: string; partLabel: string; height?: number; weekly?: PairedPoint[]; width?: number }) {
+function PairedBarDrawing({ points: days, totalLabel, partLabel, height = 220, weekly, width }: { points: PairedPoint[]; totalLabel: string; partLabel: string; height?: number; weekly?: PairedPoint[]; width?: number }) {
   const d = useDrawing(width, height)
   const readout = useReadout(d.figure)
   const hover = readout.at
@@ -980,7 +977,7 @@ export interface Column {
  * column clicked opens what it stands for; tapped, it is first read out under
  * the chart with an Open button, and a second tap on it opens it too.
  */
-export function ColumnChart({ columns, height = 200, unit = '', onPick, width }: { columns: Column[]; height?: number; unit?: string; onPick?: (index: number) => void; width?: number }) {
+function ColumnDrawing({ columns, height = 200, unit = '', onPick, width }: { columns: Column[]; height?: number; unit?: string; onPick?: (index: number) => void; width?: number }) {
   const d = useDrawing(width, height)
   const readout = useReadout(d.figure)
   const hover = readout.at
@@ -1069,7 +1066,7 @@ export interface StackSegment {
  * room at the left the first ones need, and on a phone are cut shorter (the
  * read-out names a column in full). `format`: how figures are written.
  */
-export function StackedColumnChart({
+function StackedColumnDrawing({
   columns,
   legend,
   height = 240,
@@ -1197,7 +1194,7 @@ export interface BarSeries {
  * chart, as the line charts do. `width`: the drawing's width, for a chart
  * drawn at the size it is shown. `format`: how figures are written.
  */
-export function GroupedBarChart({ labels, series, unit = '', height = 220, width = 720, format = fmt, goal }: { labels: string[]; series: BarSeries[]; unit?: string; height?: number; width?: number; format?: FigureFormat; /** A target drawn across the bars (the assistant's). */ goal?: number }) {
+function GroupedBarDrawing({ labels, series, unit = '', height = 220, width = 720, format = fmt, goal }: { labels: string[]; series: BarSeries[]; unit?: string; height?: number; width?: number; format?: FigureFormat; /** A target drawn across the bars (the assistant's). */ goal?: number }) {
   const d = useDrawing(width, height)
   const readout = useReadout(d.figure)
   const hover = readout.at
@@ -1310,7 +1307,7 @@ export interface LineSeries {
  * line's ground is shaded down to zero. A figure below zero takes the axis
  * below zero with it (the assistant's charts; the dashboard's never are).
  */
-export function LineChart({
+function LineDrawing({
   labels,
   series,
   unit = '%',
@@ -1499,5 +1496,145 @@ export function Sparkline({ values, className = 'stroke-brand-500', width = 96, 
       {segments.map((d, i) => <polyline key={i} points={d} fill="none" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className={className} />)}
       {last !== null && last !== undefined && <circle cx={xAt(lastIdx)} cy={yAt(last)} r={2.5} className={cn('fill-white dark:fill-slate-900', className)} strokeWidth={2} />}
     </svg>
+  )
+}
+
+// ---- Chart or table ---------------------------------------------------------------------
+// Each chart as its card's switch (./figureView) shows it: drawn, or its figures as a table — the rows and columns
+// of what it draws, in its own words and format.
+
+const capital = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+const name: FigureColumn = { label: '' }
+const figure = (label: string, unit = ''): FigureColumn => ({ label, numeric: true, unit })
+
+export function TrendChart(props: Parameters<typeof TrendDrawing>[0]) {
+  const { points, barLabel, lineLabel, lineUnit = '%', lines = [] } = props
+  return (
+    <Figure
+      table={() => ({
+        columns: [name, figure(barLabel), figure(lineLabel, lineUnit), ...lines.map((l) => figure(l.label, lineUnit))],
+        rows: points.map((p, i) => [p.label, p.bar, p.line, ...lines.map((l) => l.values[i] ?? null)]),
+      })}
+    >
+      <TrendDrawing {...props} />
+    </Figure>
+  )
+}
+
+/** `valueLabel` names the bars' figures in the table (pieces, samples…). */
+export function ParetoChart({ valueLabel = 'Value', ...props }: Parameters<typeof ParetoDrawing>[0] & { valueLabel?: string }) {
+  return (
+    <Figure table={() => ({ columns: [name, figure(valueLabel), figure('Cumulative', '%')], rows: props.bars.map((b) => [b.label, b.value, Math.round(b.cumulativePct * 10) / 10]) })}>
+      <ParetoDrawing {...props} />
+    </Figure>
+  )
+}
+
+export function DonutChart(props: Parameters<typeof DonutDrawing>[0]) {
+  const total = props.slices.reduce((t, s) => t + s.value, 0)
+  return (
+    <Figure table={() => ({ columns: [name, figure(capital(props.centerLabel)), figure('Share', '%')], rows: props.slices.map((s) => [s.label, s.value, shareOf(s.value, total)]) })}>
+      <DonutDrawing {...props} />
+    </Figure>
+  )
+}
+
+export function PieChart(props: Parameters<typeof PieDrawing>[0]) {
+  const total = props.slices.reduce((t, s) => t + s.value, 0)
+  return (
+    <Figure
+      table={() => ({
+        columns: [name, figure(capital(props.centerLabel), props.unit ?? ''), figure('Share', '%')],
+        rows: props.slices.map((s) => [s.sub ? `${s.label} · ${s.sub}` : s.label, s.value, shareOf(s.value, total)]),
+        format: props.format,
+      })}
+    >
+      <PieDrawing {...props} />
+    </Figure>
+  )
+}
+
+export function HorizontalBars(props: Parameters<typeof HorizontalBarsDrawing>[0]) {
+  return (
+    <Figure
+      table={() => ({
+        columns: [name, figure('Value', props.unit ?? ''), { label: 'Detail' }],
+        rows: props.rows.map((r) => [r.sub ? `${r.label} · ${r.sub}` : r.label, r.value, r.text]),
+      })}
+    >
+      <HorizontalBarsDrawing {...props} />
+    </Figure>
+  )
+}
+
+export function PairedBarChart(props: Parameters<typeof PairedBarDrawing>[0]) {
+  return (
+    <Figure
+      table={() => ({
+        columns: [name, figure(props.totalLabel), figure(props.partLabel), figure('Share', '%')],
+        rows: props.points.map((p) => [p.label, p.total, p.part, shareOf(p.part, p.total)]),
+      })}
+    >
+      <PairedBarDrawing {...props} />
+    </Figure>
+  )
+}
+
+export function ColumnChart(props: Parameters<typeof ColumnDrawing>[0]) {
+  const details = props.columns.some((c) => !!c.sub)
+  return (
+    <Figure
+      table={() => ({
+        columns: [name, figure('Value', props.unit ?? ''), ...(details ? [{ label: 'Detail' }] : [])],
+        rows: props.columns.map((c) => [c.label, c.value, ...(details ? [c.sub ?? ''] : [])]),
+      })}
+    >
+      <ColumnDrawing {...props} />
+    </Figure>
+  )
+}
+
+export function StackedColumnChart(props: Parameters<typeof StackedColumnDrawing>[0]) {
+  const unit = props.unit ?? ''
+  return (
+    <Figure
+      table={() => ({
+        columns: [name, ...props.legend.map((l) => figure(l.label, unit)), figure('Total', unit)],
+        rows: props.columns.map((c) => [c.label, ...props.legend.map((l) => c.segments.find((sg) => sg.label === l.label)?.value ?? null), c.segments.reduce((t, sg) => t + sg.value, 0)]),
+        format: props.format,
+      })}
+    >
+      <StackedColumnDrawing {...props} />
+    </Figure>
+  )
+}
+
+export function GroupedBarChart(props: Parameters<typeof GroupedBarDrawing>[0]) {
+  const unit = props.unit ?? ''
+  return (
+    <Figure
+      table={() => ({
+        columns: [name, ...props.series.map((sr) => figure(sr.label, unit))],
+        rows: props.labels.map((l, i) => [l, ...props.series.map((sr) => sr.values[i] ?? null)]),
+        format: props.format,
+      })}
+    >
+      <GroupedBarDrawing {...props} />
+    </Figure>
+  )
+}
+
+export function LineChart(props: Parameters<typeof LineDrawing>[0]) {
+  const unit = props.unit ?? '%'
+  return (
+    <Figure
+      table={() => ({
+        columns: [name, ...props.series.map((sr) => figure(sr.label, unit))],
+        rows: props.labels.map((l, i) => [l, ...props.series.map((sr) => sr.values[i] ?? null)]),
+        format: props.format,
+      })}
+    >
+      <LineDrawing {...props} />
+    </Figure>
   )
 }
