@@ -8,14 +8,17 @@
 // What it is sent is checked here, every problem told at once, so it fixes
 // them in one go: the layout's own rules (a swimlane's boxes each in a lane, a
 // tree with one root and no loop, a fishbone with one effect and its causes on
-// bones), the ids every arrow, parent and group names, the words' lengths.
+// bones, each cause with its figure from the data), the ids every arrow,
+// parent and group names, the words' lengths.
 //
 // A figure on a box is never the model's own text. It names a row of one of
 // the diagram's figure queries — read-only, over the ai.* views, run here as
 // the person's domains read now, as run_sql runs — by the value of the
 // query's key column, and the server writes that row's value in. A query no
 // box uses is not run. A box marked a hypothesis (not shown by the data) has
-// no figure, and is drawn dashed.
+// no figure, and is drawn dashed — except on a fishbone, which holds only what
+// the data shows: every cause there carries its figure, and a hypothesis, or a
+// cause with no figure, is refused.
 //
 // What passes is kept with the call and its result, in one transaction
 // (ai_diagrams, migration 0058), and shown as a card in its place.
@@ -76,7 +79,7 @@ const LAYOUT_WORDS =
   'flow: boxes in the order the arrows run (a process map, a flowchart, a decision tree, a value stream). ' +
   'swimlane: the same, each box in the lane (group) of who does it (a department, a role, a machine). ' +
   'tree: each box under its parent (5 whys, a fault tree, a mind map, a breakdown); one root. ' +
-  'fishbone: a cause-and-effect (Ishikawa) diagram: one effect box with no group and no parent, each cause on a bone (group, such as the 6M), a sub-cause under its cause (parent). ' +
+  'fishbone: a cause-and-effect (Ishikawa) diagram: one effect box with no group and no parent, each cause on a bone (group, such as the 6M), a sub-cause under its cause (parent); only causes the data shows, each with its figure, never a hypothesis. ' +
   'columns: boxes in columns side by side, each in its column (group), in order (SIPOC, before and after, options compared).'
 
 export const MAKE_DIAGRAM_TOOL: Anthropic.Beta.BetaTool = {
@@ -127,7 +130,7 @@ export const MAKE_DIAGRAM_TOOL: Anthropic.Beta.BetaTool = {
             tone: { type: 'string', enum: [...AI_DIAGRAM_TONES], description: 'Optional (default neutral): accent to pick a box out, good, warning, bad (the problem, a bottleneck, the main cause).' },
             group: { type: 'string', description: "The id of its lane (swimlane), bone (fishbone) or column (columns)." },
             parent: { type: 'string', description: "tree: the id of its parent (every box but the root has one). fishbone: a sub-cause's cause." },
-            hypothesis: { type: 'boolean', description: 'True for a cause or a step that the data does not show: put forward from experience, to be checked. Drawn dashed. A box with a figure is never one.' },
+            hypothesis: { type: 'boolean', description: 'True for a step or a why that the data does not show: put forward from experience, to be checked. Drawn dashed. A box with a figure is never one, and a fishbone takes none.' },
             figure: {
               type: 'object',
               description: "Optional. The figure shown on the box: the row of a figure query whose key column holds `key`; the server writes that row's value in.",
@@ -479,7 +482,7 @@ export async function checkDiagram(input: unknown, run: (source: { id: string; p
 
   // ---- A tree's and a fishbone's parents.
   if (layout === 'tree') errors.push(...treeProblems(nodes, byId))
-  if (layout === 'fishbone') errors.push(...fishboneProblems(nodes, byId))
+  if (layout === 'fishbone') errors.push(...fishboneProblems(nodes, byId, new Set([...asked.keys()].map((at) => nodes[at].id))))
 
   // ---- The figures: each query a box names, run once; each box's row found by its key.
   const used = new Set([...asked.values()].map((a) => a.source))
@@ -577,8 +580,12 @@ function treeProblems(nodes: readonly AiDiagramNode[], byId: ReadonlyMap<string,
   return errors
 }
 
-/** A fishbone: one effect (no bone, no parent), each cause on a bone, each sub-cause under a cause and on its bone. */
-function fishboneProblems(nodes: AiDiagramNode[], byId: ReadonlyMap<string, AiDiagramNode>): string[] {
+/**
+ * A fishbone: one effect (no bone, no parent), each cause on a bone, each sub-cause under a cause and on its bone; and
+ * only what the data shows. Every cause and sub-cause carries a figure from a figure query (`figured`: the boxes that
+ * ask for one); one put forward from the model's own knowledge — a hypothesis, or a box with no figure — is refused.
+ */
+function fishboneProblems(nodes: AiDiagramNode[], byId: ReadonlyMap<string, AiDiagramNode>, figured: ReadonlySet<string>): string[] {
   const errors: string[] = []
   const effects = nodes.filter((n) => !n.group && !n.parent)
   if (effects.length !== 1) {
@@ -590,6 +597,11 @@ function fishboneProblems(nodes: AiDiagramNode[], byId: ReadonlyMap<string, AiDi
   }
   const effect = effects.length === 1 ? effects[0] : null
   if (effect?.hypothesis) errors.push(`node "${effect.id}": the effect is the problem observed, not a hypothesis.`)
+  for (const n of nodes) {
+    if (n === effect) continue
+    if (n.hypothesis) errors.push(`node "${n.id}": a fishbone holds only what the data shows, never a hypothesis; leave this cause off it.`)
+    else if (!figured.has(n.id)) errors.push(`node "${n.id}": every cause on a fishbone shows the figure from the data that bears it out; give it a figure from a figure query, or leave it off.`)
+  }
   for (const n of nodes) {
     if (!n.parent) continue
     const parent = byId.get(n.parent)
