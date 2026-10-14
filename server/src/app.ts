@@ -64,6 +64,12 @@ export function createApp(ctx: AppContext): Express {
       crossOriginEmbedderPolicy: false,
     }),
   )
+  // A batch of an ERP export (up to 1,000 rows of the order sheet's 57 columns) is larger than any other request:
+  // its own limit, on its own routes; every other body keeps the small one.
+  app.use(
+    ['/api/orders/import', '/api/orders/import/compare', '/api/production-records/import', '/api/production-records/import/compare'],
+    express.json({ limit: '8mb' }),
+  )
   app.use(express.json({ limit: '2mb' }))
   app.use(cookieParser())
 

@@ -13,6 +13,7 @@ import {
   EXISTING_KEYS_MAX,
   type ClearOrdersResult,
   type ExistingKeysResponse,
+  type ImportCompareResponse,
   type ImportResult,
   type OrderHistory,
   type OrderListOptionsResponse,
@@ -41,6 +42,7 @@ import {
   DETAIL_INSERT_COLUMNS,
   DETAIL_INSERT_VALUES,
   DETAIL_RECORD_COLUMNS,
+  DETAIL_NEW_VALUES,
   DETAIL_UPDATE_SET,
   detailListColumns,
   detailPayload,
@@ -107,31 +109,28 @@ export async function fetchOrdersByIds(q: Queryable, ids: string[]): Promise<Pro
 }
 
 /**
- * §7.7 — idempotent bulk upsert on the line key, the ERP's Order ID (matched
- * without regard to case; the stored spelling is kept). A field the rows do
- * not carry leaves the stored value alone; a line that had been marked
- * deleted comes back, because the ERP says it is current. A line seen for the
- * first time must name its order number. A sync run stamps the lines it saw.
- * The ERP details (§7.7.1) differ in one way: a detail the row carries as
- * null is cleared, as the ERP no longer has it.
+ * Each stored column of a line and its value after a row is applied: a core field the row does not carry keeps the
+ * stored value (`i` is the row's record, `p` the stored line, `e.j` the row's JSON object).
  */
-export async function upsertOrderLines(tx: Queryable, rows: OrderImportRow[], syncRunId: string | null = null): Promise<{ inserted: number; updated: number }> {
-  // Last occurrence of a key wins, so a file that repeats a line key is
-  // applied in its own order rather than colliding inside one statement.
+const CORE_NEW_VALUES: readonly (readonly [column: string, value: string])[] = [
+  'order_number', 'item', 'item_code', 'work_center_code', 'required_qty', 'finished_qty', 'drawing', 'drawing_alt', 'issue',
+  'material', 'expected_grade', 'customer', 'type', 'colour', 'erp_status', 'order_date',
+].map((c) => [c, `COALESCE(i.${c}, p.${c})`] as const)
+const NEW_VALUES = [...CORE_NEW_VALUES, ...DETAIL_NEW_VALUES]
+
+/**
+ * What a row would change of its stored line, as SQL over `p`, `i` and `e.j`: a value that differs, a line marked
+ * deleted (the ERP says it is current), or — for a sync run ($2) — a line this run has not stamped yet.
+ */
+const LINE_CHANGES = `((${NEW_VALUES.map(([c]) => `p.${c}`).join(', ')}) IS DISTINCT FROM (${NEW_VALUES.map(([, v]) => v).join(', ')})
+       OR p.deleted_at IS NOT NULL
+       OR ($2::uuid IS NOT NULL AND p.last_sync_run_id IS DISTINCT FROM $2::uuid))`
+
+/** The rows of a batch as the upsert's JSON: one per line key, the last occurrence winning (a file applied in its own order). */
+function linePayload(rows: OrderImportRow[]): { unique: z.infer<typeof importRow>[]; payload: string } {
   const byKey = new Map<string, z.infer<typeof importRow>>()
   for (const row of rows) byKey.set(normaliseKey(row.lineKey), row)
   const unique = Array.from(byKey.values())
-
-  const known = new Set(
-    (
-      await tx.query<{ key: string }>(`SELECT lower(line_key) AS key FROM production_orders WHERE lower(line_key) = ANY($1::text[])`, [
-        unique.map((o) => normaliseKey(o.lineKey)),
-      ])
-    ).rows.map((x) => x.key),
-  )
-  const orphan = unique.find((o) => !known.has(normaliseKey(o.lineKey)) && !o.orderNumber)
-  if (orphan) throw badRequest(`Order ID "${orphan.lineKey}" is new, so its row must carry the order number.`)
-
   const payload = JSON.stringify(
     unique.map((o) => ({
       line_key: o.lineKey,
@@ -154,36 +153,65 @@ export async function upsertOrderLines(tx: Queryable, rows: OrderImportRow[], sy
       ...detailPayload(o),
     })),
   )
-  // Each row's JSON object (`j`, so the details can tell "carried as null" from "not carried") and its record (`i`).
-  const recordset = `jsonb_array_elements($1::jsonb) AS e(j), jsonb_to_record(e.j) AS i(
+  return { unique, payload }
+}
+
+// Each row's JSON object (`j`, so the details can tell "carried as null" from "not carried") and its record (`i`).
+const RECORDSET = `jsonb_array_elements($1::jsonb) AS e(j), jsonb_to_record(e.j) AS i(
     line_key text, order_number text, item text, item_code text, work_center_code text, required_qty numeric,
     finished_qty numeric, drawing text, drawing_alt text, issue text, material text,
     expected_grade text, customer text, type text, colour text, erp_status text, order_date timestamptz,
     ${DETAIL_RECORD_COLUMNS})`
 
+/**
+ * §7.7 — what importing these rows would do, line by line, without writing: the keys (lower case) of the lines it
+ * would add and of those it would change; every other key would be left as it is. What the importer's preview shows,
+ * and what lets it send only the rows that change something.
+ */
+export async function compareOrderLines(q: Queryable, rows: OrderImportRow[]): Promise<ImportCompareResponse> {
+  const { payload } = linePayload(rows)
+  const { rows: found } = await q.query<{ key: string; change: 'new' | 'changed' | 'same' }>(
+    `SELECT lower(i.line_key) AS key,
+            CASE WHEN p.id IS NULL THEN 'new' WHEN ${LINE_CHANGES} THEN 'changed' ELSE 'same' END AS change
+       FROM ${RECORDSET}
+       LEFT JOIN production_orders p ON lower(p.line_key) = lower(i.line_key)`,
+    [payload, null],
+  )
+  return { new: found.filter((r) => r.change === 'new').map((r) => r.key), changed: found.filter((r) => r.change === 'changed').map((r) => r.key) }
+}
+
+/**
+ * §7.7 — idempotent bulk upsert on the line key, the ERP's Order ID (matched
+ * without regard to case; the stored spelling is kept). A field the rows do
+ * not carry leaves the stored value alone; a line that had been marked
+ * deleted comes back, because the ERP says it is current. A line seen for the
+ * first time must name its order number. A sync run stamps the lines it saw.
+ * The ERP details (§7.7.1) differ in one way: a detail the row carries as
+ * null is cleared, as the ERP no longer has it. A line the row would not
+ * change is not written at all (its last change stays when it was), and is
+ * counted as unchanged.
+ */
+export async function upsertOrderLines(tx: Queryable, rows: OrderImportRow[], syncRunId: string | null = null): Promise<ImportResult> {
+  const { unique, payload } = linePayload(rows)
+
+  const known = new Set(
+    (
+      await tx.query<{ key: string }>(`SELECT lower(line_key) AS key FROM production_orders WHERE lower(line_key) = ANY($1::text[])`, [
+        unique.map((o) => normaliseKey(o.lineKey)),
+      ])
+    ).rows.map((x) => x.key),
+  )
+  const orphan = unique.find((o) => !known.has(normaliseKey(o.lineKey)) && !o.orderNumber)
+  if (orphan) throw badRequest(`Order ID "${orphan.lineKey}" is new, so its row must carry the order number.`)
+
   const updated = await tx.query<{ id: string }>(
     `UPDATE production_orders p SET
-        order_number = COALESCE(i.order_number, p.order_number),
-        item = COALESCE(i.item, p.item),
-        item_code = COALESCE(i.item_code, p.item_code),
-        work_center_code = COALESCE(i.work_center_code, p.work_center_code),
-        required_qty = COALESCE(i.required_qty, p.required_qty),
-        finished_qty = COALESCE(i.finished_qty, p.finished_qty),
-        drawing = COALESCE(i.drawing, p.drawing),
-        drawing_alt = COALESCE(i.drawing_alt, p.drawing_alt),
-        issue = COALESCE(i.issue, p.issue),
-        material = COALESCE(i.material, p.material),
-        expected_grade = COALESCE(i.expected_grade, p.expected_grade),
-        customer = COALESCE(i.customer, p.customer),
-        type = COALESCE(i.type, p.type),
-        colour = COALESCE(i.colour, p.colour),
-        erp_status = COALESCE(i.erp_status, p.erp_status),
-        order_date = COALESCE(i.order_date, p.order_date),
+        ${CORE_NEW_VALUES.map(([c, v]) => `${c} = ${v}`).join(',\n        ')},
         ${DETAIL_UPDATE_SET},
         deleted_at = NULL, deleted_by_id = NULL,
         last_sync_run_id = COALESCE($2::uuid, p.last_sync_run_id)
-      FROM ${recordset}
-     WHERE lower(p.line_key) = lower(i.line_key)
+      FROM ${RECORDSET}
+     WHERE lower(p.line_key) = lower(i.line_key) AND ${LINE_CHANGES}
      RETURNING p.id`,
     [payload, syncRunId],
   )
@@ -197,12 +225,14 @@ export async function upsertOrderLines(tx: Queryable, rows: OrderImportRow[], sy
             i.issue, COALESCE(i.material, ''), COALESCE(i.expected_grade, ''), COALESCE(i.customer, ''),
             COALESCE(i.type, ''), COALESCE(i.colour, ''), COALESCE(i.erp_status, ''), COALESCE(i.order_date, now()), $2::uuid,
             ${DETAIL_INSERT_VALUES}
-       FROM ${recordset}
+       FROM ${RECORDSET}
       WHERE NOT EXISTS (SELECT 1 FROM production_orders p WHERE lower(p.line_key) = lower(i.line_key))
      RETURNING id`,
     [payload, syncRunId],
   )
-  return { inserted: inserted.rowCount ?? 0, updated: updated.rowCount ?? 0 }
+  const added = inserted.rowCount ?? 0
+  const changed = updated.rowCount ?? 0
+  return { inserted: added, updated: changed, unchanged: Math.max(0, unique.length - added - changed) }
 }
 
 export function ordersRoutes(ctx: AppContext): Router {
@@ -612,18 +642,26 @@ export function ordersRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
+  /** What importing a batch would do, written nowhere: the importer's preview, and what it sends (only what changes). */
+  r.post('/import/compare', requireCapability('manage-admin-data'), async (req, res) => {
+    const { rows } = parse(importSchema, req.body)
+    const body: ImportCompareResponse = await compareOrderLines(ctx.db, rows)
+    res.json(body)
+  })
+
   /**
    * §7.7 — idempotent bulk upsert on the line key, the ERP's Order ID (matched
    * without regard to case; the stored spelling is kept). A field the file
    * does not carry leaves the stored value alone; a line that had been marked
    * deleted comes back, because the ERP says it is current. A line seen for
-   * the first time must name its order number.
+   * the first time must name its order number. A line the row would not
+   * change is not written, and is counted as unchanged.
    */
   r.post('/import', requireCapability('manage-admin-data'), async (req, res) => {
     const user = requireUser(req)
     const { rows } = parse(importSchema, req.body)
     const result = await withTransaction(ctx.db, async (tx) => {
-      const { inserted, updated } = await upsertOrderLines(tx, rows)
+      const { inserted, updated, unchanged } = await upsertOrderLines(tx, rows)
       const at = new Date().toISOString()
       await writeAudit(tx, [
         {
@@ -634,10 +672,10 @@ export function ordersRoutes(ctx: AppContext): Router {
           entity: 'ProductionOrder',
           entityId: 'bulk-import',
           field: 'import',
-          newValue: `${inserted} inserted, ${updated} updated`,
+          newValue: `${inserted} inserted, ${updated} updated, ${unchanged ?? 0} unchanged`,
         },
       ])
-      const body: ImportResult = { inserted, updated }
+      const body: ImportResult = { inserted, updated, unchanged }
       return body
     })
     res.json(result)

@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-14.4',
+    date: '2026-10-14',
+    title: 'Faster order and production imports: only what changed is sent',
+    items: [
+      { text: 'Before importing the order sheet or the production record, the preview now compares the file with what is stored and shows New, Updated and Unchanged. Only new and changed rows are sent: the same file imported twice writes nothing the second time ("Nothing to import"), and the daily sheet sends only the lines the ERP changed.' },
+      { text: 'A row that changes nothing is no longer rewritten, so its last change stays when it really was.' },
+      { text: 'The upload goes in batches of 1,000 rows instead of 200, compressed, and the lists and dashboard refresh once at the end instead of after every batch.' },
+    ],
+  },
+  {
     id: '2026-10-14.3',
     date: '2026-10-14',
     title: 'The right drawing on every order line, and the order import matched to the new ERP sheet',

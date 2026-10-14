@@ -138,7 +138,11 @@ export const DETAIL_RECORD_COLUMNS = DETAIL_COLUMNS.map((c) => `${c.column} ${c.
  * written (null clears it), one it does not carry keeps its stored value.
  * `e.j` is the row's JSON object, `i` its record, `p` the stored line.
  */
-export const DETAIL_UPDATE_SET = DETAIL_COLUMNS.map((c) => `${c.column} = CASE WHEN e.j ? '${c.column}' THEN i.${c.column} ELSE p.${c.column} END`).join(',\n        ')
+export const DETAIL_NEW_VALUES: readonly (readonly [column: string, value: string])[] = DETAIL_COLUMNS.map((c) => [
+  c.column,
+  `CASE WHEN e.j ? '${c.column}' THEN i.${c.column} ELSE p.${c.column} END`,
+])
+export const DETAIL_UPDATE_SET = DETAIL_NEW_VALUES.map(([column, value]) => `${column} = ${value}`).join(',\n        ')
 
 /** The details' columns, and their values from the record `i`, for the upsert's INSERT. */
 export const DETAIL_INSERT_COLUMNS = DETAIL_COLUMNS.map((c) => c.column).join(', ')

@@ -74,7 +74,7 @@ describe('§7.7.1 — the ERP details of an order line', () => {
   it('imports them with the line, and the Access list returns each as it was written: days as days, figures as figures', async () => {
     const res = await importRows([tasksRow('462484'), tasksRow('462494', { planningWeek: '52/2025', dueDate: '2025-12-28' })])
     expect(res.status).toBe(200)
-    expect(res.body).toEqual({ inserted: 2, updated: 0 })
+    expect(res.body).toEqual({ inserted: 2, updated: 0, unchanged: 0 })
     const o = await line('462484')
     expect(o).toMatchObject({
       dueDate: '2026-02-25', refinedDate: '2026-06-30', planningWeek: '01/2026', erpRemainingQty: 0, acceptedQty: 24,
@@ -99,7 +99,7 @@ describe('§7.7.1 — the ERP details of an order line', () => {
         stage: 'S2',
       },
     ])
-    expect(res.body).toEqual({ inserted: 0, updated: 1 })
+    expect(res.body).toEqual({ inserted: 0, updated: 1, unchanged: 0 })
     const o = await line('462484')
     expect(o).toMatchObject({ finishedQty: 20, dueDate: '2026-03-10', stage: 'S2', plannedStart: '2026-04-06', delayReasonCode: 14, orderNumber: '19145-Ph1.23-EHF-(Rail)', customer: 'حسن علام' })
     expect(o.delayComment).toBeUndefined()

@@ -15,6 +15,7 @@ import {
   type CreatePDIRequest,
   type CreateUserRequest,
   type ExistingKeysResponse,
+  type ImportCompareResponse,
   type ImportResult,
   type MasterKind,
   type MasterRecordByKind,
@@ -293,11 +294,22 @@ export async function existingKeys(target: ImportTarget, keys: string[]): Promis
   return existing
 }
 
-export async function importRows(qc: QueryClient, target: ImportTarget, rows: unknown[]): Promise<ImportResult> {
-  const { path, invalidates } = importEndpoint(target)
-  const result = await api<ImportResult>(`${path}/import`, { method: 'POST', body: { rows } })
+/** One batch written. What it changed is refreshed once the whole import ends (refreshAfterImport), not after every batch. */
+export async function importRows(target: ImportTarget, rows: unknown[]): Promise<ImportResult> {
+  const { path } = importEndpoint(target)
+  return api<ImportResult>(`${path}/import`, { method: 'POST', body: { rows }, gzip: true })
+}
+
+/** What importing a batch would do, written nowhere: the keys it would add and those it would change (orders and the production record). */
+export async function compareImportRows(target: ImportTarget, rows: unknown[]): Promise<ImportCompareResponse> {
+  const { path } = importEndpoint(target)
+  return api<ImportCompareResponse>(`${path}/import/compare`, { method: 'POST', body: { rows }, gzip: true })
+}
+
+/** The screens an import changed, refreshed once when it ends (or stops): the target's lists and the dashboard's figures. */
+export async function refreshAfterImport(qc: QueryClient, target: ImportTarget): Promise<void> {
+  const { invalidates } = importEndpoint(target)
   await Promise.all([qc.invalidateQueries({ queryKey: [...invalidates] }), qc.invalidateQueries({ queryKey: ['kpi'] })])
-  return result
 }
 
 // ---- Users -----------------------------------------------------------------
