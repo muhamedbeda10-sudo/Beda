@@ -12,7 +12,8 @@
 // (revisesProposalId) supersedes it, in the transaction that stores the new
 // one and only when the new one passed: the older card then says it was
 // replaced, and it can no longer be activated. A version of one already
-// activated is a change of its automation (replacesAutomationId) instead.
+// activated is proposed as a change of the automation it became
+// (replacesAutomationId) instead, and the model is told so.
 // ============================================================================
 
 import type { AiAutomationPart, AutomationBacktest, AutomationDraft, AutomationProposalState } from '@qc/shared/automation'
@@ -59,6 +60,8 @@ export async function insertProposals(q: Queryable, conversationId: string, turn
 export interface Revision {
   errors: string[]
   supersedes: string | null
+  /** The proposal was activated: the automation it became, still there, which a new version changes instead. */
+  became?: string
 }
 
 const quotedId = (s: string) => `"${cutChars(s, 60, true)}"`
@@ -68,7 +71,8 @@ const quotedId = (s: string) => `"${cutChars(s, 60, true)}"`
  * for the same person. One still proposed (and passed) is superseded when
  * the new one is stored; one discarded, superseded already or that did not
  * pass leaves nothing to mark. One activated is an automation now: a new
- * version of it is a change of that automation, which the model is told.
+ * version of it is a change of that automation (`became`; tools.ts proposes
+ * it so), and only when that cannot be does the model get the error.
  */
 export async function checkRevision(q: Queryable, conversationId: string, userId: string, revisesProposalId: string): Promise<Revision> {
   if (!isUuid(revisesProposalId)) return { errors: [`revisesProposalId: ${quotedId(revisesProposalId)} is not a proposal id.`], supersedes: null }
@@ -91,6 +95,7 @@ export async function checkRevision(q: Queryable, conversationId: string, userId
           : 'revisesProposalId: that proposal was activated, and the automation it became has since been deleted. Propose this as a new automation and leave revisesProposalId out.',
       ],
       supersedes: null,
+      ...(revised.automationExists && revised.automationId ? { became: revised.automationId } : {}),
     }
   }
   return { errors: [], supersedes: revised.ok && revised.state === 'proposed' ? revisesProposalId.toLowerCase() : null }

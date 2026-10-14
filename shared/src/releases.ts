@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-14.1',
+    date: '2026-10-14',
+    title: 'The assistant says what it is writing, and changes an activated automation without a refusal',
+    items: [
+      { text: 'While the assistant writes an automation, a notice, a task, a query or a playbook entry, the line under its answer says so ("Writing the automation… 40 s"), then "Checking the automation and running it once…". Before, the answer could sit for minutes with only its cursor showing, as if it had stopped.' },
+      { text: 'Asking to change an automation you already activated from its card now proposes the change to that automation straight away, with Activate to apply it. Before, the assistant was told "that proposal was activated" and had to write the whole automation again.' },
+    ],
+  },
+  {
     id: '2026-10-13.109',
     date: '2026-10-13',
     title: 'Conversations named by the assistant',

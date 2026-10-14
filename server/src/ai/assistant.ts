@@ -68,6 +68,7 @@ import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './mo
 import { MAX_TOKENS, MAX_TOKENS_RETRY, modelRequest, systemBlocks, worstCaseUsd } from './models'
 import { MAX_STEPS_PER_ANSWER, RUN_SQL_TOOL_NAME, RunSqlInput, TURN_DEADLINE_MINUTES, WRAP_UP_STEPS, WRAP_UP_TAG, WRAP_UP_TIME_SHARE } from './prompt'
 import { AI_QUERY_STOPPED, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
+import { checkingLine, writingLine } from './toolProgress'
 import { appendMessages, insertQueries, queryPart, recordUsage, settleStep, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
 
 type ContentBlock = Anthropic.Beta.BetaContentBlock
@@ -89,6 +90,8 @@ export const CHAT_QUERY_TIMEOUT_MS = 30_000
 /** At most this often a line on what the model is doing. */
 const PROGRESS_EVERY_MS = 250
 const PROGRESS_CHARS = 200
+/** While a tool's input is written, its line (with the seconds it has taken) at most this often. */
+const TOOL_LINE_EVERY_MS = 1_000
 /**
  * A call cut off is counted as having written at least this many tokens a
  * second since it began — more than the model streams. Summarized thinking
@@ -561,6 +564,9 @@ async function runStep(
   const queries: QueryRecord[] = []
   const stores: ((tx: Queryable) => Promise<void>)[] = []
   let withdrawn = false
+  // Said before the first tool runs: once the step's first card is out, the next words are the model's (followsKeptRound).
+  const checking = checkingLine(toolUses.map((tu) => tu.name))
+  if (checking && !signal.aborted) qn.emit({ type: 'progress', text: checking })
   for (const tu of toolUses) {
     if (signal.aborted) {
       const c = cause()
@@ -751,13 +757,31 @@ export function watchStream(stream: ModelStream, emit?: (e: AiStreamEvent) => vo
   }
   // Counted from the raw deltas: tool input arrives only there (a call cut off mid-input has no finished
   // block), and each character is seen once. Not the SDK's inputJson event: it parses on every delta.
+  // The tool whose input is being written, and since when: its input has no words to show, so a line says what it is.
+  let tool: { name: string; since: number; said: number } | null = null
+  const writing = (now: number) => {
+    if (!tool) return
+    tool.said = now
+    lastProgress = now
+    emit?.({ type: 'progress', text: writingLine(tool.name, (now - tool.since) / 1000) })
+  }
   stream.on('streamEvent', (event) => {
     startedAt ??= Date.now()
+    if (event.type === 'content_block_start') {
+      tool = event.content_block.type === 'tool_use' ? { name: event.content_block.name, since: Date.now(), said: 0 } : null
+      writing(Date.now())
+      return
+    }
+    if (event.type === 'content_block_stop') tool = null
     if (event.type !== 'content_block_delta') return
     const d = event.delta
     if (d.type === 'text_delta') chars += d.text.length
     else if (d.type === 'thinking_delta') chars += d.thinking.length
-    else if (d.type === 'input_json_delta') chars += d.partial_json.length
+    else if (d.type === 'input_json_delta') {
+      chars += d.partial_json.length
+      const now = Date.now()
+      if (tool && now - tool.said >= TOOL_LINE_EVERY_MS) writing(now)
+    }
   })
   if (emit) {
     stream.on('text', (delta) => {
