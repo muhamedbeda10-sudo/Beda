@@ -170,8 +170,8 @@ describe('§20 charts: checking a chart against its result', () => {
     }
     expect(note({ type: 'bar', x: 'machine' })).toMatch(/^Chart not drawn: chart takes type, x and y/)
     expect(note({ type: 'bar', x: 'machine', y: [3] })).toMatch(/^Chart not drawn: chart takes/)
-    expect(note({ type: 'radar', x: 'machine', y: ['samples'] })).toBe(
-      'Chart not drawn: its type must be one of bar, horizontal-bar, stacked-bar, stacked-bar-100, line, area, stacked-area, pie, combo, pareto, scatter, heatmap, control, progress, funnel, waterfall, gantt, dumbbell, treemap.',
+    expect(note({ type: 'hexbin', x: 'machine', y: ['samples'] })).toBe(
+      'Chart not drawn: its type must be one of bar, horizontal-bar, stacked-bar, stacked-bar-100, line, area, stacked-area, pie, combo, pareto, scatter, heatmap, control, progress, funnel, waterfall, gantt, dumbbell, treemap, histogram, xbar-r, p-chart, u-chart, c-chart, box-plot, gauge, radar, bubble, sankey, calendar, risk-matrix.',
     )
     expect(note({ type: 'bar', x: 'day', y: ['samples'] })).toBe('Chart not drawn: x "day" is not a column of the result.')
     expect(note({ type: 'bar', x: 'machine', y: ['defects'] })).toBe('Chart not drawn: y "defects" is not a column of the result.')
@@ -289,6 +289,18 @@ describe('§20 charts: checking a chart against its result', () => {
       'gantt',
       'dumbbell',
       'treemap',
+      'histogram',
+      'xbar-r',
+      'p-chart',
+      'u-chart',
+      'c-chart',
+      'box-plot',
+      'gauge',
+      'radar',
+      'bubble',
+      'sankey',
+      'calendar',
+      'risk-matrix',
     ])
     // Strict tool use takes no length or count limits: those are checked here instead.
     expect(JSON.stringify(RUN_SQL_TOOL)).not.toMatch(/"(minItems|maxItems|minLength|maxLength|minimum|maximum)"/)

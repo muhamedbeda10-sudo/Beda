@@ -13,8 +13,9 @@
 // read) is not drawn: the table under it says it all anyway.
 // ============================================================================
 
-import { parseChartDate, type AiCell, type AiChartSpec, type AiChartType, type AiQueryPart } from '@qc/shared/ai'
+import { parseChartDate, type AiCell, type AiChartBetter, type AiChartSpec, type AiChartType, type AiQueryPart } from '@qc/shared/ai'
 import { monthLabel, shortDay } from '@/components/dashboard/period'
+import { attributeOf, niceStep, xbarROf, type SankeyLink, type Stepped, type XbarR } from './chartStats'
 import { cellNumber, cellText } from './tables'
 
 /** The most series one chart draws (the server's limit too); beyond it, the largest are drawn and the figure says so. */
@@ -114,6 +115,29 @@ export interface ChartModel {
   percentMode?: boolean
   /** A gantt's bars in time (its rows are `labels`). */
   gantt?: GanttModel
+  /** A histogram's or a box plot's specification limits. */
+  lsl?: number
+  usl?: number
+  /** A histogram's readings, in the order the query returned them (time's, for σ within). */
+  readings?: number[]
+  /** A box plot's groups' readings, one list per label. */
+  groups?: number[][]
+  /** An X̄-R chart: its subgroups' means and ranges with their limits (its labels the subgroups kept). */
+  xbar?: XbarR
+  /** A p-, u- or c-chart's points with their limits. */
+  stepped?: Stepped
+  /** A gauge's full scale, and which way is good against its goal. */
+  gaugeMax?: number
+  better?: AiChartBetter
+  /** A bubble chart's bubbles, and the name of what sizes them. */
+  bubbles?: { x: number; y: number; size: number; label: string }[]
+  sizeName?: string
+  /** A sankey's flows. */
+  links?: SankeyLink[]
+  /** A calendar's days. */
+  days?: { ms: number; day: string; value: number | null }[]
+  /** A risk matrix's failure modes: severity, occurrence and detection (when given). */
+  risks?: { label: string; s: number; o: number; d: number | null }[]
   /** Series left out (the smallest), when there were more than a chart draws. */
   omitted: number
   /** When one column is split into series: the y column the values come from, and the column that splits it. */
@@ -328,6 +352,7 @@ export function shapeChart(spec: AiChartSpec | undefined, columns: readonly stri
   const keyOf = (v: AiCell | undefined) => JSON.stringify(v ?? null)
 
   if (spec.type === 'gantt') return shapeGantt(spec, xi, ys, si, rows, titled)
+  if (NEW_KINDS.has(spec.type)) return shapeNewKind(spec, columns, rows, xi, ys, si, titled)
 
   // The categories in the order the query returned them; a category met again adds to its own (a total per category).
   const order: string[] = []
@@ -444,6 +469,119 @@ export function shapeChart(spec: AiChartSpec | undefined, columns: readonly stri
     ...(si >= 0 ? { measure: humanizeColumn(columns[ys[0]]), splitBy: humanizeColumn(columns[si]) } : {}),
     ...(type === 'pie' || type === 'stacked-bar' || type === 'stacked-bar-100' || type === 'stacked-area' || type === 'heatmap' || type === 'pareto' || type === 'funnel' || type === 'waterfall' || type === 'treemap' ? {} : goal),
     ...extra,
+  }
+}
+
+/** The kinds shaped on their own (shapeNewKind); a radar is drawn from categories and series as bars are. */
+const NEW_KINDS: ReadonlySet<AiChartType> = new Set(['histogram', 'xbar-r', 'p-chart', 'u-chart', 'c-chart', 'box-plot', 'gauge', 'bubble', 'sankey', 'calendar', 'risk-matrix'])
+
+/** A cell's text as a chart names it. */
+const nameOf = (v: AiCell | undefined) => (v === null || v === undefined ? '(blank)' : cellText(v).trim() || '(blank)')
+
+/**
+ * The quality charts and the other newer kinds, each from its rows as the server checked them: readings one per row
+ * (a histogram), or grouped by x (an X̄-R chart's subgroups, a box plot's groups); counts and sizes per sample (an
+ * attribute chart); a figure per gauge; bubbles; flows; days; failure modes. Null when nothing can be drawn.
+ */
+function shapeNewKind(spec: AiChartSpec, columns: readonly string[], rows: readonly (readonly AiCell[])[], xi: number, ys: number[], si: number, titled: { title?: string }): ChartModel | null {
+  const num = (v: AiCell | undefined): number | null => (v === null || v === undefined ? null : cellNumber(v))
+  const yName = humanizeColumn(columns[ys[0]])
+  const unit = isPercentName(columns[ys[0]]) ? '%' : ''
+  const goal = typeof spec.goal === 'number' && Number.isFinite(spec.goal) ? { goal: spec.goal } : {}
+  const limits = { ...(typeof spec.lsl === 'number' ? { lsl: spec.lsl } : {}), ...(typeof spec.usl === 'number' ? { usl: spec.usl } : {}) }
+  const base = { type: spec.type, ...titled, labels: [] as string[], series: [] as ChartSeries[], unit, omitted: 0 }
+  // Readings by x, in the order the subgroups (or groups) first came.
+  const grouped = () => {
+    const at = new Map<string, number>()
+    const names: AiCell[] = []
+    const groups: number[][] = []
+    for (const r of rows) {
+      const v = num(r[ys[0]])
+      if (v === null) continue
+      const key = JSON.stringify(r[xi] ?? null)
+      let i = at.get(key)
+      if (i === undefined) {
+        at.set(key, (i = groups.length))
+        groups.push([])
+        names.push(r[xi] ?? null)
+      }
+      groups[i].push(v)
+    }
+    return { labels: uniqueLabels(chartLabels(names)), groups }
+  }
+  switch (spec.type) {
+    case 'histogram': {
+      const readings = rows.map((r) => num(r[ys[0]])).filter((v): v is number => v !== null)
+      if (readings.length < 2) return null
+      return { ...base, series: [{ label: yName, values: [] }], readings, ...limits, ...goal }
+    }
+    case 'box-plot': {
+      const { labels, groups } = grouped()
+      if (!groups.some((g) => g.length > 0)) return null
+      return { ...base, labels, series: [{ label: yName, values: [] }], groups, ...limits, ...goal }
+    }
+    case 'xbar-r': {
+      const { labels, groups } = grouped()
+      const xbar = xbarROf(groups)
+      if (!xbar) return null
+      return { ...base, labels: xbar.kept.map((i) => labels[i]), series: [{ label: yName, values: [] }], xbar, ...goal }
+    }
+    case 'p-chart':
+    case 'u-chart':
+    case 'c-chart': {
+      const xValues = rows.map((r) => r[xi] ?? null)
+      const along = axisOrder(xValues, 'control')
+      const ordered = along ? along.map((i) => rows[i]) : rows
+      const counts = ordered.map((r) => num(r[ys[0]]))
+      const sizes = ordered.map((r) => (ys[1] === undefined ? null : num(r[ys[1]])))
+      const stepped = attributeOf(spec.type === 'p-chart' ? 'p' : spec.type === 'u-chart' ? 'u' : 'c', counts, sizes)
+      if (!stepped) return null
+      const label = spec.type === 'p-chart' ? `${yName} (% of ${humanizeColumn(columns[ys[1]])})` : spec.type === 'u-chart' ? `${yName} per ${humanizeColumn(columns[ys[1]]).replace(/s$/, '')}` : yName
+      return { ...base, labels: uniqueLabels(chartLabels(ordered.map((r) => r[xi] ?? null))), series: [{ label, values: stepped.values }], unit: spec.type === 'p-chart' ? '%' : '', stepped }
+    }
+    case 'gauge': {
+      const values = rows.map((r) => num(r[ys[0]]))
+      const known = values.filter((v): v is number => v !== null)
+      if (known.length === 0) return null
+      const reach = Math.max(...known, goal.goal ?? 0)
+      const gaugeMax = typeof spec.max === 'number' && spec.max > 0 ? spec.max : unit === '%' && reach <= 100 ? 100 : reach > 0 ? Math.ceil((reach * 1.1) / niceStep(reach, 5)) * niceStep(reach, 5) : 1
+      return { ...base, labels: uniqueLabels(chartLabels(rows.map((r) => r[xi] ?? null))), series: [{ label: yName, values }], gaugeMax, ...(spec.better ? { better: spec.better } : {}), ...goal }
+    }
+    case 'bubble': {
+      const bubbles = rows.flatMap((r) => {
+        const [x, y, size] = [num(r[xi]), num(r[ys[0]]), num(r[ys[1]])]
+        return x === null || y === null || size === null ? [] : [{ x, y, size: Math.max(0, size), label: si >= 0 ? nameOf(r[si]) : '' }]
+      })
+      if (bubbles.length < 2) return null
+      return { ...base, bubbles, xName: humanizeColumn(columns[xi]), yName, sizeName: humanizeColumn(columns[ys[1]]) }
+    }
+    case 'sankey': {
+      if (si < 0) return null
+      const links = rows.flatMap((r) => {
+        const v = num(r[ys[0]])
+        return v === null || v <= 0 ? [] : [{ from: nameOf(r[xi]), to: nameOf(r[si]), value: v }]
+      })
+      if (links.length === 0) return null
+      return { ...base, links, series: [{ label: yName, values: [] }] }
+    }
+    case 'calendar': {
+      const days = rows.flatMap((r) => {
+        const d = parseChartDate(r[xi])
+        return d ? [{ ms: d.ms, day: cellText(r[xi] as AiCell).slice(0, 10), value: num(r[ys[0]]) }] : []
+      })
+      if (!days.some((d) => d.value !== null)) return null
+      return { ...base, days, series: [{ label: yName, values: [] }] }
+    }
+    case 'risk-matrix': {
+      const risks = rows.flatMap((r) => {
+        const [sv, o, d] = [num(r[ys[0]]), num(r[ys[1]]), ys[2] === undefined ? null : num(r[ys[2]])]
+        return sv === null || o === null ? [] : [{ label: nameOf(r[xi]), s: sv, o, d }]
+      })
+      if (risks.length === 0) return null
+      return { ...base, risks }
+    }
+    default:
+      return null
   }
 }
 

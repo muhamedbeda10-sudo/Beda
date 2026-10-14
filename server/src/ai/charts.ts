@@ -5,14 +5,23 @@
 //
 //     { type: 'line', x: 'day', y: ['defect_pieces'], title: 'Defect pieces per day' }
 //
-// Nineteen kinds (shared/ai.ts: AI_CHART_TYPES), each taking what it needs:
+// Thirty-one kinds (shared/ai.ts: AI_CHART_TYPES), each taking what it needs:
 // a combo two or more y columns, a heatmap a series for its rows, a Pareto,
 // a control chart, a funnel and a waterfall one y and no series, a scatter a
 // numeric x, a dumbbell two y columns, a progress chart one (of a goal, or a
 // percentage) or two (done and its target), a gantt two date columns (start
 // and end) with perhaps a series naming its bars, a treemap one y with
 // perhaps a series grouping its tiles; any of bar, horizontal-bar, line,
-// area, combo, control and dumbbell may carry a target (goal). It is checked here against what the query returned before
+// area, combo, control and dumbbell may carry a target (goal). The quality
+// charts take the readings themselves (a histogram one per row, an X̄-R chart
+// and a box plot several per subgroup or group), or the counts an attribute
+// chart is worked out from (a p-chart's defectives and inspected, a u-chart's
+// defects and units, a c-chart's defects); a histogram and a box plot may
+// carry specification limits (lsl, usl). A gauge takes one to six figures, a
+// radar three to twelve axes, a bubble chart a numeric x and two y (its
+// height and its size), a sankey its flows (from x to series, by y), a
+// calendar one figure per day, a risk matrix each failure mode's severity and
+// occurrence (and detection) on a scale of 1 to 10. It is checked here against what the query returned before
 // anything keeps it: the columns must be there (and be numbers where they
 // are plotted), and the chart must have something to show. A chart that
 // cannot be drawn is left out, and the model is told why in the query's
@@ -60,6 +69,24 @@ export const MAX_GANTT_ROWS = 40
 export const MAX_GANTT_BARS = 120
 /** A treemap's tiles at most: the rest are grouped as "Others" in SQL. */
 export const MAX_TREEMAP_TILES = 60
+/** Readings a histogram needs at the least to show a spread. */
+export const MIN_HISTOGRAM_READINGS = 10
+/** An X̄-R chart's subgroups at the least, and readings in one at most (its constants go to 10). */
+export const MIN_XBAR_SUBGROUPS = 5
+export const MAX_SUBGROUP_SIZE = 10
+/** A box plot's groups at most. */
+export const MAX_BOX_GROUPS = 12
+/** Gauges one chart draws at most. */
+export const MAX_GAUGES = 6
+/** A radar's axes, at least and at most; its shapes at most. */
+export const MIN_RADAR_AXES = 3
+export const MAX_RADAR_AXES = 12
+export const MAX_RADAR_SHAPES = 6
+/** A bubble chart's bubbles, a sankey's flows and its stages (nodes), a risk matrix's failure modes, at most. */
+export const MAX_BUBBLES = 60
+export const MAX_SANKEY_LINKS = 60
+export const MAX_SANKEY_NODES = 40
+export const MAX_RISKS = 30
 
 /** `chart` in run_sql's input, as the tool declares it. A strict schema cannot carry the count limits: checkChart holds to them. */
 export const CHART_INPUT_SCHEMA = {
@@ -83,7 +110,17 @@ export const CHART_INPUT_SCHEMA = {
         'waterfall: one y of signed changes in order (the first may be the starting amount); the end total is drawn after them. ' +
         'gantt: bars in time, y = [start, end] (dates or timestamps); x names the row, series (optional) names and colours each bar, and a row may hold several bars. ' +
         'dumbbell: two y columns compared on each row (planned and actual, last month and this one). ' +
-        'treemap: one y as tiles sized by it (none below zero); series (optional) groups the tiles.',
+        'treemap: one y as tiles sized by it (none below zero); series (optional) groups the tiles. ' +
+        `histogram: one y of readings, one row per reading in time order (x names each: a sample), at least ${MIN_HISTOGRAM_READINGS}; with lsl and usl it shows the capability (Cp, Cpk, Pp, Ppk). ` +
+        `xbar-r: one y of readings, one row per reading, x the subgroup (a session, an hour) in time order: 2 to ${MAX_SUBGROUP_SIZE} readings per subgroup, at least ${MIN_XBAR_SUBGROUPS} subgroups. ` +
+        'p-chart: y = [defective, inspected] per sample (x a day or a lot), the share defective with its limits. u-chart: y = [defects, units]: defects per unit. c-chart: one y of defects per equal sample. ' +
+        `box-plot: one y of readings, one row per reading, x the group (machine, shift), at most ${MAX_BOX_GROUPS} groups; lsl and usl optional. ` +
+        `gauge: one y, one to ${MAX_GAUGES} rows (x names each), each on a dial to max against goal; better says whether higher or lower is good. ` +
+        `radar: x the axes (${MIN_RADAR_AXES} to ${MAX_RADAR_AXES} measures, best on one scale such as 0-100), one shape per y column or per series value (at most ${MAX_RADAR_SHAPES}). ` +
+        `bubble: x and the first y numeric, the second y sizes each bubble; series (optional) names each bubble (at most ${MAX_BUBBLES}). ` +
+        `sankey: one row per flow: x the stage it leaves, series the stage it reaches, one y its quantity (at most ${MAX_SANKEY_LINKS} flows, no loops). ` +
+        'calendar: x a day (a date), one y, one row per day: shaded by day across the weeks. ' +
+        `risk-matrix (FMEA): x the failure mode, y = [severity, occurrence] or [severity, occurrence, detection], each 1 to 10 (or 1 to 5), at most ${MAX_RISKS} modes; it ranks them by RPN.`,
     },
     x: { type: 'string', description: "The result column along the axis, exactly as the query names it: a day, a month or a category (a pie's slices); a number for scatter." },
     y: {
@@ -96,10 +133,14 @@ export const CHART_INPUT_SCHEMA = {
       description: `Optional. A result column whose values split the one y column into lines, bars or stacks, one per value (at most ${MAX_CHART_SERIES}; a heatmap's rows, at most ${MAX_HEATMAP_ROWS}): the result in long form, one row per x and series value. A gantt's: each bar's name; a treemap's: the group of each tile.`,
     },
     title: { type: 'string', description: "Optional. A short title, in the user's language." },
+    lsl: { type: 'number', description: "Optional. A histogram's or a box plot's lower specification limit, in the y column's unit." },
+    usl: { type: 'number', description: "Optional. A histogram's or a box plot's upper specification limit, in the y column's unit." },
+    max: { type: 'number', description: "Optional. A gauge's full scale (100 for a percentage)." },
+    better: { type: 'string', enum: ['higher', 'lower'], description: "Optional. A gauge's: whether a higher or a lower figure is good against goal (lower for rejects or downtime)." },
     goal: {
       type: 'number',
       description:
-        "Optional. A target drawn as a dashed line across the plot, in the y column's unit (bar, horizontal-bar, line, area, combo's line axis, control, dumbbell); a progress chart's target for every row, with one y.",
+        "Optional. A target drawn as a dashed line across the plot, in the y column's unit (bar, horizontal-bar, line, area, combo's line axis, control, dumbbell, histogram, xbar-r, box-plot: the nominal); a progress chart's target for every row, with one y; a gauge's target.",
     },
   },
   required: ['type', 'x', 'y'],
@@ -114,6 +155,10 @@ const ChartInput = z.object({
   series: z.string().nullish(),
   title: z.string().nullish(),
   goal: z.number().nullish(),
+  lsl: z.number().nullish(),
+  usl: z.number().nullish(),
+  max: z.number().nullish(),
+  better: z.string().nullish(),
 })
 
 export interface ChartCheck {
@@ -162,6 +207,35 @@ const ALIASES: Record<string, AiChartType> = {
   'connected-dot': 'dumbbell',
   'dot-plot': 'dumbbell',
   'tree-map': 'treemap',
+  capability: 'histogram',
+  'capability-histogram': 'histogram',
+  'process-capability': 'histogram',
+  distribution: 'histogram',
+  xbar: 'xbar-r',
+  'x-bar-r': 'xbar-r',
+  'xbar-r-chart': 'xbar-r',
+  'x-bar': 'xbar-r',
+  'xbar-chart': 'xbar-r',
+  p: 'p-chart',
+  'p-control': 'p-chart',
+  u: 'u-chart',
+  c: 'c-chart',
+  'box-and-whisker': 'box-plot',
+  boxplot: 'box-plot',
+  'box-whisker': 'box-plot',
+  box: 'box-plot',
+  dial: 'gauge',
+  speedometer: 'gauge',
+  spider: 'radar',
+  'spider-chart': 'radar',
+  'radar-chart': 'radar',
+  'bubble-chart': 'bubble',
+  flow: 'sankey',
+  'sankey-diagram': 'sankey',
+  'calendar-heatmap': 'calendar',
+  'risk-map': 'risk-matrix',
+  fmea: 'risk-matrix',
+  'heat-matrix': 'risk-matrix',
 }
 
 /** A chart type as the model may spell it ("Stacked bar", "stacked_bar", "donut"); null when it is none of them. */
@@ -172,7 +246,13 @@ function typeOf(raw: string): AiChartType | null {
 }
 
 /** The types that take a goal line (a progress chart's: its target for every row). */
-const TAKES_GOAL: ReadonlySet<AiChartType> = new Set(['bar', 'horizontal-bar', 'line', 'area', 'combo', 'control', 'dumbbell', 'progress'])
+const TAKES_GOAL: ReadonlySet<AiChartType> = new Set(['bar', 'horizontal-bar', 'line', 'area', 'combo', 'control', 'dumbbell', 'progress', 'histogram', 'xbar-r', 'box-plot', 'gauge'])
+/** The types that take specification limits. */
+const TAKES_SPEC: ReadonlySet<AiChartType> = new Set(['histogram', 'box-plot'])
+/** The types whose rows may repeat x: readings of one subgroup or group, points that share an x. */
+const REPEATS_X: ReadonlySet<AiChartType> = new Set(['scatter', 'bubble', 'histogram', 'xbar-r', 'box-plot'])
+/** The attribute control charts, and the control charts as a whole: each needs enough points for its limits. */
+const ATTRIBUTE: ReadonlySet<AiChartType> = new Set(['p-chart', 'u-chart', 'c-chart'])
 
 /** How the notes name each type. */
 const TYPE_NAME: Record<AiChartType, string> = {
@@ -195,6 +275,18 @@ const TYPE_NAME: Record<AiChartType, string> = {
   gantt: 'gantt chart',
   dumbbell: 'dumbbell chart',
   treemap: 'treemap',
+  histogram: 'histogram',
+  'xbar-r': 'X̄-R chart',
+  'p-chart': 'p-chart',
+  'u-chart': 'u-chart',
+  'c-chart': 'c-chart',
+  'box-plot': 'box plot',
+  gauge: 'gauge',
+  radar: 'radar chart',
+  bubble: 'bubble chart',
+  sankey: 'sankey diagram',
+  calendar: 'calendar',
+  'risk-matrix': 'risk matrix',
 }
 
 /** The most rows (a gantt's: bars; a treemap's: tiles) each type draws, when it has a limit of its own. */
@@ -205,6 +297,10 @@ const MOST_ROWS: Partial<Record<AiChartType, number>> = {
   funnel: MAX_FUNNEL_STAGES,
   gantt: MAX_GANTT_BARS,
   treemap: MAX_TREEMAP_TILES,
+  gauge: MAX_GAUGES,
+  bubble: MAX_BUBBLES,
+  sankey: MAX_SANKEY_LINKS,
+  'risk-matrix': MAX_RISKS,
 }
 /** The types that stack their series, and cannot across zero. */
 const STACKED: ReadonlySet<AiChartType> = new Set(['stacked-bar', 'stacked-bar-100', 'stacked-area'])
@@ -259,7 +355,7 @@ export function checkChart(raw: unknown, result: QueryPreview): ChartCheck {
     const s = columnOf(result.columns, input.series, 'series')
     if ('error' in s) return { note: s.error }
     if (s.index === x.index || ys.some((o) => o.index === s.index)) return { note: `${NOT_DRAWN} "${s.name}" is used twice; x, y and series each take other columns.` }
-    if (ys.length > 1 && type !== 'gantt') return { note: `${NOT_DRAWN} with series, y takes exactly one column.` }
+    if (ys.length > 1 && type !== 'gantt' && type !== 'bubble') return { note: `${NOT_DRAWN} with series, y takes exactly one column.` }
     series = s
   }
 
@@ -274,6 +370,17 @@ export function checkChart(raw: unknown, result: QueryPreview): ChartCheck {
   if (type === 'dumbbell' && (series || ys.length !== 2)) return { note: `${NOT_DRAWN} a dumbbell chart takes exactly two y columns (the two values compared on each row) and no series.` }
   if (type === 'gantt' && ys.length !== 2) return { note: `${NOT_DRAWN} a gantt chart takes two y columns, each bar's start and end (dates), and optionally a series naming the bars.` }
   if (type === 'treemap' && ys.length !== 1) return { note: `${NOT_DRAWN} a treemap takes one y column (each tile's size), and optionally a series grouping the tiles.` }
+  if ((type === 'histogram' || type === 'xbar-r' || type === 'box-plot' || type === 'c-chart' || type === 'calendar' || type === 'gauge') && (series || ys.length !== 1)) {
+    return { note: `${NOT_DRAWN} a ${TYPE_NAME[type]} takes one y column and no series.` }
+  }
+  if (type === 'p-chart' && (series || ys.length !== 2)) return { note: `${NOT_DRAWN} a p-chart takes two y columns, the defective pieces and the pieces inspected of each sample, and no series.` }
+  if (type === 'u-chart' && (series || ys.length !== 2)) return { note: `${NOT_DRAWN} a u-chart takes two y columns, the defects and the units inspected of each sample, and no series.` }
+  if (type === 'bubble' && ys.length !== 2) return { note: `${NOT_DRAWN} a bubble chart takes two y columns: the height of each bubble, then its size; series (optional) names each bubble.` }
+  if (type === 'sankey' && (!series || ys.length !== 1)) return { note: `${NOT_DRAWN} a sankey takes x (the stage a flow leaves), series (the stage it reaches) and one y (its quantity).` }
+  if (type === 'risk-matrix' && (series || ys.length < 2 || ys.length > 3)) {
+    return { note: `${NOT_DRAWN} a risk matrix takes y = [severity, occurrence] or [severity, occurrence, detection] and no series.` }
+  }
+  if (type === 'radar' && series && ys.length !== 1) return { note: `${NOT_DRAWN} with series, a radar chart takes one y column.` }
 
   const rows = result.rows
   if (rows.length === 0) return { note: `${NOT_DRAWN} the result has no rows.` }
@@ -286,15 +393,22 @@ export function checkChart(raw: unknown, result: QueryPreview): ChartCheck {
     if (gantt) return { note: gantt }
     return finish(type, input, x, ys, series, result, [])
   }
-  if (type === 'scatter') {
+  if (type === 'scatter' || type === 'bubble') {
     let numbers = 0
     for (const row of rows) {
       const v = row[x.index]
       if (v === null) continue
-      if (typeof v !== 'number') return { note: `${NOT_DRAWN} a scatter chart's x column "${x.name}" must be numeric (it holds ${JSON.stringify(cutChars(String(v), 40, true))}).` }
+      if (typeof v !== 'number') return { note: `${NOT_DRAWN} a ${TYPE_NAME[type]}'s x column "${x.name}" must be numeric (it holds ${JSON.stringify(cutChars(String(v), 40, true))}).` }
       numbers++
     }
-    if (numbers < 3) return { note: `${NOT_DRAWN} a scatter chart needs at least 3 points.` }
+    if (numbers < (type === 'bubble' ? 2 : 3)) return { note: `${NOT_DRAWN} a ${TYPE_NAME[type]} needs at least ${type === 'bubble' ? 2 : 3} points.` }
+  }
+  if (type === 'calendar') {
+    for (const row of rows) {
+      const v = row[x.index]
+      const day = parseChartDate(v)
+      if (!day || !day.dateOnly) return { note: `${NOT_DRAWN} a calendar's x column "${x.name}" must hold days (it holds ${JSON.stringify(cutChars(String(v), 40, true))}): select it as a date.` }
+    }
   }
   let values = 0
   let nonZero = false
@@ -312,13 +426,13 @@ export function checkChart(raw: unknown, result: QueryPreview): ChartCheck {
     if (numbers === 0) return { note: `${NOT_DRAWN} y column "${y.name}" holds no numbers.` }
     values += numbers
   }
-  if (values < 2) return { note: `${NOT_DRAWN} a single figure is stated in words, not charted.` }
-  if (!nonZero) return { note: `${NOT_DRAWN} every value is 0.` }
-  const own = valuesProblem(type, rows, ys, input.goal ?? undefined)
+  if (values < 2 && type !== 'gauge') return { note: `${NOT_DRAWN} a single figure is stated in words, not charted.` }
+  if (!nonZero && type !== 'gauge' && type !== 'p-chart' && type !== 'u-chart') return { note: `${NOT_DRAWN} every value is 0.` }
+  const own = valuesProblem(type, rows, ys, input.goal ?? undefined) ?? shapeProblem(type, rows, x, ys, series)
   if (own) return { note: own }
   if (series) {
     const n = distinct(rows, series.index)
-    const most = type === 'heatmap' ? MAX_HEATMAP_ROWS : MAX_CHART_SERIES
+    const most = type === 'heatmap' ? MAX_HEATMAP_ROWS : type === 'radar' ? MAX_RADAR_SHAPES : type === 'bubble' || type === 'sankey' ? Infinity : MAX_CHART_SERIES
     if (n > most) {
       return {
         note:
@@ -331,8 +445,10 @@ export function checkChart(raw: unknown, result: QueryPreview): ChartCheck {
   if (type === 'heatmap' && distinct(rows, x.index) > MAX_HEATMAP_COLUMNS) {
     return { note: `${NOT_DRAWN} x "${x.name}" has ${distinct(rows, x.index)} values; a heatmap shows at most ${MAX_HEATMAP_COLUMNS} columns. Use a coarser period (weeks for days).` }
   }
-  // One point per x (and series): two rows on one point would be drawn over each other, or summed out of sight. A scatter's points may share an x.
-  if (type !== 'scatter') {
+  // One point per x (and series): two rows on one point would be drawn over each other, or summed out of sight. A
+  // scatter's or a bubble chart's points may share an x, and a histogram, an X̄-R chart and a box plot hold many
+  // readings of one subgroup or group.
+  if (!REPEATS_X.has(type)) {
     const points = new Set(rows.map((r) => JSON.stringify([r[x.index] ?? null, series ? (r[series.index] ?? null) : null]))).size
     if (points < rows.length) {
       return {
@@ -342,7 +458,7 @@ export function checkChart(raw: unknown, result: QueryPreview): ChartCheck {
       }
     }
   }
-  if (type === 'control' && rows.length < MIN_CONTROL_POINTS) return { note: `${NOT_DRAWN} a control chart needs at least ${MIN_CONTROL_POINTS} points for its limits.` }
+  if ((type === 'control' || ATTRIBUTE.has(type)) && rows.length < MIN_CONTROL_POINTS) return { note: `${NOT_DRAWN} a ${TYPE_NAME[type]} needs at least ${MIN_CONTROL_POINTS} points for its limits.` }
 
   const notes: string[] = []
   let drawn: AiChartType = type
@@ -398,6 +514,27 @@ function finish(
     else if (TAKES_GOAL.has(drawn)) chart.goal = input.goal
     else notes.push(`The goal line is not drawn: a ${TYPE_NAME[drawn]} takes none.`)
   }
+  const lsl = typeof input.lsl === 'number' && Number.isFinite(input.lsl) ? input.lsl : undefined
+  const usl = typeof input.usl === 'number' && Number.isFinite(input.usl) ? input.usl : undefined
+  if (lsl !== undefined || usl !== undefined) {
+    if (!TAKES_SPEC.has(drawn)) notes.push(`The specification limits are not drawn: a ${TYPE_NAME[drawn]} takes none.`)
+    else if (lsl !== undefined && usl !== undefined && !(lsl < usl)) notes.push('The specification limits are not drawn: lsl must be below usl.')
+    else {
+      if (lsl !== undefined) chart.lsl = lsl
+      if (usl !== undefined) chart.usl = usl
+    }
+  }
+  if (typeof input.max === 'number' && Number.isFinite(input.max)) {
+    if (drawn !== 'gauge') notes.push(`max is not used: only a gauge takes a full scale.`)
+    else if (!(input.max > 0)) notes.push("max is not used: a gauge's full scale must be above 0.")
+    else chart.max = input.max
+  }
+  if (input.better) {
+    const better = input.better.trim().toLowerCase()
+    if (drawn !== 'gauge') notes.push('better is not used: only a gauge takes it.')
+    else if (better === 'higher' || better === 'lower') chart.better = better
+    else notes.push('better is not used: it is higher or lower.')
+  }
   return notes.length > 0 ? { chart, note: notes.join(' ') } : { chart }
 }
 
@@ -429,6 +566,91 @@ function valuesProblem(type: AiChartType, rows: readonly AiCell[][], ys: readonl
     const tiles = column(0)
     if (tiles.some((v) => v < 0)) return `${NOT_DRAWN} a treemap's tiles are sizes: none can be below zero.`
     if (tiles.filter((v) => v > 0).length < 2) return `${NOT_DRAWN} a treemap needs at least two tiles above 0.`
+  }
+  return null
+}
+
+/**
+ * What the newer kinds ask of the shape of their rows: an X̄-R chart's
+ * subgroups of 2 to 10 readings, enough of them; a box plot's groups; a
+ * p-chart's or a u-chart's counts within each other; a radar's axes; a
+ * sankey's flows without a loop; a risk matrix's ratings on their scale.
+ * Null when they hold.
+ */
+function shapeProblem(type: AiChartType, rows: readonly AiCell[][], x: { index: number; name: string }, ys: readonly { index: number; name: string }[], series: { index: number; name: string } | null): string | null {
+  const num = (r: readonly AiCell[], k: number) => r[ys[k].index]
+  const sizes = () => {
+    const by = new Map<string, number>()
+    for (const r of rows) if (typeof num(r, 0) === 'number') by.set(JSON.stringify(r[x.index] ?? null), (by.get(JSON.stringify(r[x.index] ?? null)) ?? 0) + 1)
+    return by
+  }
+  if (type === 'histogram') {
+    const n = rows.filter((r) => typeof num(r, 0) === 'number').length
+    if (n < MIN_HISTOGRAM_READINGS) return `${NOT_DRAWN} a histogram needs at least ${MIN_HISTOGRAM_READINGS} readings (it has ${n}).`
+  }
+  if (type === 'xbar-r') {
+    const by = sizes()
+    const big = [...by.entries()].find(([, n]) => n > MAX_SUBGROUP_SIZE)
+    if (big) return `${NOT_DRAWN} subgroup ${big[0]} has ${big[1]} readings; an X̄-R chart takes at most ${MAX_SUBGROUP_SIZE} per subgroup (take the first ${MAX_SUBGROUP_SIZE}, or use smaller subgroups).`
+    const kept = [...by.values()].filter((n) => n >= 2).length
+    if (kept < MIN_XBAR_SUBGROUPS) return `${NOT_DRAWN} an X̄-R chart needs at least ${MIN_XBAR_SUBGROUPS} subgroups of 2 or more readings (it has ${kept}): return one row per reading, x naming its subgroup.`
+  }
+  if (type === 'box-plot') {
+    const by = sizes()
+    if (by.size > MAX_BOX_GROUPS) return `${NOT_DRAWN} a box plot shows at most ${MAX_BOX_GROUPS} groups and x "${x.name}" has ${by.size}: keep the largest.`
+    if (![...by.values()].some((n) => n >= 4)) return `${NOT_DRAWN} a box plot needs a group of at least 4 readings: return one row per reading, x naming its group.`
+  }
+  if (type === 'p-chart' || type === 'u-chart') {
+    for (const r of rows) {
+      const [d, n] = [num(r, 0), num(r, 1)]
+      if (d === null || n === null) return `${NOT_DRAWN} every sample needs both its ${type === 'p-chart' ? 'defective pieces and pieces inspected' : 'defects and units'}; leave out a sample without them.`
+      if (!((n as number) > 0)) return `${NOT_DRAWN} the ${type === 'p-chart' ? 'pieces inspected' : 'units'} ("${ys[1].name}") must be above 0 on every row.`
+      if ((d as number) < 0) return `${NOT_DRAWN} "${ys[0].name}" cannot be below zero.`
+      if (type === 'p-chart' && (d as number) > (n as number)) return `${NOT_DRAWN} a sample has more defective pieces than it inspected (${JSON.stringify(r[x.index])}); check the order of y (defective, then inspected).`
+    }
+  }
+  if (type === 'c-chart' && rows.some((r) => typeof num(r, 0) === 'number' && (num(r, 0) as number) < 0)) return `${NOT_DRAWN} a c-chart's defects cannot be below zero.`
+  if (type === 'radar') {
+    const axes = distinct(rows, x.index)
+    if (axes < MIN_RADAR_AXES || axes > MAX_RADAR_AXES) return `${NOT_DRAWN} a radar chart takes ${MIN_RADAR_AXES} to ${MAX_RADAR_AXES} axes (values of x "${x.name}"); it has ${axes}.`
+    if (rows.some((r) => ys.some((_, k) => typeof num(r, k) === 'number' && (num(r, k) as number) < 0))) return `${NOT_DRAWN} a radar chart's values cannot be below zero: score them (0 to 100) in SQL.`
+  }
+  if (type === 'bubble' && rows.some((r) => typeof num(r, 1) === 'number' && (num(r, 1) as number) < 0)) return `${NOT_DRAWN} a bubble's size ("${ys[1].name}") cannot be below zero.`
+  if (type === 'sankey' && series) {
+    const name = (v: AiCell) => (v === null || v === undefined ? '' : String(v).trim())
+    const out = new Map<string, Set<string>>()
+    for (const r of rows) {
+      const v = num(r, 0)
+      if (typeof v === 'number' && v < 0) return `${NOT_DRAWN} a flow cannot be below zero.`
+      const [a, b] = [name(r[x.index]), name(r[series.index])]
+      if (!a || !b) return `${NOT_DRAWN} every flow needs the stage it leaves and the one it reaches.`
+      if (a === b) return `${NOT_DRAWN} a flow from "${a}" to itself.`
+      out.set(a, (out.get(a) ?? new Set()).add(b))
+    }
+    const nodes = new Set([...out.keys(), ...[...out.values()].flatMap((s) => [...s])])
+    if (nodes.size > MAX_SANKEY_NODES) return `${NOT_DRAWN} a sankey shows at most ${MAX_SANKEY_NODES} stages and this one has ${nodes.size}: group the smallest.`
+    // A loop has no first stage to draw it from.
+    const state = new Map<string, 1 | 2>()
+    const loops = (n: string): boolean => {
+      state.set(n, 1)
+      for (const m of out.get(n) ?? []) {
+        if (state.get(m) === 1) return true
+        if (!state.has(m) && loops(m)) return true
+      }
+      state.set(n, 2)
+      return false
+    }
+    for (const n of nodes) if (!state.has(n) && loops(n)) return `${NOT_DRAWN} the flows go round in a loop (through "${n}"); a sankey runs one way: name a stage met twice apart (Rework, Re-inspection).`
+  }
+  if (type === 'risk-matrix') {
+    for (const r of rows) {
+      for (let k = 0; k < ys.length; k++) {
+        const v = num(r, k)
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 10) {
+          return `${NOT_DRAWN} ${['severity', 'occurrence', 'detection'][k]} ("${ys[k].name}") must be a whole number from 1 to 10 on every row (${JSON.stringify(r[x.index])} has ${JSON.stringify(v)}).`
+        }
+      }
+    }
   }
   return null
 }

@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-14.11',
+    date: '2026-10-14',
+    title: 'Twelve new charts in the assistant: SPC, capability, FMEA and more',
+    items: [
+      { text: 'Quality (SPC): a histogram of readings against their specification limits with the process capability (Cp, Cpk, Pp, Ppk, and how many readings fall outside); an X̄-R chart of subgroups; p-, u- and c-charts for rejects and defects, their limits adjusted to each sample\'s size; and box plots to compare the spread of machines, shifts or inspectors. Points out of control are marked red.' },
+      { text: 'FMEA: a risk matrix of failure modes by severity and occurrence, ranked by RPN. Occurrence comes from the record; severity and detection are the person\'s ratings, and the assistant asks for them rather than guessing.' },
+      { text: 'Also: gauges for one figure against its target, a radar to compare machines on several measures, bubble charts, a sankey of where the pieces went, and a calendar of a figure by day.' },
+      { text: 'Every chart works in answers, saved and scheduled reports, and print. Available in conversations started from now on.' },
+    ],
+  },
+  {
     id: '2026-10-14.10',
     date: '2026-10-14',
     title: 'A fishbone shows only what the data shows',

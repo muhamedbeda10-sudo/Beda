@@ -111,3 +111,88 @@ describe('dates as a chart reads them', () => {
     for (const bad of ['2026-02-30', '2026-13-01', '13/10/2026', 'today', 5, null]) expect(parseChartDate(bad)).toBeNull()
   })
 })
+
+describe('the quality charts and the other newer kinds', () => {
+  const readings = (n: number, x = (i: number) => `S${i}`) => Array.from({ length: n }, (_, i) => [x(i), 2450 + ((i * 7) % 5) - 2])
+
+  it('are offered to the model with what each takes, and named as the model may spell them', () => {
+    const typeText = CHART_INPUT_SCHEMA.properties.type as { enum: string[]; description: string }
+    for (const t of ['histogram', 'xbar-r', 'p-chart', 'u-chart', 'c-chart', 'box-plot', 'gauge', 'radar', 'bubble', 'sankey', 'calendar', 'risk-matrix']) {
+      expect(typeText.enum).toContain(t)
+      expect(typeText.description).toContain(`${t}`)
+    }
+    const r = result(['sample', 'length'], readings(30))
+    expect(checkChart({ type: 'Capability', x: 'sample', y: ['length'] }, r).chart?.type).toBe('histogram')
+    expect(checkChart({ type: 'spider chart', x: 'sample', y: ['length'] }, r).chart).toBeUndefined()
+    expect(checkChart({ type: 'FMEA', x: 'm', y: ['s', 'o'] }, result(['m', 's', 'o'], [['Wavy', 7, 6], ['Twist', 5, 3]])).chart?.type).toBe('risk-matrix')
+  })
+
+  it('draws a histogram of readings with its limits and target, and needs enough of them', () => {
+    expect(checkChart({ type: 'histogram', x: 'sample', y: ['length'], lsl: 2446, usl: 2454, goal: 2450 }, result(['sample', 'length'], readings(30)))).toEqual({
+      chart: { type: 'histogram', x: 'sample', y: ['length'], lsl: 2446, usl: 2454, goal: 2450 },
+    })
+    expect(why({ type: 'histogram', x: 'sample', y: ['length'] }, result(['sample', 'length'], readings(6)))).toBe('Chart not drawn: a histogram needs at least 10 readings (it has 6).')
+    expect(why({ type: 'histogram', x: 'sample', y: ['length'], lsl: 2454, usl: 2446 }, result(['sample', 'length'], readings(30)))).toBe('The specification limits are not drawn: lsl must be below usl.')
+    expect(why({ type: 'bar', x: 'sample', y: ['length'], lsl: 1 }, result(['sample', 'length'], readings(3)))).toBe('The specification limits are not drawn: a bar chart takes none.')
+  })
+
+  it('draws an X̄-R chart of subgroups of 2 to 10 readings, at least five of them', () => {
+    const groups = (n: number, size: number) => result(['session', 'length'], readings(n * size, (i) => `G${Math.floor(i / size)}`))
+    expect(checkChart({ type: 'xbar-r', x: 'session', y: ['length'], goal: 2450 }, groups(6, 5)).chart).toEqual({ type: 'xbar-r', x: 'session', y: ['length'], goal: 2450 })
+    expect(why({ type: 'xbar-r', x: 'session', y: ['length'] }, groups(3, 5))).toContain('needs at least 5 subgroups of 2 or more readings (it has 3)')
+    expect(why({ type: 'xbar-r', x: 'session', y: ['length'] }, groups(6, 12))).toContain('subgroup "G0" has 12 readings; an X̄-R chart takes at most 10 per subgroup')
+  })
+
+  it('draws p-, u- and c-charts from counts, never more defective than inspected', () => {
+    const days = Array.from({ length: 6 }, (_, i) => `2026-09-0${i + 1}`)
+    const p = result(['day', 'rejected', 'inspected'], days.map((d, i) => [d, i + 1, 200]))
+    expect(checkChart({ type: 'p-chart', x: 'day', y: ['rejected', 'inspected'] }, p).chart).toEqual({ type: 'p-chart', x: 'day', y: ['rejected', 'inspected'] })
+    expect(why({ type: 'p-chart', x: 'day', y: ['inspected', 'rejected'] }, p)).toContain('a sample has more defective pieces than it inspected')
+    expect(why({ type: 'p-chart', x: 'day', y: ['rejected'] }, p)).toBe('Chart not drawn: a p-chart takes two y columns, the defective pieces and the pieces inspected of each sample, and no series.')
+    const zero = result(['day', 'rejected', 'inspected'], days.map((d, i) => [d, 1, i === 2 ? 0 : 100]))
+    expect(why({ type: 'u-chart', x: 'day', y: ['rejected', 'inspected'] }, zero)).toBe('Chart not drawn: the units ("inspected") must be above 0 on every row.')
+    // No defect at all is still a stable process on a p-chart.
+    expect(checkChart({ type: 'p-chart', x: 'day', y: ['rejected', 'inspected'] }, result(['day', 'rejected', 'inspected'], days.map((d) => [d, 0, 100]))).chart?.type).toBe('p-chart')
+    expect(why({ type: 'c-chart', x: 'day', y: ['rejected'] }, result(['day', 'rejected'], days.slice(0, 4).map((d) => [d, 2])))).toBe('Chart not drawn: a c-chart needs at least 5 points for its limits.')
+  })
+
+  it('draws box plots of groups, at most twelve', () => {
+    const r = result(['machine', 'length'], readings(40, (i) => `M${i % 4}`))
+    expect(checkChart({ type: 'box-plot', x: 'machine', y: ['length'], usl: 2454 }, r).chart).toEqual({ type: 'box-plot', x: 'machine', y: ['length'], usl: 2454 })
+    expect(why({ type: 'box-plot', x: 'machine', y: ['length'] }, result(['machine', 'length'], readings(39, (i) => `M${i % 13}`)))).toContain('a box plot shows at most 12 groups')
+  })
+
+  it('draws a gauge of one figure (the only chart of a single number) with its scale and which way is good', () => {
+    const one = result(['kpi', 'reject_pct'], [['Reject rate', 2.6]])
+    expect(checkChart({ type: 'gauge', x: 'kpi', y: ['reject_pct'], goal: 2, max: 10, better: 'Lower' }, one)).toEqual({ chart: { type: 'gauge', x: 'kpi', y: ['reject_pct'], goal: 2, max: 10, better: 'lower' } })
+    expect(why({ type: 'bar', x: 'kpi', y: ['reject_pct'] }, one)).toBe('Chart not drawn: a single figure is stated in words, not charted.')
+    expect(why({ type: 'line', x: 'kpi', y: ['reject_pct'], max: 5, better: 'up' }, result(['kpi', 'reject_pct'], [['A', 1], ['B', 2]]))).toBe('max is not used: only a gauge takes a full scale. better is not used: only a gauge takes it.')
+    expect(why({ type: 'gauge', x: 'kpi', y: ['reject_pct'] }, result(['kpi', 'reject_pct'], Array.from({ length: 7 }, (_, i) => [`K${i}`, i])))).toContain('a gauge shows at most 6 rows')
+  })
+
+  it('draws a radar of three to twelve axes, a bubble chart of three measures, and a calendar of days', () => {
+    const scores = result(['measure', 'machine', 'score'], ['Quality', 'Output', 'OEE'].flatMap((m) => [[m, 'RF-01', 80], [m, 'RF-03', 60]]))
+    expect(checkChart({ type: 'radar', x: 'measure', y: ['score'], series: 'machine' }, scores).chart).toEqual({ type: 'radar', x: 'measure', y: ['score'], series: 'machine' })
+    expect(why({ type: 'radar', x: 'measure', y: ['score'], series: 'machine' }, result(['measure', 'machine', 'score'], [['Q', 'A', 1], ['O', 'A', 2]]))).toContain('a radar chart takes 3 to 12 axes')
+    const machines = result(['machine', 'output', 'reject_pct', 'hours'], [['RF-01', 900, 1.6, 120], ['RF-02', 1700, 0.3, 80], ['RF-03', 2000, 2.8, -1]])
+    expect(why({ type: 'bubble', x: 'output', y: ['reject_pct', 'hours'], series: 'machine' }, machines)).toBe('Chart not drawn: a bubble\'s size ("hours") cannot be below zero.')
+    expect(checkChart({ type: 'bubble', x: 'output', y: ['reject_pct', 'hours'], series: 'machine' }, result(machines.columns, machines.rows.slice(0, 2))).chart?.type).toBe('bubble')
+    expect(why({ type: 'bubble', x: 'machine', y: ['reject_pct', 'hours'] }, machines)).toContain('a bubble chart\'s x column "machine" must be numeric')
+    expect(checkChart({ type: 'calendar', x: 'day', y: ['n'] }, result(['day', 'n'], [['2026-09-01', 3], ['2026-09-02', 5]])).chart?.type).toBe('calendar')
+    expect(why({ type: 'calendar', x: 'day', y: ['n'] }, result(['day', 'n'], [['Mon', 3], ['Tue', 5]]))).toContain("a calendar's x column \"day\" must hold days")
+  })
+
+  it('draws a sankey of flows that run one way, and a risk matrix of ratings from 1 to 10', () => {
+    const flows = result(['from_stage', 'to_stage', 'pieces'], [['Order A', 'RF-01', 100], ['RF-01', 'Passed', 90], ['RF-01', 'Rejected', 10]])
+    expect(checkChart({ type: 'sankey', x: 'from_stage', y: ['pieces'], series: 'to_stage' }, flows).chart).toEqual({ type: 'sankey', x: 'from_stage', y: ['pieces'], series: 'to_stage' })
+    const loop = result(flows.columns, [...flows.rows, ['Rejected', 'RF-01', 5]])
+    expect(why({ type: 'sankey', x: 'from_stage', y: ['pieces'], series: 'to_stage' }, loop)).toContain('the flows go round in a loop')
+    expect(why({ type: 'sankey', x: 'from_stage', y: ['pieces'] }, flows)).toContain('a sankey takes x (the stage a flow leaves), series (the stage it reaches)')
+    const risks = result(['mode', 's', 'o', 'd'], [['Wavy edge', 7, 6, 4], ['Twist', 6, 4, 6]])
+    expect(checkChart({ type: 'risk-matrix', x: 'mode', y: ['s', 'o', 'd'] }, risks).chart).toEqual({ type: 'risk-matrix', x: 'mode', y: ['s', 'o', 'd'] })
+    expect(why({ type: 'risk-matrix', x: 'mode', y: ['s', 'o', 'd'] }, result(risks.columns, [['Wavy edge', 7, 6, 4], ['Twist', 11, 4, 6]]))).toBe(
+      'Chart not drawn: severity ("s") must be a whole number from 1 to 10 on every row ("Twist" has 11).',
+    )
+    expect(why({ type: 'risk-matrix', x: 'mode', y: ['s'] }, risks)).toContain('a risk matrix takes y = [severity, occurrence]')
+  })
+})

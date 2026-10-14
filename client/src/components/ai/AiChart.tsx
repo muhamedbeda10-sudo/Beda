@@ -6,8 +6,10 @@
 // whole is made of, bars with lines on two axes, a Pareto of causes, a
 // scatter with its trend, a heatmap, an SPC control chart, and for planning
 // and production (./AiPlanCharts) progress toward targets, a funnel, a
-// waterfall, a gantt, a dumbbell and a treemap. Charts read left to right,
-// in an Arabic answer too.
+// waterfall, a gantt, a dumbbell and a treemap; for quality (./AiQualityCharts)
+// a histogram with the capability, an X̄-R chart, p-, u- and c-charts, box
+// plots and an FMEA risk matrix; and (./AiMoreCharts) gauges, a radar, bubbles,
+// a sankey and a calendar. Charts read left to right, in an Arabic answer too.
 //
 // The dashboard draws on a 720-wide canvas scaled to its card; the answer's
 // column is narrower in the panel (about 420 px) and wider on the full page,
@@ -23,7 +25,9 @@ import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { GroupedBarChart, LineChart, PIE_CLASSES, PIE_STROKES, PieChart, StackedColumnChart } from '@/components/dashboard/charts'
 import { ChartOnly } from '@/components/dashboard/figureView'
 import { ComboChart, ControlChart, HeatmapChart, HorizontalBarChart, ParetoAiChart, ScatterChart, StackedAreaChart } from './AiChartKinds'
+import { BubbleChart, CalendarChart, GaugeChart, RadarChart, SankeyChart } from './AiMoreCharts'
 import { DumbbellChart, FunnelChart, GanttChart, ProgressChart, TreemapChart, WaterfallChart } from './AiPlanCharts'
+import { AttributeChart, BoxPlotChart, HistogramChart, RiskMatrixChart, XbarRChart } from './AiQualityCharts'
 import { aiChartWidth, chartFigure, percentStack, type ChartModel } from './chartData'
 
 /** The series' colours, in order: the dashboard's pie colours, so a line, a bar and a slice of one series match. */
@@ -128,6 +132,38 @@ export const AiChart = memo(function AiChart({ model }: { model: ChartModel }) {
       break
     case 'treemap':
       chart = <TreemapChart labels={labels} series={series} grouped={!!model.splitBy} fills={fillOf} unit={unit} width={width} format={chartFigure} />
+      break
+    case 'histogram':
+      chart = model.readings ? <HistogramChart readings={model.readings} lsl={model.lsl} usl={model.usl} goal={goal} label={series[0]?.label ?? ''} unit={unit} width={width} format={chartFigure} /> : null
+      break
+    case 'xbar-r':
+      chart = model.xbar ? <XbarRChart labels={labels} xbar={model.xbar} label={series[0]?.label ?? ''} unit={unit} width={width} format={chartFigure} goal={goal} /> : null
+      break
+    case 'p-chart':
+    case 'u-chart':
+    case 'c-chart':
+      chart = model.stepped ? <AttributeChart kind={model.type} labels={labels} stepped={model.stepped} label={series[0]?.label ?? ''} unit={unit} width={width} format={chartFigure} /> : null
+      break
+    case 'box-plot':
+      chart = model.groups ? <BoxPlotChart labels={labels} groups={model.groups} lsl={model.lsl} usl={model.usl} goal={goal} label={series[0]?.label ?? ''} unit={unit} width={width} format={chartFigure} /> : null
+      break
+    case 'risk-matrix':
+      chart = model.risks ? <RiskMatrixChart risks={model.risks} width={width} /> : null
+      break
+    case 'gauge':
+      chart = <GaugeChart labels={labels} values={series[0]?.values ?? []} max={model.gaugeMax ?? 100} goal={goal} better={model.better} label={series[0]?.label ?? ''} unit={unit} width={width} format={chartFigure} />
+      break
+    case 'radar':
+      chart = <RadarChart labels={labels} series={series} strokes={strokeOf} fills={fillOf} unit={unit} width={width} format={chartFigure} />
+      break
+    case 'bubble':
+      chart = model.bubbles ? <BubbleChart bubbles={model.bubbles} fills={fillOf} xName={model.xName ?? ''} yName={model.yName ?? ''} sizeName={model.sizeName ?? ''} unit={unit} width={width} height={HEIGHT} format={chartFigure} goal={goal} /> : null
+      break
+    case 'sankey':
+      chart = model.links ? <SankeyChart links={model.links} fills={fillOf} unit={unit} width={width} format={chartFigure} label={series[0]?.label ?? ''} /> : null
+      break
+    case 'calendar':
+      chart = model.days ? <CalendarChart days={model.days} label={series[0]?.label ?? ''} unit={unit} width={width} format={chartFigure} /> : null
       break
     case 'stacked-bar-100': {
       const shares = percentStack(series, labels.length)
