@@ -14,6 +14,7 @@ import type { AiNoticePart } from './noticeAssistant'
 import type { AiPlaybookPart } from './playbook'
 import type { AiSavedTablePart } from './savedTables'
 import type { AiExcelPart } from './aiExcel'
+import type { AiDiagramPart } from './aiDiagram'
 
 /** The model the assistant runs on. */
 export const AI_MODEL = 'claude-sonnet-5-5'
@@ -582,9 +583,19 @@ export interface AiTaskProposalResponse {
 /**
  * An answer's pieces in order. An automation proposal (§21), a notice card (§23) and a task card are cards the person
  * applies or discards; a playbook card says what the assistant saved, with Remove; an Excel card is a file to download;
- * a saved-table card says what table the assistant made, changed, computed again or removed.
+ * a saved-table card says what table the assistant made, changed, computed again or removed; a diagram card is a
+ * diagram it drew (aiDiagram.ts).
  */
-export type AiPart = { type: 'text'; text: string } | AiQueryPart | AiAutomationPart | AiNoticePart | AiTaskPart | AiPlaybookPart | AiExcelPart | AiSavedTablePart
+export type AiPart =
+  | { type: 'text'; text: string }
+  | AiQueryPart
+  | AiAutomationPart
+  | AiNoticePart
+  | AiTaskPart
+  | AiPlaybookPart
+  | AiExcelPart
+  | AiSavedTablePart
+  | AiDiagramPart
 
 /** How an answer ended. */
 export type AiStopReason =
@@ -688,6 +699,8 @@ export type AiStreamEvent =
   | { type: 'excel'; part: AiExcelPart }
   /** A saved table the assistant made, changed, computed again or removed. */
   | { type: 'saved-table'; part: AiSavedTablePart }
+  /** A diagram the assistant drew, checked and kept. */
+  | { type: 'diagram'; part: AiDiagramPart }
   /** A new conversation's title, as the assistant gave it: a few words on what it is about. */
   | { type: 'title'; conversation: AiConversation }
   | { type: 'done'; message: AiMessage; status: AiStatusResponse }
