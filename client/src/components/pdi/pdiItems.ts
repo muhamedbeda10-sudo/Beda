@@ -4,6 +4,7 @@
 // its lines, and shows every drawing.
 
 import type { ProductionOrder } from '@qc/shared/types'
+import { orderDrawings } from '@qc/shared/rules'
 
 export interface OrderItem {
   key: string
@@ -28,8 +29,8 @@ export function itemsOfLines(lines: ProductionOrder[]): OrderItem[] {
       byKey.set(key, it)
     }
     it.lineIds.push(l.id)
-    const drawing = l.drawing?.trim()
-    if (drawing && !it.drawings.includes(drawing)) it.drawings.push(drawing)
+    // Its real drawings: DWG2 when DWG1 is a placeholder such as "(V)".
+    for (const drawing of orderDrawings(l)) if (!it.drawings.includes(drawing)) it.drawings.push(drawing)
     if (l.workCenterCode && !it.machines.includes(l.workCenterCode)) it.machines.push(l.workCenterCode)
   }
   return Array.from(byKey.values()).sort((a, b) => collator.compare(a.itemCode || a.item, b.itemCode || b.item) || collator.compare(a.item, b.item))

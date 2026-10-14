@@ -148,7 +148,6 @@ export function OrderDetailsPanel({
                   <Attr label="Expected grade" value={order.expectedGrade} />
                   <Attr label="Drawing" value={order.drawing} mono />
                   <Attr label="Alt. drawing" value={order.drawingAlt} mono />
-                  <Attr label="Issue" value={order.issue} />
                   <Attr label="ERP status" value={order.erpStatus} />
                   <Attr label="Machine" value={machineLabel(order.workCenterCode)} />
                 </dl>

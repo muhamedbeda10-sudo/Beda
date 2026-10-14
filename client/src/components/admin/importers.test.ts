@@ -22,11 +22,12 @@ describe('order sheet from the ERP', () => {
     expect(gradeFromMaterial('a : b : c : ')).toBeUndefined()
   })
 
-  it('derives the expected grade only when the sheet has none of its own', () => {
+  it('reads the expected grade from the raw-material description: the sheet has no grade column, nor an issue one', () => {
     const derive = ORDERS_IMPORTER.derive!
     expect(derive({ material: 'RM.ST.SH.HR. : 1000x3000 : 4 : S315MC : PO' }).expectedGrade).toBe('S315MC')
-    expect(derive({ material: 'RM.ST.SH.HR. : 1000x3000 : 4 : S315MC : PO', expectedGrade: 'S275JR' }).expectedGrade).toBe('S275JR')
     expect(derive({ item: 'Beam' }).expectedGrade).toBeUndefined()
+    expect(ORDERS_IMPORTER.fields.map((f) => f.key)).not.toContain('expectedGrade')
+    expect(ORDERS_IMPORTER.fields.map((f) => f.key)).not.toContain('issue')
   })
 
   it("maps the Dataverse export's own column names without renaming", () => {

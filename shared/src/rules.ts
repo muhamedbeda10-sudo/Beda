@@ -613,6 +613,42 @@ export function isStockOrder(o: { orderNumber?: string | null } | null | undefin
   return (o?.orderNumber ?? '').trim().toUpperCase() === STOCK_ORDER_NUMBER
 }
 
+/**
+ * What the ERP writes in a drawing column (DWG1, DWG2) when the column holds
+ * no drawing: "(V)", "V", "0", "NA", "X", "-". On such a line the drawing is
+ * in the other column. Compared without regard to case or spaces.
+ */
+const NOT_A_DRAWING = new Set(['', '(v)', 'v', '0', 'na', 'n/a', 'x', '-', '--'])
+
+/** A drawing column's value that names a drawing, not a placeholder. */
+export function isDrawing(value: string | null | undefined): value is string {
+  return typeof value === 'string' && !NOT_A_DRAWING.has(value.trim().toLowerCase())
+}
+
+/**
+ * The drawings an order line can be inspected against: its DWG1 and DWG2
+ * that name a drawing, in that order, each once, without their outer spaces.
+ * The first is the one a new session starts with.
+ */
+export function orderDrawings(o: { drawing?: string | null; drawingAlt?: string | null } | null | undefined): string[] {
+  const out: string[] = []
+  for (const value of [o?.drawing, o?.drawingAlt]) {
+    if (!isDrawing(value)) continue
+    const drawing = value.trim()
+    if (!out.includes(drawing)) out.push(drawing)
+  }
+  return out
+}
+
+/**
+ * Whether a sample on this line must name its drawing: not on a stock line,
+ * and not on a line whose sheet gives none to pick (both columns empty or
+ * placeholders) — the inspector could not save it otherwise.
+ */
+export function drawingRequiredFor(o: { orderNumber?: string | null; drawing?: string | null; drawingAlt?: string | null } | null | undefined): boolean {
+  return !isStockOrder(o) && orderDrawings(o).length > 0
+}
+
 /** The highest stage an item on a universal machine may be given. */
 export const MAX_STAGE = 50
 

@@ -23,6 +23,10 @@ import {
   topStageQty,
   ptRequiredFor,
   stockProductionOf, isStockMachine, normaliseMachineCode,
+  drawingRequiredFor,
+  isDrawing,
+  orderDrawings,
+  STOCK_ORDER_NUMBER,
 } from './rules'
 
 // Local time is what the factory clock shows, so build dates in local time.
@@ -646,5 +650,25 @@ describe('where the wizard takes its dimensions from', () => {
     expect(takesConfiguredDimensions('forming', { usesItemDimensions: true })).toBe(true)
     expect(takesConfiguredDimensions('welding', null)).toBe(true)
     expect(takesConfiguredDimensions('forming', { usesItemDimensions: false })).toBe(false)
+  })
+})
+
+describe('an order line’s drawings', () => {
+  it('takes DWG2 when DWG1 is a placeholder the ERP writes, each drawing once, without outer spaces', () => {
+    expect(orderDrawings({ drawing: '(V)', drawingAlt: 'CUS19350-23' })).toEqual(['CUS19350-23'])
+    for (const placeholder of ['V', '(v)', '0', 'NA', 'X', ' - ', '', null, undefined]) {
+      expect(orderDrawings({ drawing: placeholder, drawingAlt: 'CUS19350-18' })).toEqual(['CUS19350-18'])
+    }
+    expect(orderDrawings({ drawing: '', drawingAlt: 'BS9301 (CTL)  / Gasp.334 - MJ916 (RF) ' })).toEqual(['BS9301 (CTL)  / Gasp.334 - MJ916 (RF)'])
+    expect(orderDrawings({ drawing: 'BS9251 (Weld), BS9314 (Non-Weld)', drawingAlt: 'BS9314' })).toEqual(['BS9251 (Weld), BS9314 (Non-Weld)', 'BS9314'])
+    expect(orderDrawings({ drawing: 'SM240', drawingAlt: 'SM240 ' })).toEqual(['SM240'])
+    expect(orderDrawings({ drawing: '(V)', drawingAlt: '0' })).toEqual([])
+    expect(isDrawing('CFSM')).toBe(true)
+  })
+
+  it('asks a sample for a drawing only when the line has one to pick', () => {
+    expect(drawingRequiredFor({ orderNumber: '20615-SGR', drawing: '(V)', drawingAlt: 'CUS19350-23' })).toBe(true)
+    expect(drawingRequiredFor({ orderNumber: '20615-SGR', drawing: 'X', drawingAlt: '' })).toBe(false)
+    expect(drawingRequiredFor({ orderNumber: STOCK_ORDER_NUMBER, drawing: 'SM240', drawingAlt: null })).toBe(false)
   })
 })

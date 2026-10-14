@@ -44,7 +44,6 @@ const ACCESS_COLUMNS: ColumnDef[] = [
   { key: 'expectedGrade', label: 'Expected grade', width: 120, min: 80 },
   { key: 'drawing', label: 'Drawing', width: 130, min: 80, defaultHidden: true },
   { key: 'drawingAlt', label: 'Drawing (alt)', width: 130, min: 80, defaultHidden: true },
-  { key: 'issue', label: 'Issue', width: 90, min: 64, defaultHidden: true },
   { key: 'material', label: 'Material', width: 120, min: 80, defaultHidden: true },
   { key: 'type', label: 'Type', width: 100, min: 64, defaultHidden: true },
   { key: 'colour', label: 'Colour', width: 100, min: 64, defaultHidden: true },
@@ -233,8 +232,6 @@ function cell(key: string, o: OrderListRow, fixed: boolean, machineName: (code: 
       return text(o.drawing)
     case 'drawingAlt':
       return text(o.drawingAlt ?? '')
-    case 'issue':
-      return text(o.issue ?? '')
     case 'material':
       return text(o.material)
     case 'type':

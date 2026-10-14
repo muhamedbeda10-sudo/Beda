@@ -35,12 +35,12 @@ describe('§7.7.1 — the ERP "Tasks" query, every column of it', () => {
   ]
   const match = matchOrderColumns(TASKS_HEADERS)
 
-  it('maps every column to its own field; only Issue (not in the query) and the expected grade (read from the material) have none', () => {
+  it('maps every column to its own field, and every field to a column (the expected grade is read from the material)', () => {
     expect(match.unknown).toEqual([])
     const columns = Object.values(match.byField)
     expect(new Set(columns).size).toBe(columns.length)
     expect(columns).toHaveLength(TASKS_HEADERS.length)
-    expect(ORDER_IMPORT_FIELDS.filter((f) => match.byField[f.key] === undefined).map((f) => f.key)).toEqual(['issue', 'expectedGrade'])
+    expect(ORDER_IMPORT_FIELDS.filter((f) => match.byField[f.key] === undefined).map((f) => f.key)).toEqual([])
     expect(match.byField).toMatchObject({
       lineKey: 'ID', erpStatus: 'Status', workCenterCode: 'Work Center', date: 'Release Date', orderNumber: 'Order', item: 'Item',
       itemCode: 'Item ID', requiredQty: 'Req_Q', finishedQty: 'Finished_Q', colour: 'Color', customer: 'Cus Name', type: 'Exp/Local',

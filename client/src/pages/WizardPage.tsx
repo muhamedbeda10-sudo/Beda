@@ -71,6 +71,8 @@ import {
   isPaintThicknessName,
   isOtherDefect,
   isStockOrder,
+  drawingRequiredFor,
+  orderDrawings,
   OTHER_DEFECT_NAME,
   ptOverallVerdict,
   PAINT_THICKNESS_NAME,
@@ -256,7 +258,15 @@ export function WizardPage() {
       process,
       submissionId: newSubmissionId(),
       step: carried ? steps[1] : steps[0],
-      drawing: carried ? carried.drawing : process === 'paint' ? '' : (order.drawing ?? ''),
+      // The line's first real drawing (DWG2 when DWG1 is a placeholder such as "(V)"); one carried from the session's
+      // last sample stays while the sheet still gives it.
+      drawing: carried
+        ? isStockOrder(order) || orderDrawings(order).includes(carried.drawing.trim())
+          ? carried.drawing
+          : (orderDrawings(order)[0] ?? '')
+        : process === 'paint'
+          ? ''
+          : (orderDrawings(order)[0] ?? ''),
       drawingAlt: carried ? (carried.drawingAlt ?? undefined) : order.drawingAlt,
       issue: carried ? (carried.issue ?? undefined) : order.issue,
       sampleQty: '',
@@ -313,8 +323,8 @@ export function WizardPage() {
     const lengths = keptLengths(draft.pt?.testedLengths ?? [])
     const found = validateSample({
       process: draft.process,
-      // A stock item has no order drawing to pick.
-      drawingRequired: !isStockOrder(order),
+      // A stock item, or a line whose sheet names no drawing, has none to pick.
+      drawingRequired: drawingRequiredFor(order),
       sampleQty: Number(draft.sampleQty),
       drawing: draft.drawing,
       coils: draft.coils.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade })),
@@ -1123,6 +1133,8 @@ function SetupStep({
   onConnectorFocused: () => void
 }) {
   const { toast } = useApp()
+  /** The line's drawings to pick from: DWG1 and DWG2 that name one ("(V)", "0" and the like do not). */
+  const drawings = useMemo(() => orderDrawings(order), [order])
   const [picking, setPicking] = useState(false)
   /** The coil a tap in the picker pointed at, lit for a moment so the eye finds it on the list. */
   const [litCoil, setLitCoil] = useState<string | null>(null)
@@ -1190,10 +1202,16 @@ function SetupStep({
             <Input value={draft.drawing} onChange={(e) => update({ drawing: e.target.value })} className="min-h-[48px]" placeholder="—" />
           </Field>
         ) : (
-          <Field label="Drawing">
-            <Select value={draft.drawing} onChange={(e) => update({ drawing: e.target.value })} className="min-h-[48px]">
-              {[order.drawing, order.drawingAlt].filter(Boolean).map((d) => (
-                <option key={d} value={d!}>
+          <Field label="Drawing" hint={drawings.length === 0 ? 'The order sheet gives no drawing for this line.' : undefined}>
+            <Select value={drawings.includes(draft.drawing) ? draft.drawing : ''} onChange={(e) => update({ drawing: e.target.value })} className="min-h-[48px]" disabled={drawings.length === 0}>
+              {/* What is shown is what is kept: a drawing the sheet no longer gives (or none yet) reads as not chosen. */}
+              {!drawings.includes(draft.drawing) && (
+                <option value="" disabled>
+                  {drawings.length === 0 ? '—' : 'Choose a drawing…'}
+                </option>
+              )}
+              {drawings.map((d) => (
+                <option key={d} value={d}>
                   {d}
                 </option>
               ))}

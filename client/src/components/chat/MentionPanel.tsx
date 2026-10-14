@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom'
 import { ClipboardList, Package } from 'lucide-react'
 import type { ChatMention, ProductionOrder } from '@qc/shared/types'
 import { remainingQty } from '@qc/shared/types'
+import { orderDrawings } from '@qc/shared/rules'
 import { Badge, Button, Drawer } from '@/components/ui'
 import { useOrder, useOrderHistory, useOrderSearch } from '@/services/queries'
 import { sessionDetailPath } from '@/lib/links'
@@ -25,7 +26,7 @@ function OrderLine({ orderId, onClose }: { orderId: string; onClose: () => void 
     ['Item', `${o.item} · ${o.itemCode}`],
     ['Machine', o.workCenterCode],
     ['Customer', o.customer || '—'],
-    ['Drawing', o.drawing || '—'],
+    ['Drawing', orderDrawings(o).join(' · ') || '—'],
     ['Expected grade', o.expectedGrade || '—'],
     ['Quantity', `${o.finishedQty} of ${o.requiredQty} · ${remainingQty(o)} remaining`],
     ['ERP status', o.erpStatus || '—'],
