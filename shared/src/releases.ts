@@ -28,6 +28,14 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-14.7',
+    date: '2026-10-14',
+    title: 'Tapping outside a window to hide the keyboard no longer closes it',
+    items: [
+      { text: 'On a tablet or phone, while you type in a window (closing a session with its final quantity or its stages, adding a user, any form), a tap outside it now only puts the keyboard away: the window stays open with what you typed, ready for Save. A second tap outside closes it, as before.' },
+    ],
+  },
+  {
     id: '2026-10-14.6',
     date: '2026-10-14',
     title: 'Slow queries of the assistant, listed for the owner',
