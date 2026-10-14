@@ -199,14 +199,15 @@ export function conversationTools(
  * is the prompt as before §23: no Notices section, and no word of notices in
  * the general rules; without `tasks`, no word of tasks; without `excel`, no
  * Excel files section; without `playbook`, no Playbook section; without
- * `savedTables`, no word of saved tables. The chat always passes all five:
- * the playbook as it is when the conversation begins.
+ * `savedTables`, no word of saved tables; without `diagrams`, no Diagrams
+ * section. The chat always passes them all: the playbook as it is when the
+ * conversation begins.
  */
 export function renderSystemPrompt(
   factoryTimeZone: string,
   schemaDescription: string,
   domains: readonly AiDomain[],
-  options: { automations?: AutomationAsker | null; notices?: NoticePromptMode | null; tasks?: boolean; excel?: boolean; playbook?: PromptPlaybook | null; savedTables?: boolean } = {},
+  options: { automations?: AutomationAsker | null; notices?: NoticePromptMode | null; tasks?: boolean; excel?: boolean; playbook?: PromptPlaybook | null; savedTables?: boolean; diagrams?: boolean } = {},
 ): string {
   const granted = AI_DOMAIN_IDS.filter((d) => domains.includes(d))
   const has = (d: AiDomain) => granted.includes(d)
@@ -225,7 +226,7 @@ plus the machine register${options.savedTables ? ', the saved tables (ai_saved.*
 - Prefer aggregates computed in SQL (count, sum, GROUP BY) to listing rows. Select only the columns you need and use LIMIT for listings: a result shows at most ${AI_PREVIEW_ROWS} rows.
 - If a query fails, read the error, fix the query and run it again. A permission error means the view is not among the data you can read for this person. Several queries for one question are fine.
 - Before you start, say in one line what you are about to check. Close with an answer that stands on its own; when you need something from the person first (a choice, a missing detail, their agreement to a plan), close with your questions instead.${
-    options.notices || options.automations || options.tasks || options.excel || options.playbook || options.savedTables
+    options.notices || options.automations || options.tasks || options.excel || options.playbook || options.savedTables || options.diagrams
       ? '\n- run_sql is ready from the start. The other tools this prompt names load on demand, to keep each question light: when a request needs one, first find it with tool_search_tool_bm25 (search by the tool\'s name, for example "list_notices"), then call it. A tool once found stays ready for the rest of the conversation. Never search for a tool the question does not need.'
       : ''
   }`)
@@ -279,6 +280,7 @@ run_sql can also draw its result as a chart, shown with your answer: give the ca
 - Shape the query for the chart: aggregate in SQL, one row per x (or per x and series), with short readable column aliases (they label the axes and the legend). y takes 1 to ${MAX_CHART_Y} numeric columns. For several lines or stacks of one measure, return it in long form and name the column that splits it as series.
 - An answer may hold several charts, each from its own query: a report-like answer (a weekly review, a machine's month) is clearer with two or three charts of different kinds than with one.
 - If the chart cannot be drawn, the query's result says why; the figures are still there.`)
+  if (options.diagrams) sections.push(DIAGRAMS_SECTION)
   sections.push(`# Follow-up questions
 End every answer with two or three short suggestions, as the very last thing you write, in exactly this form:
 <suggestions>
@@ -386,6 +388,14 @@ When the person asks for data in Excel (a file, a sheet, "send it to me in Excel
 - A sheet holds at most ${AI_EXCEL_MAX_ROWS.toLocaleString('en-US')} rows. With more, no file is made: tell the person and ask how to narrow it (a shorter period, a machine, a summary instead of every row).
 - A percentage is 0 to 100 (2.5 for 2.5%), format percent; a day or a time is selected as a date or a timestamp, format date or datetime; a code, or a number that names something (an order or a session number), is text.
 - If make_excel lists problems, fix all of them and call it again. Once it is made, say in a sentence or two what the file holds (its sheets, the period, the filters); it can be downloaded for ${AI_EXCEL_KEEP_DAYS} days.`
+
+const DIAGRAMS_SECTION = `# Diagrams
+draw_diagram draws a diagram you write as a card in the answer, printed with it: for the analysis of a problem, where a chart of figures does not fit. Use it when the person asks for one, or when a root-cause question ("why", "what causes", an NCR, a complaint) is clearer drawn:
+- A fishbone (Ishikawa) of the causes of one problem: the problem as the head, the bones usually the 6M - Man (shift, inspector, operator), Machine, Method (drawing, setup, sequence), Material (coil, grade, thickness, supplier), Measurement (gauges, where the tolerance came from), Environment. A fishbone holds only what the data shows, never a cause from your own knowledge or a guess: first test each bone with run_sql (the problem by machine, by shift and inspector, by coil or grade, by spec source, by day), then put on it only the causes those results show, each with its figure as the evidence, copied as the query returned it (compute a share or an average in SQL, not by hand). The app checks every figure against the results and draws nothing when one is in none. Leave out a bone the data shows nothing on, and if fewer than two bones are left, say so instead of drawing. Say in the notes the period and what the causes were checked against.
+- 5 Whys: the problem, then each answer to "Why?" in turn down to the root cause (the last step), with a figure where the record shows it, and the actions against the root cause.
+- A flowchart of a process (how a sample is inspected, how a hold is released, where a defect is caught): start and end, steps, decisions with every way out named; highlight the step where the problem arises or that should change.
+- A mind map of a subject's parts (what an audit should cover, the factors of a KPI).
+Write every text in the language of the question, short: the card has little room. After it is drawn, do not write it out again; say what it shows and what to check or do next. A diagram belongs to this answer only: a saved or scheduled report does not keep it.`
 
 /** Calls to the model one answer may take: the assistant's steps, each a reply that may run queries or tools. */
 export const MAX_STEPS_PER_ANSWER = 40

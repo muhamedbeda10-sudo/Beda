@@ -1,6 +1,7 @@
 // ============================================================================
 // §20 — the answer being written. The stream's events (start, text, progress,
-// query_start, query_end, automation, notice, task, playbook, done, error) are folded into one value
+// query_start, query_end, automation, notice, task, playbook, excel, saved-table,
+// diagram, done, error) are folded into one value
 // the thread draws, and the saved conversation takes over once it holds the
 // same answer. The answer is the server's once `start` has named its
 // question: it goes on there whatever becomes of the connection, and only
@@ -110,6 +111,12 @@ export function applyEvent(t: LiveTurn, e: AiStreamEvent): LiveTurn {
       const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
       return { ...t, phase: 'streaming', progress: null, parts }
     }
+    case 'diagram': {
+      // A diagram, where it came; the same card again (sent twice) takes its place.
+      const at = t.parts.findIndex((p) => p.type === 'diagram' && p.diagramId === e.part.diagramId)
+      const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
+      return { ...t, phase: 'streaming', progress: null, parts }
+    }
     case 'saved-table': {
       // A saved table made, replaced, computed or removed, where it came; the same card again (sent twice) takes its place.
       const at = t.parts.findIndex((p) => p.type === 'saved-table' && p.changeId === e.part.changeId)
@@ -196,7 +203,7 @@ export function parseStreamEvent(event: string, data: string): AiStreamEvent | n
   return value as AiStreamEvent
 }
 
-const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'automation', 'notice', 'task', 'playbook', 'excel', 'saved-table', 'title', 'done', 'error'])
+const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'automation', 'notice', 'task', 'playbook', 'excel', 'saved-table', 'diagram', 'title', 'done', 'error'])
 
 /**
  * What a question is sent after (LiveTurn.after): the last message this device

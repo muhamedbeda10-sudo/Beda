@@ -14,7 +14,8 @@
 //     and of the tasks it drafted (proposed, sent, discarded or superseded)
 //     and the playbook changes it made (each entry as it stands now) and
 //     the Excel files it made (each as checked when it was made) and the
-//     saved tables it made, changed, computed or removed (each as it stands now),
+//     saved tables it made, changed, computed or removed (each as it stands now)
+//     and the diagrams it drew (each as it was drawn),
 //     the blocks the model wrote for the app (its headline figures, its
 //     follow-up questions) taken out of the text and handed over on their
 //     own. Thinking and the tool plumbing stay out of sight.
@@ -31,6 +32,7 @@ import { loadTurnAttachments, type StoredBlock, type StoredMessage } from './att
 import { loadSavedTableParts } from './savedTableParts'
 import { stripBlocks } from './blocks'
 import { loadExcelParts } from './excelParts'
+import { loadDiagramParts } from './diagrams'
 import { KPIS_BLOCK, parseKpis } from './kpis'
 import { SUGGESTIONS_BLOCK, parseSuggestions } from './suggestions'
 
@@ -443,6 +445,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
   const playbookByToolUse = await loadPlaybookParts(q, conversationId, turnId)
   const excelByToolUse = await loadExcelParts(q, conversationId, turnId)
   const savedTableByToolUse = await loadSavedTableParts(q, conversationId, turnId)
+  const diagramByToolUse = await loadDiagramParts(q, conversationId, turnId)
   const attachmentsByTurn = await loadTurnAttachments(q, conversationId, turnId)
   const byTurn = new Map<string, MessageRow[]>()
   for (const m of messages.rows) {
@@ -479,6 +482,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
           const playbook = playbookByToolUse.get(block.id)
           const excel = excelByToolUse.get(block.id)
           const savedTable = savedTableByToolUse.get(block.id)
+          const diagram = diagramByToolUse.get(block.id)
           if (run) parts.push(queryPart(run))
           else if (proposal) parts.push(proposal)
           else if (notice) parts.push(notice)
@@ -486,6 +490,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
           else if (playbook) parts.push(playbook)
           else if (excel) parts.push(excel)
           else if (savedTable) parts.push(savedTable)
+          else if (diagram) parts.push(diagram)
         }
       }
     }

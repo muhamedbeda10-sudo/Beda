@@ -98,7 +98,7 @@ describe('the tools and the prompt', () => {
   it('gives everyone given the assistant the task tools, loaded on demand, and says how to use them', async () => {
     app.model.reply({ content: [text('Hi.')] })
     await ask(app, p.plain, 'Hello')
-    expect(toolNames(app).slice(-9)).toEqual(['find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
+    expect(toolNames(app).slice(-10)).toEqual(['find_people', 'propose_task', 'my_tasks', 'update_playbook', 'draw_diagram', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
     for (const tool of app.model.calls[0].params.tools!.slice(-9, -6)) expect(tool).toMatchObject({ defer_loading: true, eager_input_streaming: true })
     const system = systemOf(app)
     expect(system).toContain('# Tasks')

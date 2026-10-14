@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-14.9',
+    date: '2026-10-14',
+    title: 'The assistant draws fishbone, 5 Whys, flowchart and mind map diagrams',
+    items: [
+      { text: 'Ask the assistant for a fishbone of a problem: it first checks each bone (machine, shift and inspector, coil and material, measurement, method) against the record, then draws only the causes the data shows, each with its figure. The app checks every figure against the queries before drawing, so nothing from the assistant’s own guesses goes on the fishbone; hover a cause to see the query it came from.' },
+      { text: 'It also draws a 5 Whys chain down to the root cause with its actions, a flowchart of a process (decisions, loops, the step where the problem arises marked out) and a mind map. Each diagram is a card in the answer: Enlarge opens it full size, and Print prints it with the answer.' },
+      { text: 'Available in conversations started from now on.' },
+    ],
+  },
+  {
     id: '2026-10-14.8',
     date: '2026-10-14',
     title: 'The coil can be required on a machine',

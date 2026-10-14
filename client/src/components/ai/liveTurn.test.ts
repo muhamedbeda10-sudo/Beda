@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AiConversation, AiMessage, AiMessagesResponse, AiQueryPart, AiRunningAnswer, AiStatusResponse } from '@qc/shared/ai'
 import type { AiAutomationPart, AutomationDraft } from '@qc/shared/automation'
+import type { AiDiagramPart } from '@qc/shared/aiDiagram'
 import type { AiExcelPart } from '@qc/shared/aiExcel'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import type { AiSavedTablePart } from '@qc/shared/savedTables'
@@ -138,6 +139,15 @@ describe('the answer being written', () => {
     expect(applyEvent(applyEvent(t, { type: 'text', delta: 'Here it is.' }), { type: 'notice', part: second }).parts).toEqual([card, { type: 'text', text: 'Here it is.' }, second])
     expect(parseStreamEvent('notice', JSON.stringify({ type: 'notice', part: fixed }))).toEqual({ type: 'notice', part: fixed })
     expect(parseStreamEvent('automation', JSON.stringify({ type: 'notice', part: fixed }))).toBeNull()
+  })
+
+  it('puts a diagram where it came, and the same diagram again in its place', () => {
+    const d: AiDiagramPart = { type: 'diagram', diagramId: 'd1', diagram: { kind: 'five-whys', title: 'Late', problem: 'Late', steps: [{ because: 'Hold' }, { because: 'No supervisor' }], actions: [] } }
+    const t = run([{ type: 'start', conversation, userMessageId: 'u1' }, { type: 'progress', text: 'Checking the diagram' }, { type: 'diagram', part: d }])
+    expect(t.parts).toEqual([d])
+    expect(t.progress).toBeNull()
+    expect(applyEvent(t, { type: 'diagram', part: d }).parts).toEqual([d])
+    expect(parseStreamEvent('diagram', JSON.stringify({ type: 'diagram', part: d }))).toEqual({ type: 'diagram', part: d })
   })
 
   it('puts an Excel file where it came, and the same file again in its place', () => {

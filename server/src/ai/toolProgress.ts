@@ -17,6 +17,7 @@ const WRITING: Readonly<Record<string, string>> = {
   save_table: 'Writing the table to save',
   update_saved_table: 'Writing the change to the saved table',
   make_excel: 'Writing the Excel file',
+  draw_diagram: 'Drawing the diagram',
 }
 
 /** What the app does with a step's tools before its first card: run_sql's card says so itself. */
@@ -31,6 +32,7 @@ const CHECKING: Readonly<Record<string, string>> = {
   refresh_saved_table: 'Computing the saved table again',
   remove_saved_table: 'Removing the saved table',
   make_excel: 'Making the Excel file',
+  draw_diagram: 'Checking the diagram',
   find_people: 'Looking people up',
   find_notice_targets: 'Looking up who can be told',
   list_notices: 'Reading the notices',

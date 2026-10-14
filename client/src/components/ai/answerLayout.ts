@@ -9,11 +9,12 @@
 // query group (and the cards in it) moves rather than being drawn anew.
 //
 // An automation the assistant proposed (§21), a notice card (§23), a task
-// card, a playbook change, an Excel file or a saved table is a card of its own, in its place among the text, written or
-// settled: it is what the answer is for.
+// card, a playbook change, an Excel file, a saved table or a diagram is a card of its own, in its place among the text,
+// written or settled: it is what the answer is for.
 // ============================================================================
 
 import type { AiTaskPart } from '@qc/shared/ai'
+import type { AiDiagramPart } from '@qc/shared/aiDiagram'
 import type { AiExcelPart } from '@qc/shared/aiExcel'
 import type { AiAutomationPart } from '@qc/shared/automation'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
@@ -25,11 +26,11 @@ type QueryLike = Extract<LivePart, { type: 'query' | 'pending-query' }>
 
 const isQuery = (p: LivePart): p is QueryLike => p.type === 'query' || p.type === 'pending-query'
 
-type InlinePart = Extract<LivePart, { type: 'text' | 'automation' | 'notice' | 'task' | 'playbook' | 'excel' | 'saved-table' }>
+type InlinePart = Extract<LivePart, { type: 'text' | 'automation' | 'notice' | 'task' | 'playbook' | 'excel' | 'saved-table' | 'diagram' }>
 
 /** What reads in its place among the text: the text itself and the cards. */
 const isInline = (p: LivePart): p is InlinePart =>
-  p.type === 'text' || p.type === 'automation' || p.type === 'notice' || p.type === 'task' || p.type === 'playbook' || p.type === 'excel' || p.type === 'saved-table'
+  p.type === 'text' || p.type === 'automation' || p.type === 'notice' || p.type === 'task' || p.type === 'playbook' || p.type === 'excel' || p.type === 'saved-table' || p.type === 'diagram'
 
 export type AnswerBlock =
   | { kind: 'text'; key: string; text: string }
@@ -42,6 +43,7 @@ export type AnswerBlock =
   | { kind: 'playbook'; key: string; part: AiPlaybookPart }
   | { kind: 'excel'; key: string; part: AiExcelPart }
   | { kind: 'saved-table'; key: string; part: AiSavedTablePart }
+  | { kind: 'diagram'; key: string; part: AiDiagramPart }
 
 const QUERIES = 'queries' as const
 const KPIS = 'kpis' as const
@@ -79,6 +81,8 @@ export function answerBlocks(parts: readonly LivePart[], opts: { settled: boolea
         return excel(p)
       case 'saved-table':
         return savedTable(p)
+      case 'diagram':
+        return { kind: 'diagram', key: `diagram:${p.diagramId}`, part: p }
     }
   }
 
