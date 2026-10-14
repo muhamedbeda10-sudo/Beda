@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-14.10',
+    date: '2026-10-14',
+    title: 'A fishbone shows only what the data shows',
+    items: [
+      { text: 'The assistant no longer puts causes from its own knowledge on a fishbone: every cause and sub-cause carries its figure from a query of the factory\'s record, and the app refuses to draw a cause without one. A bone the data shows nothing on is left out.' },
+      { text: 'Other diagrams (5 whys, process maps) still mark what the data does not show as a hypothesis to check, drawn dashed.' },
+    ],
+  },
+  {
     id: '2026-10-14.9',
     date: '2026-10-14',
     title: 'The assistant draws diagrams: process maps, fishbones, 5 whys and more',

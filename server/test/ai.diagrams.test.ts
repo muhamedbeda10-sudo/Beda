@@ -44,9 +44,7 @@ const FISHBONE = {
     { id: 'effect', label: 'Twist in the profile', tone: 'bad' },
     { id: 'm58', label: 'Machine 58', group: 'machine', tone: 'bad', figure: { source: 'pieces', key: '58' }, link: '/history?machine=58' },
     { id: 'm31', label: 'Machine 31', group: 'machine', figure: { source: 'pieces', key: 31 } },
-    { id: 'roll', label: 'Worn rolls', parent: 'm58', hypothesis: true },
-    { id: 'coil', label: 'Coil thickness varies', group: 'material', hypothesis: true },
-    { id: 'heat', label: 'Heat in the hall', group: 'environment', hypothesis: true },
+    { id: 'roll', label: 'Night shift on 58', parent: 'm58', figure: { source: 'pieces', key: '58' } },
   ],
   figures: [PIECES, { id: 'spare', purpose: 'Never used', sql: 'SELECT nonsense FROM nowhere', key: 'a', value: 'b' }],
 }
@@ -80,7 +78,8 @@ describe('make_diagram', () => {
     const section = system.slice(system.indexOf('# Diagrams'), system.indexOf('\n#', system.indexOf('# Diagrams') + 2))
     expect(section).toContain('draw it with make_diagram')
     expect(section).toContain('Never write a figure of the record into a label')
-    expect(section).toContain('is marked hypothesis: true')
+    expect(section).toContain('A fishbone holds only what the data shows')
+    expect(section).toContain('never a cause from your own knowledge or a guess')
     // Where to look for the 6M is said only of what the person can read: inspections, not the coil register.
     expect(section).toContain('ai.dimension_measurements')
     expect(section).not.toContain('ai.coils')
@@ -93,8 +92,9 @@ describe('make_diagram', () => {
     expect(told.figures).toEqual([
       { box: 'm58', figure: '116 pcs' },
       { box: 'm31', figure: '62 pcs' },
+      { box: 'roll', figure: '116 pcs' },
     ])
-    expect(told.hypotheses).toBe(3)
+    expect(told.hypotheses).toBe(0)
     expect(told.notes.join(' ')).toContain('Figure queries no box uses were not run: "spare"')
 
     expect(cards).toHaveLength(1)
@@ -111,7 +111,7 @@ describe('make_diagram', () => {
       link: '/history?machine=58',
     })
     // A sub-cause sits on its cause's bone.
-    expect(spec.nodes.find((n) => n.id === 'roll')).toMatchObject({ parent: 'm58', group: 'machine', hypothesis: true })
+    expect(spec.nodes.find((n) => n.id === 'roll')).toMatchObject({ parent: 'm58', group: 'machine', figure: { text: '116 pcs' } })
     expect(spec.sources).toEqual([{ id: 'pieces', purpose: 'Defect pieces by machine', sql: PIECES.sql, rows: 2, ms: expect.any(Number) }])
 
     // The saved conversation shows the same card, from what was kept.
@@ -149,6 +149,25 @@ describe('make_diagram', () => {
     expect(said).toContain('nodes[5].id: "roll" is used twice')
     expect(said).toContain('edges: a fishbone takes none')
     expect(said).toContain('a fishbone has one effect; 3 boxes have no group and no parent ("effect", "other", "m58")')
+    expect((await app.db.query(`SELECT count(*)::int AS n FROM ai_diagrams`)).rows[0].n).toBe(before)
+  })
+
+  it('puts on a fishbone only what the data shows: a hypothesis, or a cause with no figure, is refused', async () => {
+    const before = (await app.db.query(`SELECT count(*)::int AS n FROM ai_diagrams`)).rows[0].n
+    const { cards, result } = await viaChat({
+      ...FISHBONE,
+      nodes: [
+        ...FISHBONE.nodes,
+        { id: 'wear', label: 'Worn rolls', parent: 'm58', hypothesis: true },
+        { id: 'heat', label: 'Heat in the hall', group: 'environment' },
+      ],
+    })
+    expect(cards).toEqual([])
+    const said = String(result.content)
+    expect(said).toContain('node "wear": a fishbone holds only what the data shows, never a hypothesis; leave this cause off it.')
+    expect(said).toContain('node "heat": every cause on a fishbone shows the figure from the data that bears it out; give it a figure from a figure query, or leave it off.')
+    // The effect, the problem observed, needs no figure.
+    expect(said).not.toContain('node "effect"')
     expect((await app.db.query(`SELECT count(*)::int AS n FROM ai_diagrams`)).rows[0].n).toBe(before)
   })
 

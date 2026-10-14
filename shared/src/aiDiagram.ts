@@ -10,7 +10,8 @@
 // A figure on a box (a count, a share, hours) is never the model's own words:
 // it names a row of a read-only query over the ai.* views that the server
 // runs, as the person's domains read, and the server writes the figure in. A
-// box the data does not show is marked a hypothesis and drawn dashed.
+// box the data does not show is marked a hypothesis and drawn dashed; a
+// fishbone takes none: every cause on it carries its figure from the data.
 //
 // What passes is kept with the answer (ai_diagrams) and shown as a card in
 // its place, live and in the history alike.
