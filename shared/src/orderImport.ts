@@ -33,7 +33,10 @@ export interface OrderImportField {
 }
 
 // Aliases include the Dataverse export's own column names (cr863_…), so the
-// ERP file maps itself without renaming a single header.
+// ERP file maps itself without renaming a single header. The ERP's Tasks sheet
+// has no grade and no issue column: the expected grade is read from the
+// raw-material description (deriveOrderValues), and an issue is the
+// inspector's to type on the sample.
 const ORDER_CORE_FIELDS: readonly OrderImportField[] = [
   { key: 'lineKey', label: 'Order ID', kind: 'text', aliases: ['order id', 'orderid', 'id', 'line id', 'line', 'cr863_orderid'], sample: '100245' },
   { key: 'orderNumber', label: 'Order number', kind: 'text', aliases: ['order', 'order name', 'order no', 'ordernr', 'po', 'cr863_order'], sample: '20480-Ph1.4-SMA' },
@@ -44,9 +47,7 @@ const ORDER_CORE_FIELDS: readonly OrderImportField[] = [
   { key: 'finishedQty', label: 'Finished qty', kind: 'number', aliases: ['finished', 'produced', 'finished q', 'cr863_finished_q'], sample: '900' },
   { key: 'drawing', label: 'Drawing', kind: 'text', aliases: ['dwg', 'dwg1', 'cr863_dwg1'], sample: 'BS9059/48' },
   { key: 'drawingAlt', label: 'Alternative drawing', kind: 'text', aliases: ['drawing 2', 'alt drawing', 'dwg2', 'cr863_dwg2'], sample: 'BS9059/48-ALT' },
-  { key: 'issue', label: 'Issue', kind: 'text', aliases: ['rev', 'revision'], sample: 'Rev C' },
   { key: 'material', label: 'Material', kind: 'text', aliases: ['raw material', 'raw material description', 'cr863_rawmaterialdescription'], sample: 'RM.ST.CO.HR. : 344 : 1.5 : S315MC : PO' },
-  { key: 'expectedGrade', label: 'Expected grade', kind: 'text', aliases: ['grade'], sample: 'S315MC' },
   { key: 'customer', label: 'Customer', kind: 'text', aliases: ['client', 'cus name', 'cr863_cusname'], sample: 'Alpha Racking' },
   { key: 'type', label: 'Type', kind: 'text', aliases: ['exp local', 'export local', 'cr863_explocal'], sample: 'Export' },
   { key: 'colour', label: 'Colour', kind: 'text', aliases: ['color', 'ral', 'cr863_color'], sample: 'RAL7016' },
@@ -191,7 +192,7 @@ export function gradeFromMaterial(description: string): string | undefined {
 
 /** Fills in what the sheet implies but does not carry: the ERP has no grade column, it lives in the raw-material description. */
 export function deriveOrderValues(values: Record<string, OrderCellValue>): Record<string, OrderCellValue> {
-  if (values.expectedGrade !== undefined || typeof values.material !== 'string') return values
+  if (typeof values.material !== 'string') return values
   const grade = gradeFromMaterial(values.material)
   return grade ? { ...values, expectedGrade: grade } : values
 }

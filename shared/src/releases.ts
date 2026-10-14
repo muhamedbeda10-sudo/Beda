@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-14.3',
+    date: '2026-10-14',
+    title: 'The right drawing on every order line, and the order import matched to the new ERP sheet',
+    items: [
+      { text: 'When the ERP writes a placeholder such as "(V)", "V", "0", "NA" or "X" in DWG1, the drawing is taken from DWG2: the new inspection window, the sample\'s Setup, PDI and the order panel in the chat show the real drawing (for example CUS19350-23, not "(V)").' },
+      { text: 'A sample on a line whose drawing is only in DWG2 saves again: before, the drawing looked chosen but was not, and Save said "Select a drawing." Now what the list shows is what is kept, and a drawing the line no longer has reads "Choose a drawing…". A line whose sheet names no drawing at all saves without one.' },
+      { text: 'The order import maps every column of the new ERP Tasks sheet and nothing else. Issue and Expected grade are no longer columns to map: the sheet has neither. The expected grade is still read from the Raw Material Description, so coil grade checks work as before; Issue is gone from the order line panel and the Access list (the inspector still types a sample\'s issue).' },
+    ],
+  },
+  {
     id: '2026-10-14.2',
     date: '2026-10-14',
     title: 'The assistant changes part of an automation, not all of it',

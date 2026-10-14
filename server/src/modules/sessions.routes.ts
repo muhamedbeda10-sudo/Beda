@@ -34,6 +34,7 @@ import {
   validateSample,
   stockProductionOf,
   isStockOrder,
+  drawingRequiredFor,
   stockLineKey,
   normaliseMachineCode,
   STOCK_ORDER_NUMBER,
@@ -1095,7 +1096,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       const wc = session.workCenterCode
       const process = processForMachine(await loadMachine(tx, wc), wc)
 
-      const { imageIds } = await validateSampleBody(tx, process, body, !isStockOrder(order))
+      const { imageIds } = await validateSampleBody(tx, process, body, drawingRequiredFor(order))
 
       const index = (await tx.query<{ next: number }>(
         `SELECT COALESCE(max(index), 0) + 1 AS next FROM inspection_samples WHERE session_id = $1`,
@@ -1198,7 +1199,9 @@ export function sessionsRoutes(ctx: AppContext): Router {
 
       const wc = session.workCenterCode
       const process = processForMachine(await loadMachine(tx, wc), wc)
-      const { imageIds } = await validateSampleBody(tx, process, body, !isStockOrder(session.order))
+      // Its drawings as the sheet gives them now: a line whose sheet names none takes a sample without one.
+      const [line] = session.orderId ? await fetchOrdersByIds(tx, [session.orderId]) : []
+      const { imageIds } = await validateSampleBody(tx, process, body, line ? drawingRequiredFor(line) : !isStockOrder(session.order))
 
       // Retire the current child rows; nothing is erased.
       const counts = await retireSampleChildren(tx, sampleId, user.id)

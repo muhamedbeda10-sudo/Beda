@@ -8,7 +8,7 @@ import { matchNotices } from '@/services/mutations'
 import { NoticeGate } from '@/components/notices/NoticeGate'
 import type { NoticeForUser } from '@qc/shared/types'
 import { useApp } from '@/store/AppContext'
-import { processForMachine, stockProductionOf } from '@qc/shared/rules'
+import { orderDrawings, processForMachine, stockProductionOf } from '@qc/shared/rules'
 import { remainingQty, type Machine, type ProductionOrder } from '@qc/shared/types'
 import { When } from '@/components/ui/Tooltip'
 import { isCoarsePointer } from '@/lib/media'
@@ -253,7 +253,7 @@ export function NewInspectionDialog({ open, onClose }: { open: boolean; onClose:
 
             <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
               <Detail label="Machine" value={machine?.displayName ?? picked.workCenterCode} />
-              <Detail label="Drawing" value={picked.drawing} />
+              <Detail label="Drawing" value={orderDrawings(picked).join(' · ')} />
               <Detail label="Material" value={picked.material} />
               <Detail label="Grade" value={picked.expectedGrade} />
               <Detail label="Customer" value={picked.customer} />
