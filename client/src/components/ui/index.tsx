@@ -150,17 +150,41 @@ const FOOTER =
 /** The close button in a dialog's header: a 44 px target whose margins keep the header as low as its title. */
 const CLOSE = 'icon-btn -my-2 -me-2 shrink-0'
 
+/** The inputs a tablet or phone opens its keyboard for: every one but a box, a button, a slider, a colour or a file. */
+const NO_KEYBOARD_INPUTS = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file', 'image', 'hidden'])
+
+/** Whether the element being typed in has the on-screen keyboard open: a text field, a box of text, or editable text. */
+export function opensKeyboard(el: { tagName: string; getAttribute(name: string): string | null; isContentEditable?: boolean } | null | undefined): boolean {
+  if (!el) return false
+  if (el.isContentEditable) return true
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'textarea') return true
+  if (tag !== 'input') return false
+  return !NO_KEYBOARD_INPUTS.has((el.getAttribute('type') ?? 'text').toLowerCase())
+}
+
 /**
  * A dialog's backdrop closes it on a click that began on the backdrop — not
  * on one that ends there after a drag from inside the dialog, and not on the
  * tap that closes a pick list opened in the dialog (a FloatingPanel): that tap
  * is meant for the list alone. The press is judged as it begins, before the
  * list (closing on the same press) is gone.
+ *
+ * Nor on the tap that only puts the keyboard away: on a tablet the keyboard
+ * covers half the screen, and a tap outside the dialog while one of its fields
+ * is being typed in is meant to hide it (to reach Save), not to throw away what
+ * was typed. That tap ends the typing; the next one on the backdrop closes it.
  */
 function useBackdrop(onClose: () => void) {
   const armed = useRef(false)
   return {
     onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => {
+      const typing = document.activeElement
+      if (typing instanceof HTMLElement && opensKeyboard(typing) && typing.closest('[role="dialog"]')) {
+        armed.current = false
+        typing.blur()
+        return
+      }
       armed.current = e.target === e.currentTarget && !document.querySelector('[data-floating-panel]')
     },
     onClick: (e: ReactMouseEvent<HTMLDivElement>) => {
