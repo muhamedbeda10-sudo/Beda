@@ -190,6 +190,7 @@ import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS } from '../noticeAssistant/tools
 import { TASK_TOOLS, discardTaskProposal, sendTaskProposal } from '../tasks/assistant'
 import { PLAYBOOK_TOOLS } from '../playbook/assistant'
 import { EXCEL_TOOLS, XLSX_CONTENT_TYPE, findExcelFile, logExcelDownload } from '../ai/excel'
+import { DIAGRAM_TOOLS } from '../ai/diagram'
 import { addEntry, changeEntry, listPlaybook, mayUsePlaybook, promptPlaybook, removeEntry } from '../playbook/service'
 import {
   appendMessages,
@@ -777,7 +778,7 @@ export function aiRoutes(ctx: AppContext): Router {
     const dictionary = async () => [await describeAiSchema(db, access.domains), await describeSavedTables(db, access.domains)].filter(Boolean).join('\n\n')
     const systemPrompt = body.conversationId
       ? null
-      : renderSystemPrompt(tz, await dictionary(), access.domains, { automations, notices, tasks: true, excel, playbook: await promptPlaybook(db, user.id, tz), savedTables: true })
+      : renderSystemPrompt(tz, await dictionary(), access.domains, { automations, notices, tasks: true, excel, playbook: await promptPlaybook(db, user.id, tz), savedTables: true, diagrams: true })
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return
     const askedAt = new Date()
@@ -803,7 +804,7 @@ export function aiRoutes(ctx: AppContext): Router {
           tools: conversationTools(
             automations ? AUTOMATION_TOOLS : null,
             managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS,
-            [...TASK_TOOLS, ...PLAYBOOK_TOOLS, ...(excel ? EXCEL_TOOLS : [])],
+            [...TASK_TOOLS, ...PLAYBOOK_TOOLS, ...DIAGRAM_TOOLS, ...(excel ? EXCEL_TOOLS : [])],
             SAVED_TABLE_TOOLS,
           ),
         })

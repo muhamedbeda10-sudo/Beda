@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AiQueryPart } from '@qc/shared/ai'
 import type { AiAutomationPart } from '@qc/shared/automation'
 import type { AiExcelPart } from '@qc/shared/aiExcel'
+import type { AiDiagramPart } from '@qc/shared/aiDiagram'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import { answerBlocks } from './answerLayout'
 import type { LivePart, PendingQuery } from './liveTurn'
@@ -12,8 +13,9 @@ const t = (text: string): LivePart => ({ type: 'text', text })
 const a = (id: string): AiAutomationPart => ({ type: 'automation', proposalId: id, ok: true, state: 'proposed' })
 const n = (id: string): AiNoticePart => ({ type: 'notice', proposalId: id, ok: true, action: 'create', state: 'proposed' })
 const file = (id: string): AiExcelPart => ({ type: 'excel', fileId: id, fileName: 'Scrap', sheets: [{ name: 'Scrap', columns: ['Machine'], rows: 3 }], byteSize: 7000, expiresAt: '2026-11-12T08:30:00.000Z' })
+const d = (id: string): AiDiagramPart => ({ type: 'diagram', diagramId: id, spec: { layout: 'flow', title: 'Flow', direction: 'across', rtl: false, groups: [], nodes: [], edges: [], sources: [] } })
 const NONE = new Set<string>()
-const shape = (blocks: ReturnType<typeof answerBlocks>) => blocks.map((b) => (b.kind === 'text' ? `text:${b.text}` : b.kind === 'figure' ? `figure:${b.queryId}` : b.kind === 'queries' ? `queries:${b.queries.map((x) => x.queryId).join(',')}` : b.kind === 'automation' ? `automation:${b.part.proposalId}` : b.kind === 'notice' ? `notice:${b.part.proposalId}` : b.kind === 'excel' ? `excel:${b.part.fileId}` : 'kpis'))
+const shape = (blocks: ReturnType<typeof answerBlocks>) => blocks.map((b) => (b.kind === 'text' ? `text:${b.text}` : b.kind === 'figure' ? `figure:${b.queryId}` : b.kind === 'queries' ? `queries:${b.queries.map((x) => x.queryId).join(',')}` : b.kind === 'automation' ? `automation:${b.part.proposalId}` : b.kind === 'notice' ? `notice:${b.part.proposalId}` : b.kind === 'excel' ? `excel:${b.part.fileId}` : b.kind === 'diagram' ? `diagram:${b.part.diagramId}` : 'kpis'))
 
 describe('the layout of an answer', () => {
   it('reads in the order it comes while it is written: the queries as one open group where the first ran', () => {
@@ -71,5 +73,11 @@ describe('the layout of an answer', () => {
     expect(shape(answerBlocks(parts, { settled: false, kpis: false, charted: NONE }))).toEqual(['text:Checking the scrap.', 'queries:q1', 'excel:f1', 'text:The file has one sheet.'])
     expect(shape(answerBlocks(parts, { settled: true, kpis: false, charted: NONE }))).toEqual(['text:Checking the scrap.', 'excel:f1', 'text:The file has one sheet.', 'queries:q1'])
     expect(answerBlocks(parts, { settled: true, kpis: false, charted: NONE }).find((b) => b.kind === 'excel')?.key).toBe('excel:f1')
+  })
+
+  it('keeps a diagram in its place among the text, written and settled, out of the queries', () => {
+    const parts = [t('Checking the defects.'), q('q1'), d('d1'), t('Machine 58 stands out.')]
+    expect(shape(answerBlocks(parts, { settled: false, kpis: false, charted: NONE }))).toEqual(['text:Checking the defects.', 'queries:q1', 'diagram:d1', 'text:Machine 58 stands out.'])
+    expect(shape(answerBlocks(parts, { settled: true, kpis: false, charted: NONE }))).toEqual(['text:Checking the defects.', 'diagram:d1', 'text:Machine 58 stands out.', 'queries:q1'])
   })
 })

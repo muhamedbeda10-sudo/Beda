@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AiConversation, AiMessage, AiMessagesResponse, AiQueryPart, AiRunningAnswer, AiStatusResponse } from '@qc/shared/ai'
 import type { AiAutomationPart, AutomationDraft } from '@qc/shared/automation'
 import type { AiExcelPart } from '@qc/shared/aiExcel'
+import type { AiDiagramPart } from '@qc/shared/aiDiagram'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import type { AiSavedTablePart } from '@qc/shared/savedTables'
 import {
@@ -138,6 +139,22 @@ describe('the answer being written', () => {
     expect(applyEvent(applyEvent(t, { type: 'text', delta: 'Here it is.' }), { type: 'notice', part: second }).parts).toEqual([card, { type: 'text', text: 'Here it is.' }, second])
     expect(parseStreamEvent('notice', JSON.stringify({ type: 'notice', part: fixed }))).toEqual({ type: 'notice', part: fixed })
     expect(parseStreamEvent('automation', JSON.stringify({ type: 'notice', part: fixed }))).toBeNull()
+  })
+
+  it('puts a diagram where it came, and the same diagram again in its place', () => {
+    const diagram: AiDiagramPart = {
+      type: 'diagram',
+      diagramId: 'd1',
+      spec: { layout: 'tree', title: '5 whys', direction: 'down', rtl: false, groups: [], nodes: [{ id: 'p', label: 'Twist', shape: 'step', tone: 'bad' }], edges: [], sources: [] },
+    }
+    const t = run([{ type: 'start', conversation, userMessageId: 'u1' }, { type: 'progress', text: 'Checking the diagram' }, { type: 'diagram', part: diagram }])
+    expect(t.parts).toEqual([diagram])
+    expect(t.progress).toBeNull()
+    const again: AiDiagramPart = { ...diagram, spec: { ...diagram.spec, title: '5 whys, again' } }
+    expect(applyEvent(t, { type: 'diagram', part: again }).parts).toEqual([again])
+    expect(parseStreamEvent('diagram', JSON.stringify({ type: 'diagram', part: diagram }))).toEqual({ type: 'diagram', part: diagram })
+    expect(parseStreamEvent('excel', JSON.stringify({ type: 'diagram', part: diagram }))).toBeNull()
+    expect(followsKeptRound({ type: 'diagram', part: diagram })).toBe(false)
   })
 
   it('puts an Excel file where it came, and the same file again in its place', () => {

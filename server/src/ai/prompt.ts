@@ -14,6 +14,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { AI_DOMAIN_IDS, AI_PREVIEW_ROWS, isAiDay, type AiDomain } from '@qc/shared/ai'
+import { AI_DIAGRAM_MAX_NODES } from '@qc/shared/aiDiagram'
 import { AI_EXCEL_KEEP_DAYS, AI_EXCEL_MAX_ROWS, AI_EXCEL_MAX_SHEETS } from '@qc/shared/aiExcel'
 import { AUTOMATION_MIN_EVERY_MINUTES } from '@qc/shared/automation'
 import type { NoticePromptMode } from '../noticeAssistant/scope'
@@ -199,14 +200,23 @@ export function conversationTools(
  * is the prompt as before §23: no Notices section, and no word of notices in
  * the general rules; without `tasks`, no word of tasks; without `excel`, no
  * Excel files section; without `playbook`, no Playbook section; without
- * `savedTables`, no word of saved tables. The chat always passes all five:
- * the playbook as it is when the conversation begins.
+ * `savedTables`, no word of saved tables; without `diagrams`, no Diagrams
+ * section. The chat always passes all six: the playbook as it is when the
+ * conversation begins.
  */
 export function renderSystemPrompt(
   factoryTimeZone: string,
   schemaDescription: string,
   domains: readonly AiDomain[],
-  options: { automations?: AutomationAsker | null; notices?: NoticePromptMode | null; tasks?: boolean; excel?: boolean; playbook?: PromptPlaybook | null; savedTables?: boolean } = {},
+  options: {
+    automations?: AutomationAsker | null
+    notices?: NoticePromptMode | null
+    tasks?: boolean
+    excel?: boolean
+    playbook?: PromptPlaybook | null
+    savedTables?: boolean
+    diagrams?: boolean
+  } = {},
 ): string {
   const granted = AI_DOMAIN_IDS.filter((d) => domains.includes(d))
   const has = (d: AiDomain) => granted.includes(d)
@@ -225,7 +235,7 @@ plus the machine register${options.savedTables ? ', the saved tables (ai_saved.*
 - Prefer aggregates computed in SQL (count, sum, GROUP BY) to listing rows. Select only the columns you need and use LIMIT for listings: a result shows at most ${AI_PREVIEW_ROWS} rows.
 - If a query fails, read the error, fix the query and run it again. A permission error means the view is not among the data you can read for this person. Several queries for one question are fine.
 - Before you start, say in one line what you are about to check. Close with an answer that stands on its own; when you need something from the person first (a choice, a missing detail, their agreement to a plan), close with your questions instead.${
-    options.notices || options.automations || options.tasks || options.excel || options.playbook || options.savedTables
+    options.notices || options.automations || options.tasks || options.excel || options.playbook || options.savedTables || options.diagrams
       ? '\n- run_sql is ready from the start. The other tools this prompt names load on demand, to keep each question light: when a request needs one, first find it with tool_search_tool_bm25 (search by the tool\'s name, for example "list_notices"), then call it. A tool once found stays ready for the rest of the conversation. Never search for a tool the question does not need.'
       : ''
   }`)
@@ -279,6 +289,7 @@ run_sql can also draw its result as a chart, shown with your answer: give the ca
 - Shape the query for the chart: aggregate in SQL, one row per x (or per x and series), with short readable column aliases (they label the axes and the legend). y takes 1 to ${MAX_CHART_Y} numeric columns. For several lines or stacks of one measure, return it in long form and name the column that splits it as series.
 - An answer may hold several charts, each from its own query: a report-like answer (a weekly review, a machine's month) is clearer with two or three charts of different kinds than with one.
 - If the chart cannot be drawn, the query's result says why; the figures are still there.`)
+  if (options.diagrams) sections.push(diagramsSection(has))
   sections.push(`# Follow-up questions
 End every answer with two or three short suggestions, as the very last thing you write, in exactly this form:
 <suggestions>
@@ -359,6 +370,33 @@ function playbookSection(p: PromptPlaybook): string {
     '- To change or remove an entry, use its id from this list or from an earlier update_playbook result. Asked what is in their playbook, list it from here and from the changes in this conversation. The Playbook page (the book icon at the top of the chat) shows it all and lets them change it.',
   )
   return lines.join('\n')
+}
+
+/**
+ * Diagrams: when to draw one with make_diagram rather than a chart, which
+ * layout fits which request, and how to keep it to the record: figures only
+ * through its queries, what the data does not show marked as a hypothesis.
+ * Where to look for each of the 6M is said only of what the person can read.
+ */
+function diagramsSection(has: (d: AiDomain) => boolean): string {
+  const places = [
+    has('inspection') ? 'Machine: defects and reject rates by machine (ai.defects, ai.production_between)' : null,
+    has('inspection') ? 'Man: by inspector and shift (ai.defects, ai.inspection_samples)' : has('production') ? 'Man: by worker and shift (ai.production_task_records)' : null,
+    has('materials') ? 'Material: by coil, supplier and thickness (ai.coils, ai.sample_coils, ai.suppliers)' : null,
+    has('inspection') ? 'Measurement: out-of-tolerance dimensions (ai.dimension_measurements)' : null,
+    has('materials') ? 'Method: the work instructions (ai.work_instructions)' : null,
+  ].filter(Boolean)
+  return `# Diagrams
+When the person asks for a diagram, a map or a drawing of something's structure — a process map or flowchart, the steps of a job across departments, a fishbone (Ishikawa, cause and effect), 5 whys, a fault tree, a decision tree, a mind map, SIPOC — draw it with make_diagram. A chart (run_sql's chart) is for figures over categories or time; a diagram is for steps, causes, decisions and how things hang together. When the request is open ("draw me something about it"), choose what fits and say why.
+- The layouts: flow for a process map, a flowchart or a decision tree (decision boxes with Yes/No on their arrows, inspection points as inspection, stock and waits as store, rework as a dashed arrow back); swimlane when who does each step matters (lanes: departments, roles, machines); tree for 5 whys (the problem at the root, each why under the one before), a fault tree, a mind map or a breakdown; fishbone for the causes of one problem; columns for SIPOC (Suppliers, Inputs, Process, Outputs, Customers), before and after, or options side by side.
+- The app lays it out: give boxes, arrows, groups and parents, never positions. Labels are a few words in the person's language (codes and names exactly as in the data); the rest goes in detail. At most ${AI_DIAGRAM_MAX_NODES} boxes: a larger subject is summarised, or split into two diagrams.
+- Everything about the factory's record in a diagram comes from the data, as in your answers: query it first with run_sql to learn what it bears out. A figure on a box (pieces, a share, hours) comes only through the diagram's figure queries, which the server runs and writes in: one row per key, the box naming its key. Never write a figure of the record into a label, a detail or the title.
+- A fishbone: the effect is the problem as observed, with its scope (the defect, the machine or line, the period), its figure from a query when it has one. The bones are the 6M — Man, Machine, Material, Method, Measurement, Environment — in the person's language, unless another set fits the problem better. Check each category the record holds before you place causes${places.length > 0 ? `: ${places.join('; ')}` : ''}; the record holds nothing on the environment (temperature, humidity, lighting). A cause the data bears out gets its figure; a cause from engineering knowledge that the data does not show (a worn roll, a die out of setting, a heat effect) is marked hypothesis: true, and so is everything on a category the record does not hold. Never present a hypothesis as found. Mark the cause the data points to most with tone bad.
+- A process map of the factory: the record holds the machines, their processes and the stages of the order lines, not the steps between them. Draw the factory's own process only as the person described it or as the record shows it; otherwise ask, or draw a general one and say plainly that it is a proposal to correct.
+- 5 whys: ask why of each answer in turn, from the data where it can answer, and mark each why the data does not bear out as a hypothesis; the last box is the root cause to act on.
+- To change a diagram, call make_diagram again with the whole of it as it should now be; the earlier one stays above.
+- After it is drawn, never draw it again in text or list every box: say in a few sentences what it shows, which boxes the data bears out (with their figures) and which are hypotheses to check, and what to do next.
+- If make_diagram lists problems, fix all of them and call it again.`
 }
 
 /**

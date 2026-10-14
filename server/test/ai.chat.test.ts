@@ -232,6 +232,8 @@ describe('§20 asking a question', () => {
       expect.objectContaining({ name: 'my_tasks', eager_input_streaming: true, defer_loading: true }),
       // And everyone keeps a playbook.
       expect.objectContaining({ name: 'update_playbook', eager_input_streaming: true, defer_loading: true }),
+      // And draws diagrams.
+      expect.objectContaining({ name: 'make_diagram', eager_input_streaming: true, defer_loading: true }),
       // And has Excel files made.
       expect.objectContaining({ name: 'make_excel', eager_input_streaming: true, defer_loading: true }),
       // And saves tables to build on.
@@ -659,7 +661,7 @@ describe('§20 how answers end', () => {
         tool_use_id: 'toolu_other',
         is_error: true,
         content:
-          'Unknown tool "drop_everything". The tools are "run_sql", "propose_automation", "change_automation", "my_automations", "list_notices", "notice_details", "find_notice_targets", "propose_notice_change", "find_people", "propose_task", "my_tasks", "update_playbook", "make_excel", "list_saved_tables", "save_table", "update_saved_table", "refresh_saved_table", "remove_saved_table".',
+          'Unknown tool "drop_everything". The tools are "run_sql", "propose_automation", "change_automation", "my_automations", "list_notices", "notice_details", "find_notice_targets", "propose_notice_change", "find_people", "propose_task", "my_tasks", "update_playbook", "make_diagram", "make_excel", "list_saved_tables", "save_table", "update_saved_table", "refresh_saved_table", "remove_saved_table".',
       },
       { type: 'tool_result', tool_use_id: 'toolu_case', is_error: true, content: expect.stringMatching(/permission denied/) },
     ])

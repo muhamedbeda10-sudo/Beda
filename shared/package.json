@@ -20,7 +20,8 @@
     "./tasks": "./src/tasks.ts",
     "./playbook": "./src/playbook.ts",
     "./aiExcel": "./src/aiExcel.ts",
-    "./savedTables": "./src/savedTables.ts"
+    "./savedTables": "./src/savedTables.ts",
+    "./aiDiagram": "./src/aiDiagram.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",

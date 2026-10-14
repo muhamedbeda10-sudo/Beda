@@ -37,6 +37,7 @@ import { AiTaskProposalCard } from './AiTaskProposalCard'
 import { AiPlaybookCard } from './AiPlaybookCard'
 import { AiExcelCard } from './AiExcelCard'
 import { AiSavedTableCard } from './AiSavedTableCard'
+import { AiDiagramCard } from './AiDiagramCard'
 import { AiTableExcel } from './AiTable'
 import { useAiExcel } from '@/services/queries'
 import { AnswerPrint } from '@/components/print/reportPrints'
@@ -302,6 +303,8 @@ export const Answer = memo(function Answer({
             return <AiExcelCard key={b.key} part={b.part} />
           case 'saved-table':
             return <AiSavedTableCard key={b.key} part={b.part} />
+          case 'diagram':
+            return <AiDiagramCard key={b.key} part={b.part} />
         }
       })}
       {working && <Working text={working} />}

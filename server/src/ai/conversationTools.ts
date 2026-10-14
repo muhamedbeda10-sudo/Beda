@@ -18,6 +18,7 @@ import { noticeToolHandlers } from '../noticeAssistant/tools'
 import { playbookToolHandlers } from '../playbook/assistant'
 import { taskToolHandlers } from '../tasks/assistant'
 import type { ToolHandler } from './assistant'
+import { diagramToolHandlers } from './diagram'
 import { excelToolHandlers } from './excel'
 import type { AiReader } from './reader'
 import { savedTableToolHandlers } from './savedTableTools'
@@ -55,5 +56,7 @@ export function turnToolHandlers(c: TurnToolsContext): Record<string, ToolHandle
     ...excelToolHandlers({ ...base, readers: c.readers, store: c.images, limiter: c.reportLimiter, userName: c.userName }),
     // Saved tables: each call reads the person's access again; what a table may read is what they may.
     ...savedTableToolHandlers({ ...base, readers: c.readers, userName: c.userName }),
+    // Diagrams: for everyone given the assistant; their figures read what the person may, as their domains are now.
+    ...diagramToolHandlers({ ...base, readers: c.readers }),
   }
 }
