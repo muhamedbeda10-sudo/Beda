@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-14.5',
+    date: '2026-10-14',
+    title: 'The assistant\'s queries may run up to a minute',
+    items: [
+      { text: 'A query the assistant runs — in a chat, a saved or scheduled report, an Excel file, a saved table or an export — now has 60 seconds to finish instead of 30, so a long analysis over months of records stops less often with "The query took too long".' },
+      { text: 'Automations\' watches keep their 10 seconds: they run every few minutes, around the clock.' },
+    ],
+  },
+  {
     id: '2026-10-14.4',
     date: '2026-10-14',
     title: 'Faster order and production imports: only what changed is sent',

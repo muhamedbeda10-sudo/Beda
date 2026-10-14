@@ -51,7 +51,7 @@ import { HANDED_OVER, type Readers, type ToolHandler, type ToolOutcome } from '.
 import { buildWorkbook, type BookSheet } from './excelBook'
 import { currentAiOwner } from './owner'
 import { factoryClock } from './prompt'
-import { AI_EXPORT_LIMITS, AI_MAX_SQL_CHARS, exportRows, runReadOnlyQuery, type QueryRun } from './runQuery'
+import { AI_EXPORT_LIMITS, AI_MAX_SQL_CHARS, AI_QUERY_TIMEOUT_MS, exportRows, runReadOnlyQuery, type QueryRun } from './runQuery'
 
 type ToolUse = Anthropic.Beta.BetaToolUseBlock
 
@@ -59,7 +59,7 @@ export const MAKE_EXCEL_TOOL_NAME = 'make_excel'
 export const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 /** How long a sheet's query may run: an export's time. */
-const SHEET_QUERY_TIMEOUT_MS = 30_000
+const SHEET_QUERY_TIMEOUT_MS = AI_QUERY_TIMEOUT_MS
 const DAY_MS = 86_400_000
 /** A file's name and a sheet's title, notes and totals label, at most; a sheet's name is cut at Excel's 31. */
 const MAX_FILE_NAME = 80

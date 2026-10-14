@@ -52,10 +52,10 @@ import { auditEvent } from '@qc/shared/audit'
 import { auditCreate, auditDelete, writeAudit } from '../audit/service'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
 import { AI_DOMAIN_COMBINATIONS, combinationRole, storedDomains } from './domains'
-import { codeOnly, precheckSql, runReadOnlyQuery } from './runQuery'
+import { AI_QUERY_TIMEOUT_MS, codeOnly, precheckSql, runReadOnlyQuery } from './runQuery'
 
 /** A computation's query may take this long: the most the runner allows. */
-export const SAVED_TABLE_QUERY_TIMEOUT_MS = 30_000
+export const SAVED_TABLE_QUERY_TIMEOUT_MS = AI_QUERY_TIMEOUT_MS
 /** Planning the query as one role, to learn what it reads. */
 const EXPLAIN_TIMEOUT_MS = 5_000
 /** What a computation may hold while it is written. */

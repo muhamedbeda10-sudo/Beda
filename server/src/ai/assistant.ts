@@ -67,7 +67,7 @@ import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
 import { MAX_TOKENS, MAX_TOKENS_RETRY, modelRequest, systemBlocks, worstCaseUsd } from './models'
 import { MAX_STEPS_PER_ANSWER, RUN_SQL_TOOL_NAME, RunSqlInput, TURN_DEADLINE_MINUTES, WRAP_UP_STEPS, WRAP_UP_TAG, WRAP_UP_TIME_SHARE } from './prompt'
-import { AI_QUERY_STOPPED, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
+import { AI_QUERY_STOPPED, AI_QUERY_TIMEOUT_MS, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
 import { checkingLine, writingLine } from './toolProgress'
 import { appendMessages, insertQueries, queryPart, recordUsage, settleStep, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
 
@@ -86,7 +86,7 @@ export const TURN_DEADLINE_MS = TURN_DEADLINE_MINUTES * 60_000
 /** Tool input the SDK could not parse at all: the call is made again, this many times. */
 const JSON_RETRIES = 2
 /** A query the assistant runs may take this long: the most the runner allows, so an analysis over years of the record can finish. */
-export const CHAT_QUERY_TIMEOUT_MS = 30_000
+export const CHAT_QUERY_TIMEOUT_MS = AI_QUERY_TIMEOUT_MS
 /** At most this often a line on what the model is doing. */
 const PROGRESS_EVERY_MS = 250
 const PROGRESS_CHARS = 200
