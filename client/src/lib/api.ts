@@ -91,6 +91,20 @@ export interface RequestOptions {
   signal?: AbortSignal
   /** Skip the refresh-and-retry on 401 (used by the auth endpoints). */
   noRetry?: boolean
+  /**
+   * Send the JSON body gzipped (a batch of an ERP export: its repeated column
+   * names shrink it about tenfold, so a slow factory line uploads it in a
+   * fraction of the time). The server inflates it; a browser without
+   * CompressionStream sends it as it is.
+   */
+  gzip?: boolean
+}
+
+/** Text gzipped by the browser, or null where it cannot. */
+async function gzipped(text: string): Promise<Blob | null> {
+  if (typeof CompressionStream === 'undefined') return null
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))
+  return new Response(stream).blob()
 }
 
 async function send(path: string, opts: RequestOptions): Promise<Response> {
@@ -100,7 +114,14 @@ async function send(path: string, opts: RequestOptions): Promise<Response> {
   if (opts.form) body = opts.form
   else if (opts.body !== undefined) {
     headers['content-type'] = 'application/json'
-    body = JSON.stringify(opts.body)
+    const json = JSON.stringify(opts.body)
+    const packed = opts.gzip ? await gzipped(json) : null
+    if (packed) {
+      headers['content-encoding'] = 'gzip'
+      body = packed
+    } else {
+      body = json
+    }
   }
   return fetch(`${API_BASE}${path}`, {
     method: opts.method ?? 'GET',

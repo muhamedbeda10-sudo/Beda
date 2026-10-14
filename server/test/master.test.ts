@@ -218,13 +218,13 @@ describe('production orders', () => {
       },
     })
     expect(first.status).toBe(200)
-    expect(first.body).toEqual({ inserted: 4, updated: 0 })
+    expect(first.body).toEqual({ inserted: 4, updated: 0, unchanged: 0 })
 
     const second = await app.api<ImportResult>('POST', '/api/orders/import', {
       token: admin.token,
       body: { rows: [{ lineKey: 'l-1', finishedQty: 1000 }, { lineKey: 'L-4', orderNumber: '20389-EHF', item: 'Walkway Mesh', workCenterCode: '48' }] },
     })
-    expect(second.body).toEqual({ inserted: 1, updated: 1 })
+    expect(second.body).toEqual({ inserted: 1, updated: 1, unchanged: 0 })
 
     const found = await app.api<ProductionOrder[]>('GET', '/api/orders?search=20480', { token: inspector.token })
     expect(found.body).toHaveLength(2)
@@ -314,7 +314,7 @@ describe('production orders', () => {
     expect(rows[0].n).toBe(5)
     // The fresh export still carries L-1: the upsert restores it in place.
     const again = await app.api<ImportResult>('POST', '/api/orders/import', { token: admin.token, body: { rows: [{ lineKey: 'L-1', finishedQty: 1200 }] } })
-    expect(again.body).toEqual({ inserted: 0, updated: 1 })
+    expect(again.body).toEqual({ inserted: 0, updated: 1, unchanged: 0 })
     const back = await app.api<ProductionOrder[]>('GET', '/api/orders', { token: inspector.token })
     expect(back.body.map((o) => [o.lineKey, o.finishedQty])).toEqual([['L-1', 1200]])
   })

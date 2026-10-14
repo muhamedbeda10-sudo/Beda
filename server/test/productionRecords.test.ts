@@ -93,7 +93,7 @@ beforeAll(async () => {
       ],
     },
   })
-  expect(sheet.body).toEqual({ inserted: 2, updated: 0 })
+  expect(sheet.body).toEqual({ inserted: 2, updated: 0, unchanged: 0 })
 })
 afterAll(() => app.stop())
 
@@ -111,7 +111,7 @@ describe('§24 the production task record import', () => {
       { lineKey: '999001', erpRecordId: '140000', orderNumber: '19999-X', item: 'Unknown Thing', producedQty: 10, requiredQty: 10, workCenterCode: '99', resource: 'Shear GPN840 4mt' },
     ])
     expect(res.status, JSON.stringify(res.body)).toBe(200)
-    expect(res.body).toEqual({ inserted: 5, updated: 0 })
+    expect(res.body).toEqual({ inserted: 5, updated: 0, unchanged: 0 })
 
     const { rows } = await app.db.query(
       `SELECT line_key, erp_record_id, week, week_no, week_year, produced_qty, required_qty, day_no, work_day::text AS work_day, actual_hours, planned_hours,
@@ -128,7 +128,7 @@ describe('§24 the production task record import', () => {
     for (const r of rows) expect(r.imported_at).toMatch(/^\d{4}-\d{2}-\d{2}T/)
 
     const audit = await app.api<AuditListResponse>('GET', '/api/audit', { token: owner.token })
-    expect(audit.body.entries.filter((e) => e.entity === 'ProductionTaskRecord')).toMatchObject([{ action: 'update', entityId: 'bulk-import', field: 'import', newValue: '5 inserted, 0 updated' }])
+    expect(audit.body.entries.filter((e) => e.entity === 'ProductionTaskRecord')).toMatchObject([{ action: 'update', entityId: 'bulk-import', field: 'import', newValue: '5 inserted, 0 updated, 0 unchanged' }])
   })
 
   it('refuses a day or a day number it cannot read, naming the row, and anything negative or blank', async () => {
@@ -156,13 +156,13 @@ describe('§24 the production task record import', () => {
     expect((await app.db.query('SELECT count(*)::int AS n FROM production_task_records')).rows[0].n).toBe(5)
   })
 
-  it('is idempotent: a re-import writes the row over and counts it, the same record id on another line is another row, and the last of a repeated key wins', async () => {
+  it('is idempotent: a re-import that changes a row writes it over and counts it, the same record id on another line is another row, and the last of a repeated key wins', async () => {
     const again = await importRows([
       { ...DAY1, producedQty: 140, actualHours: 2.5, worker4: '' },
       // The ERP's record id repeats across order lines: this is a different record.
       { ...DAY1, lineKey: '486768', producedQty: 1 },
     ])
-    expect(again.body).toEqual({ inserted: 1, updated: 1 })
+    expect(again.body).toEqual({ inserted: 1, updated: 1, unchanged: 0 })
     const { rows } = await app.db.query(
       `SELECT line_key, produced_qty, actual_hours, worker_4, imported_at > created_at AS reimported FROM production_task_records WHERE erp_record_id = '113290' ORDER BY line_key`,
     )
@@ -176,9 +176,9 @@ describe('§24 the production task record import', () => {
       { lineKey: 'l-abc', erpRecordId: 'R1', producedQty: 5 },
       { lineKey: 'L-ABC', erpRecordId: 'r1', producedQty: 6 },
     ])
-    expect(twice.body).toEqual({ inserted: 1, updated: 0 })
+    expect(twice.body).toEqual({ inserted: 1, updated: 0, unchanged: 0 })
     const once = await importRows([{ lineKey: 'L-abc', erpRecordId: 'R1', producedQty: 7 }])
-    expect(once.body).toEqual({ inserted: 0, updated: 1 })
+    expect(once.body).toEqual({ inserted: 0, updated: 1, unchanged: 0 })
     // The spelling stored is the one that made the row (the later of the first batch); a re-import keeps it, as the order sheet's does.
     const abc = await app.db.query(`SELECT line_key, erp_record_id, produced_qty FROM production_task_records WHERE lower(line_key) = 'l-abc'`)
     expect(abc.rows).toEqual([{ line_key: 'L-ABC', erp_record_id: 'r1', produced_qty: 7 }])
@@ -282,7 +282,7 @@ describe('§24 what the assistant reads', () => {
 
     // The fresh export still carries the record: the upsert brings it back in place, as an update.
     const back = await importRows([{ ...DAY1, producedQty: 150 }])
-    expect(back.body).toEqual({ inserted: 0, updated: 1 })
+    expect(back.body).toEqual({ inserted: 0, updated: 1, unchanged: 0 })
     expect(await read(`SELECT erp_record_id, produced_qty FROM ai.production_task_records`)).toEqual([['113290', 150]])
     expect((await app.db.query(`SELECT deleted_at, deleted_by_id FROM production_task_records WHERE erp_record_id = '113290' AND line_key = '490226'`)).rows[0]).toEqual({ deleted_at: null, deleted_by_id: null })
     // Never erased: the database refuses a DELETE outright.
@@ -291,7 +291,7 @@ describe('§24 what the assistant reads', () => {
     const audit = await app.api<AuditListResponse>('GET', '/api/audit', { token: owner.token })
     const entries = audit.body.entries.filter((e) => e.entity === 'ProductionTaskRecord').map((e) => [e.action, e.entityId, e.newValue])
     expect(entries.slice(0, 3)).toEqual([
-      ['update', 'bulk-import', '0 inserted, 1 updated'],
+      ['update', 'bulk-import', '0 inserted, 1 updated, 0 unchanged'],
       ['delete', 'bulk-clear', '0 production records marked deleted before a fresh import'],
       ['delete', 'bulk-clear', '7 production records marked deleted before a fresh import'],
     ])

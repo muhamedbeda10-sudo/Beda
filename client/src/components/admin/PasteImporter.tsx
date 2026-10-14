@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, ClipboardPaste, Eraser, Loader2, Plus, Trash2, UploadCloud, CheckCircle2 } from 'lucide-react'
 import { Badge, Button } from '@/components/ui'
 import { ScrollX } from '@/components/ui/ScrollX'
-import { existingKeys, importRows } from '@/services/mutations'
+import { existingKeys, importRows, refreshAfterImport } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { cn } from '@/lib/utils'
 import { BATCH_SIZE, coerceCell, normaliseHeader, normaliseKeyPart, type CellValue, type ImportField, type Importer } from '@/components/admin/importers'
@@ -117,7 +117,7 @@ export function PasteImporter({ importer }: { importer: Importer }) {
       const all = plan.valid.map((r) => r.values)
       for (let i = 0; i < all.length; i += BATCH_SIZE) {
         const chunk = all.slice(i, i + BATCH_SIZE)
-        const res = await importRows(queryClient, importer.target, chunk)
+        const res = await importRows(importer.target, chunk)
         setResult((r) => ({ inserted: r.inserted + res.inserted, updated: r.updated + res.updated }))
         setWritten(Math.min(all.length, i + chunk.length))
       }
@@ -129,6 +129,8 @@ export function PasteImporter({ importer }: { importer: Importer }) {
       // safely because the upsert matches on the business key.
       setStatus('idle')
       setRunError(e instanceof Error ? e.message : 'The import stopped unexpectedly. The rows already written are in; press Import to continue.')
+    } finally {
+      void refreshAfterImport(queryClient, importer.target)
     }
   }
 

@@ -1,6 +1,9 @@
 // ============================================================================
 // §7.7 — the bulk importer: load a CSV or .xlsx, map its columns, preview
 // new-vs-update, then import in batches. Nothing is written until Import.
+// Where the API compares (orders, the production record), the preview also
+// tells the rows that would change nothing, and only the rest are sent: the
+// same file imported twice writes nothing the second time.
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -8,7 +11,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, FileDown, FileSpreadsheet, Info, Loader2, Pause, Play, Plus, RotateCcw, UploadCloud } from 'lucide-react'
 import { Badge, Button, Card, Field, Select, Stat } from '@/components/ui'
 import { ScrollX } from '@/components/ui/ScrollX'
-import { existingKeys, importRows } from '@/services/mutations'
+import { compareImportRows, existingKeys, importRows, refreshAfterImport } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
 import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn, downloadText, parseCSV } from '@/lib/utils'
@@ -17,8 +20,11 @@ import { BATCH_SIZE, coerceCell, csvCell, normaliseHeader, normaliseKeyPart, typ
 
 interface PlannedRow {
   rowNumber: number
+  /** The business key as the API spells it back: normalised parts joined by '||'. */
+  key: string
   values: Record<string, CellValue>
-  mode: 'new' | 'update'
+  /** 'same': matched a stored record and would change nothing in it (known only where the API compares). */
+  mode: 'new' | 'update' | 'same'
 }
 
 interface RowError {
@@ -31,6 +37,23 @@ interface Plan {
   errors: RowError[]
   newCount: number
   updateCount: number
+}
+
+/** The plan as the preview shows it and Import sends it: where the API compares, the unchanged rows are told apart and left out. */
+interface View extends Plan {
+  sameCount: number
+  /** What Import sends: every valid row, or (comparing) only those that change something. */
+  toSend: PlannedRow[]
+}
+
+/** The API's answer for a plan, as it comes in batch by batch. */
+interface Comparison {
+  plan: Plan
+  done: number
+  fresh: Set<string>
+  changed: Set<string>
+  error: string | null
+  complete: boolean
 }
 
 type RunStatus = 'idle' | 'running' | 'paused' | 'done'
@@ -59,7 +82,8 @@ export function CsvImporter({ importer }: { importer: Importer }) {
   const [written, setWritten] = useState(0)
   const [runTotal, setRunTotal] = useState(0)
   const [runError, setRunError] = useState<string | null>(null)
-  const [runResult, setRunResult] = useState({ inserted: 0, updated: 0 })
+  const [runResult, setRunResult] = useState({ inserted: 0, updated: 0, unchanged: 0 })
+  const batchSize = importer.batchSize ?? BATCH_SIZE
 
   /** The business keys that already exist — only ever the keys present in the
    *  file, never the whole table. */
@@ -83,7 +107,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
     setWritten(0)
     setRunTotal(0)
     setRunError(null)
-    setRunResult({ inserted: 0, updated: 0 })
+    setRunResult({ inserted: 0, updated: 0, unchanged: 0 })
   }, [])
 
   const autoMap = useCallback(
@@ -287,11 +311,74 @@ export function CsvImporter({ importer }: { importer: Importer }) {
       seenKeys.add(key)
       if (mode === 'new') newCount += 1
       else updateCount += 1
-      valid.push({ rowNumber, values: derived, mode })
+      valid.push({ rowNumber, key, values: derived, mode })
     })
 
     return { valid, errors, newCount, updateCount }
   }, [headers, dataRows, mapping, missingKeys, importer, keyParts, existing, resolvedFor, lookupSignature])
+
+  // Where the API compares: the plan's rows sent to /import/compare in batches (nothing is written), so the preview
+  // knows which rows change nothing. A new plan (another file, sheet or mapping) starts again.
+  const [comparison, setComparison] = useState<Comparison | null>(null)
+  const [compareToken, setCompareToken] = useState(0)
+  useEffect(() => {
+    if (!importer.compares || !plan || plan.valid.length === 0) {
+      setComparison(null)
+      return
+    }
+    let cancelled = false
+    const fresh = new Set<string>()
+    const changed = new Set<string>()
+    setComparison({ plan, done: 0, fresh, changed, error: null, complete: false })
+    void (async () => {
+      try {
+        for (let i = 0; i < plan.valid.length; i += batchSize) {
+          const answer = await compareImportRows(
+            importer.target,
+            plan.valid.slice(i, i + batchSize).map((p) => p.values),
+          )
+          if (cancelled) return
+          for (const k of answer.new) fresh.add(k)
+          for (const k of answer.changed) changed.add(k)
+          setComparison({ plan, done: Math.min(plan.valid.length, i + batchSize), fresh, changed, error: null, complete: false })
+        }
+        if (!cancelled) setComparison({ plan, done: plan.valid.length, fresh, changed, error: null, complete: true })
+      } catch (e) {
+        if (cancelled) return
+        setComparison({
+          plan,
+          done: 0,
+          fresh,
+          changed,
+          error: e instanceof Error ? `Could not compare the file with what is stored: ${e.message}` : 'Could not compare the file with what is stored.',
+          complete: false,
+        })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [plan, importer, batchSize, compareToken])
+  const comparing = !!importer.compares && !!plan && plan.valid.length > 0 && !(comparison?.plan === plan && (comparison.complete || comparison.error))
+  const compareError = importer.compares && comparison?.plan === plan ? comparison.error : null
+
+  /** What the preview shows and Import sends. Held back while the comparison runs: a preview that guesses is worse than none. */
+  const view = useMemo<View | null>(() => {
+    if (!plan) return null
+    if (!importer.compares || plan.valid.length === 0) return { ...plan, sameCount: 0, toSend: plan.valid }
+    if (comparison?.plan !== plan || !comparison.complete) return null
+    let newCount = 0
+    let updateCount = 0
+    let sameCount = 0
+    const valid = plan.valid.map((p): PlannedRow => {
+      const mode = comparison.fresh.has(p.key) ? 'new' : comparison.changed.has(p.key) ? 'update' : 'same'
+      if (mode === 'new') newCount += 1
+      else if (mode === 'update') updateCount += 1
+      else sameCount += 1
+      return { ...p, mode }
+    })
+    return { valid, errors: plan.errors, newCount, updateCount, sameCount, toSend: valid.filter((p) => p.mode !== 'same') }
+  }, [plan, importer.compares, comparison])
 
   const mappedFields = useMemo(() => importer.fields.filter((f) => (mapping[f.key] ?? -1) >= 0), [importer.fields, mapping])
   /** The template's header for a field: the ERP's own column name where the importer has one (templateHeaders), else the key. */
@@ -303,7 +390,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
    * already landed is never sent again.
    */
   async function run() {
-    const source = status === 'paused' ? runPlanRef.current : plan?.valid
+    const source = status === 'paused' ? runPlanRef.current : view?.toSend
     if (!source || source.length === 0) return
 
     if (status !== 'paused') {
@@ -311,7 +398,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
       cursorRef.current = 0
       setWritten(0)
       setRunTotal(source.length)
-      setRunResult({ inserted: 0, updated: 0 })
+      setRunResult({ inserted: 0, updated: 0, unchanged: 0 })
     }
 
     pausedRef.current = false
@@ -325,13 +412,12 @@ export function CsvImporter({ importer }: { importer: Importer }) {
           setStatus('paused')
           return
         }
-        const chunk = rows.slice(cursorRef.current, cursorRef.current + BATCH_SIZE)
+        const chunk = rows.slice(cursorRef.current, cursorRef.current + batchSize)
         const result = await importRows(
-          queryClient,
           importer.target,
           chunk.map((p) => p.values),
         )
-        setRunResult((r) => ({ inserted: r.inserted + result.inserted, updated: r.updated + result.updated }))
+        setRunResult((r) => ({ inserted: r.inserted + result.inserted, updated: r.updated + result.updated, unchanged: r.unchanged + (result.unchanged ?? 0) }))
         cursorRef.current += chunk.length
         setWritten(cursorRef.current)
       }
@@ -343,6 +429,9 @@ export function CsvImporter({ importer }: { importer: Importer }) {
       setRunError(
         `${e instanceof Error ? e.message : 'The import stopped unexpectedly.'} ${done} row${done === 1 ? '' : 's'} already imported — resume to continue from there.`,
       )
+    } finally {
+      // Once, whether it finished, paused or stopped: the lists and figures show what was written.
+      void refreshAfterImport(queryClient, importer.target)
     }
   }
 
@@ -548,39 +637,77 @@ export function CsvImporter({ importer }: { importer: Importer }) {
         </Card>
       )}
 
+      {/* ---- Comparing the file with what is stored (orders, the production record) ---- */}
+      {hasFile && comparing && !compareError && (
+        <Card className="space-y-3 p-4 sm:p-5">
+          <div className="flex items-start gap-3">
+            <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-brand-600 dark:text-brand-400" />
+            <div className="min-w-0 flex-1">
+              <h3 className="text-base font-bold">Comparing the file with what is stored</h3>
+              <p className="mt-0.5 text-sm text-muted">
+                {(comparison?.plan === plan ? comparison.done : 0).toLocaleString('en-US')} of {(plan?.valid.length ?? 0).toLocaleString('en-US')} rows
+                checked. Nothing is written: only the rows that change something will be sent.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {hasFile && compareError && (
+        <Card className="space-y-3 p-4 sm:p-5">
+          <p className="flex items-start gap-2 rounded-2xl bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{compareError} Nothing has been written.</span>
+          </p>
+          <Button variant="primary" className="min-h-[48px]" onClick={() => setCompareToken((t) => t + 1)}>
+            <RotateCcw className="h-4 w-4" /> Try again
+          </Button>
+        </Card>
+      )}
+
       {/* ---- Dry run + import ---- */}
-      {plan && (
+      {view && (
         <Card className="space-y-4 p-4 sm:p-5">
           <div>
             <h3 className="text-base font-bold">Preview — nothing has been written yet</h3>
             <p className="mt-0.5 text-sm text-muted">This is exactly what pressing Import would do.</p>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 sm:gap-3">
-            <Stat compact label="New" value={plan.newCount} icon={<Plus className="h-5 w-5" />} tone="green" />
-            <Stat compact label="Updated" value={plan.updateCount} sub="Matched on the business key" icon={<RotateCcw className="h-5 w-5" />} tone="blue" />
+          <div className={cn('grid gap-2 sm:gap-3', importer.compares ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3')}>
+            <Stat compact label="New" value={view.newCount} icon={<Plus className="h-5 w-5" />} tone="green" />
+            <Stat
+              compact
+              label="Updated"
+              value={view.updateCount}
+              sub={importer.compares ? 'Something in them changed' : 'Matched on the business key'}
+              icon={<RotateCcw className="h-5 w-5" />}
+              tone="blue"
+            />
+            {importer.compares && (
+              <Stat compact label="Unchanged" value={view.sameCount} sub="Already as in the file: not sent" icon={<CheckCircle2 className="h-5 w-5" />} tone="neutral" />
+            )}
             <Stat
               compact
               label="Skipped"
-              value={plan.errors.length}
-              sub={plan.errors.length > 0 ? 'Listed below with the reason' : 'No problems found'}
+              value={view.errors.length}
+              sub={view.errors.length > 0 ? 'Listed below with the reason' : 'No problems found'}
               icon={<AlertTriangle className="h-5 w-5" />}
-              tone={plan.errors.length > 0 ? 'amber' : 'neutral'}
+              tone={view.errors.length > 0 ? 'amber' : 'neutral'}
             />
           </div>
 
-          {plan.valid.length > 0 && (
+          {view.valid.length > 0 && (
             <div>
               <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">
-                First {Math.min(5, plan.valid.length)} of {plan.valid.length} mapped rows
+                First {Math.min(5, view.valid.length)} of {view.valid.length} mapped rows
               </p>
               {phone ? (
                 <ul className="space-y-2">
-                  {plan.valid.slice(0, 5).map((p) => (
+                  {view.valid.slice(0, 5).map((p) => (
                     <li key={p.rowNumber} className="rounded-2xl p-3 ring-1 ring-slate-200 dark:ring-slate-800">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-xs font-semibold text-muted">Row {p.rowNumber}</span>
-                        <Badge tone={p.mode === 'new' ? 'green' : 'blue'}>{p.mode === 'new' ? 'New' : 'Update'}</Badge>
+                        <ModeBadge mode={p.mode} />
                       </div>
                       <dl className="mt-1.5 space-y-0.5 text-sm">
                         {mappedFields.slice(0, 4).map((f) => (
@@ -611,11 +738,11 @@ export function CsvImporter({ importer }: { importer: Importer }) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {plan.valid.slice(0, 5).map((p) => (
+                      {view.valid.slice(0, 5).map((p) => (
                         <tr key={p.rowNumber}>
                           <td className="px-3 py-2.5 tabular-nums text-muted">{p.rowNumber}</td>
                           <td className="px-3 py-2.5">
-                            <Badge tone={p.mode === 'new' ? 'green' : 'blue'}>{p.mode === 'new' ? 'New' : 'Update'}</Badge>
+                            <ModeBadge mode={p.mode} />
                           </td>
                           {mappedFields.map((f) => (
                             <td key={f.key} dir="auto" className="whitespace-nowrap px-3 py-2.5">
@@ -631,11 +758,11 @@ export function CsvImporter({ importer }: { importer: Importer }) {
             </div>
           )}
 
-          {plan.errors.length > 0 && (
+          {view.errors.length > 0 && (
             <div>
               <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Rows that will be skipped</p>
               <ul className="max-h-60 space-y-1 overflow-y-auto rounded-2xl bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-500/10 dark:text-rose-300">
-                {plan.errors.slice(0, 25).map((e) => (
+                {view.errors.slice(0, 25).map((e) => (
                   <li key={e.rowNumber} className="flex items-start gap-2">
                     <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span dir="auto">
@@ -643,7 +770,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
                     </span>
                   </li>
                 ))}
-                {plan.errors.length > 25 && <li className="pl-6 text-xs opacity-80">…and {plan.errors.length - 25} more. Every other row still imports.</li>}
+                {view.errors.length > 25 && <li className="pl-6 text-xs opacity-80">…and {view.errors.length - 25} more. Every other row still imports.</li>}
               </ul>
             </div>
           )}
@@ -684,17 +811,24 @@ export function CsvImporter({ importer }: { importer: Importer }) {
               <p className="flex items-start gap-2 rounded-2xl bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
-                  {runResult.inserted} new, {runResult.updated} updated. Importing this same file again would update these records rather than
-                  duplicate them.
+                  {runResult.inserted} new, {runResult.updated} updated
+                  {view.sameCount + runResult.unchanged > 0 ? `, ${view.sameCount + runResult.unchanged} unchanged` : ''}. Importing this same file
+                  again would update these records rather than duplicate them.
                 </span>
               </p>
             )}
 
             <div className="flex flex-wrap items-center gap-2">
               {status === 'idle' && (
-                <Button variant="primary" className="min-h-[48px]" onClick={() => void run()} disabled={plan.valid.length === 0}>
-                  <Play className="h-4 w-4" /> Import {plan.valid.length} row{plan.valid.length === 1 ? '' : 's'}
-                </Button>
+                view.toSend.length === 0 && view.valid.length > 0 ? (
+                  <p className="flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+                    <CheckCircle2 className="h-4 w-4" /> Nothing to import: every row is already as in the file.
+                  </p>
+                ) : (
+                  <Button variant="primary" className="min-h-[48px]" onClick={() => void run()} disabled={view.toSend.length === 0}>
+                    <Play className="h-4 w-4" /> Import {view.toSend.length} row{view.toSend.length === 1 ? '' : 's'}
+                  </Button>
+                )
               )}
 
               {status === 'running' && (
@@ -708,7 +842,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
                     <Pause className="h-4 w-4" /> Pause
                   </Button>
                   <span className="inline-flex items-center gap-2 text-sm text-muted">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Sending in batches of {BATCH_SIZE}…
+                    <Loader2 className="h-4 w-4 animate-spin" /> Sending in batches of {batchSize}…
                   </span>
                 </>
               )}
@@ -744,4 +878,11 @@ export function CsvImporter({ importer }: { importer: Importer }) {
       )}
     </div>
   )
+}
+
+/** What Import does with a row: adds it, changes it, or (comparing) leaves it as it is. */
+function ModeBadge({ mode }: { mode: PlannedRow['mode'] }) {
+  if (mode === 'new') return <Badge tone="green">New</Badge>
+  if (mode === 'update') return <Badge tone="blue">Update</Badge>
+  return <Badge tone="neutral">Unchanged</Badge>
 }

@@ -51,17 +51,27 @@ describe('a write to the inspection record refreshes the dashboard too', () => {
     })
   }
 
-  it('an import refreshes the dashboard as well as the list it filled', async () => {
-    apiMock.mockResolvedValue({ inserted: 1, updated: 0, skipped: 0 })
-    await mutations.importRows(qc, 'orders', [{}])
+  it('an import refreshes the dashboard as well as the list it filled, once when it ends, not after every batch', async () => {
+    apiMock.mockResolvedValue({ inserted: 1, updated: 0, unchanged: 0 })
+    await mutations.importRows('orders', [{}])
+    expect(keysInvalidated()).toEqual([])
+    await mutations.refreshAfterImport(qc, 'orders')
     expect(keysInvalidated()).toEqual(expect.arrayContaining(['["orders"]', '["kpi"]']))
   })
 
   it('a production record import (§24) goes to its own importer and refreshes its summary', async () => {
     apiMock.mockResolvedValue({ inserted: 1, updated: 0 })
-    await mutations.importRows(qc, 'production-records', [{ lineKey: '490226', erpRecordId: '113290' }])
+    await mutations.importRows('production-records', [{ lineKey: '490226', erpRecordId: '113290' }])
     expect(apiMock.mock.calls.at(-1)?.[0]).toBe('/production-records/import')
+    await mutations.refreshAfterImport(qc, 'production-records')
     expect(keysInvalidated()).toEqual(expect.arrayContaining(['["production-records"]']))
+  })
+
+  it('compares a batch with what is stored without writing, on the importer of its own target', async () => {
+    apiMock.mockResolvedValue({ new: ['535200'], changed: [] })
+    await expect(mutations.compareImportRows('orders', [{ lineKey: '535200' }])).resolves.toEqual({ new: ['535200'], changed: [] })
+    expect(apiMock.mock.calls.at(-1)?.[0]).toBe('/orders/import/compare')
+    expect(keysInvalidated()).toEqual([])
   })
 
   it('a machine edited in Configuration refreshes the dashboard', async () => {

@@ -261,6 +261,18 @@ export interface ImportRequest<Row> {
 export interface ImportResult {
   inserted: number
   updated: number
+  /** Rows that matched a stored record and would change nothing in it: not written. Older servers leave it out. */
+  unchanged?: number
+}
+
+/**
+ * What importing a batch would do, without writing: the keys (as the importer
+ * spells them, lower case) it would add and those it would change. Every other
+ * key of the batch would be left as it is.
+ */
+export interface ImportCompareResponse {
+  new: string[]
+  changed: string[]
 }
 
 /** Answer to clearing the order catalogue before a fresh export is loaded. */

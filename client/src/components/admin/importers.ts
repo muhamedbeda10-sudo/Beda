@@ -45,10 +45,20 @@ export interface Importer {
    *  in for. A field left out keeps its key. Every one must map back to its
    *  field through the aliases, or the template would not import itself. */
   templateHeaders?: Readonly<Record<string, string>>
+  /**
+   * The API compares a batch with what is stored (`/import/compare`): the
+   * preview tells new, changed and unchanged rows apart, and only the rows
+   * that change something are sent.
+   */
+  compares?: boolean
+  /** Rows sent per request, when not BATCH_SIZE: the large ERP exports go in fewer, larger requests. */
+  batchSize?: number
 }
 
 /** Rows sent per request. The API merges each batch in one transaction. */
 export const BATCH_SIZE = 200
+/** The batch of the ERP's large exports (orders, the production record): the most the API takes in one request. */
+export const LARGE_BATCH_SIZE = 1000
 
 export function normaliseKeyPart(v: unknown): string {
   return String(v ?? '').trim().toLowerCase()
@@ -75,6 +85,8 @@ export const ORDERS_IMPORTER: Importer = {
     "One row per order line: an item on a machine under an order. Lines are matched and updated on the Order ID; the order number repeats across the lines of one order. The ERP's further columns (due and planned dates, shipping, QC totals, delays…) are read too; for those an empty cell clears the stored value, while an empty cell in the main columns leaves it as it is.",
   target: 'orders',
   templateFile: 'production-orders-template.csv',
+  compares: true,
+  batchSize: LARGE_BATCH_SIZE,
   businessKeys: ['lineKey'],
   // The same fields and aliases the Access sync reads, kept in one place.
   fields: ORDER_IMPORT_FIELDS.map((f) => ({ ...f, sample: f.key === 'date' ? new Date().toISOString().slice(0, 10) : f.sample })),
@@ -202,6 +214,8 @@ export const PRODUCTION_RECORDS_IMPORTER: Importer = {
     "The production written against the order sheet, from the ERP: one row per order line per working day — what the machine made, who stood at it, in which shift, with hours, weights and lengths. Rows are matched and updated on Order ID + Record ID; a row missing from the file is kept. The Order ID is the same column the Production orders import is matched on.",
   target: 'production-records',
   templateFile: 'production-record-template.csv',
+  compares: true,
+  batchSize: LARGE_BATCH_SIZE,
   businessKeys: [...PRODUCTION_RECORD_KEYS],
   // The same fields and aliases the API reads, kept in one place.
   fields: [...PRODUCTION_RECORD_FIELDS],

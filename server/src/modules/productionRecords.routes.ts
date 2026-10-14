@@ -17,6 +17,7 @@ import {
   EXISTING_KEYS_MAX,
   type ClearProductionRecordsResult,
   type ExistingKeysResponse,
+  type ImportCompareResponse,
   type ImportResult,
   type ProductionRecordsSummary,
 } from '@qc/shared/api'
@@ -183,39 +184,64 @@ const RECORDSET = `jsonb_to_recordset($1::jsonb) AS i(
   stage_qty numeric, remarks text, length_mm numeric, width_mm numeric, thickness_mm numeric, shift text, resource text,
   weight_kg numeric, produced_weight_kg numeric, produced_length_m numeric)`
 
+/** The columns a row writes besides its key. */
+const VALUE_COLUMNS = COLUMNS.filter((c) => c !== 'line_key' && c !== 'erp_record_id')
+
+/** A batch as the upsert's JSON: one row per record, the last occurrence winning (a file applied in its own order). */
+function recordPayload(rows: ProductionRecordRow[]): { unique: RecordValues[]; payload: string } {
+  const byKey = new Map<string, RecordValues>()
+  for (const row of rows) byKey.set(recordKey(row.lineKey, row.erpRecordId), toRecord(row))
+  const unique = Array.from(byKey.values())
+  return { unique, payload: JSON.stringify(unique) }
+}
+
+/** Whether the stored record `r` differs from the row `n` (or is marked deleted): what is written, and what the preview calls changed. */
+const recordChanges = (r: string, n: string) =>
+  `((${VALUE_COLUMNS.map((c) => `${r}.${c}`).join(', ')}) IS DISTINCT FROM (${VALUE_COLUMNS.map((c) => `${n}.${c}`).join(', ')}) OR ${r}.deleted_at IS NOT NULL)`
+
+/**
+ * §24 — what importing these rows would do, record by record, without writing: the keys (lineKey||erpRecordId, lower
+ * case, as the importer spells them) it would add and those it would change; every other would be left as it is.
+ */
+export async function compareProductionRecords(q: Queryable, rows: ProductionRecordRow[]): Promise<ImportCompareResponse> {
+  const { payload } = recordPayload(rows)
+  const { rows: found } = await q.query<{ key: string; change: 'new' | 'changed' | 'same' }>(
+    `SELECT lower(i.line_key) || '||' || lower(i.erp_record_id) AS key,
+            CASE WHEN r.id IS NULL THEN 'new' WHEN ${recordChanges('r', 'i')} THEN 'changed' ELSE 'same' END AS change
+       FROM ${RECORDSET}
+       LEFT JOIN production_task_records r ON lower(r.line_key) = lower(i.line_key) AND lower(r.erp_record_id) = lower(i.erp_record_id)`,
+    [payload],
+  )
+  return { new: found.filter((r) => r.change === 'new').map((r) => r.key), changed: found.filter((r) => r.change === 'changed').map((r) => r.key) }
+}
+
 /**
  * §24 — idempotent bulk upsert on (line_key, erp_record_id), matched without
  * regard to case like the order sheet's key. Every column is written from the
  * row (the export carries the whole record each time), imported_at is set,
- * and a retired row comes back. Inserted and updated are counted as in
- * upsertOrderLines: the last occurrence of a key in a batch wins, so a file
- * that repeats a record is applied in its own order rather than colliding
- * inside one statement.
+ * and a retired row comes back. A record the row would not change is not
+ * written at all (imported_at stays when it last changed), and is counted as
+ * unchanged. As in upsertOrderLines, the last occurrence of a key in a batch
+ * wins, so a file that repeats a record is applied in its own order rather
+ * than colliding inside one statement.
  */
 export async function upsertProductionRecords(tx: Queryable, rows: ProductionRecordRow[]): Promise<ImportResult> {
-  const byKey = new Map<string, RecordValues>()
-  for (const row of rows) byKey.set(recordKey(row.lineKey, row.erpRecordId), toRecord(row))
-  const unique = Array.from(byKey.values())
-
-  // Which of them are there already, through the business key's index: the update count.
-  const existing = await tx.query(
-    `SELECT 1 FROM production_task_records r
-       JOIN unnest($1::text[], $2::text[]) AS k(line_key, erp_record_id)
-         ON lower(r.line_key) = k.line_key AND lower(r.erp_record_id) = k.erp_record_id`,
-    [unique.map((r) => normaliseKey(r.line_key)), unique.map((r) => normaliseKey(r.erp_record_id))],
-  )
-  const updated = existing.rowCount ?? 0
-
-  const assignments = COLUMNS.filter((c) => c !== 'line_key' && c !== 'erp_record_id').map((c) => `${c} = EXCLUDED.${c}`)
-  await tx.query(
-    `INSERT INTO production_task_records (${COLUMNS.join(', ')})
+  const { unique, payload } = recordPayload(rows)
+  const assignments = VALUE_COLUMNS.map((c) => `${c} = EXCLUDED.${c}`)
+  // xmax is 0 on a row this statement inserted; a row updated has its transaction there instead.
+  const written = await tx.query<{ inserted: boolean }>(
+    `INSERT INTO production_task_records AS r (${COLUMNS.join(', ')})
      SELECT ${COLUMNS.map((c) => `i.${c}`).join(', ')} FROM ${RECORDSET}
      ON CONFLICT (lower(line_key), lower(erp_record_id)) DO UPDATE SET
         ${assignments.join(', ')},
-        imported_at = now(), deleted_at = NULL, deleted_by_id = NULL`,
-    [JSON.stringify(unique)],
+        imported_at = now(), deleted_at = NULL, deleted_by_id = NULL
+      WHERE ${recordChanges('r', 'EXCLUDED')}
+     RETURNING (r.xmax = 0) AS inserted`,
+    [payload],
   )
-  return { inserted: unique.length - updated, updated }
+  const inserted = written.rows.filter((w) => w.inserted).length
+  const updated = written.rows.length - inserted
+  return { inserted, updated, unchanged: Math.max(0, unique.length - written.rows.length) }
 }
 
 export function productionRecordsRoutes(ctx: AppContext): Router {
@@ -259,12 +285,19 @@ export function productionRecordsRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
-  /** One batch of the export; every row is stored whole. One audit entry per request. */
+  /** What importing a batch would do, written nowhere: the importer's preview, and what it sends (only what changes). */
+  r.post('/import/compare', async (req, res) => {
+    const { rows } = parse(importSchema, req.body)
+    const body: ImportCompareResponse = await compareProductionRecords(ctx.db, rows)
+    res.json(body)
+  })
+
+  /** One batch of the export; every row that changes something is stored whole. One audit entry per request. */
   r.post('/import', async (req, res) => {
     const user = requireUser(req)
     const { rows } = parse(importSchema, req.body)
     const result = await withTransaction(ctx.db, async (tx) => {
-      const { inserted, updated } = await upsertProductionRecords(tx, rows)
+      const { inserted, updated, unchanged } = await upsertProductionRecords(tx, rows)
       await writeAudit(tx, [
         {
           at: new Date().toISOString(),
@@ -274,10 +307,10 @@ export function productionRecordsRoutes(ctx: AppContext): Router {
           entity: 'ProductionTaskRecord',
           entityId: 'bulk-import',
           field: 'import',
-          newValue: `${inserted} inserted, ${updated} updated`,
+          newValue: `${inserted} inserted, ${updated} updated, ${unchanged ?? 0} unchanged`,
         },
       ])
-      const body: ImportResult = { inserted, updated }
+      const body: ImportResult = { inserted, updated, unchanged }
       return body
     })
     res.json(result)
