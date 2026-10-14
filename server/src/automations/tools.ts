@@ -18,7 +18,8 @@
 // the person's words of agreement, checked against their message before the
 // draft is looked at (confirmation.ts), and a call that fails the check keeps
 // nothing and shows no card. A new version of a proposal of the conversation
-// names it (revisesProposalId) and supersedes it once stored.
+// names it (revisesProposalId) and supersedes it once stored; a version of
+// one activated meanwhile is proposed as a change of its automation.
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'
@@ -126,18 +127,27 @@ async function propose(ctx: AutomationToolContext, tu: ToolUse, signal: AbortSig
   let errors: string[] = []
   // The earlier version this one supersedes once stored, if it passes.
   let supersedes: string | null = null
+  // The automation it changes because the version it names was activated: the model is told.
+  let changes: string | null = null
   if ('errors' in read) {
     errors = read.errors
     record = { id, userId: ctx.userId, toolUseId: tu.id, ok: false, error: errors.join('\n'), draft: null, backtest: null, confirmation }
   } else {
+    let draft = read.draft
+    // Checked before the draft: a version of a proposal activated meanwhile is a change of the automation it became.
+    let revision = draft.revisesProposalId?.trim() ? await checkRevision(ctx.db, ctx.conversationId, ctx.userId, draft.revisesProposalId.trim()) : null
+    if (revision?.became && (!draft.replacesAutomationId?.trim() || draft.replacesAutomationId.trim().toLowerCase() === revision.became.toLowerCase())) {
+      const { revisesProposalId: _revised, ...rest } = draft
+      draft = { ...rest, replacesAutomationId: revision.became }
+      changes = revision.became
+      revision = null
+    }
     const checked = await validateDraft(
       { db: ctx.db, readers: ctx.readers, timeZone: ctx.config.FACTORY_TIMEZONE, creatorId: ctx.userId, domains: access.domains, now, runQueries: true, signal },
-      read.draft,
+      draft,
     )
     if (!checked.ok) errors = checked.errors
-    const revises = checked.draft.revisesProposalId
-    if (revises) {
-      const revision = await checkRevision(ctx.db, ctx.conversationId, ctx.userId, revises)
+    if (revision) {
       errors = [...errors, ...revision.errors]
       supersedes = revision.supersedes
     }
@@ -175,7 +185,10 @@ async function propose(ctx: AutomationToolContext, tu: ToolUse, signal: AbortSig
         : record.backtest?.keepsCases
           ? " This change keeps the automation's query and key column, so its cases carry on: those already told are not told again, and those not told yet (casesNotToldYet) fire on its next run."
           : ' On activation the cases matching now are recorded as already seen (unless the person asks to be told about them too); only new cases fire.') +
-      (supersedes ? ' The card of the version it revises is marked as replaced by this one.' : ''),
+      (supersedes ? ' The card of the version it revises is marked as replaced by this one.' : '') +
+      (changes
+        ? ` The proposal named in revisesProposalId was activated already: this is proposed as a change of the automation it became (replacesAutomationId "${changes}"), and Activate applies the change to it.`
+        : ''),
     backtest: record.backtest ? backtestForModel(record.backtest) : null,
   }
   return { result: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(content) }, store }

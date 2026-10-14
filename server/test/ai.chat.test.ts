@@ -163,15 +163,17 @@ describe('§20 asking a question', () => {
     expect(res.headers.get('content-type')).toBe('text/event-stream; charset=utf-8')
     expect(res.headers.get('cache-control')).toBe('no-cache, no-transform')
     expect(res.headers.get('x-accel-buffering')).toBe('no')
-    expect(events.map((e) => e.type)).toEqual(['start', 'progress', 'text', 'text', 'query_start', 'query_end', 'progress', 'text', 'text', 'done'])
+    // While the query is written (no words of its own to show), a line says what is being written.
+    expect(events.map((e) => e.type)).toEqual(['start', 'progress', 'text', 'text', 'progress', 'query_start', 'query_end', 'progress', 'text', 'text', 'done'])
+    expect(events[4]).toEqual({ type: 'progress', text: 'Writing a query…' })
     expect(events.filter((e) => e.type === 'text').map((e) => (e as { delta: string }).delta).join('')).toBe('Let me count the machines.There are **2** machines in the register.')
     expect(events[1]).toEqual({ type: 'progress', text: 'I will count the machines in the register.' })
 
     const start = first.start!
     expect(start.conversation.title).toBe('How many machines are there?')
-    const queryStart = events[4] as Extract<AiStreamEvent, { type: 'query_start' }>
+    const queryStart = events[5] as Extract<AiStreamEvent, { type: 'query_start' }>
     expect(queryStart).toMatchObject({ purpose: 'Count the machines', sql: 'SELECT count(*) AS machines FROM ai.machines' })
-    const part = (events[5] as Extract<AiStreamEvent, { type: 'query_end' }>).part
+    const part = (events[6] as Extract<AiStreamEvent, { type: 'query_end' }>).part
     expect(part).toMatchObject({ type: 'query', queryId: queryStart.queryId, ok: true, columns: ['machines'], rows: [[2]], rowCount: 1, truncated: false })
 
     // The answer as stored: the text and the query card in order; cost of both calls.

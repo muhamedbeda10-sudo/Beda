@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest'
 import type Anthropic from '@anthropic-ai/sdk'
+import { randomUUID } from 'node:crypto'
 import type { ApiErrorBody, AuditListResponse } from '@qc/shared/api'
 import type { AiMessagesResponse, AiStreamEvent } from '@qc/shared/ai'
 import type { AiAutomationPart, AutomationActivateResponse, AutomationDiscardResponse, AutomationDraft } from '@qc/shared/automation'
@@ -967,16 +968,32 @@ describe('§22 a new version of a proposal', () => {
     expect(await stateOf(ofFailed.proposalId)).toMatchObject({ state: 'superseded' })
   })
 
-  it('tells the model to change the automation instead when the version it revises was activated', async () => {
+  it('proposes a version of an activated proposal as a change of the automation it became, and says so', async () => {
     const first = await proposeInChat(watchDraft({ name: 'Activated first' }))
     const old = automationEvents(first.events)[0]
     const automation = ((await activate(old.proposalId)).body as AutomationActivateResponse).automation
     const res = await revise(first.conversationId, watchDraft({ name: 'Activated first, every 15 minutes', revisesProposalId: old.proposalId }, { everyMinutes: 15 }))
     const [card] = automationEvents(res.events)
-    const said = `revisesProposalId: that proposal was activated and is now the automation ${automation.id}. To change it, set replacesAutomationId to "${automation.id}" and leave revisesProposalId out.`
-    expect(card).toMatchObject({ ok: false, error: said })
-    expect(resultsOf()[0]).toMatchObject({ is_error: true, content: expect.stringContaining(`- ${said}`) })
+    // Said while it is checked and run once, before its card.
+    const checking = res.events.findIndex((e) => e.type === 'progress' && e.text === 'Checking the automation and running it once…')
+    expect(checking).toBeGreaterThan(-1)
+    expect(checking).toBeLessThan(res.events.findIndex((e) => e.type === 'automation'))
+    expect(card).toMatchObject({ ok: true, state: 'proposed', draft: { replacesAutomationId: automation.id }, replacesName: 'Activated first' })
+    expect(card.draft).not.toHaveProperty('revisesProposalId')
+    const told = JSON.parse(resultsOf()[0].content as string) as { note: string }
+    expect(told.note).toContain(`this is proposed as a change of the automation it became (replacesAutomationId "${automation.id}")`)
+    expect(told.note).not.toContain('marked as replaced')
     expect(await stateOf(old.proposalId)).toMatchObject({ state: 'activated' })
+    // Activated, it changes that automation: still one.
+    const changed = await activate(card.proposalId)
+    expect(changed.status, JSON.stringify(changed.body)).toBe(200)
+    expect((changed.body as AutomationActivateResponse).automation).toMatchObject({ id: automation.id, name: 'Activated first, every 15 minutes', watch: { everyMinutes: 15 } })
+    expect((await app.db.query(`SELECT 1 FROM ai_automations WHERE name LIKE 'Activated first%' AND deleted_at IS NULL`)).rowCount).toBe(1)
+    // Naming another automation to change as well: which one is meant is not guessed.
+    const other = randomUUID()
+    const torn = automationEvents((await revise(first.conversationId, watchDraft({ revisesProposalId: old.proposalId, replacesAutomationId: other }))).events)[0]
+    const said = `revisesProposalId: that proposal was activated and is now the automation ${automation.id}. To change it, set replacesAutomationId to "${automation.id}" and leave revisesProposalId out.`
+    expect(torn).toMatchObject({ ok: false, error: expect.stringContaining(said) })
     // Its automation deleted since: nothing to change, a new one to propose.
     expect((await app.api('DELETE', `/api/automations/${automation.id}`, { token: p.creator.token })).status).toBe(204)
     const gone = automationEvents((await revise(first.conversationId, watchDraft({ revisesProposalId: old.proposalId }))).events)[0]
