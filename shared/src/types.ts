@@ -74,6 +74,13 @@ export interface Machine {
    * stay, every dashboard figure leaves them out. Defaults to on.
    */
   onDashboard: boolean
+  /**
+   * Whether every sample on this machine must name the coil it was made from
+   * (roll forming, the 400 t press). Not for welding, whose connector coil
+   * number is always required, nor paint, which records no coils. Off unless
+   * turned on; absent from older answers.
+   */
+  coilRequired?: boolean
   deletedAt?: ISODate | null
 }
 

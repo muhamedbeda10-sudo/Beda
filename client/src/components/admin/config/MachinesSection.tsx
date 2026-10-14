@@ -20,7 +20,12 @@ interface MachineDraft {
   dimensions: 'item' | 'inspector'
   /** Counted by the dashboard; off for a machine inspected but not weighed with production (manual welding). */
   onDashboard: boolean
+  /** Every sample names its coil (roll forming, the 400 t press). Not offered for welding or paint. */
+  coilRequired: boolean
 }
+
+/** Whether a machine of this process records coils on its samples, so that the coil can be required. */
+const takesCoils = (p: Process) => p === 'forming' || p === 'universal'
 
 const PROCESS_TONE: Record<Process, 'neutral' | 'amber' | 'violet' | 'blue' | 'green'> = { forming: 'blue', welding: 'amber', paint: 'violet', universal: 'green' }
 
@@ -48,7 +53,7 @@ export function MachinesSection() {
       sort={sort}
       addLabel="Add machine"
       emptyHint="Add the machines used on the shop floor."
-      minTableWidth="min-w-[54rem]"
+      minTableWidth="min-w-[60rem]"
       columns={[
         { key: 'code', label: 'Code', render: (r) => <Badge tone="blue">{r.code}</Badge> },
         { key: 'name', label: 'Machine', render: (r) => r.name },
@@ -59,6 +64,12 @@ export function MachinesSection() {
           text: (r) => (takesConfiguredDimensions(r.process ?? 'forming', r) ? 'From item setup' : 'Typed by inspector'),
           // What the wizard does, not only the switch: a universal machine is always typed by the inspector.
           render: (r) => (takesConfiguredDimensions(r.process ?? 'forming', r) ? <Badge tone="neutral">From item setup</Badge> : <Badge tone="amber">Typed by inspector</Badge>),
+        },
+        {
+          key: 'coil',
+          label: 'Coil',
+          text: (r) => (r.coilRequired && takesCoils(r.process ?? 'forming') ? 'Required' : 'Optional'),
+          render: (r) => (r.coilRequired && takesCoils(r.process ?? 'forming') ? <Badge tone="blue">Required</Badge> : <span className="text-muted">Optional</span>),
         },
         {
           key: 'dashboard',
@@ -75,7 +86,7 @@ export function MachinesSection() {
         },
       ]}
       describe={(r) => r.displayName || r.name}
-      newDraft={() => ({ code: '', name: '', factory: '', process: 'forming', dimensions: 'item', onDashboard: true })}
+      newDraft={() => ({ code: '', name: '', factory: '', process: 'forming', dimensions: 'item', onDashboard: true, coilRequired: false })}
       toDraft={(r) => ({
         code: r.code,
         name: r.name,
@@ -83,6 +94,7 @@ export function MachinesSection() {
         process: r.process ?? 'forming',
         dimensions: r.usesItemDimensions === false ? 'inspector' : 'item',
         onDashboard: r.onDashboard !== false,
+        coilRequired: r.coilRequired === true,
       })}
       validate={(d) => requireText(d.code, 'Machine code') ?? requireText(d.name, 'Machine name')}
       toRecord={(d) => {
@@ -96,6 +108,8 @@ export function MachinesSection() {
           process: d.process,
           usesItemDimensions: d.dimensions === 'item',
           onDashboard: d.onDashboard,
+          // Welding has its own rule (the connector coil); paint records no coils.
+          coilRequired: takesCoils(d.process) && d.coilRequired,
           // The label the shop floor recognises: "58-A. Welding Line".
           displayName: [code, name].filter(Boolean).join('-'),
         }
@@ -137,6 +151,14 @@ export function MachinesSection() {
               <Select value={d.dimensions} onChange={(e) => patch({ dimensions: e.target.value as MachineDraft['dimensions'] })} className="min-h-[48px]">
                 <option value="item">From item setup</option>
                 <option value="inspector">Typed by inspector</option>
+              </Select>
+            </Field>
+          )}
+          {takesCoils(d.process) && (
+            <Field label="Coil" hint="Required: a sample on this machine is not saved until the coil it was made from is added — for roll forming lines and the presses that run from a coil.">
+              <Select value={d.coilRequired ? 'required' : 'optional'} onChange={(e) => patch({ coilRequired: e.target.value === 'required' })} className="min-h-[48px]">
+                <option value="optional">Optional</option>
+                <option value="required">Required on every sample</option>
               </Select>
             </Field>
           )}

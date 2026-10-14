@@ -672,3 +672,21 @@ describe('an order line’s drawings', () => {
     expect(drawingRequiredFor({ orderNumber: STOCK_ORDER_NUMBER, drawing: 'SM240', drawingAlt: null })).toBe(false)
   })
 })
+
+describe('a machine that requires its coil', () => {
+  const base = { process: 'forming' as const, sampleQty: 5, drawing: 'D-1', coils: [], defects: [], dimensions: [] }
+  const coilIssue = (issues: ReturnType<typeof validateSample>) => issues.find((i) => i.ref === 'coil')?.message
+
+  it('refuses a sample without a coil there, and only there', () => {
+    expect(coilIssue(validateSample({ ...base, coilRequired: true }))).toBe('Add the coil this sample was made from: this machine requires it.')
+    expect(coilIssue(validateSample({ ...base, coilRequired: true, process: 'universal' }))).toBe('Add the coil this sample was made from: this machine requires it.')
+    expect(coilIssue(validateSample({ ...base, coilRequired: true, coils: [{ coilNumber: 'C10021' }] }))).toBeUndefined()
+    expect(coilIssue(validateSample({ ...base, coilRequired: false }))).toBeUndefined()
+    expect(coilIssue(validateSample(base))).toBeUndefined()
+  })
+
+  it('leaves welding to its connector coil, and paint (no coils) alone', () => {
+    expect(coilIssue(validateSample({ ...base, coilRequired: true, process: 'welding' }))).toBeUndefined()
+    expect(coilIssue(validateSample({ ...base, coilRequired: true, process: 'paint' }))).toBeUndefined()
+  })
+})

@@ -302,6 +302,8 @@ export interface SampleDraftForValidation {
   drawing: string
   /** False on a make-to-stock line, where there is no order drawing to pick. Default true. */
   drawingRequired?: boolean
+  /** The machine requires the coil a sample was made from (Machine.coilRequired). Not for welding: its connector coil is. */
+  coilRequired?: boolean
   coils: Array<{ coilNumber: string; grade?: string }>
   defects: Array<{ defectName: string; disposition: Disposition | null; qty: number; notes?: string | null }>
   /** The measurement rows; a paint sample's thickness readings live here. */
@@ -335,6 +337,10 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
     issues.push({ step: 'review', message: 'Sample quantity must be greater than zero.' })
   }
 
+  // A machine that requires its coil (roll forming, the 400 t press): every sample names at least one.
+  if (draft.coilRequired && steps.includes('setup') && process !== 'welding' && !draft.coils.some((c) => c.coilNumber?.trim())) {
+    issues.push({ step: 'setup', message: 'Add the coil this sample was made from: this machine requires it.', ref: 'coil' })
+  }
   for (const c of draft.coils) {
     if (!c.coilNumber?.trim()) {
       issues.push({ step: 'setup', message: 'Every coil needs a coil ID.', ref: 'coil' })
