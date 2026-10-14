@@ -466,6 +466,18 @@ export interface AiQueryPart {
  * a start to an end, step by step. gantt: bars in time, from a start to an
  * end (a plan, a schedule). dumbbell: two values per category side by side
  * (planned and actual). treemap: the parts of a whole as tiles, grouped.
+ *
+ * For quality (SPC): histogram — the spread of readings against their
+ * specification limits, with the process's capability (Cp, Cpk, Pp, Ppk);
+ * xbar-r — subgroups' means and ranges, each with its limits; p-chart — the
+ * share defective of samples of any size; u-chart — defects per unit;
+ * c-chart — defects per equal sample; box-plot — the spread of readings in
+ * each group side by side. And: gauge — one figure (or a few) on a dial
+ * against its target; radar — several measures around a circle, one shape
+ * per item; bubble — a scatter whose points are sized by a third measure;
+ * sankey — how quantities flow from one stage to the next; calendar — a
+ * measure per day laid out as weeks; risk-matrix — failure modes placed by
+ * severity and occurrence (FMEA), with their risk priority.
  */
 export type AiChartType =
   | 'bar'
@@ -487,6 +499,18 @@ export type AiChartType =
   | 'gantt'
   | 'dumbbell'
   | 'treemap'
+  | 'histogram'
+  | 'xbar-r'
+  | 'p-chart'
+  | 'u-chart'
+  | 'c-chart'
+  | 'box-plot'
+  | 'gauge'
+  | 'radar'
+  | 'bubble'
+  | 'sankey'
+  | 'calendar'
+  | 'risk-matrix'
 export const AI_CHART_TYPES: readonly AiChartType[] = [
   'bar',
   'horizontal-bar',
@@ -507,11 +531,26 @@ export const AI_CHART_TYPES: readonly AiChartType[] = [
   'gantt',
   'dumbbell',
   'treemap',
+  'histogram',
+  'xbar-r',
+  'p-chart',
+  'u-chart',
+  'c-chart',
+  'box-plot',
+  'gauge',
+  'radar',
+  'bubble',
+  'sankey',
+  'calendar',
+  'risk-matrix',
 ]
+
+/** Which way is better for a gauge's figure: higher (output, yield) or lower (rejects, downtime). */
+export type AiChartBetter = 'higher' | 'lower'
 
 /**
  * A chart of a query's result: `x` the category or day column, `y` 1–4 numeric columns (a gantt's two: start and end
- * dates), `series` a column to split by (long to wide; a gantt's bars' names, a treemap's groups).
+ * dates), `series` a column to split by (long to wide; a gantt's bars' names, a treemap's groups, a sankey's targets).
  */
 export interface AiChartSpec {
   type: AiChartType
@@ -521,9 +560,17 @@ export interface AiChartSpec {
   title?: string
   /**
    * A target drawn across the plot as a dashed line (bar, horizontal-bar, line, area, combo's line axis, control,
-   * dumbbell); a progress chart's target for every row, when it has one y column.
+   * dumbbell, histogram, xbar-r's means, box-plot); a progress chart's target for every row, when it has one y
+   * column; a gauge's target.
    */
   goal?: number
+  /** The lower and upper specification limits of a histogram (its capability) or a box plot. */
+  lsl?: number
+  usl?: number
+  /** A gauge's full scale. */
+  max?: number
+  /** Which way is better for a gauge's figure, against its goal. */
+  better?: AiChartBetter
 }
 
 /**

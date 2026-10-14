@@ -20,7 +20,24 @@ import { AUTOMATION_MIN_EVERY_MINUTES } from '@qc/shared/automation'
 import type { NoticePromptMode } from '../noticeAssistant/scope'
 import type { PromptPlaybook } from '../playbook/service'
 import type { AttachmentRef, StoredBlock } from './attachments'
-import { CHART_INPUT_SCHEMA, MAX_CHART_Y, MAX_GANTT_ROWS, MAX_PARETO_BARS, MAX_PIE_SLICES, MAX_PROGRESS_BARS, MAX_TREEMAP_TILES, MIN_CONTROL_POINTS } from './charts'
+import {
+  CHART_INPUT_SCHEMA,
+  MAX_BOX_GROUPS,
+  MAX_CHART_Y,
+  MAX_GANTT_ROWS,
+  MAX_GAUGES,
+  MAX_PARETO_BARS,
+  MAX_PIE_SLICES,
+  MAX_PROGRESS_BARS,
+  MAX_RADAR_AXES,
+  MAX_RISKS,
+  MAX_SANKEY_LINKS,
+  MAX_SUBGROUP_SIZE,
+  MAX_TREEMAP_TILES,
+  MIN_CONTROL_POINTS,
+  MIN_HISTOGRAM_READINGS,
+  MIN_XBAR_SUBGROUPS,
+} from './charts'
 import { MAX_KPIS } from './kpis'
 import { AI_MAX_SQL_CHARS } from './runQuery'
 
@@ -284,8 +301,19 @@ run_sql can also draw its result as a chart, shown with your answer: give the ca
 - A plan or a schedule in time (order lines from their first to their last work day, a planning week as its Monday to its Sunday, a machine's jobs, plan against actual): gantt, y = [start, end] selected as dates or timestamps, x the row (order line, machine, at most ${MAX_GANTT_ROWS}), series each bar's name (Planned or Actual, the order); a row may hold several bars.
 - Two values side by side on each row (planned and actual hours by machine, last month and this month by line): dumbbell, two y columns, the earlier or the planned first.
 - The parts of a whole when they are many (pieces by machine within factories, defects by type within processes): treemap, one y, series the group, at most ${MAX_TREEMAP_TILES} tiles.
-- goal draws a target as a dashed line (a reject-rate target of 2, a nominal length) on bar, horizontal-bar, line, area, combo (on its line's axis), control and dumbbell, and is a progress chart's target for every row. Use only a target the person gave or the record holds.
-- Never chart a single number, a list of records or a result of one row.
+- Quality (SPC). Return the readings themselves, one row per reading (inspection readings are in ai.dimension_measurements, actual with its nominal and limits, when it is among the data you can read); never a value you made up:
+  - How a dimension is spread and whether the process can hold its tolerance (capability, Cp/Cpk): histogram, one y of readings ordered by recorded_at (x names each reading, such as the sample), at least ${MIN_HISTOGRAM_READINGS} (25 or more for the indices to mean much), with lsl and usl (lower_limit and upper_limit) and goal the nominal, all from the record. It shows Cp and Cpk (short-term spread) and Pp and Ppk (overall): 1.33 and above is capable, 1 to 1.33 only just, below 1 not. Say which, and how many readings fall outside.
+  - Whether a measured process is stable in subgroups (the samples of a session, an hour): xbar-r, one row per reading, x the subgroup in time order, 2 to ${MAX_SUBGROUP_SIZE} readings each, at least ${MIN_XBAR_SUBGROUPS} subgroups. For one reading at a time, control.
+  - Whether the share defective is stable when samples differ in size (rejected pieces of inspected, by day or by lot): p-chart, y = [defective, inspected]. Defects per unit when a unit can have several: u-chart, y = [defects, units]. Defects per sample of the same size: c-chart, one y. At least ${MIN_CONTROL_POINTS} points. Say which points are out of control.
+  - The spread of readings compared across machines, shifts or inspectors: box-plot, one row per reading, x the group (at most ${MAX_BOX_GROUPS}), lsl, usl and goal when one dimension and spec is compared.
+- One figure (or up to ${MAX_GAUGES}) against its target, such as this month's first-pass yield or the reject rate today: gauge, one y, goal the target, max the full scale (100 for a %), better lower for a figure where less is good (rejects, downtime). The only chart for a single number.
+- Several measures of a few items at once (machines scored on quality, output, OEE): radar, x the measures (3 to ${MAX_RADAR_AXES}), one y column or series value per item; put the measures on one scale (0 to 100) in SQL first.
+- Three measures of each item (rejects by output, sized by hours): bubble, x and the first y numeric, the second y the size, series the item's name.
+- How quantities flow from stage to stage (pieces from orders to machines to their disposition; produced to passed, held, rejected): sankey, one row per flow, x the stage it leaves, series the stage it reaches, one y (at most ${MAX_SANKEY_LINKS} flows, no loops).
+- A figure per day over weeks or months, to see days and weeks that stand out: calendar, x the day as a date, one y, one row per day.
+- An FMEA, or which failure modes to act on first: risk-matrix, x the failure mode, y = [severity, occurrence] or [severity, occurrence, detection], whole numbers 1 to 10 (at most ${MAX_RISKS} modes); it ranks them by RPN. Occurrence comes from the record (how often the defect happens, put on the 1-10 scale in SQL, the scale said in your answer). Severity and detection are engineering judgments the record does not hold: use the person's ratings; when they gave none, ask for them, or rate them yourself only when asked and say plainly that those ratings are yours, to be confirmed.
+- goal draws a target as a dashed line (a reject-rate target of 2, a nominal length) on bar, horizontal-bar, line, area, combo (on its line's axis), control, dumbbell, histogram, xbar-r and box-plot, is a progress chart's target for every row and a gauge's target. Use only a target the person gave or the record holds.
+- Never chart a single number (except as a gauge), a list of records or a result of one row.
 - Shape the query for the chart: aggregate in SQL, one row per x (or per x and series), with short readable column aliases (they label the axes and the legend). y takes 1 to ${MAX_CHART_Y} numeric columns. For several lines or stacks of one measure, return it in long form and name the column that splits it as series.
 - An answer may hold several charts, each from its own query: a report-like answer (a weekly review, a machine's month) is clearer with two or three charts of different kinds than with one.
 - If the chart cannot be drawn, the query's result says why; the figures are still there.`)

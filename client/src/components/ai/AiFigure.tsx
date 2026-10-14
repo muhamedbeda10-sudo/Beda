@@ -9,6 +9,10 @@ import { memo, useState } from 'react'
 import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figureView'
 import {
   Activity,
+  CalendarDays,
+  ChartCandlestick,
+  Radar,
+  Waypoints,
   ChartBarBig,
   ChartColumnBig,
   ChartColumnDecreasing,
@@ -54,6 +58,18 @@ const ICON: Record<AiChartType, typeof ChartLine> = {
   gantt: ChartGantt,
   dumbbell: SlidersHorizontal,
   treemap: LayoutDashboard,
+  histogram: ChartColumnBig,
+  'xbar-r': Activity,
+  'p-chart': Activity,
+  'u-chart': Activity,
+  'c-chart': Activity,
+  'box-plot': ChartCandlestick,
+  gauge: Gauge,
+  radar: Radar,
+  bubble: ChartScatter,
+  sankey: Waypoints,
+  calendar: CalendarDays,
+  'risk-matrix': Grid3x3,
 }
 
 export const AiFigure = memo(function AiFigure({ part, model, question }: { part: AiQueryPart; model: ChartModel; question?: string }) {
