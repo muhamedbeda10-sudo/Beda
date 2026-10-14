@@ -78,6 +78,7 @@ const DEFS: Record<MasterKind, MasterDef> = {
       { field: 'process', column: 'process' },
       { field: 'usesItemDimensions', column: 'uses_item_dimensions' },
       { field: 'onDashboard', column: 'on_dashboard' },
+      { field: 'coilRequired', column: 'coil_required' },
     ],
     schema: z.object({
       code: text(40),
@@ -89,6 +90,7 @@ const DEFS: Record<MasterKind, MasterDef> = {
       process: processSchema.default('forming'),
       usesItemDimensions: z.boolean().default(true),
       onDashboard: z.boolean().default(true),
+      coilRequired: z.boolean().default(false),
     }),
     filters: { factory: 'factory' },
     orderBy: 'factory, code, line',

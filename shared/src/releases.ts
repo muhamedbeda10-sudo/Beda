@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-14.8',
+    date: '2026-10-14',
+    title: 'The coil can be required on a machine',
+    items: [
+      { text: 'Configuration → Machines has a new Coil setting on roll forming / fabrication and universal machines: Optional, or Required on every sample. On a machine where it is required — the roll forming lines, the 400 t press — a sample is not saved until the coil it was made from is added; the Setup step marks the coils as required and says so.' },
+      { text: 'Welding keeps its own rule: the connector coil number, always required. Every machine starts as Optional, so turn it on for the machines that need it.' },
+    ],
+  },
+  {
     id: '2026-10-14.7',
     date: '2026-10-14',
     title: 'Tapping outside a window to hide the keyboard no longer closes it',
