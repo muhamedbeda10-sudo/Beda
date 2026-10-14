@@ -19,6 +19,8 @@
 import type { AiAutomationPart, AutomationBacktest, AutomationDraft, AutomationProposalState } from '@qc/shared/automation'
 import type { Queryable } from '../db/pool'
 import { cutChars } from '../ai/blocks'
+import { describeChanges } from './changes'
+import { AUTOMATION_COLUMNS, AUTOMATION_FROM, draftOf, type AutomationRow } from './views'
 import { assigneeView, namedUserIds, peopleById, recipientViews } from './labels'
 import { isUuid } from './people'
 
@@ -140,12 +142,27 @@ export async function findProposal(q: Queryable, id: string, userId: string, for
   return rows[0] ?? null
 }
 
+/**
+ * The automations the waiting changes among these proposals change, as they are now, by id: what their cards compare
+ * against. One read for them all.
+ */
+async function changedAutomations(q: Queryable, proposals: StoredProposal[]): Promise<Map<string, AutomationDraft>> {
+  const waiting = proposals.filter((p) => p.state === 'proposed' && p.ok && p.draft?.replacesAutomationId && isUuid(p.draft.replacesAutomationId))
+  if (waiting.length === 0) return new Map()
+  const { rows } = await q.query<AutomationRow>(
+    `SELECT ${AUTOMATION_COLUMNS} FROM ${AUTOMATION_FROM} WHERE a.id = ANY($1::uuid[]) AND a.deleted_at IS NULL`,
+    [[...new Set(waiting.map((p) => p.draft!.replacesAutomationId!.toLowerCase()))]],
+  )
+  return new Map(rows.map((r) => [r.id, draftOf(r)]))
+}
+
 /** Proposals' cards, as they stand now; one read of names for them all. */
 export async function proposalParts(q: Queryable, proposals: StoredProposal[]): Promise<AiAutomationPart[]> {
   const people = await peopleById(
     q,
     proposals.flatMap((p) => (p.draft ? namedUserIds(p.draft.recipients, p.draft.actions) : [])),
   )
+  const current = await changedAutomations(q, proposals)
   return proposals.map((p) => {
     const part: AiAutomationPart = { type: 'automation', proposalId: p.id, ok: p.ok, state: p.state }
     if (p.error) part.error = p.error
@@ -159,6 +176,9 @@ export async function proposalParts(q: Queryable, proposals: StoredProposal[]): 
     if (p.backtest) part.backtest = p.backtest
     if (p.automationId) part.automationId = p.automationId
     if (p.replacesName) part.replacesName = p.replacesName
+    // A change still waiting says what it changes; once decided, the card shows what was decided.
+    const before = p.state === 'proposed' && p.ok && p.draft?.replacesAutomationId ? current.get(p.draft.replacesAutomationId.toLowerCase()) : undefined
+    if (before && p.draft) part.changes = describeChanges(before, p.draft)
     return part
   })
 }

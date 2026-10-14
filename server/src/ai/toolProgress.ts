@@ -10,6 +10,7 @@
 const WRITING: Readonly<Record<string, string>> = {
   run_sql: 'Writing a query',
   propose_automation: 'Writing the automation',
+  change_automation: 'Writing the change to the automation',
   propose_notice_change: 'Writing the notice',
   propose_task: 'Writing the task',
   update_playbook: 'Writing to the playbook',
@@ -21,6 +22,7 @@ const WRITING: Readonly<Record<string, string>> = {
 /** What the app does with a step's tools before its first card: run_sql's card says so itself. */
 const CHECKING: Readonly<Record<string, string>> = {
   propose_automation: 'Checking the automation and running it once',
+  change_automation: 'Making the change, checking it and running it once',
   propose_notice_change: 'Checking the notice',
   propose_task: 'Checking the task',
   update_playbook: 'Saving to the playbook',

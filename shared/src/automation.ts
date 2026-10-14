@@ -236,6 +236,8 @@ export interface AiAutomationPart {
   automationId?: string
   /** The name of the automation it replaces, when it does. */
   replacesName?: string
+  /** A change still waiting: what it changes of that automation as it is now, a line each (none: nothing). */
+  changes?: string[]
 }
 
 /** The fields a person may change outside the chat (the queries change only through the assistant). */

@@ -191,7 +191,7 @@ export const DRAFT_INPUT_SCHEMA = {
     revisesProposalId: {
       type: 'string',
       description:
-        "Optional. The proposalId (from its propose_automation result) of an earlier proposal of this conversation that this one is a new version of: its card is marked as replaced by this one. Keep that proposal's replacesAutomationId. If it was activated, the call says so and names the automation to set as replacesAutomationId instead.",
+        "Optional. The proposalId (from its propose_automation result) of an earlier proposal of this conversation that this one is a new version of: its card is marked as replaced by this one. Keep that proposal's replacesAutomationId. If it was activated, this is proposed as a change of the automation it became.",
     },
   },
   required: ['confirmation', 'kind', 'name', 'description', 'language', 'recipients', 'channels', 'actions'],

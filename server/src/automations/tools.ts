@@ -24,8 +24,8 @@
 
 import { randomUUID } from 'node:crypto'
 import type Anthropic from '@anthropic-ai/sdk'
-import type { AiCell, AiStreamEvent } from '@qc/shared/ai'
-import type { AutomationBacktest } from '@qc/shared/automation'
+import type { AiCell, AiDomain, AiStreamEvent } from '@qc/shared/ai'
+import type { AutomationBacktest, AutomationDraft } from '@qc/shared/automation'
 import type { Config } from '../config'
 import type { Db } from '../db/pool'
 import { loadAccess, mayAutomate } from '../ai/access'
@@ -34,6 +34,7 @@ import { currentAiOwner } from '../ai/owner'
 import { cutChars } from '../ai/blocks'
 import { checkAgreement, loadAgreementTurn } from './confirmation'
 import { readConfirmation, readDraft, DRAFT_INPUT_SCHEMA } from './draft'
+import { CHANGE_AUTOMATION_TOOL, CHANGE_AUTOMATION_TOOL_NAME, applyEdits, loadChangeBase, readChange } from './edit'
 import { checkRevision, insertProposals, proposalPart, supersedeProposal, type ProposalRecord, type StoredProposal } from './proposals'
 import { withoutIsolates } from './text'
 import { validateDraft, type AutomationReaders } from './validate'
@@ -61,13 +62,13 @@ export const PROPOSE_AUTOMATION_TOOL: Anthropic.Beta.BetaTool = {
 export const MY_AUTOMATIONS_TOOL: Anthropic.Beta.BetaTool = {
   name: MY_AUTOMATIONS_TOOL_NAME,
   description:
-    "List the person's automations: id, name, kind, status and definition. Use it to explain, list or change them; a change is a new propose_automation call with replacesAutomationId.",
+    "List the person's automations: id, name, kind, status and definition. Use it to explain, list or change them; a change is a change_automation call naming only what changes (propose_automation with replacesAutomationId only when most of it is rewritten).",
   strict: true,
   input_schema: { type: 'object', properties: {}, additionalProperties: false },
 }
 
 /** The tools of a new conversation of a person allowed to create automations, after run_sql. */
-export const AUTOMATION_TOOLS: readonly Anthropic.Beta.BetaTool[] = [PROPOSE_AUTOMATION_TOOL, MY_AUTOMATIONS_TOOL]
+export const AUTOMATION_TOOLS: readonly Anthropic.Beta.BetaTool[] = [PROPOSE_AUTOMATION_TOOL, CHANGE_AUTOMATION_TOOL, MY_AUTOMATIONS_TOOL]
 
 const NOT_ALLOWED = 'Not allowed: this person may not create automations (any more). Tell them so; nothing was proposed.'
 /** What my_automations hands the model, at most (as a query's result). */
@@ -96,6 +97,7 @@ export interface AutomationToolContext {
 export function automationToolHandlers(ctx: AutomationToolContext): Record<string, ToolHandler> {
   return {
     [PROPOSE_AUTOMATION_TOOL_NAME]: { run: (tu, signal) => propose(ctx, tu, signal) },
+    [CHANGE_AUTOMATION_TOOL_NAME]: { run: (tu, signal) => change(ctx, tu, signal) },
     [MY_AUTOMATIONS_TOOL_NAME]: { run: (tu) => myAutomations(ctx, tu) },
   }
 }
@@ -109,20 +111,68 @@ async function allowed(ctx: AutomationToolContext) {
 
 const failed = (tu: ToolUse, content: string): ToolOutcome => ({ result: { type: 'tool_result', tool_use_id: tu.id, is_error: true, content } })
 
+/** §22 — agreed in words first: a call that was not is refused (failed) before anything is checked, kept or shown. */
+async function agreement(ctx: AutomationToolContext, tu: ToolUse): Promise<{ confirmation: string | null } | { failed: ToolOutcome }> {
+  if (!ctx.confirmFirst) return { confirmation: null }
+  const turn = await loadAgreementTurn(ctx.db, ctx.turnId)
+  const agreed = checkAgreement(readConfirmation(tu.input), turn ?? { question: '', answeredBefore: false })
+  return agreed.ok ? { confirmation: agreed.confirmation } : { failed: failed(tu, agreed.refusal) }
+}
+
 async function propose(ctx: AutomationToolContext, tu: ToolUse, signal: AbortSignal): Promise<ToolOutcome> {
   const access = await allowed(ctx)
   if (!access) return failed(tu, NOT_ALLOWED)
-  // Agreed in words first (§22): a call that was not is refused before anything is checked, kept or shown.
-  let confirmation: string | null = null
-  if (ctx.confirmFirst) {
-    const turn = await loadAgreementTurn(ctx.db, ctx.turnId)
-    const agreed = checkAgreement(readConfirmation(tu.input), turn ?? { question: '', answeredBefore: false })
-    if (!agreed.ok) return failed(tu, agreed.refusal)
-    confirmation = agreed.confirmation
+  const agreed = await agreement(ctx, tu)
+  if ('failed' in agreed) return agreed.failed
+  return proposeDraft(ctx, tu, signal, access.domains, agreed.confirmation, readDraft(tu.input), 'propose')
+}
+
+/**
+ * A change of part of a definition (edit.ts): applied to the definition as it is now, then proposed as the whole
+ * result is. An edit that cannot be made leaves no card.
+ */
+async function change(ctx: AutomationToolContext, tu: ToolUse, signal: AbortSignal): Promise<ToolOutcome> {
+  const access = await allowed(ctx)
+  if (!access) return failed(tu, NOT_ALLOWED)
+  const agreed = await agreement(ctx, tu)
+  if ('failed' in agreed) return agreed.failed
+  const req = readChange(tu.input)
+  if ('errors' in req) return failed(tu, ['Nothing changed. Fix the call and make it again:', ...req.errors.map((e) => `- ${e}`)].join('\n'))
+  const base = await loadChangeBase(ctx.db, req, ctx)
+  if ('error' in base) return failed(tu, `Nothing changed: ${base.error}`)
+  const edited = applyEdits(base.draft, req.edits)
+  if ('errors' in edited) {
+    return failed(tu, ['Nothing changed, and no card was shown. Fix these edits and call change_automation again:', ...edited.errors.map((e) => `- ${e}`)].join('\n'))
   }
+  // The result read as any draft is: the edits may have broken its shape (a number where text goes, a field it has not).
+  const read = readDraft(edited.result)
+  if ('errors' in read) {
+    return failed(tu, ['Nothing changed, and no card was shown: with these edits the definition is not one an automation can have. Fix the edits:', ...read.errors.map((e) => `- ${e}`)].join('\n'))
+  }
+  return proposeDraft(ctx, tu, signal, access.domains, agreed.confirmation, read, 'change')
+}
+
+/**
+ * What a failed version tells the model to do, after its problems: a proposal is written again; a change is fixed on
+ * its own card (which keeps that version), naming only the fixes.
+ */
+const FIX_THESE = {
+  propose: 'Not proposed. Fix these and call propose_automation again:',
+  change: 'Not proposed: the changed definition has problems. Fix them with change_automation on this card (proposalId below), naming only the fixes:',
+} as const
+
+/** A draft, or what is wrong with its shape, checked and run once, kept as a proposal and shown as a card. */
+async function proposeDraft(
+  ctx: AutomationToolContext,
+  tu: ToolUse,
+  signal: AbortSignal,
+  domains: AiDomain[],
+  confirmation: string | null,
+  read: { draft: AutomationDraft } | { errors: string[] },
+  made: keyof typeof FIX_THESE,
+): Promise<ToolOutcome> {
   const now = new Date()
   const id = randomUUID()
-  const read = readDraft(tu.input)
   let record: ProposalRecord
   let errors: string[] = []
   // The earlier version this one supersedes once stored, if it passes.
@@ -143,7 +193,7 @@ async function propose(ctx: AutomationToolContext, tu: ToolUse, signal: AbortSig
       revision = null
     }
     const checked = await validateDraft(
-      { db: ctx.db, readers: ctx.readers, timeZone: ctx.config.FACTORY_TIMEZONE, creatorId: ctx.userId, domains: access.domains, now, runQueries: true, signal },
+      { db: ctx.db, readers: ctx.readers, timeZone: ctx.config.FACTORY_TIMEZONE, creatorId: ctx.userId, domains, now, runQueries: true, signal },
       draft,
     )
     if (!checked.ok) errors = checked.errors
@@ -164,14 +214,16 @@ async function propose(ctx: AutomationToolContext, tu: ToolUse, signal: AbortSig
     }
   }
   const stored = await asStored(ctx, record)
-  ctx.emit({ type: 'automation', part: await proposalPart(ctx.db, stored) })
+  const part = await proposalPart(ctx.db, stored)
+  ctx.emit({ type: 'automation', part })
   const store = async (tx: Parameters<NonNullable<ToolOutcome['store']>>[0]) => {
     await insertProposals(tx, ctx.conversationId, ctx.turnId, [record])
     // Only a version that passed replaces the one before it: a failed one leaves that card as it was.
     if (record.ok && supersedes) await supersedeProposal(tx, supersedes, ctx.userId)
   }
   if (!record.ok) {
-    const lines = ['Not proposed. Fix these and call propose_automation again:', ...errors.map((e) => `- ${e}`)]
+    const lines = [FIX_THESE[made], ...errors.map((e) => `- ${e}`)]
+    if (record.draft && made === 'change') lines.push(`proposalId: ${id}`)
     if (record.backtest) lines.push(`What it found when run: ${JSON.stringify(backtestForModel(record.backtest))}`)
     return { result: { type: 'tool_result', tool_use_id: tu.id, is_error: true, content: lines.join('\n') }, store }
   }
@@ -189,6 +241,8 @@ async function propose(ctx: AutomationToolContext, tu: ToolUse, signal: AbortSig
       (changes
         ? ` The proposal named in revisesProposalId was activated already: this is proposed as a change of the automation it became (replacesAutomationId "${changes}"), and Activate applies the change to it.`
         : ''),
+    // A change of an automation: what its card lists as changing, so what you say matches it.
+    ...(part.changes ? { changesOnActivate: part.changes.map(withoutIsolates) } : {}),
     backtest: record.backtest ? backtestForModel(record.backtest) : null,
   }
   return { result: { type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(content) }, store }

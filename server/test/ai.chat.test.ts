@@ -220,6 +220,7 @@ describe('§20 asking a question', () => {
       expect.objectContaining({ name: 'run_sql', strict: true, eager_input_streaming: true, input_schema: expect.objectContaining({ additionalProperties: false, required: ['purpose', 'sql'] }) }),
       { type: 'tool_search_tool_bm25_20251119', name: 'tool_search_tool_bm25' },
       expect.objectContaining({ name: 'propose_automation', eager_input_streaming: true, defer_loading: true }),
+      expect.objectContaining({ name: 'change_automation', eager_input_streaming: true, defer_loading: true }),
       expect.objectContaining({ name: 'my_automations', strict: true, defer_loading: true }),
       expect.objectContaining({ name: 'list_notices', eager_input_streaming: true, defer_loading: true }),
       expect.objectContaining({ name: 'notice_details', eager_input_streaming: true, defer_loading: true }),
@@ -242,9 +243,10 @@ describe('§20 asking a question', () => {
     ])
     expect(p.tools![0]).not.toHaveProperty('defer_loading')
     // None of the notices' or tasks' tools is strict: each strict schema adds to one grammar, and the server reads their input itself.
-    for (const tool of p.tools!.slice(4)) expect(tool).not.toHaveProperty('strict')
-    // Not strict: with run_sql's, its alternatives compile to a grammar larger than the API accepts; the server checks the input itself.
+    for (const tool of p.tools!.slice(5)) expect(tool).not.toHaveProperty('strict')
+    // Not strict: with run_sql's, their alternatives compile to a grammar larger than the API accepts; the server checks the input itself.
     expect(p.tools![2]).not.toHaveProperty('strict')
+    expect(p.tools![3]).not.toHaveProperty('strict')
     // The prompt says how the other tools are found.
     expect(system).toContain('first find it with tool_search_tool_bm25')
     expect(p.messages).toHaveLength(1)
@@ -657,7 +659,7 @@ describe('§20 how answers end', () => {
         tool_use_id: 'toolu_other',
         is_error: true,
         content:
-          'Unknown tool "drop_everything". The tools are "run_sql", "propose_automation", "my_automations", "list_notices", "notice_details", "find_notice_targets", "propose_notice_change", "find_people", "propose_task", "my_tasks", "update_playbook", "make_excel", "list_saved_tables", "save_table", "update_saved_table", "refresh_saved_table", "remove_saved_table".',
+          'Unknown tool "drop_everything". The tools are "run_sql", "propose_automation", "change_automation", "my_automations", "list_notices", "notice_details", "find_notice_targets", "propose_notice_change", "find_people", "propose_task", "my_tasks", "update_playbook", "make_excel", "list_saved_tables", "save_table", "update_saved_table", "refresh_saved_table", "remove_saved_table".',
       },
       { type: 'tool_result', tool_use_id: 'toolu_case', is_error: true, content: expect.stringMatching(/permission denied/) },
     ])

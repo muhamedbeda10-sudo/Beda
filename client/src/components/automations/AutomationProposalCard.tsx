@@ -211,9 +211,26 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
         {!folded && (
           <>
             {part.replacesName && (
-              <p className="rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-800 dark:bg-violet-500/10 dark:text-violet-200">
-                Changes <bdi dir="auto" className="font-semibold">“{part.replacesName}”</bdi> when activated; the cases it has already fired stay fired.
-              </p>
+              <div className="rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-800 dark:bg-violet-500/10 dark:text-violet-200">
+                <p>
+                  Changes <bdi dir="auto" className="font-semibold">“{part.replacesName}”</bdi> when activated; the cases it has already fired stay fired.
+                </p>
+                {/* What changes of it as it is now: the server compares while the card waits. */}
+                {proposed && part.changes && (
+                  <>
+                    <p className="mt-1.5 font-semibold">{part.changes.length > 0 ? 'What changes:' : 'It changes nothing of it as it is now.'}</p>
+                    {part.changes.length > 0 && (
+                      <ul aria-label="What changes" className="mt-0.5 list-disc space-y-0.5 ps-4">
+                        {part.changes.map((line, i) => (
+                          <li key={i} dir="auto" className="break-words">
+                            {line}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </div>
             )}
             {replacedGone && proposed && (
               <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">

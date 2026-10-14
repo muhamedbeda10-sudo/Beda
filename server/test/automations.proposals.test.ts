@@ -114,13 +114,13 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
     expect(systemOf(plain)).not.toContain('# Automations')
     await ask(app, p.creator, 'Hello')
     const creator = lastCall()
-    expect(toolsOf(creator)).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
+    expect(toolsOf(creator)).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'change_automation', 'my_automations', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
     expect(creator.params.tools![2]).toMatchObject({ eager_input_streaming: true, input_schema: { additionalProperties: false } })
     // Not strict: together with run_sql's, its alternatives compile to a grammar the API refuses as too large.
     expect(creator.params.tools![2]).not.toHaveProperty('strict')
     await ask(app, p.owner, 'Hello')
     // The owner, an administrator, may also have notices written, and always may have Excel files made.
-    expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'make_excel', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
+    expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'change_automation', 'my_automations', 'list_notices', 'notice_details', 'find_notice_targets', 'propose_notice_change', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'make_excel', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
 
     // Without automations the prompt is the one it always was, byte for byte; with them, one section more.
     const tz = app.config.FACTORY_TIMEZONE
@@ -159,8 +159,11 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
     expect(section).toContain('Agree on the plan in words before any automation card.')
     expect(section).toContain('Ask them to confirm it or change it, and stop there: no propose_automation call in that answer.')
     expect(section).toContain('Choosing one of several options you offered is agreement only when you described that option as a full plan')
-    expect(section).toContain('Call propose_automation only after they agree, in a later message, and pass their words of agreement as confirmation, exactly as they wrote them')
-    expect(section).toContain('set revisesProposalId to its proposalId: its card is marked as replaced by the new one. Keep everything they did not ask to change, replacesAutomationId included.')
+    expect(section).toContain('Call propose_automation (or change_automation) only after they agree, in a later message, and pass their words of agreement as confirmation, exactly as they wrote them')
+    // A change names only what changes; a whole definition again only when most of it is rewritten.
+    expect(section).toContain('To change an automation, or a card of this conversation, call change_automation with only the edits')
+    expect(section).toContain('When one request changes several automations, make one change_automation call for each, in the same step.')
+    expect(section).toContain('then set revisesProposalId to the card\'s proposalId, or replacesAutomationId to the automation\'s id, and keep everything the person did not ask to change.')
     // The tool asks for the person's words first, as the prompt does.
     const input = (creator.params.tools![2] as { input_schema: { properties: Record<string, { description?: string }>; required: string[] } }).input_schema
     expect(Object.keys(input.properties)[0]).toBe('confirmation')
@@ -195,7 +198,7 @@ describe('§21 the tools and the prompt: new conversations of people allowed to 
 
       app.model.reply({ content: [text('Hi again.')] })
       const fresh = await ask(app, p.plain, 'A new conversation')
-      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'my_automations', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
+      expect(toolsOf()).toEqual(['run_sql', 'tool_search_tool_bm25', 'propose_automation', 'change_automation', 'my_automations', 'list_notices', 'notice_details', 'find_people', 'propose_task', 'my_tasks', 'update_playbook', 'list_saved_tables', 'save_table', 'update_saved_table', 'refresh_saved_table', 'remove_saved_table'])
       const freshStored = await stored(fresh.conversationId)
 
       // The permission withdrawn: the conversation keeps its tools, which now refuse; nothing is proposed or shown.

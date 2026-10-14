@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-14.2',
+    date: '2026-10-14',
+    title: 'The assistant changes part of an automation, not all of it',
+    items: [
+      { text: 'Asking the assistant to change a report or an alert (a word added to a query, another time, one more recipient, a section added or removed) now changes only that part: it no longer writes the whole automation again. Changes to several reports at once finish much faster and cost less.' },
+      { text: 'The card of a change lists what it changes before you press Activate, for example "Section 2 “Production vs Quality”: its query" or "Runs: weekly on Thursday at 08:00 → 09:00". Nothing changes until you press Activate, as before.' },
+      { text: 'For conversations started from now on.' },
+    ],
+  },
+  {
     id: '2026-10-14.1',
     date: '2026-10-14',
     title: 'The assistant says what it is writing, and changes an activated automation without a refusal',
