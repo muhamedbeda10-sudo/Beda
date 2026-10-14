@@ -38,6 +38,7 @@ import {
 import type { Role } from '@qc/shared/types'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
 import { runReadOnlyQuery, type QueryRun } from '../ai/runQuery'
+import { withQueryOrigin } from '../ai/slowQueries'
 import { assignedNotification, followUpLink, followUpsOfLink, openFollowUps, type NewFollowUp } from './followUps'
 import { createNotifications, type NewNotification } from './notify'
 import { activeUserIds, distinctIds } from './people'
@@ -181,7 +182,9 @@ export interface WatchRunArgs {
 export async function runWatch(args: WatchRunArgs): Promise<RunResult> {
   const a = args.automation
   const w = a.watch!
-  const run = await runReadOnlyQuery(args.pool, w.sql, { maxRows: AUTOMATION_WATCH_MAX_ROWS, timeoutMs: AUTOMATION_QUERY_TIMEOUT_MS, timeZone: args.timeZone, signal: args.signal })
+  const run = await withQueryOrigin({ source: 'automation', userId: a.creatorId, purpose: a.name }, () =>
+    runReadOnlyQuery(args.pool, w.sql, { maxRows: AUTOMATION_WATCH_MAX_ROWS, timeoutMs: AUTOMATION_QUERY_TIMEOUT_MS, timeZone: args.timeZone, signal: args.signal }),
+  )
   const base: RunResult = { ok: false, notified: 0, casesNotified: 0, digest: false, notes: [] }
   if (!run.ok) return { ...base, error: queryErrorForPeople(run) }
   const found = casesOf(w, run, a.name)

@@ -18,6 +18,7 @@ import { AI_MAX_MONTHLY_CAP_USD, type AiKeyState, type AiSettingsResponse, type 
 import { CAP_RANGE_TEXT, parseCapUsd } from '@/components/ai/access'
 import { AiAccessSection } from '@/components/ai/AiAccessSection'
 import { AiActivitySection } from '@/components/ai/AiActivitySection'
+import { AiSlowQueriesSection } from '@/components/ai/AiSlowQueriesSection'
 import { Notice, UnavailableNotice } from '@/components/ai/AiNotice'
 import { AiSwitch } from '@/components/ai/AiSwitch'
 import { formatCap, formatMonth, formatTokens, formatUsd, formatUtcDay, spendBarClass, spendShare, utcMonth } from '@/components/ai/format'
@@ -71,18 +72,20 @@ export function AiSettings() {
       {shown === 'people' && <AiAccessSection appCapUsd={data?.settings.monthlyCapUsd} />}
       {shown === 'usage' && <UsageSection enabled={owner} />}
       {shown === 'activity' && <AiActivitySection enabled={owner} />}
+      {shown === 'slow' && <AiSlowQueriesSection enabled={owner} />}
     </div>
   )
 }
 
-type SettingsTab = 'settings' | 'people' | 'usage' | 'activity'
+type SettingsTab = 'settings' | 'people' | 'usage' | 'activity' | 'slow'
 
-/** The page's sections, one at a time under the figures: the setup, the people, what it cost, what was asked. */
+/** The page's sections, one at a time under the figures: the setup, the people, what it cost, what was asked, what was slow. */
 const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
   { value: 'settings', label: 'Key and cap' },
   { value: 'people', label: 'Who can use it' },
   { value: 'usage', label: 'Usage' },
   { value: 'activity', label: 'Activity' },
+  { value: 'slow', label: 'Slow queries' },
 ]
 
 const INTRO =

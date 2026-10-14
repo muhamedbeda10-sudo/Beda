@@ -54,6 +54,7 @@ import type { AiModelClient, ModelMessage, ModelParams } from './model'
 import { contextDay, conversationTitle, factoryDay } from './prompt'
 import { checkTemplate, fillTemplate, noDataRange, ordersRows, ownDays, periodProblem, rangeDays, readsClock, sameResult } from './reportTemplate'
 import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, exportRows, previewOf, runReadOnlyQuery, type QueryRun, type RunOptions } from './runQuery'
+import { withQueryPurpose } from './slowQueries'
 import { loadDisplayMessages, recordUsage, type UsageRecord } from './transcript'
 
 /** The longest title a report may have. */
@@ -525,8 +526,8 @@ export async function verifyTemplates(args: {
       const range = resolveAiPeriod(period, readsClock(original.sql) ? args.today : args.askedOn)
       const ordered = ordersRows(original.sql)
       const opts = { maxRows: VERIFY_MAX_ROWS, timeoutMs: CHAT_QUERY_TIMEOUT_MS, timeZone: args.timeZone, signal: ac.signal }
-      const asRan = await runReadOnlyQuery(args.reader, original.sql, opts)
-      const asTemplate = await runReadOnlyQuery(args.reader, fillTemplate(templates[i], range), opts)
+      const asRan = await withQueryPurpose(original.title, () => runReadOnlyQuery(args.reader, original.sql, opts))
+      const asTemplate = await withQueryPurpose(original.title, () => runReadOnlyQuery(args.reader, fillTemplate(templates[i], range), opts))
       if (ac.signal.aborted) return fixed(FIXED_NOTICE.slow, `over ${VERIFY_DEADLINE_MS / 1000} s`)
       if (!asRan.ok) return fixed(FIXED_NOTICE.originalFails(original.title), `section ${i + 1} as it ran: ${asRan.error}`)
       if (!asTemplate.ok) return fixed(FIXED_NOTICE.templateFails(original.title), `section ${i + 1} as a template: ${asTemplate.error}`)
@@ -599,12 +600,14 @@ export async function runReportSections(
   const out: AiReportSectionRun[] = []
   // One after another: the reader's few connections are shared with every answer being written.
   for (const section of report.sections) {
-    const run = await runSection(reader, sectionSql(report, section, period), {
-      maxRows: AI_PREVIEW_ROWS,
-      timeoutMs: CHAT_QUERY_TIMEOUT_MS,
-      timeZone: opts.timeZone,
-      signal: opts.signal,
-    })
+    const run = await withQueryPurpose(section.title, () =>
+      runSection(reader, sectionSql(report, section, period), {
+        maxRows: AI_PREVIEW_ROWS,
+        timeoutMs: CHAT_QUERY_TIMEOUT_MS,
+        timeZone: opts.timeZone,
+        signal: opts.signal,
+      }),
+    )
     const preview = previewOf(run)
     const result: AiReportSectionRun = {
       title: section.title,
@@ -638,14 +641,16 @@ export async function exportReportSections(
   const out: AiReportExportResponse['sections'] = []
   let room = AI_EXPORT_LIMITS.maxChars
   for (const section of report.sections) {
-    const run = await runSection(reader, sectionSql(report, section, period), {
-      maxRows: AI_EXPORT_MAX_ROWS,
-      timeoutMs: REPORT_EXPORT_TIMEOUT_MS,
-      timeZone: opts.timeZone,
-      maxRowBytes: AI_EXPORT_LIMITS.maxRowBytes,
-      maxChars: Math.max(1, room),
-      signal: opts.signal,
-    })
+    const run = await withQueryPurpose(section.title, () =>
+      runSection(reader, sectionSql(report, section, period), {
+        maxRows: AI_EXPORT_MAX_ROWS,
+        timeoutMs: REPORT_EXPORT_TIMEOUT_MS,
+        timeZone: opts.timeZone,
+        maxRowBytes: AI_EXPORT_LIMITS.maxRowBytes,
+        maxChars: Math.max(1, room),
+        signal: opts.signal,
+      }),
+    )
     const rows = exportRows(run)
     for (const row of rows) for (const c of row) room -= typeof c === 'string' ? c.length : 8
     const result: AiReportExportResponse['sections'][number] = { title: section.title, ok: run.ok, columns: run.columns, rows, truncated: run.truncated }

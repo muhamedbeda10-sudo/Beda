@@ -68,6 +68,7 @@ import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './mo
 import { MAX_TOKENS, MAX_TOKENS_RETRY, modelRequest, systemBlocks, worstCaseUsd } from './models'
 import { MAX_STEPS_PER_ANSWER, RUN_SQL_TOOL_NAME, RunSqlInput, TURN_DEADLINE_MINUTES, WRAP_UP_STEPS, WRAP_UP_TAG, WRAP_UP_TIME_SHARE } from './prompt'
 import { AI_QUERY_STOPPED, AI_QUERY_TIMEOUT_MS, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
+import { withQueryOrigin } from './slowQueries'
 import { checkingLine, writingLine } from './toolProgress'
 import { appendMessages, insertQueries, queryPart, recordUsage, settleStep, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
 
@@ -583,11 +584,13 @@ async function runStep(
       continue
     }
     const handler = toolHandler(qn, tu.name)
+    // The queries a tool runs are this chat's (a slow one is kept for the owner: slowQueries.ts).
+    const origin = { source: 'chat' as const, userId: qn.userId, conversationId: qn.conversation.id, purpose: tu.name }
     if (!handler) {
-      results.push(await runToolUse(qn, qn.readers.poolFor(access.domains), tu, queries, signal, cause))
+      results.push(await withQueryOrigin(origin, () => runToolUse(qn, qn.readers.poolFor(access.domains), tu, queries, signal, cause)))
       continue
     }
-    const outcome = await handler.run(tu, signal)
+    const outcome = await withQueryOrigin(origin, () => handler.run(tu, signal))
     // Cut short while it ran: what it found is not kept, and the replay says why.
     if (signal.aborted) {
       const c = cause()
@@ -706,7 +709,9 @@ async function runToolUse(
   const { purpose, sql, chart: askedChart } = parsed.data
   const queryId = randomUUID()
   qn.emit({ type: 'query_start', queryId, purpose, sql })
-  const run = await runReadOnlyQuery(reader, sql, { maxRows: AI_PREVIEW_ROWS, timeoutMs: CHAT_QUERY_TIMEOUT_MS, timeZone: qn.config.FACTORY_TIMEZONE, signal })
+  const run = await withQueryOrigin({ purpose }, () =>
+    runReadOnlyQuery(reader, sql, { maxRows: AI_PREVIEW_ROWS, timeoutMs: CHAT_QUERY_TIMEOUT_MS, timeZone: qn.config.FACTORY_TIMEZONE, signal }),
+  )
   // Stopped through the signal (not a failure of its own that came first): the replay keeps why.
   // (Handed over, the step is not kept at all; the words never reach the replay.)
   if (!run.ok && run.error === AI_QUERY_STOPPED) run.error = INTERRUPTED[cause() === 'time' ? 'time' : 'user'].running

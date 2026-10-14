@@ -49,6 +49,7 @@ import type { Config } from '../config'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
 import type { AiModelClient } from '../ai/model'
 import { previewOf, runReadOnlyQuery } from '../ai/runQuery'
+import { withQueryOrigin } from '../ai/slowQueries'
 import { escalateOverdue } from './followUps'
 import { createNotifications, purgeNotifications } from './notify'
 import { activeUserIds, distinctIds } from './people'
@@ -439,7 +440,9 @@ export async function testAutomation(deps: EngineDeps, a: AutomationRow, opts: {
     if (a.kind === 'report') {
       const period = reportPeriodAt(a.schedule!, now, tz)
       // The rows a card shows, not a delivery's: nothing is kept. Each section as its creator's domains are when it starts.
-      const ran = await runSections(readerFor(deps, a.creatorId), a.schedule!, period, tz, ac.signal, AI_PREVIEW_ROWS)
+      const ran = await withQueryOrigin({ source: 'scheduled-report', userId: a.creatorId, purpose: a.name }, () =>
+        runSections(readerFor(deps, a.creatorId), a.schedule!, period, tz, ac.signal, AI_PREVIEW_ROWS),
+      )
       if (ran.blocked) return { ranAt, ok: false, error: blockedNote(ran.blocked) }
       const sections = ran.sections.map((s) => ({ ...s, ...previewOf(s) }))
       const recipients = await recipientCount(deps.db, a, [])
@@ -450,7 +453,9 @@ export async function testAutomation(deps: EngineDeps, a: AutomationRow, opts: {
       return out
     }
     const w = a.watch!
-    const run = await runReadOnlyQuery(pool, w.sql, { maxRows: AUTOMATION_WATCH_MAX_ROWS, timeoutMs: AUTOMATION_QUERY_TIMEOUT_MS, timeZone: tz, signal: ac.signal })
+    const run = await withQueryOrigin({ source: 'automation', userId: a.creatorId, purpose: a.name }, () =>
+      runReadOnlyQuery(pool, w.sql, { maxRows: AUTOMATION_WATCH_MAX_ROWS, timeoutMs: AUTOMATION_QUERY_TIMEOUT_MS, timeZone: tz, signal: ac.signal }),
+    )
     if (!run.ok) return { ranAt, ok: false, error: queryErrorForPeople(run) }
     const found = casesOf(w, run, a.name)
     if ('error' in found) return { ranAt, ok: false, error: found.error }

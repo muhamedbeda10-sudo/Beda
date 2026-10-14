@@ -436,11 +436,31 @@ function watchMessageSizes(client: pg.PoolClient, limit: number, onTooLarge: (ty
   return () => stream.off('data', onData)
 }
 
+/** Told of every run, as it ends (slowQueries.ts keeps the slow ones). One at a time: set again, it replaces the last. */
+let observer: ((sql: string, run: QueryRun) => void) | null = null
+
+/** Tell `watch` of every query run from now on, with its SQL and how it ended. */
+export function observeQueries(watch: ((sql: string, run: QueryRun) => void) | null): void {
+  observer = watch
+}
+
 /**
  * Run one query as the reader. Never throws: a refusal, an error, a timeout
- * or a stop comes back as `ok: false` with a sentence for the model.
+ * or a stop comes back as `ok: false` with a sentence for the model. The
+ * observer, when one is set, is told of it as it ends.
  */
 export async function runReadOnlyQuery(pool: pg.Pool | null, rawSql: string, opts: RunOptions): Promise<QueryRun> {
+  const run = await runOnce(pool, rawSql, opts)
+  try {
+    observer?.(rawSql, run)
+  } catch (e) {
+    // Watching is never the query's failure.
+    console.warn('[ai] a query observer failed:', e instanceof Error ? e.message : String(e))
+  }
+  return run
+}
+
+async function runOnce(pool: pg.Pool | null, rawSql: string, opts: RunOptions): Promise<QueryRun> {
   const started = Date.now()
   const fail = (why: Failed): QueryRun => ({ ok: false, columns: [], rows: [], truncated: false, ms: Date.now() - started, ...why })
   const checked = precheckSql(rawSql)
