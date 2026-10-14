@@ -272,6 +272,14 @@ const FETCH_ROWS_MAX = 1_000
 const WIRE_SLACK_BYTES = 64 * 1024
 /** How long a cancel request may take to deliver before it is given up. */
 const CANCEL_TIMEOUT_MS = 5_000
+/**
+ * How long one of the assistant's queries may run: in a chat, a saved or
+ * scheduled report, an Excel file, a saved table, an export. The database is
+ * the one the inspectors save to, so a longer limit lets one heavy query hold
+ * it longer; automations' watches keep their own, shorter one.
+ */
+export const AI_QUERY_TIMEOUT_MS = 60_000
+
 /** PostgreSQL's CancelRequest code (1234 << 16 | 5678). */
 const CANCEL_REQUEST_CODE = 80_877_102
 

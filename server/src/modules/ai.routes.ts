@@ -172,7 +172,7 @@ import {
   type SavedTurn,
   type SectionReader,
 } from '../ai/reports'
-import { AI_EXPORT_LIMITS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
+import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
 import { describeAiSchema } from '../ai/schemaDoc'
 import { describeSavedTables, findSavedTable, listSavedTables, previewTable, refreshTable, removeTable, type SavedTableActor } from '../ai/savedTables'
 import { SAVED_TABLE_TOOLS } from '../ai/savedTableTools'
@@ -204,7 +204,7 @@ import {
 
 const uuid = z.string().uuid()
 /** A query run again for Excel may take this long. */
-const EXPORT_QUERY_TIMEOUT_MS = 30_000
+const EXPORT_QUERY_TIMEOUT_MS = AI_QUERY_TIMEOUT_MS
 /** How long a finished answer waits for its conversation's title before it closes without it. */
 const TITLE_WAIT_MS = 3_000
 /** Where the owner fixes what stops the assistant. */

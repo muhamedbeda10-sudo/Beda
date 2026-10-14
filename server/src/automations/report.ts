@@ -30,7 +30,7 @@ import { cutChars } from '../ai/blocks'
 import { resolveApiKey } from '../ai/credentials'
 import type { AiModelClient, ModelMessage, ModelParams } from '../ai/model'
 import { worstCaseUsd } from '../ai/models'
-import { AI_EXPORT_LIMITS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
+import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
 import { recordUsage } from '../ai/transcript'
 import { createNotifications } from './notify'
 import { activeUserIds } from './people'
@@ -41,7 +41,7 @@ import { blockedNote, type AutomationRow } from './views'
 import { isStopping, type RunResult } from './watch'
 
 /** A section of a delivered report may take this long, as a section exported to Excel. */
-const SECTION_TIMEOUT_MS = 30_000
+const SECTION_TIMEOUT_MS = AI_QUERY_TIMEOUT_MS
 /** Everything one delivery keeps, at most, in characters: its sections share it. */
 const DELIVERY_MAX_CHARS = 10_000_000
 /** The summary's call: room for a little thinking and a few lines. */

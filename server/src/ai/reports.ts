@@ -53,13 +53,13 @@ import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams } from './model'
 import { contextDay, conversationTitle, factoryDay } from './prompt'
 import { checkTemplate, fillTemplate, noDataRange, ordersRows, ownDays, periodProblem, rangeDays, readsClock, sameResult } from './reportTemplate'
-import { AI_EXPORT_LIMITS, exportRows, previewOf, runReadOnlyQuery, type QueryRun, type RunOptions } from './runQuery'
+import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, exportRows, previewOf, runReadOnlyQuery, type QueryRun, type RunOptions } from './runQuery'
 import { loadDisplayMessages, recordUsage, type UsageRecord } from './transcript'
 
 /** The longest title a report may have. */
 export const AI_REPORT_TITLE_CHARS = 120
 /** A section of a report run again for Excel may take this long (as a query of an answer exported). */
-export const REPORT_EXPORT_TIMEOUT_MS = 30_000
+export const REPORT_EXPORT_TIMEOUT_MS = AI_QUERY_TIMEOUT_MS
 
 // ---- Stored reports ---------------------------------------------------------------
 
@@ -459,8 +459,8 @@ export async function proposeTemplates(args: {
 
 /** Rows each run of the check may read: more, and the two results cannot be told apart for sure. */
 const VERIFY_MAX_ROWS = 10_000
-/** The whole check, every section run twice, may take this long. */
-const VERIFY_DEADLINE_MS = 60_000
+/** The whole check, every section run twice, may take this long: two of the slowest queries allowed. */
+const VERIFY_DEADLINE_MS = 2 * AI_QUERY_TIMEOUT_MS
 
 export type Verified =
   /** Every template returned what its query did: the period can be changed. */

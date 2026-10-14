@@ -21,6 +21,7 @@ import { AI_DOMAIN_IDS, type AiDomain } from '@qc/shared/ai'
 import type { Config } from '../config'
 import type { Db } from '../db/pool'
 import { AI_DOMAIN_COMBINATIONS, combinationRole, domainBits, domainRole, domainsOfBits, type AiRoleDomain } from './domains'
+import { AI_QUERY_TIMEOUT_MS } from './runQuery'
 
 /** Serialises concurrent starts: two instances altering one role at once can fail. Next to the migration lock (7_204_930_115). */
 const PROVISION_LOCK_KEY = 7_204_930_116
@@ -288,8 +289,8 @@ function makePool(config: Config, role: string): pg.Pool {
     ssl: needsTls ? { rejectUnauthorized: true } : undefined,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 10_000,
-    // A backstop behind the statement timeout the runner sets (30 s at most).
-    query_timeout: 45_000,
+    // A backstop behind the statement timeout the runner sets (AI_QUERY_TIMEOUT_MS at most), a quarter of a minute later.
+    query_timeout: AI_QUERY_TIMEOUT_MS + 15_000,
     application_name: 'qc-ai-reader',
     types: readerTypes,
   })
