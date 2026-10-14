@@ -12,6 +12,7 @@ import type {
   AutomationActions,
   AutomationBlockedReason,
   AutomationChannels,
+  AutomationDraft,
   AutomationKind,
   AutomationLanguage,
   AutomationRecipient,
@@ -136,6 +137,22 @@ export const AUTOMATION_COLUMNS = `a.id, a.creator_id AS "creatorId", cu.name AS
        (SELECT count(*)::int FROM follow_ups f WHERE f.automation_id = a.id AND f.status <> 'done') AS "openFollowUps"`
 
 export const AUTOMATION_FROM = `ai_automations a JOIN users cu ON cu.id = a.creator_id LEFT JOIN ai_conversations c ON c.id = a.conversation_id`
+
+/** An automation's definition, as a draft again: what an edit starts from. */
+export function draftOf(a: AutomationRow): AutomationDraft {
+  const d: AutomationDraft = {
+    kind: a.kind,
+    name: a.name,
+    description: a.description,
+    language: a.language,
+    recipients: a.recipients,
+    channels: a.channels,
+    actions: a.actions,
+  }
+  if (a.watch) d.watch = a.watch
+  if (a.schedule) d.schedule = a.schedule
+  return d
+}
 
 /** One automation, unless deleted; `forUpdate` locks its row. */
 export async function findAutomation(q: Queryable, id: string, forUpdate = false): Promise<AutomationRow | null> {

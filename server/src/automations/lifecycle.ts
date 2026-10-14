@@ -41,7 +41,9 @@ import { assigneeView, namedUserIds, peopleById, recipientViews } from './labels
 import { findProposal, proposalPart } from './proposals'
 import { nextReportRun, nextWatchRun, watchRunAt } from './schedule'
 import { caseKey, keepsCases, validateDraft, type Validation } from './validate'
-import { appState, findAutomation, toAutomations, type AutomationRow } from './views'
+import { appState, draftOf, findAutomation, toAutomations, type AutomationRow } from './views'
+
+export { draftOf }
 
 export interface Actor {
   id: string
@@ -53,22 +55,6 @@ const conflict = (message: string) => new HttpError(409, 'conflict', message)
 /** A draft that did not pass: a 400 naming the first problem, every problem in the details. */
 function invalid(errors: string[]): HttpError {
   return badRequest(errors[0] ?? 'The automation is not valid.', errors.map((message) => ({ path: '', message })))
-}
-
-/** An automation's definition, as a draft again: what an edit starts from. */
-export function draftOf(a: AutomationRow): AutomationDraft {
-  const d: AutomationDraft = {
-    kind: a.kind,
-    name: a.name,
-    description: a.description,
-    language: a.language,
-    recipients: a.recipients,
-    channels: a.channels,
-    actions: a.actions,
-  }
-  if (a.watch) d.watch = a.watch
-  if (a.schedule) d.schedule = a.schedule
-  return d
 }
 
 /** The queries of a definition as the audit log names them: a fingerprint, so a change shows and the SQL does not. */

@@ -142,6 +142,14 @@ describe('the proposal card', () => {
     expect(text({ ...replaced, draft: { ...draft, replacesAutomationId: 'a1' } })).not.toContain('no longer there')
   })
 
+  it('lists what a change waiting changes of the automation as it is now, and nothing once it is decided', () => {
+    const changes = ['Section 2 “الإنتاج مقابل الجودة”: its query', 'Runs: weekly on Thursday at 08:00 → weekly on Thursday at 09:00']
+    const t = text({ ...proposed, replacesName: 'Old holds', changes })
+    expect(t).toContain('the cases it has already fired stay fired. What changes: Section 2 “الإنتاج مقابل الجودة”: its query Runs: weekly on Thursday at 08:00 → weekly on Thursday at 09:00')
+    expect(text({ ...proposed, replacesName: 'Old holds', changes: [] })).toContain('It changes nothing of it as it is now.')
+    expect(text({ ...proposed, state: 'activated', automationId: 'a1', replacesName: 'Old holds', changes })).not.toContain('What changes')
+  })
+
   it('names the automation a change would replace', () => {
     expect(text({ ...proposed, replacesName: 'Old holds' })).toContain('Changes “Old holds” when activated; the cases it has already fired stay fired.')
   })
