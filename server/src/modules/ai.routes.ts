@@ -54,6 +54,7 @@ import multer from 'multer'
 import { z } from 'zod'
 import {
   AI_ACTIVITY_PAGE,
+  AI_SLOW_QUERIES_SHOWN,
   AI_DOMAIN_IDS,
   AI_MAX_ATTACHMENTS_PER_QUESTION,
   AI_MAX_IMAGE_BYTES,
@@ -96,6 +97,7 @@ import {
   type AiTaskProposalResponse,
   type AiActivityItem,
   type AiActivityResponse,
+  type AiSlowQueriesResponse,
   type AiUsageResponse,
 } from '@qc/shared/ai'
 import { auditEvent } from '@qc/shared/audit'
@@ -173,6 +175,7 @@ import {
   type SectionReader,
 } from '../ai/reports'
 import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
+import { SLOW_QUERY_MS, listSlowQueries, withQueryOrigin } from '../ai/slowQueries'
 import { describeAiSchema } from '../ai/schemaDoc'
 import { describeSavedTables, findSavedTable, listSavedTables, previewTable, refreshTable, removeTable, type SavedTableActor } from '../ai/savedTables'
 import { SAVED_TABLE_TOOLS } from '../ai/savedTableTools'
@@ -392,7 +395,7 @@ const reportRunQuery = z
  * The owner's routes, by path: every request under them, whatever its method,
  * is the owner's alone. A route of the owner's goes under one of these.
  */
-const OWNER_PATHS = ['/status', '/settings', '/key', '/access', '/people', '/usage', '/activity']
+const OWNER_PATHS = ['/status', '/settings', '/key', '/access', '/people', '/usage', '/activity', '/slow-queries']
 
 /** What anyone but the owner gets from the owner's routes: what an endpoint that does not exist answers. */
 const noSuchEndpoint = () => new HttpError(404, 'not_found', 'No such endpoint.')
@@ -1045,12 +1048,14 @@ export function aiRoutes(ctx: AppContext): Router {
     if (!ctx.aiReader.ready) throw readerDown()
     const ranAt = new Date().toISOString()
     // The export's own room: longer rows and more of them than a chat query may hold.
-    const run = await runReadOnlyQuery(ctx.aiReader.poolFor(access.domains), query.sql, {
-      maxRows: AI_EXPORT_MAX_ROWS,
-      timeoutMs: EXPORT_QUERY_TIMEOUT_MS,
-      timeZone: tz,
-      ...AI_EXPORT_LIMITS,
-    })
+    const run = await withQueryOrigin({ source: 'export', userId: user.id, purpose: query.purpose }, () =>
+      runReadOnlyQuery(ctx.aiReader.poolFor(access.domains), query.sql, {
+        maxRows: AI_EXPORT_MAX_ROWS,
+        timeoutMs: EXPORT_QUERY_TIMEOUT_MS,
+        timeZone: tz,
+        ...AI_EXPORT_LIMITS,
+      }),
+    )
     if (!run.ok) throw badRequest(`The query could not be run again: ${run.code === '42501' ? 'you no longer have access to this data.' : run.error}`)
     const body: AiQueryExportResponse = { purpose: query.purpose, sql: query.sql, columns: run.columns, rows: exportRows(run), truncated: run.truncated, ranAt }
     res.json(body)
@@ -1091,6 +1096,16 @@ export function aiRoutes(ctx: AppContext): Router {
    * costs are added up, so a month of thousands reads one page's worth. Its place is the row's time to the
    * microsecond and its id, so a page never repeats or skips a row that shares a second with another.
    */
+  /** §20 — the assistant's queries that took SLOW_QUERY_MS or more, newest first: which questions are heavy. */
+  r.get('/slow-queries', async (_req, res) => {
+    const body: AiSlowQueriesResponse = {
+      queries: await listSlowQueries(db, AI_SLOW_QUERIES_SHOWN),
+      thresholdSeconds: SLOW_QUERY_MS / 1000,
+      limitSeconds: AI_QUERY_TIMEOUT_MS / 1000,
+    }
+    res.json(body)
+  })
+
   r.get('/activity', async (req, res) => {
     const q = parse(activityQuery, req.query)
     const month = q.month ?? new Date().toISOString().slice(0, 7)
@@ -1481,14 +1496,16 @@ export function aiRoutes(ctx: AppContext): Router {
           console.warn(`[ai] report of answer ${turn.turnId}: period kept as asked (${proposal.detail})`)
         } else {
           proposedTitle = proposal.title
-          const verified = await verifyTemplates({
-            reader: ctx.aiReader.poolFor(now.domains),
-            timeZone: tz,
-            sections: turn.sections,
-            proposal,
-            askedOn: turn.askedOn,
-            today: factoryDay(new Date(), tz),
-          })
+          const verified = await withQueryOrigin({ source: 'report', userId: user.id, purpose: `Saving "${proposal.title}": checking its period` }, () =>
+            verifyTemplates({
+              reader: ctx.aiReader.poolFor(now.domains),
+              timeZone: tz,
+              sections: turn.sections,
+              proposal,
+              askedOn: turn.askedOn,
+              today: factoryDay(new Date(), tz),
+            }),
+          )
           if (verified.kind === 'adjustable') {
             period = verified.period
             adjustable = true
@@ -1609,7 +1626,9 @@ export function aiRoutes(ctx: AppContext): Router {
   r.get('/reports/:id/run', async (req, res) => {
     const { report, period, reader, signal } = await reportToRun(req, res)
     const ranAt = new Date().toISOString()
-    const sections = await runReportSections(reader, report, period, { timeZone: tz, signal })
+    const sections = await withQueryOrigin({ source: 'report', userId: requireUser(req).id, purpose: report.title }, () =>
+      runReportSections(reader, report, period, { timeZone: tz, signal }),
+    )
     const body: AiReportRunResponse = { report: await markReportRun(db, report), period, sections, ranAt }
     res.json(body)
   })
@@ -1620,7 +1639,9 @@ export function aiRoutes(ctx: AppContext): Router {
     await mayHaveExcel(user, access)
     const { report, period, reader, signal } = await reportToRun(req, res)
     const ranAt = new Date().toISOString()
-    const sections = await exportReportSections(reader, report, period, { timeZone: tz, signal })
+    const sections = await withQueryOrigin({ source: 'export', userId: user.id, purpose: report.title }, () =>
+      exportReportSections(reader, report, period, { timeZone: tz, signal }),
+    )
     const body: AiReportExportResponse = { report: await markReportRun(db, report), period, sections, ranAt }
     res.json(body)
   })

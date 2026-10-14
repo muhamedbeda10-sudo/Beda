@@ -69,6 +69,7 @@ import type {
   AiReportsResponse,
   AiSettingsResponse,
   AiActivityResponse,
+  AiSlowQueriesResponse,
   AiUsageResponse,
 } from '@qc/shared/ai'
 import { ApiError, api, apiBlob, qs } from '@/lib/api'
@@ -141,6 +142,7 @@ export const keys = {
   aiMessages: (id: string) => ['ai', 'messages', id] as const,
   aiUsage: (month: string) => ['ai', 'usage', month] as const,
   aiActivity: (month: string, userId: string, kind: string) => ['ai', 'activity', month, userId, kind] as const,
+  aiSlowQueries: ['ai', 'slow-queries'] as const,
   /** Every list of this person's reports, whatever its search. */
   aiReports: ['ai', 'reports'] as const,
   /** The list of reports matching a search ('' for all of them), page after page. */
@@ -1014,6 +1016,16 @@ export function useAiActivity(month: string, userId: string, kind: '' | 'questio
     enabled,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
+  })
+}
+
+/** §20 — the assistant's queries that took 10 seconds or more (the owner's). */
+export function useAiSlowQueries(enabled: boolean) {
+  return useQuery({
+    queryKey: keys.aiSlowQueries,
+    queryFn: () => api<AiSlowQueriesResponse>('/ai/slow-queries'),
+    enabled,
+    staleTime: 60_000,
   })
 }
 

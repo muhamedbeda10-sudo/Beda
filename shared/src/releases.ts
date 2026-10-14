@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-14.6',
+    date: '2026-10-14',
+    title: 'Slow queries of the assistant, listed for the owner',
+    items: [
+      { text: 'Every query of the assistant that takes 10 seconds or more is now kept for 90 days: where it ran (a chat, a saved or scheduled report, an Excel file, a saved table, an export, an automation), for whom, what it was for, how long it took and whether it stopped at the limit, with its SQL to copy.' },
+      { text: 'The owner sees them under AI settings → Slow queries. A question that keeps coming back slow points at a view or an index to fix, rather than a longer time limit.' },
+    ],
+  },
+  {
     id: '2026-10-14.5',
     date: '2026-10-14',
     title: 'The assistant\'s queries may run up to a minute',

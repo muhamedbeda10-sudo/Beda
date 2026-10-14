@@ -37,10 +37,13 @@ import { tasksRoutes } from './modules/tasks.routes'
 import { automationsRoutes } from './modules/automations.routes'
 import { productionRecordsRoutes } from './modules/productionRecords.routes'
 import { pushRoutes } from './modules/push.routes'
+import { keepSlowQueries } from './ai/slowQueries'
 
 export function createApp(ctx: AppContext): Express {
   const app = express()
   const { config, db } = ctx
+  // §20 — every query of the assistant that takes 10 s or more is kept for the owner to see (slowQueries.ts).
+  keepSlowQueries(db)
 
   app.disable('x-powered-by')
   if (config.TRUST_PROXY) app.set('trust proxy', 1)

@@ -52,6 +52,7 @@ import { buildWorkbook, type BookSheet } from './excelBook'
 import { currentAiOwner } from './owner'
 import { factoryClock } from './prompt'
 import { AI_EXPORT_LIMITS, AI_MAX_SQL_CHARS, AI_QUERY_TIMEOUT_MS, exportRows, runReadOnlyQuery, type QueryRun } from './runQuery'
+import { withQueryOrigin } from './slowQueries'
 
 type ToolUse = Anthropic.Beta.BetaToolUseBlock
 
@@ -504,7 +505,9 @@ async function make(ctx: ExcelToolContext, tu: ToolUse, signal: AbortSignal): Pr
     // Every sheet in full, one after another, all of them within one export's room.
     const pool = ctx.readers.poolFor(access.domains)
     let room = AI_EXPORT_LIMITS.maxChars
-    const checked = await checkExcel(tu.input, async (sql) => {
+    // Its sheets' queries are an Excel file's, named by the file (a slow one is kept for the owner: slowQueries.ts).
+    const named = (tu.input as { fileName?: unknown } | null)?.fileName
+    const checked = await withQueryOrigin({ source: 'excel', purpose: typeof named === 'string' ? named : 'Excel file' }, () => checkExcel(tu.input, async (sql) => {
       const run = await runReadOnlyQuery(pool, sql, {
         maxRows: AI_EXCEL_MAX_ROWS,
         timeoutMs: SHEET_QUERY_TIMEOUT_MS,
@@ -515,7 +518,7 @@ async function make(ctx: ExcelToolContext, tu: ToolUse, signal: AbortSignal): Pr
       })
       for (const row of run.rows) for (const c of row) room -= typeof c === 'string' ? c.length : 8
       return run
-    })
+    }))
     if (signal.aborted) return await cutShort(ctx, tu, who, signal)
     if ('errors' in checked) return await refuse(ctx, tu, who, checked.errors)
 

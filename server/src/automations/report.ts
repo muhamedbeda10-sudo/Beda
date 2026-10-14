@@ -31,6 +31,7 @@ import { resolveApiKey } from '../ai/credentials'
 import type { AiModelClient, ModelMessage, ModelParams } from '../ai/model'
 import { worstCaseUsd } from '../ai/models'
 import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
+import { withQueryOrigin, withQueryPurpose } from '../ai/slowQueries'
 import { recordUsage } from '../ai/transcript'
 import { createNotifications } from './notify'
 import { activeUserIds } from './people'
@@ -166,14 +167,14 @@ export async function runSections(
   for (const section of s.sections) {
     const pool = await reader()
     if (pool && 'blocked' in pool) return { sections: out, blocked: pool.blocked }
-    const run = await runReadOnlyQuery(pool, sectionSql(section.sql, period), {
+    const run = await withQueryPurpose(section.title, () => runReadOnlyQuery(pool, sectionSql(section.sql, period), {
       maxRows,
       timeoutMs: SECTION_TIMEOUT_MS,
       timeZone,
       maxRowBytes: AI_EXPORT_LIMITS.maxRowBytes,
       maxChars: Math.max(1, room),
       signal,
-    })
+    }))
     const rows = exportRows(run)
     for (const row of rows) for (const c of row) room -= typeof c === 'string' ? c.length : 8
     const result: AiReportSectionRun = { title: section.title, ok: run.ok, columns: run.columns, rows, rowCount: rows.length, truncated: run.truncated, ms: Math.round(run.ms) }
@@ -193,7 +194,7 @@ export async function runReport(args: ReportRunArgs): Promise<RunResult> {
   const tz = args.config.FACTORY_TIMEZONE
   // The days of the time it was due: an end-of-day report run after midnight still covers its own day.
   const period = reportPeriodAt(s, args.slotAt ?? args.now, tz)
-  const ran = await runSections(args.reader, s, period, tz, args.signal)
+  const ran = await withQueryOrigin({ source: 'scheduled-report', userId: a.creatorId, purpose: a.name }, () => runSections(args.reader, s, period, tz, args.signal))
   const base: RunResult = { ok: false, notified: 0, casesNotified: 0, digest: false, notes: [] }
   if (ran.blocked) return { ...base, blocked: ran.blocked, error: blockedNote(ran.blocked) }
   // The server stopping: nothing goes out half done; the run is handed back and runs again in full.

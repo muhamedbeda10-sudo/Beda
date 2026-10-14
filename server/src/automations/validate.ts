@@ -65,6 +65,7 @@ import { cutChars } from '../ai/blocks'
 import { factoryDay } from '../ai/prompt'
 import { checkTemplate, fillTemplate, periodProblem } from '../ai/reportTemplate'
 import { precheckSql, previewOf, runReadOnlyQuery, type QueryRun } from '../ai/runQuery'
+import { withQueryOrigin, withQueryPurpose } from '../ai/slowQueries'
 import { clipText } from './notify'
 import { fillCaseTemplate } from './text'
 
@@ -166,12 +167,14 @@ export async function validateDraft(ctx: ValidationContext, input: AutomationDra
     const pool = ctx.readers.ready ? ctx.readers.poolFor(ctx.domains) : null
     if (!pool) errors.push("The assistant cannot reach the factory's data right now, so the automation could not be tried. Try again later.")
     else if (draft.kind === 'watch' && draft.watch && watchSqlOk) {
-      watchRun = await runReadOnlyQuery(pool, draft.watch.sql, {
-        maxRows: AUTOMATION_WATCH_MAX_ROWS,
-        timeoutMs: AUTOMATION_QUERY_TIMEOUT_MS,
-        timeZone: ctx.timeZone,
-        signal: ctx.signal,
-      })
+      watchRun = await withQueryOrigin({ source: 'automation', userId: ctx.creatorId, purpose: draft.name }, () =>
+        runReadOnlyQuery(pool, draft.watch!.sql, {
+          maxRows: AUTOMATION_WATCH_MAX_ROWS,
+          timeoutMs: AUTOMATION_QUERY_TIMEOUT_MS,
+          timeZone: ctx.timeZone,
+          signal: ctx.signal,
+        }),
+      )
       backtest = watchBacktest(draft.watch, watchRun, ctx.now)
       if (!watchRun.ok) errors.push(`watch.sql: ${failedQuery(watchRun)}`)
       else {
@@ -180,7 +183,7 @@ export async function validateDraft(ctx: ValidationContext, input: AutomationDra
         if (errors.length === 0 && draft.replacesAutomationId) await describeChange(ctx, draft, watchRun, backtest)
       }
     } else if (draft.kind === 'report' && draft.schedule && sectionsOk) {
-      const ran = await reportBacktest(pool, draft.schedule, ctx)
+      const ran = await withQueryOrigin({ source: 'automation', userId: ctx.creatorId, purpose: draft.name }, () => reportBacktest(pool, draft.schedule!, ctx))
       backtest = ran.backtest
       ran.runs.forEach((run, i) => {
         if (!run.ok) errors.push(`schedule.sections[${i}] (${quoted(draft.schedule!.sections[i].title)}): ${failedQuery(run)}`)
@@ -578,12 +581,14 @@ async function reportBacktest(pool: pg.Pool, s: AutomationScheduleSpec, ctx: Val
   const runs: QueryRun[] = []
   const chartProblems: string[] = []
   for (const section of s.sections) {
-    const run = await runReadOnlyQuery(pool, sectionSql(section.sql, period), {
-      maxRows: Math.min(BACKTEST_SECTION_ROWS, AI_PREVIEW_ROWS),
-      timeoutMs: AUTOMATION_QUERY_TIMEOUT_MS,
-      timeZone: ctx.timeZone,
-      signal: ctx.signal,
-    })
+    const run = await withQueryPurpose(section.title, () =>
+      runReadOnlyQuery(pool, sectionSql(section.sql, period), {
+        maxRows: Math.min(BACKTEST_SECTION_ROWS, AI_PREVIEW_ROWS),
+        timeoutMs: AUTOMATION_QUERY_TIMEOUT_MS,
+        timeZone: ctx.timeZone,
+        signal: ctx.signal,
+      }),
+    )
     runs.push(run)
     const preview = previewOf(run)
     const out: AiReportSectionRun = {

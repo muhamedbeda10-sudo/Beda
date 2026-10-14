@@ -765,6 +765,41 @@ export interface AiActivityResponse {
 /** Rows an Activity page brings. */
 export const AI_ACTIVITY_PAGE = 50
 
+// ---- Slow queries: the owner's -----------------------------------------------------------
+
+/** Where one of the assistant's queries ran. */
+export type AiSlowQuerySource = 'chat' | 'report' | 'scheduled-report' | 'excel' | 'saved-table' | 'export' | 'automation' | 'other'
+
+/** A query of the assistant that took 10 seconds or more: kept 90 days, so the heavy ones can be fixed. */
+export interface AiSlowQuery {
+  id: string
+  at: string
+  source: AiSlowQuerySource
+  userId: string | null
+  userName: string | null
+  conversationId: string | null
+  /** What it was for: the query's purpose, a report's or file's name and its section. */
+  purpose: string | null
+  sql: string
+  durationMs: number
+  /** 'timeout': stopped at the time limit; 'error': it failed otherwise. */
+  outcome: 'ok' | 'timeout' | 'error'
+  error: string | null
+  /** Rows it returned, when it finished. */
+  rowCount: number | null
+}
+
+export interface AiSlowQueriesResponse {
+  queries: AiSlowQuery[]
+  /** What counts as slow, in seconds. */
+  thresholdSeconds: number
+  /** The time limit of one query, in seconds. */
+  limitSeconds: number
+}
+
+/** Slow queries the owner's list shows, newest first. */
+export const AI_SLOW_QUERIES_SHOWN = 200
+
 // ---- Saved reports -------------------------------------------------------------------
 
 /** A report's period, kept as it was asked, so "last 30 days" stays the last 30 days. */

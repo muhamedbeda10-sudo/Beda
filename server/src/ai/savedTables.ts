@@ -53,6 +53,7 @@ import { auditCreate, auditDelete, writeAudit } from '../audit/service'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
 import { AI_DOMAIN_COMBINATIONS, combinationRole, storedDomains } from './domains'
 import { AI_QUERY_TIMEOUT_MS, codeOnly, precheckSql, runReadOnlyQuery } from './runQuery'
+import { withQueryOrigin } from './slowQueries'
 
 /** A computation's query may take this long: the most the runner allows. */
 export const SAVED_TABLE_QUERY_TIMEOUT_MS = AI_QUERY_TIMEOUT_MS
@@ -549,7 +550,10 @@ export async function saveTable(
     if (rows[0].n >= SAVED_TABLE_MAX_LIVE) return fail(`There are already ${SAVED_TABLE_MAX_LIVE} saved tables: remove ones no longer needed first (list_saved_tables).`)
   }
 
-  const computed = def.source === 'query' ? await computeQuery(deps, def.sql, actor.domains) : computeLiteral(def.columns, def.rows)
+  const computed =
+    def.source === 'query'
+      ? await withQueryOrigin({ source: 'saved-table', userId: actor.id, purpose: def.name }, () => computeQuery(deps, def.sql, actor.domains))
+      : computeLiteral(def.columns, def.rows)
   if ('error' in computed) return fail(`Nothing was saved: ${computed.error}`)
   const notes = def.source === 'query' ? noteMap(def.notes, computed) : noteMap(Object.fromEntries(def.columns.map((c) => [c.name, c.note ?? ''])), computed)
   const refresh: SavedTableRefresh = def.source === 'query' ? def.refresh : 'never'
@@ -687,7 +691,7 @@ export async function refreshTable(
   const started = Date.now()
   let computed: Computed | { error: string }
   try {
-    computed = await computeQuery(deps, row.sql!, null)
+    computed = await withQueryOrigin({ source: 'saved-table', purpose: row.name }, () => computeQuery(deps, row.sql!, null))
   } catch (e) {
     computed = { error: e instanceof Error ? e.message : String(e) }
   }
@@ -902,11 +906,13 @@ export async function removeTable(deps: SavedTableDeps, actor: SavedTableActor, 
 export async function previewTable(deps: SavedTableDeps, viewer: SavedTableActor, tableId: string): Promise<SavedTableRowsResponse | null> {
   const row = await findLive(deps.db, { id: tableId })
   if (!row || !readable(row, viewer.domains)) return null
-  const run = await runReadOnlyQuery(deps.readers.poolFor(viewer.domains), `SELECT * FROM ${qualified(row.name)}`, {
-    maxRows: SAVED_TABLE_PREVIEW_ROWS,
-    timeoutMs: 10_000,
-    timeZone: deps.timeZone,
-  })
+  const run = await withQueryOrigin({ source: 'saved-table', userId: viewer.id, purpose: row.name }, () =>
+    runReadOnlyQuery(deps.readers.poolFor(viewer.domains), `SELECT * FROM ${qualified(row.name)}`, {
+      maxRows: SAVED_TABLE_PREVIEW_ROWS,
+      timeoutMs: 10_000,
+      timeZone: deps.timeZone,
+    }),
+  )
   if (!run.ok) throw new Error(run.error ?? 'The table could not be read.')
   return { columns: run.columns, rows: run.rows, truncated: run.truncated, rowCount: row.rowCount }
 }
