@@ -102,6 +102,12 @@ export async function giveConversationTitle(r: TitleRequest): Promise<AiConversa
     costUsd: usage.costUsd,
     requestId: (message as { _request_id?: string | null })._request_id ?? null,
   })
+  // Asked beside the answer, the title can be counted after a quick answer has closed its turn, whose cost was summed
+  // then: the sum again, with it. A turn still running sums it when it closes (finishTurn).
+  await r.db.query(
+    `UPDATE ai_turns SET cost_usd = (SELECT COALESCE(sum(u.cost_usd), 0) FROM ai_usage u WHERE u.turn_id = $1) WHERE id = $1 AND status = 'done'`,
+    [r.turnId],
+  )
   const words = message.content
     .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
     .map((b) => b.text)

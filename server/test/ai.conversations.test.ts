@@ -363,6 +363,28 @@ describe('a title by the assistant', () => {
     expect(await sourceOf(id)).toEqual({ title: 'Late orders this month', title_source: 'question' })
   })
 
+  it("counts the title in its question's cost when it comes after the answer has closed", async () => {
+    // The title is asked beside the answer: a quick answer can close its turn (and sum its cost) before the title's
+    // call is recorded. The turn here is closed already, with its answer's call counted.
+    const { rows } = await app.db.query<{ id: string; turn: string }>(
+      `WITH c AS (INSERT INTO ai_conversations (user_id, title, model, system_prompt, tools) VALUES ($1, 'Scrap last week', $2, '', '[]') RETURNING id)
+       INSERT INTO ai_turns (conversation_id, user_id, client_id, question) SELECT c.id, $1, $3, 'Scrap last week' FROM c RETURNING conversation_id AS id, id AS turn`,
+      [admin.user.id, AI_MODEL, randomUUID()],
+    )
+    const [{ id, turn }] = rows
+    await app.db.query(`INSERT INTO ai_usage (user_id, conversation_id, turn_id, model, cost_usd) VALUES ($1, $2, $3, $4, 0.004)`, [admin.user.id, id, turn, AI_MODEL])
+    await app.db.query(`UPDATE ai_turns SET status = 'done', stop_reason = 'end_turn', finished_at = now(), cost_usd = 0.004 WHERE id = $1`, [turn])
+    app.model.completeWith = () => 'Scrap by machine'
+    await giveConversationTitle({ db: app.db, model: app.model, apiKey: KEY, userId: admin.user.id, conversationId: id, turnId: turn, question: 'Scrap last week' })
+    const usage = await app.db.query<{ cost: number }>(`SELECT sum(cost_usd)::float AS cost FROM ai_usage WHERE turn_id = $1`, [turn])
+    expect(usage.rows[0].cost).toBeGreaterThan(0.004)
+    const closed = await app.db.query<{ cost: number }>(`SELECT cost_usd::float AS cost FROM ai_turns WHERE id = $1`, [turn])
+    expect(closed.rows[0].cost).toBeCloseTo(usage.rows[0].cost, 9)
+    app.model.completeWith = () => {
+      throw new Error('unused')
+    }
+  })
+
   it('never replaces a title the person gave', async () => {
     const { rows } = await app.db.query<{ id: string; turn: string }>(
       `WITH c AS (INSERT INTO ai_conversations (user_id, title, model, system_prompt, tools, title_source) VALUES ($1, 'My own name', $2, '', '[]', 'person') RETURNING id)
