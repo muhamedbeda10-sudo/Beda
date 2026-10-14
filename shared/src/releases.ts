@@ -28,13 +28,22 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-10-14.8',
+    id: '2026-10-14.9',
     date: '2026-10-14',
     title: 'The assistant draws diagrams: process maps, fishbones, 5 whys and more',
     items: [
       { text: 'Ask the AI assistant for a diagram and it draws one in the chat: a process map or flowchart (decisions, inspection points, rework loops), a swimlane across departments, a fishbone (cause and effect) of a problem, 5 whys or another tree, or columns such as SIPOC. Arabic diagrams read from the right.' },
       { text: 'Every figure on a diagram comes from the factory\'s record, by a query you can open under it; a cause the data does not show is drawn dashed, as a hypothesis to check.' },
       { text: 'Full screen opens a diagram to pinch and zoom on a tablet; PNG and SVG download it, and Print prints it with the answer. To change one, ask the assistant: it draws it again.' },
+    ],
+  },
+  {
+    id: '2026-10-14.8',
+    date: '2026-10-14',
+    title: 'The coil can be required on a machine',
+    items: [
+      { text: 'Configuration → Machines has a new Coil setting on roll forming / fabrication and universal machines: Optional, or Required on every sample. On a machine where it is required — the roll forming lines, the 400 t press — a sample is not saved until the coil it was made from is added; the Setup step marks the coils as required and says so.' },
+      { text: 'Welding keeps its own rule: the connector coil number, always required. Every machine starts as Optional, so turn it on for the machines that need it.' },
     ],
   },
   {

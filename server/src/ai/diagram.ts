@@ -18,7 +18,7 @@
 // no figure, and is drawn dashed.
 //
 // What passes is kept with the call and its result, in one transaction
-// (ai_diagrams, migration 0057), and shown as a card in its place.
+// (ai_diagrams, migration 0058), and shown as a card in its place.
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'

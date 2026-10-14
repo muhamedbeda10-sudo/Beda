@@ -262,7 +262,7 @@ async function loadPreviousSetup(q: Queryable, sessionId: string): Promise<Previ
 async function loadMachine(q: Queryable, code: string): Promise<Machine | null> {
   const { rows } = await q.query<Machine>(
     `SELECT id, code, name, line, display_name AS "displayName", machine_number AS "machineNumber", factory, process,
-            uses_item_dimensions AS "usesItemDimensions"
+            uses_item_dimensions AS "usesItemDimensions", coil_required AS "coilRequired"
        FROM machines WHERE lower(code) = lower($1) AND deleted_at IS NULL LIMIT 1`,
     [code],
   )
@@ -1094,9 +1094,10 @@ export function sessionsRoutes(ctx: AppContext): Router {
       const [order] = await fetchOrdersByIds(tx, [session.orderId])
       if (!order) throw notFound('The session’s order')
       const wc = session.workCenterCode
-      const process = processForMachine(await loadMachine(tx, wc), wc)
+      const machine = await loadMachine(tx, wc)
+      const process = processForMachine(machine, wc)
 
-      const { imageIds } = await validateSampleBody(tx, process, body, drawingRequiredFor(order))
+      const { imageIds } = await validateSampleBody(tx, process, body, drawingRequiredFor(order), !!machine?.coilRequired)
 
       const index = (await tx.query<{ next: number }>(
         `SELECT COALESCE(max(index), 0) + 1 AS next FROM inspection_samples WHERE session_id = $1`,
@@ -1198,10 +1199,11 @@ export function sessionsRoutes(ctx: AppContext): Router {
       if (before.version !== body.version) throw new ConflictError(dropNulls(toSample(before)))
 
       const wc = session.workCenterCode
-      const process = processForMachine(await loadMachine(tx, wc), wc)
+      const machine = await loadMachine(tx, wc)
+      const process = processForMachine(machine, wc)
       // Its drawings as the sheet gives them now: a line whose sheet names none takes a sample without one.
       const [line] = session.orderId ? await fetchOrdersByIds(tx, [session.orderId]) : []
-      const { imageIds } = await validateSampleBody(tx, process, body, line ? drawingRequiredFor(line) : !isStockOrder(session.order))
+      const { imageIds } = await validateSampleBody(tx, process, body, line ? drawingRequiredFor(line) : !isStockOrder(session.order), !!machine?.coilRequired)
 
       // Retire the current child rows; nothing is erased.
       const counts = await retireSampleChildren(tx, sampleId, user.id)
@@ -1566,10 +1568,12 @@ async function validateSampleBody(
   process: Process,
   body: Omit<z.infer<typeof saveSampleSchema>, 'submissionId'>,
   drawingRequired = true,
+  coilRequired = false,
 ): Promise<{ imageIds: string[] }> {
   const issues = validateSample({
     process,
     drawingRequired,
+    coilRequired,
     sampleQty: body.sampleQty,
     drawing: body.drawing,
     coils: body.coils.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade })),

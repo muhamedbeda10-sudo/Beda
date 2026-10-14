@@ -325,6 +325,8 @@ export function WizardPage() {
       process: draft.process,
       // A stock item, or a line whose sheet names no drawing, has none to pick.
       drawingRequired: drawingRequiredFor(order),
+      // Roll forming, the 400 t press…: the machine requires the coil (Configuration → Machines).
+      coilRequired: !!machine?.coilRequired,
       sampleQty: Number(draft.sampleQty),
       drawing: draft.drawing,
       coils: draft.coils.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade })),
@@ -349,7 +351,7 @@ export function WizardPage() {
         : undefined,
     })
     return renumberLengthIssues(found, lengths.rowOf)
-  }, [draft])
+  }, [draft, order, machine?.coilRequired])
 
   // ---- Layout: the rail, the keyboard, a short landscape screen ------------
   const short = useMediaQuery(SHORT_LANDSCAPE)
@@ -736,6 +738,7 @@ export function WizardPage() {
             connectorRefused={connectorRefused}
             focusConnector={focusConnector}
             onConnectorFocused={connectorFocused}
+            coilRequired={!!machine?.coilRequired}
           />
         )}
         {current !== 'setup' && current !== 'review' && steps.includes('setup') && (
@@ -1119,6 +1122,7 @@ function SetupStep({
   connectorRefused,
   focusConnector,
   onConnectorFocused,
+  coilRequired,
 }: {
   draft: SampleDraft
   order: ProductionOrder
@@ -1131,6 +1135,8 @@ function SetupStep({
   /** A save was refused for the connector coil number: put the cursor in it. */
   focusConnector: boolean
   onConnectorFocused: () => void
+  /** The machine requires the coil this sample was made from (Configuration → Machines). */
+  coilRequired: boolean
 }) {
   const { toast } = useApp()
   /** The line's drawings to pick from: DWG1 and DWG2 that name one ("(V)", "0" and the like do not). */
@@ -1279,14 +1285,22 @@ function SetupStep({
       {!welding && (
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <span className="label !mb-0">Coils</span>
+          <span className="label !mb-0">
+            Coils{coilRequired && <span className="ms-1 text-rose-600 dark:text-rose-400" aria-hidden>*</span>}
+            {coilRequired && <span className="sr-only"> (required)</span>}
+          </span>
           <Button variant="secondary" className="min-h-[44px]" onClick={() => setPicking(true)}>
             <Plus className="h-4 w-4" /> Add coil
           </Button>
         </div>
         {draft.coils.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-sm text-muted dark:border-slate-700">
-            No coils added. Optional on this machine.
+          <p
+            className={cn(
+              'rounded-xl border border-dashed py-4 text-center text-sm',
+              coilRequired ? 'border-rose-300 text-rose-700 dark:border-rose-500/40 dark:text-rose-300' : 'border-slate-200 text-muted dark:border-slate-700',
+            )}
+          >
+            {coilRequired ? 'Required on this machine: add the coil this sample was made from.' : 'No coils added. Optional on this machine.'}
           </p>
         ) : (
           <div className="space-y-3">
