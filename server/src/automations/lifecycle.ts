@@ -19,6 +19,7 @@
 // ============================================================================
 
 import { createHash } from 'node:crypto'
+import { inputValueText } from '@qc/shared/aiReportInputs'
 import { describeAiPeriod } from '@qc/shared/ai'
 import { auditEvent } from '@qc/shared/audit'
 import {
@@ -57,9 +58,14 @@ function invalid(errors: string[]): HttpError {
   return badRequest(errors[0] ?? 'The automation is not valid.', errors.map((message) => ({ path: '', message })))
 }
 
-/** The queries of a definition as the audit log names them: a fingerprint, so a change shows and the SQL does not. */
+/** The queries of a definition as the audit log names them: a fingerprint, so a change shows and the SQL does not. A saved report it sends is its id and values. */
 function queriesFingerprint(d: AutomationDraft): string {
-  const sql = d.watch ? d.watch.sql : (d.schedule?.sections ?? []).map((s) => `${s.title}\n${s.sql}`).join('\n\n')
+  const report = d.schedule?.report
+  const sql = d.watch
+    ? d.watch.sql
+    : report
+      ? `report ${report.reportId}\n${JSON.stringify(report.inputs)}`
+      : (d.schedule?.sections ?? []).map((s) => `${s.title}\n${s.sql}`).join('\n\n')
   return createHash('sha256').update(sql).digest('hex').slice(0, 12)
 }
 
@@ -85,6 +91,15 @@ async function auditSnapshot(q: Queryable, d: AutomationDraft, creatorName: stri
     snap.schedule = describeSchedule(d.schedule)
     snap.period = d.schedule.period ? describeAiPeriod(d.schedule.period) : 'none'
     snap.summary = d.schedule.summary ? 'on' : 'off'
+    if (d.schedule.report) {
+      // The saved report by its title, and the values it is given, as people read them.
+      const { rows } = await q.query<{ title: string }>(`SELECT title FROM ai_reports WHERE id = $1`, [d.schedule.report.reportId])
+      snap.report = rows[0]?.title ?? d.schedule.report.reportId
+      snap.reportInputs =
+        Object.entries(d.schedule.report.inputs)
+          .map(([k, v]) => `${k}: ${inputValueText(v)}`)
+          .join('; ') || 'each its default'
+    }
   }
   return snap
 }

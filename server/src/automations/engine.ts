@@ -57,7 +57,8 @@ import { runReport, runSections, sectionError, type ReportReader } from './repor
 import { INTERRUPTED_ERROR, beginRun, closeLostRuns, findRun, skippedRun } from './runs'
 import { MISSED_RUN_GRACE_MS, nextReportRun, nextWatchRun, previousReportRun, reportRunsBetween, watchRunAt } from './schedule'
 import { isolate } from './text'
-import { AUTOMATION_QUERY_TIMEOUT_MS, queryErrorForPeople, reportPeriodAt, watchBacktest, type AutomationReaders } from './validate'
+import { prepareReport } from './savedReport'
+import { AUTOMATION_QUERY_TIMEOUT_MS, queryErrorForPeople, watchBacktest, type AutomationReaders } from './validate'
 import { appState, blockedNote, blockedReason, creatorDomains, creatorStates, findAutomation, type AutomationRow } from './views'
 import { STOPPING, automationLink, casesOf, runWatch, type RunResult } from './watch'
 
@@ -435,10 +436,13 @@ export async function testAutomation(deps: EngineDeps, a: AutomationRow, opts: {
   else opts.signal?.addEventListener('abort', onLeave, { once: true })
   try {
     if (a.kind === 'report') {
-      const period = reportPeriodAt(a.schedule!, now, tz)
+      // Its own sections, or its saved report as it stands, with the values its inputs take today.
+      const prepared = await prepareReport(deps.db, a.creatorId, a.schedule!, now, tz)
+      if ('error' in prepared) return { ranAt, ok: false, error: prepared.error }
+      const period = prepared.period
       // The rows a card shows, not a delivery's: nothing is kept. Each section as its creator's domains are when it starts.
       const ran = await withQueryOrigin({ source: 'scheduled-report', userId: a.creatorId, purpose: a.name }, () =>
-        runSections(readerFor(deps, a.creatorId), a.schedule!, period, tz, ac.signal, AI_PREVIEW_ROWS),
+        runSections(readerFor(deps, a.creatorId), prepared.sections, tz, ac.signal, AI_PREVIEW_ROWS),
       )
       if (ran.blocked) return { ranAt, ok: false, error: blockedNote(ran.blocked) }
       const sections = ran.sections.map((s) => ({ ...s, ...previewOf(s) }))

@@ -10,16 +10,19 @@
 // When it cannot be had — a cap, no key, the assistant off, the call failing —
 // the report goes out without it and says so in a sentence, never an amount.
 //
+// Its sections are its own, or a saved report's as the report stands, with
+// the values its inputs take that day (./savedReport).
+//
 // What was delivered is kept (ai_report_deliveries: each section's rows, up
-// to AUTOMATION_DELIVERY_MAX_ROWS, and the summary) with the people it went
-// to, so the bell's alert and the chat's message open a page that shows it
+// to AUTOMATION_DELIVERY_MAX_ROWS, and the summary; the saved report and its
+// inputs' values when it sent one) with the people it went to, so the bell's alert and the chat's message open a page that shows it
 // and exports it. Nothing here changes the factory's record.
 // ============================================================================
 
 import Anthropic from '@anthropic-ai/sdk'
 import type pg from 'pg'
 import { resolveAiAction, type AiCell, type AiEffort, type AiModelId, type AiReportSectionRun } from '@qc/shared/ai'
-import { AUTOMATION_DELIVERY_MAX_ROWS, type AutomationBlockedReason, type AutomationLanguage, type AutomationScheduleSpec } from '@qc/shared/automation'
+import { AUTOMATION_DELIVERY_MAX_ROWS, type AutomationBlockedReason, type AutomationLanguage } from '@qc/shared/automation'
 import type { Role } from '@qc/shared/types'
 import type { Config } from '../config'
 import { withTransaction, type Db } from '../db/pool'
@@ -38,7 +41,8 @@ import { createNotifications } from './notify'
 import { activeUserIds } from './people'
 import { sendSystemMessages } from './systemChat'
 import { isolate } from './text'
-import { queryErrorForPeople, reportPeriodAt, sectionSql } from './validate'
+import { prepareReport, type PreparedSection } from './savedReport'
+import { queryErrorForPeople } from './validate'
 import { blockedNote, type AutomationRow } from './views'
 import { isStopping, type RunResult } from './watch'
 
@@ -96,7 +100,7 @@ export function summarySystemPrompt(language: AutomationLanguage, sections: read
     ...(cut ? ['truncated: true when it returned more rows than the report keeps'] : []),
   ]
   const input =
-    `The input is JSON: the report's name and description, the days it covers, and each section's result: ${fields.slice(0, -1).join(', ')} and ${fields[fields.length - 1]}.` +
+    `The input is JSON: the report's name and description, the days it covers, the values it was run for when it has any (inputs: the orders, the week…), and each section's result: ${fields.slice(0, -1).join(', ')} and ${fields[fields.length - 1]}.` +
     (failed ? ' A section that did not run has failed: true instead.' : '')
   const lines = [
     "You write the short summary at the top of a scheduled report of a factory's quality-control system (the factory makes steel storage racking).",
@@ -147,15 +151,15 @@ export interface ReportRunArgs {
 }
 
 /**
- * The sections, run now in full for the delivery (or a test's first rows):
- * each within what the delivery has room left for, each as its creator's
- * domains are when it starts. A creator who can no longer run it stops the
- * rest: `blocked` says why.
+ * The sections (./savedReport: their SQL filled in for the run), run now in
+ * full for the delivery (or a test's first rows): each within what the
+ * delivery has room left for, each as its creator's domains are when it
+ * starts. A creator who can no longer run it stops the rest: `blocked` says
+ * why. A saved report's sections keep how they show their rows.
  */
 export async function runSections(
   reader: ReportReader,
-  s: AutomationScheduleSpec,
-  period: { from: string; to: string } | null,
+  sections: readonly PreparedSection[],
   timeZone: string,
   signal: AbortSignal,
   maxRows = AUTOMATION_DELIVERY_MAX_ROWS,
@@ -163,10 +167,10 @@ export async function runSections(
   const out: AiReportSectionRun[] = []
   let room = DELIVERY_MAX_CHARS
   // One after another: the readers' few connections are shared with everyone asking.
-  for (const section of s.sections) {
+  for (const section of sections) {
     const pool = await reader()
     if (pool && 'blocked' in pool) return { sections: out, blocked: pool.blocked }
-    const run = await withQueryPurpose(section.title, () => runReadOnlyQuery(pool, sectionSql(section.sql, period), {
+    const run = await withQueryPurpose(section.title, () => runReadOnlyQuery(pool, section.sql, {
       maxRows,
       timeoutMs: SECTION_TIMEOUT_MS,
       timeZone,
@@ -182,6 +186,9 @@ export async function runSections(
     // Its chart, drawn from this run's rows when they fit it (a day with one row is told in figures).
     const chart = run.ok ? checkChart(section.chart, { columns: run.columns, rows, rowCount: rows.length, truncated: run.truncated }).chart : undefined
     if (chart) result.chart = chart
+    if (section.display) result.display = section.display
+    if (section.tree) result.tree = section.tree
+    if (section.note) result.note = section.note
     out.push(result)
   }
   return { sections: out }
@@ -191,10 +198,12 @@ export async function runReport(args: ReportRunArgs): Promise<RunResult> {
   const a = args.automation
   const s = a.schedule!
   const tz = args.config.FACTORY_TIMEZONE
-  // The days of the time it was due: an end-of-day report run after midnight still covers its own day.
-  const period = reportPeriodAt(s, args.slotAt ?? args.now, tz)
-  const ran = await withQueryOrigin({ source: 'scheduled-report', userId: a.creatorId, purpose: a.name }, () => runSections(args.reader, s, period, tz, args.signal))
   const base: RunResult = { ok: false, notified: 0, casesNotified: 0, digest: false, notes: [] }
+  // The days, and a saved report's input values, of the time it was due: an end-of-day report run after midnight still covers its own day.
+  const prepared = await prepareReport(args.db, a.creatorId, s, args.slotAt ?? args.now, tz)
+  if ('error' in prepared) return { ...base, error: prepared.error }
+  const period = prepared.period
+  const ran = await withQueryOrigin({ source: 'scheduled-report', userId: a.creatorId, purpose: a.name }, () => runSections(args.reader, prepared.sections, tz, args.signal))
   if (ran.blocked) return { ...base, blocked: ran.blocked, error: blockedNote(ran.blocked) }
   // The server stopping: nothing goes out half done; the run is handed back and runs again in full.
   if (isStopping(args.signal)) return { ...base, interrupted: true, error: INTERRUPTED }
@@ -209,7 +218,7 @@ export async function runReport(args: ReportRunArgs): Promise<RunResult> {
   let summary: string | null = null
   let summaryNote: string | null = null
   if (s.summary) {
-    const written = await summarize(args, period, sections)
+    const written = await summarize(args, period, sections, prepared.inputs)
     if (isStopping(args.signal)) return { ...base, interrupted: true, error: INTERRUPTED }
     if ('summary' in written) summary = written.summary
     else {
@@ -220,9 +229,21 @@ export async function runReport(args: ReportRunArgs): Promise<RunResult> {
 
   return withTransaction(args.db, async (tx) => {
     const { rows } = await tx.query<{ id: string }>(
-      `INSERT INTO ai_report_deliveries (automation_id, run_id, automation_name, language, ran_at, period, summary, summary_note, sections)
-       VALUES ($1, $2, $3, $4, $5, $6::json, $7, $8, $9::json) RETURNING id`,
-      [a.id, args.runId, a.name, a.language, args.now.toISOString(), period ? JSON.stringify(period) : null, summary, summaryNote, JSON.stringify(sections)],
+      `INSERT INTO ai_report_deliveries (automation_id, run_id, automation_name, language, ran_at, period, summary, summary_note, sections, report_id, inputs)
+       VALUES ($1, $2, $3, $4, $5, $6::json, $7, $8, $9::json, $10, $11::json) RETURNING id`,
+      [
+        a.id,
+        args.runId,
+        a.name,
+        a.language,
+        args.now.toISOString(),
+        period ? JSON.stringify(period) : null,
+        summary,
+        summaryNote,
+        JSON.stringify(sections),
+        prepared.report?.id ?? null,
+        prepared.report ? JSON.stringify(prepared.inputs) : null,
+      ],
     )
     const deliveryId = rows[0].id
     const users = a.recipients.flatMap((r) => (r.kind === 'user' ? [r.userId] : []))
@@ -267,13 +288,20 @@ function excerptOf(summary: string): string {
  * whole fits. A section is marked truncated or failed only when it is: the
  * figures are what the summary is about, not how the report went.
  */
-export function summaryInput(a: Pick<AutomationRow, 'name' | 'description'>, period: { from: string; to: string; label: string } | null, sections: AiReportSectionRun[]): string {
+export function summaryInput(
+  a: Pick<AutomationRow, 'name' | 'description'>,
+  period: { from: string; to: string; label: string } | null,
+  sections: AiReportSectionRun[],
+  inputs: readonly { label: string; value: string }[] = [],
+): string {
   const cell = (c: AiCell): AiCell => (typeof c === 'string' ? cutChars(c, SUMMARY_CELL_CHARS, true) : c)
   for (const rows of [30, 10, 3, 0]) {
     const input = {
       report: a.name,
       description: a.description,
       period,
+      // A saved report's values that day: the orders, the week… it is about.
+      ...(inputs.length > 0 ? { inputs } : {}),
       sections: sections.map((s) =>
         s.ok
           ? { title: s.title, columns: s.columns, rows: s.rows.slice(0, rows).map((r) => r.map(cell)), rowCount: s.rowCount, ...(s.truncated ? { truncated: true } : {}) }
@@ -292,6 +320,7 @@ export function summaryRequest(
   a: Pick<AutomationRow, 'name' | 'description' | 'language'>,
   period: { from: string; to: string; label: string } | null,
   sections: AiReportSectionRun[],
+  inputs: readonly { label: string; value: string }[] = [],
 ): ModelParams {
   return {
     model: run.model,
@@ -299,7 +328,7 @@ export function summaryRequest(
     thinking: { type: 'adaptive' },
     output_config: { effort: run.effort },
     system: [{ type: 'text', text: summarySystemPrompt(a.language, sections) }],
-    messages: [{ role: 'user', content: summaryInput(a, period, sections) }],
+    messages: [{ role: 'user', content: summaryInput(a, period, sections, inputs) }],
   }
 }
 
@@ -308,12 +337,17 @@ export function summaryRequest(
  * is made — its worst case at this max_tokens — and counted the moment it
  * ends (or as far as it got). Never throws for the model's sake.
  */
-async function summarize(args: ReportRunArgs, period: { from: string; to: string; label: string } | null, sections: AiReportSectionRun[]): Promise<{ summary: string } | { note: string }> {
+async function summarize(
+  args: ReportRunArgs,
+  period: { from: string; to: string; label: string } | null,
+  sections: AiReportSectionRun[],
+  inputs: readonly { label: string; value: string }[],
+): Promise<{ summary: string } | { note: string }> {
   const a = args.automation
   const { apiKey } = await resolveApiKey(args.db, args.config)
   if (!apiKey) return { note: SUMMARY_NOTE.unavailable }
   // On the model and effort the owner set for scheduled summaries (Models).
-  const params = summaryRequest(resolveAiAction((await loadAiSettings(args.db)).settings, 'report-summary'), a, period, sections)
+  const params = summaryRequest(resolveAiAction((await loadAiSettings(args.db)).settings, 'report-summary'), a, period, sections, inputs)
   const stop = await checkCall(args.db, a.creatorId, worstCaseUsd(params))
   if (stop) return { note: stop.stopReason === 'cap' ? SUMMARY_NOTE.cap : SUMMARY_NOTE.unavailable }
 

@@ -104,7 +104,7 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
   const recipients = changes?.recipients ? recipientViews(def.recipients, peopleMap, part.recipients ?? [], watch ? columns : null) : (part.recipients ?? recipientViews(def.recipients, null))
   const f = def.actions.followUp
   const assignee = f ? (changes?.actions ? assigneeView(f.assignee, peopleMap, creatorName, part.assignee, watch ? columns : null) : (part.assignee ?? assigneeView(f.assignee, null, creatorName))) : undefined
-  const summary = automationSummary({ ...def, recipients, assignee })
+  const summary = automationSummary({ ...def, recipients, assignee, linkedReport: part.linkedReport })
   const matched = bt?.matched ?? 0
   // What becomes of the cases matching now: a change of a watch says how many its automation has not seen yet, and whether they carry on.
   const cases = watch && bt?.ok ? existingCases(draft.replacesAutomationId ? bt : { ...bt, newCases: undefined, keepsCases: undefined }, notifyExisting) : null
@@ -239,7 +239,7 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
             )}
 
             <p className="text-13 leading-relaxed text-slate-700 dark:text-slate-200">{summary}</p>
-            <DefinitionFacts def={def} recipients={recipients} assignee={assignee} />
+            <DefinitionFacts def={def} recipients={recipients} assignee={assignee} linkedReport={part.linkedReport} />
 
             {bt && (
               <section aria-label="What a trial run found" className="space-y-2 rounded-xl bg-slate-50 p-2.5 ring-1 ring-slate-200/70 dark:bg-slate-800/40 dark:ring-slate-800">
@@ -369,6 +369,7 @@ function Proposal({ part, draft, writing, onDecided }: { part: AiAutomationPart;
           initialEdits={edits}
           knownRecipients={part.recipients ?? []}
           knownAssignee={part.assignee}
+          reportInputs={part.linkedReport?.inputs}
           creatorName={creatorName}
           columns={columns}
           title={def.name}

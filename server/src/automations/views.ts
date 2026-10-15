@@ -26,6 +26,7 @@ import { isGranted, loadAccess, type AccessRecord } from '../ai/access'
 import { currentAiOwner } from '../ai/owner'
 import { loadAiSettings } from '../ai/settings'
 import { assigneeView, namedUserIds, peopleById, recipientViews, type Person } from './labels'
+import { linkedReportView, linkedReportViews } from './savedReport'
 
 // ---- Whether the creator can run it --------------------------------------------------
 
@@ -167,7 +168,14 @@ export async function findAutomation(q: Queryable, id: string, forUpdate = false
 export async function toAutomations(q: Queryable, rows: AutomationRow[], viewerId: string, app: AppState): Promise<Automation[]> {
   const people = await peopleById(q, rows.flatMap((r) => namedUserIds(r.recipients, r.actions)))
   const creators = await creatorStates(q, rows.map((r) => r.creatorId))
-  return rows.map((r) => toAutomation(r, viewerId, people, blockedReason(r.creatorId, creators.get(r.creatorId), app)))
+  // The saved reports they send, each as its automation's creator may open it now.
+  const linked = await linkedReportViews(q, rows)
+  return rows.map((r) => {
+    const out = toAutomation(r, viewerId, people, blockedReason(r.creatorId, creators.get(r.creatorId), app))
+    const report = linkedReportView(linked, r.creatorId, r.schedule)
+    if (report) out.linkedReport = report
+    return out
+  })
 }
 
 export function toAutomation(r: AutomationRow, viewerId: string, people: Map<string, Person>, blocked: AutomationBlockedReason | null): Automation {

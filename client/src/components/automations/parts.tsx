@@ -8,9 +8,10 @@
 // ============================================================================
 
 import { useMemo, useState, type ReactNode } from 'react'
-import { AlertTriangle, Bell, CalendarRange, CheckCircle2, ChevronDown, Clock, ListChecks, OctagonX, Sparkles, Table2, Users } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { AlertTriangle, Bell, CalendarRange, CheckCircle2, ChevronDown, Clock, FileChartColumn, ListChecks, OctagonX, Sparkles, Table2, Users } from 'lucide-react'
 import { AI_PREVIEW_ROWS, describeAiDays, describeAiPeriod, type AiCell, type AiDayRange, type AiQueryPart, type AiReportSectionRun } from '@qc/shared/ai'
-import type { Automation, AutomationAssigneeView, AutomationKind, AutomationRecipientView } from '@qc/shared/automation'
+import type { Automation, AutomationAssigneeView, AutomationKind, AutomationLinkedReport, AutomationRecipientView } from '@qc/shared/automation'
 import { Badge } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -21,6 +22,7 @@ import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figure
 import { AiResultModal, PreviewTable } from '@/components/ai/AiResultTable'
 import { queryChart } from '@/components/ai/chartData'
 import { sectionAsQuery } from '@/components/ai/reports'
+import { SectionFigures, SectionTree, sectionDisplay } from '@/components/ai/AiReportLayouts'
 import { TableTool, aiTableFilename } from '@/components/ai/AiTable'
 import { aiCellValue } from '@/components/ai/exportAiResult'
 import {
@@ -32,6 +34,7 @@ import {
   automationStatus,
   channelsText,
   followUpText,
+  linkedValuesLines,
   needsReview,
   periodPhrase,
   whenText,
@@ -109,10 +112,13 @@ export function DefinitionFacts({
   def,
   recipients,
   assignee,
+  linkedReport,
 }: {
   def: EditableDefinition
   recipients: readonly AutomationRecipientView[]
   assignee?: AutomationAssigneeView
+  /** A report sending a saved report: which, as the server read it (its values are the definition's). */
+  linkedReport?: AutomationLinkedReport
 }) {
   const s = def.schedule
   const f = def.actions.followUp
@@ -123,9 +129,30 @@ export function DefinitionFacts({
         {whenText(def)}
         <span className="text-muted">{def.kind === 'watch' ? ' · each new case once' : ' · factory time'}</span>
       </Fact>
+      {s?.report && (
+        <Fact icon={<FileChartColumn className="h-4 w-4" />} label="Sends">
+          {linkedReport && !linkedReport.missing ? (
+            <Link to={`/ai/reports/${encodeURIComponent(linkedReport.id)}`} dir="auto" className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
+              {linkedReport.title}
+            </Link>
+          ) : (
+            <span className="font-semibold text-rose-700 dark:text-rose-300">{linkedReport ? `${linkedReport.title}: deleted, or no longer shared` : 'A saved report'}</span>
+          )}
+          <span className="text-muted"> · as it stands each time it runs</span>
+          {linkedReport && linkedReport.inputs.length > 0 && (
+            <ul className="mt-0.5 space-y-0.5 text-xs text-muted">
+              {linkedValuesLines(linkedReport.inputs, s.report.inputs ?? {}).map((line) => (
+                <li key={line} dir="auto">
+                  {line}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Fact>
+      )}
       {s && (
         <Fact icon={<CalendarRange className="h-4 w-4" />} label="Covers">
-          {s.period ? describeAiPeriod(s.period) : <span className="text-muted">Its queries take no period</span>}
+          {s.period ? describeAiPeriod(s.period) : <span className="text-muted">{s.report ? 'The days the report covers' : 'Its queries take no period'}</span>}
           {s.summary && (
             <span className="mt-0.5 flex items-center gap-1 text-xs text-muted">
               <Sparkles className="h-3.5 w-3.5" /> With a short summary by the assistant on top
@@ -280,7 +307,8 @@ function SectionPreview({ section, index, initiallyOpen }: { section: AiReportSe
   const meta = section.ok ? `${section.rowCount.toLocaleString('en-US')}${section.truncated ? '+' : ''} ${section.rowCount === 1 && !section.truncated ? 'row' : 'rows'}` : 'Failed'
   const shown = section.rows.slice(0, AI_PREVIEW_ROWS)
   // The chart the delivered report will draw, as this run would draw it; the switch shows it or the rows themselves.
-  const chart = useMemo(() => (section.ok ? queryChart(sectionAsQuery(section, '', index)) : null), [section, index])
+  const display = sectionDisplay(section)
+  const chart = useMemo(() => (section.ok && display === 'table' ? queryChart(sectionAsQuery(section, '', index)) : null), [section, index, display])
   const [view, setView] = useState<FigureView>('chart')
   return (
     <section className={cn('overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', section.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
@@ -294,12 +322,21 @@ function SectionPreview({ section, index, initiallyOpen }: { section: AiReportSe
       </button>
       {open && (
         <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
+          {section.note && (
+            <p dir="auto" className="text-[11px] leading-snug text-muted">
+              {section.note}
+            </p>
+          )}
           {chart && (
             <div className="flex justify-end">
               <ChartTableSwitch value={view} onChange={setView} />
             </div>
           )}
-          {chart && view === 'chart' ? (
+          {display === 'figures' ? (
+            <SectionFigures columns={section.columns} rows={section.rows} />
+          ) : display === 'tree' && section.tree ? (
+            <SectionTree columns={section.columns} rows={shown} tree={section.tree} truncated={section.truncated || section.rows.length > shown.length} />
+          ) : chart && view === 'chart' ? (
             <AiChart model={chart} />
           ) : section.ok ? (
             <CasesTable title={section.title} columns={section.columns} rows={shown} more={section.truncated || section.rows.length > shown.length} />

@@ -28,6 +28,19 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-16.4',
+    date: '2026-10-16',
+    title: 'Saved reports sent on a schedule',
+    items: [
+      { text: 'A scheduled report can now send one of My reports, such as Order tracking or Week tracking: ask the assistant, for example “send Order tracking for 20332 to Ahmed every day at 8”. It describes the plan, and once you agree it shows the card to activate.' },
+      { text: 'The values are fixed in the schedule (the orders, the machine…). A value left empty takes its default on the day of each run, so Week tracking with no week always sends the current week.' },
+      { text: 'The report goes out as it stands each time it runs: with its headline figures, its tree and its charts, as in My reports. A change to the report reaches the next delivery.' },
+      { text: 'The delivered report names the report and the values it ran for, links to the report for anyone who may open it, and both Excel and Print include them.' },
+      { text: 'On the automation’s page, Sends shows the report and its values, and Edit changes the values without going through the chat.' },
+      { text: 'If the report is deleted, or no longer shared with the automation’s creator, its runs fail and say why, like any other failure.' },
+    ],
+  },
+  {
     id: '2026-10-16.3',
     date: '2026-10-16',
     title: 'MTC: certificates from photos and Excel, and reading fixed',
