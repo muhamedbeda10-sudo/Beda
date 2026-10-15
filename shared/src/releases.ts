@@ -28,12 +28,25 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
-    id: '2026-10-16.4',
+    id: '2026-10-16.5',
     date: '2026-10-16',
     title: 'AI: a conversation keeps its level',
     items: [
       { text: 'In a conversation with the AI assistant, the level (simple, analysis, deep) now only goes up. A follow-up that asks less stays on the conversation’s model, so the conversation so far is read from Anthropic’s cache at a tenth of the price instead of being paid for again on another model. Once a conversation is at Deep analysis, the router is not asked any more.' },
       { text: 'Activity says so: such a question reads “Kept at …” as the reason for its level.' },
+    ],
+  },
+  {
+    id: '2026-10-16.4',
+    date: '2026-10-16',
+    title: 'Saved reports sent on a schedule',
+    items: [
+      { text: 'A scheduled report can now send one of My reports, such as Order tracking or Week tracking: ask the assistant, for example “send Order tracking for 20332 to Ahmed every day at 8”. It describes the plan, and once you agree it shows the card to activate.' },
+      { text: 'The values are fixed in the schedule (the orders, the machine…). A value left empty takes its default on the day of each run, so Week tracking with no week always sends the current week.' },
+      { text: 'The report goes out as it stands each time it runs: with its headline figures, its tree and its charts, as in My reports. A change to the report reaches the next delivery.' },
+      { text: 'The delivered report names the report and the values it ran for, links to the report for anyone who may open it, and both Excel and Print include them.' },
+      { text: 'On the automation’s page, Sends shows the report and its values, and Edit changes the values without going through the chat.' },
+      { text: 'If the report is deleted, or no longer shared with the automation’s creator, its runs fail and say why, like any other failure.' },
     ],
   },
   {

@@ -3,8 +3,8 @@
 // with the delivery (each section's rows up to AUTOMATION_DELIVERY_MAX_ROWS),
 // so the workbook is built from it as it is, never run again: it shows what
 // the recipients were sent. Laid out as a saved report's workbook is
-// (./exportAiReport): a "Report" sheet saying what it is, when it ran, over
-// which days, its summary, and for each section its sheet and rows — then a
+// (./exportAiReport): a "Report" sheet saying what it is (the saved report it
+// sent, and its values), when it ran, over which days, its summary, and for each section its sheet and rows — then a
 // sheet per section, in order.
 // ============================================================================
 
@@ -29,7 +29,10 @@ export function deliverySheets(d: AutomationDelivery): SheetSpec[] {
   const about: CellValue[][] = [
     ['Report', aiCellValue(d.automationName)],
     ['Delivered', aiStamp(d.ranAt)],
-    ['Period', d.period ? periodCell(d.period) : 'Its queries take no period'],
+    // The saved report it sent, and the values it ran for that day.
+    ...(d.report ? [['Saved report', aiCellValue(d.report.title)] as CellValue[]] : []),
+    ...(d.inputs ?? []).map((i): CellValue[] => [i.label, aiCellValue(i.value)]),
+    ['Period', d.period ? periodCell(d.period) : d.report ? 'As the report covers' : 'Its queries take no period'],
   ]
   if (d.summary) about.push(['Summary', aiCellValue(d.summary)])
   else if (d.summaryNote) about.push(['Summary', aiCellValue(d.summaryNote)])

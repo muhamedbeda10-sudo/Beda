@@ -36,6 +36,8 @@ import { cn } from '@/lib/utils'
 import { groupByRole } from '@/components/ai/access'
 import { useAutomationPeople } from '@/services/automations'
 import { ErrorList, errorLines } from './parts'
+import { ReportInputFields } from '@/components/ai/AiReportLayouts'
+import type { AiReportInput } from '@qc/shared/aiReportInputs'
 import {
   FORM_WEEKDAYS,
   PERIOD_OPTIONS,
@@ -106,6 +108,7 @@ export function AutomationEditor({
   subtitle,
   saveLabel,
   footnote,
+  reportInputs,
   onSave,
   onClose,
 }: {
@@ -125,6 +128,8 @@ export function AutomationEditor({
   saveLabel: string
   /** A word under the form (where the queries are changed). */
   footnote?: ReactNode
+  /** A report sending a saved report: what the report asks for, so its values can be changed here. */
+  reportInputs?: readonly AiReportInput[]
   /** Keep the changes; a refusal thrown here is shown in the form. An empty change is passed on too (all undone). */
   onSave: (edits: AutomationEdits) => Promise<void> | void
   onClose: () => void
@@ -205,7 +210,7 @@ export function AutomationEditor({
           </Field>
         </fieldset>
 
-        {watch ? <WatchFields form={form} patch={patch} disabled={saving} people={people.data?.people ?? null} columns={columns} creatorName={creatorName} known={knownAssignee} hasSession={!!base.watch?.sessionColumn} /> : <ScheduleFields form={form} patch={patch} disabled={saving} />}
+        {watch ? <WatchFields form={form} patch={patch} disabled={saving} people={people.data?.people ?? null} columns={columns} creatorName={creatorName} known={knownAssignee} hasSession={!!base.watch?.sessionColumn} /> : <ScheduleFields form={form} patch={patch} disabled={saving} reportInputs={reportInputs} />}
 
         <fieldset className="space-y-2" disabled={saving}>
           <legend className="label">Who is told</legend>
@@ -434,7 +439,17 @@ function WeekdayPicker({ weekdays, onToggle }: { weekdays: readonly AutomationWe
   )
 }
 
-function ScheduleFields({ form, patch, disabled }: { form: AutomationForm; patch: (p: Partial<AutomationForm>) => void; disabled: boolean }) {
+function ScheduleFields({
+  form,
+  patch,
+  disabled,
+  reportInputs,
+}: {
+  form: AutomationForm
+  patch: (p: Partial<AutomationForm>) => void
+  disabled: boolean
+  reportInputs?: readonly AiReportInput[]
+}) {
   return (
     <>
       <fieldset className="space-y-3" disabled={disabled}>
@@ -476,6 +491,21 @@ function ScheduleFields({ form, patch, disabled }: { form: AutomationForm; patch
           </Field>
         </div>
       </fieldset>
+
+      {form.reportInputs && reportInputs && reportInputs.length > 0 && (
+        <fieldset className="space-y-2" disabled={disabled}>
+          <legend className="label">The values it sends the report with</legend>
+          <p className="text-xs text-muted">The same on every run. Leave one empty to take its default on the day it runs (this week, this year, today).</p>
+          <ReportInputFields
+            inputs={reportInputs}
+            drafts={form.reportInputs}
+            onChange={(name, value) => patch({ reportInputs: { ...(form.reportInputs ?? {}), [name]: value } })}
+            optional
+            idPrefix="automation-report-input"
+            className="grid gap-3 sm:grid-cols-2"
+          />
+        </fieldset>
+      )}
 
       {form.hasPeriod && (
         <fieldset className="space-y-2" disabled={disabled}>

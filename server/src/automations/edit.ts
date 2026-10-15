@@ -52,7 +52,7 @@ export const CHANGE_AUTOMATION_TOOL: Anthropic.Beta.BetaTool = {
       },
       edits: {
         type: 'array',
-        description: `1 to ${MAX_EDITS} edits, applied in order. Paths name a field of the definition as my_automations shows it, dot by dot, list items by their position from 0: name, schedule.time, schedule.sections.2.sql, schedule.sections.0.chart, watch.titleTemplate, recipients.`,
+        description: `1 to ${MAX_EDITS} edits, applied in order. Paths name a field of the definition as my_automations shows it, dot by dot, list items by their position from 0: name, schedule.time, schedule.sections.2.sql, schedule.sections.0.chart, schedule.report.inputs.orders (a saved report's value), watch.titleTemplate, recipients.`,
         items: {
           type: 'object',
           properties: {

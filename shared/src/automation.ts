@@ -8,7 +8,9 @@
 //     is given (factory time). Each row it returns is a case; each case
 //     fires once.
 //   • A scheduled report runs its queries at a factory-time hour and, when
-//     asked, the model writes a short summary on top.
+//     asked, the model writes a short summary on top. Its queries are its
+//     own sections, or one of the saved reports (My reports) as it stands
+//     at each run, with the values its inputs take fixed in the schedule.
 //
 // What an automation may do is fixed: tell people (the bell, the chat), and
 // open a follow-up — which also marks its session "Needs review" until it is
@@ -16,6 +18,7 @@
 // ============================================================================
 
 import type { AiCell, AiChartSpec, AiDayRange, AiReportPeriod, AiReportSectionRun } from './ai'
+import type { AiReportInput, AiReportInputValues } from './aiReportInputs'
 import type { Role } from './types'
 
 // ---- Limits ------------------------------------------------------------------------
@@ -104,6 +107,30 @@ export interface AutomationReportSection {
   chart?: AiChartSpec
 }
 
+/**
+ * A saved report a schedule sends: one of the reports its creator may open
+ * (their own, or one shared), run as it stands at each run — a change to the
+ * report reaches the next delivery. Its inputs take the values given here on
+ * every run; one left out takes its default on the day of the run (this
+ * week, this year, today).
+ */
+export interface AutomationSavedReport {
+  reportId: string
+  inputs: AiReportInputValues
+}
+
+/** The saved report a schedule sends, as a person reads it. */
+export interface AutomationLinkedReport {
+  id: string
+  title: string
+  /** Deleted, or no longer one its creator may open: the schedule's runs fail until it is changed. */
+  missing: boolean
+  /** What the report asks for, and the values the schedule gives (one left out: its default on the day). */
+  inputs: AiReportInput[]
+  values: AiReportInputValues
+  sectionCount: number
+}
+
 /** A scheduled report: when it runs (factory time) and what it covers. */
 export interface AutomationScheduleSpec {
   cadence: AutomationCadence
@@ -115,9 +142,15 @@ export interface AutomationScheduleSpec {
   weekday?: AutomationWeekday
   /** monthly: 1–28. */
   monthDay?: number
-  /** The days its sections cover, counted from the factory day it runs on; absent: the sections take no period. */
+  /**
+   * The days its sections cover, counted from the factory day it runs on; absent: the sections take no period. With a
+   * saved report: other days than the report's own (one whose period can change); absent, the report's.
+   */
   period?: AiReportPeriod
+  /** Its own sections; none when it sends a saved report. */
   sections: AutomationReportSection[]
+  /** The saved report it sends, in place of sections of its own. */
+  report?: AutomationSavedReport
   /** The assistant writes a short summary on top. */
   summary: boolean
 }
@@ -236,6 +269,8 @@ export interface AiAutomationPart {
   automationId?: string
   /** The name of the automation it replaces, when it does. */
   replacesName?: string
+  /** A report that sends a saved report: which, and the values it gives. */
+  linkedReport?: AutomationLinkedReport
   /** A change still waiting: what it changes of that automation as it is now, a line each (none: nothing). */
   changes?: string[]
 }
@@ -260,6 +295,8 @@ export interface AutomationEdits {
   monthDay?: number | null
   period?: AiReportPeriod | null
   summary?: boolean
+  /** A report sending a saved report: the values its inputs take on every run (one left out: its default on the day). */
+  reportInputs?: AiReportInputValues
 }
 
 export interface AutomationActivateRequest {
@@ -309,6 +346,8 @@ export interface Automation {
   statusNote?: string
   watch?: AutomationWatchSpec
   schedule?: AutomationScheduleSpec
+  /** A report that sends a saved report: which, and the values it gives. */
+  linkedReport?: AutomationLinkedReport
   recipients: AutomationRecipientView[]
   channels: AutomationChannels
   actions: AutomationActions
@@ -399,6 +438,10 @@ export interface AutomationDelivery {
   summaryNote?: string
   language: AutomationLanguage
   sections: AiReportSectionRun[]
+  /** The saved report it was, when it sent one; `open`: the viewer may open it in My reports. */
+  report?: { id: string; title: string; open: boolean }
+  /** The values its inputs took on this run, as read. */
+  inputs?: { label: string; value: string }[]
 }
 
 /** People and roles a recipient can be. */

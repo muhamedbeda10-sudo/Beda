@@ -11,7 +11,9 @@
 //     template, a link, a recipient or the assignee names is in the result;
 //   • a report's sections (1 to 8) pass the saved reports' template rules
 //     ({{from}} and {{to}} only with a period, standing alone, bounding the
-//     data) and each runs over the period as of the factory's today;
+//     data) and each runs over the period as of the factory's today; or it
+//     sends a saved report its creator may open, with values its inputs take
+//     (./savedReport), and that report runs with them as of today;
 //   • the schedule's fields fit its cadence; the interval its limits, a
 //     watch's hours two HH:MM times that differ and its days real ones;
 //   • the people named are active accounts (never the system sender), the
@@ -67,6 +69,7 @@ import { checkTemplate, fillTemplate, periodProblem } from '../ai/reportTemplate
 import { precheckSql, previewOf, runReadOnlyQuery, type QueryRun } from '../ai/runQuery'
 import { withQueryOrigin, withQueryPurpose } from '../ai/slowQueries'
 import { clipText } from './notify'
+import { checkLinkedReport, prepareReport, type PreparedSection } from './savedReport'
 import { fillCaseTemplate } from './text'
 
 /** A query an automation runs may take this long, as a query in the chat. */
@@ -159,6 +162,9 @@ export async function validateDraft(ctx: ValidationContext, input: AutomationDra
   const columnsNamed = checkRecipients(draft, errors)
   await checkPeople(ctx.db, draft, errors)
   await checkOwnership(ctx, draft, errors)
+  // A saved report: one its creator may open, with values its inputs take (made what is stored).
+  const linkedOk =
+    draft.kind === 'report' && draft.schedule?.report ? (await checkLinkedReport(ctx.db, ctx.creatorId, draft.schedule, factoryDay(ctx.now, ctx.timeZone), errors)) !== null : true
 
   // ---- What it finds
   let backtest: AutomationBacktest | null = null
@@ -182,13 +188,19 @@ export async function validateDraft(ctx: ValidationContext, input: AutomationDra
         // Only for a change that passed everything (its automation the person's own, of this kind).
         if (errors.length === 0 && draft.replacesAutomationId) await describeChange(ctx, draft, watchRun, backtest)
       }
-    } else if (draft.kind === 'report' && draft.schedule && sectionsOk) {
+    } else if (draft.kind === 'report' && draft.schedule && sectionsOk && linkedOk && !(draft.schedule.report && errors.length > 0)) {
+      const linked = !!draft.schedule.report
       const ran = await withQueryOrigin({ source: 'automation', userId: ctx.creatorId, purpose: draft.name }, () => reportBacktest(pool, draft.schedule!, ctx))
-      backtest = ran.backtest
-      ran.runs.forEach((run, i) => {
-        if (!run.ok) errors.push(`schedule.sections[${i}] (${quoted(draft.schedule!.sections[i].title)}): ${failedQuery(run)}`)
-      })
-      errors.push(...ran.chartProblems)
+      if ('error' in ran) errors.push(`schedule.report: ${ran.error}`)
+      else {
+        backtest = ran.backtest
+        ran.runs.forEach((run, i) => {
+          if (run.ok) return
+          const title = quoted(ran.backtest.sections![i].title)
+          errors.push(linked ? `schedule.report: its section ${title}: ${failedQuery(run)}` : `schedule.sections[${i}] (${title}): ${failedQuery(run)}`)
+        })
+        errors.push(...ran.chartProblems)
+      }
     }
   } else if (draft.kind === 'watch' && draft.watch && ctx.knownColumns) {
     checkColumns(draft, ctx.knownColumns, columnsNamed, errors)
@@ -233,9 +245,11 @@ function normalise(d: AutomationDraft): AutomationDraft {
       cadence: d.schedule.cadence,
       time: d.schedule.time.trim(),
       // A chart as asked for, until the trial run checks it against the section's result (reportBacktest).
-      sections: d.schedule.sections.map((x) => (x.chart ? { title: oneLine(x.title), sql: x.sql.trim(), chart: x.chart } : { title: oneLine(x.title), sql: x.sql.trim() })),
+      sections: (d.schedule.sections ?? []).map((x) => (x.chart ? { title: oneLine(x.title), sql: x.sql.trim(), chart: x.chart } : { title: oneLine(x.title), sql: x.sql.trim() })),
       summary: d.schedule.summary,
     }
+    // Its values are checked, and made what is stored, against the report's inputs (checkLinkedReport).
+    if (d.schedule.report) s.report = { reportId: String(d.schedule.report.reportId ?? '').trim(), inputs: d.schedule.report.inputs ?? {} }
     if (d.schedule.weekdays !== undefined) s.weekdays = [...new Set(d.schedule.weekdays)].sort((a, b) => a - b)
     if (d.schedule.weekday !== undefined) s.weekday = d.schedule.weekday
     if (d.schedule.monthDay !== undefined) s.monthDay = d.schedule.monthDay
@@ -318,8 +332,10 @@ function checkSchedule(s: AutomationScheduleSpec, errors: string[]): boolean {
     if (!Number.isInteger(s.monthDay) || (s.monthDay ?? 0) < 1 || (s.monthDay ?? 0) > 28) errors.push('schedule.monthDay: the day of the month, 1 to 28 (every month has it).')
   } else if (s.monthDay !== undefined) errors.push(`schedule.monthDay: only a monthly report takes a day of the month; this one is ${s.cadence}.`)
 
+  // A saved report's sections are its own, checked when it was saved (checkLinkedReport checks the rest).
+  if (s.report) return true
   if (s.sections.length === 0 || s.sections.length > AUTOMATION_MAX_SECTIONS) {
-    errors.push(`schedule.sections: from 1 to ${AUTOMATION_MAX_SECTIONS} sections.`)
+    errors.push(`schedule.sections: from 1 to ${AUTOMATION_MAX_SECTIONS} sections, or a saved report to send (schedule.report).`)
     return false
   }
   let runnable = true
@@ -574,15 +590,27 @@ export function sectionSql(sql: string, period: { from: string; to: string } | n
   return period && /\{\{(?:from|to)\}\}/.test(sql) ? fillTemplate(sql, period) : sql
 }
 
-/** A report run once over its period as of today: each section's first rows (no summary), and each section's run as it went. */
-async function reportBacktest(pool: pg.Pool, s: AutomationScheduleSpec, ctx: ValidationContext): Promise<{ backtest: AutomationBacktest; runs: QueryRun[]; chartProblems: string[] }> {
-  const period = reportPeriodAt(s, ctx.now, ctx.timeZone)
+/**
+ * A report run once over its period as of today: each section's first rows (no summary), and each section's run as
+ * it went. Its own sections' charts are checked against today's result here; a saved report's were when it was saved
+ * (each run draws them when its rows fit).
+ */
+async function reportBacktest(
+  pool: pg.Pool,
+  s: AutomationScheduleSpec,
+  ctx: ValidationContext,
+): Promise<{ backtest: AutomationBacktest; runs: QueryRun[]; chartProblems: string[] } | { error: string }> {
+  const prepared = await prepareReport(ctx.db, ctx.creatorId, s, ctx.now, ctx.timeZone)
+  if ('error' in prepared) return { error: prepared.error }
+  const period = prepared.period
   const sections: AiReportSectionRun[] = []
   const runs: QueryRun[] = []
   const chartProblems: string[] = []
-  for (const section of s.sections) {
+  for (const [i, ready] of prepared.sections.entries()) {
+    // The schedule's own section (its chart checked here), or the saved report's as prepared.
+    const section: PreparedSection | AutomationScheduleSpec['sections'][number] = s.report ? ready : s.sections[i]
     const run = await withQueryPurpose(section.title, () =>
-      runReadOnlyQuery(pool, sectionSql(section.sql, period), {
+      runReadOnlyQuery(pool, ready.sql, {
         maxRows: Math.min(BACKTEST_SECTION_ROWS, AI_PREVIEW_ROWS),
         timeoutMs: AUTOMATION_QUERY_TIMEOUT_MS,
         timeZone: ctx.timeZone,
@@ -602,8 +630,14 @@ async function reportBacktest(pool: pg.Pool, s: AutomationScheduleSpec, ctx: Val
     }
     // On the card of the person who asked for it.
     if (!run.ok) out.error = queryErrorForPeople(run, 'asker')
-    // Its chart, checked against what the section returns today: kept as it is drawn, or a problem for the model to fix.
-    if (section.chart && run.ok) {
+    if (ready.display) out.display = ready.display
+    if (ready.tree) out.tree = ready.tree
+    if (ready.note) out.note = ready.note
+    if (s.report) {
+      const chart = ready.chart && run.ok ? checkChart(ready.chart, preview).chart : undefined
+      if (chart) out.chart = chart
+    } else if (section.chart && run.ok) {
+      // Its chart, checked against what the section returns today: kept as it is drawn, or a problem for the model to fix.
       const checked = checkChart(section.chart, preview)
       if (checked.chart) {
         section.chart = checked.chart
