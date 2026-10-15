@@ -505,6 +505,8 @@ export function queryErrorForPeople(run: QueryFailed, reader: 'creator' | 'asker
       return "The database's reply was too large to read."
     case 'stopped':
       return 'The query was stopped before it finished.'
+    case 'busy':
+      return 'Another long analysis was running; it can run again in a few minutes.'
     case 'unavailable':
       return "The factory's data could not be reached just now."
     case 'rejected':

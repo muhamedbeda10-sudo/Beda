@@ -66,6 +66,11 @@ export const RUN_SQL_TOOL: Anthropic.Beta.BetaTool = {
       purpose: { type: 'string', description: "One short line, in the user's language, saying what this query looks for. Shown to the user." },
       sql: { type: 'string', description: 'A single SELECT over ai.* views. No semicolons, no DDL/DML.' },
       chart: CHART_INPUT_SCHEMA,
+      long: {
+        type: 'boolean',
+        description:
+          'A long analysis: up to 10 minutes instead of 1, one at a time across the app. Only for a question that truly needs the whole record (every machine over years, every dimension) and cannot be narrowed or aggregated first, or a query stopped for time that has already been narrowed. The person is told; they may leave and are notified when the answer is ready.',
+      },
     },
     required: ['purpose', 'sql'],
     additionalProperties: false,
@@ -86,6 +91,7 @@ export const RunSqlInput = z
     purpose: z.string().min(1).max(300).transform(withoutNul),
     sql: z.string().min(1).max(AI_MAX_SQL_CHARS).transform(withoutNul),
     chart: z.unknown().optional(),
+    long: z.boolean().optional(),
   })
   .strict()
 
@@ -257,6 +263,17 @@ plus the machine register${options.savedTables ? ', the saved tables (ai_saved.*
       ? '\n- run_sql is ready from the start. The other tools this prompt names load on demand, to keep each question light: when a request needs one, first find it with tool_search_tool_bm25 (search by the tool\'s name, for example "list_notices"), then call it. A tool once found stays ready for the rest of the conversation. Never search for a tool the question does not need.'
       : ''
   }`)
+  sections.push(`# Fast queries
+Queries run on the live database the floor saves to, and a query stops after 60 seconds. Any question can be answered, over any period; write each query so the database reads only what the question needs:
+- Filter first, in the view you read: the period on its *_at column, the machine (ai.machine_key(machine_code) = '24'), the item, the order. In a WITH, narrow every part the same way: a part left over a whole view is read in full, every row of it.
+- Aggregate in SQL, and aggregate each large view before joining it to another; join on ids (sample_id, session_id, order_line_id), never on names or text.${
+    has('inspection')
+      ? `
+- A sample's and a session's figures are columns of their own, kept as the record is saved: in inspection_samples (dimensions_pass, dimensions_fail, defect_pieces, coils, coil_material, material…) and inspection_sessions (samples, pieces_inspected, defect_pieces, hold_pieces, dimension_fails…). Read them there; never count dimension_measurements or defects again to get them.
+- To split figures by material (black or galvanized), use the material column of inspection_samples or dimension_measurements: no join to sample_coils.`
+      : ''
+  }
+- When a query is stopped for time, its error says where the time went: narrow it there and run it again. A question that truly needs the whole record (every machine over years, every dimension) and cannot be narrowed or aggregated first: run it with long: true, up to 10 minutes, one at a time across the app; say so in a line, as the person may leave and is told when the answer is ready. Or split it into a few queries (by year, by machine) and put their results together.`)
   sections.push(`# When a request is unclear or cannot be met as asked
 Work like a consultant who knows the factory, not like a search box.
 - Understand what the person is trying to achieve: the problem on the floor behind the request.

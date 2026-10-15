@@ -71,6 +71,12 @@ export interface RunOptions {
   maxChars?: number
   /** Aborting it stops the query at once, inside PostgreSQL too; the run then fails with AI_QUERY_STOPPED. */
   signal?: AbortSignal
+  /**
+   * One such run at a time across every instance (a long analysis): a
+   * transaction lock taken before the query; when another run holds it, this
+   * one fails at once ('busy') rather than waiting.
+   */
+  exclusive?: boolean
 }
 
 /**
@@ -79,7 +85,7 @@ export interface RunOptions {
  * no reader to run it, the caller stopped it, it took too long, a row or the
  * database's reply was too large, or PostgreSQL itself refused or failed it.
  */
-export type QueryFailure = 'rejected' | 'unavailable' | 'stopped' | 'timeout' | 'row-too-large' | 'reply-too-large' | 'database'
+export type QueryFailure = 'rejected' | 'unavailable' | 'stopped' | 'timeout' | 'row-too-large' | 'reply-too-large' | 'database' | 'busy'
 
 /** What one run returned: the rows as read, before anything is cut for the model. */
 export interface QueryRun {
@@ -282,6 +288,19 @@ const CANCEL_TIMEOUT_MS = 5_000
  * it longer; automations' watches keep their own, shorter one.
  */
 export const AI_QUERY_TIMEOUT_MS = 60_000
+
+/**
+ * A long analysis (run_sql with long): a question that truly needs the whole
+ * record, run inside the same answer for up to this long, one at a time
+ * across the app (RunOptions.exclusive) so it never crowds out the floor.
+ */
+export const AI_LONG_QUERY_TIMEOUT_MS = 10 * 60_000
+
+/** The lock a long analysis holds while it runs (pg_try_advisory_xact_lock): any number of the app's own, kept apart from the rest. */
+const LONG_QUERY_LOCK = 20_620_001
+
+export const LONG_QUERY_BUSY =
+  'Another long analysis is running in the app just now, and they run one at a time. Narrow this query to run it now (a shorter period, one machine, aggregate before joining), or tell the person to ask again in a few minutes.'
 
 /** PostgreSQL's CancelRequest code (1234 << 16 | 5678). */
 const CANCEL_REQUEST_CODE = 80_877_102
@@ -515,6 +534,10 @@ async function runOnce(pool: pg.Pool | null, rawSql: string, opts: RunOptions): 
     await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
     await client.query(`SET LOCAL TIME ZONE ${pg.escapeLiteral(opts.timeZone)}`)
     await client.query(`SET LOCAL statement_timeout = ${pg.escapeLiteral(`${Math.max(1, Math.round(opts.timeoutMs))}ms`)}`)
+    if (opts.exclusive) {
+      const held = await client.query<{ ok: boolean }>('SELECT pg_try_advisory_xact_lock($1) AS ok', [LONG_QUERY_LOCK])
+      if (!held.rows[0]?.ok) return fail({ error: LONG_QUERY_BUSY, failure: 'busy' })
+    }
     await client.query('SELECT 1')
     // @types/pg does not know queryMode; pg does (lib/query.js).
     at.prefix = PREPARE_PREFIX.length
@@ -567,6 +590,89 @@ async function runOnce(pool: pg.Pool | null, rawSql: string, opts: RunOptions): 
       close()
     }
   }
+}
+
+// ---- Where a slow query's time goes ------------------------------------------------
+
+/** The tables behind the views, in the views' words: a plan names the tables, the model knows the views. */
+const TABLE_WORDS: Record<string, string> = {
+  dimension_results: 'dimension measurements',
+  inspection_samples: 'samples',
+  inspection_sessions: 'sessions',
+  defect_results: 'defects',
+  sample_coils: 'sample coils',
+  coils: 'coils in the register',
+  production_orders: 'order lines',
+  production_task_records: 'production task records',
+  audit_log: 'audit log entries',
+  pt_records: 'PT records',
+  pt_tested_lengths: 'PT tested lengths',
+  session_notes: 'session notes',
+  session_stage_quantities: 'stage quantities',
+  pdi_documents: 'PDI documents',
+  pdi_lines: 'PDI lines',
+}
+
+interface PlanNode {
+  'Node Type'?: string
+  'Relation Name'?: string
+  'Plan Rows'?: number
+  'Parent Relationship'?: string
+  Plans?: PlanNode[]
+}
+
+/**
+ * What PostgreSQL's plan for a query reads, in a sentence for the model: the
+ * largest tables it reads and how much of each, and how many subqueries it
+ * works out row by row. Planned only (EXPLAIN, nothing read), as the same
+ * reader, within a few seconds; null when it cannot be had. Told with a query
+ * stopped for time, so the next one is narrower where it matters.
+ */
+export async function planSummary(pool: pg.Pool | null, rawSql: string, opts: { timeZone: string; signal?: AbortSignal }): Promise<string | null> {
+  const checked = precheckSql(rawSql)
+  if ('error' in checked || !pool) return null
+  const client = await connect(pool, opts.signal)
+  if (client === 'stopped' || client instanceof Error) return null
+  let plan: PlanNode | undefined
+  try {
+    await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+    await client.query(`SET LOCAL TIME ZONE ${pg.escapeLiteral(opts.timeZone)}`)
+    await client.query(`SET LOCAL statement_timeout = '5s'`)
+    const explain: pg.QueryConfig & { queryMode: 'extended' } = { text: `EXPLAIN (FORMAT JSON) ${checked.sql}`, queryMode: 'extended' }
+    const result = await client.query<{ 'QUERY PLAN': { Plan: PlanNode }[] }>(explain)
+    plan = result.rows[0]?.['QUERY PLAN']?.[0]?.Plan
+  } catch {
+    return null
+  } finally {
+    await client.query('ROLLBACK').catch(() => undefined)
+    client.release()
+  }
+  return plan ? describePlan(plan) : null
+}
+
+/** The sentence planSummary gives, from a plan. */
+export function describePlan(plan: PlanNode): string | null {
+  const reads = new Map<string, { rows: number; whole: boolean }>()
+  let perRow = 0
+  const walk = (node: PlanNode) => {
+    if (node['Parent Relationship'] === 'SubPlan') perRow++
+    const table = node['Relation Name']
+    if (table) {
+      const seen = reads.get(table) ?? { rows: 0, whole: false }
+      seen.rows = Math.max(seen.rows, Math.round(node['Plan Rows'] ?? 0))
+      seen.whole ||= node['Node Type'] === 'Seq Scan'
+      reads.set(table, seen)
+    }
+    for (const child of node.Plans ?? []) walk(child)
+  }
+  walk(plan)
+  const largest = [...reads].filter(([, r]) => r.rows >= 1000).sort((a, b) => b[1].rows - a[1].rows).slice(0, 4)
+  if (largest.length === 0 && perRow === 0) return null
+  const parts = largest.map(([table, r]) => `about ${r.rows.toLocaleString('en-US')} ${TABLE_WORDS[table] ?? table}${r.whole ? ' (all of them)' : ''}`)
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : (parts[0] ?? '')
+  const reading = list ? `PostgreSQL's plan for it reads ${list}` : "PostgreSQL's plan for it"
+  const subqueries = perRow > 0 ? `${list ? ', and' : ''} works out ${perRow} ${perRow === 1 ? 'subquery' : 'subqueries'} row by row` : ''
+  return `${reading}${subqueries}.`
 }
 
 // ---- What the model and the card see ------------------------------------------------
