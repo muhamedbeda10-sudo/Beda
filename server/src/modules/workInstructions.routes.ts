@@ -17,7 +17,7 @@ import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requirePermission, requireUser, userCan } from '../auth/middleware'
 import { dropNulls } from '../lib/rows'
 import { auditChanges, auditCreate, auditDelete } from '../audit/service'
 import { buildDocumentStorageKey } from '../images/storage'
@@ -155,7 +155,7 @@ export function workInstructionsRoutes(ctx: AppContext): Router {
   r.get('/', async (req, res) => {
     const q = parse(z.object({ process: scopeSchema.optional(), history: z.enum(['0', '1']).default('0') }), req.query)
     const user = requireUser(req)
-    const history = q.history === '1' && user.role === 'admin'
+    const history = q.history === '1' && userCan(user, 'manage-configuration')
     const { rows } = await ctx.db.query<WorkInstruction>(
       `SELECT ${WORK_INSTRUCTION_SELECT} FROM work_instructions
         WHERE deleted_at IS NULL
@@ -167,7 +167,7 @@ export function workInstructionsRoutes(ctx: AppContext): Router {
     res.json(rows.map(dropNulls))
   })
 
-  r.post('/', requireCapability('manage-admin-data'), upload.single('file'), async (req, res) => {
+  r.post('/', requirePermission('manage-configuration'), upload.single('file'), async (req, res) => {
     const user = requireUser(req)
     if (!req.file) throw badRequest('Attach the PDF as the "file" field.')
     const fields = parse(uploadFields, req.body)
@@ -181,7 +181,7 @@ export function workInstructionsRoutes(ctx: AppContext): Router {
     res.status(201).json(created)
   })
 
-  r.patch('/:id', requireCapability('manage-admin-data'), async (req, res) => {
+  r.patch('/:id', requirePermission('manage-configuration'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const body = parse(updateSchema, req.body) as UpdateWorkInstructionRequest
@@ -213,7 +213,7 @@ export function workInstructionsRoutes(ctx: AppContext): Router {
   })
 
   /** Take a document out of use. The bytes stay for the record. */
-  r.delete('/:id', requireCapability('manage-admin-data'), async (req, res) => {
+  r.delete('/:id', requirePermission('manage-configuration'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     await withTransaction(ctx.db, async (tx) => {

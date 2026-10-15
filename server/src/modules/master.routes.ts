@@ -14,7 +14,7 @@ import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
 import { badRequest, duplicate, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requirePermission, requireUser } from '../auth/middleware'
 import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
 import { dropNulls, normaliseKey } from '../lib/rows'
 
@@ -246,7 +246,7 @@ export function masterRoutes(ctx: AppContext): Router {
     res.json(rows.map(dropNulls))
   })
 
-  r.post('/:kind', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/:kind', requirePermission('manage-configuration'), async (req, res) => {
     const def = kindOf(String(req.params.kind))
     const user = requireUser(req)
     const body = parse(def.schema, req.body) as Record<string, unknown>
@@ -270,7 +270,7 @@ export function masterRoutes(ctx: AppContext): Router {
     res.status(201).json(row)
   })
 
-  r.put('/:kind/:id', requireCapability('manage-admin-data'), async (req, res) => {
+  r.put('/:kind/:id', requirePermission('manage-configuration'), async (req, res) => {
     const def = kindOf(String(req.params.kind))
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
@@ -318,7 +318,7 @@ export function masterRoutes(ctx: AppContext): Router {
 
   /** Dimension configuration, keyed by item code + dimension name + machine
    *  (empty machine = every machine). */
-  r.post('/item-dimension-order/import', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/item-dimension-order/import', requirePermission('manage-configuration'), async (req, res) => {
     const user = requireUser(req)
     const rowSchema = z.object({
       itemCode: text(120),
@@ -376,7 +376,7 @@ export function masterRoutes(ctx: AppContext): Router {
     res.json(result)
   })
 
-  r.post('/item-dimension-order/existing-keys', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/item-dimension-order/existing-keys', requirePermission('manage-configuration'), async (req, res) => {
     const { keys } = parse(existingKeysSchema, req.body)
     const wanted = Array.from(new Set(keys.map(normaliseKey)))
     const { rows } = await ctx.db.query<{ key: string }>(
@@ -391,7 +391,7 @@ export function masterRoutes(ctx: AppContext): Router {
   })
 
   /** The machine register, keyed by machine code. */
-  r.post('/machines/import', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/machines/import', requirePermission('manage-configuration'), async (req, res) => {
     const user = requireUser(req)
     const rowSchema = z.object({
       code: text(40),
@@ -460,7 +460,7 @@ export function masterRoutes(ctx: AppContext): Router {
     res.json(result)
   })
 
-  r.post('/machines/existing-keys', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/machines/existing-keys', requirePermission('manage-configuration'), async (req, res) => {
     const { keys } = parse(existingKeysSchema, req.body)
     const wanted = Array.from(new Set(keys.map(normaliseKey)))
     const { rows } = await ctx.db.query<{ key: string }>(`SELECT DISTINCT lower(code) AS key FROM machines WHERE lower(code) = ANY($1::text[])`, [wanted])
@@ -469,7 +469,7 @@ export function masterRoutes(ctx: AppContext): Router {
   })
 
   /** The defect names offered on each machine, keyed by machine + name. */
-  r.post('/work-center-defects/import', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/work-center-defects/import', requirePermission('manage-configuration'), async (req, res) => {
     const user = requireUser(req)
     const rowSchema = z.object({ workCenterCode: text(40), defectName: text(200) })
     const { rows } = parse(z.object({ rows: z.array(rowSchema).min(1).max(1000) }), req.body)
@@ -496,7 +496,7 @@ export function masterRoutes(ctx: AppContext): Router {
     res.json(result)
   })
 
-  r.post('/work-center-defects/existing-keys', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/work-center-defects/existing-keys', requirePermission('manage-configuration'), async (req, res) => {
     const { keys } = parse(existingKeysSchema, req.body)
     const wanted = Array.from(new Set(keys.map(normaliseKey)))
     const { rows } = await ctx.db.query<{ key: string }>(
@@ -509,7 +509,7 @@ export function masterRoutes(ctx: AppContext): Router {
   })
 
   /** Mark many records deleted at once — one transaction, one audit entry each. */
-  r.post('/:kind/delete-many', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/:kind/delete-many', requirePermission('manage-configuration'), async (req, res) => {
     const def = kindOf(String(req.params.kind))
     const user = requireUser(req)
     const { ids } = parse(z.object({ ids: z.array(uuid).min(1).max(1000) }), req.body)
@@ -524,7 +524,7 @@ export function masterRoutes(ctx: AppContext): Router {
     res.json({ deleted })
   })
 
-  r.delete('/:kind/:id', requireCapability('manage-admin-data'), async (req, res) => {
+  r.delete('/:kind/:id', requirePermission('manage-configuration'), async (req, res) => {
     const def = kindOf(String(req.params.kind))
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)

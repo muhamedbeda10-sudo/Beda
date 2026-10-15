@@ -24,7 +24,6 @@ import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, ArrowDown, ArrowRight, Ban, BellOff, BellPlus, CheckCircle2, ChevronDown, Loader2, OctagonX, Paperclip, PenLine, Send, Trash2, Undo2, Users, X } from 'lucide-react'
 import type { AiNoticeAction, AiNoticeDraft, AiNoticePart } from '@qc/shared/noticeAssistant'
-import { can } from '@qc/shared/rules'
 import { NOTICE_TARGET_LABEL, type NoticeTarget } from '@qc/shared/types'
 import { Badge, Button, Modal } from '@/components/ui'
 import { NoticeCard, TargetChips } from '@/components/notices/NoticeCard'
@@ -88,7 +87,7 @@ export const AiNoticeProposalCard = memo(function AiNoticeProposalCard({ part, w
 function Proposal({ part, notice, writing, onDecided }: { part: AiNoticePart; notice: AiNoticeDraft; writing: boolean; onDecided: (p: AiNoticePart) => void }) {
   const qc = useQueryClient()
   const { toast } = useApp()
-  const { role } = useAuth()
+  const { can } = useAuth()
   const [busy, setBusy] = useState<'apply' | 'discard' | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [problems, setProblems] = useState<string[] | null>(null)
@@ -108,7 +107,7 @@ function Proposal({ part, notice, writing, onDecided }: { part: AiNoticePart; no
   const changes = action === 'update' && part.before && part.draft ? noticeChanges(part.before, part.draft) : null
   const attachments = attachmentsNote(action, notice.attachments ?? part.before?.attachments)
   // The Notices page is an administrator's: the link is offered only while the person still is one.
-  const mayOpenNotices = can(role, 'manage-admin-data')
+  const mayOpenNotices = can('manage-notices')
 
   /**
    * A refusal, said in a toast and on the card. A conflict: decided elsewhere, replaced by a newer card, or the

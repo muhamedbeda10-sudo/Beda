@@ -10,7 +10,7 @@ import type { Coil } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { withTransaction } from '../db/pool'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requireAnyPermission, requirePermission, requireUser } from '../auth/middleware'
 import { writeAudit } from '../audit/service'
 import { dropNulls, normaliseKey } from '../lib/rows'
 
@@ -31,7 +31,8 @@ export function coilsRoutes(ctx: AppContext): Router {
   const r = Router()
 
   /** Prefix search on coil number; grade and supplier too once something is typed. */
-  r.get('/', async (req, res) => {
+  // Coil search's (§14), and the inspection's coil picker.
+  r.get('/', requireAnyPermission('view-coil-search', 'record-inspection'), async (req, res) => {
     const q = parse(
       z.object({ search: z.string().trim().max(120).default(''), limit: z.coerce.number().int().min(1).max(100).default(25) }),
       req.query,
@@ -50,7 +51,7 @@ export function coilsRoutes(ctx: AppContext): Router {
   })
 
   /** Where each coil has been used — the traceability the search exists for. */
-  r.get('/usage', async (req, res) => {
+  r.get('/usage', requireAnyPermission('view-coil-search', 'record-inspection'), async (req, res) => {
     const numbers = parse(z.string().default(''), req.query.coilNumbers)
       .split(',')
       .map(normaliseKey)
@@ -72,7 +73,7 @@ export function coilsRoutes(ctx: AppContext): Router {
     res.json(rows)
   })
 
-  r.post('/existing-keys', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/existing-keys', requirePermission('import-data'), async (req, res) => {
     const { keys } = parse(z.object({ keys: z.array(z.string().trim().min(1)).max(EXISTING_KEYS_MAX) }), req.body)
     const wanted = Array.from(new Set(keys.map(normaliseKey)))
     const { rows } = await ctx.db.query<{ key: string }>(`SELECT lower(coil_number) AS key FROM coils WHERE lower(coil_number) = ANY($1::text[])`, [wanted])
@@ -81,7 +82,7 @@ export function coilsRoutes(ctx: AppContext): Router {
   })
 
   /** §7.7 — idempotent upsert on the coil number. */
-  r.post('/import', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/import', requirePermission('import-data'), async (req, res) => {
     const user = requireUser(req)
     const { rows } = parse(z.object({ rows: z.array(importRow).min(1).max(1000) }), req.body)
     const byKey = new Map<string, z.infer<typeof importRow>>()

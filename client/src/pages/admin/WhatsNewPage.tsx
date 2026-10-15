@@ -12,7 +12,7 @@ export function WhatsNewPage() {
   const { data } = useReleaseState(true)
   const unseen = new Set(data ? unseenReleases(data.lastSeenReleaseId).map((r) => r.id) : [])
   return (
-    <AdminLayout title="What's new" description="Every update that reached the application, newest first, under its day. The newest are open; a highlighted one is still to be read." needs="manage-admin-data">
+    <AdminLayout title="What's new" description="Every update that reached the application, newest first, under its day. The newest are open; a highlighted one is still to be read." needs="view-release-notes">
       <ReleaseArchive unseenIds={unseen} />
     </AdminLayout>
   )

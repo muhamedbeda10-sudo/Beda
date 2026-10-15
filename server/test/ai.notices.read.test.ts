@@ -240,7 +240,7 @@ describe('§23 a person reads their own bell', () => {
     const { results } = await callTools(p.viewer, [listNotices({ status: 'all' }), noticeDetails(n.everyone.id)])
     const listed = resultJson<Listed>(results[0])
     expect(listed.notices).toEqual([])
-    expect(listed.note).toMatch(/^This person's role \(viewer\) does not receive notices in the app/)
+    expect(listed.note).toMatch(/^This person does not receive notices in the app/)
     expect(results[1]).toMatchObject({ is_error: true })
   })
 

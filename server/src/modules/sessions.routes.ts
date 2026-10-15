@@ -30,7 +30,6 @@ import {
   dimensionStatus,
   processForMachine,
   ptOverallVerdict,
-  can,
   validateSample,
   stockProductionOf,
   isStockOrder,
@@ -78,7 +77,8 @@ import { ConflictError, badRequest, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { columnFilterClauses, columnOrderBy, columnQuerySchema, columnValues, type SqlColumns } from '../lib/columnFilters'
 import type { ColumnFilters } from '@qc/shared/api'
-import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
+import type { Permission } from '@qc/shared/permissions'
+import { requireAnyPermission, requirePermission, requireUser, userCan, type AuthUser } from '../auth/middleware'
 import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
 import { auditEvent } from '@qc/shared/audit'
 import { dropNulls } from '../lib/rows'
@@ -315,9 +315,13 @@ function auditCtxFor(user: { id: string; name: string }, s: SessionWithOrder, en
   }
 }
 
+/** The screens a session is opened from (§14), and recording on it. */
+export const SESSION_READERS = ['view-inspections', 'view-history', 'record-inspection', 'view-coil-search'] as const satisfies readonly Permission[]
+
 export function sessionsRoutes(ctx: AppContext): Router {
   const r = Router()
   const { db } = ctx
+  const sessionReader = requireAnyPermission(...SESSION_READERS)
 
   /** The board: what is open now, the samples recorded so far, and the Hold badge. */
   /**
@@ -340,7 +344,8 @@ export function sessionsRoutes(ctx: AppContext): Router {
    * inspectors record on the same one, each sample under its own name —
    * so the board is not narrowed to the viewer's own (§4.4).
    */
-  r.get('/open', async (req, res) => {
+  // The Inspections screen's (§14); also who records (starting one) and the chat (linking one).
+  r.get('/open', requireAnyPermission('view-inspections', 'record-inspection', 'use-chat'), async (req, res) => {
     requireUser(req)
     const q = parse(z.object({ limit: z.coerce.number().int().min(1).max(500).default(200) }), req.query)
     const visible = { clause: 'TRUE', params: [] as unknown[] }
@@ -386,7 +391,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
    * session is ever out of reach: the floor keeps recording, and a record
    * that falls past the first page is still the factory's evidence.
    */
-  r.get('/history', async (req, res) => {
+  r.get('/history', requirePermission('view-history'), async (req, res) => {
     requireUser(req)
     const q = parse(
       historyFilterSchema.merge(columnQuerySchema).extend({
@@ -441,7 +446,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
   })
 
   /** One History column's values under every other filter, for its Excel menu. */
-  r.get('/history/values', async (req, res) => {
+  r.get('/history/values', requirePermission('view-history'), async (req, res) => {
     requireUser(req)
     const q = parse(historyFilterSchema.merge(columnQuerySchema).extend({ column: z.string().max(60), search: z.string().max(200).optional() }), req.query)
     const tz = ctx.config.FACTORY_TIMEZONE
@@ -454,7 +459,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
    * an item, a machine or the filters as they stand, newest first, each with
    * its counts and its defects. Bounded at HISTORY_GROUP_LIMIT sessions.
    */
-  r.get('/history/group', async (req, res) => {
+  r.get('/history/group', requirePermission('view-history'), async (req, res) => {
     requireUser(req)
     const q = parse(
       historyFilterSchema.extend({
@@ -515,7 +520,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
    * with its samples, measurements and defects. Bounded: past
    * EXPORT_MAX_RECORDS sessions the filters must narrow.
    */
-  r.get('/history/export', requireCapability('export-records'), async (req, res) => {
+  r.get('/history/export', requirePermission('view-history'), requirePermission('export-records'), async (req, res) => {
     const q = parse(historyFilterSchema.merge(columnQuerySchema), req.query)
     const base = historyWhere(q, ctx.config.FACTORY_TIMEZONE)
     const params = base.params
@@ -595,7 +600,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
    * a session and every machine that ever ran one. Drawn from the record
    * itself, so a filter is never limited to the page on screen.
    */
-  r.get('/history/options', async (req, res) => {
+  r.get('/history/options', requirePermission('view-history'), async (req, res) => {
     requireUser(req)
     const [inspectors, machines, items] = await Promise.all([
       db.query<{ id: string; name: string }>(
@@ -672,7 +677,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
   }
 
   /** Kept for the API's sake; the app itself opens a session with its first sample. */
-  r.post('/', requireCapability('record-inspection'), async (req, res) => {
+  r.post('/', requirePermission('record-inspection'), async (req, res) => {
     const user = requireUser(req)
     const body = parse(startSchema, req.body)
     const created = await withTransaction(db, (tx) => createSession(tx, user, body))
@@ -680,7 +685,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
   })
 
   /** §4.4 — the session and its first sample, written together or not at all. */
-  r.post('/start-with-sample', requireCapability('record-inspection'), async (req, res) => {
+  r.post('/start-with-sample', requirePermission('record-inspection'), async (req, res) => {
     const user = requireUser(req)
     const body = parse(z.object({ start: startSchema, sample: saveSampleSchema }), req.body)
     const outcome = await withTransaction(db, async (tx): Promise<StartWithSampleResponse> => {
@@ -716,7 +721,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
   })
 
   /** What the wizard needs before a session exists: the line, the machine, the configuration (§4.4). */
-  r.get('/preview', async (req, res) => {
+  r.get('/preview', sessionReader, async (req, res) => {
     const start = parse(startSchema, req.query)
     const orderId = 'orderId' in start ? start.orderId : null
     const wc = 'orderId' in start ? null : start.workCenterCode
@@ -746,14 +751,14 @@ export function sessionsRoutes(ctx: AppContext): Router {
     res.json(await buildWizardContext(db, null, order))
   })
 
-  r.get('/:id', async (req, res) => {
+  r.get('/:id', sessionReader, async (req, res) => {
     const session = await loadSessionWithOrder(db, parse(uuid, req.params.id))
     if (!session) throw notFound('That session')
     res.json(session)
   })
 
   /** Everything the wizard needs in one round trip. */
-  r.get('/:id/wizard', async (req, res) => {
+  r.get('/:id/wizard', sessionReader, async (req, res) => {
     const id = parse(uuid, req.params.id)
     const session = await loadSessionWithOrder(db, id)
     if (!session) throw notFound('That session')
@@ -864,7 +869,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
   }
 
   /** §5.8 — the notes written during this session, newest first. */
-  r.get('/:id/notes', async (req, res) => {
+  r.get('/:id/notes', sessionReader, async (req, res) => {
     const id = parse(uuid, req.params.id)
     const session = await loadSessionWithOrder(db, id)
     if (!session) throw notFound('That session')
@@ -878,7 +883,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
    * Only live rows: a deleted sample, defect, note or image takes its photos
    * with it.
    */
-  r.get('/:id/images', async (req, res) => {
+  r.get('/:id/images', sessionReader, async (req, res) => {
     const id = parse(uuid, req.params.id)
     const session = await loadSessionWithOrder(db, id)
     if (!session) throw notFound('That session')
@@ -922,7 +927,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
   })
 
   /** Mark a note deleted — administrators only; the row and its photos stay. */
-  r.delete('/:id/notes/:noteId', requireCapability('delete-note'), async (req, res) => {
+  r.delete('/:id/notes/:noteId', requirePermission('delete-note'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const noteId = parse(uuid, req.params.noteId)
@@ -940,7 +945,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
     res.status(204).end()
   })
 
-  r.get('/:id/samples', async (req, res) => {
+  r.get('/:id/samples', sessionReader, async (req, res) => {
     const id = parse(uuid, req.params.id)
     const { rows } = await db.query<SampleSummary>(
       `SELECT ${SAMPLE_SUMMARY_SELECT} FROM inspection_samples sm WHERE sm.session_id = $1 AND sm.deleted_at IS NULL ORDER BY sm.index`,
@@ -950,7 +955,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
   })
 
   /** §4 — what the close asks of a session on a universal machine: final product or stages, and the line's stages so far. */
-  r.get('/:id/stages', async (req, res) => {
+  r.get('/:id/stages', sessionReader, async (req, res) => {
     requireUser(req)
     const id = parse(uuid, req.params.id)
     const session = await loadSessionWithOrder(db, id)
@@ -959,7 +964,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
   })
 
   /** §8.6 — close with the confirmed final quantity. Rejected if the session moved. */
-  r.post('/:id/close', requireCapability('record-inspection'), async (req, res) => {
+  r.post('/:id/close', requirePermission('record-inspection'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const body = parse(closeSchema, req.body)
@@ -1023,14 +1028,14 @@ export function sessionsRoutes(ctx: AppContext): Router {
    * inspection started by mistake does not linger on the board as an empty
    * record. Marked deleted like everything else, and audited.
    */
-  r.post('/:id/discard', requireCapability('record-inspection'), async (req, res) => {
+  r.post('/:id/discard', requirePermission('record-inspection'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     await withTransaction(db, async (tx) => {
       const session = await loadSessionWithOrder(tx, id, true)
       if (!session) throw notFound('That session')
       // The inspector who opened it, or a role that oversees everyone's sessions.
-      if (session.inspectorId !== user.id && !can(user.role, 'view-all-sessions')) throw forbidden()
+      if (session.inspectorId !== user.id && !userCan(user, 'view-all-sessions')) throw forbidden()
       if ((session.sampleCount ?? 0) > 0) throw badRequest('This session has samples: it is a record now. An administrator can delete it from History.')
       await tx.query(`UPDATE inspection_sessions SET deleted_at = now(), deleted_by_id = $2 WHERE id = $1`, [id, user.id])
       await writeAudit(tx, [
@@ -1043,7 +1048,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
     res.status(204).end()
   })
 
-  r.delete('/:id', requireCapability('delete-session'), async (req, res) => {
+  r.delete('/:id', requirePermission('delete-session'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     await withTransaction(db, async (tx) => {
@@ -1056,7 +1061,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
   })
 
   /** §9 — save a complete sample atomically. */
-  r.post('/:id/samples', requireCapability('record-inspection'), async (req, res) => {
+  r.post('/:id/samples', requirePermission('record-inspection'), async (req, res) => {
     const user = requireUser(req)
     const sessionId = parse(uuid, req.params.id)
     const body = parse(saveSampleSchema, req.body)
@@ -1067,7 +1072,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       const session = await loadSessionWithOrder(tx, sessionId, true)
       if (!session) throw notFound('That session')
       if (session.status === 'Closed') throw badRequest('This session is closed. Samples cannot be added to it.')
-      if (session.inspectorId !== user.id && !can(user.role, 'edit-open-session')) throw forbidden()
+      if (session.inspectorId !== user.id && !userCan(user, 'edit-open-session')) throw forbidden()
 
       // §9.3 — a retry with the same submission id returns the first save.
       const dup = (await tx.query<{ id: string; index: number }>(
@@ -1175,7 +1180,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
    * the new ones written; the sample keeps its number, shift, time and
    * inspector, and every scalar change is audited field by field.
    */
-  r.put('/:id/samples/:sampleId', requireCapability('record-inspection'), async (req, res) => {
+  r.put('/:id/samples/:sampleId', requirePermission('record-inspection'), async (req, res) => {
     const user = requireUser(req)
     const sessionId = parse(uuid, req.params.id)
     const sampleId = parse(uuid, req.params.sampleId)
@@ -1187,7 +1192,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       // An open session may be corrected by anyone who records; a closed one
       // only by a role allowed to correct closed records (§14).
       const capability = session.status === 'Open' ? 'edit-open-session' : 'edit-closed-session'
-      if (!can(user.role, capability)) throw forbidden()
+      if (!userCan(user, capability)) throw forbidden()
 
       const before = (
         await tx.query<SampleRow>(`SELECT ${SAMPLE_SELECT} FROM inspection_samples sm WHERE sm.id = $1 AND sm.session_id = $2 AND sm.deleted_at IS NULL FOR UPDATE`, [
@@ -1252,7 +1257,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
   })
 
   /** Reopen a closed session so samples can be added again. Closed-record rights required. */
-  r.post('/:id/reopen', requireCapability('edit-closed-session'), async (req, res) => {
+  r.post('/:id/reopen', requirePermission('edit-closed-session'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const body = parse(reopenSchema, req.body)
@@ -1283,7 +1288,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
    * by whoever may edit closed records. Every change is written to the audit
    * log, and the rejected quantity is re-attributed to whoever corrected it.
    */
-  r.patch('/:id/quantities', requireCapability('record-inspection'), async (req, res) => {
+  r.patch('/:id/quantities', requirePermission('record-inspection'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const body = parse(quantitiesSchema, req.body)
@@ -1291,7 +1296,7 @@ export function sessionsRoutes(ctx: AppContext): Router {
       const before = await loadSessionWithOrder(tx, id, true)
       if (!before) throw notFound('That session')
       if (before.version !== body.version) throw new ConflictError(before)
-      const may = before.status === 'Open' ? before.inspectorId === user.id || can(user.role, 'edit-open-session') : can(user.role, 'edit-closed-session')
+      const may = before.status === 'Open' ? before.inspectorId === user.id || userCan(user, 'edit-open-session') : userCan(user, 'edit-closed-session')
       if (!may) throw forbidden()
       const stock = isStockOrder(before.order)
       if (body.startQty !== undefined && stock) throw badRequest('A make-to-stock session has no rejected quantity before release.')

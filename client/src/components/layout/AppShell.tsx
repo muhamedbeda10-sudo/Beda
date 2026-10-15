@@ -8,7 +8,7 @@ import { Brand } from '@/components/brand/Brand'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
-import { can } from '@qc/shared/rules'
+import { ADMIN_PLUS } from '@qc/shared/permissions'
 import { AccountMenu, AvatarEditor, ThemeSwitch } from '@/components/layout/AccountMenu'
 import { NotificationSettings } from '@/components/layout/NotificationSettings'
 import { ADMIN_NAV, NAV, TOOLS_NAV, visibleNav, type NavItem } from '@/components/layout/navItems'
@@ -170,15 +170,17 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function Shell({ children }: { children: ReactNode }) {
   const { user } = useApp()
-  const { role, signOutUser, profile } = useAuth()
+  const { role: roleName, signOutUser, profile, can, permissions, adminPlus } = useAuth()
+  // §14 — the AI assistant's owner reads as ADMIN+, above the roles.
+  const role = adminPlus ? ADMIN_PLUS : roleName
   const ai = useAi()
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
 
   // §21 — Automations open from the assistant's header and Follow-ups from the bell: neither is a tab.
-  const nav = visibleNav(NAV, role, false)
-  const tools = visibleNav(TOOLS_NAV, role, false)
+  const nav = visibleNav(NAV, permissions, false)
+  const tools = visibleNav(TOOLS_NAV, permissions, false)
   // The tabs keep their names while those fit beside the brand and the icons; then tighter padding; then icons alone, the
   // names in tooltips. Measured on this bar, for these tabs and this window (navFit), not guessed from how many there are.
   const barRef = useRef<HTMLDivElement>(null)
@@ -190,7 +192,7 @@ function Shell({ children }: { children: ReactNode }) {
   // soon as they fit. A mouse keeps the icons, with their names in tooltips.
   const coarse = useCoarsePointer()
   const menuAtLg = coarse && fit === 'icons'
-  const admin = visibleNav(ADMIN_NAV, role, ai.owner)
+  const admin = visibleNav(ADMIN_NAV, permissions, ai.owner)
   const displayName = profile?.name || user
 
   const isActive = (n: NavItem) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to))
@@ -247,9 +249,9 @@ function Shell({ children }: { children: ReactNode }) {
 
           {/* Right — chat, the bell, administration, account (the theme is in the account panel / the menu; the assistant floats in the bottom corner) */}
           <div className="ml-auto flex shrink-0 items-center justify-end gap-1 lg:flex-1">
-            {can(role, 'use-chat') && <ChatButton />}
+            {can('use-chat') && <ChatButton />}
             {/* §21 — everyone has the bell for their alerts; the notices in it are for the roles that receive them. */}
-            <NoticeBell notices={can(role, 'read-notices')} />
+            <NoticeBell notices={can('read-notices')} />
             {/* With the menu button kept at lg, the menu holds administration and the account as well: the bar reads as on a portrait tablet. */}
             {admin.length > 0 && (
               <div className={cn('hidden', !menuAtLg && 'lg:block')}>
@@ -309,7 +311,7 @@ function Shell({ children }: { children: ReactNode }) {
               <p className="text-sm text-muted">
                 Signed in as <span className="font-semibold text-slate-700 dark:text-slate-200">{displayName}</span>
               </p>
-              <p className="mt-0.5 text-xs capitalize text-muted">Role: {role}</p>
+              <p className={cn('mt-0.5 text-xs text-muted', !adminPlus && 'capitalize')}>Role: {role}</p>
               <div className="mt-3">
                 <AvatarEditor name={displayName ?? ''} size={56} />
               </div>

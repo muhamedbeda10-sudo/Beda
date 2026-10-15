@@ -22,7 +22,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { can } from '@qc/shared/rules'
 import { ArrowRight, Bell, BellRing, Check, ChevronDown, ChevronUp, FileChartColumn, ListChecks, ListTodo, Loader2, Megaphone } from 'lucide-react'
 import type { NoticeForUser } from '@qc/shared/types'
 import { Badge, Button, Drawer, EmptyState } from '@/components/ui'
@@ -112,13 +111,13 @@ function InboxRow({ notice, open, onToggle }: { notice: NoticeForUser; open: boo
 /** `notices`: this person receives notices (by role); without, the bell holds their alerts alone. */
 export function NoticeBell({ className, notices: receivesNotices = true }: { className?: string; notices?: boolean }) {
   const qc = useQueryClient()
-  const { profile, role } = useAuth()
+  const { profile, role, can } = useAuth()
   const { data, isLoading } = useNoticeInbox(receivesNotices)
   const { data: alertPages } = useNotifications('alerts')
   const { data: reportPages } = useNotifications('reports')
   const { data: followUps } = useFollowUpCounts(!!profile)
   const { data: tasks } = useTaskCounts(!!profile)
-  const manageNotices = can(role, 'manage-admin-data')
+  const manageNotices = can('manage-notices')
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<BellTab>('notices')
   const [expanded, setExpanded] = useState<string | null>(null)

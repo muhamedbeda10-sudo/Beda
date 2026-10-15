@@ -27,8 +27,8 @@ export function ConversationInfoModal({
 }) {
   const qc = useQueryClient()
   const { toast } = useApp()
-  const { role, profile } = useAuth()
-  const admin = role === 'admin' && c.kind === 'group'
+  const { can, profile } = useAuth()
+  const admin = can('manage-chat') && c.kind === 'group'
   const { data: users = [] } = useChatUsers(admin)
   const [name, setName] = useState(c.title)
   const [busy, setBusy] = useState(false)

@@ -503,7 +503,7 @@ describe('§23 a card checked before it is shown', () => {
       [{ action: 'create', draft: draft({ validFrom: '2026-02-30', validTo: '2026-02-01' }) }, [/draft\.validFrom: "2026-02-30" is not a day/, /draft\.validTo: The end is before the start\./]],
       [
         { action: 'create', draft: draft({ targets: [{ kind: 'machine', value: '99' }, { kind: 'role', value: 'viewer' }, { kind: 'customer', value: 'Nobody Ltd' }] }) },
-        [/draft\.targets\.0: no machine with the code "99" is in the register\. Find the value with find_notice_targets/, /draft\.targets\.1: viewers do not receive notices/, /draft\.targets\.2: no customer "Nobody Ltd"/],
+        [/draft\.targets\.0: no machine with the code "99" is in the register\. Find the value with find_notice_targets/, /draft\.targets\.1: the viewer role does not receive notices/, /draft\.targets\.2: no customer "Nobody Ltd"/],
       ],
       [{ action: 'create', draft: draft({ targets: [{ kind: 'user', value: 'Ivy' }] }) }, [/draft\.targets\.0\.value: Not a valid user\./]],
       [{ action: 'create', draft: draft({ title: '   ' }) }, [/draft\.title: /]],

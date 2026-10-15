@@ -15,7 +15,6 @@ import { useWorkInstructions } from '@/services/queries'
 import { deleteWorkInstruction, updateWorkInstruction, uploadWorkInstruction } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can } from '@/domain'
 import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn } from '@/lib/utils'
 import {
@@ -58,7 +57,7 @@ const ROW_BTN = 'grid h-11 w-11 shrink-0 place-items-center rounded-xl text-mute
 
 export function WorkInstructionsSection() {
   const queryClient = useQueryClient()
-  const { role } = useAuth()
+  const { can } = useAuth()
   const { toast } = useApp()
   const [history, setHistory] = useState(false)
   const { data: rows = [], isLoading } = useWorkInstructions(undefined, history)
@@ -69,7 +68,7 @@ export function WorkInstructionsSection() {
   const [viewing, setViewing] = useState<WorkInstruction | null>(null)
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
-  const canManage = can(role, 'manage-admin-data')
+  const canManage = can('manage-configuration')
   // On a phone each document is a card; from 640 px the table, its Actions column kept in view while the rest
   // scrolls under it, and a tap on a row opens the document.
   const phone = useMediaQuery(PHONE)
@@ -199,7 +198,7 @@ export function WorkInstructionsSection() {
             <h2 className="text-lg font-bold">Work instructions</h2>
           </div>
           <div className="flex flex-wrap gap-2">
-            {can(role, 'manage-admin-data') && (
+            {can('manage-configuration') && (
               <Button className="min-h-[48px]" onClick={() => setHistory((h) => !h)}>
                 <History className="h-4 w-4" /> {history ? 'In force only' : 'Show superseded'}
               </Button>

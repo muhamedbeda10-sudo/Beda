@@ -8,7 +8,6 @@
 // ============================================================================
 
 import type { AiNoticeDraft, AiNoticeReach } from '@qc/shared/noticeAssistant'
-import { can } from '@qc/shared/rules'
 import { NOTICE_TARGET_LABEL, ROLES, type NoticeMatchMode, type NoticeTarget, type Role } from '@qc/shared/types'
 import type { Queryable } from '../db/pool'
 import { isUuid } from '../automations/people'
@@ -62,11 +61,14 @@ export function draftOfNotice(n: StoredNotice): AiNoticeDraft {
   return draft
 }
 
-/** The roles whose accounts have a bell: a notice reaches nobody else. */
-export const NOTICE_READER_ROLES: readonly Role[] = ROLES.filter((r) => can(r, 'read-notices'))
+/** The roles whose set includes notices (§14), as the administrators set them now: a notice for another role reaches only those of it given notices. */
+export async function noticeReaderRoles(q: Queryable): Promise<Role[]> {
+  const { rows } = await q.query<{ role: Role }>(`SELECT role::text AS role FROM role_permissions WHERE permission = 'read-notices'`)
+  return ROLES.filter((r) => rows.some((x) => x.role === r))
+}
 
-/** An account that is told: live, not the system sender, of a role with a bell. Requires the alias `u` for users. */
-const READER_ACCOUNT = `u.is_active AND u.deleted_at IS NULL AND NOT u.is_system AND u.role::text = ANY($1::text[])`
+/** An account that is told: live, not the system sender, with a bell ($1 is 'read-notices'). Requires the alias `u` for users. */
+const READER_ACCOUNT = `u.is_active AND u.deleted_at IS NULL AND NOT u.is_system AND user_has_permission(u.id, $1)`
 
 /**
  * Whom a notice reaches, by its targets and how they combine. `people` counts
@@ -75,7 +77,7 @@ const READER_ACCOUNT = `u.is_active AND u.deleted_at IS NULL AND NOT u.is_system
  * people it names at once, and whoever meets it at the place it names.
  */
 export async function reachOf(q: Queryable, targets: readonly NoticeTarget[], mode: NoticeMatchMode): Promise<AiNoticeReach> {
-  const roles = [...NOTICE_READER_ROLES]
+  const roles = 'read-notices'
   if (targets.length === 0) {
     const { rows } = await q.query<{ n: number }>(`SELECT count(*)::int AS n FROM users u WHERE ${READER_ACCOUNT}`, [roles])
     return { everyone: true, people: rows[0].n, placeBound: false }

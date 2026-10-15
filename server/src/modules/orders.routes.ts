@@ -30,7 +30,7 @@ import { withTransaction, type Queryable } from '../db/pool'
 import { badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { columnFilterClauses, columnOrderBy, columnQuerySchema, columnValues, type SqlColumns } from '../lib/columnFilters'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requirePermission, requireUser } from '../auth/middleware'
 import { writeAudit } from '../audit/service'
 import { dropNulls, normaliseKey } from '../lib/rows'
 import { SAMPLE_SUMMARY_SELECT, SESSION_SELECT } from './sessions.sql'
@@ -361,7 +361,7 @@ export function ordersRoutes(ctx: AppContext): Router {
    * Cancelled lines are listed too: this is the sheet as it was uploaded.
    * Any column filters and sorts as in Excel (cf, sort).
    */
-  r.get('/list', requireCapability('view-order-sheet'), async (req, res) => {
+  r.get('/list', requirePermission('view-order-sheet'), async (req, res) => {
     requireUser(req)
     const q = parse(
       orderListQuery.merge(columnQuerySchema).extend({
@@ -402,7 +402,7 @@ export function ordersRoutes(ctx: AppContext): Router {
   })
 
   /** One Access column's values under every other filter, for its Excel menu. */
-  r.get('/list/values', requireCapability('view-order-sheet'), async (req, res) => {
+  r.get('/list/values', requirePermission('view-order-sheet'), async (req, res) => {
     requireUser(req)
     const q = parse(
       orderListQuery.merge(columnQuerySchema).extend({
@@ -418,7 +418,7 @@ export function ordersRoutes(ctx: AppContext): Router {
   })
 
   /** What the Access filters may offer, drawn from every line on record. */
-  r.get('/list/options', requireCapability('view-order-sheet'), async (req, res) => {
+  r.get('/list/options', requirePermission('view-order-sheet'), async (req, res) => {
     requireUser(req)
     const [statuses, factories, machines, items] = await Promise.all([
       ctx.db.query<{ v: string }>(`SELECT DISTINCT btrim(erp_status) AS v FROM production_orders WHERE deleted_at IS NULL AND btrim(erp_status) <> '' ORDER BY 1`),
@@ -605,7 +605,7 @@ export function ordersRoutes(ctx: AppContext): Router {
    * their order, and a line the new export still carries comes back through
    * the import's upsert. Only an administrator, and the count is audited.
    */
-  r.post('/clear', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/clear', requirePermission('import-data'), async (req, res) => {
     const user = requireUser(req)
     const result = await withTransaction(ctx.db, async (tx) => {
       const { rowCount } = await tx.query(
@@ -631,7 +631,7 @@ export function ordersRoutes(ctx: AppContext): Router {
   })
 
   /** Which line keys already exist — the importer's new-vs-update preview. */
-  r.post('/existing-keys', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/existing-keys', requirePermission('import-data'), async (req, res) => {
     const { keys } = parse(existingKeysSchema, req.body)
     const wanted = Array.from(new Set(keys.map(normaliseKey)))
     const { rows } = await ctx.db.query<{ key: string }>(
@@ -643,7 +643,7 @@ export function ordersRoutes(ctx: AppContext): Router {
   })
 
   /** What importing a batch would do, written nowhere: the importer's preview, and what it sends (only what changes). */
-  r.post('/import/compare', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/import/compare', requirePermission('import-data'), async (req, res) => {
     const { rows } = parse(importSchema, req.body)
     const body: ImportCompareResponse = await compareOrderLines(ctx.db, rows)
     res.json(body)
@@ -657,7 +657,7 @@ export function ordersRoutes(ctx: AppContext): Router {
    * the first time must name its order number. A line the row would not
    * change is not written, and is counted as unchanged.
    */
-  r.post('/import', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/import', requirePermission('import-data'), async (req, res) => {
     const user = requireUser(req)
     const { rows } = parse(importSchema, req.body)
     const result = await withTransaction(ctx.db, async (tx) => {

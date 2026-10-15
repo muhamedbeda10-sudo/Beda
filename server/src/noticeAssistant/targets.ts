@@ -11,11 +11,11 @@
 
 import { z } from 'zod'
 import { normaliseMachineCode, shiftName } from '@qc/shared/rules'
-import { NOTICE_TARGET_KINDS, PROCESSES, PROCESS_LABEL, type NoticeTarget, type NoticeTargetKind, type Process, type Role } from '@qc/shared/types'
+import { NOTICE_TARGET_KINDS, PROCESSES, ROLES, PROCESS_LABEL, type NoticeTarget, type NoticeTargetKind, type Process, type Role } from '@qc/shared/types'
 import type { Queryable } from '../db/pool'
 import { cancelledSql } from '../lib/orderStatus'
 import { isUuid } from '../automations/people'
-import { NOTICE_READER_ROLES } from './view'
+import { noticeReaderRoles } from './view'
 
 /** At most this many values a lookup hands back. */
 export const MAX_TARGET_CANDIDATES = 50
@@ -72,7 +72,7 @@ export async function findTargets(q: Queryable, kind: NoticeTargetKind, query?: 
     case 'shift':
       return bounded(narrow(SHIFTS.map((s) => ({ value: s, label: shiftLabel(s) }))))
     case 'role':
-      return bounded(narrow(NOTICE_READER_ROLES.map((r) => ({ value: r, label: roleLabel(r) }))))
+      return bounded(narrow((await noticeReaderRoles(q)).map((r) => ({ value: r, label: roleLabel(r) }))))
     case 'factory':
       return bounded(narrow((await factories(q)).map((f) => ({ value: f, label: f }))))
     case 'machine': {
@@ -228,10 +228,11 @@ export async function resolveTargets(q: Queryable, asked: readonly TargetAsked[]
         break
       }
       case 'role': {
-        const r = NOTICE_READER_ROLES.find((x) => x === value.toLowerCase())
+        const readers = await noticeReaderRoles(q)
+        const r = readers.find((x) => x === value.toLowerCase())
         if (r) add({ kind: 'role', value: r, label: roleLabel(r) })
-        else if (value.toLowerCase() === 'viewer') errors.push(`${where}: viewers do not receive notices, so a notice for them reaches nobody. Leave this target out.`)
-        else missing(`"${value}" is not a role that receives notices (they are ${NOTICE_READER_ROLES.join(', ')}).`)
+        else if ((ROLES as readonly string[]).includes(value.toLowerCase())) errors.push(`${where}: the ${value.toLowerCase()} role does not receive notices, so a notice for it reaches nobody. Leave this target out.`)
+        else missing(`"${value}" is not a role that receives notices (they are ${readers.join(', ')}).`)
         break
       }
       case 'machine': {

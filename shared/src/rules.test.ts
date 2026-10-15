@@ -16,7 +16,6 @@ import {
   validateSample,
   resolveDimensions,
   sessionTone,
-  can,
   stagesProblem,
   orderLineProblems,
   takesConfiguredDimensions,
@@ -502,39 +501,6 @@ describe('session colouring', () => {
   })
 })
 
-describe('§14 q2 permissions', () => {
-  it('lets inspectors record but not edit closed sessions', () => {
-    expect(can('inspector', 'record-inspection')).toBe(true)
-    expect(can('inspector', 'view-all-sessions')).toBe(false)
-    expect(can('inspector', 'edit-closed-session')).toBe(false)
-    expect(can('inspector', 'override-grade-mismatch')).toBe(false)
-    expect(can('inspector', 'purge-audit-logs')).toBe(false)
-  })
-
-  it('lets supervisors correct closed sessions and override grade mismatches', () => {
-    expect(can('supervisor', 'edit-closed-session')).toBe(true)
-    expect(can('supervisor', 'view-all-sessions')).toBe(true)
-    expect(can('admin', 'view-all-sessions')).toBe(true)
-    expect(can('supervisor', 'override-grade-mismatch')).toBe(true)
-    expect(can('supervisor', 'delete-defect')).toBe(true)
-    expect(can('supervisor', 'delete-session')).toBe(false)
-    expect(can('supervisor', 'delete-sample')).toBe(false)
-    expect(can('supervisor', 'purge-audit-logs')).toBe(false)
-    expect(can('supervisor', 'manage-admin-data')).toBe(false)
-  })
-
-  it('gives admins everything including audit purging', () => {
-    expect(can('admin', 'manage-admin-data')).toBe(true)
-    expect(can('admin', 'purge-audit-logs')).toBe(true)
-    expect(can('admin', 'delete-session')).toBe(true)
-    expect(can('admin', 'delete-sample')).toBe(true)
-  })
-
-  it('denies everything to an unknown role', () => {
-    expect(can(undefined, 'record-inspection')).toBe(false)
-  })
-})
-
 describe('§8.2 measurements with no specification', () => {
   it('is Pending when there is no nominal to judge against', () => {
     // Real legacy shape: "Paint Thickness" recorded 88 with no nominal or
@@ -576,34 +542,6 @@ describe('the make-to-stock press', () => {
     expect(stockProductionOf(null)).toBeNull()
     expect(normaliseMachineCode('٠٥٨')).toBe('58')
     expect(normaliseMachineCode('LM-4 ')).toBe('lm-4')
-  })
-})
-
-describe('roles', () => {
-  it('a viewer reads and never writes, and is outside the chat and the notices', () => {
-    expect(can('viewer', 'view-all-sessions')).toBe(true)
-    expect(can('viewer', 'view-dashboard')).toBe(true)
-    expect(can('viewer', 'view-order-sheet')).toBe(true)
-    expect(can('inspector', 'view-order-sheet')).toBe(false)
-    expect(can('supervisor', 'view-order-sheet')).toBe(true)
-    for (const cap of ['record-inspection', 'edit-open-session', 'edit-closed-session', 'delete-session', 'delete-sample', 'delete-note', 'delete-defect', 'manage-admin-data', 'purge-audit-logs', 'override-grade-mismatch', 'use-chat', 'read-notices'] as const) {
-      expect(can('viewer', cap)).toBe(false)
-    }
-  })
-  it("keeps History's Excel export and the inspectors' ranking from a viewer", () => {
-    expect(can('viewer', 'export-records')).toBe(false)
-    expect(can('supervisor', 'export-records')).toBe(true)
-    expect(can('admin', 'export-records')).toBe(true)
-    expect(can('viewer', 'view-inspector-ranking')).toBe(false)
-    expect(can('admin', 'view-inspector-ranking')).toBe(true)
-  })
-  it('everyone who records is in the chat and receives notices', () => {
-    for (const role of ['inspector', 'supervisor', 'admin'] as const) {
-      expect(can(role, 'record-inspection')).toBe(true)
-      expect(can(role, 'use-chat')).toBe(true)
-      expect(can(role, 'read-notices')).toBe(true)
-    }
-    expect(can(undefined, 'view-all-sessions')).toBe(false)
   })
 })
 

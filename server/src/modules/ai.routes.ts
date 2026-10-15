@@ -836,10 +836,10 @@ export function aiRoutes(ctx: AppContext): Router {
     // a task as a card and follow their tasks, and their playbook as it is now, with the tool to keep it. Their role is
     // the one this request was signed in with.
     const automations = avail.me.automations ? { id: user.id, name: user.name, role: user.role } : null
-    const managesNotices = mayManageNotices(access, owner, user.role)
+    const managesNotices = mayManageNotices(access, owner, user.permissions)
     // Excel files, for the people the owner allows (and the owner).
     const excel = mayMakeExcel(access, owner)
-    const notices = noticePromptMode(user.role, managesNotices)
+    const notices = noticePromptMode({ permissions: [...user.permissions] }, managesNotices)
     // The data dictionary: the views the person may read, then the saved tables built from what they may read.
     const dictionary = async () => [await describeAiSchema(db, access.domains), await describeSavedTables(db, access.domains)].filter(Boolean).join('\n\n')
     const systemPrompt = body.conversationId

@@ -23,7 +23,7 @@ import { useAuth } from '@/store/AuthContext'
 import { useAiMe } from '@/services/queries'
 import { useAi } from '@/components/ai/AiAssistantProvider'
 import { AiAddress } from '@/components/ai/AiAddress'
-import { can, type Capability } from '@qc/shared/rules'
+import { homePath, type Permission } from '@qc/shared/permissions'
 import { lazy, Suspense, type ReactElement } from 'react'
 import { usePushBridge } from '@/lib/push'
 
@@ -40,10 +40,26 @@ const TaskPage = lazy(() => import('@/pages/TaskPage').then((m) => ({ default: m
 const PlaybookPage = lazy(() => import('@/pages/PlaybookPage').then((m) => ({ default: m.PlaybookPage })))
 const SavedTablesPage = lazy(() => import('@/pages/SavedTablesPage').then((m) => ({ default: m.SavedTablesPage })))
 
-/** A page for a capability the signed-in role lacks sends the reader home; the API refuses it anyway. */
-function Only({ cap, children }: { cap: Capability; children: ReactElement }) {
-  const { role } = useAuth()
-  return can(role, cap) ? children : <Navigate to="/" replace />
+/** A page the person may not open (§14) sends them home; the API refuses its data anyway. */
+function Only({ cap, children }: { cap: Permission; children: ReactElement }) {
+  const { can } = useAuth()
+  return can(cap) ? children : <Navigate to="/" replace />
+}
+
+/**
+ * Home: the Inspections board for those who may open it; anyone else, to the
+ * first screen they may open (§14); and someone allowed none is told so.
+ */
+function Home() {
+  const { can, permissions } = useAuth()
+  if (can('view-inspections')) return <InspectionsPage />
+  const home = homePath(permissions)
+  if (home && home !== '/') return <Navigate to={home} replace />
+  return (
+    <p className="mx-auto max-w-md py-16 text-center text-sm text-muted">
+      You have no screens to open yet. Ask an administrator to give you the ones you need.
+    </p>
+  )
 }
 
 /**
@@ -127,15 +143,15 @@ export default function App() {
     <AppShell>
       <PushBridge userId={profile.id} />
       <Routes>
-        <Route path="/" element={<InspectionsPage />} />
+        <Route path="/" element={<Home />} />
         <Route path="/wizard/:sessionId" element={<Only cap="record-inspection"><WizardPage /></Only>} />
         <Route path="/wizard/:sessionId/edit/:sampleId" element={<Only cap="record-inspection"><WizardPage /></Only>} />
-        <Route path="/coils" element={<Only cap="record-inspection"><CoilSearchPage /></Only>} />
+        <Route path="/coils" element={<Only cap="view-coil-search"><CoilSearchPage /></Only>} />
         <Route path="/pdi" element={<Only cap="record-inspection"><PDIPage /></Only>} />
-        <Route path="/history" element={<HistoryPage />} />
+        <Route path="/history" element={<Only cap="view-history"><HistoryPage /></Only>} />
         <Route path="/access" element={<Only cap="view-order-sheet"><AccessPage /></Only>} />
         <Route path="/dashboard" element={<Only cap="view-dashboard"><DashboardPage /></Only>} />
-        <Route path="/mtc" element={<MtcPage />} />
+        <Route path="/mtc" element={<Only cap="view-mtc"><MtcPage /></Only>} />
         <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
         {/* §20 — the assistant's addresses (/ai?c=<conversation>, /ai/reports/<id>) open its popup, large, on that place. */}
         <Route path="/ai/*" element={<OnlyAiGranted><AiAddress /></OnlyAiGranted>} />
@@ -150,14 +166,14 @@ export default function App() {
         <Route path="/saved-tables" element={<OnlyAiGranted><LazyPage what="The saved tables"><SavedTablesPage /></LazyPage></OnlyAiGranted>} />
         {/* Administration lives behind the gear; every section keeps its own address. */}
         <Route path="/admin" element={<Navigate to="/admin/configuration" replace />} />
-        <Route path="/admin/configuration/:section?" element={<Only cap="manage-admin-data"><ConfigurationPage /></Only>} />
-        <Route path="/admin/import" element={<Only cap="manage-admin-data"><DataImportPage /></Only>} />
-        <Route path="/admin/users" element={<Only cap="manage-admin-data"><UsersPage /></Only>} />
-        <Route path="/admin/audit" element={<Only cap="edit-closed-session"><AuditPage /></Only>} />
+        <Route path="/admin/configuration/:section?" element={<Only cap="manage-configuration"><ConfigurationPage /></Only>} />
+        <Route path="/admin/import" element={<Only cap="import-data"><DataImportPage /></Only>} />
+        <Route path="/admin/users" element={<Only cap="manage-users"><UsersPage /></Only>} />
+        <Route path="/admin/audit" element={<Only cap="view-audit-log"><AuditPage /></Only>} />
         {/* §16 — notices have a page of their own, opened from the bell; the old address under Administration leads there. */}
-        <Route path="/notices" element={<Only cap="manage-admin-data"><NoticesPage /></Only>} />
+        <Route path="/notices" element={<Only cap="manage-notices"><NoticesPage /></Only>} />
         <Route path="/admin/notices" element={<Navigate to="/notices" replace />} />
-        <Route path="/admin/whats-new" element={<Only cap="manage-admin-data"><WhatsNewPage /></Only>} />
+        <Route path="/admin/whats-new" element={<Only cap="view-release-notes"><WhatsNewPage /></Only>} />
         {/* §20 — the assistant's settings live in its popup (the gear): this address opens them there, large. */}
         <Route path="/admin/ai" element={<OnlyAiOwner><AiAddress /></OnlyAiOwner>} />
         <Route path="/audit" element={<Navigate to="/admin/audit" replace />} />

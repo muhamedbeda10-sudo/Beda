@@ -22,7 +22,8 @@
     "./aiExcel": "./src/aiExcel.ts",
     "./savedTables": "./src/savedTables.ts",
     "./aiDiagram": "./src/aiDiagram.ts",
-    "./mtc": "./src/mtc.ts"
+    "./mtc": "./src/mtc.ts",
+    "./permissions": "./src/permissions.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",

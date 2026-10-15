@@ -55,7 +55,7 @@ export function ConfigurationPage() {
     <AdminLayout
       title="Configuration"
       description="The lists every inspection draws on: machines, items, defects, grades, consumables, work instructions and the dashboard's targets."
-      needs="manage-admin-data"
+      needs="manage-configuration"
       actions={
         <Button className="min-h-[44px]" onClick={() => setExporting(true)}>
           <FileSpreadsheet className="h-4 w-4" /> Export to Excel

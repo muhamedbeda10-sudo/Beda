@@ -38,7 +38,7 @@ import { UniversalChoice, readUniversalDraft, universalDraft, type UniversalDraf
 import { closeSession, correctDefect, correctDimension, discardSession } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can, isStockOrder, processForMachine, sessionTone, shiftName, type Process, type SessionTone } from '@/domain'
+import { isStockOrder, processForMachine, sessionTone, shiftName, type Process, type SessionTone } from '@/domain'
 import { cn, formatDateTime } from '@/lib/utils'
 import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 import { usePersistedState } from '@/lib/usePersistedState'
@@ -76,9 +76,9 @@ interface MachineGroup {
 export function InspectionsPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { role } = useAuth()
+  const { can } = useAuth()
   // A viewer reads the board: no new inspection, no continue, no close.
-  const canRecord = can(role, 'record-inspection')
+  const canRecord = can('record-inspection')
   const { toast } = useApp()
 
   // Only the open sessions — this screen exists to answer "what is open now".
@@ -249,12 +249,12 @@ export function InspectionsPage() {
   /** §7 — the session whose Holds are being decided from the badge. */
   const [holdFor, setHoldFor] = useState<SessionWithOrder | null>(null)
   /** Who may change a defect's decision here: the same rule as any correction. */
-  const mayDecide = (s: SessionWithOrder) => (s.holdCount ?? 0) > 0 && (s.status === 'Open' ? can(role, 'edit-open-session') : can(role, 'edit-closed-session'))
+  const mayDecide = (s: SessionWithOrder) => (s.holdCount ?? 0) > 0 && (s.status === 'Open' ? can('edit-open-session') : can('edit-closed-session'))
   /** A sample opened from its chip on the card: the full record, read-only here. */
   const [viewing, setViewing] = useState<{ session: SessionWithOrder; sample: SampleSummary } | null>(null)
   const { data: viewingDetail, isLoading: viewingLoading } = useSampleDetail(viewing?.sample.id ?? null)
   /** §14 — an open session's sample is corrected by an inspector, a closed one's by a supervisor; the API enforces the same. */
-  const viewingEditable = viewing ? (viewing.session.status === 'Open' ? can(role, 'edit-open-session') : can(role, 'edit-closed-session')) : false
+  const viewingEditable = viewing ? (viewing.session.status === 'Open' ? can('edit-open-session') : can('edit-closed-session')) : false
   const [editingDim, setEditingDim] = useState<DimensionResult | null>(null)
   const [editingDefect, setEditingDefect] = useState<DefectResult | null>(null)
   const [correcting, setCorrecting] = useState(false)
@@ -829,7 +829,7 @@ export function InspectionsPage() {
         </div>
       )}
 
-      <RecentlyClosed machineName={machineLabel} />
+      {can('view-history') && <RecentlyClosed machineName={machineLabel} />}
 
       <NewInspectionDialog open={newOpen} onClose={() => setNewOpen(false)} />
 
@@ -845,7 +845,7 @@ export function InspectionsPage() {
           setClosing(s)
         }}
         onOpenSample={(s, sm) => setViewing({ session: s, sample: sm })}
-        onCorrectQuantities={details && (details.status === 'Open' ? can(role, 'edit-open-session') : can(role, 'edit-closed-session')) ? (s) => setCorrectingQty(s) : undefined}
+        onCorrectQuantities={details && (details.status === 'Open' ? can('edit-open-session') : can('edit-closed-session')) ? (s) => setCorrectingQty(s) : undefined}
       />
       {correctingQty && <SessionQuantitiesDialog session={correctingQty} onClose={() => setCorrectingQty(null)} />}
       {holdFor && <HoldDecisionDialog session={holdFor} onClose={() => setHoldFor(null)} />}

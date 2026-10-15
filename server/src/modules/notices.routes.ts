@@ -24,7 +24,7 @@ import type { AppContext } from '../context'
 import { withTransaction } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requirePermission, requireUser } from '../auth/middleware'
 import { dropNulls } from '../lib/rows'
 import { NOTICE_FILE_TYPES, buildNoticeFileStorageKey } from '../images/storage'
 import { isPdf } from './workInstructions.routes'
@@ -60,7 +60,7 @@ export function noticesRoutes(ctx: AppContext): Router {
 
   // ---- Readers -------------------------------------------------------------
 
-  r.get('/inbox', requireCapability('read-notices'), async (req, res) => {
+  r.get('/inbox', requirePermission('read-notices'), async (req, res) => {
     const user = requireUser(req)
     const notices = await loadInbox(ctx.db, tz, { userId: user.id, role: user.role })
     const body: NoticeInboxResponse = { notices, pendingCount: notices.filter((n) => n.pending).length }
@@ -68,7 +68,7 @@ export function noticesRoutes(ctx: AppContext): Router {
   })
 
   /** What the reader still has to read where they are about to work. */
-  r.post('/match', requireCapability('read-notices'), async (req, res) => {
+  r.post('/match', requirePermission('read-notices'), async (req, res) => {
     const user = requireUser(req)
     const where = parse(matchSchema, req.body)
     const context: NoticeContext = { shift: deriveShift(new Date(), tz) }
@@ -130,8 +130,8 @@ export function noticesRoutes(ctx: AppContext): Router {
     res.status(204).end()
   }
 
-  r.post('/:id/seen', requireCapability('read-notices'), (req, res) => mark(req, false, res))
-  r.post('/:id/acknowledge', requireCapability('read-notices'), (req, res) => mark(req, true, res))
+  r.post('/:id/seen', requirePermission('read-notices'), (req, res) => mark(req, false, res))
+  r.post('/:id/acknowledge', requirePermission('read-notices'), (req, res) => mark(req, true, res))
 
   /** The bytes of an attached file. Signed-in only; immutable per row. */
   r.get('/files/:id/content', async (req, res) => {
@@ -163,7 +163,7 @@ export function noticesRoutes(ctx: AppContext): Router {
 
   // ---- Administrators ------------------------------------------------------
 
-  r.get('/admin', requireCapability('manage-admin-data'), async (_req, res) => {
+  r.get('/admin', requirePermission('manage-notices'), async (_req, res) => {
     const { rows } = await ctx.db.query<NoticeRow & { seenCount: number; acknowledgedCount: number }>(
       `SELECT ${NOTICE_SELECT},
               (SELECT count(*) FROM notice_acknowledgements a WHERE a.notice_id = n.id)::int AS "seenCount",
@@ -175,7 +175,7 @@ export function noticesRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
-  r.get('/:id/acknowledgements', requireCapability('manage-admin-data'), async (req, res) => {
+  r.get('/:id/acknowledgements', requirePermission('manage-notices'), async (req, res) => {
     const id = parse(uuid, req.params.id)
     const { rows } = await ctx.db.query<NoticeAcknowledgement>(
       `SELECT user_id AS "userId", user_name AS "userName", seen_at AS "seenAt", acknowledged_at AS "acknowledgedAt", context
@@ -185,7 +185,7 @@ export function noticesRoutes(ctx: AppContext): Router {
     res.json(rows.map(dropNulls))
   })
 
-  r.post('/files', requireCapability('manage-admin-data'), upload.single('file'), async (req, res) => {
+  r.post('/files', requirePermission('manage-notices'), upload.single('file'), async (req, res) => {
     const user = requireUser(req)
     if (!req.file) throw badRequest('Attach the document as the "file" field.')
     const name = req.file.originalname.slice(0, 255) || 'document'
@@ -209,14 +209,14 @@ export function noticesRoutes(ctx: AppContext): Router {
     }
   })
 
-  r.post('/', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/', requirePermission('manage-notices'), async (req, res) => {
     const user = requireUser(req)
     const body = parse(noticeSaveSchema, req.body) as SaveNoticeRequest
     const created = await withTransaction(ctx.db, (tx) => createNotice(tx, tz, user, body))
     res.status(201).json(created)
   })
 
-  r.put('/:id', requireCapability('manage-admin-data'), async (req, res) => {
+  r.put('/:id', requirePermission('manage-notices'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const body = parse(noticeSaveSchema, req.body) as SaveNoticeRequest
@@ -225,14 +225,14 @@ export function noticesRoutes(ctx: AppContext): Router {
   })
 
   /** Stop showing it before its end date. The record and its acknowledgements stay. */
-  r.post('/:id/withdraw', requireCapability('manage-admin-data'), async (req, res) => {
+  r.post('/:id/withdraw', requirePermission('manage-notices'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const after = await withTransaction(ctx.db, (tx) => withdrawNotice(tx, tz, user, id))
     res.json(after)
   })
 
-  r.delete('/:id', requireCapability('manage-admin-data'), async (req, res) => {
+  r.delete('/:id', requirePermission('manage-notices'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     await withTransaction(ctx.db, (tx) => deleteNotice(tx, user, id))

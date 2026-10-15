@@ -13,7 +13,7 @@ import { AUDIT_ACTIONS, type AuditAction, type AuditEntry } from '@qc/shared/typ
 import type { AppContext } from '../context'
 import { withTransaction } from '../db/pool'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requirePermission, requireUser } from '../auth/middleware'
 import { currentAiOwner } from '../ai/owner'
 import { writeAudit } from '../audit/service'
 import { dropNulls } from '../lib/rows'
@@ -77,7 +77,7 @@ function auditWhere(q: z.infer<typeof auditFilterSchema>, p: (v: unknown) => str
 
 export function auditRoutes(ctx: AppContext): Router {
   const r = Router()
-  r.use(requireCapability('edit-closed-session'))
+  r.use(requirePermission('view-audit-log'))
 
   /** Whether the reader owns the assistant, read again on every request. Nothing is pinned from here. */
   const ownsAi = async (userId: string) => (await currentAiOwner(ctx.db, ctx.config)) === userId
@@ -167,7 +167,7 @@ export function auditRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
-  r.post('/purge', requireCapability('purge-audit-logs'), async (req, res) => {
+  r.post('/purge', requirePermission('purge-audit-logs'), async (req, res) => {
     const user = requireUser(req)
     const { ids } = parse(z.object({ ids: z.array(z.string().regex(/^\d+$/)).min(1).max(1000) }), req.body)
     // Only entries the reader can see: an id guessed at cannot reach the assistant's own.

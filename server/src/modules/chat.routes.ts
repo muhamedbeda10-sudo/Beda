@@ -43,7 +43,7 @@ import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
 import { HttpError, badRequest, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
+import { requirePermission, requireUser, userCan, type AuthUser } from '../auth/middleware'
 import { auditDelete } from '../audit/service'
 import { NOTICE_FILE_TYPES, buildChatFileStorageKey } from '../images/storage'
 import { sniffNoticeFile } from './notices.routes'
@@ -348,12 +348,12 @@ export function chatRoutes(ctx: AppContext): Router {
   const db = ctx.db
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: ctx.config.MAX_DOCUMENT_BYTES, files: 1, fields: 5 } })
   // A viewer is outside the chat altogether: no list, no unread count, no message.
-  r.use(requireCapability('use-chat'))
+  r.use(requirePermission('use-chat'))
 
   /** Everyone who can be written to. */
   r.get('/users', async (_req, res) => {
     const { rows } = await db.query<ChatUser>(
-      `SELECT id, name, username, role FROM users WHERE deleted_at IS NULL AND is_active AND NOT is_system AND role <> 'viewer' ORDER BY name`,
+      `SELECT id, name, username, role FROM users WHERE deleted_at IS NULL AND is_active AND NOT is_system AND user_has_permission(id, 'use-chat') ORDER BY name`,
     )
     res.json(rows)
   })
@@ -411,7 +411,7 @@ export function chatRoutes(ctx: AppContext): Router {
         }
         return id
       }
-      if (user.role !== 'admin') throw forbidden('Only an administrator creates a group.')
+      if (!userCan(user, 'manage-chat')) throw forbidden('You may not create chat groups.')
       const { rows } = await tx.query<{ id: string }>(`INSERT INTO chat_conversations (kind, name, created_by_id) VALUES ('group', $1, $2) RETURNING id`, [body.name, user.id])
       const id = rows[0].id
       const ids = Array.from(new Set([user.id, ...body.memberIds]))
@@ -423,7 +423,7 @@ export function chatRoutes(ctx: AppContext): Router {
     res.status(201).json((await buildConversations(db, [row], user))[0])
   })
 
-  r.patch('/conversations/:id', requireCapability('manage-admin-data'), async (req, res) => {
+  r.patch('/conversations/:id', requirePermission('manage-chat'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const body = parse(updateGroupSchema, req.body) as UpdateGroupRequest
@@ -451,7 +451,7 @@ export function chatRoutes(ctx: AppContext): Router {
    * delete, audited); it leaves every member's list at once. The general
    * channel and a direct conversation are never deleted.
    */
-  r.delete('/conversations/:id', requireCapability('manage-admin-data'), async (req, res) => {
+  r.delete('/conversations/:id', requirePermission('manage-chat'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     await withTransaction(db, async (tx) => {
@@ -578,7 +578,7 @@ export function chatRoutes(ctx: AppContext): Router {
         await tx.query(`INSERT INTO chat_hidden_messages (message_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [id, user.id])
         return
       }
-      const moderator = user.role === 'admin' && m.kind !== 'direct'
+      const moderator = userCan(user, 'manage-chat') && m.kind !== 'direct'
       if (m.senderId !== user.id && !moderator) throw forbidden('Only the sender deletes a message for everyone.')
       if (m.senderId === user.id && !moderator && !withinWindow(m.createdAt)) throw badRequest('A message can be deleted for everyone for one hour after it was sent.')
       await tx.query(`UPDATE chat_messages SET deleted_at = now(), deleted_by_id = $2 WHERE id = $1 AND deleted_at IS NULL`, [id, user.id])

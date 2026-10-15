@@ -67,7 +67,8 @@ import type {
   AiSettingsResponse,
   AiStopResponse,
 } from '@qc/shared/ai'
-import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
+import type { ChatConversation, ChatMessage, DefectResult, DimensionResult, Notice, NoticeFile, NoticeForUser, ManagedUser, Role, StoredFile, UserProfile, WorkInstruction } from '@qc/shared/types'
+import type { RolePermissionsRequest, RolePermissionsResponse, UserPermissionsRequest } from '@qc/shared/permissions'
 import { api } from '@/lib/api'
 import { keys } from '@/services/queries'
 import { chunk } from '@/lib/utils'
@@ -357,6 +358,20 @@ export async function deleteWorkInstruction(qc: QueryClient, id: string): Promis
 export async function deleteUser(qc: QueryClient, id: string): Promise<void> {
   await api<void>(`/users/${id}`, { method: 'DELETE' })
   await qc.invalidateQueries({ queryKey: ['users'] })
+}
+
+/** §14 — a person's own differences from their role, all of them. */
+export async function saveUserPermissions(qc: QueryClient, id: string, body: UserPermissionsRequest): Promise<ManagedUser> {
+  const user = await api<ManagedUser>(`/users/${id}/permissions`, { method: 'PUT', body })
+  await qc.invalidateQueries({ queryKey: ['users'] })
+  return user
+}
+
+/** §14 — a role's set, all of it. */
+export async function saveRolePermissions(qc: QueryClient, role: Role, body: RolePermissionsRequest): Promise<RolePermissionsResponse> {
+  const res = await api<RolePermissionsResponse>(`/users/roles/${role}`, { method: 'PUT', body })
+  await qc.invalidateQueries({ queryKey: ['users'] })
+  return res
 }
 
 // ---- §15 Dashboard ---------------------------------------------------------

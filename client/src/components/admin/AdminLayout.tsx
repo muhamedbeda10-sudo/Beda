@@ -5,7 +5,7 @@ import { ADMIN_NAV, visibleNav } from '@/components/layout/navItems'
 import { Badge, Card } from '@/components/ui'
 import { useAiMe } from '@/services/queries'
 import { useAuth } from '@/store/AuthContext'
-import { can, type Capability } from '@qc/shared/rules'
+import { ADMIN_PLUS, type Permission } from '@qc/shared/permissions'
 import { cn } from '@/lib/utils'
 
 /**
@@ -31,18 +31,18 @@ export function AdminLayout({
   title: string
   /** One line under the title: what the page is for. */
   description?: ReactNode
-  /** Capability the page requires. */
-  needs?: Capability
+  /** Permission the page requires. */
+  needs?: Permission
   /** In place of `needs`: whether this person may use the page, decided by the page. */
   allowed?: boolean
   /** Buttons shown beside the heading. */
   actions?: ReactNode
   children: ReactNode
 }) {
-  const { role } = useAuth()
+  const { permissions, can, role, adminPlus } = useAuth()
   const { data: me } = useAiMe()
-  const sections = visibleNav(ADMIN_NAV, role, me?.owner ?? false)
-  const may = allowed ?? (needs ? can(role, needs) : false)
+  const sections = visibleNav(ADMIN_NAV, permissions, me?.owner ?? false)
+  const may = allowed ?? (needs ? can(needs) : false)
   const switcher = sections.length > 1
 
   return (
@@ -95,11 +95,11 @@ export function AdminLayout({
               <div>
                 <p className="text-lg font-bold">You don't have access to {title}</p>
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted">
-                  A change here affects every inspection that follows, so it is limited to administrators. Ask one if you need something added or
+                  A change here affects every inspection that follows, so only those allowed it may open this page. Ask an administrator if you need something added or
                   corrected.
                 </p>
               </div>
-              <Badge tone="neutral">Signed in as {role}</Badge>
+              <Badge tone="neutral">Signed in as {adminPlus ? ADMIN_PLUS : role}</Badge>
             </Card>
           )}
         </div>

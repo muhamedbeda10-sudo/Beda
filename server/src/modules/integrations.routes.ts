@@ -37,7 +37,7 @@ import { parse } from '../lib/validate'
 import { badRequest, duplicate, notFound, unauthenticated } from '../lib/errors'
 import { dropNulls } from '../lib/rows'
 import { RateLimiter } from '../lib/rateLimit'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requirePermission, requireUser } from '../auth/middleware'
 import { writeAudit } from '../audit/service'
 import { importRow, upsertOrderLines, type OrderImportRow } from './orders.routes'
 
@@ -117,7 +117,7 @@ function requireIntegration(req: Request): IntegrationCaller {
 export function integrationsRoutes(ctx: AppContext): Router {
   const r = Router()
   const { db } = ctx
-  r.use(requireCapability('manage-admin-data'))
+  r.use(requirePermission('import-data'))
 
   r.get('/order-sync', async (_req, res) => {
     await closeStaleRuns(db)

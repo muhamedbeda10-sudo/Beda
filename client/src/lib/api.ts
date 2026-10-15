@@ -27,6 +27,12 @@ export const API_BASE = '/api'
 let accessToken: string | null = null
 let refreshing: Promise<boolean> | null = null
 let onSessionLost: (() => void) | null = null
+let onProfile: ((user: AuthResponse['user']) => void) | null = null
+
+/** §14 — told the account as each refresh returns it: a change to the person's permissions reaches the app within one token's life. */
+export function setProfileHandler(handler: ((user: AuthResponse['user']) => void) | null): void {
+  onProfile = handler
+}
 
 export function setAccessToken(token: string | null): void {
   accessToken = token
@@ -60,6 +66,7 @@ export async function refreshAccessToken(): Promise<boolean> {
         if (!res.ok) return false
         const body = (await res.json()) as AuthResponse
         accessToken = body.accessToken
+        if (body.user) onProfile?.(body.user)
         return true
       } catch {
         return false

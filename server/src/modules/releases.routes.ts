@@ -11,7 +11,7 @@ import { isReleaseId } from '@qc/shared/releases'
 import type { AppContext } from '../context'
 import { badRequest } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requirePermission, requireUser } from '../auth/middleware'
 
 const seenSchema = z.object({ releaseId: z.string().trim().min(1).max(40) })
 
@@ -19,7 +19,7 @@ export function releasesRoutes(ctx: AppContext): Router {
   const r = Router()
   const db = ctx.db
   // The prompt is for administrators: they are the ones who asked for it.
-  r.use(requireCapability('manage-admin-data'))
+  r.use(requirePermission('view-release-notes'))
 
   r.get('/state', async (req, res) => {
     const user = requireUser(req)

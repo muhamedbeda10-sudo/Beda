@@ -9,6 +9,8 @@ import { parse } from '../lib/validate'
 import { hashPassword, verifyPassword, MIN_PASSWORD_LENGTH } from '../auth/password'
 import { REFRESH_COOKIE, SESSION_MARKER_COOKIE, hashRefreshToken, newRefreshToken, signAccessToken } from '../auth/tokens'
 import { authenticate, requireUser } from '../auth/middleware'
+import { loadProfile } from '../auth/profile'
+import { aiOwner } from '../ai/owner'
 import { seedDemoDataIfEmpty } from '../db/seed'
 import { sniffImageMime } from '../images/storage'
 
@@ -84,6 +86,18 @@ export function authRoutes(ctx: AppContext): Router {
     res.clearCookie(SESSION_MARKER_COOKIE, { path: '/' })
   }
 
+  /**
+   * The person signing in, permissions and all (§14). The AI assistant's
+   * owner is pinned first if their account has just come to exist, so ADMIN+
+   * is known from their first sign-in.
+   */
+  async function signedInProfile(userId: string): Promise<UserProfile> {
+    await aiOwner(db, config)
+    const profile = await loadProfile(db, userId)
+    if (!profile) throw unauthenticated()
+    return profile
+  }
+
   /** Open a device session and answer with both tokens. */
   async function issueTokens(req: Request, res: Response, user: UserProfile): Promise<AuthResponse> {
     const refresh = newRefreshToken()
@@ -143,7 +157,7 @@ export function authRoutes(ctx: AppContext): Router {
       await seedDemoDataIfEmpty(db).catch((e) => console.warn('[seed] demo data was not seeded:', e))
     }
     await db.query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id])
-    res.status(201).json(await issueTokens(req, res, user))
+    res.status(201).json(await issueTokens(req, res, await signedInProfile(user.id)))
   })
 
   r.post('/login', async (req, res) => {
@@ -154,7 +168,7 @@ export function authRoutes(ctx: AppContext): Router {
       throw new HttpError(429, 'rate_limited', `Too many attempts. Try again in ${wait} seconds.`)
     }
 
-    const { rows } = await db.query<UserProfile & { passwordHash: string; isSystem: boolean }>(
+    const { rows } = await db.query<Pick<UserProfile, 'id' | 'isActive'> & { passwordHash: string; isSystem: boolean }>(
       `SELECT ${USER_COLUMNS}, password_hash AS "passwordHash", is_system AS "isSystem" FROM users WHERE username = $1 AND deleted_at IS NULL`,
       [body.username],
     )
@@ -169,8 +183,7 @@ export function authRoutes(ctx: AppContext): Router {
 
     ctx.loginLimiter.reset(limiterKey)
     await db.query('UPDATE users SET last_login_at = now() WHERE id = $1', [row.id])
-    const { passwordHash: _omit, isSystem: _system, ...user } = row
-    res.json(await issueTokens(req, res, { ...user, lastLoginAt: new Date().toISOString() }))
+    res.json(await issueTokens(req, res, await signedInProfile(row.id)))
   })
 
   /** Rotate the refresh token and mint a new access token. */
@@ -203,8 +216,11 @@ export function authRoutes(ctx: AppContext): Router {
       clearSessionCookies(res)
       throw unauthenticated('Your session has expired. Sign in again.')
     }
-    const { sid, ...user } = result
+    const { sid } = result
     setSessionCookies(res, next, expiresAt)
+    // The account as it is now, permissions and all (§14): a change made since the last refresh reaches the app here.
+    const user = await loadProfile(db, result.id)
+    if (!user) throw unauthenticated('Your session has expired. Sign in again.')
     const body: AuthResponse = {
       accessToken: signAccessToken({ sub: user.id, name: user.name, role: user.role, sid }, config.JWT_SECRET, config.ACCESS_TOKEN_TTL),
       expiresIn: config.ACCESS_TOKEN_TTL,
@@ -226,9 +242,7 @@ export function authRoutes(ctx: AppContext): Router {
 
   r.get('/me', authenticate(db, config.JWT_SECRET), async (req, res) => {
     const user = requireUser(req)
-    const { rows } = await db.query<UserProfile>(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1 AND deleted_at IS NULL`, [user.id])
-    if (!rows[0]) throw unauthenticated()
-    res.json(rows[0])
+    res.json(await signedInProfile(user.id))
   })
 
   // ---- The person's own profile photo -----------------------------------------

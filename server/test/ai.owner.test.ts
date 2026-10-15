@@ -33,11 +33,11 @@ describe('§20 pinning the owner', () => {
     admin = await app.register('admin', 'Admin')
     expect(await aiOwner(app.db, app.config)).toBeNull()
 
-    // An inactive account of that name is not pinned, nor a removed one.
+    // An inactive account of that name is not pinned, nor a removed one (both put so in the database: through the app it would be pinned first).
     const inactive = await createUser('mo.beda', 'Mohamed Beda')
-    expect((await app.api('PATCH', `/api/users/${inactive}`, { token: admin.token, body: { isActive: false } })).status).toBe(200)
+    await app.db.query(`UPDATE users SET is_active = false WHERE id = $1`, [inactive])
     expect(await aiOwner(app.db, app.config)).toBeNull()
-    expect((await app.api('DELETE', `/api/users/${inactive}`, { token: admin.token })).status).toBe(204)
+    await app.db.query(`UPDATE users SET deleted_at = now() WHERE id = $1`, [inactive])
     expect(await aiOwner(app.db, app.config)).toBeNull()
     expect(await ownerRow()).toBeNull()
 
@@ -77,8 +77,8 @@ describe('§20 pinning the owner', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {
       const mo = await app.login('mo.beda')
-      // Renamed: still the owner; the setting no longer matches, which the log says once.
-      expect((await app.api('PATCH', `/api/users/${owner}`, { token: admin.token, body: { username: 'beda.m' } })).status).toBe(200)
+      // Renamed (by themselves: nobody else changes the ADMIN+ account): still the owner; the setting no longer matches, which the log says once.
+      expect((await app.api('PATCH', `/api/users/${owner}`, { token: mo.token, body: { username: 'beda.m' } })).status).toBe(200)
       expect((await app.api('GET', '/api/ai/settings', { token: mo.token })).status).toBe(200)
       expect((await app.api('GET', '/api/ai/settings', { token: mo.token })).status).toBe(200)
       const warnings = warn.mock.calls.filter((c) => String(c[0]).includes('AI_OWNER_USERNAME'))
@@ -114,38 +114,40 @@ describe('§20 pinning the owner', () => {
 
   it('leaves the assistant without an owner while the pinned account is deactivated, and never pins another', async () => {
     const owner = (await ownerRow())!
-    expect((await app.api('PATCH', `/api/users/${owner}`, { token: admin.token, body: { isActive: false } })).status).toBe(200)
+    // Through the database: nobody can deactivate the ADMIN+ account in the app.
+    await app.db.query(`UPDATE users SET is_active = false WHERE id = $1`, [owner])
     try {
       expect(await currentAiOwner(app.db, app.config)).toBeNull()
       expect(await aiOwner(app.db, config('admin'))).toBeNull()
       expect((await app.api('GET', '/api/ai/settings', { token: admin.token })).status).toBe(404)
       expect(await ownerRow()).toBe(owner)
     } finally {
-      expect((await app.api('PATCH', `/api/users/${owner}`, { token: admin.token, body: { isActive: true } })).status).toBe(200)
+      await app.db.query(`UPDATE users SET is_active = true WHERE id = $1`, [owner])
     }
     expect(await currentAiOwner(app.db, app.config)).toBe(owner)
   })
 
-  it('keeps the owner’s password the owner’s: no other administrator may set it, not even while the account is deactivated', async () => {
+  it('keeps the ADMIN+ account its owner’s: no other administrator changes it — password, name, role, switch, permissions — or removes it', async () => {
     const owner = (await ownerRow())!
     const hijack = { password: 'Hijacked#12345' }
     const refused = await app.api<ApiErrorBody>('PATCH', `/api/users/${owner}`, { token: admin.token, body: hijack })
     expect(refused.status).toBe(403)
-    expect(refused.body.error).toEqual({ code: 'forbidden', message: "Only Mohamed Beda can change this account's password." })
-    // Nor along with another change, nor while deactivated: switched on again, the account would be theirs.
-    expect((await app.api('PATCH', `/api/users/${owner}`, { token: admin.token, body: { name: 'Mo', ...hijack } })).status).toBe(403)
-    expect((await app.api('PATCH', `/api/users/${owner}`, { token: admin.token, body: { isActive: false } })).status).toBe(200)
-    expect((await app.api('PATCH', `/api/users/${owner}`, { token: admin.token, body: hijack })).status).toBe(403)
-    expect((await app.api('PATCH', `/api/users/${owner}`, { token: admin.token, body: { isActive: true } })).status).toBe(200)
+    expect(refused.body.error).toEqual({ code: 'forbidden', message: 'The ADMIN+ account is changed by its owner alone.' })
+    for (const body of [{ name: 'Mo' }, { role: 'viewer' }, { isActive: false }, { name: 'Mo', ...hijack }]) {
+      expect((await app.api('PATCH', `/api/users/${owner}`, { token: admin.token, body })).status, JSON.stringify(body)).toBe(403)
+    }
+    expect((await app.api('PUT', `/api/users/${owner}/permissions`, { token: admin.token, body: { overrides: [{ permission: 'manage-users', granted: false }] } })).status).toBe(403)
+    expect((await app.api('DELETE', `/api/users/${owner}`, { token: admin.token })).status).toBe(403)
     await expect(app.login('beda.m', hijack.password)).rejects.toThrow(/login failed: 401/)
-    const users = await app.db.query(`SELECT name FROM users WHERE id = $1`, [owner])
-    expect(users.rows).toEqual([{ name: 'Mohamed Beda' }])
-    expect((await app.db.query(`SELECT 1 FROM audit_log WHERE entity = 'User' AND entity_id = $1 AND field = 'password'`, [owner])).rowCount).toBe(0)
+    const users = await app.db.query(`SELECT name, role, is_active AS "isActive", deleted_at AS "deletedAt" FROM users WHERE id = $1`, [owner])
+    expect(users.rows).toEqual([{ name: 'Mohamed Beda', role: 'admin', isActive: true, deletedAt: null }])
+    expect((await app.db.query(`SELECT 1 FROM audit_log WHERE entity = 'User' AND entity_id = $1 AND field IN ('password', 'name', 'role', 'isActive')`, [owner])).rowCount).toBe(0)
 
-    // The owner sets their own; anyone else's, an administrator still may.
+    // The owner sets their own password, but not their own role or switch; anyone else's, an administrator still may.
     const mo = await app.login('beda.m')
     expect((await app.api('PATCH', `/api/users/${owner}`, { token: mo.token, body: { password: 'Owners#Own12' } })).status).toBe(200)
     await app.login('beda.m', 'Owners#Own12')
+    expect((await app.api('PATCH', `/api/users/${owner}`, { token: mo.token, body: { role: 'viewer' } })).status).toBe(400)
     const someone = await createUser('someone', 'Some One', 'inspector')
     expect((await app.api('PATCH', `/api/users/${someone}`, { token: admin.token, body: hijack })).status).toBe(200)
     await app.login('someone', hijack.password)
@@ -167,12 +169,11 @@ describe('§20 pinning the owner', () => {
     expect(refused.body.error).toEqual({ code: 'not_found', message: 'No such endpoint.' })
   })
 
-  it('pins the owner before anyone else may set the password of the account named', async () => {
+  it('pins the owner before anyone else may change the account named', async () => {
     await app.resetDatabase()
     admin = await app.register('admin', 'Admin')
     const owner = await createUser('mo.beda', 'Mohamed Beda', 'inspector')
-    // Changing anything else pins nobody: a password is what makes the account someone else's.
-    expect((await app.api('PATCH', `/api/users/${owner}`, { token: admin.token, body: { name: 'Mohamed B.' } })).status).toBe(200)
+    // Any change to an account pins the owner first: the account named is ADMIN+ before anyone else can touch it.
     expect(await ownerRow()).toBeNull()
     expect((await app.api('PATCH', `/api/users/${owner}`, { token: admin.token, body: { password: 'Hijacked#12345' } })).status).toBe(403)
     expect(await ownerRow()).toBe(owner)

@@ -39,8 +39,7 @@ import type { Queryable } from '../db/pool'
 import { withTransaction } from '../db/pool'
 import { parse } from '../lib/validate'
 import { badRequest } from '../lib/errors'
-import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
-import { can } from '@qc/shared/rules'
+import { requirePermission, requireUser, userCan, type AuthUser } from '../auth/middleware'
 import { auditChanges } from '../audit/service'
 import { buildInsights } from './kpi.insights'
 import {
@@ -332,7 +331,7 @@ function foldFactories(perFactory: KpiInspectorRaw[], activeDays: Map<string, nu
 
 export function kpiRoutes(ctx: AppContext): Router {
   const r = Router()
-  r.use(requireCapability('view-dashboard'))
+  r.use(requirePermission('view-dashboard'))
 
   /** The first day anything was recorded — where the period strip begins. */
   r.get('/span', async (_req, res) => {
@@ -351,7 +350,7 @@ export function kpiRoutes(ctx: AppContext): Router {
     res.json(await loadThresholds(ctx.db))
   })
 
-  r.put('/thresholds', requireCapability('manage-admin-data'), async (req, res) => {
+  r.put('/thresholds', requirePermission('manage-configuration'), async (req, res) => {
     const user = requireUser(req)
     const next = parse(ThresholdsBody, req.body)
     const body = await withTransaction(ctx.db, async (tx) => {
@@ -388,7 +387,7 @@ export function kpiRoutes(ctx: AppContext): Router {
 
   /** What this person sees: their own arrangement if they may keep one and have, the default otherwise. */
   async function loadLayout(q: Queryable, user: AuthUser): Promise<DashboardLayoutResponse> {
-    if (can(user.role, 'manage-admin-data')) {
+    if (userCan(user, 'manage-configuration')) {
       const { rows } = await q.query<{ layouts: unknown; updatedAt: string }>(
         `SELECT layouts, updated_at AS "updatedAt" FROM dashboard_user_layouts WHERE user_id = $1 AND layouts IS NOT NULL`,
         [user.id],
@@ -404,7 +403,7 @@ export function kpiRoutes(ctx: AppContext): Router {
   })
 
   /** An administrator's own arrangement: nobody else's board changes. */
-  r.put('/layout', requireCapability('manage-admin-data'), async (req, res) => {
+  r.put('/layout', requirePermission('manage-configuration'), async (req, res) => {
     const user = requireUser(req)
     const body = parse(LayoutBody, req.body) as SaveDashboardLayoutRequest
     // Unknown widgets are dropped and missing ones appended, so what is stored is always whole.
@@ -418,7 +417,7 @@ export function kpiRoutes(ctx: AppContext): Router {
   })
 
   /** Back to the default, for this administrator only; the row stays with its layout cleared. */
-  r.delete('/layout', requireCapability('manage-admin-data'), async (req, res) => {
+  r.delete('/layout', requirePermission('manage-configuration'), async (req, res) => {
     const user = requireUser(req)
     await ctx.db.query(`UPDATE dashboard_user_layouts SET layouts = NULL WHERE user_id = $1 AND layouts IS NOT NULL`, [user.id])
     res.json(await loadLayout(ctx.db, user))
@@ -566,7 +565,7 @@ export function kpiRoutes(ctx: AppContext): Router {
       holds: holds.rows,
       discipline,
       // The scores are an administrator's; a viewer has the names, for the filter.
-      inspectorRanking: can(user.role, 'view-inspector-ranking') ? inspectorRanking : null,
+      inspectorRanking: userCan(user, 'view-inspector-ranking') ? inspectorRanking : null,
       inspectors: [...inspectorRanking.overall.ranked, ...inspectorRanking.overall.unranked].map((r) => ({ inspectorId: r.inspectorId, name: r.name })),
     }
     const body: KpiOverview = { ...draft, insights: buildInsights(draft, thresholds) }
