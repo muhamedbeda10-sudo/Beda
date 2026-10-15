@@ -15,6 +15,7 @@ import type { AiPlaybookPart } from './playbook'
 import type { AiSavedTablePart } from './savedTables'
 import type { AiExcelPart } from './aiExcel'
 import type { AiDiagramPart } from './aiDiagram'
+import type { AiReportInput, AiReportInputValues } from './aiReportInputs'
 
 /** The model the assistant runs on. */
 export const AI_MODEL = 'claude-sonnet-5-5'
@@ -732,7 +733,7 @@ export interface AiTaskProposalResponse {
  * An answer's pieces in order. An automation proposal (§21), a notice card (§23) and a task card are cards the person
  * applies or discards; a playbook card says what the assistant saved, with Remove; an Excel card is a file to download;
  * a saved-table card says what table the assistant made, changed, computed again or removed; a diagram card is a
- * diagram it drew (aiDiagram.ts).
+ * diagram it drew (aiDiagram.ts); a report card opens a report it built or changed.
  */
 export type AiPart =
   | { type: 'text'; text: string }
@@ -744,6 +745,23 @@ export type AiPart =
   | AiExcelPart
   | AiSavedTablePart
   | AiDiagramPart
+  | AiReportPart
+
+/** A report the assistant built or changed (save_report), as a card in its answer, with Open report. */
+export interface AiReportPart {
+  type: 'report'
+  changeId: string
+  reportId: string
+  action: 'create' | 'update'
+  title: string
+  description?: string
+  shared: boolean
+  /** Its inputs' labels, in order. */
+  inputs: string[]
+  sectionCount: number
+  /** As this card left it, changed since, or deleted. */
+  state: 'current' | 'changed' | 'removed'
+}
 
 /** How an answer ended. */
 export type AiStopReason =
@@ -849,6 +867,8 @@ export type AiStreamEvent =
   | { type: 'saved-table'; part: AiSavedTablePart }
   /** A diagram the assistant drew, checked and kept. */
   | { type: 'diagram'; part: AiDiagramPart }
+  /** A report the assistant built or changed. */
+  | { type: 'report'; part: AiReportPart }
   /** A new conversation's title, as the assistant gave it: a few words on what it is about. */
   | { type: 'title'; conversation: AiConversation }
   | { type: 'done'; message: AiMessage; status: AiStatusResponse }
@@ -1079,14 +1099,36 @@ export function describeAiPeriod(period: AiReportPeriod): string {
   }
 }
 
+/**
+ * How a section shows its rows: a table (with its chart, when it has one); headline figures, the first row's
+ * columns as cards (a figure apiece: its column's name, its value); or a tree, rows nested under the row their
+ * parent column names (a main item, its parts, the machines each passed).
+ */
+export type AiReportSectionDisplay = 'table' | 'figures' | 'tree'
+export const AI_REPORT_SECTION_DISPLAYS: readonly AiReportSectionDisplay[] = ['table', 'figures', 'tree']
+
+/** A tree's columns: the one naming each row, and the one naming the row it sits under (empty or null at the top). */
+export interface AiReportTree {
+  key: string
+  parent: string
+}
+
 export interface AiReportSection {
   /** The query's purpose, as the answer showed it. */
   title: string
-  /** With an adjustable period, the SQL carries {{from}} and {{to}}. */
+  /** With an adjustable period, the SQL carries {{from}} and {{to}}; with inputs, {{name}} for each. */
   sql: string
   /** How its result is drawn, as the answer drew it; checked again against each run's result. */
   chart?: AiChartSpec
+  /** How its rows are shown; a table unless the assistant built it otherwise. */
+  display?: AiReportSectionDisplay
+  tree?: AiReportTree
+  /** A line under its title: what it counts and how. */
+  note?: string
 }
+
+/** Who made a report: kept from an answer, built by the assistant (save_report), or one the app starts with. */
+export type AiReportMadeBy = 'answer' | 'assistant' | 'starter'
 
 export interface AiReportSummary {
   id: string
@@ -1099,11 +1141,24 @@ export interface AiReportSummary {
   createdAt: string
   updatedAt: string
   lastRunAt?: string
+  /** What the report shows, in a sentence or two (one the assistant built); absent for one kept from an answer. */
+  description?: string
+  /** Open to everyone given the assistant; each runs it over the data they may read. */
+  shared: boolean
+  /** The person asking made it: only they may rename, change or delete it. */
+  mine: boolean
+  /** Who made it. */
+  ownerName: string
+  madeBy: AiReportMadeBy
+  /** How many inputs the form asks for. */
+  inputCount: number
 }
 
 export interface AiReport extends AiReportSummary {
   conversationId?: string
   sections: AiReportSection[]
+  /** What a run asks for besides the period. */
+  inputs: AiReportInput[]
 }
 
 export interface AiReportsResponse {
@@ -1130,6 +1185,9 @@ export interface AiReportSectionRun {
   title: string
   /** The section's chart, when its result this time can be drawn so. */
   chart?: AiChartSpec
+  display?: AiReportSectionDisplay
+  tree?: AiReportTree
+  note?: string
   ok: boolean
   error?: string
   columns: string[]
@@ -1144,6 +1202,8 @@ export interface AiReportRunResponse {
   /** The days it ran over, and whether they were chosen for this run. */
   period: (AiDayRange & { label: string; overridden: boolean }) | null
   sections: AiReportSectionRun[]
+  /** The inputs' values the run used (what was typed, or each one's default). */
+  inputs: AiReportInputValues
   ranAt: string
 }
 
@@ -1151,6 +1211,7 @@ export interface AiReportExportResponse {
   report: AiReport
   period: (AiDayRange & { label: string; overridden: boolean }) | null
   sections: { title: string; ok: boolean; error?: string; columns: string[]; rows: AiCell[][]; truncated: boolean }[]
+  inputs: AiReportInputValues
   ranAt: string
 }
 

@@ -211,6 +211,13 @@ describe('§20 saving an answer as a report', () => {
       createdAt: expect.any(String),
       updatedAt: expect.any(String),
       conversationId: first.conversationId,
+      // Kept from an answer: the asker's own, not shared, with no inputs.
+      shared: false,
+      mine: true,
+      ownerName: expect.any(String),
+      madeBy: 'answer',
+      inputCount: 0,
+      inputs: [],
       sections: [
         { title: 'Changes per day', sql: PER_DAY_TEMPLATE },
         // A query with no period stays exactly as it ran.

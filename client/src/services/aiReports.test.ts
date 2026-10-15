@@ -36,6 +36,12 @@ const report: AiReport = {
   createdAt: '2026-10-09T10:01:00Z',
   updatedAt: '2026-10-09T10:01:00Z',
   conversationId: 'c1',
+  shared: false,
+  mine: true,
+  ownerName: 'Admin',
+  madeBy: 'answer',
+  inputCount: 0,
+  inputs: [],
   sections: [{ title: 'Defects', sql: 'SELECT 1 WHERE d >= {{from}} AND d < {{to}} + 1' }],
 }
 
@@ -99,27 +105,27 @@ describe('saved reports and the cache', () => {
   })
 
   it('renaming reaches the report and its runs', async () => {
-    const run: AiReportRunResponse = { report, period: null, sections: [], ranAt: '2026-10-09T11:00:00Z' }
-    qc.setQueryData(keys.aiReportRun('r1', null), run)
-    qc.setQueryData(keys.aiReportRun('r1', { from: '2026-09-01', to: '2026-09-30' }), run)
+    const run: AiReportRunResponse = { report, period: null, sections: [], inputs: {}, ranAt: '2026-10-09T11:00:00Z' }
+    qc.setQueryData(keys.aiReportRun('r1', null, ''), run)
+    qc.setQueryData(keys.aiReportRun('r1', { from: '2026-09-01', to: '2026-09-30' }, ''), run)
     const renamed = { ...report, title: 'Defects, 30 days' }
     apiMock.mockResolvedValueOnce(renamed)
     await renameAiReport(qc, 'r1', 'Defects, 30 days')
     expect(apiMock).toHaveBeenCalledWith('/ai/reports/r1', { method: 'PATCH', body: { title: 'Defects, 30 days' } })
     expect(qc.getQueryData<AiReport>(keys.aiReport('r1'))?.title).toBe('Defects, 30 days')
-    expect(qc.getQueryData<AiReportRunResponse>(keys.aiReportRun('r1', null))?.report.title).toBe('Defects, 30 days')
-    expect(qc.getQueryData<AiReportRunResponse>(keys.aiReportRun('r1', { from: '2026-09-01', to: '2026-09-30' }))?.report.title).toBe('Defects, 30 days')
+    expect(qc.getQueryData<AiReportRunResponse>(keys.aiReportRun('r1', null, ''))?.report.title).toBe('Defects, 30 days')
+    expect(qc.getQueryData<AiReportRunResponse>(keys.aiReportRun('r1', { from: '2026-09-01', to: '2026-09-30' }, ''))?.report.title).toBe('Defects, 30 days')
   })
 
   it('deleting forgets the report and its runs, and the answer offers saving again', async () => {
     qc.setQueryData(keys.aiMessages('c1'), markSavedReport(messages, 't1', 'r1'))
     qc.setQueryData(keys.aiReport('r1'), report)
-    qc.setQueryData(keys.aiReportRun('r1', null), { report, period: null, sections: [], ranAt: '2026-10-09T11:00:00Z' })
+    qc.setQueryData(keys.aiReportRun('r1', null, ''), { report, period: null, sections: [], inputs: {}, ranAt: '2026-10-09T11:00:00Z' })
     apiMock.mockResolvedValueOnce(undefined)
     await deleteAiReport(qc, 'r1')
     expect(apiMock).toHaveBeenCalledWith('/ai/reports/r1', { method: 'DELETE' })
     expect(qc.getQueryData(keys.aiReport('r1'))).toBeUndefined()
-    expect(qc.getQueryData(keys.aiReportRun('r1', null))).toBeUndefined()
+    expect(qc.getQueryData(keys.aiReportRun('r1', null, ''))).toBeUndefined()
     expect(qc.getQueryData<AiMessagesResponse>(keys.aiMessages('c1'))?.messages[1].savedReportId).toBeUndefined()
   })
 
@@ -198,7 +204,7 @@ describe('saving an answer, once at a time', () => {
 
 describe('a run ending after a rename', () => {
   let qc: QueryClient
-  const run = (r: AiReport): AiReportRunResponse => ({ report: r, period: null, sections: [], ranAt: '2026-10-09T11:00:00Z' })
+  const run = (r: AiReport): AiReportRunResponse => ({ report: r, period: null, sections: [], inputs: {}, ranAt: '2026-10-09T11:00:00Z' })
 
   beforeEach(() => {
     apiMock.mockReset()
@@ -275,6 +281,11 @@ describe('My reports, paged and searched by the server', () => {
       sectionCount: 1,
       createdAt: at(i + 1),
       updatedAt: at(i + 1),
+      shared: false,
+      mine: true,
+      ownerName: 'Admin',
+      madeBy: 'answer' as const,
+      inputCount: 0,
     }))
   })
 

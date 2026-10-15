@@ -19,6 +19,7 @@ import { aiOwner } from './ai/owner'
 import { AnswerRunner } from './ai/answerRunner'
 import { AutomationEngine } from './automations/engine'
 import { SavedTableRefresher } from './ai/savedTables'
+import { ensureStarters } from './ai/starters'
 import { PushDispatcher } from './push/dispatcher'
 import { ExcelFileSweeper } from './ai/excel'
 
@@ -125,6 +126,17 @@ excelFiles?.start()
 // every night), on every instance: a lease keeps each computation to one.
 const savedTables = config.NODE_ENV !== 'test' ? new SavedTableRefresher({ db, readers: aiReader, timeZone: config.FACTORY_TIMEZONE }) : null
 savedTables?.start()
+
+// §20 — what the assistant starts with (Order tracking, Week tracking, the standard times), made once as its
+// owner's when there is one; a failure leaves everything else running, and the next start tries again.
+if (config.NODE_ENV !== 'test') {
+  ensureStarters({ db, config, readers: aiReader })
+    .then((r) => {
+      if (r.reports.length > 0) console.log(`[ai] starter reports made: ${r.reports.join(', ')}`)
+      if (r.table !== 'made' && r.table !== 'there') console.warn(`[ai] the standard times table is not made yet: ${r.table}`)
+    })
+    .catch((e) => console.warn('[ai] the starter reports could not be made:', e instanceof Error ? e.message : String(e)))
+}
 
 // App Service sends SIGTERM on restart/scale-in: stop accepting, finish
 // in-flight requests, then release the pools.

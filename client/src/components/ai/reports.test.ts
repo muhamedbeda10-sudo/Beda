@@ -37,6 +37,11 @@ const summary = (id: string, title: string, extra: Partial<AiReportSummary> = {}
   sectionCount: 2,
   createdAt: '2026-10-01T08:00:00Z',
   updatedAt: '2026-10-02T08:00:00Z',
+  shared: false,
+  mine: true,
+  ownerName: 'Admin',
+  madeBy: 'answer',
+  inputCount: 0,
   ...extra,
 })
 
@@ -57,7 +62,7 @@ describe('saving an answer as a report', () => {
 
 describe('what saving an answer has come to', () => {
   const saved = (adjustable: boolean, notice?: string): AiSaveReportResponse => ({
-    report: { ...summary('r1', 'Top'), adjustable, period: adjustable ? { kind: 'last_days', days: 30 } : null, sections: [{ title: 'Defects', sql: 'SELECT 1' }] },
+    report: { ...summary('r1', 'Top'), adjustable, period: adjustable ? { kind: 'last_days', days: 30 } : null, sections: [{ title: 'Defects', sql: 'SELECT 1' }], inputs: [] },
     ...(notice ? { notice } : {}),
     status: { available: true, model: 'm', spentUsd: 1, capUsd: 50, monthStart: '2026-10-01T00:00:00Z' },
   })

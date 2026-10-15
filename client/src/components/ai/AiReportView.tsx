@@ -4,8 +4,13 @@
 // as the answer showed it: what it looks for, its rows in a preview, a large
 // table with Excel's filters, the SQL. A report that kept its question's
 // period ("last 30 days") runs over that period as of today; other days can
-// be chosen for a run (not saved), and reset. Export Excel takes every
-// section in full, a sheet each, after a sheet on the report itself.
+// be chosen for a run (not saved), and reset. A report the assistant built
+// may ask for inputs (orders, a week…): a form over its sections, run with
+// Run, each field starting from its default; one that cannot run before
+// something is typed waits for it. Its sections may be headline figures or a
+// tree as well as tables. Export Excel takes every section in full, a sheet
+// each, after a sheet on the report itself. Only its maker renames or
+// deletes a report; a shared one says whose it is.
 // ============================================================================
 
 import { memo, useCallback, useMemo, useReducer, useState, type Dispatch } from 'react'
@@ -25,6 +30,7 @@ import {
   Table2,
   Trash2,
   Undo2,
+  Users,
 } from 'lucide-react'
 import {
   AI_EXPORT_MAX_ROWS,
@@ -34,8 +40,10 @@ import {
   type AiReport,
   type AiReportPeriod,
   type AiReportRunResponse,
+  type AiReportSectionRun,
   type AiReportSummary,
 } from '@qc/shared/ai'
+import type { AiReportInputValues } from '@qc/shared/aiReportInputs'
 import { Badge, Button } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
@@ -54,6 +62,8 @@ import { AiChart } from './AiChart'
 import { AiResultModal, PreviewTable } from './AiResultTable'
 import { queryChart } from './chartData'
 import { aiReportExportMessage, aiReportFilename, aiReportSheets } from './exportAiReport'
+import { ReportInputsForm, SectionFigures, SectionTree } from './AiReportLayouts'
+import { inputDrafts, inputsKey, inputsLine, localDay, readDrafts, runsOnOpen, treeAsTable } from './reportInputs'
 import {
   REPORT_PERIOD_SAVED,
   daysInRange,
@@ -96,7 +106,18 @@ export function AiReportView({
   const [period, setPeriod] = useReducer(reportPeriodReducer, REPORT_PERIOD_SAVED)
   const override = period.override
   const detail = useAiReport(id, enabled)
-  const run = useAiReportRun(id, override, enabled)
+  // The inputs' values a run is asked for: null runs each with its default (the server's, as of the factory's today).
+  const today = useMemo(() => localDay(), [])
+  const [applied, setApplied] = useState<AiReportInputValues | null>(null)
+  // What the fields hold once the person typed in them; untouched, they show what the last run used.
+  const [drafts, setDrafts] = useState<Record<string, string> | null>(null)
+  const [problems, setProblems] = useState<string[]>([])
+  const inputsJson = inputsKey(applied)
+  const loaded: AiReport | undefined = detail.data
+  const inputCount = loaded ? loaded.inputs.length : known?.inputCount
+  // A report with inputs waits for its definition; one whose required inputs have no default waits for them to be typed.
+  const canRun = inputCount === 0 || (loaded !== undefined && (applied !== null || runsOnOpen(loaded.inputs, today)))
+  const run = useAiReportRun(id, override, inputsJson, enabled && canRun)
   const [renaming, setRenaming] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -105,6 +126,19 @@ export function AiReportView({
   const report: AiReport | AiReportSummary | undefined = detail.data ?? run.data?.report ?? known
   const full: AiReport | undefined = detail.data ?? run.data?.report
   const shown = run.data
+  const inputs = full?.inputs ?? []
+  const fields = drafts ?? inputDrafts(inputs, shown?.inputs ?? null, today)
+  const waiting = inputs.length > 0 && !canRun
+  const runInputs = () => {
+    const read = readDrafts(inputs, fields, today)
+    if ('problems' in read) {
+      setProblems(read.problems)
+      return
+    }
+    setProblems([])
+    if (inputsKey(read.values) === inputsJson) void run.refetch()
+    else setApplied(read.values)
+  }
   // The tables on screen belong to other days than those asked for: the next run is on its way.
   const stale = run.isPlaceholderData
   const gone = detail.error instanceof ApiError && detail.error.status === 404
@@ -137,7 +171,7 @@ export function AiReportView({
   const exportExcel = useCallback(async () => {
     setExporting(true)
     try {
-      const res = await loadAiReportExport(id, override)
+      const res = await loadAiReportExport(id, override, inputsJson)
       // A rename made while it ran is newer than the copy the export carries: the file takes the title on screen.
       const report = newerAiReport(qc.getQueryData<AiReport>(keys.aiReport(id)), res.report)
       const data = report === res.report ? res : { ...res, report }
@@ -148,7 +182,7 @@ export function AiReportView({
     } finally {
       setExporting(false)
     }
-  }, [id, override, qc, toast])
+  }, [id, override, inputsJson, qc, toast])
   const onExport = useCallback(() => void exportExcel(), [exportExcel])
   // Excel is for the people the assistant's owner allows (§20).
   const excel = useAiExcel()
@@ -157,6 +191,16 @@ export function AiReportView({
 
   // Each section in the shape the answer's cards take, built once per run so the cards keep their state.
   const parts = useMemo(() => shown?.sections.map((s, i) => sectionAsQuery(s, shown.report.sections[i]?.sql ?? '', i)) ?? null, [shown])
+  // As print shows them: a tree as its rows in order, stepped in, without its key and parent columns.
+  const printParts = useMemo(
+    () =>
+      parts?.map((part, i) => {
+        const s = shown?.sections[i]
+        const flat = s?.display === 'tree' && s.tree && part.ok ? treeAsTable(part.columns, part.rows, s.tree) : null
+        return flat ? { ...part, columns: flat.columns, rows: flat.rows } : part
+      }) ?? null,
+    [parts, shown],
+  )
   const sectionCount = full?.sections.length ?? known?.sectionCount ?? 2
   const failures = shown && !stale ? runFailures(shown.sections) : null
 
@@ -174,7 +218,7 @@ export function AiReportView({
             <h3 dir="auto" className="line-clamp-2 min-w-0 flex-1 break-words px-1 text-start text-sm font-bold leading-snug" data-tip={report?.title}>
               {report?.title ?? 'Report'}
             </h3>
-            {report && !gone && (
+            {report && !gone && report.mine && (
               <>
                 <button type="button" onClick={() => setRenaming(true)} className="icon-btn h-9 w-9 shrink-0 touch:h-11 touch:w-11" aria-label="Rename the report" data-tip="Rename">
                   <Pencil className="h-4 w-4" />
@@ -206,9 +250,25 @@ export function AiReportView({
             <>
               {report && (
                 <div className="space-y-1">
-                  <p dir="auto" className="whitespace-pre-wrap break-words text-13 text-muted">
-                    {report.question}
-                  </p>
+                  {report.description ? (
+                    <p dir="auto" className="whitespace-pre-wrap break-words text-13 text-muted">
+                      {report.description}
+                    </p>
+                  ) : (
+                    <p dir="auto" className="whitespace-pre-wrap break-words text-13 text-muted">
+                      {report.question}
+                    </p>
+                  )}
+                  {(report.shared || !report.mine) && (
+                    <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+                      {report.shared && (
+                        <Badge tone="blue" tip="Everyone given the assistant may open it; each sees the data they may read">
+                          <Users className="h-3 w-3" /> Shared
+                        </Badge>
+                      )}
+                      {!report.mine && <span dir="auto">by {report.ownerName}</span>}
+                    </p>
+                  )}
                   {full?.conversationId && (
                     <button
                       type="button"
@@ -221,20 +281,31 @@ export function AiReportView({
                 </div>
               )}
 
+              {inputs.length > 0 && (
+                <ReportInputsForm
+                  inputs={inputs}
+                  drafts={fields}
+                  onChange={(name, value) => setDrafts({ ...fields, [name]: value })}
+                  onRun={runInputs}
+                  problems={problems}
+                  running={run.isFetching}
+                />
+              )}
+
               {report && hasAdjustablePeriod(report) && (
                 <ReportPeriod saved={report.period!} ran={shown?.period ?? null} state={period} dispatch={setPeriod} />
               )}
 
               <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => void run.refetch()} disabled={run.isFetching} className={SMALL_BTN} data-tip="Runs every section again now">
+                <button type="button" onClick={() => void run.refetch()} disabled={run.isFetching || !canRun} className={SMALL_BTN} data-tip="Runs every section again now">
                   <RefreshCw className={cn('h-3.5 w-3.5', run.isFetching && 'animate-spin')} /> {run.isFetching ? 'Running…' : 'Run again'}
                 </button>
                 {excel && (
-                  <button type="button" onClick={onExport} disabled={exporting || !report} className={SMALL_BTN} data-tip={EXPORT_TIP}>
+                  <button type="button" onClick={onExport} disabled={exporting || !report || !canRun} className={SMALL_BTN} data-tip={EXPORT_TIP}>
                     {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} {exporting ? 'Exporting…' : 'Export Excel'}
                   </button>
                 )}
-                {shown && parts && (
+                {shown && printParts && (
                   <button
                     type="button"
                     onClick={() =>
@@ -244,11 +315,12 @@ export function AiReportView({
                           title={shown.report.title}
                           lines={[
                             // The question it came from, unless it is the title already.
-                            shown.report.question.trim() !== shown.report.title.trim() ? shown.report.question : '',
+                            shown.report.description ?? (shown.report.question.trim() !== shown.report.title.trim() ? shown.report.question : ''),
+                            inputsLine(shown.report.inputs, shown.inputs),
                             shown.period ? `Covers ${shown.period.label}` : '',
                             `Data read ${formatFullTimestamp(shown.ranAt)}`,
                           ].filter(Boolean)}
-                          parts={parts}
+                          parts={printParts}
                         />,
                       )
                     }
@@ -289,11 +361,15 @@ export function AiReportView({
 
               {failures && <Notice tone="amber">{failures} Each says why below.</Notice>}
 
+              {waiting && <Notice tone="neutral">Fill in {inputs.filter((i) => i.required).map((i) => i.label).join(', ') || 'the fields'} above and press Run.</Notice>}
+
               {/* Other days' tables are dimmed and still while the asked-for ones come; the same days', only dimmed. */}
               <div className={cn('space-y-2 transition-opacity', stale ? 'pointer-events-none opacity-50' : run.isFetching && shown && 'opacity-70')} aria-busy={run.isFetching}>
                 {parts && shown
-                  ? parts.map((part, i) => <ReportSection key={i} part={part} templated={shown.report.adjustable} onExport={excel ? onExport : undefined} exporting={exporting} />)
-                  : run.isPending && Array.from({ length: Math.max(1, sectionCount) }, (_, i) => <SectionSkeleton key={i} title={full?.sections[i]?.title} />)}
+                  ? parts.map((part, i) => (
+                      <ReportSection key={i} part={part} layout={shown.sections[i]} templated={shown.report.adjustable} onExport={excel ? onExport : undefined} exporting={exporting} />
+                    ))
+                  : run.isPending && !waiting && Array.from({ length: Math.max(1, sectionCount) }, (_, i) => <SectionSkeleton key={i} title={full?.sections[i]?.title} />)}
               </div>
             </>
           )}
@@ -432,7 +508,20 @@ function SectionSkeleton({ title }: { title?: string }) {
  * once (they are what a report is for), the SQL on request. `templated`: the
  * SQL carries {{from}} and {{to}} for the period's first and last day.
  */
-const ReportSection = memo(function ReportSection({ part, templated, onExport, exporting }: { part: AiQueryPart; templated: boolean; onExport?: () => void; exporting: boolean }) {
+const ReportSection = memo(function ReportSection({
+  part,
+  layout,
+  templated,
+  onExport,
+  exporting,
+}: {
+  part: AiQueryPart
+  /** How the section shows its rows (a table, figures, a tree), and its note. */
+  layout?: Pick<AiReportSectionRun, 'display' | 'tree' | 'note'>
+  templated: boolean
+  onExport?: () => void
+  exporting: boolean
+}) {
   const { toast } = useApp()
   const [showSql, setShowSql] = useState(false)
   const [table, setTable] = useState(false)
@@ -450,6 +539,7 @@ const ReportSection = memo(function ReportSection({ part, templated, onExport, e
     ? `${part.rowCount.toLocaleString()}${part.truncated ? '+' : ''} ${part.rowCount === 1 && !part.truncated ? 'row' : 'rows'} · ${part.ms.toLocaleString()} ms`
     : `Failed · ${part.ms.toLocaleString()} ms`
   const placeholders = templated && /\{\{(from|to)\}\}/.test(part.sql)
+  const display = layout?.display ?? 'table'
   // Drawn as the answer drew it, from this run's rows; the switch shows it or the rows themselves.
   const chart = useMemo(() => queryChart(part), [part])
   const [view, setView] = useState<FigureView>('chart')
@@ -471,11 +561,20 @@ const ReportSection = memo(function ReportSection({ part, templated, onExport, e
             )}
           </p>
         </div>
-        {chart && part.ok && <ChartTableSwitch value={view} onChange={setView} className="mt-0.5" />}
+        {chart && part.ok && display === 'table' && <ChartTableSwitch value={view} onChange={setView} className="mt-0.5" />}
       </header>
 
       <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
-        {chart && view === 'chart' ? (
+        {layout?.note && (
+          <p dir="auto" className="text-[11px] leading-snug text-muted">
+            {layout.note}
+          </p>
+        )}
+        {part.ok && display === 'figures' ? (
+          <SectionFigures columns={part.columns} rows={part.rows} />
+        ) : part.ok && display === 'tree' && layout?.tree && part.columns.includes(layout.tree.key) && part.columns.includes(layout.tree.parent) ? (
+          <SectionTree columns={part.columns} rows={part.rows} tree={layout.tree} truncated={part.truncated} />
+        ) : chart && view === 'chart' && display === 'table' ? (
           <AiChart model={chart} />
         ) : part.ok ? (
           <PreviewTable part={part} />
