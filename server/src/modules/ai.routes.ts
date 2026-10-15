@@ -64,6 +64,7 @@ import {
   AI_MAX_MESSAGE_CHARS,
   AI_MAX_MONTHLY_CAP_USD,
   AI_MODEL,
+  AI_ACTION_INFO,
   AI_ROUTER_MODEL,
   AI_ACTIONS,
   AI_MODELS,
@@ -71,7 +72,9 @@ import {
   aiMinCapUsd,
   isAiAction,
   isAiChatMode,
+  isTopLevel,
   resolveAiAction,
+  stickyLevel,
   isAiDay,
   isAiDomain,
   isAiEffort,
@@ -871,24 +874,31 @@ export function aiRoutes(ctx: AppContext): Router {
 
     // The question's level, and so its model and effort (the owner's Models): files have a level of their own; otherwise
     // the router chooses (auto), or the level the owner fixed. The router reads the question before it for a follow-up.
+    // A conversation's level only goes up (stickyLevel): a follow-up asking less keeps it, and its prompt cache with it;
+    // one already at the top level asks the router nothing.
     const settings = avail.app.settings.settings
+    const previous = body.conversationId
+      ? (
+          await db.query<{ question: string; level: AiChatLevel | null }>(
+            `SELECT t.question, t.level FROM ai_turns t JOIN ai_conversations c ON c.id = t.conversation_id
+              WHERE t.conversation_id = $1 AND c.user_id = $2 ORDER BY t.created_at DESC LIMIT 1`,
+            [body.conversationId, user.id],
+          )
+        ).rows[0] ?? null
+      : null
     let routed: RouterResult | null = null
-    let level: AiChatLevel
-    if (body.attachmentIds.length > 0) level = 'chat-files'
-    else if (settings.chatMode !== 'auto') level = settings.chatMode
+    let wanted: AiChatLevel
+    if (body.attachmentIds.length > 0) wanted = 'chat-files'
+    else if (settings.chatMode !== 'auto') wanted = settings.chatMode
+    else if (isTopLevel(previous?.level)) wanted = previous!.level!
     else {
-      const previous = body.conversationId
-        ? (
-            await db.query<{ question: string; level: AiChatLevel | null }>(
-              `SELECT t.question, t.level FROM ai_turns t JOIN ai_conversations c ON c.id = t.conversation_id
-                WHERE t.conversation_id = $1 AND c.user_id = $2 ORDER BY t.created_at DESC LIMIT 1`,
-              [body.conversationId, user.id],
-            )
-          ).rows[0]
-        : null
       routed = await chooseLevel({ model: ctx.ai, apiKey: avail.app.apiKey, question: body.message, previous, signal: ac.signal })
-      level = routed.level
+      wanted = routed.level
     }
+    const level = stickyLevel(previous?.level, wanted)
+    // Why, for Activity: the router's reason, or that the conversation's level held (raised by nothing, or the router not asked).
+    const held = level !== wanted || (settings.chatMode === 'auto' && body.attachmentIds.length === 0 && routed === null)
+    const levelReason = held ? `Kept at ${AI_ACTION_INFO[level].name}: the conversation is there already, and keeps its cache.` : (routed?.reason ?? null)
     const chosen = resolveAiAction(settings, level)
     /** The router's call when no question is kept to carry it (refused, or the asker gone): billed all the same, to the asker. */
     const keepRouterCost = async () => {
@@ -935,7 +945,7 @@ export function aiRoutes(ctx: AppContext): Router {
         // Written by this instance from the start: its runner and heartbeat set as it is kept, so no other takes it.
         `INSERT INTO ai_turns (conversation_id, user_id, client_id, question, model, effort, runner, heartbeat_at, level, level_reason)
          VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8, $9) RETURNING id`,
-        [conversation.id, user.id, body.clientId, body.message, chosen.model, chosen.effort, ctx.answers.id, level, routed?.reason ?? null],
+        [conversation.id, user.id, body.clientId, body.message, chosen.model, chosen.effort, ctx.answers.id, level, levelReason],
       )
       const turnId = rows[0].id
       // The router's call is the question's cost, with the answer's.

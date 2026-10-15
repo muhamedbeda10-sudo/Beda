@@ -23,7 +23,9 @@ import {
   describeAiDays,
   describeAiPeriod,
   isAiDay,
+  isTopLevel,
   resolveAiAction,
+  stickyLevel,
   resolveAiPeriod,
   type AiAction,
   type AiActionSetting,
@@ -154,5 +156,21 @@ describe('§20 Models: the model and effort of each thing the assistant does', (
     expect(order.indexOf(AI_MTC_REREAD_MODEL)).toBeGreaterThan(order.indexOf(resolveAiAction(AI_DEFAULT_SETTINGS, 'mtc').model))
     expect(AI_ROUTER_MODEL).toBe('claude-haiku-5-5')
     expect(AI_DEFAULT_SETTINGS).toMatchObject({ chatMode: 'auto', mtcReread: true })
+  })
+})
+
+describe('§20 a conversation’s level only goes up', () => {
+  it('keeps the level when a question asks less, and raises it when one asks more', () => {
+    expect(stickyLevel(null, 'chat-simple')).toBe('chat-simple')
+    expect(stickyLevel('chat-deep', 'chat-simple')).toBe('chat-deep')
+    expect(stickyLevel('chat-analysis', 'chat-deep')).toBe('chat-deep')
+    expect(stickyLevel('chat-simple', 'chat-analysis')).toBe('chat-analysis')
+    // A question with files is an analysis's equal: neither moves the other.
+    expect(stickyLevel('chat-analysis', 'chat-files')).toBe('chat-analysis')
+    expect(stickyLevel('chat-files', 'chat-analysis')).toBe('chat-files')
+    expect(stickyLevel('chat-simple', 'chat-files')).toBe('chat-files')
+    expect(isTopLevel('chat-deep')).toBe(true)
+    expect(isTopLevel('chat-analysis')).toBe(false)
+    expect(isTopLevel(null)).toBe(false)
   })
 })

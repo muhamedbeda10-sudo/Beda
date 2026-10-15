@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-16.4',
+    date: '2026-10-16',
+    title: 'AI: a conversation keeps its level',
+    items: [
+      { text: 'In a conversation with the AI assistant, the level (simple, analysis, deep) now only goes up. A follow-up that asks less stays on the conversation’s model, so the conversation so far is read from Anthropic’s cache at a tenth of the price instead of being paid for again on another model. Once a conversation is at Deep analysis, the router is not asked any more.' },
+      { text: 'Activity says so: such a question reads “Kept at …” as the reason for its level.' },
+    ],
+  },
+  {
     id: '2026-10-16.3',
     date: '2026-10-16',
     title: 'MTC: certificates from photos and Excel, and reading fixed',

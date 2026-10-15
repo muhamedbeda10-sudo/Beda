@@ -320,31 +320,43 @@ describe('§20 a question runs on the model and effort the owner set for its lev
     expect(activity.body.items[0]).toMatchObject({ kind: 'question', text: 'How many machines?', level: 'chat-simple', levelReason: 'One count of machines.' })
   })
 
-  it('gives each question of a conversation its own level, the follow-up read with the question before it', async () => {
+  it('raises a conversation’s level when a question asks more, and never lowers it: its cache holds', async () => {
     const prompt = systemOf()
+    // The router failing (no answer in time, say): the middle level, with no reason; never a refusal. Up from simple.
+    routeAs(new Error('overloaded'))
+    reply(answer('A trend.'))
+    let routed = routerCalls().length
+    expect((await ask(insp, 'And the trend?', conversationId)).status).toBe(200)
+    expect(JSON.stringify(routerCalls()[routed].params.messages)).toContain('answered as simple')
+    expect(lastCall().params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'medium' } })
+
     routeAs('deep', 'Causes across several sources.')
     reply({ ...answer('Here is why.'), model: 'claude-opus-5-5' })
-    const routed = routerCalls().length
+    routed = routerCalls().length
     expect((await ask(insp, 'Why did the defects rise?', conversationId)).status).toBe(200)
-    expect(JSON.stringify(routerCalls()[routed].params.messages)).toContain('answered as simple')
+    expect(JSON.stringify(routerCalls()[routed].params.messages)).toContain('answered as analysis')
     expect(lastCall().params).toMatchObject({ model: 'claude-opus-5-5', output_config: { effort: 'high' }, fallbacks: 'default', betas: [FALLBACK, BINDING] })
     // The conversation keeps the prompt it began with, byte for byte, whatever model answers.
     expect(systemOf()).toBe(prompt)
 
-    // The router failing (no answer in time, say): the middle level, with no reason; never a refusal.
-    routeAs(new Error('overloaded'))
-    reply(answer('A trend.'))
-    expect((await ask(insp, 'And the trend?', conversationId)).status).toBe(200)
-    expect(lastCall().params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'medium' } })
+    // At the top level the router is not asked: a simple follow-up stays on Opus, in the conversation's cache.
+    routeAs('simple', 'A thank-you.')
+    reply({ ...answer('You are welcome.'), model: 'claude-opus-5-5' })
+    routed = routerCalls().length
+    expect((await ask(insp, 'Thanks!', conversationId)).status).toBe(200)
+    expect(routerCalls()).toHaveLength(routed)
+    expect(lastCall().params).toMatchObject({ model: 'claude-opus-5-5', output_config: { effort: 'high' } })
 
+    const kept = 'Kept at Deep analysis: the conversation is there already, and keeps its cache.'
     const turns = await app.db.query(`SELECT model, effort, level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1 ORDER BY created_at`, [conversationId])
     expect(turns.rows.slice(1)).toEqual([
-      { model: 'claude-opus-5-5', effort: 'high', level: 'chat-deep', levelReason: 'Causes across several sources.' },
       { model: 'claude-sonnet-5-5', effort: 'medium', level: 'chat-analysis', levelReason: null },
+      { model: 'claude-opus-5-5', effort: 'high', level: 'chat-deep', levelReason: 'Causes across several sources.' },
+      { model: 'claude-opus-5-5', effort: 'high', level: 'chat-deep', levelReason: kept },
     ])
   })
 
-  it('takes the owner’s change from the next question: a level fixed for all, each level’s own model and effort', async () => {
+  it('takes the owner’s change from the next new conversation: a level fixed for all, each level’s own model and effort', async () => {
     const cases: [string, AiModelId, AiEffort, boolean][] = [
       ['chat-analysis', 'claude-fable-5-1', 'max', true],
       ['chat-deep', 'claude-sonnet-5-5', 'xhigh', true],
@@ -355,7 +367,7 @@ describe('§20 a question runs on the model and effort the owner set for its lev
       expect((await setModels({ chatMode: level, actions: { [level]: { model, effort } } })).status, level).toBe(200)
       reply({ ...answer('Still two.'), model })
       const routed = routerCalls().length
-      const res = await ask(insp, `Again, as ${level}?`, conversationId)
+      const res = await ask(insp, `Again, as ${level}?`)
       expect(res.status, model).toBe(200)
       expect(routerCalls()).toHaveLength(routed)
       const params = lastCall().params
@@ -367,9 +379,16 @@ describe('§20 a question runs on the model and effort the owner set for its lev
         expect(params, model).not.toHaveProperty('fallbacks')
         expect(params.betas, model).toEqual([BINDING])
       }
+      const turn = await app.db.query(`SELECT model, effort, level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1`, [res.conversationId])
+      expect(turn.rows).toEqual([{ model, effort, level, levelReason: null }])
     }
-    const turns = await app.db.query(`SELECT model, effort, level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1 ORDER BY created_at`, [conversationId])
-    expect(turns.rows.slice(3)).toEqual(cases.map(([level, model, effort]) => ({ model, effort, level, levelReason: null })))
+    // A conversation already at a higher level keeps it, a level fixed lower notwithstanding.
+    // (Deep analysis runs on Sonnet 5.5 at xhigh now, as set above.)
+    reply({ ...answer('Still deep.'), model: 'claude-sonnet-5-5' })
+    expect((await ask(insp, 'And now?', conversationId)).status).toBe(200)
+    expect(lastCall().params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'xhigh' } })
+    const last = await app.db.query(`SELECT level FROM ai_turns WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT 1`, [conversationId])
+    expect(last.rows).toEqual([{ level: 'chat-deep' }])
     await setModels({ chatMode: 'auto', actions: AI_DEFAULT_SETTINGS.actions })
   })
 
