@@ -20,13 +20,14 @@ import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import type { AiPlaybookPart } from '@qc/shared/playbook'
 import type { AiSavedTablePart } from '@qc/shared/savedTables'
 import type { AiDiagramPart } from '@qc/shared/aiDiagram'
+import type { AiReportPart } from '@qc/shared/ai'
 import type { LivePart } from './liveTurn'
 
 type QueryLike = Extract<LivePart, { type: 'query' | 'pending-query' }>
 
 const isQuery = (p: LivePart): p is QueryLike => p.type === 'query' || p.type === 'pending-query'
 
-type InlinePart = Extract<LivePart, { type: 'text' | 'automation' | 'notice' | 'task' | 'playbook' | 'excel' | 'saved-table' | 'diagram' }>
+type InlinePart = Extract<LivePart, { type: 'text' | 'automation' | 'notice' | 'task' | 'playbook' | 'excel' | 'saved-table' | 'diagram' | 'report' }>
 
 /** What reads in its place among the text: the text itself and the cards. */
 const isInline = (p: LivePart): p is InlinePart =>
@@ -37,7 +38,8 @@ const isInline = (p: LivePart): p is InlinePart =>
   p.type === 'playbook' ||
   p.type === 'excel' ||
   p.type === 'saved-table' ||
-  p.type === 'diagram'
+  p.type === 'diagram' ||
+  p.type === 'report'
 
 export type AnswerBlock =
   | { kind: 'text'; key: string; text: string }
@@ -51,6 +53,7 @@ export type AnswerBlock =
   | { kind: 'excel'; key: string; part: AiExcelPart }
   | { kind: 'saved-table'; key: string; part: AiSavedTablePart }
   | { kind: 'diagram'; key: string; part: AiDiagramPart }
+  | { kind: 'report'; key: string; part: AiReportPart }
 
 const QUERIES = 'queries' as const
 const KPIS = 'kpis' as const
@@ -73,6 +76,7 @@ export function answerBlocks(parts: readonly LivePart[], opts: { settled: boolea
   const excel = (p: AiExcelPart): AnswerBlock => ({ kind: 'excel', key: `excel:${p.fileId}`, part: p })
   const savedTable = (p: AiSavedTablePart): AnswerBlock => ({ kind: 'saved-table', key: `saved-table:${p.changeId}`, part: p })
   const diagram = (p: AiDiagramPart): AnswerBlock => ({ kind: 'diagram', key: `diagram:${p.diagramId}`, part: p })
+  const report = (p: AiReportPart): AnswerBlock => ({ kind: 'report', key: `report:${p.changeId}`, part: p })
   const inline = (p: InlinePart): AnswerBlock => {
     switch (p.type) {
       case 'text':
@@ -91,6 +95,8 @@ export function answerBlocks(parts: readonly LivePart[], opts: { settled: boolea
         return savedTable(p)
       case 'diagram':
         return diagram(p)
+      case 'report':
+        return report(p)
     }
   }
 

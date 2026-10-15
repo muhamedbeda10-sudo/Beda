@@ -32,6 +32,7 @@ import { loadTurnAttachments, type StoredBlock, type StoredMessage } from './att
 import { loadSavedTableParts } from './savedTableParts'
 import { stripBlocks } from './blocks'
 import { loadDiagramParts } from './diagramParts'
+import { loadReportParts } from './reportParts'
 import { loadExcelParts } from './excelParts'
 import { KPIS_BLOCK, parseKpis } from './kpis'
 import { SUGGESTIONS_BLOCK, parseSuggestions } from './suggestions'
@@ -449,6 +450,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
   const excelByToolUse = await loadExcelParts(q, conversationId, turnId)
   const savedTableByToolUse = await loadSavedTableParts(q, conversationId, turnId)
   const diagramByToolUse = await loadDiagramParts(q, conversationId, turnId)
+  const reportPartByToolUse = await loadReportParts(q, conversationId, turnId)
   const attachmentsByTurn = await loadTurnAttachments(q, conversationId, turnId)
   const byTurn = new Map<string, MessageRow[]>()
   for (const m of messages.rows) {
@@ -486,6 +488,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
           const excel = excelByToolUse.get(block.id)
           const savedTable = savedTableByToolUse.get(block.id)
           const diagram = diagramByToolUse.get(block.id)
+          const builtReport = reportPartByToolUse.get(block.id)
           if (run) parts.push(queryPart(run))
           else if (proposal) parts.push(proposal)
           else if (notice) parts.push(notice)
@@ -494,6 +497,7 @@ export async function loadDisplayMessages(q: Queryable, conversationId: string, 
           else if (excel) parts.push(excel)
           else if (savedTable) parts.push(savedTable)
           else if (diagram) parts.push(diagram)
+          else if (builtReport) parts.push(builtReport)
         }
       }
     }

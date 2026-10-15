@@ -22,6 +22,7 @@
     "./aiExcel": "./src/aiExcel.ts",
     "./savedTables": "./src/savedTables.ts",
     "./aiDiagram": "./src/aiDiagram.ts",
+    "./aiReportInputs": "./src/aiReportInputs.ts",
     "./mtc": "./src/mtc.ts",
     "./permissions": "./src/permissions.ts"
   },

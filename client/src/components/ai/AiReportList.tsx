@@ -1,8 +1,9 @@
 // ============================================================================
-// §20 — My reports: the answers this person saved to run again, the
-// latest changed first. Search their titles and questions, open one, rename
-// one in place, remove one, page back through older ones. Nobody else sees
-// them.
+// §20 — My reports: the answers this person saved to run again and the
+// reports the assistant built for them, with the ones shared with everyone
+// given the assistant (marked Shared, and whose), the latest changed first.
+// Search their titles and questions, open one, rename or remove one of their
+// own in place, page back through older ones.
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -80,9 +81,15 @@ export function ReportTitleEditor({ initial, onSave, onCancel, className }: { in
   )
 }
 
-/** The period, the sections and the last run of a report, on one line. */
+/** Whose it is (when shared or another's), what it asks for, the period, the sections and the last run of a report, on one line. */
 function reportMeta(r: AiReportSummary): string {
-  const bits = [reportPeriodLabel(r) ?? 'Period as asked', `${r.sectionCount} ${r.sectionCount === 1 ? 'section' : 'sections'}`]
+  const bits: string[] = []
+  if (r.shared) bits.push(r.mine ? 'Shared' : `Shared by ${r.ownerName}`)
+  if (r.inputCount > 0) bits.push(`${r.inputCount} ${r.inputCount === 1 ? 'input' : 'inputs'}`)
+  // A report the assistant built without a period runs over what its inputs choose: no period to name.
+  const period = reportPeriodLabel(r) ?? (r.madeBy === 'answer' ? 'Period as asked' : null)
+  if (period) bits.push(period)
+  bits.push(`${r.sectionCount} ${r.sectionCount === 1 ? 'section' : 'sections'}`)
   bits.push(r.lastRunAt ? `ran ${when(r.lastRunAt)}` : `saved ${when(r.createdAt)}`)
   return bits.join(' · ')
 }
@@ -200,12 +207,16 @@ export function AiReportList({ onOpen, activeId }: { onOpen: (report: AiReportSu
                     </span>
                   </span>
                 </button>
-                <button type="button" onClick={() => setRenaming(r.id)} aria-label={`Rename the report "${r.title}"`} data-tip="Rename" className={ROW_BTN}>
-                  <Pencil className="h-4 w-4" />
-                </button>
-                <button type="button" onClick={() => setRemoving(r)} aria-label={`Delete the report "${r.title}"`} data-tip="Delete" className={cn(ROW_BTN, 'hover:text-rose-600')}>
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                {r.mine && (
+                  <>
+                    <button type="button" onClick={() => setRenaming(r.id)} aria-label={`Rename the report "${r.title}"`} data-tip="Rename" className={ROW_BTN}>
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button type="button" onClick={() => setRemoving(r)} aria-label={`Delete the report "${r.title}"`} data-tip="Delete" className={cn(ROW_BTN, 'hover:text-rose-600')}>
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </>
+                )}
               </>
             )}
           </li>

@@ -298,6 +298,12 @@ describe('§20 report templates: what the model is asked, and what is taken from
       createdAt: '',
       updatedAt: '',
       sections: [],
+      inputs: [],
+      shared: false,
+      mine: true,
+      ownerName: 'A',
+      madeBy: 'answer' as const,
+      inputCount: 0,
     }
     expect(runPeriod(report, null, '2026-10-09')).toEqual({ from: '2026-09-10', to: '2026-10-09', label: 'Last 30 days', overridden: false })
     expect(runPeriod(report, { from: '2026-09-01', to: '2026-09-30' }, '2026-10-09')).toEqual({ from: '2026-09-01', to: '2026-09-30', label: '1 Sep – 30 Sep 2026', overridden: true })

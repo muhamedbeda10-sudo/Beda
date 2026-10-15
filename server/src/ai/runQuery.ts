@@ -37,6 +37,9 @@ import type { AiCell } from '@qc/shared/ai'
 export const AI_MAX_SQL_CHARS = 20_000
 /** A cell the model reads is cut here. */
 const MODEL_CELL_CHARS = 1_000
+/** Rows a report's section shows when it runs, at most, and their characters: no model reads them, a page draws them. */
+export const AI_REPORT_RUN_ROWS = 2_000
+export const AI_REPORT_RUN_CHARS = 2_000_000
 /** What the model is handed for one query, at most. */
 const MODEL_RESULT_CHARS = 60_000
 /** A cell going to Excel is cut below the 32 767 characters a cell can hold. */
@@ -605,6 +608,26 @@ export function previewOf(run: QueryRun): QueryPreview {
   const truncated = run.truncated || keep < rows.length
   rows.length = keep
   return { columns: run.columns, rows, rowCount: keep, truncated }
+}
+
+/**
+ * The rows a report shows when it runs (no model reads them): every row read, each long cell cut as the model's are,
+ * the whole within AI_REPORT_RUN_CHARS so a page never takes a reply it cannot draw.
+ */
+export function reportPreview(run: QueryRun): QueryPreview {
+  const rows: AiCell[][] = []
+  let chars = 0
+  let truncated = run.truncated
+  for (const r of run.rows) {
+    const row = r.map((c) => cut(c, MODEL_CELL_CHARS))
+    chars += JSON.stringify(row).length + 1
+    if (chars > AI_REPORT_RUN_CHARS) {
+      truncated = true
+      break
+    }
+    rows.push(row)
+  }
+  return { columns: run.columns, rows, rowCount: rows.length, truncated }
 }
 
 /** Rows for Excel: every row read, each cell within what a spreadsheet cell holds. */

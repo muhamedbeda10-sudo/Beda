@@ -152,7 +152,7 @@ export const keys = {
   /** Saving an answer as a report: a mutation's key (not a query's), so the save outlives the answer on screen. */
   aiSaveReport: (turnId: string) => ['ai', 'save-report', turnId] as const,
   /** A report run over its saved period (no range) or over the days chosen for it. */
-  aiReportRun: (id: string, range: AiDayRange | null) => ['ai', 'report-run', id, range?.from ?? '', range?.to ?? ''] as const,
+  aiReportRun: (id: string, range: AiDayRange | null, inputs: string) => ['ai', 'report-run', id, range?.from ?? '', range?.to ?? '', inputs] as const,
   /** Every run of one report, whatever its days. */
   aiReportRuns: (id: string) => ['ai', 'report-run', id] as const,
 }
@@ -1057,7 +1057,8 @@ export function loadAiExcelFile(fileId: string): Promise<Blob> {
 export const AI_REPORTS_PAGE = 50
 
 /** The days of a run as the server takes them: both or neither. */
-const rangeQs = (range: AiDayRange | null) => (range ? qs({ from: range.from, to: range.to }) : '')
+/** A run's days and its inputs' values (`inputs`: their JSON, '' for each one's default), as the query the server reads. */
+const runQs = (range: AiDayRange | null, inputs: string) => qs({ from: range?.from, to: range?.to, inputs: inputs || undefined })
 
 /** The longest search of My reports the server takes. */
 export const AI_REPORT_SEARCH_MAX = 200
@@ -1113,11 +1114,11 @@ export function useAiReport(id: string | null, enabled: boolean) {
  * window regaining focus, and a failure is not retried behind the asker's
  * back. The tables on screen stay while the next run is on its way.
  */
-export function useAiReportRun(id: string | null, range: AiDayRange | null, enabled: boolean) {
+export function useAiReportRun(id: string | null, range: AiDayRange | null, inputs: string, enabled: boolean) {
   const qc = useQueryClient()
   return useQuery({
-    queryKey: keys.aiReportRun(id ?? '', range),
-    queryFn: () => runAiReport(qc, id ?? '', range),
+    queryKey: keys.aiReportRun(id ?? '', range, inputs),
+    queryFn: () => runAiReport(qc, id ?? '', range, inputs),
     enabled: enabled && id !== null,
     staleTime: 0,
     gcTime: 5 * 60_000,
@@ -1142,8 +1143,8 @@ export function newerAiReport(cached: AiReport | undefined, fromRun: AiReport): 
 }
 
 /** Run a report now (see useAiReportRun); the report on screen and the list follow what the run moved. */
-export async function runAiReport(qc: QueryClient, id: string, range: AiDayRange | null): Promise<AiReportRunResponse> {
-  const run = await api<AiReportRunResponse>(`/ai/reports/${encodeURIComponent(id)}/run${rangeQs(range)}`)
+export async function runAiReport(qc: QueryClient, id: string, range: AiDayRange | null, inputs = ''): Promise<AiReportRunResponse> {
+  const run = await api<AiReportRunResponse>(`/ai/reports/${encodeURIComponent(id)}/run${runQs(range, inputs)}`)
   // Its last run moved; its title may have moved too while it ran (a rename), and the newer copy is kept.
   const report = newerAiReport(qc.getQueryData<AiReport>(keys.aiReport(run.report.id)), run.report)
   qc.setQueryData(keys.aiReport(report.id), report)
@@ -1151,7 +1152,7 @@ export async function runAiReport(qc: QueryClient, id: string, range: AiDayRange
   return report === run.report ? run : { ...run, report }
 }
 
-/** A report run again in full (up to AI_EXPORT_MAX_ROWS rows a section) over the same days, for Excel. */
-export function loadAiReportExport(id: string, range: AiDayRange | null): Promise<AiReportExportResponse> {
-  return api<AiReportExportResponse>(`/ai/reports/${encodeURIComponent(id)}/export${rangeQs(range)}`)
+/** A report run again in full (up to AI_EXPORT_MAX_ROWS rows a section) over the same days and values, for Excel. */
+export function loadAiReportExport(id: string, range: AiDayRange | null, inputs = ''): Promise<AiReportExportResponse> {
+  return api<AiReportExportResponse>(`/ai/reports/${encodeURIComponent(id)}/export${runQs(range, inputs)}`)
 }

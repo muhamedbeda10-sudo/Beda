@@ -1,8 +1,8 @@
 // ============================================================================
 // §20 — a saved report to Excel. The server runs every section again in full
 // (up to AI_EXPORT_MAX_ROWS rows each) over the period on screen; the
-// workbook opens on a "Report" sheet that says what was asked, over which
-// days, when it ran, and for each section its sheet, its rows and the SQL
+// workbook opens on a "Report" sheet that says what was asked (and the
+// values its inputs were given), over which days, when it ran, and for each section its sheet, its rows and the SQL
 // that produced them — then one sheet per section, in the report's order.
 // ============================================================================
 
@@ -10,6 +10,7 @@ import { describeAiDays, type AiReportExportResponse } from '@qc/shared/ai'
 import { sheetName, type CellValue, type SheetSpec } from '@/lib/xlsxWrite'
 import { aiCellValue, aiStamp } from './exportAiResult'
 import { sectionSqlForRun } from './reports'
+import { valueDraft } from './reportInputs'
 
 /** The period of an export in words, and whether it was the saved one. */
 function periodCell(p: NonNullable<AiReportExportResponse['period']>): string {
@@ -27,7 +28,9 @@ export function aiReportSheets(r: AiReportExportResponse): SheetSpec[] {
 
   const about: CellValue[][] = [
     ['Report', aiCellValue(r.report.title)],
-    ['Question', aiCellValue(r.report.question)],
+    r.report.description ? ['Shows', aiCellValue(r.report.description)] : ['Question', aiCellValue(r.report.question)],
+    // What the run was asked for: each input's value ({{name}} in the SQL below).
+    ...(r.report.inputs ?? []).map((i): CellValue[] => [i.label, aiCellValue(valueDraft(r.inputs?.[i.name]) || '—')]),
     ['Period', r.period ? periodCell(r.period) : 'As the queries were asked'],
     ['Run at', aiStamp(r.ranAt)],
     ['Sections', r.sections.length],

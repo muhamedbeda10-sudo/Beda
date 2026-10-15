@@ -21,9 +21,15 @@
 // against, the model not answering — and the report keeps the queries
 // exactly as they ran, its period fixed, and says why.
 //
-// Reports are personal: someone else's report is "not found", never a hint
-// that it exists. A report runs as its owner's current domains: a section
-// over data the person can no longer read says so, and the rest still runs.
+// A report is its maker's, unless it is shared (a report the assistant built
+// for everyone, or one the app starts with): someone else's report that is not
+// shared is "not found", never a hint that it exists. Only its maker renames,
+// changes or deletes it. A report runs as the current domains of whoever runs
+// it: a section over data they cannot read says so, and the rest still runs.
+//
+// The assistant builds reports of its own too (./reportTools), with inputs a
+// run asks for besides the period (./reportInputs) and sections shown as a
+// table, as headline figures or as a tree.
 // ============================================================================
 
 import Anthropic from '@anthropic-ai/sdk'
@@ -47,14 +53,17 @@ import {
   type AiReportSectionRun,
   type AiReportSummary,
   type AiReportsResponse,
+  type AiReportMadeBy,
 } from '@qc/shared/ai'
+import type { AiReportInput, AiReportInputValues } from '@qc/shared/aiReportInputs'
 import type { Db, Queryable } from '../db/pool'
 import { CHAT_QUERY_TIMEOUT_MS, recordCutOffUsage, usageOf, watchStream } from './assistant'
 import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams } from './model'
 import { contextDay, conversationTitle, factoryDay } from './prompt'
+import { fillInputs } from './reportInputs'
 import { checkTemplate, fillTemplate, noDataRange, ordersRows, ownDays, periodProblem, rangeDays, readsClock, sameResult } from './reportTemplate'
-import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, exportRows, previewOf, runReadOnlyQuery, type QueryRun, type RunOptions } from './runQuery'
+import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, AI_REPORT_RUN_CHARS, AI_REPORT_RUN_ROWS, exportRows, previewOf, reportPreview, runReadOnlyQuery, type QueryRun, type RunOptions } from './runQuery'
 import { withQueryPurpose } from './slowQueries'
 import { loadDisplayMessages, recordUsage, type UsageRecord } from './transcript'
 
@@ -75,13 +84,26 @@ interface ReportRow {
   createdAt: string
   updatedAt: string
   lastRunAt: string | null
+  description: string | null
+  shared: boolean
+  mine: boolean
+  ownerName: string
+  madeBy: AiReportMadeBy
+  inputCount: number
   conversationId?: string | null
   sections?: AiReportSection[]
+  inputs?: AiReportInput[]
 }
 
+/** A report's columns as one person reads them ($2: who asks). */
 const SUMMARY_COLUMNS = `r.id, r.title, r.question, r.period, r.adjustable, json_array_length(r.sections) AS "sectionCount",
-       r.created_at AS "createdAt", r.updated_at AS "updatedAt", r.last_run_at AS "lastRunAt"`
-const REPORT_COLUMNS = `${SUMMARY_COLUMNS}, r.conversation_id AS "conversationId", r.sections`
+       r.created_at AS "createdAt", r.updated_at AS "updatedAt", r.last_run_at AS "lastRunAt",
+       r.description, r.shared, (r.user_id = $2) AS mine, COALESCE(u.name, '') AS "ownerName", r.made_by AS "madeBy",
+       json_array_length(r.inputs) AS "inputCount"`
+const REPORT_COLUMNS = `${SUMMARY_COLUMNS}, r.conversation_id AS "conversationId", r.sections, r.inputs`
+/** The reports a person may open: their own, and the shared ones. */
+const VISIBLE = `r.deleted_at IS NULL AND (r.user_id = $2 OR r.shared)`
+const FROM = `ai_reports r LEFT JOIN users u ON u.id = r.user_id`
 
 function toSummary(r: ReportRow): AiReportSummary {
   const summary: AiReportSummary = {
@@ -93,33 +115,49 @@ function toSummary(r: ReportRow): AiReportSummary {
     sectionCount: r.sectionCount,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
+    shared: r.shared,
+    mine: r.mine,
+    ownerName: r.ownerName,
+    madeBy: r.madeBy,
+    inputCount: r.inputCount,
   }
   if (r.lastRunAt) summary.lastRunAt = r.lastRunAt
+  if (r.description) summary.description = r.description
   return summary
 }
 
+/** A section as kept: what it holds, and how it shows its rows when not as a table. */
+function toSection(s: AiReportSection): AiReportSection {
+  const out: AiReportSection = { title: s.title, sql: s.sql }
+  if (s.chart) out.chart = s.chart
+  if (s.display && s.display !== 'table') out.display = s.display
+  if (s.tree) out.tree = s.tree
+  if (s.note) out.note = s.note
+  return out
+}
+
 function toReport(r: ReportRow): AiReport {
-  const report: AiReport = { ...toSummary(r), sections: (r.sections ?? []).map((s) => (s.chart ? { title: s.title, sql: s.sql, chart: s.chart } : { title: s.title, sql: s.sql })) }
+  const report: AiReport = { ...toSummary(r), sections: (r.sections ?? []).map(toSection), inputs: r.inputs ?? [] }
   if (r.conversationId) report.conversationId = r.conversationId
   return report
 }
 
-/** The person's own report, unless it was deleted. */
+/** A report the person may open: their own, or a shared one; unless it was deleted. */
 export async function findReport(q: Queryable, id: string, userId: string): Promise<AiReport | null> {
-  const { rows } = await q.query<ReportRow>(`SELECT ${REPORT_COLUMNS} FROM ai_reports r WHERE r.id = $1 AND r.user_id = $2 AND r.deleted_at IS NULL`, [id, userId])
+  const { rows } = await q.query<ReportRow>(`SELECT ${REPORT_COLUMNS} FROM ${FROM} WHERE r.id = $1 AND ${VISIBLE}`, [id, userId])
   return rows[0] ? toReport(rows[0]) : null
 }
 
 /** The report an answer was already saved as, if it was. */
 export async function findReportOfTurn(q: Queryable, turnId: string, userId: string): Promise<AiReport | null> {
   const { rows } = await q.query<ReportRow>(
-    `SELECT ${REPORT_COLUMNS} FROM ai_reports r WHERE r.turn_id = $1 AND r.user_id = $2 AND r.deleted_at IS NULL`,
+    `SELECT ${REPORT_COLUMNS} FROM ${FROM} WHERE r.turn_id = $1 AND r.user_id = $2 AND r.deleted_at IS NULL AND r.made_by = 'answer'`,
     [turnId, userId],
   )
   return rows[0] ? toReport(rows[0]) : null
 }
 
-/** The person's reports, last changed first; `search` matches the title or the question, ignoring case. */
+/** The reports a person may open (their own and the shared ones), last changed first; `search` matches the title or the question, ignoring case. */
 export async function listReports(
   q: Queryable,
   userId: string,
@@ -127,42 +165,85 @@ export async function listReports(
 ): Promise<AiReportsResponse> {
   // The page's cursor comes back at the API's millisecond precision, so compare at that precision, the id breaking ties.
   const { rows } = await q.query<ReportRow>(
-    `SELECT ${SUMMARY_COLUMNS} FROM ai_reports r
-      WHERE r.user_id = $1 AND r.deleted_at IS NULL
-        AND ($2::timestamptz IS NULL
-             OR ($5::uuid IS NULL AND date_trunc('milliseconds', r.updated_at) < $2)
-             OR ($5::uuid IS NOT NULL AND (date_trunc('milliseconds', r.updated_at), r.id) < ($2, $5::uuid)))
+    `SELECT ${SUMMARY_COLUMNS} FROM ${FROM}
+      WHERE ${VISIBLE}
+        AND ($1::timestamptz IS NULL
+             OR ($5::uuid IS NULL AND date_trunc('milliseconds', r.updated_at) < $1)
+             OR ($5::uuid IS NOT NULL AND (date_trunc('milliseconds', r.updated_at), r.id) < ($1, $5::uuid)))
         AND ($4::text IS NULL OR strpos(lower(r.title), lower($4)) > 0 OR strpos(lower(r.question), lower($4)) > 0)
       ORDER BY date_trunc('milliseconds', r.updated_at) DESC, r.id DESC LIMIT $3`,
-    [userId, opts.before, opts.limit + 1, opts.search, opts.beforeId ?? null],
+    [opts.before, userId, opts.limit + 1, opts.search, opts.beforeId ?? null],
   )
   return { reports: rows.slice(0, opts.limit).map(toSummary), hasMore: rows.length > opts.limit }
 }
 
 export interface NewReport {
+  /** Given for a report built by the assistant, whose card names it before it is kept. */
+  id?: string
   userId: string
-  conversationId: string
-  turnId: string
+  conversationId: string | null
+  turnId: string | null
   title: string
   question: string
   period: AiReportPeriod | null
   adjustable: boolean
   sections: AiReportSection[]
+  inputs?: AiReportInput[]
+  shared?: boolean
+  description?: string | null
+  madeBy?: AiReportMadeBy
+  starterKey?: string
 }
 
 export async function insertReport(q: Queryable, r: NewReport): Promise<AiReport> {
-  const { rows } = await q.query<ReportRow>(
-    `INSERT INTO ai_reports AS r (user_id, conversation_id, turn_id, title, question, period, adjustable, sections)
-     VALUES ($1, $2, $3, $4, $5, $6::json, $7, $8::json)
-     RETURNING ${REPORT_COLUMNS}`,
-    [r.userId, r.conversationId, r.turnId, r.title, r.question, r.period ? JSON.stringify(r.period) : null, r.adjustable, JSON.stringify(r.sections)],
+  const { rows } = await q.query<{ id: string }>(
+    `INSERT INTO ai_reports (id, user_id, conversation_id, turn_id, title, question, period, adjustable, sections, inputs, shared, description, made_by, starter_key)
+     VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7::json, $8, $9::json, $10::json, $11, $12, $13, $14)
+     RETURNING id`,
+    [
+      r.id ?? null,
+      r.userId,
+      r.conversationId,
+      r.turnId,
+      r.title,
+      r.question,
+      r.period ? JSON.stringify(r.period) : null,
+      r.adjustable,
+      JSON.stringify(r.sections.map(toSection)),
+      JSON.stringify(r.inputs ?? []),
+      r.shared ?? false,
+      r.description ?? null,
+      r.madeBy ?? 'answer',
+      r.starterKey ?? null,
+    ],
   )
-  return toReport(rows[0])
+  return (await findReport(q, rows[0].id, r.userId))!
 }
 
-export async function renameReport(q: Queryable, id: string, title: string): Promise<AiReport> {
-  const { rows } = await q.query<ReportRow>(`UPDATE ai_reports r SET title = $2 WHERE r.id = $1 RETURNING ${REPORT_COLUMNS}`, [id, title])
-  return toReport(rows[0])
+/** What the assistant changes of a report it built: all of it but its maker. */
+export interface ReportChanges {
+  title: string
+  description: string | null
+  period: AiReportPeriod | null
+  adjustable: boolean
+  sections: AiReportSection[]
+  inputs: AiReportInput[]
+  shared: boolean
+}
+
+export async function changeReport(q: Queryable, id: string, userId: string, c: ReportChanges): Promise<AiReport> {
+  await q.query(
+    `UPDATE ai_reports SET title = $2, description = $3, period = $4::json, adjustable = $5, sections = $6::json, inputs = $7::json, shared = $8,
+            made_by = CASE WHEN made_by = 'answer' THEN 'assistant' ELSE made_by END
+      WHERE id = $1`,
+    [id, c.title, c.description, c.period ? JSON.stringify(c.period) : null, c.adjustable, JSON.stringify(c.sections.map(toSection)), JSON.stringify(c.inputs), c.shared],
+  )
+  return (await findReport(q, id, userId))!
+}
+
+export async function renameReport(q: Queryable, id: string, title: string, userId: string): Promise<AiReport> {
+  await q.query(`UPDATE ai_reports SET title = $2 WHERE id = $1`, [id, title])
+  return (await findReport(q, id, userId))!
 }
 
 /** Removed from the person's list; the record stays (soft delete). */
@@ -170,7 +251,7 @@ export async function deleteReport(q: Queryable, id: string): Promise<void> {
   await q.query(`UPDATE ai_reports SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`, [id])
 }
 
-/** Stamp a run; the report as it now reads. */
+/** Stamp a run (anyone's run of a shared report too); the report as it now reads. */
 export async function markReportRun(q: Queryable, report: AiReport): Promise<AiReport> {
   const { rows } = await q.query<{ lastRunAt: string }>(`UPDATE ai_reports SET last_run_at = now() WHERE id = $1 RETURNING last_run_at AS "lastRunAt"`, [report.id])
   return rows[0] ? { ...report, lastRunAt: rows[0].lastRunAt } : report
@@ -586,9 +667,13 @@ async function runSection(reader: SectionReader, sql: string, opts: RunOptions):
 /** A run's error as the report shows it: refused for want of a grant, it is the person's access that changed. */
 const sectionError = (run: { error?: string; code?: string }): string | undefined => (run.code === '42501' ? NO_ACCESS : run.error)
 
-/** A section's SQL for one run: a template filled with the run's days, or the query as it ran. */
-function sectionSql(report: AiReport, section: AiReportSection, period: AiDayRange | null): string {
-  return report.adjustable && period ? fillTemplate(section.sql, period) : section.sql
+/**
+ * A section's SQL for one run: a template filled with the run's days, or the query as it ran; then its inputs, from
+ * the run's checked values. The days first: a value typed into an input is never read as a placeholder.
+ */
+export function sectionSql(report: Pick<AiReport, 'adjustable' | 'inputs'>, section: Pick<AiReportSection, 'sql'>, period: AiDayRange | null, values: AiReportInputValues = {}): string {
+  const dated = report.adjustable && period ? fillTemplate(section.sql, period) : section.sql
+  return report.inputs.length > 0 ? fillInputs(dated, report.inputs, values) : dated
 }
 
 /** Every section run now, as the answer's cards show a query: the first rows, how many, and whether there were more. */
@@ -596,20 +681,22 @@ export async function runReportSections(
   reader: SectionReader,
   report: AiReport,
   period: AiDayRange | null,
-  opts: { timeZone: string; signal?: AbortSignal },
+  opts: { timeZone: string; signal?: AbortSignal; values?: AiReportInputValues },
 ): Promise<AiReportSectionRun[]> {
   const out: AiReportSectionRun[] = []
   // One after another: the reader's few connections are shared with every answer being written.
   for (const section of report.sections) {
     const run = await withQueryPurpose(section.title, () =>
-      runSection(reader, sectionSql(report, section, period), {
-        maxRows: AI_PREVIEW_ROWS,
+      runSection(reader, sectionSql(report, section, period, opts.values), {
+        maxRows: AI_REPORT_RUN_ROWS,
+        maxChars: AI_REPORT_RUN_CHARS,
         timeoutMs: CHAT_QUERY_TIMEOUT_MS,
         timeZone: opts.timeZone,
         signal: opts.signal,
       }),
     )
-    const preview = previewOf(run)
+    // Every row read (up to AI_REPORT_RUN_ROWS): a report is read on a page, not by the model.
+    const preview = reportPreview(run)
     const result: AiReportSectionRun = {
       title: section.title,
       ok: run.ok,
@@ -619,6 +706,9 @@ export async function runReportSections(
       truncated: preview.truncated,
       ms: Math.round(run.ms),
     }
+    if (section.display && section.display !== 'table') result.display = section.display
+    if (section.tree) result.tree = section.tree
+    if (section.note) result.note = section.note
     const error = sectionError(run)
     if (error) result.error = error
     // Drawn again from this run's rows, when they still fit the chart (another period may hold one row, or none).
@@ -637,13 +727,13 @@ export async function exportReportSections(
   reader: SectionReader,
   report: AiReport,
   period: AiDayRange | null,
-  opts: { timeZone: string; signal?: AbortSignal },
+  opts: { timeZone: string; signal?: AbortSignal; values?: AiReportInputValues },
 ): Promise<AiReportExportResponse['sections']> {
   const out: AiReportExportResponse['sections'] = []
   let room = AI_EXPORT_LIMITS.maxChars
   for (const section of report.sections) {
     const run = await withQueryPurpose(section.title, () =>
-      runSection(reader, sectionSql(report, section, period), {
+      runSection(reader, sectionSql(report, section, period, opts.values), {
         maxRows: AI_EXPORT_MAX_ROWS,
         timeoutMs: REPORT_EXPORT_TIMEOUT_MS,
         timeZone: opts.timeZone,

@@ -28,6 +28,21 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-16.2',
+    date: '2026-10-16',
+    title: 'Order tracking and Week tracking, and reports the assistant builds',
+    items: [
+      { text: 'Two new reports in the AI assistant’s My reports, shared with everyone given the assistant: Order tracking and Week tracking. Each person sees them over the data they may read.' },
+      { text: 'Order tracking: type one order or several. 20332 takes the order and all its phases; 20332-Ph2.2 takes that phase alone. It shows the customer, the pieces to make and finished, the done %, the weight and finished weight, the rejected and repaired pieces with the reject rate (as on the Dashboard), each order and phase, what is late and by how many days, and the shipping status.' },
+      { text: 'Order tracking, further down: the main items with their parts and the machines each passed, as a tree that opens level by level (Open all, Close all), each machine’s finished and remaining, where the pieces stand (order → machine), and each item’s pieces per hour against its standard time.' },
+      { text: 'Standard times: a new saved table, standard_times, worked out from the last year of the production record (pieces ÷ hours for each item on each machine). It is computed again every night.' },
+      { text: 'Week tracking: type the planning week (the order sheet’s Pivot column; it starts on this week) and the year, and optionally only some orders, or orders to leave out. It shows each machine’s required, finished, remaining, weight and rejects, the lines done on time, done late and overdue, each order, and every line still missing with its order, item and machine.' },
+      { text: 'A report can now ask for values before it runs: a form above its sections, then Run. Its first sections can be headline figures shown as cards. Excel and Print take the values used.' },
+      { text: 'The assistant can build reports like these itself. Ask it for a tracker or a review you want to open again and again; it tests every section on real data before saving, and the report appears as a card in the answer (Open report) and in My reports. It can share a report with everyone, and can read a report to change it.' },
+      { text: 'Only the person who made a report can rename, change or delete it; a shared report shows who made it.' },
+    ],
+  },
+  {
     id: '2026-10-16.1',
     date: '2026-10-16',
     title: 'Permissions by role and by person, and ADMIN+',
