@@ -364,6 +364,24 @@ export const AI_ACTION_INFO: Readonly<Record<AiAction, AiActionInfo>> = Object.f
 export const AI_ROUTER_MODEL: AiModelId = 'claude-haiku-5-5'
 /** The level a question takes when the router cannot be asked: the middle one. */
 export const AI_ROUTER_FALLBACK: AiChatTier = 'chat-analysis'
+
+/** How much a level asks of the model: a question with files is an analysis's equal. */
+export const AI_LEVEL_RANK: Record<AiChatLevel, number> = { 'chat-simple': 0, 'chat-analysis': 1, 'chat-files': 1, 'chat-deep': 2 }
+
+/**
+ * A conversation's level only goes up (§20). The prompt cache — the
+ * conversation so far, read again at a tenth of the price — is kept per model
+ * and effort: a follow-up answered a level lower would pay for the whole
+ * conversation again, and lose the stronger model's footing besides. So a
+ * question asking less than the conversation already has is answered at the
+ * conversation's level; one asking more raises it, from then on.
+ */
+export function stickyLevel(previous: AiChatLevel | null | undefined, wanted: AiChatLevel): AiChatLevel {
+  return previous && AI_LEVEL_RANK[previous] >= AI_LEVEL_RANK[wanted] ? previous : wanted
+}
+
+/** Nothing ranks above it: the router need not be asked. */
+export const isTopLevel = (level: AiChatLevel | null | undefined): boolean => !!level && AI_LEVEL_RANK[level] === Math.max(...Object.values(AI_LEVEL_RANK))
 /** The model a doubtful certificate is read again on. */
 export const AI_MTC_REREAD_MODEL: AiModelId = 'claude-opus-5-5'
 /** A certificate is doubtful when more than this share of its values came back unsure, or when nothing was listed. */

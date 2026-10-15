@@ -134,7 +134,11 @@ export function AiModelsSection({ data }: { data: AiSettingsResponse }) {
               )
             })}
           </div>
-          <p className="text-xs text-muted">A question carrying photos, PDFs or spreadsheets always runs as “{AI_ACTION_INFO['chat-files'].name}”.</p>
+          <p className="text-xs text-muted">
+            A question carrying photos, PDFs or spreadsheets runs as “{AI_ACTION_INFO['chat-files'].name}”. Within a conversation the level only goes up: a
+            follow-up asking less stays at the conversation’s level, so the conversation so far is read from Anthropic’s cache at a tenth of the price instead of
+            paid for again on another model.
+          </p>
         </fieldset>
       </Card>
 
