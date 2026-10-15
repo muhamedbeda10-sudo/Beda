@@ -19,6 +19,7 @@
 import { z } from 'zod'
 import { isAiDay } from '@qc/shared/ai'
 import { normaliseMachineCode } from '@qc/shared/rules'
+import type { Permission } from '@qc/shared/permissions'
 import { NOTICE_TARGET_KINDS, type NoticeAcknowledgement, type NoticeTarget, type NoticeTargetKind, type Role } from '@qc/shared/types'
 import type { Queryable } from '../db/pool'
 import { factoryDay } from '../ai/prompt'
@@ -26,7 +27,7 @@ import { NOTICE_SELECT, attachNoticeParts, isPlaceBound, loadInbox, noticeApplie
 import type { StoredNotice } from '../modules/noticesService'
 import { isUuid } from '../automations/people'
 import { readsEveryNotice, receivesNotices, type NoticeAsker } from './scope'
-import { NOTICE_READER_ROLES, audienceText, daysText, factoryTime, noticeStatus, reachOf, reachText, type NoticeStatus } from './view'
+import { audienceText, daysText, factoryTime, noticeStatus, reachOf, reachText, type NoticeStatus } from './view'
 
 /** What one result may hold, at most: a query's result's room. */
 export const NOTICE_RESULT_CHARS = 60_000
@@ -164,8 +165,8 @@ function bounded(head: Record<string, unknown>, key: string, rows: unknown[], ta
   return text
 }
 
-const NO_BELL = (role: Role) =>
-  `This person's role (${role}) does not receive notices in the app, so there are none for them to see. Tell them so; an administrator manages notices on the Notices page.`
+const NO_BELL = (_role: Role) =>
+  `This person does not receive notices in the app, so there are none for them to see. Tell them so; an administrator manages notices on the Notices page.`
 
 /**
  * list_notices: the notices the person may see, filtered, newest first. A
@@ -173,8 +174,8 @@ const NO_BELL = (role: Role) =>
  */
 export async function listNotices(q: Queryable, timeZone: string, asker: NoticeAsker, query: ListNoticesQuery, now: Date): Promise<string> {
   const today = factoryDay(now, timeZone)
-  const admin = readsEveryNotice(asker.role)
-  if (!admin && !receivesNotices(asker.role)) return JSON.stringify({ notices: [], note: NO_BELL(asker.role) })
+  const admin = readsEveryNotice(asker)
+  if (!admin && !receivesNotices(asker)) return JSON.stringify({ notices: [], note: NO_BELL(asker.role) })
   const limit = query.limit ?? DEFAULT_LIST
   let candidates: ReadNotice[]
   let scanned = false
@@ -213,13 +214,13 @@ const someNames = (names: string[]) => ({ count: names.length, names: names.slic
  */
 export async function noticeDetails(q: Queryable, timeZone: string, asker: NoticeAsker, id: string, now: Date): Promise<string | null> {
   const today = factoryDay(now, timeZone)
-  const admin = readsEveryNotice(asker.role)
+  const admin = readsEveryNotice(asker)
   if (!isUuid(id)) return null
   let notice: ReadNotice | undefined
   if (admin) {
     const { rows } = await q.query<NoticeRow>(`SELECT ${NOTICE_SELECT} FROM notices n WHERE n.id = $2 AND n.deleted_at IS NULL`, [timeZone, id])
     notice = rows[0] ? (await attachNoticeParts(q, rows))[0] : undefined
-  } else if (receivesNotices(asker.role)) {
+  } else if (receivesNotices(asker)) {
     notice = (await loadInbox(q, timeZone, { userId: asker.id, role: asker.role })).find((n) => n.id === id.toLowerCase())
   }
   if (!notice) return null
@@ -276,9 +277,9 @@ export async function noticeDetails(q: Queryable, timeZone: string, asker: Notic
     // Aimed only at people: the live accounts it names, as the bell decides it, less those who read it.
     const { rows: people } = await q.query<{ id: string; name: string; role: Role }>(
       `SELECT u.id, u.name, u.role FROM users u
-        WHERE u.is_active AND u.deleted_at IS NULL AND NOT u.is_system AND u.role::text = ANY($1::text[])
+        WHERE u.is_active AND u.deleted_at IS NULL AND NOT u.is_system AND user_has_permission(u.id, $1)
         ORDER BY lower(u.name), u.username`,
-      [[...NOTICE_READER_ROLES]],
+      ['read-notices' satisfies Permission],
     )
     const expected = people.filter((u) => noticeApplies(notice.targets, { userId: u.id, role: u.role }, null, notice.matchMode))
     const seen = new Map(acks.map((a) => [a.userId, a]))

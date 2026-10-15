@@ -39,7 +39,6 @@ import {
   draftFromAccess,
   effortName,
   groupByRole,
-  isAdministrator,
   minCapUsd,
   modelName,
   newAccessDraft,
@@ -416,9 +415,9 @@ function AccessEditor({ editing, appCapUsd, chatModel, onClose }: { editing: Edi
 
   const groups = useMemo(() => groupByRole(candidates.data ?? []), [candidates.data])
   const person = row ? null : (candidates.data?.find((p) => p.id === personId) ?? null)
-  // §23 — notices through the assistant are an administrator's: the switch turns on only for one (the server holds it too,
-  // and a stored permission applies only while the role is one). Left on from before, it can still be turned off.
-  const admin = isAdministrator(row?.role ?? person?.role ?? '')
+  // §23 — notices through the assistant are for those who may manage notices in the app (§14): the switch turns on only for
+  // one (the server holds it too, and a stored permission applies only while they may). Left on from before, it can still be turned off.
+  const admin = row?.managesNotices ?? person?.managesNotices ?? false
   const noticesLocked = saving || !!row?.owner || (!admin && !row?.notices)
   const cap = parseCapUsd(draft.cap)
   const minCap = minCapUsd(chatModel)
@@ -497,7 +496,7 @@ function AccessEditor({ editing, appCapUsd, chatModel, onClose }: { editing: Edi
                   const next = candidates.data?.find((p) => p.id === e.target.value)
                   setPersonId(e.target.value)
                   // Turned on for an administrator, then another person chosen: it goes with the administrator.
-                  if (!next || !isAdministrator(next.role)) setDraft((d) => (d.notices ? { ...d, notices: false } : d))
+                  if (!next || !next.managesNotices) setDraft((d) => (d.notices ? { ...d, notices: false } : d))
                   setError(null)
                 }}
                 disabled={saving || !candidates.data || candidates.data.length === 0}

@@ -26,7 +26,7 @@ import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
 import { badRequest } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requirePermission, requireUser } from '../auth/middleware'
 import { writeAudit } from '../audit/service'
 import { normaliseKey } from '../lib/rows'
 
@@ -246,7 +246,7 @@ export async function upsertProductionRecords(tx: Queryable, rows: ProductionRec
 
 export function productionRecordsRoutes(ctx: AppContext): Router {
   const r = Router()
-  r.use(requireCapability('manage-admin-data'))
+  r.use(requirePermission('import-data'))
 
   /** What the import page shows above the importer: how much there is, how far it reaches, how fresh it is. */
   r.get('/summary', async (_req, res) => {

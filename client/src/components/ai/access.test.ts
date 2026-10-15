@@ -15,7 +15,6 @@ import {
   effortName,
   formatRate,
   groupByRole,
-  isAdministrator,
   minCapUsd,
   modelName,
   newAccessDraft,
@@ -44,6 +43,7 @@ const row = (over: Partial<AiAccess>): AiAccess => ({
   owner: false,
   automations: false,
   notices: false,
+  managesNotices: false,
   excel: false,
   mtc: false,
   ...over,
@@ -211,12 +211,12 @@ describe('the owner’s draft of one person’s access', () => {
   })
 
   it('reads the notices permission back: as stored, the owner’s on while an administrator', () => {
-    expect(draftFromAccess(row({ role: 'admin', notices: true })).notices).toBe(true)
-    expect(draftFromAccess(row({ role: 'admin' })).notices).toBe(false)
+    expect(draftFromAccess(row({ managesNotices: true, notices: true })).notices).toBe(true)
+    expect(draftFromAccess(row({ managesNotices: true })).notices).toBe(false)
     // Stored for someone who is not an administrator now: read back as it is, so it can be turned off.
-    expect(draftFromAccess(row({ role: 'supervisor', notices: true })).notices).toBe(true)
-    expect(draftFromAccess(row({ role: 'admin', owner: true })).notices).toBe(true)
-    expect(draftFromAccess(row({ role: 'supervisor', owner: true })).notices).toBe(false)
+    expect(draftFromAccess(row({ notices: true })).notices).toBe(true)
+    expect(draftFromAccess(row({ managesNotices: true, owner: true })).notices).toBe(true)
+    expect(draftFromAccess(row({ owner: true })).notices).toBe(false)
   })
 
   it('knows when the draft says something new', () => {
@@ -236,28 +236,23 @@ describe('the owner’s draft of one person’s access', () => {
 })
 
 describe('notices through the assistant, on the owner’s page', () => {
-  it('knows an administrator by the app’s own rule: the role that manages its data', () => {
-    expect(isAdministrator('admin')).toBe(true)
-    for (const role of ['supervisor', 'inspector', 'viewer', '', 'superuser', 'ADMIN']) expect(isAdministrator(role)).toBe(false)
-  })
-
-  it('says whether it is in effect: allowed administrators and the owner while one; allowed otherwise is held', () => {
-    expect(noticesAccessView({ owner: false, notices: true, role: 'admin' }).key).toBe('can')
-    expect(noticesAccessView({ owner: false, notices: false, role: 'admin' }).key).toBe('no')
-    expect(noticesAccessView({ owner: true, notices: false, role: 'admin' }).key).toBe('can')
-    expect(noticesAccessView({ owner: true, notices: true, role: 'supervisor' }).key).toBe('no')
-    const held = noticesAccessView({ owner: false, notices: true, role: 'supervisor' })
+  it('says whether it is in effect: allowed people who may manage notices, and the owner while they may; allowed otherwise is held', () => {
+    expect(noticesAccessView({ owner: false, notices: true, managesNotices: true }).key).toBe('can')
+    expect(noticesAccessView({ owner: false, notices: false, managesNotices: true }).key).toBe('no')
+    expect(noticesAccessView({ owner: true, notices: false, managesNotices: true }).key).toBe('can')
+    expect(noticesAccessView({ owner: true, notices: true, managesNotices: false }).key).toBe('no')
+    const held = noticesAccessView({ owner: false, notices: true, managesNotices: false })
     expect(held.key).toBe('held')
-    expect(held.tip).toMatch(/only administrators manage notices/)
-    expect(noticesAccessView({ owner: false, notices: false, role: 'inspector' }).tip).toMatch(/can still ask about the ones they see/)
+    expect(held.tip).toMatch(/only people allowed the notices page manage notices/)
+    expect(noticesAccessView({ owner: false, notices: false, managesNotices: false }).tip).toMatch(/can still ask about the ones they see/)
   })
 
   it('says under the switch why it cannot be turned on, or what it allows', () => {
     expect(noticesSwitchHint({ admin: true, owner: false, stored: false })).toMatch(/^They may have the assistant write a notice.*nothing changes until they press its button/)
-    expect(noticesSwitchHint({ admin: false, owner: false, stored: false })).toBe('Only administrators manage notices. Like everyone with the assistant, they can still ask about the notices they see.')
+    expect(noticesSwitchHint({ admin: false, owner: false, stored: false })).toBe('Only people allowed the Notices page manage notices. Like everyone with the assistant, they can still ask about the notices they see.')
     expect(noticesSwitchHint({ admin: false, owner: false, stored: true })).toMatch(/not in effect .* Turn it off to drop it\.$/)
-    expect(noticesSwitchHint({ admin: true, owner: true, stored: false })).toBe('You always can, as the assistant’s owner, while you are an administrator.')
-    expect(noticesSwitchHint({ admin: false, owner: true, stored: true })).toMatch(/^Only administrators manage notices: as the owner/)
+    expect(noticesSwitchHint({ admin: true, owner: true, stored: false })).toBe('You always can, as the assistant’s owner, while you may manage notices.')
+    expect(noticesSwitchHint({ admin: false, owner: true, stored: true })).toMatch(/^Only people allowed the Notices page manage notices: as the owner/)
   })
 })
 

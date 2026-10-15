@@ -45,7 +45,7 @@ import {
   Table2,
   Truck,
 } from 'lucide-react'
-import { can, shiftName } from '@qc/shared/rules'
+import { shiftName } from '@qc/shared/rules'
 import type { Disposition, ShiftLetter } from '@qc/shared/types'
 import { GENERAL_MONTHS, defaultDashboardLayouts, deltaPct, normaliseDashboardLayout, insightKey, pct, ppm, toneHighIsGood, toneLowIsGood, type DashboardLayouts, type KpiBreakdown, type KpiDrillQuery, type KpiFilters, type KpiFirstPart, type KpiGeneral, type KpiGroupRow, type KpiInsight, type KpiOverview, type KpiThresholds, type KpiTone, type KpiCompareBlock, type KpiCompareBucket, type KpiCompareSeries, type KpiGrain, type KpiGrainChoice, type KpiMaterialDetail, MATERIAL_KIND_LABEL, type MaterialKind } from '@qc/shared/kpi'
 import { PROCESSES, PROCESS_LABEL, type Process } from '@qc/shared/types'
@@ -63,7 +63,7 @@ import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, 
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn } from '@/lib/utils'
-import { useDashboardLayout, useHiddenInsights, useKpiBreakdown, useKpiComparisons, useKpiGeneral, useKpiMaterials, useKpiOverview, useKpiSpan, useMaster, useUsers } from '@/services/queries'
+import { useDashboardLayout, useHiddenInsights, useKpiBreakdown, useKpiComparisons, useKpiGeneral, useKpiMaterials, useKpiOverview, useKpiSpan, useMaster, useUserDirectory } from '@/services/queries'
 import { hideInsight, resetDashboardLayout, restoreInsight, saveDashboardLayout } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
@@ -2225,9 +2225,9 @@ function showing(shown: number, total: number, rank: 'largest' | 'oldest' = 'lar
 }
 
 export function DashboardPage() {
-  const { role } = useAuth()
+  const { role, can } = useAuth()
   const navigate = useNavigate()
-  const allowed = can(role, 'view-dashboard')
+  const allowed = can('view-dashboard')
   const [f, setF] = usePersistedState<DashFilters>('qc-dash:filters', DEFAULT_FILTERS)
   const patch = (p: Partial<DashFilters>) => setF((prev) => ({ ...DEFAULT_FILTERS, ...prev, ...p }))
 
@@ -2265,7 +2265,7 @@ export function DashboardPage() {
   const { data: hiddenState } = useHiddenInsights(allowed)
   // §15 — the board's layout: the fixed default for everyone, or an administrator's own arrangement, made here.
   const { data: layoutState } = useDashboardLayout(allowed)
-  const canArrange = can(role, 'manage-admin-data')
+  const canArrange = can('manage-configuration')
   const [editingLayout, setEditingLayout] = useState(false)
   const [draftLayouts, setDraftLayouts] = useState<DashboardLayouts | null>(null)
   /** The gallery of charts, open while arranging. */
@@ -2356,7 +2356,7 @@ export function DashboardPage() {
    *  PDF is the whole dashboard whichever tab is open. */
   const [chosenView, setView] = usePersistedState<'general' | 'inspectors'>('qc-dash:tab', 'general')
   // The Inspectors tab is an administrator's: a viewer has the general one only, whatever this device last showed.
-  const canRank = can(role, 'view-inspector-ranking')
+  const canRank = can('view-inspector-ranking')
   const view = canRank ? chosenView : 'general'
   /** Which angle the general page is read from; Details is the full analysis behind the filters. */
   const [pick, setPick] = usePersistedState<GeneralPick>('qc-dash:pick', 'factory')
@@ -2376,7 +2376,7 @@ export function DashboardPage() {
   // The dashboard offers and counts only the machines it is set to count; the others are named under its figures.
   const machines = useMemo(() => registered.filter((m) => m.onDashboard !== false), [registered])
   const leftOut = useMemo(() => registered.filter((m) => m.onDashboard === false).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true })), [registered])
-  const { data: users = [] } = useUsers()
+  const { data: users = [] } = useUserDirectory(allowed)
   const { data: span } = useKpiSpan(allowed)
   // How much room there is: the boards stacked (no grid to arrange), a phone, the smallest phones.
   const { ref: pageRef, stacked } = useBoardsStacked()

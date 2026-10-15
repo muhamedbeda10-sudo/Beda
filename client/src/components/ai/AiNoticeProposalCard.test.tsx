@@ -9,11 +9,11 @@ import { PROPOSAL_WAIT } from '@/components/automations/AutomationProposalCard'
 import { AiNoticeProposalCard } from './AiNoticeProposalCard'
 import { dayText } from './noticeProposal'
 
-// The signed-in person's role: the Notices page (and so the card's link to it) is an administrator's.
+// The signed-in person's role: the Notices page (and so the card's link to it) is for those allowed it (§14) — administrators by default.
 const auth = vi.hoisted(() => ({ role: 'admin' }))
 vi.mock('@/store/AuthContext', async (original) => ({
   ...(await original<typeof import('@/store/AuthContext')>()),
-  useAuth: () => ({ role: auth.role, profile: null, factoryTimeZone: 'Africa/Cairo' }),
+  useAuth: () => ({ role: auth.role, profile: null, factoryTimeZone: 'Africa/Cairo', can: (p: string) => p === 'manage-notices' && auth.role === 'admin' }),
 }))
 
 // The card drawn to a string, as on a server: what each state says and offers. The router's and the provider's

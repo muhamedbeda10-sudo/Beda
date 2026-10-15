@@ -8,6 +8,8 @@
 // server/migrations); the API maps between the two in one place.
 // ============================================================================
 
+import type { Permission, PermissionOverride } from './permissions'
+
 export type ID = string
 export type ISODate = string
 
@@ -619,6 +621,18 @@ export interface UserProfile {
   isActive: boolean
   createdAt?: ISODate
   lastLoginAt?: ISODate | null
+  /** §14 — what they may open and do now: their role's set with their own overrides; everything for ADMIN+. */
+  permissions: Permission[]
+  /** §14 — the AI assistant's owner: above the roles, and changed by nobody else. */
+  adminPlus: boolean
+}
+
+/** An account as a list of people shows it (a notice's audience, the dashboard's inspectors): no permissions. */
+export type DirectoryUser = Pick<UserProfile, 'id' | 'username' | 'name' | 'role' | 'isActive'>
+
+/** §14 — an account as the users screen lists it: with its own differences from its role. */
+export interface ManagedUser extends UserProfile {
+  overrides: PermissionOverride[]
 }
 
 // ---- Notices (§16) ---------------------------------------------------------

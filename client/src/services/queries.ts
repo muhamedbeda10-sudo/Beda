@@ -51,7 +51,8 @@ import type {
 import type { KpiBreakdown, KpiBreakdownFilters, KpiComparisons, KpiGrainChoice, KpiMaterials, MaterialKind, KpiDrillQuery, KpiDrillResponse, KpiFilters, KpiFirstPartDrillQuery, KpiGeneral, KpiOverview, KpiRange } from '@qc/shared/kpi'
 import { loadAvatar } from '@/lib/avatarLoader'
 import type { AvatarResponse, ColumnValuesResponse, DashboardLayoutResponse, HiddenInsightsResponse, OrderSyncStatusResponse, OrderListFilters, OrderListOptionsResponse, OrderListResponse, ProductionRecordsSummary, ReleaseStateResponse, SessionImagesResponse } from '@qc/shared/api'
-import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, UserProfile, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
+import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow, Process, ProductionOrder, DirectoryUser, ManagedUser, WorkInstruction, WorkInstructionScope } from '@qc/shared/types'
+import type { RolePermissionsResponse } from '@qc/shared/permissions'
 import type {
   AiAccessListResponse,
   AiConversationGroupsResponse,
@@ -580,8 +581,19 @@ export function useWorkInstructions(process?: WorkInstructionScope, history = fa
   })
 }
 
+/** §14 — every account with its permissions and overrides: the Users screen's. */
 export function useUsers() {
-  return useQuery({ queryKey: keys.users, queryFn: () => api<UserProfile[]>('/users') })
+  return useQuery({ queryKey: keys.users, queryFn: () => api<ManagedUser[]>('/users') })
+}
+
+/** The people by name, for a notice's audience and the dashboard's inspectors (no permissions). */
+export function useUserDirectory(enabled = true) {
+  return useQuery({ queryKey: [...keys.users, 'directory'] as const, queryFn: () => api<DirectoryUser[]>('/users/directory'), enabled, staleTime: 60_000 })
+}
+
+/** §14 — each role's set, and which roles this person may change. */
+export function useRolePermissions() {
+  return useQuery({ queryKey: [...keys.users, 'roles'] as const, queryFn: () => api<RolePermissionsResponse>('/users/roles') })
 }
 
 // ---- §15 Dashboard ---------------------------------------------------------
@@ -874,6 +886,8 @@ export interface AiPerson {
   name: string
   username: string
   role: string
+  /** §14 — may manage notices in the app now: the assistant's notices permission needs it. */
+  managesNotices: boolean
 }
 
 /** The active accounts not on the access list yet, for "Add person". */

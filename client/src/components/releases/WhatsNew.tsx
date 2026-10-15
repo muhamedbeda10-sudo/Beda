@@ -14,7 +14,6 @@ import { Button, Modal } from '@/components/ui'
 import { useReleaseState } from '@/services/queries'
 import { markReleaseSeen } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
-import { can } from '@qc/shared/rules'
 import { cn } from '@/lib/utils'
 import { When } from '@/components/ui/Tooltip'
 
@@ -128,8 +127,8 @@ const QUIET_PATHS = [/^\/wizard\//]
  * marks the newest one seen on any close, so the prompt is once per person.
  */
 export function WhatsNewPrompt() {
-  const { role, profile } = useAuth()
-  const admin = !!profile && can(role, 'manage-admin-data')
+  const { profile, can } = useAuth()
+  const admin = !!profile && can('view-release-notes')
   const { data } = useReleaseState(admin)
   const location = useLocation()
   const qc = useQueryClient()

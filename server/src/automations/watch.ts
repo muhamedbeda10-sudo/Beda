@@ -256,7 +256,7 @@ async function openCaseFollowUps(tx: Queryable, a: AutomationRow, w: AutomationW
 /** Someone the run tells, and what they may open. */
 interface Person {
   id: string
-  /** Sees every follow-up: a supervisor, an administrator, the assistant's owner. */
+  /** Sees every follow-up: the permission (§14; supervisors and administrators by default), the assistant's owner. */
   seesAllFollowUps: boolean
   /** May open the automation's page: its creator and the owner. */
   opensAutomation: boolean
@@ -264,12 +264,12 @@ interface Person {
 
 async function peopleOf(q: Queryable, ids: string[], a: AutomationRow, ownerId: string | null): Promise<Map<string, Person>> {
   if (ids.length === 0) return new Map()
-  const { rows } = await q.query<{ id: string; role: Role }>(`SELECT id, role::text AS role FROM users WHERE id = ANY($1::uuid[])`, [ids])
+  const { rows } = await q.query<{ id: string; allFollowUps: boolean }>(
+    `SELECT id, user_has_permission(id, 'view-all-follow-ups') AS "allFollowUps" FROM users WHERE id = ANY($1::uuid[])`,
+    [ids],
+  )
   return new Map(
-    rows.map((r) => [
-      r.id,
-      { id: r.id, seesAllFollowUps: r.role === 'supervisor' || r.role === 'admin' || r.id === ownerId, opensAutomation: r.id === a.creatorId || r.id === ownerId },
-    ]),
+    rows.map((r) => [r.id, { id: r.id, seesAllFollowUps: r.allFollowUps || r.id === ownerId, opensAutomation: r.id === a.creatorId || r.id === ownerId }]),
   )
 }
 

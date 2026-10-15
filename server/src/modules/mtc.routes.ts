@@ -65,7 +65,7 @@ import { withTransaction, PG, pgCode } from '../db/pool'
 import { HttpError, badRequest, duplicate, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { RateLimiter } from '../lib/rateLimit'
-import { requireUser } from '../auth/middleware'
+import { requireUser, userCan } from '../auth/middleware'
 import { writeAudit } from '../audit/service'
 import { isPdf } from '../ai/attachments'
 import { describeModelFailure, usageOf } from '../ai/assistant'
@@ -176,6 +176,25 @@ export function mtcRoutes(ctx: AppContext): Router {
     }
     next()
   }
+
+  /**
+   * The registers are the MTC screen's (§14): read by those who may open it.
+   * The welding wire register is also read by whoever records inspections —
+   * the PT step suggests its batches; and an uploader compares a reading with
+   * what is registered, whether or not they may open the screen.
+   */
+  const readerOnly =
+    (forUploaders: boolean): RequestHandler =>
+    async (req, _res, next) => {
+      const user = requireUser(req)
+      if (userCan(user, 'view-mtc')) return next()
+      if (String(req.params.kind) === 'welding-wire' && userCan(user, 'record-inspection')) return next()
+      if (forUploaders) {
+        const owner = (await aiOwnerAccount(ctx.db, ctx.config)) === user.id
+        if (mayUploadMtc(await loadAccess(ctx.db, user.id), owner, true)) return next()
+      }
+      next(forbidden())
+    }
 
   // A name in Arabic arrives as UTF-8: read it so, not as Latin-1 (multer's default; its types do not list the option yet).
   const uploadOptions: multer.Options & { defParamCharset: string } = {
@@ -373,8 +392,8 @@ export function mtcRoutes(ctx: AppContext): Router {
     return [...where, ...columnFilterClauses(sqlColumns(t), q.cf, p, exceptColumn)]
   }
 
-  /** A register as a table, for everyone, a page at a time with the total, filtered and sorted as History is. */
-  r.get('/:kind/table', async (req, res) => {
+  /** A register as a table, for those who may open the screen, a page at a time with the total, filtered and sorted as History is. */
+  r.get('/:kind/table', readerOnly(false), async (req, res) => {
     const t = registerOf(String(req.params.kind))
     const q = parse(
       tableQuery.extend({
@@ -401,7 +420,7 @@ export function mtcRoutes(ctx: AppContext): Router {
   })
 
   /** One column's values under the table's other filters, for its menu. */
-  r.get('/:kind/values', async (req, res) => {
+  r.get('/:kind/values', readerOnly(false), async (req, res) => {
     const t = registerOf(String(req.params.kind))
     const q = parse(tableQuery.extend({ column: z.string().max(60), columnSearch: z.string().max(200).optional() }), req.query)
     const params: unknown[] = []
@@ -410,7 +429,7 @@ export function mtcRoutes(ctx: AppContext): Router {
   })
 
   /** The table's filter choices: the suppliers and the filter field's values registered, once each whatever their case. */
-  r.get('/:kind/options', async (req, res) => {
+  r.get('/:kind/options', readerOnly(false), async (req, res) => {
     const t = registerOf(String(req.params.kind))
     const distinct = (c: string) =>
       `(SELECT array_agg(v ORDER BY lower(v)) FROM (SELECT DISTINCT ON (lower(btrim(${c}))) btrim(${c}) AS v FROM ${t.table}
@@ -423,7 +442,7 @@ export function mtcRoutes(ctx: AppContext): Router {
   })
 
   /** The registered items behind these identifiers, removed ones included: what the review compares each row with. */
-  r.post('/:kind/existing', async (req, res) => {
+  r.post('/:kind/existing', readerOnly(true), async (req, res) => {
     const t = registerOf(String(req.params.kind))
     const { ids } = parse(z.object({ ids: z.array(z.string().max(500)).max(MTC_MAX_ROWS) }), req.body)
     const wanted = Array.from(new Set(ids.map((v) => v.trim().toLowerCase()).filter(Boolean)))

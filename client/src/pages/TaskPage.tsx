@@ -26,7 +26,6 @@ import {
   type TaskPhoto,
   type TaskPriority,
 } from '@qc/shared/tasks'
-import { can } from '@qc/shared/rules'
 import { Badge, Button, Card, EmptyState, Modal } from '@/components/ui'
 import { Segmented } from '@/components/ui/PageShell'
 import { Lightbox, type ViewableImage } from '@/components/ui/Lightbox'
@@ -376,14 +375,14 @@ function EditTaskDialog({ task: t, onClose }: { task: TaskDetail; onClose: () =>
 
 /** The thread: what people wrote, with their photos, and each change in a line of its own; and the box to write in. */
 function Thread({ task: t }: { task: TaskDetail }) {
-  const { factoryTimeZone: tz, role } = useAuth()
+  const { factoryTimeZone: tz, can } = useAuth()
   const qc = useQueryClient()
   const { busy, run } = useRun()
   const [body, setBody] = useState('')
   const [photos, setPhotos] = useState<string[]>([])
   const open = t.status === 'open'
   // Photos are stored where an inspection's are: whoever may record inspections may add them.
-  const mayPhoto = can(role, 'record-inspection')
+  const mayPhoto = can('record-inspection')
   const send = () =>
     void run('send', () => writeOnTask(qc, t.id, { body: body.trim(), imageIds: photos })).then((ok) => {
       if (ok) {

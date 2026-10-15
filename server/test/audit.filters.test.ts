@@ -24,7 +24,8 @@ const PROMOTION = 1
 const get = (query: string) => app.api<AuditListResponse>('GET', `/api/audit?limit=${PAGE}&${query}`, { token: admin.token })
 
 beforeAll(async () => {
-  await app.start()
+  // No AI owner: pinning one writes the assistant's own entries, which these counts are not about.
+  await app.start({ AI_OWNER_USERNAME: 'nobody.here' })
   await app.resetDatabase()
   admin = await app.register('admin', 'Admin')
   supervisor = await app.register('sup', 'Rania Adel')

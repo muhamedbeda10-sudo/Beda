@@ -541,7 +541,8 @@ describe('§21 — the assistant’s owner sees everyone’s, whatever their rol
   it('keeps seeing all of them as an inspector', async () => {
     await addUser('admin2', 'Second Admin', 'admin')
     const second = await app.login('admin2')
-    expect((await app.api('PATCH', `/api/users/${admin.user.id}`, { token: second.token, body: { role: 'inspector' } })).status).toBe(200)
+    // In the database: nobody changes the ADMIN+ account's role in the app.
+    await app.db.query(`UPDATE users SET role = 'inspector' WHERE id = $1`, [admin.user.id])
     expect((await counts(admin)).body.all).toBe(true)
     expect((await listOf(admin, '?scope=all&status=open,in_progress')).body.followUps.length).toBeGreaterThan(0)
     const f = (await get(admin, ids[2])).body

@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AuthConfigResponse, AuthResponse, LoginRequest, RegisterRequest } from '@qc/shared/api'
+import { can as holds, type Permission } from '@qc/shared/permissions'
 import type { Role, UserProfile } from '@qc/shared/types'
-import { ApiError, api, hasSessionMarker, refreshAccessToken, setAccessToken, setSessionLostHandler } from '@/lib/api'
+import { ApiError, api, hasSessionMarker, refreshAccessToken, setAccessToken, setProfileHandler, setSessionLostHandler } from '@/lib/api'
 import { disablePush } from '@/lib/push'
 
 interface AuthValue {
@@ -10,6 +11,12 @@ interface AuthValue {
   ready: boolean
   profile: UserProfile | null
   role: Role
+  /** §14 — what the person may open and do now (their role's set with their own overrides; everything for ADMIN+). */
+  permissions: readonly Permission[]
+  /** §14 — whether they may: the app hides what they may not, and the server refuses it anyway. */
+  can: (permission: Permission) => boolean
+  /** §14 — the AI assistant's owner, above the roles. */
+  adminPlus: boolean
   error: string | null
   selfRegistrationOpen: boolean
   /** IANA zone the factory runs on — shifts are shown in it, as the API stores them. */
@@ -22,6 +29,8 @@ interface AuthValue {
 }
 
 const AuthContext = createContext<AuthValue | null>(null)
+
+const NONE: readonly Permission[] = []
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
@@ -36,6 +45,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null)
     queryClient.clear()
   }, [queryClient])
+
+  // §14 — the account as the server sends it again (each token refresh, and on coming back to the app):
+  // a role or permission changed meanwhile shows at once, without signing in again.
+  useEffect(() => {
+    setProfileHandler((user) => setProfile((p) => (p && p.id === user.id ? user : p)))
+    let last = Date.now()
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - last < 60_000) return
+      last = Date.now()
+      api<UserProfile>('/auth/me', { noRetry: true })
+        .then((me) => setProfile((p) => (p && p.id === me.id ? me : p)))
+        .catch(() => {})
+    }
+    document.addEventListener('visibilitychange', onFocus)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      setProfileHandler(null)
+      document.removeEventListener('visibilitychange', onFocus)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [])
 
   // On load: try to resume the device session from the refresh cookie.
   useEffect(() => {
@@ -134,6 +164,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ready,
       profile,
       role: profile?.role ?? 'inspector',
+      permissions: profile?.permissions ?? NONE,
+      can: (permission: Permission) => holds(profile?.permissions, permission),
+      adminPlus: profile?.adminPlus ?? false,
       error,
       selfRegistrationOpen,
       factoryTimeZone,

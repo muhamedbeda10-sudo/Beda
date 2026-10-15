@@ -17,6 +17,7 @@ const row = (over: Partial<AiAccess>): AiAccess => ({
   owner: false,
   automations: false,
   notices: false,
+  managesNotices: false,
   excel: false,
   mtc: false,
   ...over,
@@ -36,7 +37,7 @@ describe('who can use it, as the owner reads it', () => {
   it('shows each person’s role, switch, data and month against their cap; no model: that is by what is asked (Models)', () => {
     const t = text([
       row({ userId: 'b', name: 'Basem Fathy', username: 'basem', role: 'supervisor', domains: ['audit', 'orders'], monthlyCapUsd: 5, spentUsd: 0.004 }),
-      row({ userId: 'o', name: 'Mohamed Beda', username: 'beda', role: 'admin', owner: true, domains: ['inspection', 'orders', 'materials', 'audit'], monthlyCapUsd: 50, spentUsd: 12.5 }),
+      row({ userId: 'o', name: 'Mohamed Beda', username: 'beda', role: 'admin', managesNotices: true, owner: true, domains: ['inspection', 'orders', 'materials', 'audit'], monthlyCapUsd: 50, spentUsd: 12.5 }),
     ])
     // The owner's own row first, marked as theirs.
     expect(t).toMatch(/Mohamed Beda You beda \| admin \| On \| Can create \| Can manage \| Can have made \| Can upload \| Inspections Orders & PDI Coils & master data Audit & accounts \| \$12.50 of \$50 \|/)
@@ -78,9 +79,9 @@ describe('who can use it, as the owner reads it', () => {
 
   it('says who may manage notices: administrators allowed, and the owner while one; allowed but not an administrator is not in effect', () => {
     const t = text([
-      row({ userId: 'a', name: 'Amal', username: 'amal', role: 'admin', notices: true }),
+      row({ userId: 'a', name: 'Amal', username: 'amal', role: 'admin', managesNotices: true, notices: true }),
       row({ userId: 'b', name: 'Basem', username: 'basem', role: 'supervisor', notices: true }),
-      row({ userId: 'c', name: 'Camilia', username: 'camilia', role: 'admin' }),
+      row({ userId: 'c', name: 'Camilia', username: 'camilia', role: 'admin', managesNotices: true }),
       row({ userId: 'o', name: 'Owner', username: 'owner', role: 'supervisor', owner: true }),
     ])
     expect(t).toMatch(/Amal amal \| admin \| On \| No \| Can manage \|/)

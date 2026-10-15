@@ -14,7 +14,7 @@ import { applyEvent, askedToStop, startTurn, streamEnded, type LivePart, type Li
 // A notice card asks the signed-in person's role (its link to the Notices page is an administrator's).
 vi.mock('@/store/AuthContext', async (original) => ({
   ...(await original<typeof import('@/store/AuthContext')>()),
-  useAuth: () => ({ role: 'admin', profile: null, factoryTimeZone: 'Africa/Cairo' }),
+  useAuth: () => ({ role: 'admin', profile: null, factoryTimeZone: 'Africa/Cairo', can: () => true }),
 }))
 
 // An answer drawn to a string, as on a server: the layout effects (a chart reading its width) say they do nothing

@@ -46,7 +46,7 @@ export function DataImportPage() {
   }
 
   return (
-    <AdminLayout title="Data import" description="Load the production orders, coils and production record from their exports, or keep them in step with Access." needs="manage-admin-data">
+    <AdminLayout title="Data import" description="Load the production orders, coils and production record from their exports, or keep them in step with Access." needs="import-data">
       <div className="space-y-4">
         {/* The source switch: two by two on a phone, each cell the full width of its half, under short names; one row
             of the full names from 640 px. The icons keep their size whatever the label does. */}

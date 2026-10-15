@@ -5,7 +5,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ChevronRight, FileText } from 'lucide-react'
 import type { PDIListFilters, PDIWithOrder } from '@qc/shared/api'
-import { can } from '@qc/shared/rules'
 import { Badge, Button, Card, EmptyState, Modal } from '@/components/ui'
 import { ExportMenu, FilterBar, FilterSelect, type FilterChip } from '@/components/ui/PageShell'
 import { ScrollX } from '@/components/ui/ScrollX'
@@ -154,7 +153,7 @@ export function PdiDetail({ doc, onClose }: { doc: PDIWithOrder; onClose: () => 
 /** `leading` is the page's view switch (Sessions / PDI), at the head of the filter row. */
 export function PdiList({ leading }: { leading?: ReactNode }) {
   const { toast } = useApp()
-  const { role } = useAuth()
+  const { can } = useAuth()
   const [term, setTerm] = usePersistedState('qc-pdi:term', '')
   const [range, setRange] = usePersistedState<RangeFilter>('qc-pdi:range', 'all')
   const [fromDay, setFromDay] = usePersistedState('qc-pdi:from', localDay())
@@ -228,7 +227,7 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
   }
 
   // §4 — the PDIs the filters match, to Excel: one row per item.
-  const canExport = can(role, 'export-records')
+  const canExport = can('export-records')
   async function exportExcel() {
     if (exporting) return
     setExporting(true)

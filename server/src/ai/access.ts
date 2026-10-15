@@ -23,11 +23,11 @@ import {
   type AiStopReason,
 } from '@qc/shared/ai'
 import { auditEvent } from '@qc/shared/audit'
-import { can } from '@qc/shared/rules'
-import type { Role } from '@qc/shared/types'
+import { can, type Permission } from '@qc/shared/permissions'
 import type { Config } from '../config'
 import type { Queryable } from '../db/pool'
 import { auditChanges, writeAudit } from '../audit/service'
+import { loadPermissions } from '../auth/permissions'
 import { storedDomains } from './domains'
 import { minCallWorstCaseUsd } from './models'
 import { loadAiSettings, loadAvailability, type AiAvailability } from './settings'
@@ -115,13 +115,17 @@ export const mayUploadMtc = (a: AccessRecord | null, owner: boolean, active: boo
 
 /**
  * Whether the person may have the assistant write notices (§23): given the
- * assistant, an administrator by their role as it is now (`role`, read again
- * by the caller), and the owner or allowed by the owner. The assistant never
- * gets more power than its user has in the app: a person demoted loses it at
- * once, whatever their row says.
+ * assistant, allowed to manage notices in the app by their permissions as
+ * they are now (§14, read again by the caller), and the owner or allowed by
+ * the owner. The assistant never gets more power than its user has in the
+ * app: a person who loses the Notices screen loses it at once, whatever their
+ * row says.
  */
-export const mayManageNotices = (a: AccessRecord | null, owner: boolean, role: Role | null | undefined): a is AccessRecord =>
-  isGranted(a) && can(role ?? undefined, 'manage-admin-data') && (owner || a.notices)
+export const mayManageNotices = (
+  a: AccessRecord | null,
+  owner: boolean,
+  permissions: ReadonlySet<Permission> | readonly Permission[] | null | undefined,
+): a is AccessRecord => isGranted(a) && can(permissions, 'manage-notices') && (owner || a.notices)
 
 // ---- The owner's list ----------------------------------------------------------------
 
@@ -130,6 +134,7 @@ interface ListedRow extends AccessRow {
   username: string
   role: string
   spentUsd: number
+  managesNotices: boolean
   updatedAt: string
   updatedByName: string | null
 }
@@ -141,6 +146,7 @@ export async function listAccess(q: Queryable, ownerId: string | null, userId?: 
        SELECT user_id, sum(cost_usd) AS spent FROM ai_usage
         WHERE created_at >= (date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') GROUP BY user_id)
      SELECT ${ACCESS_COLUMNS}, u.name, u.username, u.role::text AS role, COALESCE(s.spent, 0)::numeric(14, 6) AS "spentUsd",
+            user_has_permission(u.id, 'manage-notices') AS "managesNotices",
             a.updated_at AS "updatedAt", a.updated_by_name AS "updatedByName"
        FROM ai_access a JOIN users u ON u.id = a.user_id LEFT JOIN spend s ON s.user_id = a.user_id
       WHERE ($2::uuid IS NULL OR a.user_id = $2)
@@ -163,6 +169,7 @@ export async function listAccess(q: Queryable, ownerId: string | null, userId?: 
       // The owner may create automations whatever their row says (§21), and write notices while an administrator (§23).
       automations: a.automations || a.userId === ownerId,
       notices: a.notices || a.userId === ownerId,
+      managesNotices: r.managesNotices,
       excel: a.excel || a.userId === ownerId,
       mtc: a.mtc || a.userId === ownerId,
       updatedAt: r.updatedAt,
@@ -173,9 +180,9 @@ export async function listAccess(q: Queryable, ownerId: string | null, userId?: 
 }
 
 /** Active accounts the owner has not listed yet: whom "Add person" offers. Never the automations' system sender (§21). */
-export async function unlistedPeople(q: Queryable): Promise<{ id: string; name: string; username: string; role: string }[]> {
-  const { rows } = await q.query<{ id: string; name: string; username: string; role: string }>(
-    `SELECT u.id, u.name, u.username, u.role::text AS role FROM users u
+export async function unlistedPeople(q: Queryable): Promise<{ id: string; name: string; username: string; role: string; managesNotices: boolean }[]> {
+  const { rows } = await q.query<{ id: string; name: string; username: string; role: string; managesNotices: boolean }>(
+    `SELECT u.id, u.name, u.username, u.role::text AS role, user_has_permission(u.id, 'manage-notices') AS "managesNotices" FROM users u
       WHERE u.is_active AND u.deleted_at IS NULL AND NOT u.is_system AND NOT EXISTS (SELECT 1 FROM ai_access a WHERE a.user_id = u.id)
       ORDER BY lower(u.name), u.username`,
   )
@@ -339,15 +346,15 @@ export async function personAvailability(
   const app = await loadAvailability(q, config, readerReady)
   const model = app.status.model
   const owner = ownerId !== null && ownerId === userId
-  // The role as it is now: a person demoted loses the notices at once (mayManageNotices).
-  const role = isGranted(access) ? ((await q.query<{ role: Role }>(`SELECT role FROM users WHERE id = $1`, [userId])).rows[0]?.role ?? null) : null
+  // The permissions as they are now: a person who loses the Notices screen loses the notices at once (mayManageNotices).
+  const permissions = isGranted(access) ? ((await loadPermissions(q, userId))?.permissions ?? null) : null
   const me: AiMeResponse = {
     granted: isGranted(access),
     owner,
     available: false,
     automations: mayAutomate(access, owner),
     excel: mayMakeExcel(access, owner),
-    notices: mayManageNotices(access, owner, role),
+    notices: mayManageNotices(access, owner, permissions),
     mtc: mayUploadMtc(access, owner, true),
   }
   if (!isGranted(access)) me.reason = 'not-granted'

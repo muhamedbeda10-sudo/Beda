@@ -146,7 +146,7 @@ describe('§20 the owner gives the assistant, person by person', () => {
     const people = await app.api<{ id: string; name: string; username: string; role: string }[]>('GET', '/api/ai/people', { token: owner.token })
     expect(people.status).toBe(200)
     expect(people.body.map((p) => p.username).sort()).toEqual(['admin2', 'insp', 'sup', 'watch'])
-    expect(people.body.find((p) => p.username === 'insp')).toEqual({ id: insp.user.id, name: 'Inspector One', username: 'insp', role: 'inspector' })
+    expect(people.body.find((p) => p.username === 'insp')).toEqual({ id: insp.user.id, name: 'Inspector One', username: 'insp', role: 'inspector', managesNotices: false })
 
     const given = await grant(insp, { domains: ['orders', 'inspection'], monthlyCapUsd: 5 })
     expect(given).toEqual({
@@ -162,6 +162,7 @@ describe('§20 the owner gives the assistant, person by person', () => {
       owner: false,
       automations: false,
       notices: false,
+      managesNotices: false,
       excel: false,
       mtc: false,
       updatedAt: expect.any(String),

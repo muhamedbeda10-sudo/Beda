@@ -54,7 +54,7 @@ export function ChatThread({
 }) {
   const qc = useQueryClient()
   const { toast } = useApp()
-  const { profile, role } = useAuth()
+  const { profile, can } = useAuth()
   const myId = profile?.id ?? ''
   const { data, isLoading } = useChatMessages(c.id)
   const [older, setOlder] = useState<ChatMessage[]>([])
@@ -176,7 +176,7 @@ export function ChatThread({
     }
   }
 
-  const canModerate = role === 'admin' && c.kind !== 'direct'
+  const canModerate = can('manage-chat') && c.kind !== 'direct'
   const automated = c.automated === true
   const subtitle = automated ? 'Automated messages' : c.kind === 'direct' ? c.members.find((m) => m.id !== myId)?.role ?? '' : `${c.members.length} members`
 
@@ -197,7 +197,7 @@ export function ChatThread({
           </span>
         </button>
         {/* An administrator adds people to a group from here, after it was made. */}
-        {role === 'admin' && c.kind === 'group' && (
+        {can('manage-chat') && c.kind === 'group' && (
           <button type="button" onClick={() => setInfo('add')} className="icon-btn h-10 w-10 touch:h-11 touch:w-11" aria-label="Add people" data-tip="Add people to this group">
             <UserPlus className="h-5 w-5" />
           </button>

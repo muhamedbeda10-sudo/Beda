@@ -14,7 +14,7 @@ import type { ImageAsset } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { HttpError, badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requirePermission, requireUser } from '../auth/middleware'
 import { dropNulls } from '../lib/rows'
 import { buildStorageKey, sniffImageMime } from '../images/storage'
 
@@ -47,7 +47,7 @@ export function imagesRoutes(ctx: AppContext): Router {
     limits: { fileSize: ctx.config.MAX_IMAGE_BYTES, files: 1, fields: 10 },
   })
 
-  r.post('/', requireCapability('record-inspection'), upload.single('file'), async (req, res) => {
+  r.post('/', requirePermission('record-inspection'), upload.single('file'), async (req, res) => {
     const user = requireUser(req)
     const file = req.file
     if (!file) throw badRequest('Attach the image as the "file" field.')

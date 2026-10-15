@@ -6,7 +6,8 @@ import { TestApp, cookieOf } from './harness'
 const app = new TestApp()
 
 beforeAll(async () => {
-  await app.start()
+  // No ADMIN+ here: the administrators' own rules (ADMIN+ has its own tests, in ai.owner and permissions).
+  await app.start({ AI_OWNER_USERNAME: 'nobody.here' })
   await app.resetDatabase()
 })
 afterAll(() => app.stop())

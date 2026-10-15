@@ -35,7 +35,7 @@ import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
 import { HttpError, badRequest, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireUser, type AuthUser } from '../auth/middleware'
+import { requireUser, userCan, type AuthUser } from '../auth/middleware'
 import { auditChanges, writeAudit } from '../audit/service'
 import { currentAiOwner } from '../ai/owner'
 import { LIVE_PERSON } from '../automations/people'
@@ -232,7 +232,7 @@ export function followUpsRoutes(ctx: AppContext): Router {
 
   /** Who is asking, and whether they see everyone's. The owner is read again every time; nothing is pinned from here. */
   async function viewerOf(user: AuthUser): Promise<Viewer> {
-    const all = user.role === 'supervisor' || user.role === 'admin' || (await currentAiOwner(db, ctx.config)) === user.id
+    const all = userCan(user, 'view-all-follow-ups') || (await currentAiOwner(db, ctx.config)) === user.id
     return { id: user.id, all }
   }
 

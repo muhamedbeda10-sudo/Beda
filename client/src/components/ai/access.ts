@@ -23,8 +23,6 @@ import {
   type AiMeResponse,
   type AiModelId,
 } from '@qc/shared/ai'
-import { can } from '@qc/shared/rules'
-import { ROLES, type Role } from '@qc/shared/types'
 import { formatCap, formatTokens } from './format'
 
 /** Why someone who has the assistant cannot ask it now. ('not-granted' is never said: the assistant is simply not there.) */
@@ -166,7 +164,7 @@ export function draftFromAccess(a: AiAccess): AccessDraft {
     domains: orderDomains(a.domains),
     cap: String(a.monthlyCapUsd),
     automations: a.owner || a.automations,
-    notices: a.notices || (a.owner && isAdministrator(a.role)),
+    notices: a.notices || (a.owner && a.managesNotices),
     excel: a.owner || a.excel,
     mtc: a.owner || a.mtc,
   }
@@ -212,13 +210,8 @@ export function accessChanged(a: AiAccess, d: AccessDraft): boolean {
 
 // ---- Notices through the assistant (§23) -------------------------------------------
 
-/** An administrator in the app: their role may manage its data (notices among it). Checked again by the server on every call, with the role then. */
-export function isAdministrator(role: string): boolean {
-  return (ROLES as readonly string[]).includes(role) && can(role as Role, 'manage-admin-data')
-}
-
-/** Why the notices switch cannot be turned on for someone: only administrators manage notices. */
-export const NOTICES_ADMIN_ONLY = 'Only administrators manage notices'
+/** Why the notices switch cannot be turned on for someone: only those who may open the Notices page (§14) manage notices. */
+export const NOTICES_ADMIN_ONLY = 'Only people allowed the Notices page manage notices'
 
 /**
  * Whether a person may manage notices through the assistant, as the owner's
@@ -232,17 +225,17 @@ export interface NoticesAccessView {
   tip: string
 }
 
-export function noticesAccessView(a: Pick<AiAccess, 'owner' | 'notices' | 'role'>): NoticesAccessView {
-  const admin = isAdministrator(a.role)
+export function noticesAccessView(a: Pick<AiAccess, 'owner' | 'notices' | 'managesNotices'>): NoticesAccessView {
+  const admin = a.managesNotices
   if (a.owner) {
     return admin
-      ? { key: 'can', tip: 'You always can, as the assistant’s owner, while you are an administrator' }
-      : { key: 'no', tip: `${NOTICES_ADMIN_ONLY}: as the owner, you can again once your role is administrator` }
+      ? { key: 'can', tip: 'You always can, as the assistant’s owner, while you may manage notices' }
+      : { key: 'no', tip: `${NOTICES_ADMIN_ONLY}: as the owner, you can again once you are allowed it` }
   }
   if (!a.notices) return { key: 'no', tip: 'May not have the assistant change notices; they can still ask about the ones they see' }
   return admin
     ? { key: 'can', tip: 'May have the assistant write, change, withdraw and delete notices: each only when they press its card’s button' }
-    : { key: 'held', tip: `Allowed, but not in effect: ${NOTICES_ADMIN_ONLY.toLowerCase()}. It applies again if their role becomes administrator.` }
+    : { key: 'held', tip: `Allowed, but not in effect: ${NOTICES_ADMIN_ONLY.toLowerCase()}. It applies again once they are allowed the Notices page.` }
 }
 
 /**
@@ -252,13 +245,13 @@ export function noticesAccessView(a: Pick<AiAccess, 'owner' | 'notices' | 'role'
  * they are an administrator).
  */
 export function noticesSwitchHint(p: { admin: boolean; owner: boolean; stored: boolean }): string {
-  if (p.owner) return p.admin ? 'You always can, as the assistant’s owner, while you are an administrator.' : `${NOTICES_ADMIN_ONLY}: as the owner, you can again once your role is administrator.`
+  if (p.owner) return p.admin ? 'You always can, as the assistant’s owner, while you may manage notices.' : `${NOTICES_ADMIN_ONLY}: as the owner, you can again once you are allowed it.`
   if (!p.admin) {
     return p.stored
-      ? `${NOTICES_ADMIN_ONLY}: this is not in effect while their role is not administrator, and applies again if it becomes one. Turn it off to drop it.`
+      ? `${NOTICES_ADMIN_ONLY}: this is not in effect while they are not, and applies again once they are. Turn it off to drop it.`
       : `${NOTICES_ADMIN_ONLY}. Like everyone with the assistant, they can still ask about the notices they see.`
   }
-  return 'They may have the assistant write a notice, or change, withdraw or delete one. Each comes as a card showing exactly what goes out and to whom, and nothing changes until they press its button. Only while they are an administrator; photos and files are still added on the Notices page.'
+  return 'They may have the assistant write a notice, or change, withdraw or delete one. Each comes as a card showing exactly what goes out and to whom, and nothing changes until they press its button. Only while they may manage notices; photos and files are still added on the Notices page.'
 }
 
 /** One domain ticked or unticked, the rest kept in order. */

@@ -12,7 +12,6 @@ import { PHONE, useMediaQuery } from '@/lib/media'
 import { useBottomBarRef } from '@/lib/bottomBar'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can } from '@/domain'
 import { cn, downloadText, formatDate, formatFullTimestamp } from '@/lib/utils'
 import { AUDIT_ACTIONS, type AuditAction, type AuditEntry } from '@qc/shared/types'
 import type { AuditFilters } from '@qc/shared/api'
@@ -77,7 +76,7 @@ export function AuditPage() {
   const queryClient = useQueryClient()
   const { data: stats } = useAuditStats()
   const totalEvents = stats?.total ?? 0
-  const { role } = useAuth()
+  const { can } = useAuth()
   const { toast } = useApp()
 
   // Kept on this device, so a tab away and back finds the filters as left.
@@ -152,7 +151,7 @@ export function AuditPage() {
   }
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id))
-  const canPurge = can(role, 'purge-audit-logs')
+  const canPurge = can('purge-audit-logs')
   const toggleOne = (id: string) =>
     setSelected((s) => {
       const n = new Set(s)
@@ -213,7 +212,7 @@ export function AuditPage() {
           <Button variant="secondary" className="min-h-[48px]" onClick={() => void exportCsv()} disabled={exporting}>
             <Download className="h-4 w-4" /> {exporting ? 'Building…' : 'Export'}
           </Button>
-          {can(role, 'purge-audit-logs') && (
+          {can('purge-audit-logs') && (
             <Button variant="danger" className="min-h-[48px]" disabled={selected.size === 0} onClick={() => setPurging(true)}>
               <Flame className="h-4 w-4" /> Purge {selected.size > 0 && `(${selected.size})`}
             </Button>

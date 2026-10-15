@@ -28,6 +28,19 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-16.1',
+    date: '2026-10-16',
+    title: 'Permissions by role and by person, and ADMIN+',
+    items: [
+      { text: 'Administration → Users has a Roles tab: what each role may open and do, as a table of permissions. Changing a role changes it for everyone of that role at once.' },
+      { text: 'Each person’s Permissions (the shield beside their name): tick or untick to give them something from another role, or take something of their own role away, for that person alone. The list shows “+1 −1” where someone differs from their role.' },
+      { text: 'Screens are permissions too: Inspections, History, Access, Dashboard, MTC, Coil search, Chat, Configuration, Data import, Users, Audit log, Notices and What’s new. A screen taken away is hidden and also refused by the server, so its data cannot be reached another way. Someone with no Inspections screen opens on the first screen they have.' },
+      { text: 'ADMIN+: the AI assistant’s owner is shown as ADMIN+, holds every permission always, and nobody else can change that account, its permissions or password, or remove it.' },
+      { text: 'Nobody can give more than they hold: a person managing users changes only accounts whose permissions they hold, gives only permissions they have, and cannot change their own role or permissions. The administrators’ own set is changed by ADMIN+ alone. Every change is in the audit log.' },
+      { text: 'Changes apply at once on the server; on the person’s screen within a few minutes, or when they come back to the app.' },
+    ],
+  },
+  {
     id: '2026-10-15.3',
     date: '2026-10-15',
     title: 'AI models chosen by what Claude is doing',

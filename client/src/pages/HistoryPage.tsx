@@ -46,7 +46,7 @@ import { useServerColumns } from '@/components/ui/ColumnFilter'
 import { useCoarsePointer, useMediaQuery } from '@/lib/media'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
-import { can, dimensionStatus, isStockOrder, processForMachine, sessionTone, shiftName } from '@/domain'
+import { dimensionStatus, isStockOrder, processForMachine, sessionTone, shiftName } from '@/domain'
 import { cn, daysAgoISO, formatDate, formatDateTime } from '@/lib/utils'
 import {
   DISPOSITIONS,
@@ -372,7 +372,7 @@ function historyCell(key: string, s: SessionWithOrder, ctx: HistoryCellContext):
 export function HistoryPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const { role } = useAuth()
+  const { can } = useAuth()
   const { toast } = useApp()
   const [params, setParams] = useSearchParams()
   /** What History lists: inspection sessions, or PDI documents. Kept on this device. */
@@ -454,11 +454,11 @@ export function HistoryPage() {
   const [removing, setRemoving] = useState<
     { kind: 'session'; id: string; label: string } | { kind: 'sample'; id: string; label: string } | { kind: 'note'; id: string; label: string } | null
   >(null)
-  const canDelete = can(role, 'delete-session')
+  const canDelete = can('delete-session')
   /** §4 — an open session's quantities by an inspector, a closed one's by a supervisor; the API enforces the same. */
-  const canCorrectQuantities = (s: SessionWithOrder) => (s.status === 'Open' ? can(role, 'edit-open-session') : can(role, 'edit-closed-session'))
+  const canCorrectQuantities = (s: SessionWithOrder) => (s.status === 'Open' ? can('edit-open-session') : can('edit-closed-session'))
   const [correctingQty, setCorrectingQty] = useState<SessionWithOrder | null>(null)
-  const canDeleteNote = can(role, 'delete-note')
+  const canDeleteNote = can('delete-note')
 
   async function reopen() {
     if (!openSession) return
@@ -671,8 +671,8 @@ export function HistoryPage() {
    *  the same rule, so this only decides what to show. */
   const editable = openSession
     ? openSession.status === 'Open'
-      ? can(role, 'edit-open-session')
-      : can(role, 'edit-closed-session')
+      ? can('edit-open-session')
+      : can('edit-closed-session')
     : false
 
   async function saveDimension(dim: DimensionResult, actual: number | null) {
@@ -702,7 +702,7 @@ export function HistoryPage() {
   }
 
   // §6 — History to Excel: every session the filters match, not only the page on screen.
-  const canExport = can(role, 'export-records')
+  const canExport = can('export-records')
   const [exporting, setExporting] = useState(false)
   async function exportExcel() {
     if (exporting) return
@@ -1047,12 +1047,12 @@ export function HistoryPage() {
                 <Pencil className="h-4 w-4" /> Edit sample
               </Button>
             )}
-            {openSession && !openSample && openSession.status === 'Open' && can(role, 'record-inspection') && (
+            {openSession && !openSample && openSession.status === 'Open' && can('record-inspection') && (
               <Button variant="secondary" className="min-h-[48px]" onClick={() => navigate(`/wizard/${openSession.id}`)}>
                 <Plus className="h-4 w-4" /> New sample
               </Button>
             )}
-            {openSession && !openSample && openSession.status === 'Closed' && can(role, 'edit-closed-session') && (
+            {openSession && !openSample && openSession.status === 'Closed' && can('edit-closed-session') && (
               <Button variant="secondary" className="min-h-[48px]" disabled={saving} onClick={() => void reopen()}>
                 {/* Half a phone's width holds the short words on one line. */}
                 <LockOpen className="h-4 w-4" /> <span className="sm:hidden">Reopen</span>
@@ -1231,8 +1231,8 @@ export function HistoryPage() {
               <p className="flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-muted dark:bg-slate-800/60">
                 <Lock className="h-4 w-4 shrink-0" />
                 {openSession.status === 'Closed'
-                  ? 'This session is closed. A supervisor can still correct it — every correction is audited.'
-                  : 'Your role can view this record but not correct it.'}
+                  ? 'This session is closed. Someone allowed to correct closed sessions still can — every correction is audited.'
+                  : 'You may view this record but not correct it.'}
               </p>
             )}
           </div>

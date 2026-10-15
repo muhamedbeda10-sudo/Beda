@@ -27,7 +27,7 @@ import {
   type NoticeTargetKind,
   type NoticeMatchMode,
 } from '@qc/shared/types'
-import { can, normaliseMachineCode, shiftName } from '@qc/shared/rules'
+import { normaliseMachineCode, shiftName } from '@qc/shared/rules'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { NoticeCard, NoticeFileRow, SeverityBadge, TargetChips, validityText } from '@/components/notices/NoticeCard'
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select } from '@/components/ui'
@@ -37,7 +37,7 @@ import { isCoarsePointer } from '@/lib/media'
 import { cn, formatDateTime } from '@/lib/utils'
 import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 import { deleteNotice, saveNotice, uploadNoticeFile, withdrawNotice } from '@/services/mutations'
-import { useAdminNotices, useLinesOfMachines, useLinesOfOrders, useMaster, useNoticeAcknowledgements, useOrderSearch, useUsers } from '@/services/queries'
+import { useAdminNotices, useLinesOfMachines, useLinesOfOrders, useMaster, useNoticeAcknowledgements, useOrderSearch, useUserDirectory } from '@/services/queries'
 import { useApp } from '@/store/AppContext'
 import { When } from '@/components/ui/Tooltip'
 
@@ -170,7 +170,7 @@ function TargetBuilder({
   const [term, setTerm] = useState('')
   const [typed, setTyped] = useState('')
   const { data: machines = [] } = useMaster('machines')
-  const { data: users = [] } = useUsers()
+  const { data: users = [] } = useUserDirectory()
   const searching = kind === 'order-number' || kind === 'order-line'
   const { data: orderHits = [], isFetching } = useOrderSearch(term, 60, searching && term.trim().length >= 2)
   const factories = useMemo(() => Array.from(new Set(machines.map((m) => m.factory?.trim() ?? '').filter(Boolean))).sort(), [machines])
@@ -240,7 +240,8 @@ function TargetBuilder({
       case 'shift':
         return (['A', 'B', 'C'] as const).map((s) => ({ value: s, label: `${s} · ${shiftName(s)}` }))
       case 'role':
-        return ROLES.filter((r) => can(r, 'read-notices')).map((r) => ({ value: r, label: r.charAt(0).toUpperCase() + r.slice(1) }))
+        // Any role: a notice reaches those of it who receive notices (§14), as the role's set and their own say.
+        return ROLES.map((r) => ({ value: r, label: r.charAt(0).toUpperCase() + r.slice(1) }))
       case 'user':
         return [...users].filter((u) => u.isActive).sort((a, b) => a.name.localeCompare(b.name)).map((u) => ({ value: u.id, label: u.name, sub: `${u.username} · ${u.role}` }))
       case 'order-number': {

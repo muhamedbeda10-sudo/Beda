@@ -38,13 +38,30 @@ built client; **Azure Database for PostgreSQL Flexible Server** holds the data;
 **Azure Blob Storage** holds the photos. Setup is in
 [`AZURE_SETUP.md`](./AZURE_SETUP.md) (English + العربية).
 
-## Roles
+## Roles and permissions
 
-| Role         | Can                                                                                       |
-| ------------ | ----------------------------------------------------------------------------------------- |
-| `inspector`  | Record inspections; correct measurements/defects in **open** sessions.                     |
-| `supervisor` | Also correct **closed** sessions, delete (soft) sessions, read the audit log.               |
-| `admin`      | Also manage master data, bulk imports, user accounts and audit purges.                     |
+What a person may open (a **screen**) and do (an **action**) is a set of
+permissions (`shared/src/permissions.ts`): their role's set, with their own
+differences. Roles start as below; administrators change each role's set under
+**Users → Roles**, and one person's under the shield beside their name.
+
+| Role         | Starts with                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------- |
+| `viewer`     | Inspections, History, Access, Dashboard, MTC — reading only; no chat, no notices.                  |
+| `inspector`  | Inspections, History, MTC, Coil search, Chat; record inspections; correct **open** sessions.        |
+| `supervisor` | Also Access and the Audit log; correct **closed** sessions; export to Excel; everyone's follow-ups. |
+| `admin`      | Everything: configuration, imports, users and permissions, notices, deletions, audit purges.        |
+
+- **ADMIN+** is the AI assistant's owner (`AI_OWNER_USERNAME`): every
+  permission, always; nobody else changes that account or removes it, and the
+  administrators' own set is ADMIN+'s alone to change.
+- Nobody gives more than they hold: one manages only accounts whose
+  permissions one holds, gives only permissions one has, and never changes
+  one's own role or permissions.
+- A screen is enforced on the server on every endpoint it reads, not only
+  hidden. Permissions are read from the database on every request
+  (`role_permissions`, `user_permissions`, and `user_has_permission()` for
+  queries that pick people), so a change applies at once.
 
 The **first account created becomes the admin**. Afterwards, set
 `AUTH_ALLOW_SELF_REGISTRATION=false` and create accounts from **Admin → Users**.
@@ -283,7 +300,7 @@ in `shared/src/api.ts`.
 | Area     | Endpoints                                                                                   |
 | -------- | ------------------------------------------------------------------------------------------- |
 | Auth     | `POST /auth/register` `POST /auth/login` `POST /auth/refresh` `POST /auth/logout` `GET /auth/me` |
-| Users    | `GET/POST /users` `PATCH /users/:id` (admin)                                                 |
+| Users    | `GET/POST /users` `PATCH/DELETE /users/:id` `PUT /users/:id/permissions` `GET /users/roles` `PUT /users/roles/:role` (Users screen); `GET /users/directory` (Users, Notices or Dashboard) |
 | Master   | `GET/POST /master/:kind` `PUT/DELETE /master/:kind/:id` `POST /master/{item-dimension-order,machines,work-center-defects}/{import,existing-keys}` |
 | Orders   | `GET /orders?search=&machine=&orderNumber=` `GET /orders/numbers?machine=` `GET /orders/:id` `GET /orders/:id/history` `POST /orders/import` `POST /orders/existing-keys` |
 | Coils    | `GET /coils?search=` `GET /coils/usage` `POST /coils/import`                                |

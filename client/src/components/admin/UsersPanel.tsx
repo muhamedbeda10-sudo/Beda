@@ -1,31 +1,41 @@
 // ============================================================================
-// §14 — accounts and roles. An account can be deactivated (and brought back)
-// or removed for good; history keeps the person's name either way.
+// §14 — accounts, roles and permissions. An account can be deactivated (and
+// brought back) or removed for good; history keeps the person's name either
+// way. Each person holds their role's permissions with their own differences
+// (Permissions); each role's set is on the Roles tab. ADMIN+ — the AI
+// assistant's owner — is above the roles and changed by nobody else.
 // ============================================================================
 
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Loader2, Pencil, Trash2, UserCheck, UserCog, UserPlus, UserX } from 'lucide-react'
+import { Crown, KeyRound, Loader2, Lock, Pencil, ShieldCheck, Trash2, UserCheck, UserCog, UserPlus, Users, UserX } from 'lucide-react'
 import { Badge, Button, Card, Field, Input, Modal, Select } from '@/components/ui'
 import { ScrollX } from '@/components/ui/ScrollX'
 import { STICKY_TH, clickedControl } from '@/components/admin/MasterDataPanel'
-import { useUsers } from '@/services/queries'
+import { useRolePermissions, useUsers } from '@/services/queries'
 import { createUser, deleteUser, updateUser } from '@/services/mutations'
 import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn } from '@/lib/utils'
 import { useTableView, ViewTh } from '@/components/ui/ColumnFilter'
-import { ROLES, type Role, type UserProfile } from '@qc/shared/types'
+import { Segmented } from '@/components/ui/PageShell'
+import { ADMIN_PLUS, permissionsBeyond } from '@qc/shared/permissions'
+import { ROLES, type ManagedUser, type Role } from '@qc/shared/types'
+import { PersonPermissionsModal, RolesPanel } from './PermissionsPanels'
+import { manageBlock, overridesSummary, permissionsBlock, type Editor } from './permissions'
+
+type UserProfile = ManagedUser
 
 
 const ROLE_TONE: Record<Role, 'neutral' | 'blue' | 'violet'> = { viewer: 'neutral', inspector: 'neutral', supervisor: 'blue', admin: 'violet' }
 
+/** What each role starts with; the Roles tab says what it holds now. */
 const ROLE_HELP: Record<Role, string> = {
-  viewer: 'Reads the board, History and the dashboard. Changes nothing; no chat, no notices, no administration.',
-  inspector: 'Records inspections and corrects open sessions.',
-  supervisor: 'Also corrects closed sessions, deletes sessions and reviews the audit log.',
-  admin: 'Also manages master data, imports, users and audit purges.',
+  viewer: 'By default reads the board, History, Access and the dashboard. Changes nothing; no chat, no notices, no administration.',
+  inspector: 'By default records inspections and corrects open sessions.',
+  supervisor: 'By default also corrects closed sessions, exports to Excel and reads the audit log.',
+  admin: 'By default everything: configuration, imports, users and permissions, notices, audit purges.',
 }
 
 /** Mirrors the API's rule: 2–40 letters, digits, dots, dashes or underscores. */
@@ -45,8 +55,32 @@ interface UserDraft {
 }
 
 export function UsersPanel() {
+  const [tab, setTab] = useState<'people' | 'roles'>('people')
+  const { profile, role, adminPlus, permissions } = useAuth()
+  const editor: Editor = useMemo(() => ({ id: profile?.id ?? '', role, adminPlus, held: permissions }), [profile?.id, role, adminPlus, permissions])
+  return (
+    <div className="space-y-4">
+      <Segmented
+        label="Users"
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: 'people', label: 'People', icon: <Users className="h-4 w-4" /> },
+          { value: 'roles', label: 'Roles', icon: <ShieldCheck className="h-4 w-4" /> },
+        ]}
+      />
+      {tab === 'people' ? <PeoplePanel editor={editor} /> : <RolesPanel editor={editor} />}
+    </div>
+  )
+}
+
+function PeoplePanel({ editor }: { editor: Editor }) {
   const queryClient = useQueryClient()
   const { profile } = useAuth()
+  const { data: roleSets } = useRolePermissions()
+  const [permissionsOf, setPermissionsOf] = useState<UserProfile | null>(null)
+  /** The roles this editor may give: one whose set holds nothing they do not hold (ADMIN+ gives any). */
+  const mayGiveRole = (r: Role) => editor.adminPlus || !roleSets || permissionsBeyond(editor.held, roleSets.roles[r]).length === 0
   const { toast } = useApp()
   const { data: users = [], isLoading } = useUsers()
   const [creating, setCreating] = useState<UserDraft | null>(null)
@@ -71,7 +105,8 @@ export function UsersPanel() {
   const view = useTableView(sorted, [
     { key: 'name', value: (u) => u.name },
     { key: 'username', value: (u) => u.username },
-    { key: 'role', value: (u) => u.role },
+    { key: 'role', value: (u) => (u.adminPlus ? ADMIN_PLUS : u.role) },
+    { key: 'permissions', value: (u) => overridesSummary(u.overrides) || 'As the role' },
     { key: 'status', value: (u) => (u.isActive ? 'Active' : 'Deactivated') },
   ])
 
@@ -144,15 +179,39 @@ export function UsersPanel() {
   }
 
   const openEdit = (u: UserProfile) => {
+    if (manageBlock(editor, u)) return
     setEditing(u)
     setEditDraft({ username: u.username, name: u.name, role: u.role, password: '' })
   }
 
-  /** Edit, then Deactivate or Reactivate in words, then Remove; a person's own account offers Edit alone. */
-  const actions = (u: UserProfile) => (
+  /**
+   * Edit and Permissions, then Deactivate or Reactivate in words, then Remove; a person's own account offers Edit alone;
+   * an account this editor may not change (ADMIN+, or one holding more than they do) offers nothing, and says why.
+   */
+  const actions = (u: UserProfile) => {
+    const blocked = manageBlock(editor, u)
+    if (blocked) {
+      return (
+        <span className={cn(ROW_BTN, 'cursor-help')} data-tip={blocked} aria-label={blocked}>
+          <Lock className="h-4 w-4" />
+        </span>
+      )
+    }
+    const noPermissions = permissionsBlock(editor, u)
+    return (
     <>
       <button type="button" onClick={() => openEdit(u)} aria-label={`Edit ${u.name}`} className={cn(ROW_BTN, 'hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800')}>
         <Pencil className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        disabled={busy || !!noPermissions}
+        onClick={() => setPermissionsOf(u)}
+        aria-label={`Permissions of ${u.name}`}
+        data-tip={noPermissions ?? 'What they may open and do'}
+        className={cn(ROW_BTN, 'hover:bg-slate-100 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-slate-800')}
+      >
+        <ShieldCheck className="h-4 w-4" />
       </button>
       {u.id !== profile?.id && (
         <button type="button" disabled={busy} onClick={() => (u.isActive ? setDeactivating(u) : void toggleActive(u))} className={cn(WORD_BTN, u.isActive ? 'hover:text-rose-600' : 'hover:text-emerald-700')}>
@@ -166,7 +225,30 @@ export function UsersPanel() {
         </button>
       )}
     </>
-  )
+    )
+  }
+
+  /** The role as a badge: ADMIN+ above the roles. */
+  const roleBadge = (u: UserProfile) =>
+    u.adminPlus ? (
+      <Badge tone="violet">
+        <Crown className="mr-1 inline h-3 w-3" />
+        {ADMIN_PLUS}
+      </Badge>
+    ) : (
+      <Badge tone={ROLE_TONE[u.role]}>{u.role}</Badge>
+    )
+  /** Their own differences from the role, in a few characters. */
+  const differences = (u: UserProfile) => {
+    const text = u.adminPlus ? 'Everything' : overridesSummary(u.overrides)
+    return text ? (
+      <span className="font-mono text-xs font-semibold text-amber-700 dark:text-amber-300" data-tip={u.adminPlus ? undefined : `${u.overrides.length} difference${u.overrides.length === 1 ? '' : 's'} from the role`}>
+        {text}
+      </span>
+    ) : (
+      <span className="text-xs text-muted">As the role</span>
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -198,7 +280,8 @@ export function UsersPanel() {
                   <span className="block font-mono text-xs text-muted">{u.username}</span>
                 </button>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <Badge tone={ROLE_TONE[u.role]}>{u.role}</Badge>
+                  {roleBadge(u)}
+                  {differences(u)}
                   <Badge tone={u.isActive ? 'green' : 'red'}>{u.isActive ? 'Active' : 'Deactivated'}</Badge>
                   <span className="ml-auto flex items-center gap-0.5">{actions(u)}</span>
                 </div>
@@ -213,6 +296,7 @@ export function UsersPanel() {
                   <ViewTh view={view} column="name" label="Name" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="username" label="Username" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="role" label="Role" className="px-3 py-2.5 font-bold" />
+                  <ViewTh view={view} column="permissions" label="Permissions" className="px-3 py-2.5 font-bold" />
                   <ViewTh view={view} column="status" label="Status" className="px-3 py-2.5 font-bold" />
                   <th className={cn(STICKY_TH, 'px-3 py-2.5 text-right font-bold')}>Actions</th>
                 </tr>
@@ -231,9 +315,8 @@ export function UsersPanel() {
                       {u.id === profile?.id && <span className="ml-2 text-xs font-normal text-muted">(you)</span>}
                     </td>
                     <td className="px-3 py-2.5 font-mono text-[13px]">{u.username}</td>
-                    <td className="px-3 py-2.5">
-                      <Badge tone={ROLE_TONE[u.role]}>{u.role}</Badge>
-                    </td>
+                    <td className="px-3 py-2.5">{roleBadge(u)}</td>
+                    <td className="px-3 py-2.5">{differences(u)}</td>
                     <td className="px-3 py-2.5">
                       <Badge tone={u.isActive ? 'green' : 'red'}>{u.isActive ? 'Active' : 'Deactivated'}</Badge>
                     </td>
@@ -286,7 +369,7 @@ export function UsersPanel() {
             <Field label="Role" hint={ROLE_HELP[creating.role]}>
               <Select className="min-h-[48px]" value={creating.role} onChange={(e) => setCreating({ ...creating, role: e.target.value as Role })}>
                 {ROLES.map((r) => (
-                  <option key={r} value={r}>
+                  <option key={r} value={r} disabled={!mayGiveRole(r)}>
                     {r}
                   </option>
                 ))}
@@ -341,7 +424,7 @@ export function UsersPanel() {
                 onChange={(e) => setEditDraft({ ...editDraft, role: e.target.value as Role })}
               >
                 {ROLES.map((r) => (
-                  <option key={r} value={r}>
+                  <option key={r} value={r} disabled={!mayGiveRole(r)}>
                     {r}
                   </option>
                 ))}
@@ -356,6 +439,8 @@ export function UsersPanel() {
           </div>
         )}
       </Modal>
+
+      <PersonPermissionsModal user={permissionsOf} editor={editor} onClose={() => setPermissionsOf(null)} />
 
       <Modal
         open={deactivating !== null}

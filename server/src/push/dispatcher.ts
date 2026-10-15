@@ -20,8 +20,7 @@
 // pushed late. Only people with a device subscribed are looked at.
 // ============================================================================
 
-import { can } from '@qc/shared/rules'
-import { ROLES, type Role } from '@qc/shared/types'
+import type { Permission } from '@qc/shared/permissions'
 import type { PushPayload } from '@qc/shared/api'
 import type { Config } from '../config'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
@@ -37,8 +36,6 @@ const NOTICES_PER_TICK = 20
 /** A push for something this old is not sent. */
 export const STALE_EVENT_MS = 30 * 60_000
 
-const CHAT_ROLES: Role[] = ROLES.filter((r) => can(r, 'use-chat'))
-const NOTICE_ROLES: Role[] = ROLES.filter((r) => can(r, 'read-notices'))
 /** Only people with a device subscribed: `u` is users. */
 const SUBSCRIBED = `EXISTS (SELECT 1 FROM push_subscriptions ps WHERE ps.user_id = u.id)`
 
@@ -85,10 +82,10 @@ async function chatMessages(q: Queryable, ids: string[]): Promise<PushMessage[]>
     const people = await q.query<{ id: string }>(
       m.kind === 'general'
         ? // Everyone who may chat is in the general channel; $1 is its id, which every live account belongs to.
-          `SELECT u.id FROM users u WHERE $1::uuid IS NOT NULL AND ${LIVE_PERSON} AND u.role::text = ANY($2::text[]) AND u.id <> $3 AND ${SUBSCRIBED}`
+          `SELECT u.id FROM users u WHERE $1::uuid IS NOT NULL AND ${LIVE_PERSON} AND user_has_permission(u.id, $2) AND u.id <> $3 AND ${SUBSCRIBED}`
         : `SELECT u.id FROM chat_members cm JOIN users u ON u.id = cm.user_id
-            WHERE cm.conversation_id = $1 AND cm.removed_at IS NULL AND ${LIVE_PERSON} AND u.role::text = ANY($2::text[]) AND u.id <> $3 AND ${SUBSCRIBED}`,
-      [m.conversationId, CHAT_ROLES, m.senderId],
+            WHERE cm.conversation_id = $1 AND cm.removed_at IS NULL AND ${LIVE_PERSON} AND user_has_permission(u.id, $2) AND u.id <> $3 AND ${SUBSCRIBED}`,
+      [m.conversationId, 'use-chat' satisfies Permission, m.senderId],
     )
     const text = chatNotification(m)
     for (const p of people.rows) {
@@ -119,8 +116,8 @@ export async function noticeAudience(q: Queryable, notice: { id: string; matchMo
       ? `(${byRole} OR ${byUser})`
       : `((cardinality($2::text[]) = 0 OR ${byRole}) AND (cardinality($3::text[]) = 0 OR ${byUser}))`
   const { rows } = await q.query<{ id: string }>(
-    `SELECT u.id FROM users u WHERE ${LIVE_PERSON} AND u.role::text = ANY($1::text[]) AND ${matches} AND ${SUBSCRIBED} ORDER BY u.id`,
-    [NOTICE_ROLES, roles, users],
+    `SELECT u.id FROM users u WHERE ${LIVE_PERSON} AND user_has_permission(u.id, $1) AND ${matches} AND ${SUBSCRIBED} ORDER BY u.id`,
+    ['read-notices' satisfies Permission, roles, users],
   )
   return rows.map((r) => r.id)
 }

@@ -14,7 +14,7 @@ import { UserAvatar } from '@/components/ui/UserAvatar'
 export function NewChatModal({ onClose, onCreated }: { onClose: () => void; onCreated: (c: ChatConversation) => void }) {
   const qc = useQueryClient()
   const { toast } = useApp()
-  const { profile, role } = useAuth()
+  const { profile, can } = useAuth()
   const { data: users = [] } = useChatUsers()
   const [tab, setTab] = useState<'direct' | 'group'>('direct')
   const [term, setTerm] = useState('')
@@ -69,7 +69,7 @@ export function NewChatModal({ onClose, onCreated }: { onClose: () => void; onCr
         ) : undefined
       }
     >
-      {role === 'admin' && (
+      {can('manage-chat') && (
         <div className="mb-3 flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
           {(['direct', 'group'] as const).map((t) => (
             <button key={t} type="button" onClick={() => setTab(t)} aria-pressed={tab === t} className={cn('flex-1 rounded-lg py-2.5 text-sm font-semibold touch:min-h-[44px]', tab === t ? 'bg-white shadow-card dark:bg-slate-900' : 'text-muted')}>

@@ -12,34 +12,38 @@
 //     the assistant draft a notice, a change, a withdrawal or a deletion.
 // ============================================================================
 
-import { can } from '@qc/shared/rules'
+import { can, type Permission } from '@qc/shared/permissions'
 import type { Role } from '@qc/shared/types'
 import type { Config } from '../config'
 import type { Queryable } from '../db/pool'
 import { loadAccess, mayManageNotices } from '../ai/access'
 import { currentAiOwner } from '../ai/owner'
+import { PERMISSION_COLUMNS, permissionRecord } from '../auth/permissions'
 
 /** The person asking, as their account is now. */
 export interface NoticeAsker {
   id: string
   name: string
   role: Role
+  /** §14 — what they may open and do now. */
+  permissions: Permission[]
 }
 
 /** The account as it is now; null when it can no longer sign in (deactivated, removed, the system sender). */
 export async function currentAccount(q: Queryable, userId: string): Promise<NoticeAsker | null> {
-  const { rows } = await q.query<NoticeAsker>(
-    `SELECT id, name, role FROM users WHERE id = $1 AND is_active AND deleted_at IS NULL AND NOT is_system`,
+  const { rows } = await q.query<Omit<NoticeAsker, 'permissions'> & Parameters<typeof permissionRecord>[1]>(
+    `SELECT u.id, u.name, u.role, ${PERMISSION_COLUMNS} FROM users u WHERE u.id = $1 AND u.is_active AND u.deleted_at IS NULL AND NOT u.is_system`,
     [userId],
   )
-  return rows[0] ?? null
+  const u = rows[0]
+  return u ? { id: u.id, name: u.name, role: u.role, permissions: permissionRecord(u.role, u).permissions } : null
 }
 
-/** Reads every notice and who saw and acknowledged it, as the administrator's Notices page does. */
-export const readsEveryNotice = (role: Role): boolean => can(role, 'manage-admin-data')
+/** Reads every notice and who saw and acknowledged it, as the Notices page does. */
+export const readsEveryNotice = (who: { permissions: readonly Permission[] }): boolean => can(who.permissions, 'manage-notices')
 
-/** Has a bell at all: a role without one is shown no notices in the app. */
-export const receivesNotices = (role: Role): boolean => can(role, 'read-notices')
+/** Has a bell at all: a person without one is shown no notices in the app. */
+export const receivesNotices = (who: { permissions: readonly Permission[] }): boolean => can(who.permissions, 'read-notices')
 
 /** The person, when they may have the assistant write notices now (mayManageNotices); null otherwise. */
 export async function noticeManager(q: Queryable, config: Config, userId: string): Promise<NoticeAsker | null> {
@@ -48,7 +52,7 @@ export async function noticeManager(q: Queryable, config: Config, userId: string
   if (!account) return null
   const access = await loadAccess(q, userId)
   const owner = (await currentAiOwner(q, config)) === userId
-  return mayManageNotices(access, owner, account.role) ? account : null
+  return mayManageNotices(access, owner, account.permissions) ? account : null
 }
 
 /**
@@ -59,7 +63,7 @@ export async function noticeManager(q: Queryable, config: Config, userId: string
  */
 export type NoticePromptMode = 'reader' | 'administrator' | 'manager'
 
-export function noticePromptMode(role: Role, manages: boolean): NoticePromptMode {
+export function noticePromptMode(who: { permissions: readonly Permission[] }, manages: boolean): NoticePromptMode {
   if (manages) return 'manager'
-  return readsEveryNotice(role) ? 'administrator' : 'reader'
+  return readsEveryNotice(who) ? 'administrator' : 'reader'
 }

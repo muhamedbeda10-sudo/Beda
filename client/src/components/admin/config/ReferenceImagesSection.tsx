@@ -8,7 +8,6 @@ import { Badge, Button, Field, Input } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
 import { ReferenceImageBulkUpload } from '@/components/admin/ReferenceImageBulkUpload'
 import { useMaster } from '@/services/queries'
-import { can } from '@/domain'
 import { MasterDataPanel, MachineSelect, numberOrNull, requireNumber, requireText } from '@/components/admin/MasterDataPanel'
 import { type ItemReferenceImage } from '@qc/shared/types'
 

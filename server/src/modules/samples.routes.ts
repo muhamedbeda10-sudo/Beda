@@ -7,14 +7,15 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { DISPOSITIONS, type CoilRegisterDetails, type DefectResult, type DimensionResult, type PTRecord, type PTTestedLength, type PaintSampleRecord, type SampleCoil } from '@qc/shared/types'
-import { OTHER_DEFECT_NAME, can, dimensionStatus, isOtherDefect } from '@qc/shared/rules'
+import { OTHER_DEFECT_NAME, dimensionStatus, isOtherDefect } from '@qc/shared/rules'
 import type {
   SessionDefectsResponse, SampleDetail } from '@qc/shared/api'
 import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
 import { ConflictError, badRequest, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser, type AuthUser } from '../auth/middleware'
+import { requireAnyPermission, requirePermission, requireUser, userCan, type AuthUser } from '../auth/middleware'
+import { SESSION_READERS } from './sessions.routes'
 import { auditChanges, auditDelete } from '../audit/service'
 import { dropNulls } from '../lib/rows'
 import { SAMPLE_SELECT, toSample, type SampleRow } from './sessions.sql'
@@ -129,9 +130,9 @@ async function loadSampleDetail(q: Queryable, id: string): Promise<SampleDetail 
  *  needs a supervisor. Resolved here so no client can bypass it. */
 function assertMayCorrect(user: AuthUser, status: 'Open' | 'Closed'): void {
   const capability = status === 'Open' ? 'edit-open-session' : 'edit-closed-session'
-  if (!can(user.role, capability)) {
+  if (!userCan(user, capability)) {
     throw forbidden(
-      status === 'Closed' ? 'This session is closed. Only a supervisor or admin can correct it.' : 'Your role cannot correct records.',
+      status === 'Closed' ? 'This session is closed. You may not correct a closed session.' : 'You may not correct records.',
     )
   }
 }
@@ -146,7 +147,7 @@ export function samplesRoutes(ctx: AppContext): Router {
    * anyone signed in, like the session itself; changing one goes through the
    * correction below, with its rights and its audit entry.
    */
-  r.get('/defects', async (req, res) => {
+  r.get('/defects', requireAnyPermission(...SESSION_READERS), async (req, res) => {
     requireUser(req)
     const { sessionId } = parse(z.object({ sessionId: uuid }), req.query)
     const { rows } = await db.query<DefectResult & { sampleIndex: number }>(
@@ -160,14 +161,14 @@ export function samplesRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
-  r.get('/:id', async (req, res) => {
+  r.get('/:id', requireAnyPermission(...SESSION_READERS), async (req, res) => {
     const detail = await loadSampleDetail(db, parse(uuid, req.params.id))
     if (!detail) throw notFound('That sample')
     res.json(detail)
   })
 
   /** Mark a sample deleted (§10): it leaves every list and count; the rows stay. */
-  r.delete('/:id', requireCapability('delete-sample'), async (req, res) => {
+  r.delete('/:id', requirePermission('delete-sample'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     await withTransaction(db, async (tx) => {

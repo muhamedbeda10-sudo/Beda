@@ -241,8 +241,10 @@ export interface AiAccess {
   owner: boolean
   /** May create automations (§21); always true for the owner. */
   automations: boolean
-  /** May have the assistant add, change, withdraw and delete notices (§23). Takes effect only while the account is an administrator. */
+  /** May have the assistant add, change, withdraw and delete notices (§23). Takes effect only while the account may manage notices in the app (§14). */
   notices: boolean
+  /** §14 — the account may manage notices in the app now (the Notices screen): the assistant's notices permission needs it. */
+  managesNotices: boolean
   /** May have the assistant make Excel files (§20); always true for the owner. */
   excel: boolean
   /** May upload mill test certificates on the MTC tab, whether or not the assistant is on for them; always true for the owner. */

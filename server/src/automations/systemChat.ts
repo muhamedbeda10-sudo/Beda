@@ -7,15 +7,13 @@
 // Only people who use the chat are written to: a viewer has no chat to read.
 // ============================================================================
 
-import { CHAT_MAX_BODY, ROLES } from '@qc/shared/types'
-import { can } from '@qc/shared/rules'
+import { CHAT_MAX_BODY } from '@qc/shared/types'
+import type { Permission } from '@qc/shared/permissions'
 import type { Queryable } from '../db/pool'
 import { parseMentions } from '../modules/chat.routes'
 import { LIVE_PERSON, distinctIds } from './people'
 import { clipText } from './notify'
 
-/** The roles that have a chat to be written to. */
-const CHAT_ROLES = ROLES.filter((r) => can(r, 'use-chat'))
 
 /** The system account: its id and the name its messages carry. */
 export async function systemUser(q: Queryable): Promise<{ id: string; name: string }> {
@@ -63,8 +61,8 @@ export async function sendSystemMessageBatch(q: Queryable, items: readonly { use
   const sender = await systemUser(q)
   const recipients = (
     await q.query<{ id: string }>(
-      `SELECT u.id FROM users u WHERE u.id = ANY($1::uuid[]) AND ${LIVE_PERSON} AND u.role::text = ANY($2::text[]) ORDER BY u.id`,
-      [[...bodies.keys()], CHAT_ROLES],
+      `SELECT u.id FROM users u WHERE u.id = ANY($1::uuid[]) AND ${LIVE_PERSON} AND user_has_permission(u.id, $2) ORDER BY u.id`,
+      [[...bodies.keys()], 'use-chat' satisfies Permission],
     )
   ).rows.map((r) => r.id)
   if (recipients.length === 0) return 0

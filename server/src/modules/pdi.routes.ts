@@ -12,7 +12,7 @@ import type { AppContext } from '../context'
 import { withTransaction } from '../db/pool'
 import { badRequest } from '../lib/errors'
 import { parse } from '../lib/validate'
-import { requireCapability, requireUser } from '../auth/middleware'
+import { requireAnyPermission, requirePermission, requireUser } from '../auth/middleware'
 import { auditCreate } from '../audit/service'
 import { assertImagesUsable, linkImages } from './images.links'
 import { cancelledSql } from '../lib/orderStatus'
@@ -159,7 +159,8 @@ function pdiWhere(q: z.infer<typeof filterSchema>, tz: string, columns = true): 
 export function pdiRoutes(ctx: AppContext): Router {
   const r = Router()
 
-  r.get('/', async (req, res) => {
+  // History's PDI tab (§14).
+  r.get('/', requirePermission('view-history'), async (req, res) => {
     const q = parse(listSchema, req.query)
     const { where, params } = pdiWhere(q, ctx.config.FACTORY_TIMEZONE)
     const p = (v: unknown) => `$${params.push(v)}`
@@ -182,7 +183,7 @@ export function pdiRoutes(ctx: AppContext): Router {
   })
 
   /** §4 — the PDIs the filters match, oldest first, for Excel. Bounded like History's export. */
-  r.get('/export', requireCapability('export-records'), async (req, res) => {
+  r.get('/export', requirePermission('view-history'), requirePermission('export-records'), async (req, res) => {
     const q = parse(filterSchema, req.query)
     const { where, params } = pdiWhere(q, ctx.config.FACTORY_TIMEZONE)
     const counted = await ctx.db.query<{ n: number }>(`SELECT count(*)::int AS n ${PDI_FROM} WHERE ${where}`, params)
@@ -194,7 +195,7 @@ export function pdiRoutes(ctx: AppContext): Router {
   })
 
   /** One PDI column's values under every other filter, for its Excel menu. */
-  r.get('/values', async (req, res) => {
+  r.get('/values', requirePermission('view-history'), async (req, res) => {
     const q = parse(valuesSchema, req.query)
     const tz = ctx.config.FACTORY_TIMEZONE
     const { where, params } = pdiWhere(q, tz, false)
@@ -202,7 +203,7 @@ export function pdiRoutes(ctx: AppContext): Router {
   })
 
   /** Who the PDI list may be narrowed to: everyone who ever recorded one. */
-  r.get('/options', async (_req, res) => {
+  r.get('/options', requireAnyPermission('view-history', 'record-inspection'), async (_req, res) => {
     const { rows } = await ctx.db.query<{ id: string; name: string }>(
       `SELECT DISTINCT ON (created_by_id) created_by_id AS id, created_by_name AS name
          FROM pdi_documents WHERE deleted_at IS NULL
@@ -212,7 +213,7 @@ export function pdiRoutes(ctx: AppContext): Router {
     res.json(body)
   })
 
-  r.post('/', requireCapability('record-inspection'), async (req, res) => {
+  r.post('/', requirePermission('record-inspection'), async (req, res) => {
     const user = requireUser(req)
     const body = parse(createSchema, req.body)
     const ids = Array.from(new Set(body.orderIds))
