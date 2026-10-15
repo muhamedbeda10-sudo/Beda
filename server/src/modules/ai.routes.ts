@@ -201,7 +201,9 @@ import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS } from '../noticeAssistant/tools
 import { TASK_TOOLS, discardTaskProposal, sendTaskProposal } from '../tasks/assistant'
 import { PLAYBOOK_TOOLS } from '../playbook/assistant'
 import { EXCEL_TOOLS, XLSX_CONTENT_TYPE, findExcelFile, logExcelDownload } from '../ai/excel'
+import { readInputValues } from '@qc/shared/aiReportInputs'
 import { DIAGRAM_TOOLS } from '../ai/diagram'
+import { REPORT_TOOLS } from '../ai/reportTools'
 import { addEntry, changeEntry, listPlaybook, mayUsePlaybook, promptPlaybook, removeEntry } from '../playbook/service'
 import {
   appendMessages,
@@ -428,6 +430,25 @@ const reportsQuery = z.object({
  * days in YYYY-MM-DD pass: they become SQL date literals.
  */
 const reportDay = z.string().refine(isAiDay, 'A day is YYYY-MM-DD, and a real date.')
+/** A run's input values, as the query string carries them: one JSON object, by input name (checked against the report's inputs). */
+const reportInputsQuery = z.object({
+  inputs: z
+    .string()
+    .max(8_000)
+    .optional()
+    .transform((v, issue) => {
+      if (v === undefined || v === '') return null
+      try {
+        const parsed: unknown = JSON.parse(v)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+      } catch {
+        /* told below */
+      }
+      issue.addIssue({ code: z.ZodIssueCode.custom, message: 'inputs: a JSON object of the values, by input name.' })
+      return z.NEVER
+    }),
+})
+
 const reportRunQuery = z
   .object({ from: reportDay.optional(), to: reportDay.optional() })
   .superRefine((v, issue) => {
@@ -844,7 +865,7 @@ export function aiRoutes(ctx: AppContext): Router {
     const dictionary = async () => [await describeAiSchema(db, access.domains), await describeSavedTables(db, access.domains)].filter(Boolean).join('\n\n')
     const systemPrompt = body.conversationId
       ? null
-      : renderSystemPrompt(tz, await dictionary(), access.domains, { automations, notices, tasks: true, excel, playbook: await promptPlaybook(db, user.id, tz), savedTables: true, diagrams: true })
+      : renderSystemPrompt(tz, await dictionary(), access.domains, { automations, notices, tasks: true, excel, playbook: await promptPlaybook(db, user.id, tz), savedTables: true, diagrams: true, reports: true })
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return
 
@@ -904,7 +925,7 @@ export function aiRoutes(ctx: AppContext): Router {
           tools: conversationTools(
             automations ? AUTOMATION_TOOLS : null,
             managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS,
-            [...TASK_TOOLS, ...PLAYBOOK_TOOLS, ...DIAGRAM_TOOLS, ...(excel ? EXCEL_TOOLS : [])],
+            [...TASK_TOOLS, ...PLAYBOOK_TOOLS, ...DIAGRAM_TOOLS, ...REPORT_TOOLS, ...(excel ? EXCEL_TOOLS : [])],
             SAVED_TABLE_TOOLS,
           ),
         })
@@ -1706,7 +1727,7 @@ export function aiRoutes(ctx: AppContext): Router {
       const { rows } = await tx.query<{ title: string }>(`SELECT title FROM ai_reports WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL FOR UPDATE`, [id, user.id])
       if (!rows[0]) throw notFound('That report')
       if (rows[0].title === title) return (await findReport(tx, id, user.id))!
-      const renamed = await renameReport(tx, id, title)
+      const renamed = await renameReport(tx, id, title, user.id)
       // That the title changed, not what it says (see the save above).
       await writeAudit(tx, [auditEvent('update', { userId: user.id, userName: user.name, entity: 'AiReport', entityId: id }, new Date().toISOString(), { field: 'title' })])
       return renamed
@@ -1741,10 +1762,16 @@ export function aiRoutes(ctx: AppContext): Router {
     })
     const { user } = await aiUser(req)
     const id = parse(uuid, req.params.id)
-    const range = parse(reportRunQuery, req.query)
+    const { inputs: sent, ...days } = req.query as Record<string, unknown>
+    const range = parse(reportRunQuery, days)
+    const { inputs: typed } = parse(reportInputsQuery, { inputs: sent })
     const report = await findReport(db, id, user.id)
     if (!report) throw notFound('That report')
     if (range && !report.adjustable) throw badRequest("This report's period cannot be changed: it runs over the days its queries name.")
+    // What the person typed, checked against each input's kind; what they left alone is its default as of today.
+    const read = readInputValues(report.inputs, typed, factoryDay(new Date(), tz))
+    if ('problems' in read) throw badRequest(read.problems.join(' '))
+    const values = read.values
     const wait = ctx.aiReportLimiter.hit(user.id)
     if (wait > 0) throw new HttpError(429, 'rate_limited', `Too many report runs in a short time. Try again in ${wait} seconds.`)
     if (!ctx.aiReader.ready) throw readerDown()
@@ -1755,17 +1782,17 @@ export function aiRoutes(ctx: AppContext): Router {
       const now = await loadAccess(db, user.id)
       return isGranted(now) ? ctx.aiReader.poolFor(now.domains) : 'withdrawn'
     }
-    return { report, period, reader, signal: ac.signal }
+    return { report, period, reader, values, signal: ac.signal }
   }
 
   /** A report run now: each section's first rows, as an answer's cards show a query. No call to the model. */
   r.get('/reports/:id/run', async (req, res) => {
-    const { report, period, reader, signal } = await reportToRun(req, res)
+    const { report, period, reader, values, signal } = await reportToRun(req, res)
     const ranAt = new Date().toISOString()
     const sections = await withQueryOrigin({ source: 'report', userId: requireUser(req).id, purpose: report.title }, () =>
-      runReportSections(reader, report, period, { timeZone: tz, signal }),
+      runReportSections(reader, report, period, { timeZone: tz, signal, values }),
     )
-    const body: AiReportRunResponse = { report: await markReportRun(db, report), period, sections, ranAt }
+    const body: AiReportRunResponse = { report: await markReportRun(db, report), period, sections, inputs: values, ranAt }
     res.json(body)
   })
 
@@ -1773,12 +1800,12 @@ export function aiRoutes(ctx: AppContext): Router {
   r.get('/reports/:id/export', async (req, res) => {
     const { user, access } = await aiUser(req)
     await mayHaveExcel(user, access)
-    const { report, period, reader, signal } = await reportToRun(req, res)
+    const { report, period, reader, values, signal } = await reportToRun(req, res)
     const ranAt = new Date().toISOString()
     const sections = await withQueryOrigin({ source: 'export', userId: user.id, purpose: report.title }, () =>
-      exportReportSections(reader, report, period, { timeZone: tz, signal }),
+      exportReportSections(reader, report, period, { timeZone: tz, signal, values }),
     )
-    const body: AiReportExportResponse = { report: await markReportRun(db, report), period, sections, ranAt }
+    const body: AiReportExportResponse = { report: await markReportRun(db, report), period, sections, inputs: values, ranAt }
     res.json(body)
   })
 

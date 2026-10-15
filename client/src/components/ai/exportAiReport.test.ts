@@ -19,6 +19,12 @@ const report: AiReport = {
   createdAt: '2026-10-01T08:00:00Z',
   updatedAt: '2026-10-01T08:00:00Z',
   conversationId: 'c1',
+  shared: false,
+  mine: true,
+  ownerName: 'Admin',
+  madeBy: 'answer',
+  inputCount: 0,
+  inputs: [],
   sections: [
     { title: 'Defects by machine', sql: 'SELECT machine, sum(pieces) FROM ai.defects WHERE recorded_day >= {{from}} AND recorded_day < {{to}} + 1 GROUP BY 1' },
     { title: 'Defects by machine', sql: 'SELECT 2' },
@@ -34,6 +40,7 @@ const data: AiReportExportResponse = {
     { title: 'Defects by machine', ok: true, columns: ['n'], rows: [[1]], truncated: true },
     { title: "Report: [holds]?'", ok: false, error: 'column "broken" does not exist', columns: [], rows: [], truncated: false },
   ],
+  inputs: {},
   ranAt: '2026-10-09T11:05:00.000Z',
 }
 
