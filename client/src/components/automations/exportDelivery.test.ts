@@ -56,3 +56,26 @@ describe('a delivered report to Excel', () => {
     expect(deliveryExportMessage(delivery)).toBe('Exported 2 sections, 2 rows. 1 failed — the workbook says why.')
   })
 })
+
+describe('a delivered saved report to Excel', () => {
+  it('names the saved report it sent and the values it ran for', () => {
+    const sent: AutomationDelivery = {
+      ...delivery,
+      period: null,
+      report: { id: 'r1', title: 'Order tracking', open: true },
+      inputs: [
+        { label: 'Orders', value: '20332, 20378' },
+        { label: 'Planning week', value: '42' },
+      ],
+    }
+    const [about] = deliverySheets(sent)
+    expect(about.rows.slice(0, 6)).toEqual([
+      ['Report', 'Daily rejects'],
+      ['Delivered', aiStamp(delivery.ranAt)],
+      ['Saved report', 'Order tracking'],
+      ['Orders', '20332, 20378'],
+      ['Planning week', '42'],
+      ['Period', 'As the report covers'],
+    ])
+  })
+})

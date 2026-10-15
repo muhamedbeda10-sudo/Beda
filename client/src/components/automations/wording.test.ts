@@ -15,6 +15,7 @@ import {
   describeDueHours,
   editInChatText,
   editsFromForm,
+  linkedValuesLines,
   existingCases,
   factoryMoment,
   factoryTimestamp,
@@ -527,5 +528,41 @@ describe('the card in the cached conversation', () => {
   it('is typed against the automation the page shows, too', () => {
     const a = { id: 'a1', name: 'Holds' } satisfies Pick<Automation, 'id' | 'name'>
     expect(editInChatText(a)).toBe('Change my automation "Holds" (id a1): ')
+  })
+})
+
+describe('a schedule that sends a saved report', () => {
+  const linked: AutomationDraft = {
+    ...report,
+    schedule: { cadence: 'daily', time: '07:30', sections: [], summary: false, report: { reportId: 'r1', inputs: { orders: ['20332', '20378'] } } },
+  }
+  const inputs = [
+    { name: 'orders', label: 'Orders', kind: 'list' as const, required: true },
+    { name: 'week', label: 'Planning week', kind: 'number' as const, required: true, dynamicDefault: 'this_week' as const },
+    { name: 'exclude', label: 'Leave out these orders', kind: 'list' as const, required: false },
+  ]
+
+  it('says each value it gives, and what one left empty takes on the day', () => {
+    expect(linkedValuesLines(inputs, { orders: ['20332', '20378'] })).toEqual(['Orders: 20332, 20378', "Planning week: this week's, on the day it runs", 'Leave out these orders: none'])
+    expect(linkedValuesLines(inputs, { orders: ['1'], week: 26, exclude: [] })).toEqual(['Orders: 1', 'Planning week: 26', 'Leave out these orders: none'])
+  })
+
+  it('changes its values on the form, and only when they change', () => {
+    const f = formFromDefinition(linked)
+    expect(f.reportInputs).toEqual({ orders: '20332, 20378' })
+    expect(editsFromForm(linked, f)).toEqual({})
+    expect(editsFromForm(linked, { ...f, reportInputs: { orders: '20332, 20378', week: ' ' } })).toEqual({})
+    expect(editsFromForm(linked, { ...f, reportInputs: { orders: '20332', week: '26' } })).toEqual({ reportInputs: { orders: '20332', week: '26' } })
+    // On the card before it is activated: the values as typed, until the server reads them.
+    expect(applyEdits(linked, { reportInputs: { orders: '20332' } }).schedule!.report).toEqual({ reportId: 'r1', inputs: { orders: '20332' } })
+    // A schedule with sections of its own has no values to give.
+    expect(formFromDefinition(report).reportInputs).toBeNull()
+  })
+})
+
+describe('a saved report in the summary sentence', () => {
+  it('names the report it sends', () => {
+    const d = { ...report, schedule: { ...report.schedule!, period: undefined, sections: [], report: { reportId: 'r1', inputs: {} } }, recipients: [] }
+    expect(automationSummary({ ...d, linkedReport: { title: 'Order tracking' } })).toBe('Saturday to Thursday at 08:00 (factory time) it runs the saved report “Order tracking”, adds a short summary written by the assistant, and sends the result to nobody on the bell and the chat.')
   })
 })

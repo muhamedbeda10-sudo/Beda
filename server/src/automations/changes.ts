@@ -75,6 +75,10 @@ function scheduleChanges(b: AutomationScheduleSpec, a: AutomationScheduleSpec, o
   if (when(b) !== when(a)) out.push(`Runs: ${when(b)} → ${when(a)}`)
   if (!same(b.period, a.period)) out.push(a.period ? (b.period ? 'The days it covers' : 'Covers a period now') : 'No longer covers a period')
   if (b.summary !== a.summary) out.push(a.summary ? 'A summary on top: added' : 'The summary on top: removed')
+  // A saved report it sends: which, and the values it gives its inputs.
+  if ((b.report?.reportId ?? null) !== (a.report?.reportId ?? null)) {
+    out.push(a.report ? (b.report ? 'The saved report it sends' : 'Sends a saved report now, in place of its sections') : 'Its own sections now, in place of the saved report')
+  } else if (a.report && b.report && !same(b.report.inputs, a.report.inputs)) out.push('The values it gives the saved report')
   const { pairs, added, removed } = pairSections(b.sections, a.sections)
   for (const [i, j] of pairs) {
     const before = b.sections[j]

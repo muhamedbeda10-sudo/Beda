@@ -42,12 +42,14 @@ import {
   type AutomationRecipient,
   type AutomationRecipientView,
   type AutomationRun,
+  type AutomationLinkedReport,
   type AutomationScheduleSpec,
   type AutomationTestResponse,
   type AutomationWatchSpec,
   type AutomationWeekday,
 } from '@qc/shared/automation'
 import type { Role } from '@qc/shared/types'
+import type { AiReportInput, AiReportInputValues } from '@qc/shared/aiReportInputs'
 import type { BadgeTone } from '@/components/ui'
 import { checkAiDayRange } from '@/components/ai/reports'
 import { dayInTimeZone } from '@/lib/utils'
@@ -208,6 +210,8 @@ export interface SummaryInput {
   channels: AutomationChannels
   actions: AutomationActions
   assignee?: AutomationAssigneeView
+  /** A report sending a saved report: its title. */
+  linkedReport?: Pick<AutomationLinkedReport, 'title'>
 }
 
 /**
@@ -225,7 +229,8 @@ export function automationSummary(d: SummaryInput): string {
     const s = d.schedule
     if (!s) return 'A scheduled report.'
     const n = s.sections.length
-    const sections = `${n} section${n === 1 ? '' : 's'}`
+    // A saved report by its title, as it stands at each run; or its own sections.
+    const sections = s.report ? `the saved report “${d.linkedReport?.title ?? 'it sends'}”` : `${n} section${n === 1 ? '' : 's'}`
     const over = s.period ? ` over ${describeAiPeriod(s.period).replace(/^[A-Z]/, (c) => c.toLowerCase())}` : ''
     const summary = s.summary ? ', adds a short summary written by the assistant,' : ''
     return `${describeSchedule(s)} (factory time) it runs ${sections}${over}${summary} and sends the result to ${who} on ${where}.`
@@ -614,9 +619,15 @@ export interface AutomationForm {
   periodFrom: string
   periodTo: string
   summary: boolean
+  /** A report sending a saved report: the values its inputs take, as typed, by name ('' takes its default on the day); null for one with sections of its own. */
+  reportInputs: Record<string, string> | null
 }
 
 const ALL_DAYS: AutomationWeekday[] = [0, 1, 2, 3, 4, 5, 6]
+
+/** A saved report's values as a form holds them: each as typed, a list joined with commas. */
+const inputDraftsOf = (values: AiReportInputValues): Record<string, string> =>
+  Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v === null || v === undefined ? '' : Array.isArray(v) ? v.join(', ') : String(v)]))
 
 /** The form, filled from a definition. */
 export function formFromDefinition(d: EditableDefinition): AutomationForm {
@@ -651,6 +662,7 @@ export function formFromDefinition(d: EditableDefinition): AutomationForm {
     periodFrom: p?.kind === 'fixed' ? p.from : '',
     periodTo: p?.kind === 'fixed' ? p.to : '',
     summary: s?.summary ?? false,
+    reportInputs: s?.report ? inputDraftsOf(s.report.inputs ?? {}) : null,
   }
 }
 
@@ -791,8 +803,16 @@ export function editsFromForm(d: EditableDefinition, f: AutomationForm): Automat
   const period = formPeriod(f)
   if (s.period && period && !same(period, s.period)) edits.period = period
   if (f.summary !== s.summary) edits.summary = f.summary
+  // A saved report's values: those typed (the server reads each as its input takes it); an empty field takes its default on the day.
+  if (s.report && f.reportInputs) {
+    const typed = Object.fromEntries(Object.entries(f.reportInputs).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v !== ''))
+    const before = Object.fromEntries(Object.entries(inputDraftsOf(s.report.inputs ?? {})).filter(([, v]) => v !== ''))
+    if (!same(sortedEntries(typed), sortedEntries(before))) edits.reportInputs = typed
+  }
   return edits
 }
+
+const sortedEntries = (o: Record<string, string>) => Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
 
 export const hasEdits = (e: AutomationEdits | null | undefined): boolean => !!e && Object.keys(e).length > 0
 
@@ -834,6 +854,7 @@ export function applyEdits<T extends EditableDefinition>(d: T, e: AutomationEdit
   if (e.monthDay !== undefined) setOrDrop(s, 'monthDay', e.monthDay)
   if (e.period !== undefined) setOrDrop(s, 'period', e.period)
   if (e.summary !== undefined) s.summary = e.summary
+  if (e.reportInputs !== undefined && s.report) s.report = { ...s.report, inputs: { ...e.reportInputs } }
   if (e.cadence !== undefined) {
     if (s.cadence !== 'daily' && e.weekdays === undefined) delete s.weekdays
     if (s.cadence !== 'weekly' && e.weekday === undefined) delete s.weekday
@@ -868,3 +889,24 @@ export function knownWatchColumns(d: Pick<EditableDefinition, 'watch' | 'recipie
 
 /** A weekday's short name, for a toggle: "Sat". */
 export const weekdayShort = (d: AutomationWeekday): string => weekdayName(d).slice(0, 3)
+
+const DEFAULT_WORDS: Record<NonNullable<AiReportInput['dynamicDefault']>, string> = {
+  this_week: "this week's, on the day it runs",
+  this_year: 'this year, on the day it runs',
+  today: 'the day it runs',
+}
+
+/**
+ * The values a schedule sends a saved report with, a line each in the report's order: the value given, or what an
+ * input left empty takes on the day ("Planning week: this week's, on the day it runs"; "Leave out these orders: none").
+ */
+export function linkedValuesLines(inputs: readonly AiReportInput[], values: AiReportInputValues): string[] {
+  return inputs.map((i) => {
+    const v = values[i.name]
+    const given = v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0)
+    if (given) return `${i.label}: ${Array.isArray(v) ? v.join(', ') : String(v)}`
+    if (i.dynamicDefault) return `${i.label}: ${DEFAULT_WORDS[i.dynamicDefault]}`
+    if (i.default !== undefined && i.default !== null) return `${i.label}: ${Array.isArray(i.default) ? i.default.join(', ') : String(i.default)} (its default)`
+    return `${i.label}: ${i.kind === 'list' ? 'none' : 'any'}`
+  })
+}

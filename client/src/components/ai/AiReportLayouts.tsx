@@ -7,7 +7,7 @@
 
 import { useMemo, useState } from 'react'
 import { ChevronRight, Play } from 'lucide-react'
-import type { AiCell, AiReportTree } from '@qc/shared/ai'
+import type { AiCell, AiReportSectionRun, AiReportTree } from '@qc/shared/ai'
 import type { AiReportInput } from '@qc/shared/aiReportInputs'
 import { Button } from '@/components/ui'
 import { cn } from '@/lib/utils'
@@ -16,6 +16,18 @@ import { sectionFigures, treeRows } from './reportInputs'
 import { cellText, numericColumns, queryTextRows, tableDirection } from './tables'
 
 const FIELD = 'input h-9 w-full px-2.5 py-0 text-13 touch:h-11'
+
+/**
+ * How a section that ran shows its rows: as figures or a tree when it was
+ * built so and its rows allow it (one that failed shows its error; a tree
+ * whose key or parent column is not in the result, its table), else a table.
+ */
+export function sectionDisplay(s: Pick<AiReportSectionRun, 'ok' | 'display' | 'tree' | 'columns'>): 'table' | 'figures' | 'tree' {
+  if (!s.ok) return 'table'
+  if (s.display === 'figures') return 'figures'
+  if (s.display === 'tree' && s.tree && s.columns.includes(s.tree.key) && s.columns.includes(s.tree.parent)) return 'tree'
+  return 'table'
+}
 
 /**
  * What a run asks for, as the report's maker declared it: a field each, its
@@ -45,52 +57,7 @@ export function ReportInputsForm({
         onRun()
       }}
     >
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {inputs.map((input) => {
-          const id = `report-input-${input.name}`
-          const value = drafts[input.name] ?? ''
-          return (
-            <div key={input.name} className="min-w-0 space-y-1">
-              <label htmlFor={id} dir="auto" className="block text-[11px] font-bold text-slate-600 dark:text-slate-300">
-                {input.label}
-                {input.required && (
-                  <span className="text-rose-600 dark:text-rose-400" aria-hidden>
-                    {' '}
-                    *
-                  </span>
-                )}
-              </label>
-              {input.kind === 'choice' ? (
-                <select id={id} value={value} onChange={(e) => onChange(input.name, e.target.value)} required={input.required} className={FIELD}>
-                  {(!input.required || !value) && <option value="">{input.required ? 'Choose…' : 'Any'}</option>}
-                  {(input.choices ?? []).map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  id={id}
-                  type={input.kind === 'date' ? 'date' : 'text'}
-                  inputMode={input.kind === 'number' ? 'decimal' : undefined}
-                  dir="auto"
-                  value={value}
-                  onChange={(e) => onChange(input.name, e.target.value)}
-                  placeholder={input.kind === 'list' ? 'Several, apart by commas or spaces' : undefined}
-                  aria-describedby={input.help ? `${id}-help` : undefined}
-                  className={cn(FIELD, input.kind === 'number' && 'tabular-nums')}
-                />
-              )}
-              {input.help && (
-                <p id={`${id}-help`} dir="auto" className="text-[11px] leading-snug text-muted">
-                  {input.help}
-                </p>
-              )}
-            </div>
-          )
-        })}
-      </div>
+      <ReportInputFields inputs={inputs} drafts={drafts} onChange={onChange} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" />
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" variant="primary" disabled={running} className="h-9 min-h-0 gap-1.5 px-3 py-0 text-xs touch:h-11">
           <Play className="h-3.5 w-3.5" /> Run
@@ -106,6 +73,78 @@ export function ReportInputsForm({
         )}
       </div>
     </form>
+  )
+}
+
+/**
+ * A field for each of a report's inputs, its hint under it: the report's own
+ * form, and the values a schedule sends it with. `optional`: every field may
+ * be left empty, each then taking its default on the day (a schedule's).
+ */
+export function ReportInputFields({
+  inputs,
+  drafts,
+  onChange,
+  className,
+  optional = false,
+  idPrefix = 'report-input',
+}: {
+  inputs: readonly AiReportInput[]
+  drafts: Record<string, string>
+  onChange: (name: string, value: string) => void
+  className?: string
+  optional?: boolean
+  idPrefix?: string
+}) {
+  return (
+    <div className={className}>
+      {inputs.map((input) => {
+        const id = `${idPrefix}-${input.name}`
+        const value = drafts[input.name] ?? ''
+        const required = input.required && !(optional && (input.dynamicDefault || input.default !== undefined))
+        const empty = optional && !input.required ? 'Empty: any' : optional ? 'Empty: its default on the day' : undefined
+        return (
+          <div key={input.name} className="min-w-0 space-y-1">
+            <label htmlFor={id} dir="auto" className="block text-[11px] font-bold text-slate-600 dark:text-slate-300">
+              {input.label}
+              {required && (
+                <span className="text-rose-600 dark:text-rose-400" aria-hidden>
+                  {' '}
+                  *
+                </span>
+              )}
+            </label>
+            {input.kind === 'choice' ? (
+              <select id={id} value={value} onChange={(e) => onChange(input.name, e.target.value)} required={required} className={FIELD}>
+                {(!required || !value) && <option value="">{required ? 'Choose…' : optional && input.required ? 'Its default on the day' : 'Any'}</option>}
+                {(input.choices ?? []).map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id={id}
+                type={input.kind === 'date' ? 'date' : 'text'}
+                inputMode={input.kind === 'number' ? 'decimal' : undefined}
+                dir="auto"
+                value={value}
+                onChange={(e) => onChange(input.name, e.target.value)}
+                placeholder={empty ?? (input.kind === 'list' ? 'Several, apart by commas or spaces' : undefined)}
+                aria-describedby={input.help ? `${id}-help` : undefined}
+                className={cn(FIELD, input.kind === 'number' && 'tabular-nums')}
+              />
+            )}
+            {input.help && (
+              <p id={`${id}-help`} dir="auto" className="text-[11px] leading-snug text-muted">
+                {input.help}
+              </p>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }
 

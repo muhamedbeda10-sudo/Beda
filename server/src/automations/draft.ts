@@ -12,6 +12,7 @@ import { z } from 'zod'
 import { CHART_INPUT_SCHEMA } from '../ai/charts'
 import { ROLES } from '@qc/shared/types'
 import type { AiReportPeriod } from '@qc/shared/ai'
+import type { AiReportInputValues } from '@qc/shared/aiReportInputs'
 import type {
   AutomationActions,
   AutomationDraft,
@@ -117,7 +118,7 @@ export const DRAFT_INPUT_SCHEMA = {
         period: PERIOD_INPUT_SCHEMA,
         sections: {
           type: 'array',
-          description: '1 to 8 sections, each a titled query. With a period, a query takes its days as {{from}} and {{to}}.',
+          description: '1 to 8 sections, each a titled query. With a period, a query takes its days as {{from}} and {{to}}. Leave out when it sends a saved report (report).',
           items: {
             type: 'object',
             properties: {
@@ -129,9 +130,24 @@ export const DRAFT_INPUT_SCHEMA = {
             additionalProperties: false,
           },
         },
+        report: {
+          type: 'object',
+          description:
+            "Instead of sections: one of the saved reports this person may open (read_report lists them, with each one's inputs), sent as it stands at each run — a change to the report reaches the next delivery. Its sections, figures, trees and charts go out as they show in My reports.",
+          properties: {
+            reportId: { type: 'string', description: "The saved report's id, from read_report." },
+            inputs: {
+              type: 'object',
+              description:
+                'The values its inputs take on every run, by input name, as the report asks for them (a list as a list of texts, a number as a number, a date as YYYY-MM-DD). Leave an input out to take its default on the day of each run (this week, this year, today). {} when every input takes its default.',
+            },
+          },
+          required: ['reportId', 'inputs'],
+          additionalProperties: false,
+        },
         summary: { type: 'boolean', description: 'Write a short summary on top of the report each time it runs.' },
       },
-      required: ['cadence', 'time', 'sections', 'summary'],
+      required: ['cadence', 'time', 'summary'],
       additionalProperties: false,
     },
     recipients: {
@@ -250,7 +266,9 @@ const scheduleInput = z
     weekday: optional(z.number().int()),
     monthDay: optional(z.number().int()),
     period: optional(periodInput),
-    sections: z.array(z.object({ title: z.string(), sql: z.string(), chart: optional(z.unknown()) }).strict()),
+    sections: optional(z.array(z.object({ title: z.string(), sql: z.string(), chart: optional(z.unknown()) }).strict())),
+    // Its values are read against the report's inputs when the draft is checked (savedReport.checkLinkedReport).
+    report: optional(z.object({ reportId: z.string(), inputs: z.record(z.string(), z.unknown()) }).strict()),
     summary: z.boolean(),
   })
   .strict()
@@ -329,7 +347,7 @@ export function readDraft(input: unknown): { draft: AutomationDraft } | { errors
       resolved = toPeriod(period)
       if (!resolved) errors.push(`schedule.period: ${JSON.stringify(period)} is not a period a report can have (last_days needs days 1 to 3660; fixed needs from and to, YYYY-MM-DD, in order).`)
     }
-    draft.schedule = { ...(schedule as AutomationScheduleSpec), ...(resolved ? { period: resolved } : {}) }
+    draft.schedule = { ...(schedule as AutomationScheduleSpec), sections: (schedule.sections ?? []) as AutomationScheduleSpec['sections'], ...(resolved ? { period: resolved } : {}) }
   }
   if (d.replacesAutomationId) draft.replacesAutomationId = d.replacesAutomationId
   if (d.revisesProposalId) draft.revisesProposalId = d.revisesProposalId
@@ -366,6 +384,7 @@ export const EditsInput = z
     monthDay: z.number().int().nullable().optional(),
     period: periodInput.nullable().optional(),
     summary: z.boolean().optional(),
+    reportInputs: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()
 
@@ -385,7 +404,7 @@ export function applyEdits(draft: AutomationDraft, edits: EditsInputType): { dra
   if (edits.recipients !== undefined) next.recipients = edits.recipients as AutomationRecipient[]
   if (edits.channels !== undefined) next.channels = edits.channels
   if (edits.actions !== undefined) next.actions = edits.actions as AutomationActions
-  const scheduleEdits = ['cadence', 'time', 'weekday', 'monthDay', 'period', 'summary'] as const
+  const scheduleEdits = ['cadence', 'time', 'weekday', 'monthDay', 'period', 'summary', 'reportInputs'] as const
   if (next.kind === 'watch') {
     const w = next.watch
     if (w) {
@@ -410,6 +429,11 @@ export function applyEdits(draft: AutomationDraft, edits: EditsInputType): { dra
     if (edits.weekday !== undefined) setOrDrop(s, 'weekday', edits.weekday as AutomationWeekday | null)
     if (edits.monthDay !== undefined) setOrDrop(s, 'monthDay', edits.monthDay)
     if (edits.summary !== undefined) s.summary = edits.summary
+    if (edits.reportInputs !== undefined) {
+      // Checked against the report's inputs with the rest of the draft (savedReport.checkLinkedReport).
+      if (s.report) s.report = { ...s.report, inputs: edits.reportInputs as AiReportInputValues }
+      else errors.push('reportInputs: only a schedule that sends a saved report has inputs; this one has sections of its own.')
+    }
     if (edits.period !== undefined) {
       if (edits.period === null) delete s.period
       else {

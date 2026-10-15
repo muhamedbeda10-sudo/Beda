@@ -23,6 +23,7 @@ import { describeChanges } from './changes'
 import { AUTOMATION_COLUMNS, AUTOMATION_FROM, draftOf, type AutomationRow } from './views'
 import { assigneeView, namedUserIds, peopleById, recipientViews } from './labels'
 import { isUuid } from './people'
+import { linkedReportView, linkedReportViews } from './savedReport'
 
 export interface ProposalRecord {
   id: string
@@ -163,6 +164,11 @@ export async function proposalParts(q: Queryable, proposals: StoredProposal[]): 
     proposals.flatMap((p) => (p.draft ? namedUserIds(p.draft.recipients, p.draft.actions) : [])),
   )
   const current = await changedAutomations(q, proposals)
+  // The saved reports they send, each as the proposal's creator may open it now.
+  const linked = await linkedReportViews(
+    q,
+    proposals.map((p) => ({ creatorId: p.userId, schedule: p.draft?.schedule })),
+  )
   return proposals.map((p) => {
     const part: AiAutomationPart = { type: 'automation', proposalId: p.id, ok: p.ok, state: p.state }
     if (p.error) part.error = p.error
@@ -176,6 +182,8 @@ export async function proposalParts(q: Queryable, proposals: StoredProposal[]): 
     if (p.backtest) part.backtest = p.backtest
     if (p.automationId) part.automationId = p.automationId
     if (p.replacesName) part.replacesName = p.replacesName
+    const report = linkedReportView(linked, p.userId, p.draft?.schedule)
+    if (report) part.linkedReport = report
     // A change still waiting says what it changes; once decided, the card shows what was decided.
     const before = p.state === 'proposed' && p.ok && p.draft?.replacesAutomationId ? current.get(p.draft.replacesAutomationId.toLowerCase()) : undefined
     if (before && p.draft) part.changes = describeChanges(before, p.draft)

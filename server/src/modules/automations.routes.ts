@@ -71,10 +71,17 @@ export function automationsRoutes(ctx: AppContext): Router {
       summaryNote: string | null
       language: AutomationLanguage
       sections: AiReportSectionRun[]
+      reportId: string | null
+      reportTitle: string | null
+      reportOpen: boolean
+      inputs: { label: string; value: string }[] | null
     }>(
+      // The saved report it sent, when it sent one, and whether the viewer may open it in My reports (their own, or shared).
       `SELECT d.id, d.automation_id AS "automationId", d.automation_name AS "automationName", d.ran_at AS "ranAt", d.period, d.summary,
-              d.summary_note AS "summaryNote", d.language, d.sections
+              d.summary_note AS "summaryNote", d.language, d.sections, d.report_id AS "reportId", d.inputs, rep.title AS "reportTitle",
+              COALESCE(rep.deleted_at IS NULL AND (rep.user_id = $2 OR rep.shared), false) AS "reportOpen"
          FROM ai_report_deliveries d JOIN ai_automations a ON a.id = d.automation_id
+         LEFT JOIN ai_reports rep ON rep.id = d.report_id
         WHERE d.id = $1
           AND ($3 OR a.creator_id = $2 OR EXISTS (SELECT 1 FROM ai_report_delivery_recipients x WHERE x.delivery_id = d.id AND x.user_id = $2))`,
       [id, user.id, owner],
@@ -92,6 +99,8 @@ export function automationsRoutes(ctx: AppContext): Router {
     }
     if (d.summary) body.summary = d.summary
     if (d.summaryNote) body.summaryNote = d.summaryNote
+    if (d.reportId) body.report = { id: d.reportId, title: d.reportTitle ?? d.automationName, open: d.reportOpen }
+    if (d.inputs && d.inputs.length > 0) body.inputs = d.inputs
     res.json(body)
   })
 

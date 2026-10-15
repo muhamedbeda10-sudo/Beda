@@ -13,8 +13,8 @@
 import '@/components/ai/fonts'
 import { memo, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, OctagonX, Printer, Sparkles, Table2 } from 'lucide-react'
-import { AI_PREVIEW_ROWS, type AiQueryPart } from '@qc/shared/ai'
+import { ArrowRight, CheckCircle2, FileChartColumn, FileSpreadsheet, Loader2, OctagonX, Printer, Sparkles, Table2 } from 'lucide-react'
+import { AI_PREVIEW_ROWS, type AiQueryPart, type AiReportSectionRun } from '@qc/shared/ai'
 import type { AutomationDelivery } from '@qc/shared/automation'
 import { Badge, Button, Card } from '@/components/ui'
 import { AiMarkdown } from '@/components/ai/AiMarkdown'
@@ -25,6 +25,8 @@ import { AiResultModal, PreviewTable } from '@/components/ai/AiResultTable'
 import { queryChart } from '@/components/ai/chartData'
 import { useAi } from '@/components/ai/AiAssistantProvider'
 import { sectionAsQuery } from '@/components/ai/reports'
+import { SectionFigures, SectionTree, sectionDisplay } from '@/components/ai/AiReportLayouts'
+import { treeAsTable } from '@/components/ai/reportInputs'
 import { periodText } from '@/components/automations/parts'
 import { deliveryExportMessage, deliveryFilename, deliverySheets } from '@/components/automations/exportDelivery'
 import { factoryMoment, factoryTimestamp } from '@/components/automations/wording'
@@ -73,17 +75,28 @@ function Delivery({ d }: { d: AutomationDelivery }) {
   const ownAutomations = useOwnAutomationIds(ai.automations && !ai.owner)
   const canOpenAutomation = mayOpenAutomation(d.automationId, { owner: ai.owner, automations: ai.automations, own: ownAutomations })
   const parts = useMemo(() => d.sections.map((s, i) => sectionAsQuery(s, '', i)), [d.sections])
+  // As print shows them: a tree as its rows in order, stepped in, without its key and parent columns.
+  const printParts = useMemo(
+    () =>
+      parts.map((part, i) => {
+        const s = d.sections[i]
+        const flat = sectionDisplay(s) === 'tree' ? treeAsTable(s.columns, s.rows, s.tree!) : null
+        return flat ? { ...part, columns: flat.columns, rows: flat.rows } : part
+      }),
+    [parts, d.sections],
+  )
   const failed = d.sections.filter((s) => !s.ok).length
   const days = periodText(d.period)
+  const values = (d.inputs ?? []).map((i) => `${i.label}: ${i.value}`).join(' · ')
   const printer = usePrint()
   const print = () =>
     printer.print(
       <ReportPrint
         kind="Scheduled report"
         title={d.automationName}
-        lines={[`Delivered ${factoryTimestamp(d.ranAt, factoryTimeZone)}`, days ? `Covers ${days}` : ''].filter(Boolean)}
+        lines={[`Delivered ${factoryTimestamp(d.ranAt, factoryTimeZone)}`, values, days ? `Covers ${days}` : ''].filter(Boolean)}
         summary={d.summary}
-        parts={parts}
+        parts={printParts}
       />,
     )
 
@@ -113,6 +126,21 @@ function Delivery({ d }: { d: AutomationDelivery }) {
         <h1 dir="auto" className="break-words text-2xl font-extrabold tracking-tight">
           {d.automationName}
         </h1>
+        {(d.report || values) && (
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-13 text-muted">
+            {d.report &&
+              (d.report.open ? (
+                <Link to={`/ai/reports/${encodeURIComponent(d.report.id)}`} dir="auto" className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline dark:text-brand-300" data-tip="Open it in My reports, to run it with other values">
+                  <FileChartColumn className="h-3.5 w-3.5" /> {d.report.title}
+                </Link>
+              ) : (
+                <span dir="auto" className="inline-flex items-center gap-1 font-semibold">
+                  <FileChartColumn className="h-3.5 w-3.5" /> {d.report.title}
+                </span>
+              ))}
+            {values && <span dir="auto">{values}</span>}
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <Button className="h-10 min-h-0 gap-1.5 px-3 py-0 text-13 touch:h-11" onClick={exportExcel} data-tip="The whole report as it was delivered: a sheet on the report, then a sheet per section">
             <FileSpreadsheet className="h-4 w-4" /> Export Excel
@@ -146,7 +174,7 @@ function Delivery({ d }: { d: AutomationDelivery }) {
 
       <div className="space-y-3">
         {parts.map((part, i) => (
-          <DeliveredSection key={i} part={part} onExport={exportExcel} />
+          <DeliveredSection key={i} part={part} section={d.sections[i]} onExport={exportExcel} />
         ))}
       </div>
     </>
@@ -154,11 +182,13 @@ function Delivery({ d }: { d: AutomationDelivery }) {
 }
 
 /** One section as delivered: its rows in the assistant's table (a preview when long), the whole of them in Open table. */
-const DeliveredSection = memo(function DeliveredSection({ part, onExport }: { part: AiQueryPart; onExport: () => void }) {
+const DeliveredSection = memo(function DeliveredSection({ part, section, onExport }: { part: AiQueryPart; section: AiReportSectionRun; onExport: () => void }) {
   const [table, setTable] = useState(false)
   const preview = useMemo(() => (part.rows.length > AI_PREVIEW_ROWS ? { ...part, rows: part.rows.slice(0, AI_PREVIEW_ROWS), truncated: true } : part), [part])
+  // A saved report's section shows its rows as it was built to: headline figures, or a tree.
+  const display = sectionDisplay(section)
   // The chart the section was given, drawn from every row it delivered; the switch shows it or the rows themselves.
-  const chart = useMemo(() => queryChart(part), [part])
+  const chart = useMemo(() => (display === 'table' ? queryChart(part) : null), [part, display])
   const [view, setView] = useState<FigureView>('chart')
   const meta = part.ok ? `${part.rowCount.toLocaleString('en-US')}${part.truncated ? '+' : ''} ${part.rowCount === 1 && !part.truncated ? 'row' : 'rows'}` : 'Failed'
   return (
@@ -181,7 +211,16 @@ const DeliveredSection = memo(function DeliveredSection({ part, onExport }: { pa
         {chart && part.ok && <ChartTableSwitch value={view} onChange={setView} className="mt-0.5" />}
       </header>
       <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
-        {chart && view === 'chart' ? (
+        {section.note && (
+          <p dir="auto" className="text-[11px] leading-snug text-muted">
+            {section.note}
+          </p>
+        )}
+        {display === 'figures' ? (
+          <SectionFigures columns={part.columns} rows={part.rows} />
+        ) : display === 'tree' ? (
+          <SectionTree columns={part.columns} rows={part.rows} tree={section.tree!} truncated={part.truncated} />
+        ) : chart && view === 'chart' ? (
           <AiChart model={chart} />
         ) : part.ok ? (
           <PreviewTable part={preview} />

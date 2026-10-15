@@ -225,7 +225,7 @@ function AutomationView({ a }: { a: Automation }) {
           <Zap className="h-4 w-4 text-muted" /> What it does
         </h2>
         <p className="text-13 leading-relaxed text-slate-700 dark:text-slate-200">{summary}</p>
-        <DefinitionFacts def={a} recipients={a.recipients} assignee={a.assignee} />
+        <DefinitionFacts def={a} recipients={a.recipients} assignee={a.assignee} linkedReport={a.linkedReport} />
         <dl className="grid grid-cols-1 gap-2 border-t border-slate-100 pt-3 text-13 dark:border-slate-800 sm:grid-cols-3">
           <Figure label="Next run" icon={<CalendarClock className="h-4 w-4" />}>
             {a.nextRunAt ? (
@@ -268,6 +268,7 @@ function AutomationView({ a }: { a: Automation }) {
           base={a}
           knownRecipients={a.recipients}
           knownAssignee={a.assignee}
+          reportInputs={a.linkedReport?.inputs}
           creatorName={a.creator.name}
           columns={columns}
           title={a.name}
