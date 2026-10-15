@@ -12,7 +12,7 @@
 
 import { useState } from 'react'
 import { ChevronDown, ChevronUp, FileCheck2, Loader2, MessagesSquare, Zap } from 'lucide-react'
-import { AI_ACTION_INFO, type AiActivityItem } from '@qc/shared/ai'
+import { AI_LEVEL_NAMES, type AiActivityItem } from '@qc/shared/ai'
 import { Button, Card, EmptyState } from '@/components/ui'
 import { FilterSelect, Segmented } from '@/components/ui/PageShell'
 import { textDirection } from '@/lib/direction'
@@ -142,10 +142,10 @@ function ActivityRow({ item }: { item: AiActivityItem }) {
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
             <span>{meta.join(' · ')}</span>
-            {/* The level the question was answered at, and why the router gave it (Models). */}
+            {/* The level the question was answered at, and why the router gave it. */}
             {item.level && (
-              <span data-tip={item.levelReason ? `Why: ${item.levelReason}` : 'The level set under Models'} className="font-semibold text-slate-600 dark:text-slate-300">
-                · {AI_ACTION_INFO[item.level].name}
+              <span data-tip={item.levelReason ? `Why: ${item.levelReason}` : 'The router could not be asked in time: the standard level'} className="font-semibold text-slate-600 dark:text-slate-300">
+                · {AI_LEVEL_NAMES[item.level]}
               </span>
             )}
             {open && item.levelReason && <span className="basis-full">Level chosen because: {item.levelReason}</span>}

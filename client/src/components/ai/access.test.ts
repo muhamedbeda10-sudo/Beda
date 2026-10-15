@@ -123,7 +123,7 @@ describe('the least a cap may be on a model', () => {
 
   it('says why, with the least amount and the cheapest model a question runs on, for the owner', () => {
     expect(capTooLowText('claude-fable-5-1')).toBe(
-      "The cap must be at least $2.40, the most one question may cost on Claude Fable 5.1, the cheapest model set under Models. Below that they could never ask: they would be told the month's limit is reached, every month.",
+      "The cap must be at least $2.40, the most one question may cost on Claude Fable 5.1, the model every question starts on. Below that they could never ask: they would be told the month's limit is reached, every month.",
     )
     expect(capTooLowText('claude-haiku-5-5')).toMatch(/^The cap must be at least \$0\.02, .* Claude Haiku 5\.5,/)
   })
@@ -163,17 +163,17 @@ describe('the owner’s draft of one person’s access', () => {
     expect(checkAccessDraft({ ...d, cap: '5000' }, 'claude-haiku-5-5')).toBe(CAP_RANGE_TEXT)
   })
 
-  it('refuses a cap under what one question may cost on the cheapest model set under Models, which would close the assistant to them every month', () => {
+  it('refuses a cap under what one question may cost on the model every question starts on, which would close the assistant to them every month', () => {
     const d = draftFromAccess(row({}))
-    // Every question on Fable 5.1 (a level fixed, files too): a $1 cap could never be used.
+    // Were every question to start on Fable 5.1: a $1 cap could never be used.
     expect(checkAccessDraft({ ...d, cap: '1' }, 'claude-fable-5-1')).toBe(capTooLowText('claude-fable-5-1'))
     expect(checkAccessDraft({ ...d, cap: '2.39' }, 'claude-fable-5-1')).toBe(capTooLowText('claude-fable-5-1'))
     expect(checkAccessDraft({ ...d, cap: '2.40' }, 'claude-fable-5-1')).toBeNull()
     expect(checkAccessDraft({ ...d, cap: '1.43' }, 'claude-opus-5-5')).toBe(capTooLowText('claude-opus-5-5'))
     expect(checkAccessDraft({ ...d, cap: '0' }, 'claude-sonnet-5-5')).toBe(capTooLowText('claude-sonnet-5-5'))
-    // The recommended Models: a simple question on Haiku 5.5.
-    expect(checkAccessDraft({ ...d, cap: '0.01' }, 'claude-haiku-5-5')).toBe(capTooLowText('claude-haiku-5-5'))
-    expect(checkAccessDraft({ ...d, cap: '0.02' }, 'claude-haiku-5-5')).toBeNull()
+    // As the app runs: every question starts on Sonnet 5.5.
+    expect(checkAccessDraft({ ...d, cap: '0.63' }, 'claude-sonnet-5-5')).toBe(capTooLowText('claude-sonnet-5-5'))
+    expect(checkAccessDraft({ ...d, cap: '0.64' }, 'claude-sonnet-5-5')).toBeNull()
     // Switching someone off is never held up by their cap.
     expect(checkAccessDraft({ ...d, enabled: false, cap: '1' }, 'claude-fable-5-1')).toBeNull()
     expect(checkAccessDraft({ ...d, enabled: false, cap: '0' }, 'claude-haiku-5-5')).toBeNull()

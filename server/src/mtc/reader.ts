@@ -165,7 +165,7 @@ export function mtcMessages(source: MtcSource, fileName: string): Anthropic.Beta
   return [{ role: 'user', content }]
 }
 
-/** The whole request, on the model and effort the owner set for certificates (Models). Thinking is shown to nobody, so it is not sent back. */
+/** The whole request, on the model and effort of a certificate's reading (AI_JOBS). Thinking is shown to nobody, so it is not sent back. */
 export function mtcRequest(source: MtcSource, fileName: string, run: { model: string; effort: AiEffort }): ModelParams {
   return {
     model: run.model,

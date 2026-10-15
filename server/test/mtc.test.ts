@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
 import type Anthropic from '@anthropic-ai/sdk'
 import type { ApiErrorBody } from '@qc/shared/api'
-import { AI_DEFAULT_SETTINGS, AI_MTC_REREAD_MODEL, resolveAiAction, type AiActivityResponse, type AiMeResponse } from '@qc/shared/ai'
+import { AI_JOBS, type AiActivityResponse, type AiMeResponse } from '@qc/shared/ai'
 import type { MtcExistingResponse, MtcKind, MtcSaveResponse, MtcStreamEvent, MtcTableOptionsResponse, MtcTableResponse } from '@qc/shared/mtc'
 import { TestApp, type Session } from './harness'
 import { apiError, text } from './aiFake'
@@ -18,7 +18,8 @@ let admin: Session
 let uploader: Session
 let inspector: Session
 let viewer: Session
-const MTC_MODEL = resolveAiAction(AI_DEFAULT_SETTINGS, 'mtc').model
+const MTC_MODEL = AI_JOBS.mtc.model
+const AI_MTC_REREAD_MODEL = AI_JOBS['mtc-reread'].model
 const KEY = `sk-ant-api03-${'m_7-'.repeat(20)}MtCk`
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n')
 
@@ -181,26 +182,15 @@ describe('reading a certificate', () => {
     expect((await app.db.query(`SELECT count(*)::int AS n FROM coils`)).rows[0].n).toBe(0)
   })
 
-  it('reads on the model and effort the owner set for certificates in Models, and needs no access to the assistant', async () => {
-    const set = await app.api('PUT', '/api/ai/settings', {
-      token: admin.token,
-      body: { enabled: true, monthlyCapUsd: 100, actions: { mtc: { model: 'claude-opus-5-5', effort: 'medium' } } },
-    })
-    expect(set.status).toBe(200)
+  it('reads on Sonnet at high effort, and needs no access to the assistant', async () => {
     // The assistant is off for them: they cannot ask it anything, and still read certificates.
     expect((await app.db.query(`SELECT enabled FROM ai_access WHERE user_id = $1`, [uploader.user.id])).rows).toEqual([{ enabled: false }])
     expect((await me(uploader)).granted).toBe(false)
-    app.model.reply({ content: [reply('coils', [{ coilNumber: 'C1' }])] })
+    app.model.reply({ content: [reply('coils', [{ coilNumber: 'C1', grade: 'S350GD', smType: 'HR', supplier: 'Ezz', thickness: 2, width: 1000, yield: 380 }])] })
     expect((await extract(PDF, 'cert.pdf')).result?.rows).toHaveLength(1)
-    expect(app.model.calls[0].params.model).toBe('claude-opus-5-5')
-    expect(app.model.calls[0].params.output_config?.effort).toBe('medium')
-    const audit = await app.db.query(`SELECT old_value AS "oldValue", new_value AS "newValue" FROM audit_log WHERE entity = 'AppSettings' AND field = 'model: Reading a certificate (MTC)'`)
-    expect(audit.rows).toEqual([{ oldValue: 'Auto · effort Auto', newValue: 'Claude Opus 5.5 · effort medium' }])
-    // The owner alone sets it.
-    expect(
-      (await app.api('PUT', '/api/ai/settings', { token: uploader.token, body: { enabled: true, monthlyCapUsd: 100, actions: { mtc: { model: 'claude-haiku-5-5', effort: 'auto' } } } })).status,
-    ).toBe(404)
-    await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 100, actions: AI_DEFAULT_SETTINGS.actions } })
+    expect(app.model.calls).toHaveLength(1)
+    expect(app.model.calls[0].params.model).toBe('claude-sonnet-5-5')
+    expect(app.model.calls[0].params.output_config?.effort).toBe('high')
   })
 
   it('reads an unclear certificate again on the stronger model, by itself, and bills both readings to it', async () => {
@@ -232,27 +222,11 @@ describe('reading a certificate', () => {
     expect(activity.body.items[0].text).toContain('read again on a stronger model')
   })
 
-  it('a clear certificate is read once; and with re-reading switched off, an unclear one too', async () => {
+  it('a clear certificate is read once', async () => {
     app.model.reply({ content: [reply('coils', [{ coilNumber: 'C10', grade: 'S350GD', smType: 'HR', supplier: 'Ezz', thickness: 2, width: 1000, yield: 380, uncertain: ['yield'] }])] })
     expect((await extract(PDF, 'clear.pdf')).events.map((e) => e.type)).toEqual(['reading', 'result'])
     expect(app.model.calls).toHaveLength(1)
-
-    await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 100, mtcReread: false } })
-    app.model.reply({ content: [reply('coils', [{ coilNumber: 'C11', uncertain: ['grade', 'thickness', 'width', 'yield'] }])] })
-    const { events, result } = await extract(PDF, 'scan.pdf')
-    expect(events.map((e) => e.type)).toEqual(['reading', 'result'])
-    expect(app.model.calls).toHaveLength(2)
-    expect(result?.rows[0].values.coilNumber).toBe('C11')
     expect((await app.db.query(`SELECT reread FROM mtc_readings ORDER BY created_at DESC LIMIT 1`)).rows).toEqual([{ reread: false }])
-    await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 100, mtcReread: true } })
-  })
-
-  it('does not read again on the same model: certificates already set to the strongest', async () => {
-    await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 100, actions: { mtc: { model: AI_MTC_REREAD_MODEL, effort: 'auto' } } } })
-    app.model.reply({ content: [reply('coils', [{ coilNumber: 'C12', uncertain: ['grade', 'thickness', 'width', 'yield'] }])] })
-    expect((await extract(PDF, 'scan.pdf')).events.map((e) => e.type)).toEqual(['reading', 'result'])
-    expect(app.model.calls).toHaveLength(1)
-    await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 100, actions: AI_DEFAULT_SETTINGS.actions } })
   })
 
   it('tells a welding wire certificate apart and reads its batch, the deposited metal’s results and the weight', async () => {

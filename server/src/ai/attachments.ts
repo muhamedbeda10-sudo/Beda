@@ -329,6 +329,17 @@ export async function removePending(q: Queryable, userId: string, id: string): P
   return !!rowCount
 }
 
+/** The kinds of the files a question is about to carry, in the order given, for the router; one no longer attached is left out (taking them says so). */
+export async function attachmentKinds(q: Queryable, userId: string, ids: readonly string[]): Promise<AiAttachmentKind[]> {
+  if (ids.length === 0) return []
+  const { rows } = await q.query<{ id: string; kind: AiAttachmentKind }>(
+    `SELECT id, kind FROM ai_attachments WHERE id = ANY($1::uuid[]) AND user_id = $2 AND turn_id IS NULL AND deleted_at IS NULL`,
+    [ids, userId],
+  )
+  const byId = new Map(rows.map((r) => [r.id, r.kind]))
+  return ids.flatMap((id) => byId.get(id) ?? [])
+}
+
 /**
  * The files a question carries, taken for it in the order given: each must be
  * the asker's, attached and not yet sent or removed. The conversation, with

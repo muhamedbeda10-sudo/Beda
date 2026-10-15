@@ -21,7 +21,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import type pg from 'pg'
-import { resolveAiAction, type AiCell, type AiEffort, type AiModelId, type AiReportSectionRun } from '@qc/shared/ai'
+import { AI_JOBS, type AiCell, type AiEffort, type AiModelId, type AiReportSectionRun } from '@qc/shared/ai'
 import { AUTOMATION_DELIVERY_MAX_ROWS, type AutomationBlockedReason, type AutomationLanguage } from '@qc/shared/automation'
 import type { Role } from '@qc/shared/types'
 import type { Config } from '../config'
@@ -31,7 +31,6 @@ import { checkCall } from '../ai/access'
 import { recordCutOffUsage, usageOf, watchStream } from '../ai/assistant'
 import { cutChars } from '../ai/blocks'
 import { resolveApiKey } from '../ai/credentials'
-import { loadAiSettings } from '../ai/settings'
 import type { AiModelClient, ModelMessage, ModelParams } from '../ai/model'
 import { worstCaseUsd } from '../ai/models'
 import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
@@ -50,8 +49,8 @@ import { isStopping, type RunResult } from './watch'
 const SECTION_TIMEOUT_MS = AI_QUERY_TIMEOUT_MS
 /** Everything one delivery keeps, at most, in characters: its sections share it. */
 const DELIVERY_MAX_CHARS = 10_000_000
-/** The summary's call: room for a little thinking and a few lines. */
-export const SUMMARY_MAX_TOKENS = 2000
+/** The summary's call: room for thinking at high effort and a few lines. */
+export const SUMMARY_MAX_TOKENS = 8000
 /** How long the summary's call may take before the report goes without it. */
 const SUMMARY_TIMEOUT_MS = 120_000
 /** What the model reads of the sections, at most. */
@@ -314,7 +313,7 @@ export function summaryInput(
   return '{}'
 }
 
-/** The one request for a report's summary, on the creator's model. No tools; low effort. */
+/** The one request for a report's summary, on its job's model and effort (AI_JOBS). No tools. */
 export function summaryRequest(
   run: { model: AiModelId; effort: AiEffort },
   a: Pick<AutomationRow, 'name' | 'description' | 'language'>,
@@ -346,8 +345,8 @@ async function summarize(
   const a = args.automation
   const { apiKey } = await resolveApiKey(args.db, args.config)
   if (!apiKey) return { note: SUMMARY_NOTE.unavailable }
-  // On the model and effort the owner set for scheduled summaries (Models).
-  const params = summaryRequest(resolveAiAction((await loadAiSettings(args.db)).settings, 'report-summary'), a, period, sections, inputs)
+  // On Sonnet at high effort (AI_JOBS).
+  const params = summaryRequest(AI_JOBS['report-summary'], a, period, sections, inputs)
   const stop = await checkCall(args.db, a.creatorId, worstCaseUsd(params))
   if (stop) return { note: stop.stopReason === 'cap' ? SUMMARY_NOTE.cap : SUMMARY_NOTE.unavailable }
 

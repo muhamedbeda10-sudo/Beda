@@ -1,22 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
-  AI_ACTION_IDS,
-  AI_ACTIONS,
-  AI_CHAT_TIERS,
   AI_DEFAULT_SETTINGS,
+  AI_DEEP_MODEL,
+  AI_EFFORT,
+  AI_JOB_IDS,
+  AI_JOBS,
+  AI_LEVEL_NAMES,
+  AI_STANDARD_MODEL,
   AI_DOMAIN_IDS,
   AI_MODEL_IDS,
   AI_MODELS,
-  AI_MTC_REREAD_MODEL,
   AI_PRICES,
   AI_ROUTER_FALLBACK,
-  AI_ROUTER_MODEL,
   AI_UNKNOWN_MODEL_PRICE,
-  aiChatModels,
-  aiCheapestChatModel,
   aiCostUsd,
-  isAiAction,
-  isAiChatMode,
   isAiDomain,
   isAiEffort,
   isAiModel,
@@ -24,12 +21,8 @@ import {
   describeAiPeriod,
   isAiDay,
   isTopLevel,
-  resolveAiAction,
   stickyLevel,
   resolveAiPeriod,
-  type AiAction,
-  type AiActionSetting,
-  type AiSettings,
 } from './ai'
 
 const none = { inputTokens: 0, outputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 }
@@ -107,69 +100,42 @@ describe('§20 — what the owner can give a person', () => {
   })
 })
 
-describe('§20 Models: the model and effort of each thing the assistant does', () => {
-  const settings = (over: Partial<Record<AiAction, AiActionSetting>> = {}, chatMode: AiSettings['chatMode'] = 'auto') => ({
-    chatMode,
-    actions: { ...AI_DEFAULT_SETTINGS.actions, ...over },
-  })
-
-  it('names every action once, each with a recommended model and effort', () => {
-    expect(AI_ACTIONS.map((a) => a.id)).toEqual([...AI_ACTION_IDS])
-    for (const a of AI_ACTIONS) {
-      expect(isAiModel(a.recommended.model), a.id).toBe(true)
-      expect(isAiEffort(a.recommended.effort), a.id).toBe(true)
+describe('§20 the model and effort of each job, fixed', () => {
+  it('runs every job on Sonnet at high, and deep questions and a doubtful certificate’s second reading on Opus at high', () => {
+    expect(AI_STANDARD_MODEL).toBe('claude-sonnet-5-5')
+    expect(AI_DEEP_MODEL).toBe('claude-opus-5-5')
+    expect(AI_EFFORT).toBe('high')
+    expect(Object.keys(AI_JOBS).sort()).toEqual([...AI_JOB_IDS].sort())
+    for (const job of AI_JOB_IDS) {
+      expect(isAiModel(AI_JOBS[job].model), job).toBe(true)
+      expect(AI_JOBS[job].effort, job).toBe('high')
+      expect(AI_JOBS[job].model, job).toBe(job === 'chat-deep' || job === 'mtc-reread' ? AI_DEEP_MODEL : AI_STANDARD_MODEL)
     }
-    expect(AI_CHAT_TIERS.every((t) => isAiAction(t) && isAiChatMode(t))).toBe(true)
-    expect(isAiChatMode('auto')).toBe(true)
-    expect(isAiChatMode('chat-files')).toBe(false)
-    expect(isAiAction('translate')).toBe(false)
-    expect(AI_ACTIONS.map((a) => a.id)).toContain(AI_ROUTER_FALLBACK)
-  })
-
-  it('runs Auto on the recommended model and effort, and a choice as chosen, field by field', () => {
-    expect(resolveAiAction(AI_DEFAULT_SETTINGS, 'chat-simple')).toEqual({ model: 'claude-haiku-5-5', effort: 'low' })
-    expect(resolveAiAction(AI_DEFAULT_SETTINGS, 'chat-deep')).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
-    expect(resolveAiAction(AI_DEFAULT_SETTINGS, 'mtc')).toEqual({ model: 'claude-sonnet-5-5', effort: 'high' })
-    expect(resolveAiAction(settings({ mtc: { model: 'claude-opus-5-5', effort: 'auto' } }), 'mtc')).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
-    expect(resolveAiAction(settings({ mtc: { model: 'auto', effort: 'low' } }), 'mtc')).toEqual({ model: 'claude-sonnet-5-5', effort: 'low' })
-    // Settings saved before an action existed: that action runs as recommended.
-    const older = { actions: { ...AI_DEFAULT_SETTINGS.actions } } as { actions: Partial<AiSettings['actions']> }
-    delete older.actions['report-summary']
-    expect(resolveAiAction(older as Pick<AiSettings, 'actions'>, 'report-summary')).toEqual({ model: 'claude-haiku-5-5', effort: 'low' })
-  })
-
-  it('knows the models a chat question may run on, and the cheapest of them, by the chat mode', () => {
-    expect(aiChatModels(AI_DEFAULT_SETTINGS).sort()).toEqual(['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5'])
-    expect(aiCheapestChatModel(AI_DEFAULT_SETTINGS)).toBe('claude-haiku-5-5')
-    // A level fixed for every question: that level's model, and the files' (a question with files has its own).
-    expect(aiChatModels(settings({}, 'chat-deep')).sort()).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5'])
-    expect(aiCheapestChatModel(settings({}, 'chat-deep'))).toBe('claude-sonnet-5-5')
-    expect(aiCheapestChatModel(settings({ 'chat-deep': { model: 'claude-fable-5-1', effort: 'auto' }, 'chat-files': { model: 'claude-fable-5-1', effort: 'auto' } }, 'chat-deep'))).toBe(
-      'claude-fable-5-1',
-    )
-    // The other actions never count: they are not a person's questions.
-    expect(aiChatModels(settings({ mtc: { model: 'claude-fable-5-1', effort: 'auto' } }))).not.toContain('claude-fable-5-1')
-  })
-
-  it('reads an unclear certificate again on a stronger model than the recommended one', () => {
+    // Haiku answers nothing, not even the router or a title.
+    expect(Object.values(AI_JOBS).map((j) => j.model)).not.toContain('claude-haiku-5-5')
+    // A doubtful certificate is read again on a stronger model than the first reading.
     const order = AI_MODELS.map((m) => m.id)
-    expect(order.indexOf(AI_MTC_REREAD_MODEL)).toBeGreaterThan(order.indexOf(resolveAiAction(AI_DEFAULT_SETTINGS, 'mtc').model))
-    expect(AI_ROUTER_MODEL).toBe('claude-haiku-5-5')
-    expect(AI_DEFAULT_SETTINGS).toMatchObject({ chatMode: 'auto', mtcReread: true })
+    expect(order.indexOf(AI_JOBS['mtc-reread'].model)).toBeGreaterThan(order.indexOf(AI_JOBS.mtc.model))
+    expect(AI_ROUTER_FALLBACK).toBe('chat-standard')
+    expect(AI_DEFAULT_SETTINGS).toEqual({ enabled: true, monthlyCapUsd: 50 })
+  })
+
+  it('names every level a turn may carry, the past ones too', () => {
+    expect(Object.keys(AI_LEVEL_NAMES).sort()).toEqual(['chat-analysis', 'chat-deep', 'chat-files', 'chat-simple', 'chat-standard'])
   })
 })
 
 describe('§20 a conversation’s level only goes up', () => {
-  it('keeps the level when a question asks less, and raises it when one asks more', () => {
-    expect(stickyLevel(null, 'chat-simple')).toBe('chat-simple')
-    expect(stickyLevel('chat-deep', 'chat-simple')).toBe('chat-deep')
-    expect(stickyLevel('chat-analysis', 'chat-deep')).toBe('chat-deep')
-    expect(stickyLevel('chat-simple', 'chat-analysis')).toBe('chat-analysis')
-    // A question with files is an analysis's equal: neither moves the other.
-    expect(stickyLevel('chat-analysis', 'chat-files')).toBe('chat-analysis')
-    expect(stickyLevel('chat-files', 'chat-analysis')).toBe('chat-files')
-    expect(stickyLevel('chat-simple', 'chat-files')).toBe('chat-files')
+  it('keeps a deep conversation deep, and otherwise gives the question the level it wants', () => {
+    expect(stickyLevel(null, 'chat-standard')).toBe('chat-standard')
+    expect(stickyLevel(null, 'chat-deep')).toBe('chat-deep')
+    expect(stickyLevel('chat-deep', 'chat-standard')).toBe('chat-deep')
+    expect(stickyLevel('chat-standard', 'chat-deep')).toBe('chat-deep')
+    // A conversation begun at a past level goes on as any other below Opus.
+    expect(stickyLevel('chat-simple', 'chat-standard')).toBe('chat-standard')
+    expect(stickyLevel('chat-files', 'chat-deep')).toBe('chat-deep')
     expect(isTopLevel('chat-deep')).toBe(true)
+    expect(isTopLevel('chat-standard')).toBe(false)
     expect(isTopLevel('chat-analysis')).toBe(false)
     expect(isTopLevel(null)).toBe(false)
   })

@@ -205,7 +205,7 @@ describe('§20 asking a question', () => {
       fallbacks: 'default',
       // Tests run with "error": an edited history must fail loudly.
       thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'error' } },
-      output_config: { effort: 'medium' },
+      output_config: { effort: 'high' },
       cache_control: { type: 'ephemeral' },
     })
     for (const absent of ['tool_choice', 'temperature', 'top_p', 'top_k']) expect(p).not.toHaveProperty(absent)
@@ -761,8 +761,8 @@ describe('§20 how answers end', () => {
       `SELECT system_prompt AS "systemPrompt", tools FROM ai_conversations ORDER BY created_at DESC LIMIT 1`,
     )).rows[0]
     expect(before.spentUsd + minCallWorstCaseUsd(AI_MODEL, { conversation: prompt, messages: [] })).toBeGreaterThan(cap)
-    // Every question an analysis, on AI_MODEL (Sonnet 5.5): the status is judged on it.
-    await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: cap, chatMode: 'chat-analysis' } })
+    // Every question starts on AI_MODEL (Sonnet 5.5): the status is judged on it.
+    await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: cap } })
     try {
       expect((await app.api<AiStatusResponse>('GET', '/api/ai/status', { token: admin.token })).body).toMatchObject({ available: true, capUsd: cap })
       const turns = async () => (await app.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_turns`)).rows[0].n
@@ -788,7 +788,7 @@ describe('§20 how answers end', () => {
       expect(refused.res.status).toBe(402)
       expect((refused.res.body as ApiErrorBody).error.message).toMatch(/^The assistant's monthly limit is reached\./)
     } finally {
-      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50, chatMode: 'auto' } })
+      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50 } })
     }
   })
 

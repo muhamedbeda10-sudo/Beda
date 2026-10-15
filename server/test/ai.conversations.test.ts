@@ -318,7 +318,7 @@ describe('a title by the assistant', () => {
   }
   const sourceOf = async (id: string) => (await app.db.query<{ title_source: string; title: string }>(`SELECT title, title_source FROM ai_conversations WHERE id = $1`, [id])).rows[0]
 
-  it('names a new conversation in a few words, before its answer closes, at the cheapest model’s cost', async () => {
+  it('names a new conversation in a few words, before its answer closes, on Sonnet, billed with the question', async () => {
     app.model.completeWith = () => '"Scrap by machine, last week."'
     const events = await askNew('  what was the scrap   on each machine last week? I need it for the morning meeting ')
     const start = events.find((e): e is Extract<AiStreamEvent, { type: 'start' }> => e.type === 'start')!
@@ -328,16 +328,18 @@ describe('a title by the assistant', () => {
     expect(events[titled]).toMatchObject({ type: 'title', conversation: { id: start.conversation.id, title: 'Scrap by machine, last week' } })
     expect(await sourceOf(start.conversation.id)).toEqual({ title: 'Scrap by machine, last week', title_source: 'assistant' })
 
-    // The router's call (Auto) is not the title's.
+    // The router's call is not the title's.
     const titles = () => app.model.completions.filter((c) => c.params.system !== ROUTER_SYSTEM)
     const call = titles().at(-1)!
-    expect(call.params).toMatchObject({ model: 'claude-haiku-5-5', max_tokens: 60, messages: [{ role: 'user', content: 'what was the scrap on each machine last week? I need it for the morning meeting' }] })
+    expect(call.params).toMatchObject({ model: 'claude-sonnet-5-5', max_tokens: 60, messages: [{ role: 'user', content: 'what was the scrap on each machine last week? I need it for the morning meeting' }] })
     expect(String(call.params.system)).toMatch(/language and the script of the question/)
     const { rows } = await app.db.query<{ model: string; turn: boolean; cost: number }>(
       `SELECT model, turn_id IS NOT NULL AS turn, cost_usd::float AS cost FROM ai_usage WHERE conversation_id = $1 ORDER BY created_at`,
       [start.conversation.id],
     )
-    expect(rows.find((r) => r.model === 'claude-haiku-5-5')).toMatchObject({ turn: true })
+    // Every call of the question — the router's, the answer's, the title's — is the turn's.
+    expect(rows.length).toBeGreaterThanOrEqual(3)
+    expect(rows.every((r) => r.model === 'claude-sonnet-5-5' && r.turn)).toBe(true)
     // The turn's cost has the title's in it.
     const turn = await app.db.query<{ cost: number }>(`SELECT cost_usd::float AS cost FROM ai_turns WHERE conversation_id = $1`, [start.conversation.id])
     expect(turn.rows[0].cost).toBeCloseTo(rows.reduce((s, r) => s + r.cost, 0), 6)

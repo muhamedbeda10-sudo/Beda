@@ -216,7 +216,7 @@ describe('§20 report templates: what the model is asked, and what is taken from
     const params = templateRequest({ question: 'Changes in the last 30 days?', askedOn: '2026-10-09', sections }, { model: AI_MODEL, effort: 'low' })
     expect(params).toMatchObject({
       model: AI_MODEL,
-      max_tokens: 8000,
+      max_tokens: 16_000,
       thinking: { type: 'adaptive' },
       output_config: { effort: 'low', format: { type: 'json_schema', schema: TEMPLATE_SCHEMA } },
     })

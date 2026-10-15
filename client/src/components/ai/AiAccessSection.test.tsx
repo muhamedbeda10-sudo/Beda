@@ -23,8 +23,8 @@ const row = (over: Partial<AiAccess>): AiAccess => ({
   ...over,
 })
 
-/** The table as text, cell by cell; `chatModel` the cheapest model a question runs on (Models). */
-const text = (people: AiAccess[], chatModel: AiModelId = 'claude-haiku-5-5') =>
+/** The table as text, cell by cell; `chatModel` the model every question starts on. */
+const text = (people: AiAccess[], chatModel: AiModelId = 'claude-sonnet-5-5') =>
   renderToStaticMarkup(<AccessTable people={sortAccess(people)} chatModel={chatModel} onEdit={() => {}} onRemove={() => {}} />)
     .replace(/<(td|th)[^>]*>/g, ' | ')
     .replace(/<[^>]+>/g, ' ')
@@ -34,7 +34,7 @@ const text = (people: AiAccess[], chatModel: AiModelId = 'claude-haiku-5-5') =>
     .trim()
 
 describe('who can use it, as the owner reads it', () => {
-  it('shows each person’s role, switch, data and month against their cap; no model: that is by what is asked (Models)', () => {
+  it('shows each person’s role, switch, data and month against their cap; no model: that is by what is asked', () => {
     const t = text([
       row({ userId: 'b', name: 'Basem Fathy', username: 'basem', role: 'supervisor', domains: ['audit', 'orders'], monthlyCapUsd: 5, spentUsd: 0.004 }),
       row({ userId: 'o', name: 'Mohamed Beda', username: 'beda', role: 'admin', managesNotices: true, owner: true, domains: ['inspection', 'orders', 'materials', 'audit'], monthlyCapUsd: 50, spentUsd: 12.5 }),
@@ -56,7 +56,7 @@ describe('who can use it, as the owner reads it', () => {
     expect(t).toMatch(/Mona Adel Account off mona \| inspector \| Off \| No \| No \| No \| No \| None: cannot ask \|/)
   })
 
-  it('says why someone whose cap is under one question on the cheapest model set under Models can never ask', () => {
+  it('says why someone whose cap is under one question on the model every question starts on can never ask', () => {
     const t = text([row({ monthlyCapUsd: 1, spentUsd: 0 }), row({ userId: 'b', name: 'Basem', monthlyCapUsd: 2.4 })], 'claude-fable-5-1')
     expect(t).toMatch(/Mona Adel mona .* \| \$0\.00 of \$1 Under the \$2\.40 one question may cost: cannot ask \|/)
     expect(t).toMatch(/Basem mona .* \| \$1\.25 of \$2\.40 \|/)
@@ -64,7 +64,7 @@ describe('who can use it, as the owner reads it', () => {
   })
 
   it('offers a change and a removal per person', () => {
-    const html = renderToStaticMarkup(<AccessTable people={[row({})]} chatModel="claude-haiku-5-5" onEdit={() => {}} onRemove={() => {}} />)
+    const html = renderToStaticMarkup(<AccessTable people={[row({})]} chatModel="claude-sonnet-5-5" onEdit={() => {}} onRemove={() => {}} />)
     expect(html).toContain('aria-label="Change Mona Adel&#x27;s access"')
     expect(html).toContain('aria-label="Take the assistant from Mona Adel"')
     // The scroller is positioned: its screen-reader-only header stays inside it, never widening a phone's page.
