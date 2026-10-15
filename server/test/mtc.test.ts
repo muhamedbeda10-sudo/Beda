@@ -431,18 +431,39 @@ describe('the registers’ tables', () => {
     expect((await app.api('GET', '/api/mtc/pipes/table', { token: viewer.token })).status).toBe(404)
   })
 
-  it('search the text fields, filter exactly, and sort the newest first', async () => {
+  it('search the text fields, and filter and sort each column as History does, over the whole register', async () => {
+    const cf = (f: object) => `cf=${encodeURIComponent(JSON.stringify(f))}`
     expect((await table('coils', '?search=23-01')).rows.map((c) => c.values.coilNumber)).toEqual(['B-200'])
     expect((await table('coils', '?search=gd%2Bz')).rows.map((c) => c.values.coilNumber)).toEqual(['A-100'])
     expect((await table('coils', '?search=%25')).total).toBe(0)
-    expect((await table('coils', '?supplier=EZZ')).rows.map((c) => c.values.coilNumber)).toEqual(['C-300', 'D-400'])
-    expect((await table('coils', '?filter=GI')).rows.map((c) => c.values.coilNumber)).toEqual(['A-100'])
-    expect((await table('coils', '?sort=newest')).rows.map((c) => c.values.coilNumber)).toEqual(['D-400', 'C-300', 'A-100', 'B-200'])
-    expect((await table('welding-wire', '?filter=solid')).rows.map((w) => w.values.batchNumber)).toEqual(['31001'])
-    expect((await table('mesh-wire', '?filter=Bright')).rows.map((w) => w.values.castNumber)).toEqual(['701688'])
+    expect((await table('coils', `?${cf({ supplier: { values: ['Ezz', 'ezz'] } })}`)).rows.map((c) => c.values.coilNumber)).toEqual(['C-300', 'D-400'])
+    expect((await table('coils', `?${cf({ smType: { values: ['GI'] } })}`)).rows.map((c) => c.values.coilNumber)).toEqual(['A-100'])
+    expect((await table('coils', `?${cf({ notes: { contains: 'xq1' } })}`)).rows.map((c) => c.values.coilNumber)).toEqual(['B-200'])
+    // The newest first: sorted by when each was registered.
+    expect((await table('coils', '?sort=createdAt:desc')).rows.map((c) => c.values.coilNumber)).toEqual(['D-400', 'C-300', 'A-100', 'B-200'])
+    expect((await table('welding-wire', `?${cf({ wireType: { values: ['Solid'] } })}`)).rows.map((w) => w.values.batchNumber)).toEqual(['31001'])
+    // A measurement filters by its text as the table shows it, and sorts by its value.
+    expect((await table('mesh-wire', `?${cf({ diameter: { values: ['4.8'] } })}`)).rows.map((w) => w.values.castNumber)).toEqual(['62920'])
+    expect((await table('mesh-wire', '?sort=diameter:desc')).rows.map((w) => w.values.diameter)).toEqual([4.8, 3.9, 3])
+    expect((await app.api('GET', '/api/mtc/coils/table?sort=password:asc', { token: inspector.token })).status).toBe(400)
   })
 
-  it('offer the registered suppliers and filter values, once each whatever their case', async () => {
+  it('list a column’s values for its menu, under the other filters', async () => {
+    const values = (kind: string, q: string) => app.api<{ values: { value: string; count: number }[] }>('GET', `/api/mtc/${kind}/values${q}`, { token: viewer.token })
+    const suppliers = await values('coils', '?column=supplier')
+    expect(suppliers.status).toBe(200)
+    expect(suppliers.body.values).toEqual([
+      { value: 'ArcelorMittal', count: 1 },
+      { value: 'Baosteel', count: 1 },
+      { value: 'Ezz', count: 1 },
+      { value: 'ezz', count: 1 },
+    ])
+    const gi = await values('coils', `?column=supplier&cf=${encodeURIComponent(JSON.stringify({ smType: { values: ['GI'] } }))}`)
+    expect(gi.body.values).toEqual([{ value: 'ArcelorMittal', count: 1 }])
+    expect((await values('mesh-wire', '?column=diameter')).body.values.map((v) => v.value)).toEqual(['3', '3.9', '4.8'])
+  })
+
+  it('offer the registered suppliers and filter values for the review, once each whatever their case', async () => {
     const coils = (await app.api<MtcTableOptionsResponse>('GET', '/api/mtc/coils/options', { token: viewer.token })).body
     expect(coils.suppliers.map((s) => s.toLowerCase())).toEqual(['arcelormittal', 'baosteel', 'ezz'])
     expect(coils.filterValues.map((s) => s.toUpperCase())).toEqual(['GI', 'HR'])

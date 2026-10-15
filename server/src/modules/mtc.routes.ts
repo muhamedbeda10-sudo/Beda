@@ -37,7 +37,7 @@ import {
   MTC_MAX_ROWS,
   MTC_TABLE_PAGE,
   MTC_TABLE_PAGE_MAX,
-  MTC_TABLE_SORTS,
+  MTC_ADDED_COLUMN,
   isMtcKind,
   mtcChangedFields,
   mtcDuplicateKeys,
@@ -75,6 +75,7 @@ import type { ModelMessage } from '../ai/model'
 import { SseStream } from '../ai/sse'
 import { MTC_MAX_TOKENS, MTC_PROMPT_TOKENS, MtcReadError, mtcMessages, mtcRequest, readMtcReply } from '../mtc/reader'
 import { REGISTER_TABLES, col, rowSql, valuesSql, type RegisterTable } from '../mtc/registers'
+import { columnFilterClauses, columnOrderBy, columnQuerySchema, columnValues, type SqlColumns } from '../lib/columnFilters'
 
 /** Certificates one person may have read in an hour: far more than a delivery brings, few enough that a stuck client cannot run up the bill. */
 const READS_PER_HOUR = 30
@@ -291,46 +292,66 @@ export function mtcRoutes(ctx: AppContext): Router {
     }
   })
 
-  /** A register as a table, for everyone: words found anywhere in its text fields; the supplier and the filter field exactly. */
+  /**
+   * A register's columns for Excel's filter and sort: each field's text as the
+   * table shows it (a measurement without trailing zeros), sorted by its value;
+   * and when it was registered, as a factory day.
+   */
+  const sqlColumns = (t: RegisterTable): SqlColumns => {
+    const out: SqlColumns = {}
+    for (const f of t.register.fields) {
+      out[f.key] = f.type === 'number' ? { text: `trim_scale(${col(t, f.key)})::text`, sort: col(t, f.key) } : { text: col(t, f.key) }
+    }
+    out[MTC_ADDED_COLUMN] = { text: `to_char(created_at AT TIME ZONE '${ctx.config.FACTORY_TIMEZONE.replace(/'/g, "''")}', 'YYYY-MM-DD')`, sort: 'created_at' }
+    return out
+  }
+  const tableQuery = z.object({ search: z.string().trim().max(120).default('') }).merge(columnQuerySchema)
+
+  /** What the table's filters leave of a register: the words anywhere in its text fields, then each column's filter. */
+  function tableWhere(t: RegisterTable, q: z.infer<typeof tableQuery>, params: unknown[], exceptColumn?: string): string[] {
+    const p = (v: unknown) => `$${params.push(v)}`
+    const where = ['deleted_at IS NULL']
+    if (q.search) {
+      const term = p(`%${escapeLike(q.search)}%`)
+      where.push(`(${t.register.fields.filter((f) => f.type === 'text').map((f) => `${col(t, f.key)} ILIKE ${term}`).join(' OR ')})`)
+    }
+    return [...where, ...columnFilterClauses(sqlColumns(t), q.cf, p, exceptColumn)]
+  }
+
+  /** A register as a table, for everyone, a page at a time with the total, filtered and sorted as History is. */
   r.get('/:kind/table', async (req, res) => {
     const t = registerOf(String(req.params.kind))
     const q = parse(
-      z.object({
-        search: z.string().trim().max(120).default(''),
-        supplier: z.string().trim().max(200).default(''),
-        filter: z.string().trim().max(60).default(''),
-        sort: z.enum(MTC_TABLE_SORTS).default('key'),
+      tableQuery.extend({
         offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
         limit: z.coerce.number().int().min(1).max(MTC_TABLE_PAGE_MAX).default(MTC_TABLE_PAGE),
       }),
       req.query,
     )
-    const where = ['deleted_at IS NULL']
     const params: unknown[] = []
-    const p = (v: unknown) => {
-      params.push(v)
-      return `$${params.length}`
-    }
-    if (q.search) {
-      const term = p(`%${escapeLike(q.search)}%`)
-      const texts = t.register.fields.filter((f) => f.type === 'text').map((f) => `${col(t, f.key)} ILIKE ${term}`)
-      where.push(`(${texts.join(' OR ')})`)
-    }
-    if (q.supplier) where.push(`lower(${col(t, 'supplier')}) = lower(${p(q.supplier)})`)
-    if (q.filter) where.push(`lower(${col(t, t.register.filter)}) = lower(${p(q.filter)})`)
+    const where = tableWhere(t, q, params).join(' AND ')
     const keyOrder = t.register.fields
       .filter((f) => f.identifies)
       .map((f) => (f.type === 'text' ? `lower(${col(t, f.key)})` : col(t, f.key)))
       .join(', ')
-    const order = q.sort === 'newest' ? `created_at DESC, ${keyOrder}` : keyOrder
-    const filter = where.join(' AND ')
-    const total = await ctx.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${filter}`, params)
-    const { rows } = await ctx.db.query<{ id: string; values: MtcValues }>(
-      `SELECT id, ${valuesSql(t)} AS "values" FROM ${t.table} WHERE ${filter} ORDER BY ${order} LIMIT ${p(q.limit)} OFFSET ${p(q.offset)}`,
-      params,
+    const order = columnOrderBy(sqlColumns(t), q.sort, keyOrder)
+    const total = await ctx.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${where}`, params)
+    const { rows } = await ctx.db.query<{ id: string; values: MtcValues; createdAt: string }>(
+      `SELECT id, ${valuesSql(t)} AS "values", created_at AS "createdAt" FROM ${t.table} WHERE ${where}
+        ORDER BY ${order} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, q.limit, q.offset],
     )
     const body: MtcTableResponse = { rows, total: total.rows[0].n }
     res.json(body)
+  })
+
+  /** One column's values under the table's other filters, for its menu. */
+  r.get('/:kind/values', async (req, res) => {
+    const t = registerOf(String(req.params.kind))
+    const q = parse(tableQuery.extend({ column: z.string().max(60), columnSearch: z.string().max(200).optional() }), req.query)
+    const params: unknown[] = []
+    const where = tableWhere(t, { ...q, cf: {} }, params)
+    res.json(await columnValues(ctx.db, { columns: sqlColumns(t), column: q.column, from: `FROM ${t.table}`, where, params, filters: q.cf, search: q.columnSearch }))
   })
 
   /** The table's filter choices: the suppliers and the filter field's values registered, once each whatever their case. */

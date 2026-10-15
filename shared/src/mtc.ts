@@ -148,6 +148,8 @@ export interface MtcRegisterRow {
   id: string
   values: MtcValues
   deletedAt?: string | null
+  /** When it was registered (the table's Added column). */
+  createdAt?: string
 }
 
 /** An item as read from the certificate. */
@@ -203,18 +205,21 @@ export interface MtcSaveResponse {
 
 // ---- A register's table -----------------------------------------------------------------
 
-export const MTC_TABLE_SORTS = ['key', 'newest'] as const
-export type MtcTableSort = (typeof MTC_TABLE_SORTS)[number]
 export const MTC_TABLE_PAGE = 100
 export const MTC_TABLE_PAGE_MAX = 200
+/** The table's own column beside the register's fields: when the item was registered (sort by it for the newest first). */
+export const MTC_ADDED_COLUMN = 'createdAt'
 
-/** GET /api/mtc/:kind/table */
+/**
+ * GET /api/mtc/:kind/table — the same filters as History: words anywhere,
+ * then Excel's filter and sort on each column (`cf`: the column filters as
+ * JSON; `sort`: "column:asc|desc"), answered over the whole register.
+ * GET /api/mtc/:kind/values takes the same, with `column`.
+ */
 export interface MtcTableQuery {
   search?: string
-  supplier?: string
-  /** A value of the register's filter field (SM type, wire type, product). */
-  filter?: string
-  sort?: MtcTableSort
+  cf?: string
+  sort?: string
   offset?: number
   limit?: number
 }

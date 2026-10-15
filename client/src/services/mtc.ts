@@ -6,8 +6,8 @@
 // ============================================================================
 
 import { keepPreviousData, useInfiniteQuery, useQuery, type QueryClient } from '@tanstack/react-query'
+import type { ColumnValuesResponse } from '@qc/shared/api'
 import {
-  MTC_TABLE_PAGE,
   type MtcExistingResponse,
   type MtcExtractResult,
   type MtcKind,
@@ -31,10 +31,10 @@ export const mtcKeys = {
 }
 
 /** A register, a page at a time: the next page is fetched when asked for. */
-export function useMtcTable(kind: MtcKind, q: Omit<MtcTableQuery, 'offset' | 'limit'>) {
+export function useMtcTable(kind: MtcKind, q: Omit<MtcTableQuery, 'offset' | 'limit'>, pageSize: number) {
   return useInfiniteQuery({
-    queryKey: mtcKeys.table(kind, q),
-    queryFn: ({ pageParam }) => api<MtcTableResponse>(`/mtc/${kind}/table${qs({ ...q, offset: pageParam, limit: MTC_TABLE_PAGE })}`),
+    queryKey: [...mtcKeys.table(kind, q), pageSize],
+    queryFn: ({ pageParam }) => api<MtcTableResponse>(`/mtc/${kind}/table${qs({ ...q, offset: pageParam, limit: pageSize })}`),
     initialPageParam: 0,
     getNextPageParam: (last, pages) => {
       const loaded = pages.reduce((n, p) => n + p.rows.length, 0)
@@ -44,6 +44,11 @@ export function useMtcTable(kind: MtcKind, q: Omit<MtcTableQuery, 'offset' | 'li
   })
 }
 
+/** One column's values under the table's other filters, for its header menu. */
+export function loadMtcValues(kind: MtcKind, q: Omit<MtcTableQuery, 'offset' | 'limit'>, column: string, search: string): Promise<ColumnValuesResponse> {
+  return api<ColumnValuesResponse>(`/mtc/${kind}/values${qs({ ...q, column, columnSearch: search || undefined })}`)
+}
+
 export function useMtcOptions(kind: MtcKind) {
   return useQuery({ queryKey: mtcKeys.options(kind), queryFn: () => api<MtcTableOptionsResponse>(`/mtc/${kind}/options`), staleTime: 60_000 })
 }
@@ -51,8 +56,8 @@ export function useMtcOptions(kind: MtcKind) {
 /** The welding wire batches matching what is typed: the PT step's suggestions (any batch may still be typed). */
 export function useWeldingWireSuggestions(search: string, enabled: boolean) {
   return useQuery({
-    queryKey: [...mtcKeys.table('welding-wire', { search, sort: 'newest' }), 'suggest'],
-    queryFn: () => api<MtcTableResponse>(`/mtc/welding-wire/table${qs({ search, sort: 'newest', limit: 20 })}`),
+    queryKey: [...mtcKeys.table('welding-wire', { search, sort: 'createdAt:desc' }), 'suggest'],
+    queryFn: () => api<MtcTableResponse>(`/mtc/welding-wire/table${qs({ search, sort: 'createdAt:desc', limit: 20 })}`),
     enabled,
     staleTime: 60_000,
     placeholderData: keepPreviousData,

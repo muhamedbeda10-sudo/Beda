@@ -8,18 +8,18 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Cable, FileUp, Grid3x3, Loader2, Package2, X } from 'lucide-react'
-import { MTC_KINDS, MTC_MAX_PDF_BYTES, MTC_REGISTERS, MTC_TABLE_SORTS, isMtcKind, type MtcExtractResult, type MtcKind, type MtcRegister, type MtcTableSort } from '@qc/shared/mtc'
+import { MTC_ADDED_COLUMN, MTC_KINDS, MTC_MAX_PDF_BYTES, MTC_REGISTERS, MTC_TABLE_PAGE, isMtcKind, type MtcExtractResult, type MtcKind, type MtcRegister, type MtcRegisterRow } from '@qc/shared/mtc'
 import { Button, Card, EmptyState } from '@/components/ui'
-import { FilterBar, FilterSelect, HeaderStat, Segmented, type FilterChip } from '@/components/ui/PageShell'
-import { ScrollX } from '@/components/ui/ScrollX'
+import { FilterBar, Segmented } from '@/components/ui/PageShell'
+import { ColumnPicker, GridFrame, GridHead, SkeletonRows, TableFooter, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
+import { useServerColumns } from '@/components/ui/ColumnFilter'
 import { MtcReview } from '@/components/mtc/MtcReview'
-import { readCertificate, useMtcOptions, useMtcTable } from '@/services/mtc'
+import { loadMtcValues, readCertificate, useMtcOptions, useMtcTable } from '@/services/mtc'
 import { useAiMe, useDebounced } from '@/services/queries'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useApp } from '@/store/AppContext'
-import { cn } from '@/lib/utils'
+import { cn, formatDate } from '@/lib/utils'
 
-const SORT_LABEL = (register: MtcRegister): Record<MtcTableSort, string> => ({ key: `By ${register.fields[0].label.toLowerCase()}`, newest: 'Newest first' })
 const KIND_ICON = { coils: Package2, 'welding-wire': Cable, 'mesh-wire': Grid3x3 } as const
 
 export function MtcPage() {
@@ -91,7 +91,6 @@ export function MtcPage() {
       key={kind}
       register={MTC_REGISTERS[kind]}
       onKind={setKind}
-      options={options}
       canUpload={canUpload}
       actions={
         canUpload ? (
@@ -133,43 +132,90 @@ export function MtcPage() {
   )
 }
 
-/** One register's table, its search and filters remembered per register on this device. */
+/** A register's columns for the grid: its fields at widths that suit them, then when each was registered (off until ticked). */
+function columnsOf(register: MtcRegister): ColumnDef[] {
+  const cols: ColumnDef[] = register.fields.map((f) => ({
+    key: f.key,
+    label: f.unit ? `${f.label} (${f.unit})` : f.label,
+    width: f.key === 'notes' ? 220 : f.type === 'number' ? 120 : f.identifies ? 170 : f.choices ? 120 : 150,
+    min: f.type === 'number' ? 80 : 90,
+    align: f.type === 'number' ? 'right' : 'left',
+    flex: f.key === 'notes',
+    hideable: !f.identifies,
+  }))
+  cols.push({ key: MTC_ADDED_COLUMN, label: 'Added', width: 130, min: 100, defaultHidden: true })
+  return cols
+}
+
+/** One register's table, as History's: resizable columns, Excel's filter and sort in each header, the page's footer. */
 function RegisterTable({
   register,
   onKind,
-  options,
   actions,
   reading,
   canUpload,
 }: {
   register: MtcRegister
   onKind: (k: MtcKind) => void
-  options?: { suppliers: string[]; filterValues: string[] }
   actions?: ReactNode
   reading?: ReactNode
   canUpload: boolean
 }) {
   const kind = register.kind
   const [term, setTerm] = usePersistedState(`qc-mtc:${kind}:term`, '')
-  const [supplier, setSupplier] = usePersistedState(`qc-mtc:${kind}:supplier`, '')
-  const [filter, setFilter] = usePersistedState(`qc-mtc:${kind}:filter`, '')
-  const [sort, setSort] = usePersistedState<MtcTableSort>(`qc-mtc:${kind}:sort`, 'key')
+  const [pageSize, setPageSize] = usePersistedState<number>('qc-mtc:page-size', MTC_TABLE_PAGE)
   const search = useDebounced(term.trim())
-  const query = useMemo(() => ({ search, supplier, filter, sort: MTC_TABLE_SORTS.includes(sort) ? sort : ('key' as const) }), [search, supplier, filter, sort])
-  const table = useMtcTable(kind, query)
+  // Excel's filter and sort on every column, answered over the whole register.
+  const columnsView = useServerColumns()
+  const query = useMemo(() => ({ search, cf: columnsView.cf, sort: columnsView.sortParam }), [search, columnsView.cf, columnsView.sortParam])
+  const table = useMtcTable(kind, query, pageSize)
   const rows = useMemo(() => table.data?.pages.flatMap((p) => p.rows) ?? [], [table.data])
-  const total = table.data?.pages[0]?.total ?? 0
-  const filterField = register.fields.find((f) => f.key === register.filter)!
-  const sortLabel = SORT_LABEL(register)
-  const filtered = !!search || !!supplier || !!filter
+  const total = table.data?.pages[0]?.total ?? null
+  const columns = useMemo(() => columnsOf(register), [register])
+  const grid = useResizableColumns(`qc-mtc:${kind}:grid`, columns)
+  const filtered = !!search || columnsView.active
   const Icon = KIND_ICON[kind]
+  const labelOf = (key: string) => columns.find((c) => c.key === key)?.label ?? key
+  const columnMenu = (c: ColumnDef) => {
+    const field = register.fields.find((f) => f.key === c.key)
+    return columnsView.menu(c.key, c.label, (s) => loadMtcValues(kind, query, c.key, s), {
+      numeric: field?.type === 'number',
+      align: c.align === 'right' ? 'right' : 'left',
+      formatValue: c.key === MTC_ADDED_COLUMN ? (v) => formatDate(v) : undefined,
+    })
+  }
 
-  const chips: FilterChip[] = []
-  if (supplier) chips.push({ key: 'supplier', label: `Supplier: ${supplier}`, onRemove: () => setSupplier('') })
-  if (filter) chips.push({ key: 'filter', label: `${filterField.label}: ${filter}`, onRemove: () => setFilter('') })
+  const cell = (c: ColumnDef, row: MtcRegisterRow) => {
+    if (c.key === MTC_ADDED_COLUMN) {
+      return (
+        <td key={c.key} className="truncate px-3 py-3 text-muted">
+          {row.createdAt ? formatDate(row.createdAt) : '—'}
+        </td>
+      )
+    }
+    const field = register.fields.find((f) => f.key === c.key)!
+    const v = row.values[c.key]
+    const shown = v === undefined || v === '' ? '' : String(v)
+    return (
+      <td
+        key={c.key}
+        data-tip={shown || undefined}
+        className={cn(
+          'truncate px-3 py-3',
+          field.type === 'number' && 'text-right tabular-nums',
+          field.mono && 'font-mono text-[13px]',
+          field.identifies && 'font-semibold',
+          field.key === 'notes' && 'text-muted',
+        )}
+      >
+        {shown || '—'}
+      </td>
+    )
+  }
 
   return (
     <div className="space-y-3">
+      {/* No title row: the tab names the page. The register switch, the search and the actions share one row, as History's. */}
       <FilterBar
         leading={
           <Segmented
@@ -182,109 +228,98 @@ function RegisterTable({
             })}
           />
         }
-        search={{ value: term, onChange: setTerm, placeholder: `Search ${register.plural}, suppliers or certificates…`, label: `Search ${register.plural}` }}
-        filters={
+        actionsInline
+        actions={
           <>
-            <FilterSelect label="Supplier" value={supplier} onChange={setSupplier}>
-              <option value="">All suppliers</option>
-              {(options?.suppliers ?? []).map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </FilterSelect>
-            <FilterSelect label={filterField.label} value={filter} onChange={setFilter}>
-              <option value="">{filterField.label}: any</option>
-              {(options?.filterValues ?? []).map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </FilterSelect>
-            <FilterSelect label="Order" value={sort} onChange={(v) => setSort(v as MtcTableSort)}>
-              {MTC_TABLE_SORTS.map((s) => (
-                <option key={s} value={s}>
-                  {sortLabel[s]}
-                </option>
-              ))}
-            </FilterSelect>
+            <span className="hidden md:inline-flex">
+              <ColumnPicker grid={grid} />
+            </span>
+            {actions}
           </>
         }
-        chips={chips}
-        canReset={filtered || sort !== 'key'}
+        search={{ value: term, onChange: setTerm, placeholder: `Search ${register.plural}, suppliers or certificates…`, label: `Search ${register.plural}` }}
+        chips={columnsView.chips(labelOf)}
+        canReset={filtered}
         onReset={() => {
           setTerm('')
-          setSupplier('')
-          setFilter('')
-          setSort('key')
+          columnsView.clear()
         }}
-        actions={actions}
       />
 
       {reading}
 
-      {table.isLoading ? (
-        <Card className="flex items-center justify-center gap-2 p-10 text-sm text-muted">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      {table.isError && !table.data ? (
+        <Card className="p-6">
+          <EmptyState icon={<Icon className="h-10 w-10" />} title="The register could not be loaded" hint="Check the connection and try again." action={<Button onClick={() => void table.refetch()}>Try again</Button>} />
         </Card>
-      ) : table.isError ? (
-        <Card className="p-6 text-sm text-rose-700 dark:text-rose-300">{table.error instanceof Error ? table.error.message : 'The register could not be loaded.'}</Card>
+      ) : table.isLoading ? (
+        <Card className="overflow-hidden">
+          <GridFrame>
+            <table className="sticky-first w-full text-sm" style={grid.tableStyle}>
+              {grid.colgroup}
+              <GridHead grid={grid} menu={columnMenu} />
+              <SkeletonRows grid={grid} />
+            </table>
+          </GridFrame>
+        </Card>
       ) : rows.length === 0 ? (
         <EmptyState
           icon={<Icon className="h-10 w-10" />}
           title={filtered ? `No ${register.plural} match` : `No ${register.plural} registered yet`}
-          hint={filtered ? 'Try another search or clear the filters.' : canUpload ? 'Upload a certificate to add them.' : undefined}
+          hint={filtered ? 'Nothing in the whole register matches these filters — clear the search or a column’s filter.' : canUpload ? 'Upload a certificate to add them.' : undefined}
         />
       ) : (
         <>
-          <ScrollX className="rounded-2xl bg-white ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800" innerClassName="rounded-2xl" label={register.label}>
-            <table className="w-full min-w-[56rem] text-sm">
-              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
-                <tr>
-                  {register.fields.map((f) => (
-                    <th key={f.key} className={cn('whitespace-nowrap px-3 py-2.5 font-bold', f.type === 'number' && 'text-right')}>
-                      {f.unit ? `${f.label} (${f.unit})` : f.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {rows.map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
-                    {register.fields.map((f, i) => {
-                      const v = r.values[f.key]
-                      if (f.key === 'notes') {
-                        return (
-                          <td key={f.key} className="max-w-[16rem] truncate px-3 py-2 text-muted" title={v === undefined ? undefined : String(v)}>
-                            {v ?? ''}
-                          </td>
-                        )
-                      }
-                      return (
-                        <td
-                          key={f.key}
-                          className={cn('whitespace-nowrap px-3 py-2', f.type === 'number' && 'text-right tabular-nums', f.mono && 'font-mono text-[13px]', i === 0 && 'font-semibold')}
-                        >
-                          {v ?? '—'}
-                        </td>
-                      )
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </ScrollX>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
-            <span>
-              <HeaderStat value={rows.length} label={`of ${total.toLocaleString()} ${total === 1 ? register.singular : register.plural} shown`} />
-            </span>
-            {table.hasNextPage && (
-              <Button className="min-h-[44px]" disabled={table.isFetchingNextPage} onClick={() => void table.fetchNextPage()}>
-                {table.isFetchingNextPage && <Loader2 className="h-4 w-4 animate-spin" />}
-                Load more
-              </Button>
-            )}
+          {/* Phone — one card per item: its identifier, then the rest of its fields. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:hidden">
+            {rows.map((row) => (
+              <Card key={row.id} className="min-w-0 p-4">
+                <p className={cn('truncate font-bold', register.fields[0].mono && 'font-mono')}>{register.fields.filter((f) => f.identifies).map((f) => row.values[f.key] ?? '—').join(' · ')}</p>
+                <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+                  {register.fields
+                    .filter((f) => !f.identifies && row.values[f.key] !== undefined)
+                    .map((f) => (
+                      <div key={f.key} className={cn('min-w-0', f.key === 'notes' && 'col-span-2')}>
+                        <dt className="text-xs font-semibold uppercase text-muted">{f.label}</dt>
+                        <dd className="truncate">
+                          {row.values[f.key]}
+                          {f.unit ? ` ${f.unit}` : ''}
+                        </dd>
+                      </div>
+                    ))}
+                </dl>
+              </Card>
+            ))}
           </div>
+
+          {/* md+ — the same rows as History's table: the columns are the person's to size, choose, filter and sort. */}
+          <Card className="hidden overflow-hidden md:block">
+            <GridFrame>
+              <table ref={grid.tableRef} className={cn('sticky-first w-full text-sm', !grid.enabled && 'min-w-[720px]')} style={grid.tableStyle}>
+                {grid.colgroup}
+                <GridHead grid={grid} menu={columnMenu} />
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {rows.map((row) => (
+                    <tr key={row.id} className="data-row bg-white transition-colors hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-[#17202f]">
+                      {grid.visible.map((c) => cell(c, row))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </GridFrame>
+          </Card>
+
+          <TableFooter
+            shown={rows.length}
+            total={total}
+            noun={total === 1 ? register.singular : register.plural}
+            hasMore={!!table.hasNextPage}
+            loadingMore={table.isFetchingNextPage}
+            onMore={() => void table.fetchNextPage()}
+            pageSize={pageSize}
+            onPageSize={setPageSize}
+            extra={table.isFetching && !table.isFetchingNextPage ? <span className="text-xs">Searching the whole register…</span> : undefined}
+          />
         </>
       )}
     </div>
