@@ -2,15 +2,21 @@
 // MTC — what Claude is asked to read from a supplier's certificate, and how
 // its reply becomes the review's rows.
 //
-//   • One call per certificate, the PDF itself as a document block: Claude
-//     reads its text and its pages as images, so a scanned or rotated
-//     certificate is read too (the review marks what it was unsure of).
+//   • One call per certificate, as the person has it: the PDF itself as a
+//     document block (Claude reads its text and its pages as images, so a
+//     scanned or rotated certificate is read too), photos of its pages as
+//     image blocks, or the mill's spreadsheet as text read on the device.
+//     The review marks what Claude was unsure of.
 //   • Claude first tells which register the certificate belongs to — steel
 //     coils, welding wire, mesh wire — then lists its items with that
 //     register's fields and nothing more, plus the certificate's number (which
 //     becomes the notes), the page of each row and the fields it was unsure of.
 //     The reply is held to a JSON schema built from the registers' own
-//     descriptions (structured outputs).
+//     descriptions (structured outputs). The schema has no nullable field: a
+//     value not read is an empty string, and a number comes as its text. The
+//     API compiles a schema with at most 16 union-typed fields, and the three
+//     registers' nullable fields came to 22 (a 400, "Schema is too complex"),
+//     which the cleaning here turns into "not read" all the same.
 //   • The rules the factory chose are in the instructions, not left to the
 //     model's taste: a coil number with a part number is joined ("213417-506"),
 //     a galvanised grade keeps its coating ("S450GD+Z275"), the SM type is HR
@@ -45,13 +51,13 @@ import type { ModelMessage, ModelParams } from '../ai/model'
 export const MTC_MAX_TOKENS = 48_000
 /** What the instructions and the schema add to the counted document, rounded up: for the cap's worst case. */
 export const MTC_PROMPT_TOKENS = 6_000
-const STRUCTURED_OUTPUTS_BETA: Anthropic.Beta.AnthropicBeta = 'structured-outputs-2025-11-13'
 
 /** The reply's list for each register. */
 const LIST: Record<MtcKind, string> = { coils: 'coils', 'welding-wire': 'weldingWires', 'mesh-wire': 'meshWires' }
 
 export const MTC_SYSTEM = [
   'You read mill test certificates (MTC; inspection certificates to EN 10204 3.1 or 3.2, analysis certificates) of materials received by a steel fabrication factory, and list every item in them for the factory’s material registers.',
+  'A certificate comes as its PDF, as photos of its pages (in order: photo 1 is page 1), or as the mill’s spreadsheet given to you as text, one sheet after another.',
   'People will check your list against the paper before it is saved, so mark every value you are not sure of rather than guessing silently.',
   '',
   'First decide what the document certifies (documentKind):',
@@ -64,9 +70,10 @@ export const MTC_SYSTEM = [
   'For every list:',
   '- Read every page. A file may hold one certificate or many (often one per page); list the items of all of them.',
   '- One entry per item. Skip totals, sums, blank rows, repeated headers, and the specification’s required values (minimums, maximums): only the results of the items.',
-  '- certificateNumber: the number of the certificate the item is listed in, as printed ("Certificate No.", "Certificato", "A03"); when pages carry different numbers, each item takes its own page’s; null when the document shows none.',
-  '- page: the page of the PDF its row is on, counting from 1.',
-  '- uncertain: the fields you could not read with full confidence (blurred, rotated or small print, a stamp over it, a column you had to guess) or that you converted. A value you cannot read at all is null, and marked uncertain.',
+  '- certificateNumber: the number of the certificate the item is listed in, as printed ("Certificate No.", "Certificato", "A03"); when pages carry different numbers, each item takes its own page’s; empty ("") when the document shows none.',
+  '- page: the page of the PDF, or the photo, its row is on, counting from 1; 1 for a spreadsheet.',
+  '- uncertain: the fields you could not read with full confidence (blurred, rotated or small print, a stamp over it, a column you had to guess) or that you converted. A value you cannot read at all is left empty (""), and marked uncertain.',
+  '- Every field is text. A number is written as plain digits with a decimal point and no unit ("3.5", "1285"); empty ("") when it is not there.',
   '- supplier: the company that made the material, by its short name in Latin letters, never the customer, consignee, purchaser or a trader. For steel mills use exactly one of ' +
     MTC_SUPPLIERS.map((s) => `"${s}"`).join(', ') +
     ' when it is one of them (Baosteel includes Shanghai Meishan Iron & Steel; Ezz includes Al Ezz Dekheila Steel and Ezz Steel; Tosyali includes Tosyali Toyo Çelik). Any other maker: its shortest recognisable name ("POSCO", "Shiqiao" for Shijiazhuang Shiqiao Electric Welding Material, "TSG" for Trafilerie di San Giovanni).',
@@ -76,14 +83,14 @@ export const MTC_SYSTEM = [
   'coils — for each steel coil:',
   '- coilNumber: the coil (or coil/pack) number exactly as printed, with its dashes, letters and leading zeros. Never the heat or cast number, the row’s serial number, or the certificate number. When the certificate identifies each coil by a coil number plus a separate part or sub-coil number (ArcelorMittal’s COILNO 213417 with PART 506, say), join them with a hyphen: "213417-506".',
   '- grade: the steel grade, upper case, without spaces ("S420 MC" is "S420MC"), without the standard’s number. For metallic-coated (galvanised) steel, the grade with its coating designation and coating mass but without surface finish or treatment suffixes: "S450GD+Z275-M-A-CO" is "S450GD+Z275". When the grade reads "S550GD+Z" and the coating mass (275 g/m², say) is given in a column or field of its own, add it: "S550GD+Z275".',
-  `- smType: "${MTC_SM_TYPES[1]}" for galvanised, zinc-coated or hot-dip coated coils (+Z, +ZF, +AZ, DX51D…, S…GD grades); "${MTC_SM_TYPES[0]}" for hot-rolled black coils, pickled and oiled included. Null for anything else (cold-rolled uncoated, say), marked uncertain.`,
+  `- smType: "${MTC_SM_TYPES[1]}" for galvanised, zinc-coated or hot-dip coated coils (+Z, +ZF, +AZ, DX51D…, S…GD grades); "${MTC_SM_TYPES[0]}" for hot-rolled black coils, pickled and oiled included. Empty for anything else (cold-rolled uncoated, say), marked uncertain.`,
   '- thickness and width: the nominal dimensions of that coil. When the table has no such columns but the page’s header gives them for all its coils, use the header’s.',
   '- yield: the yield strength (ReH, ReL, Rp0.2, Re, YS, YP). When a coil has several yield results (head and tail, several tests), give the lowest. Never the tensile strength (Rm, TS).',
   '',
   'weldingWires — for each batch of welding wire:',
   '- batchNumber: the batch (lot) number exactly as printed. When one field holds both an invoice number and the batch number ("INVOICE NO. / BATCH NO.: SQY210520-11 22285"), the batch is its own number ("22285").',
-  '- classification: the wire’s classification without the standard’s name, upper case, without spaces: "AWS A5.20 E71T-1C" is "E71T-1C"; "ER70S-6"; for a trade name with no classification, null and uncertain.',
-  '- wireType: "Flux-cored" for flux-cored (tubular, 药芯) wire, "Solid" for solid wire; null for anything else, marked uncertain.',
+  '- classification: the wire’s classification without the standard’s name, upper case, without spaces: "AWS A5.20 E71T-1C" is "E71T-1C"; "ER70S-6"; for a trade name with no classification, empty and uncertain.',
+  '- wireType: "Flux-cored" for flux-cored (tubular, 药芯) wire, "Solid" for solid wire; empty for anything else, marked uncertain.',
   '- diameter: the wire’s diameter or size (Φ1.2 is 1.2).',
   '- weightKg: the weight of the batch delivered, in kilograms (tonnes × 1000).',
   '- yield and tensile: the deposited metal’s (or all-weld metal’s) test results, never the required values ("≥400" is a requirement; "485" in the test-result row is the result).',
@@ -91,31 +98,29 @@ export const MTC_SYSTEM = [
   'meshWires — for each wire line (a cast drawn to one diameter):',
   '- castNumber: the cast or heat number ("Colata N.", "Cast No.", "No. de coulée") exactly as printed.',
   '- diameter: the wire’s diameter.',
-  '- product: "Galvanized" for galvanised or zinc-coated wire, "Bright" for bright, black or uncoated drawn wire; null for anything else, marked uncertain.',
+  '- product: "Galvanized" for galvanised or zinc-coated wire, "Bright" for bright, black or uncoated drawn wire; empty for anything else, marked uncertain.',
   '- grade: the steel grade, upper case, without spaces ("FE 360 B" is "FE360B").',
   '- tensile: the tensile strength (Rm) result.',
   '',
-  'problem: null, or one short sentence for the person when something kept you from reading part of the document (pages unreadable, cut off).',
+  'problem: empty, or one short sentence for the person when something kept you from reading part of the document (pages unreadable, cut off, photos missing pages).',
 ].join('\n')
 
-const nullable = (schema: object) => ({ anyOf: [schema, { type: 'null' }] })
-
-/** The fields Claude returns for one register: its own (the notes come from the certificate's number), then the reading's own. */
+/**
+ * The fields Claude returns for one register: its own (the notes come from the
+ * certificate's number), then the reading's own. Every one text and required:
+ * no union types, no optional fields (see the header).
+ */
 function itemSchema(register: MtcRegister) {
   const fields = register.fields.filter((f) => f.key !== 'notes')
   const properties: Record<string, object> = {}
   for (const f of fields) {
-    if (f.type === 'number') properties[f.key] = nullable({ type: 'number' })
-    else if (f.choices) properties[f.key] = nullable({ type: 'string', enum: [...f.choices] })
-    else if (f.key === mtcIdFieldKey(register)) properties[f.key] = { type: 'string' }
-    else properties[f.key] = nullable({ type: 'string' })
+    properties[f.key] = f.choices ? { type: 'string', enum: [...f.choices, ''] } : { type: 'string' }
   }
-  properties.certificateNumber = nullable({ type: 'string' })
+  properties.certificateNumber = { type: 'string' }
   properties.page = { type: 'integer' }
   properties.uncertain = { type: 'array', items: { type: 'string', enum: [...fields.map((f) => f.key), 'certificateNumber'] } }
   return { type: 'object', additionalProperties: false, required: Object.keys(properties), properties }
 }
-const mtcIdFieldKey = (register: MtcRegister) => register.fields[0].key
 
 /** What a reply must look like: which register, then a list for each (all but one empty). */
 export const MTC_OUTPUT_SCHEMA = {
@@ -124,35 +129,51 @@ export const MTC_OUTPUT_SCHEMA = {
   required: ['documentKind', 'problem', ...MTC_KINDS.map((k) => LIST[k])],
   properties: {
     documentKind: { type: 'string', enum: [...MTC_KINDS, 'other'] },
-    problem: nullable({ type: 'string' }),
+    problem: { type: 'string' },
     ...Object.fromEntries(MTC_KINDS.map((k) => [LIST[k], { type: 'array', items: itemSchema(MTC_REGISTERS[k]) }])),
   },
 }
 
-/** The PDF and what to do with it: the one user message, the same for counting and for reading. */
-export function mtcMessages(pdf: Buffer, fileName: string): Anthropic.Beta.BetaMessageParam[] {
-  const title = fileName.replace(/[\s]+/g, ' ').trim().slice(0, 255) || 'certificate.pdf'
-  return [
-    {
-      role: 'user',
-      content: [
-        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdf.toString('base64') }, title },
-        { type: 'text', text: 'Tell what this certificate certifies and list every item in it for the register.' },
-      ],
-    },
-  ]
+/** The image types Claude reads, as an image's bytes say. */
+export type MtcImageType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'
+
+/** A certificate as it was uploaded: its PDF, photos of its pages in order, or its spreadsheet's text. */
+export type MtcSource =
+  | { kind: 'pdf'; data: Buffer }
+  | { kind: 'images'; images: { type: MtcImageType; data: Buffer }[] }
+  | { kind: 'sheet'; text: string }
+
+/** The certificate and what to do with it: the one user message, the same for counting and for reading. */
+export function mtcMessages(source: MtcSource, fileName: string): Anthropic.Beta.BetaMessageParam[] {
+  const title = fileName.replace(/[\s]+/g, ' ').trim().slice(0, 255) || 'certificate'
+  const ask: Anthropic.Beta.BetaTextBlockParam = { type: 'text', text: 'Tell what this certificate certifies and list every item in it for the register.' }
+  let content: Anthropic.Beta.BetaContentBlockParam[]
+  if (source.kind === 'pdf') {
+    content = [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: source.data.toString('base64') }, title }, ask]
+  } else if (source.kind === 'images') {
+    content = [
+      { type: 'text', text: `${title}: ${source.images.length === 1 ? 'a photo of the certificate' : `photos of the certificate’s ${source.images.length} pages, in order`}.` },
+      ...source.images.flatMap((img, i): Anthropic.Beta.BetaContentBlockParam[] => [
+        { type: 'text', text: `Photo ${i + 1}:` },
+        { type: 'image', source: { type: 'base64', media_type: img.type, data: img.data.toString('base64') } },
+      ]),
+      ask,
+    ]
+  } else {
+    content = [{ type: 'text', text: `<spreadsheet name="${title.replace(/["<>]/g, '')}">\n${source.text}\n</spreadsheet>` }, ask]
+  }
+  return [{ role: 'user', content }]
 }
 
 /** The whole request, on the model and effort the owner set for certificates (Models). Thinking is shown to nobody, so it is not sent back. */
-export function mtcRequest(pdf: Buffer, fileName: string, run: { model: string; effort: AiEffort }): ModelParams {
+export function mtcRequest(source: MtcSource, fileName: string, run: { model: string; effort: AiEffort }): ModelParams {
   return {
     model: run.model,
     max_tokens: MTC_MAX_TOKENS,
-    betas: [STRUCTURED_OUTPUTS_BETA],
     system: MTC_SYSTEM,
     thinking: { type: 'adaptive', display: 'omitted' },
     output_config: { effort: run.effort, format: { type: 'json_schema', schema: MTC_OUTPUT_SCHEMA as unknown as Record<string, unknown> } },
-    messages: mtcMessages(pdf, fileName),
+    messages: mtcMessages(source, fileName),
   }
 }
 
@@ -201,7 +222,7 @@ function cleanField(field: MtcField, v: unknown): string | number | undefined {
 export function readMtcReply(message: ModelMessage, fileName: string): MtcExtractResult {
   if (message.stop_reason === 'refusal') throw new MtcReadError('Claude would not read this document. Check that it is a material certificate.')
   if (message.stop_reason === 'max_tokens') {
-    throw new MtcReadError('This certificate lists too many items to read in one go. Split the PDF into parts and upload them one by one.', true)
+    throw new MtcReadError('This certificate lists too many items to read in one go. Split it into parts (fewer pages, photos or rows) and upload them one by one.', true)
   }
   const text = message.content
     .filter((b): b is Extract<(typeof message.content)[number], { type: 'text' }> => b.type === 'text')

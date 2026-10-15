@@ -23,7 +23,7 @@ export class AttachRejected extends Error {
 }
 
 /** Photos keep detail for handwriting: a lighter touch than evidence photos. */
-const AI_PHOTO_QUALITY = 0.88
+export const AI_PHOTO_QUALITY = 0.88
 
 async function attachPhoto(file: File, signal?: AbortSignal): Promise<AiAttachment> {
   let prepared
@@ -49,8 +49,8 @@ async function attachPdf(file: File, signal?: AbortSignal): Promise<AiAttachment
   return api<AiAttachment>('/ai/attachments', { method: 'POST', form, signal })
 }
 
-/** A spreadsheet's sheets as rows: an .xlsx workbook, or a CSV as one sheet. */
-async function readSheets(file: File): Promise<{ name: string; rows: string[][] }[]> {
+/** A spreadsheet's sheets as rows: an .xlsx workbook, or a CSV as one sheet. Also how a certificate's spreadsheet is read (MTC). */
+export async function readSheets(file: File): Promise<{ name: string; rows: string[][] }[]> {
   const bytes = new Uint8Array(await file.arrayBuffer())
   if (isLegacyExcelFile(bytes)) throw new AttachRejected('That is an old Excel file (.xls). Save it as .xlsx in Excel, then attach it.')
   if (isZipFile(bytes)) {
