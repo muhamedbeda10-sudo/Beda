@@ -28,6 +28,18 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-16.8',
+    date: '2026-10-16',
+    title: 'My reports: a cleaner, full-width page',
+    items: [
+      { text: 'A saved report now takes the whole width of the page, and its tables run most of the screen before they scroll.' },
+      { text: 'Item names show in full, over several lines when they are long, instead of being cut; order numbers and codes stay on one line.' },
+      { text: 'Headline figures: the customer and dates read as a line on top, and the numbers as cards of one size.' },
+      { text: 'The SQL is no longer shown in reports (it stays in the conversation the report came from), nor the time each section took. What a report and each section are about is behind the ⓘ button by its title.' },
+      { text: 'Figures no longer show stray digits from rounding (36.9 rather than 36.900000000000006), in reports and in the assistant’s tables.' },
+    ],
+  },
+  {
     id: '2026-10-16.7',
     date: '2026-10-16',
     title: 'AI: fast on any question, and long analyses',

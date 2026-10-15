@@ -148,32 +148,50 @@ export function ReportInputFields({
   )
 }
 
-/** A figures section: the first row's columns as cards, each figure under its name. */
+/**
+ * A figures section: the first row's columns, each figure under its name. The
+ * facts that are words or dates (the customer, the latest due date) read as a
+ * line of their own on top; the numbers as cards of one size, large.
+ */
 export function SectionFigures({ columns, rows }: { columns: readonly string[]; rows: readonly AiCell[][] }) {
-  const figures = sectionFigures(columns, rows)
+  const figures = sectionFigures(columns, rows).map((f) => {
+    const text = figureText(f.value)
+    return { ...f, text, numeric: typeof f.value === 'number' || /^-?[\d,]+(\.\d+)?%?$/.test(text) }
+  })
   if (figures.length === 0) return <p className="rounded-xl bg-slate-50 px-3 py-2 text-13 text-muted dark:bg-slate-800/60">No rows matched.</p>
+  const facts = figures.filter((f) => !f.numeric)
+  const numbers = figures.filter((f) => f.numeric)
   return (
-    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-      {figures.map((f, i) => {
-        const shown = figureText(f.value)
-        // A number reads large; a name or a list (the customers) in the text's size, cut at three lines.
-        const numeric = typeof f.value === 'number' || /^-?[\d,]+(\.\d+)?$/.test(shown)
-        return (
-          <div key={i} className="min-w-0 rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200/70 dark:bg-slate-800/50 dark:ring-slate-800">
-            <dt dir="auto" className="truncate text-[11px] font-semibold text-muted" data-tip={f.label}>
-              {f.label}
-            </dt>
-            <dd
-              dir="auto"
-              data-tip={numeric || shown.length < 60 ? undefined : shown.slice(0, 600)}
-              className={cn('mt-0.5 break-words font-bold text-slate-800 dark:text-slate-100', numeric ? 'text-lg tabular-nums' : 'line-clamp-3 text-13')}
-            >
-              {shown}
-            </dd>
-          </div>
-        )
-      })}
-    </dl>
+    <div className="space-y-3">
+      {facts.length > 0 && (
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-[repeat(auto-fit,minmax(14rem,1fr))]" data-testid="report-facts">
+          {facts.map((f, i) => (
+            <div key={i} className="min-w-0 border-s-2 border-brand-500/70 ps-3 dark:border-brand-400/70">
+              <dt dir="auto" className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                {f.label}
+              </dt>
+              <dd dir="auto" data-tip={f.text.length > 120 ? f.text.slice(0, 600) : undefined} className="mt-0.5 line-clamp-3 break-words text-left text-sm font-semibold text-slate-800 dark:text-slate-100">
+                {f.text}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {numbers.length > 0 && (
+        <dl className="grid grid-cols-2 gap-2.5 sm:grid-cols-[repeat(auto-fill,minmax(10rem,1fr))]" data-testid="report-numbers">
+          {numbers.map((f, i) => (
+            <div key={i} className="flex min-w-0 flex-col justify-between gap-2 rounded-xl bg-slate-50 px-3.5 py-3 ring-1 ring-slate-200/80 dark:bg-slate-800/50 dark:ring-slate-700/60">
+              <dt dir="auto" className="line-clamp-2 text-[11px] font-semibold uppercase leading-tight tracking-wide text-muted" data-tip={f.label}>
+                {f.label}
+              </dt>
+              <dd dir="ltr" className="text-start text-2xl font-extrabold leading-none tracking-tight tabular-nums text-slate-900 dark:text-white">
+                {f.text}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
   )
 }
 
@@ -268,7 +286,8 @@ export function SectionTree({ columns, rows, tree, truncated }: { columns: reado
                         </span>
                       </td>
                     ) : (
-                      <ResultCell key={c} value={v} numeric={numeric[c]} dir={dir} />
+                      // Names in full, over as many lines as they take: a report is read, not scanned.
+                      <ResultCell key={c} value={v} numeric={numeric[c]} dir={dir} wrap />
                     ),
                   )}
                 </tr>

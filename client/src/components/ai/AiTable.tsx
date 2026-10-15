@@ -236,7 +236,10 @@ export function ResultCell({ value, numeric, dir, wrap = false }: { value: AiCel
         numeric
           ? undefined
           : wrap
-            ? 'min-w-[8rem] max-w-[28rem] whitespace-pre-wrap break-words'
+            ? // Long text (a name) over several lines; short text (a code, an order number) kept whole on one.
+              text.length > 24
+              ? 'min-w-[10rem] max-w-[28rem] whitespace-pre-wrap break-words'
+              : 'whitespace-nowrap'
             : 'max-w-[16rem] truncate whitespace-nowrap touch:whitespace-normal touch:break-words [@container(max-width:36rem)]:max-w-[10rem] [@container(max-width:36rem)]:whitespace-normal [@container(max-width:36rem)]:break-words',
       )}
     >
