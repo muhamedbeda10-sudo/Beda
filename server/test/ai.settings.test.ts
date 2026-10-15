@@ -1,7 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import type { ApiErrorBody } from '@qc/shared/api'
-import { AI_DEFAULT_MONTHLY_CAP_USD, AI_MODEL, type AiSettingsResponse, type AiStatusResponse } from '@qc/shared/ai'
+import { AI_DEFAULT_MONTHLY_CAP_USD, AI_DEFAULT_SETTINGS, AI_MODEL, type AiSettingsResponse, type AiStatusResponse } from '@qc/shared/ai'
 import { TestApp, type Session } from './harness'
 import { resolveApiKey } from '../src/ai/credentials'
 import { runReadOnlyQuery } from '../src/ai/runQuery'
@@ -67,7 +67,7 @@ describe('§20 who may see the settings', () => {
       ['GET', '/api/ai/activity'],
       ['GET', '/api/ai/access'],
       ['GET', '/api/ai/people'],
-      ['PUT', `/api/ai/access/${id}`, { enabled: true, domains: ['inspection'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 }],
+      ['PUT', `/api/ai/access/${id}`, { enabled: true, domains: ['inspection'], monthlyCapUsd: 5 }],
       ['DELETE', `/api/ai/access/${id}`],
     ]
     const askerRoutes: [string, string, unknown?][] = [
@@ -123,11 +123,12 @@ describe('§20 the API key', () => {
   it('starts with no key: the assistant says so, and a question is refused before any stream', async () => {
     const res = await status()
     expect(res.status).toBe(200)
-    expect(res.body).toMatchObject({ available: false, reason: 'no-key', model: AI_MODEL, spentUsd: 0, capUsd: AI_DEFAULT_MONTHLY_CAP_USD })
+    // The cheapest model a question may run on (a simple one, on Haiku, by default).
+    expect(res.body).toMatchObject({ available: false, reason: 'no-key', model: 'claude-haiku-5-5', spentUsd: 0, capUsd: AI_DEFAULT_MONTHLY_CAP_USD })
     expect(res.body.monthStart).toMatch(/^\d{4}-\d{2}-01T00:00:00\.000Z$/)
     const s = await settings(admin)
     expect(s.body.key).toEqual({ set: false, source: null })
-    expect(s.body.settings).toEqual({ enabled: true, monthlyCapUsd: AI_DEFAULT_MONTHLY_CAP_USD })
+    expect(s.body.settings).toEqual({ ...AI_DEFAULT_SETTINGS, monthlyCapUsd: AI_DEFAULT_MONTHLY_CAP_USD })
     const q = await ask()
     expect(q.status).toBe(503)
     expect(q.headers.get('content-type')).toMatch(/application\/json/)
@@ -240,18 +241,56 @@ describe('§20 the switch and the monthly cap', () => {
       { enabled: true, monthlyCapUsd: 12.345 },
       { enabled: 'yes', monthlyCapUsd: 10 },
       { enabled: true, monthlyCapUsd: 10, extra: 1 },
+      { enabled: true, monthlyCapUsd: 10, mtcModel: 'claude-opus-5-5' },
+      { enabled: true, monthlyCapUsd: 10, chatMode: 'fastest' },
+      { enabled: true, monthlyCapUsd: 10, actions: { mtc: { model: 'gpt-5', effort: 'auto' } } },
+      { enabled: true, monthlyCapUsd: 10, actions: { mtc: { model: 'auto', effort: 'extreme' } } },
+      { enabled: true, monthlyCapUsd: 10, actions: { translate: { model: 'auto', effort: 'auto' } } },
+      { enabled: true, monthlyCapUsd: 10, actions: { mtc: { model: 'auto' } } },
+      { enabled: true, monthlyCapUsd: 10, mtcReread: 'yes' },
     ]) {
       expect((await app.api('PUT', '/api/ai/settings', { token: admin.token, body })).status, JSON.stringify(body)).toBe(400)
     }
     const res = await app.api<AiSettingsResponse>('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 12.3 } })
     expect(res.status).toBe(200)
-    expect(res.body.settings).toEqual({ enabled: true, monthlyCapUsd: 12.3 })
+    expect(res.body.settings).toEqual({ ...AI_DEFAULT_SETTINGS, monthlyCapUsd: 12.3 })
     expect(res.body.updatedByName).toBe('Admin')
     expect(res.body.status.capUsd).toBe(12.3)
     const audit = await app.db.query<{ field: string; oldValue: string; newValue: string }>(
       `SELECT field, old_value AS "oldValue", new_value AS "newValue" FROM audit_log WHERE entity = 'AppSettings' AND entity_id = 'ai-assistant' ORDER BY id`,
     )
     expect(audit.rows).toEqual([{ field: 'monthlyCapUsd', oldValue: '50', newValue: '12.3' }])
+  })
+
+  it('keeps the Models with the settings: a change names the action in the audit log, and what is left out stays', async () => {
+    const res = await app.api<AiSettingsResponse>('PUT', '/api/ai/settings', {
+      token: admin.token,
+      body: { enabled: true, monthlyCapUsd: 12.3, chatMode: 'chat-deep', actions: { 'chat-deep': { model: 'claude-fable-5-1', effort: 'auto' }, title: { model: 'claude-sonnet-5-5', effort: 'auto' } }, mtcReread: false },
+    })
+    expect(res.status).toBe(200)
+    expect(res.body.settings).toEqual({
+      ...AI_DEFAULT_SETTINGS,
+      monthlyCapUsd: 12.3,
+      chatMode: 'chat-deep',
+      actions: { ...AI_DEFAULT_SETTINGS.actions, 'chat-deep': { model: 'claude-fable-5-1', effort: 'auto' }, title: { model: 'claude-sonnet-5-5', effort: 'auto' } },
+      mtcReread: false,
+    })
+    // Only the cap and switch: the Models stay as they were.
+    const again = await app.api<AiSettingsResponse>('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 12.3 } })
+    expect(again.body.settings.chatMode).toBe('chat-deep')
+    expect(again.body.settings.actions.title.model).toBe('claude-sonnet-5-5')
+    const audit = await app.db.query<{ field: string; oldValue: string; newValue: string }>(
+      `SELECT field, old_value AS "oldValue", new_value AS "newValue" FROM audit_log
+        WHERE entity = 'AppSettings' AND entity_id = 'ai-assistant' AND field <> 'monthlyCapUsd' ORDER BY id`,
+    )
+    expect(audit.rows).toEqual([
+      { field: 'chatMode', oldValue: 'auto', newValue: 'chat-deep' },
+      { field: 'mtcReread', oldValue: 'on', newValue: 'off' },
+      { field: 'model: Deep analysis', oldValue: 'Auto · effort Auto', newValue: 'Claude Fable 5.1 · effort Auto' },
+      { field: 'model: Conversation title', oldValue: 'Auto', newValue: 'Claude Sonnet 5.5' },
+    ])
+    // Back to the recommended ones, for the tests after.
+    await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 12.3, chatMode: 'auto', actions: AI_DEFAULT_SETTINGS.actions, mtcReread: true } })
   })
 
   it('switched off, nobody can ask', async () => {
@@ -284,7 +323,8 @@ describe('§20 the switch and the monthly cap', () => {
   it('closer to the cap than one call may cost, the assistant is unavailable: no answer could start', async () => {
     await app.db.query(`INSERT INTO ai_usage (user_id, model, output_tokens, cost_usd) VALUES ($1, $2, 0, 49.8)`, [admin.user.id, AI_MODEL])
     try {
-      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50 } })
+      // Every question an analysis, on Sonnet 5.5.
+      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50, chatMode: 'chat-analysis' } })
       // $0.20 left, and one call may write 32 000 tokens at $10 a million: the loop would stop before calling.
       expect((await status()).body).toMatchObject({ available: false, reason: 'cap-reached', spentUsd: 49.8, capUsd: 50 })
       const q = await ask()
@@ -299,9 +339,25 @@ describe('§20 the switch and the monthly cap', () => {
       // With room for both, it is available again.
       await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50.5 } })
       expect((await status()).body).toMatchObject({ available: true, spentUsd: 49.8, capUsd: 50.5 })
+
+      // Auto: the cheapest level decides whether the assistant is available — a simple question still fits in $0.20 on Haiku —
+      // and a question the router finds is an analysis is refused before anything streams.
+      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50, chatMode: 'auto' } })
+      expect((await status()).body).toMatchObject({ available: true, model: 'claude-haiku-5-5', spentUsd: 49.8, capUsd: 50 })
+      app.model.completeWith = () => '{"level":"analysis","reason":"A trend over a month."}'
+      const routed = await ask()
+      expect(routed.status).toBe(402)
+      expect(routed.body.error.code).toBe('ai_budget_reached')
+      expect((await app.db.query(`SELECT 1 FROM ai_turns`)).rowCount).toBe(0)
+      // The router's call was made: billed to the asker though no question was kept.
+      const router = await app.db.query(`SELECT user_id AS "userId", turn_id AS "turnId" FROM ai_usage WHERE model = 'claude-haiku-5-5'`)
+      expect(router.rows).toEqual([{ userId: admin.user.id, turnId: null }])
     } finally {
+      app.model.completeWith = () => {
+        throw new Error('unused')
+      }
       await app.db.query(`UPDATE ai_usage SET created_at = date_trunc('month', now()) - interval '1 day'`)
-      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 10 } })
+      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 10, chatMode: 'auto' } })
     }
     expect(app.model.calls).toEqual([])
   })

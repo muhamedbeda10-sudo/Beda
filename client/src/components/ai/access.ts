@@ -19,7 +19,6 @@ import {
   type AiAccess,
   type AiAccessRequest,
   type AiDomain,
-  type AiEffort,
   type AiMeReason,
   type AiMeResponse,
   type AiModelId,
@@ -106,9 +105,9 @@ export function orderDomains(domains: readonly string[]): AiDomain[] {
 /** The least a monthly cap must be for anyone on this model to ask at all: the server's own figure (output and fallback). */
 export const minCapUsd = (model: string): number => aiMinCapUsd(model)
 
-/** Why a cap is too small for a model, for the owner: the least it may be, and what happens below it. */
+/** Why a cap is too small, for the owner: the least it may be on the cheapest model a question runs on (Models), and what happens below it. */
 export function capTooLowText(model: string): string {
-  return `On ${modelName(model)} the cap must be at least ${formatCap(minCapUsd(model))}, the most one call to the model may cost. Below that they could never ask: they would be told the month's limit is reached, every month.`
+  return `The cap must be at least ${formatCap(minCapUsd(model))}, the most one question may cost on ${modelName(model)}, the cheapest model set under Models. Below that they could never ask: they would be told the month's limit is reached, every month.`
 }
 
 /** Whether a cap lets a person on this model ask at all. */
@@ -134,8 +133,6 @@ export function parseCapUsd(raw: string): number | null {
 export interface AccessDraft {
   enabled: boolean
   domains: AiDomain[]
-  model: AiModelId
-  effort: AiEffort
   cap: string
   /** §21 — may create automations (the owner always may). */
   automations: boolean
@@ -143,6 +140,8 @@ export interface AccessDraft {
   notices: boolean
   /** §20 — may have the assistant make Excel files (the owner always may). */
   excel: boolean
+  /** May upload mill test certificates on the MTC tab, the assistant on for them or not (the owner always may). */
+  mtc: boolean
 }
 
 /** A newcomer's monthly cap: a fifth of the default app-wide cap, never above the app-wide cap set now. The owner raises it. */
@@ -150,15 +149,14 @@ export const AI_NEW_PERSON_CAP_USD = 10
 
 /**
  * Where a person newly given the assistant starts: on, the inspection record
- * only (the narrowest useful data — the owner adds the rest), the default
- * model and effort, and a small cap — within the app-wide cap, but never so
- * small that they could not ask at all (the drawer then says the app-wide
- * cap is the one in the way).
+ * only (the narrowest useful data — the owner adds the rest), and a small cap
+ * — within the app-wide cap, but never so small that they could not ask at
+ * all on `chatModel`, the cheapest model a question runs on (Models; the
+ * drawer then says the app-wide cap is the one in the way).
  */
-export function newAccessDraft(appCapUsd: number): AccessDraft {
-  const model: AiModelId = 'claude-sonnet-5-5'
-  const cap = Math.max(minCapUsd(model), Math.min(AI_NEW_PERSON_CAP_USD, appCapUsd))
-  return { enabled: true, domains: ['inspection'], model, effort: 'medium', cap: String(cap), automations: false, notices: false, excel: false }
+export function newAccessDraft(appCapUsd: number, chatModel: AiModelId): AccessDraft {
+  const cap = Math.max(minCapUsd(chatModel), Math.min(AI_NEW_PERSON_CAP_USD, appCapUsd))
+  return { enabled: true, domains: ['inspection'], cap: String(cap), automations: false, notices: false, excel: false, mtc: false }
 }
 
 /** A person's access as it is saved, to edit. The owner's notices switch reads on while they are an administrator, as it then holds. */
@@ -166,22 +164,21 @@ export function draftFromAccess(a: AiAccess): AccessDraft {
   return {
     enabled: a.enabled,
     domains: orderDomains(a.domains),
-    model: a.model,
-    effort: a.effort,
     cap: String(a.monthlyCapUsd),
     automations: a.owner || a.automations,
     notices: a.notices || (a.owner && isAdministrator(a.role)),
     excel: a.owner || a.excel,
+    mtc: a.owner || a.mtc,
   }
 }
 
-/** Why the draft cannot be saved, or null when it can. */
-export function checkAccessDraft(d: AccessDraft): string | null {
+/** Why the draft cannot be saved, or null when it can; `chatModel` is the cheapest model a question runs on now (Models). */
+export function checkAccessDraft(d: AccessDraft, chatModel: AiModelId): string | null {
   if (orderDomains(d.domains).length === 0) return 'Choose at least one kind of data they may ask about.'
   const cap = parseCapUsd(d.cap)
   if (cap === null) return CAP_RANGE_TEXT
   // Switching someone off is never held up by their cap: it is checked again when they are switched back on.
-  if (d.enabled && !capFitsModel(cap, d.model)) return capTooLowText(d.model)
+  if (d.enabled && !capFitsModel(cap, chatModel)) return capTooLowText(chatModel)
   return null
 }
 
@@ -190,12 +187,11 @@ export function accessRequest(d: AccessDraft): AiAccessRequest {
   return {
     enabled: d.enabled,
     domains: orderDomains(d.domains),
-    model: d.model,
-    effort: d.effort,
     monthlyCapUsd: parseCapUsd(d.cap) ?? 0,
     automations: d.automations,
     notices: d.notices,
     excel: d.excel,
+    mtc: d.mtc,
   }
 }
 
@@ -205,11 +201,10 @@ export function accessChanged(a: AiAccess, d: AccessDraft): boolean {
   const cap = parseCapUsd(d.cap)
   return (
     saved.enabled !== d.enabled ||
-    saved.model !== d.model ||
-    saved.effort !== d.effort ||
     saved.automations !== d.automations ||
     saved.notices !== d.notices ||
     saved.excel !== d.excel ||
+    saved.mtc !== d.mtc ||
     cap !== a.monthlyCapUsd ||
     saved.domains.join() !== orderDomains(d.domains).join()
   )
@@ -281,10 +276,10 @@ export function sortAccess(people: readonly AiAccess[]): AiAccess[] {
 /**
  * Whether a person can ask now, as far as the owner set it: an account that
  * can sign in, switched on, with data to ask about and a cap that lets one
- * call to their model through.
+ * question through on the cheapest model a question runs on (Models).
  */
-export function accessLive(a: AiAccess): boolean {
-  return a.active && a.enabled && a.domains.length > 0 && capFitsModel(a.monthlyCapUsd, a.model)
+export function accessLive(a: AiAccess, chatModel: AiModelId): boolean {
+  return a.active && a.enabled && a.domains.length > 0 && capFitsModel(a.monthlyCapUsd, chatModel)
 }
 
 /** Roles from the widest rights down, for grouping the accounts to pick from. */

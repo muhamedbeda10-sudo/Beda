@@ -233,8 +233,6 @@ export interface AiAccess {
   active: boolean
   enabled: boolean
   domains: AiDomain[]
-  model: AiModelId
-  effort: AiEffort
   /** USD per calendar month (UTC). */
   monthlyCapUsd: number
   /** This calendar month (UTC), so far. */
@@ -247,6 +245,8 @@ export interface AiAccess {
   notices: boolean
   /** May have the assistant make Excel files (§20); always true for the owner. */
   excel: boolean
+  /** May upload mill test certificates on the MTC tab, whether or not the assistant is on for them; always true for the owner. */
+  mtc: boolean
   updatedAt?: string
   updatedByName?: string
 }
@@ -258,8 +258,6 @@ export interface AiAccessListResponse {
 export interface AiAccessRequest {
   enabled: boolean
   domains: AiDomain[]
-  model: AiModelId
-  effort: AiEffort
   monthlyCapUsd: number
   /** May create automations (§21). Absent: unchanged (false for a new row). */
   automations?: boolean
@@ -267,6 +265,8 @@ export interface AiAccessRequest {
   notices?: boolean
   /** May have the assistant make Excel files (§20). Absent: unchanged (false for a new row). */
   excel?: boolean
+  /** May upload mill test certificates (MTC tab). Absent: unchanged (false for a new row). */
+  mtc?: boolean
 }
 
 /** What anyone signed in learns about the assistant: no amounts, no models, no settings. */
@@ -286,6 +286,8 @@ export interface AiMeResponse {
   excel: boolean
   /** May have the assistant write notices (§23): an administrator by role now, given the assistant, the owner or allowed by the owner. */
   notices: boolean
+  /** May upload mill test certificates on the MTC tab: the owner, and people the owner allowed, the assistant on for them or not. */
+  mtc: boolean
 }
 
 // ---- Settings ----------------------------------------------------------------
@@ -295,9 +297,106 @@ export interface AiSettings {
   enabled: boolean
   /** USD per calendar month (UTC, as Anthropic bills); reached, the assistant stops until the 1st. */
   monthlyCapUsd: number
+  /** How a chat question finds its level: Claude decides (auto), or always the same one. A question with files is always "With files". */
+  chatMode: AiChatMode
+  /** The model and effort of each thing the app has Claude do; "auto" is the recommended one. */
+  actions: Record<AiAction, AiActionSetting>
+  /** A certificate read with too many doubtful values is read again on AI_MTC_REREAD_MODEL. */
+  mtcReread: boolean
 }
 
-export const AI_DEFAULT_SETTINGS: AiSettings = { enabled: true, monthlyCapUsd: AI_DEFAULT_MONTHLY_CAP_USD }
+/** PUT /ai/settings: the switch and the cap, and any of the Models (each left out stays as it was). */
+export type AiSettingsRequest = Pick<AiSettings, 'enabled' | 'monthlyCapUsd'> & Partial<Pick<AiSettings, 'chatMode' | 'actions' | 'mtcReread'>>
+
+// ---- Models by action ----------------------------------------------------------------
+//
+// The owner sets the model and effort by what Claude is doing, not by who asks:
+// a count is a cheap model's work, a root-cause analysis a strong one's. A chat
+// question is first given a level — simple, analysis or deep — by a short call
+// to the cheapest model (the router; chatMode "auto"), or always the level the
+// owner chose; a question with files has a level of its own. "auto" in a model
+// or an effort is the recommended one below.
+
+export const AI_CHAT_TIERS = ['chat-simple', 'chat-analysis', 'chat-deep'] as const
+export type AiChatTier = (typeof AI_CHAT_TIERS)[number]
+export type AiChatMode = 'auto' | AiChatTier
+export const isAiChatMode = (v: unknown): v is AiChatMode => v === 'auto' || (AI_CHAT_TIERS as readonly unknown[]).includes(v)
+
+export const AI_ACTION_IDS = ['chat-simple', 'chat-analysis', 'chat-deep', 'chat-files', 'mtc', 'title', 'report-template', 'report-summary'] as const
+export type AiAction = (typeof AI_ACTION_IDS)[number]
+export const isAiAction = (v: unknown): v is AiAction => (AI_ACTION_IDS as readonly unknown[]).includes(v)
+
+/** A level of a chat question: one of the three, or the one for questions with files. */
+export type AiChatLevel = AiChatTier | 'chat-files'
+
+export interface AiActionSetting {
+  model: AiModelId | 'auto'
+  effort: AiEffort | 'auto'
+}
+
+export interface AiActionInfo {
+  id: AiAction
+  name: string
+  /** When it happens, in a line. */
+  when: string
+  recommended: { model: AiModelId; effort: AiEffort }
+  /** False for a call that does not think (a conversation's title): no effort to set. */
+  usesEffort: boolean
+}
+
+export const AI_ACTIONS: readonly AiActionInfo[] = [
+  { id: 'chat-simple', name: 'Simple question', when: 'A count, a list, one lookup: "how many samples today?"', recommended: { model: 'claude-haiku-5-5', effort: 'low' }, usesEffort: true },
+  { id: 'chat-analysis', name: 'Analysis', when: 'Comparisons, trends, SPC, charts, Excel files, diagrams.', recommended: { model: 'claude-sonnet-5-5', effort: 'medium' }, usesEffort: true },
+  { id: 'chat-deep', name: 'Deep analysis', when: 'Root cause, FMEA, an investigation over several steps.', recommended: { model: 'claude-opus-5-5', effort: 'high' }, usesEffort: true },
+  { id: 'chat-files', name: 'Question with files', when: 'A question carrying photos, PDFs or spreadsheets: handwritten sheets, drawings, reports.', recommended: { model: 'claude-sonnet-5-5', effort: 'medium' }, usesEffort: true },
+  { id: 'mtc', name: 'Reading a certificate (MTC)', when: 'A mill test certificate uploaded on the MTC tab.', recommended: { model: 'claude-sonnet-5-5', effort: 'high' }, usesEffort: true },
+  { id: 'title', name: 'Conversation title', when: 'A new conversation’s first question, named in a few words.', recommended: { model: 'claude-haiku-5-5', effort: 'low' }, usesEffort: false },
+  { id: 'report-template', name: 'Saving a report with an adjustable period', when: 'An answer saved as a report whose dates can change: its queries rewritten once.', recommended: { model: 'claude-sonnet-5-5', effort: 'low' }, usesEffort: true },
+  { id: 'report-summary', name: 'Scheduled report summary', when: 'The 3 to 5 points written on top of each scheduled report sent.', recommended: { model: 'claude-haiku-5-5', effort: 'low' }, usesEffort: true },
+]
+
+export const AI_ACTION_INFO: Readonly<Record<AiAction, AiActionInfo>> = Object.fromEntries(AI_ACTIONS.map((a) => [a.id, a])) as Record<AiAction, AiActionInfo>
+
+/** The model that gives a chat question its level: the cheapest and fastest, a fraction of a cent a question. */
+export const AI_ROUTER_MODEL: AiModelId = 'claude-haiku-5-5'
+/** The level a question takes when the router cannot be asked: the middle one. */
+export const AI_ROUTER_FALLBACK: AiChatTier = 'chat-analysis'
+/** The model a doubtful certificate is read again on. */
+export const AI_MTC_REREAD_MODEL: AiModelId = 'claude-opus-5-5'
+/** A certificate is doubtful when more than this share of its values came back unsure, or when nothing was listed. */
+export const AI_MTC_REREAD_SHARE = 0.3
+
+const AUTO_ACTION: AiActionSetting = { model: 'auto', effort: 'auto' }
+
+export const AI_DEFAULT_SETTINGS: AiSettings = {
+  enabled: true,
+  monthlyCapUsd: AI_DEFAULT_MONTHLY_CAP_USD,
+  chatMode: 'auto',
+  actions: Object.fromEntries(AI_ACTION_IDS.map((a) => [a, AUTO_ACTION])) as Record<AiAction, AiActionSetting>,
+  mtcReread: true,
+}
+
+/** The model and effort an action runs on now: the owner's choice, "auto" read as the recommended one. */
+export function resolveAiAction(settings: Pick<AiSettings, 'actions'>, action: AiAction): { model: AiModelId; effort: AiEffort } {
+  const set = settings.actions[action] ?? AUTO_ACTION
+  const rec = AI_ACTION_INFO[action].recommended
+  return { model: set.model === 'auto' ? rec.model : set.model, effort: set.effort === 'auto' ? rec.effort : set.effort }
+}
+
+/** The models a chat question may run on now: the levels the router may choose (or the one fixed), and the one for files. */
+export function aiChatModels(settings: Pick<AiSettings, 'actions' | 'chatMode'>): AiModelId[] {
+  const levels: AiAction[] = settings.chatMode === 'auto' ? [...AI_CHAT_TIERS, 'chat-files'] : [settings.chatMode, 'chat-files']
+  return Array.from(new Set(levels.map((l) => resolveAiAction(settings, l).model)))
+}
+
+/**
+ * The model a person's availability is judged on: the cheapest a question may
+ * run on. Someone whose cap is under it can never ask; one whose cap allows it
+ * may ask, and a dearer level is held to the cap call by call.
+ */
+export function aiCheapestChatModel(settings: Pick<AiSettings, 'actions' | 'chatMode'>): AiModelId {
+  return aiChatModels(settings).reduce((a, b) => (aiMinCallUsd(b) < aiMinCallUsd(a) ? b : a))
+}
 
 /** The API key, as far as anyone may see it: whether there is one, where from, and its last four characters. */
 export interface AiKeyState {
@@ -794,16 +893,19 @@ export interface AiUsageResponse {
 export interface AiActivityItem {
   /** The question's turn id, or the summary's usage row (as text). Unique within its kind. */
   id: string
-  kind: 'question' | 'automation'
-  /** ISO time it was asked (or the summary written). */
+  kind: 'question' | 'automation' | 'mtc'
+  /** ISO time it was asked (or the summary written, or the certificate read). */
   at: string
   userId: string
   userName: string
-  /** The question as asked, or the automation's name. */
+  /** The question as asked, the automation's name, or the certificate's file name and what was read from it. */
   text: string
   costUsd: number
-  /** The models that served it, in the order first used (a refusal's fallback adds one). */
+  /** The models that served it, in the order first used (a refusal's fallback adds one, a certificate read again another). */
   models: string[]
+  /** A question: the level it was answered at, and why the router gave it (null when the level was fixed, or for anything else). */
+  level: AiChatLevel | null
+  levelReason: string | null
   /** Queries run on the record to answer it. */
   lookups: number
   /** A call was cut off: part of the cost is an estimate. */

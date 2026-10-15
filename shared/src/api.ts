@@ -112,8 +112,6 @@ export interface CreateUserRequest {
   password: string
   name: string
   role: Role
-  /** May upload mill test certificates (MTC); off unless given. */
-  mtcUpload?: boolean
 }
 
 export interface UpdateUserRequest {
@@ -124,8 +122,6 @@ export interface UpdateUserRequest {
   isActive?: boolean
   /** Admin-set replacement password. */
   password?: string
-  /** May upload mill test certificates (MTC). */
-  mtcUpload?: boolean
 }
 
 // ---- Master data -----------------------------------------------------------

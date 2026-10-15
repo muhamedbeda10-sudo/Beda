@@ -1,30 +1,24 @@
 // ============================================================================
 // §20 — who may use the assistant, as the owner set it. Each person granted
-// has a row: on or off, the data domains they may ask about, the model and
-// effort their questions run on, and a personal monthly cap on top of the
-// assistant's own. Everything is read again on every request, before every
-// call to the model and before every query, so a change the owner makes — or
-// an account being deactivated — takes effect at once.
+// has a row: on or off, the data domains they may ask about, and a personal
+// monthly cap on top of the assistant's own. The model and effort are not the
+// person's: they are set by what Claude is doing (the owner's Models, in the
+// assistant's settings). Everything is read again on every request, before
+// every call to the model and before every query, so a change the owner makes
+// — or an account being deactivated — takes effect at once.
 //
-// Three permissions on top, all the owner's to give: creating automations
+// Four permissions on top, all the owner's to give: creating automations
 // (§21), having the assistant write notices (§23) — only ever while the
-// account is an administrator, its role read as it is now — and having it
-// make Excel files (§20).
+// account is an administrator, its role read as it is now — having it make
+// Excel files (§20), and uploading mill test certificates (MTC tab).
 // ============================================================================
 
 import {
   AI_DOMAINS,
-  AI_EFFORTS,
-  AI_MODEL,
-  AI_MODELS,
-  isAiEffort,
-  isAiModel,
   type AiAccess,
   type AiAccessRequest,
   type AiDomain,
-  type AiEffort,
   type AiMeResponse,
-  type AiModelId,
   type AiStatusResponse,
   type AiStopReason,
 } from '@qc/shared/ai'
@@ -44,8 +38,6 @@ export interface AccessRecord {
   userId: string
   enabled: boolean
   domains: AiDomain[]
-  model: AiModelId
-  effort: AiEffort
   monthlyCapUsd: number
   /** May create automations (§21); the owner may whatever this says. */
   automations: boolean
@@ -53,6 +45,8 @@ export interface AccessRecord {
   notices: boolean
   /** May have the assistant make Excel files (§20); the owner may whatever this says. */
   excel: boolean
+  /** May upload mill test certificates (MTC tab), the assistant on for them or not; the owner may whatever this says. */
+  mtc: boolean
   /** The account is active and not removed. */
   active: boolean
 }
@@ -61,12 +55,11 @@ interface AccessRow {
   userId: string
   enabled: boolean
   domains: string[]
-  model: string
-  effort: string
   monthlyCapUsd: number
   automations: boolean
   notices: boolean
   excel: boolean
+  mtc: boolean
   active: boolean
 }
 
@@ -76,18 +69,17 @@ function toRecord(r: AccessRow): AccessRecord {
     userId: r.userId,
     enabled: r.enabled,
     domains: storedDomains(r.domains),
-    model: isAiModel(r.model) ? r.model : AI_MODEL,
-    effort: isAiEffort(r.effort) ? r.effort : 'medium',
     monthlyCapUsd: Number(r.monthlyCapUsd),
     automations: r.automations,
     notices: r.notices,
     excel: r.excel,
+    mtc: r.mtc,
     active: r.active,
   }
 }
 
-const ACCESS_COLUMNS = `a.user_id AS "userId", a.enabled, a.domains, a.model, a.effort, a.monthly_cap_usd AS "monthlyCapUsd",
-       a.automations, a.notices, a.excel, (u.is_active AND u.deleted_at IS NULL) AS active`
+const ACCESS_COLUMNS = `a.user_id AS "userId", a.enabled, a.domains, a.monthly_cap_usd AS "monthlyCapUsd",
+       a.automations, a.notices, a.excel, a.mtc, (u.is_active AND u.deleted_at IS NULL) AS active`
 
 /** A person's row, or null when the owner never gave them the assistant. */
 export async function loadAccess(q: Queryable, userId: string): Promise<AccessRecord | null> {
@@ -112,6 +104,14 @@ export const mayAutomate = (a: AccessRecord | null, owner: boolean): a is Access
  * a permission taken away stops them all at once.
  */
 export const mayMakeExcel = (a: AccessRecord | null, owner: boolean): a is AccessRecord => isGranted(a) && (owner || a.excel)
+
+/**
+ * Whether the person may upload mill test certificates (MTC tab): the owner,
+ * or an active account the owner allowed — whether or not the assistant is on
+ * for them, so someone may read certificates without ever seeing the chat.
+ * Read again by every reading and every save.
+ */
+export const mayUploadMtc = (a: AccessRecord | null, owner: boolean, active: boolean): boolean => active && (owner || (!!a && a.active && a.mtc))
 
 /**
  * Whether the person may have the assistant write notices (§23): given the
@@ -157,8 +157,6 @@ export async function listAccess(q: Queryable, ownerId: string | null, userId?: 
       active: a.active,
       enabled: a.enabled,
       domains: a.domains,
-      model: a.model,
-      effort: a.effort,
       monthlyCapUsd: a.monthlyCapUsd,
       spentUsd: Number(r.spentUsd),
       owner: a.userId === ownerId,
@@ -166,6 +164,7 @@ export async function listAccess(q: Queryable, ownerId: string | null, userId?: 
       automations: a.automations || a.userId === ownerId,
       notices: a.notices || a.userId === ownerId,
       excel: a.excel || a.userId === ownerId,
+      mtc: a.mtc || a.userId === ownerId,
       updatedAt: r.updatedAt,
     }
     if (r.updatedByName) out.updatedByName = r.updatedByName
@@ -185,8 +184,6 @@ export async function unlistedPeople(q: Queryable): Promise<{ id: string; name: 
 
 // ---- Changes -------------------------------------------------------------------------
 
-const MODEL_NAMES = new Map<string, string>(AI_MODELS.map((m) => [m.id, m.name]))
-const EFFORT_NAMES = new Map<string, string>(AI_EFFORTS.map((e) => [e.id, e.name]))
 const DOMAIN_NAMES = new Map<string, string>(AI_DOMAINS.map((d) => [d.id, d.name]))
 
 /** A row's settings as the audit log shows them: one value per field, in words. */
@@ -194,19 +191,18 @@ function auditSnapshot(a: Omit<AccessRecord, 'userId' | 'active'>): Record<strin
   return {
     enabled: a.enabled ? 'on' : 'off',
     domains: a.domains.length ? a.domains.map((d) => DOMAIN_NAMES.get(d) ?? d).join(', ') : 'none',
-    model: MODEL_NAMES.get(a.model) ?? a.model,
-    effort: EFFORT_NAMES.get(a.effort) ?? a.effort,
     monthlyCapUsd: a.monthlyCapUsd.toFixed(2),
     automations: a.automations ? 'may create' : 'may not create',
     notices: a.notices ? 'may manage' : 'may not manage',
     excel: a.excel ? 'may have made' : 'may not have made',
+    mtc: a.mtc ? 'may upload' : 'may not upload',
   }
 }
 
 /** The whole row in one line, for the audit entry of its creation or removal; the automations, notices and Excel permissions only when given. */
 const auditLine = (who: { name: string; username: string }, a: Omit<AccessRecord, 'userId' | 'active'>) => {
   const s = auditSnapshot(a)
-  return `${who.name} (${who.username}): ${s.enabled}; ${s.domains}; ${s.model}; ${s.effort}; $${s.monthlyCapUsd} a month${a.automations ? '; may create automations' : ''}${a.notices ? '; may manage notices' : ''}${a.excel ? '; may have Excel files made' : ''}`
+  return `${who.name} (${who.username}): ${s.enabled}; ${s.domains}; $${s.monthlyCapUsd} a month${a.automations ? '; may create automations' : ''}${a.notices ? '; may manage notices' : ''}${a.excel ? '; may have Excel files made' : ''}${a.mtc ? '; may upload MTC certificates' : ''}`
 }
 
 export interface Editor {
@@ -235,12 +231,13 @@ export async function saveAccess(
   const automations = next.automations ?? before.rows[0]?.automations ?? false
   const notices = next.notices ?? before.rows[0]?.notices ?? false
   const excel = next.excel ?? before.rows[0]?.excel ?? false
-  const wanted = { ...next, automations, notices, excel }
-  const values = [person.id, next.enabled, next.domains, next.model, next.effort, next.monthlyCapUsd, by.id, by.name, automations, notices, excel]
+  const mtc = next.mtc ?? before.rows[0]?.mtc ?? false
+  const wanted = { ...next, automations, notices, excel, mtc }
+  const values = [person.id, next.enabled, next.domains, next.monthlyCapUsd, by.id, by.name, automations, notices, excel, mtc]
   if (!before.rows[0]) {
     await tx.query(
-      `INSERT INTO ai_access (user_id, enabled, domains, model, effort, monthly_cap_usd, updated_by_id, updated_by_name, automations, notices, excel)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      `INSERT INTO ai_access (user_id, enabled, domains, monthly_cap_usd, updated_by_id, updated_by_name, automations, notices, excel, mtc)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       values,
     )
     await writeAudit(tx, [auditEvent('create', ctx, new Date().toISOString(), { field: 'access', newValue: auditLine(person, wanted) })])
@@ -250,8 +247,8 @@ export async function saveAccess(
   const changed = await auditChanges(tx, ctx, auditSnapshot(old), auditSnapshot(wanted))
   if (changed === 0) return 'unchanged'
   await tx.query(
-    `UPDATE ai_access SET enabled = $2, domains = $3, model = $4, effort = $5, monthly_cap_usd = $6, updated_by_id = $7, updated_by_name = $8,
-            automations = $9, notices = $10, excel = $11
+    `UPDATE ai_access SET enabled = $2, domains = $3, monthly_cap_usd = $4, updated_by_id = $5, updated_by_name = $6,
+            automations = $7, notices = $8, excel = $9, mtc = $10
       WHERE user_id = $1`,
     values,
   )
@@ -338,8 +335,9 @@ export async function personAvailability(
 ): Promise<PersonAvailability> {
   // One after another: `q` may be a transaction's single connection.
   const access = known !== undefined ? known : await loadAccess(q, userId)
-  const model = access?.model ?? AI_MODEL
-  const app = await loadAvailability(q, config, readerReady, model)
+  // Judged on the cheapest model a question may run on now (the owner's Models): a dearer level is held to the caps call by call.
+  const app = await loadAvailability(q, config, readerReady)
+  const model = app.status.model
   const owner = ownerId !== null && ownerId === userId
   // The role as it is now: a person demoted loses the notices at once (mayManageNotices).
   const role = isGranted(access) ? ((await q.query<{ role: Role }>(`SELECT role FROM users WHERE id = $1`, [userId])).rows[0]?.role ?? null) : null
@@ -350,6 +348,7 @@ export async function personAvailability(
     automations: mayAutomate(access, owner),
     excel: mayMakeExcel(access, owner),
     notices: mayManageNotices(access, owner, role),
+    mtc: mayUploadMtc(access, owner, true),
   }
   if (!isGranted(access)) me.reason = 'not-granted'
   else if (app.status.reason === 'cap-reached') me.reason = 'cap-reached'

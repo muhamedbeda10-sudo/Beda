@@ -140,7 +140,7 @@ beforeAll(async () => {
   // Given the assistant by its owner (admin): reports stay personal all the same, Excel included.
   const granted = await app.api('PUT', `/api/ai/access/${other.user.id}`, {
     token: admin.token,
-    body: { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit'], model: AI_MODEL, effort: 'medium', monthlyCapUsd: 50, excel: true },
+    body: { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit'], monthlyCapUsd: 50, excel: true },
   })
   expect(granted.status).toBe(200)
   for (const code of ['58', '31']) {
@@ -198,7 +198,8 @@ describe('§20 saving an answer as a report', () => {
     const res = await save({ turnId: first.turnId })
     expect(res.status).toBe(201)
     expect(res.body.notice).toBeUndefined()
-    expect(res.body.status).toMatchObject({ available: true, model: AI_MODEL })
+    // The status's model: the cheapest a question may run on (Models).
+    expect(res.body.status).toMatchObject({ available: true, model: 'claude-haiku-5-5' })
     saved = res.body.report
     expect(saved).toEqual({
       id: expect.any(String),

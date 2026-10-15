@@ -45,7 +45,7 @@ describe('§20 pinning the owner', () => {
     const owner = await createUser('mo.beda', 'Mohamed Beda')
     const mo = await app.login('mo.beda')
     const me = await app.api<AiMeResponse>('GET', '/api/ai/me', { token: admin.token })
-    expect(me.body).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false })
+    expect(me.body).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false, mtc: false })
     expect(await ownerRow()).toBe(owner)
     expect((await app.api<AiMeResponse>('GET', '/api/ai/me', { token: mo.token })).body).toMatchObject({ granted: true, owner: true })
   })
@@ -53,11 +53,11 @@ describe('§20 pinning the owner', () => {
   it('gives the owner their own access when pinned, and records the pin for the owner alone', async () => {
     const owner = (await ownerRow())!
     const access = await app.db.query(
-      `SELECT enabled, domains, model, effort, monthly_cap_usd AS cap, updated_by_name AS "by" FROM ai_access WHERE user_id = $1`,
+      `SELECT enabled, domains, monthly_cap_usd AS cap, updated_by_name AS "by" FROM ai_access WHERE user_id = $1`,
       [owner],
     )
     expect(access.rows).toEqual([
-      { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit', 'production'], model: AI_MODEL, effort: 'medium', cap: AI_DEFAULT_MONTHLY_CAP_USD, by: 'Mohamed Beda' },
+      { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit', 'production'], cap: AI_DEFAULT_MONTHLY_CAP_USD, by: 'Mohamed Beda' },
     ])
     const audit = await app.db.query(`SELECT entity, entity_id AS "entityId", action, field, new_value AS "newValue" FROM audit_log WHERE entity LIKE 'Ai%' ORDER BY id`)
     expect(audit.rows).toEqual([
@@ -67,7 +67,7 @@ describe('§20 pinning the owner', () => {
         entityId: owner,
         action: 'create',
         field: 'access',
-        newValue: 'Mohamed Beda (mo.beda): on; Inspections, Orders and PDI, Coils, suppliers and master data, Audit log and accounts, Production record; Claude Sonnet 5.5; Medium; $50.00 a month',
+        newValue: 'Mohamed Beda (mo.beda): on; Inspections, Orders and PDI, Coils, suppliers and master data, Audit log and accounts, Production record; $50.00 a month',
       },
     ])
   })
@@ -97,6 +97,7 @@ describe('§20 pinning the owner', () => {
         automations: false,
         excel: false,
         notices: false,
+        mtc: false,
       })
       // Another setting names another account: still the first.
       expect(await aiOwner(app.db, config('admin'))).toBe(owner)

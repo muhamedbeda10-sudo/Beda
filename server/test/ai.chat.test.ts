@@ -114,7 +114,7 @@ beforeAll(async () => {
   // The owner (admin) gives the second administrator the assistant too: conversations stay personal all the same, Excel included.
   const granted = await app.api('PUT', `/api/ai/access/${other.user.id}`, {
     token: admin.token,
-    body: { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit'], model: AI_MODEL, effort: 'medium', monthlyCapUsd: 50, excel: true },
+    body: { enabled: true, domains: ['inspection', 'orders', 'materials', 'audit'], monthlyCapUsd: 50, excel: true },
   })
   expect(granted.status).toBe(200)
   for (const code of ['58', '31']) {
@@ -758,7 +758,8 @@ describe('§20 how answers end', () => {
       `SELECT system_prompt AS "systemPrompt", tools FROM ai_conversations ORDER BY created_at DESC LIMIT 1`,
     )).rows[0]
     expect(before.spentUsd + minCallWorstCaseUsd(AI_MODEL, { conversation: prompt, messages: [] })).toBeGreaterThan(cap)
-    await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: cap } })
+    // Every question an analysis, on AI_MODEL (Sonnet 5.5): the status is judged on it.
+    await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: cap, chatMode: 'chat-analysis' } })
     try {
       expect((await app.api<AiStatusResponse>('GET', '/api/ai/status', { token: admin.token })).body).toMatchObject({ available: true, capUsd: cap })
       const turns = async () => (await app.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_turns`)).rows[0].n
@@ -784,7 +785,7 @@ describe('§20 how answers end', () => {
       expect(refused.res.status).toBe(402)
       expect((refused.res.body as ApiErrorBody).error.message).toMatch(/^The assistant's monthly limit is reached\./)
     } finally {
-      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50 } })
+      await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 50, chatMode: 'auto' } })
     }
   })
 
@@ -1193,7 +1194,7 @@ describe('§20 Excel and usage', () => {
     const third = await app.login('admin3')
     await app.api('PUT', `/api/ai/access/${third.user.id}`, {
       token: admin.token,
-      body: { enabled: true, domains: ['inspection'], model: AI_MODEL, effort: 'low', monthlyCapUsd: 5 },
+      body: { enabled: true, domains: ['inspection'], monthlyCapUsd: 5 },
     })
     await app.api('DELETE', '/api/ai/key', { token: admin.token })
     try {

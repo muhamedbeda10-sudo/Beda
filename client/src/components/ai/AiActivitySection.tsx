@@ -3,14 +3,16 @@
 // page and GET /ai/activity both refuse anyone else): what each person asked,
 // word for word, when, on which model, how many queries its answer ran, and
 // what it cost — a report saved from an answer counted with it — and what each
-// scheduled report's summary cost (§21). Newest first, a page at a time, for
-// this month or the last, one person or everyone, questions or summaries.
+// scheduled report's summary cost (§21), and what each certificate read on the
+// MTC tab cost: who uploaded which file, and what was read from it. Newest
+// first, a page at a time, for this month or the last, one person or everyone,
+// one kind or all.
 // The amounts stay on this page, as everywhere: the chat shows none.
 // ============================================================================
 
 import { useState } from 'react'
-import { ChevronDown, ChevronUp, Loader2, MessagesSquare, Zap } from 'lucide-react'
-import type { AiActivityItem } from '@qc/shared/ai'
+import { ChevronDown, ChevronUp, FileCheck2, Loader2, MessagesSquare, Zap } from 'lucide-react'
+import { AI_ACTION_INFO, type AiActivityItem } from '@qc/shared/ai'
 import { Button, Card, EmptyState } from '@/components/ui'
 import { FilterSelect, Segmented } from '@/components/ui/PageShell'
 import { textDirection } from '@/lib/direction'
@@ -19,7 +21,7 @@ import { useAiActivity } from '@/services/queries'
 import { Notice } from './AiNotice'
 import { ACTIVITY_STOP_LABEL, aiModelName, formatAnswerCost, formatMonth, utcMonth } from './format'
 
-type Kind = '' | 'question' | 'automation'
+type Kind = '' | 'question' | 'automation' | 'mtc'
 
 export function AiActivitySection({ enabled }: { enabled: boolean }) {
   const [which, setWhich] = useState<'this' | 'last'>('this')
@@ -36,7 +38,7 @@ export function AiActivitySection({ enabled }: { enabled: boolean }) {
       <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
         <div className="min-w-0">
           <h2 className="text-lg font-bold">Activity · {formatMonth(month)}</h2>
-          <p className="text-sm text-muted">What each person asked, and what each answer cost.</p>
+          <p className="text-sm text-muted">What each person asked, each scheduled report and each certificate uploaded, and what each cost.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <FilterSelect label="Person" value={userId} onChange={setUserId}>
@@ -48,9 +50,10 @@ export function AiActivitySection({ enabled }: { enabled: boolean }) {
             ))}
           </FilterSelect>
           <FilterSelect label="Kind" value={kind} onChange={(v) => setKind(v as Kind)}>
-            <option value="">Questions and reports</option>
+            <option value="">Everything</option>
             <option value="question">Questions</option>
             <option value="automation">Scheduled reports</option>
+            <option value="mtc">MTC uploads</option>
           </FilterSelect>
           <Segmented
             label="Month"
@@ -103,7 +106,8 @@ export function AiActivitySection({ enabled }: { enabled: boolean }) {
 function ActivityRow({ item }: { item: AiActivityItem }) {
   const [open, setOpen] = useState(false)
   const automation = item.kind === 'automation'
-  const running = !automation && item.stopReason === null
+  const mtc = item.kind === 'mtc'
+  const running = item.kind === 'question' && item.stopReason === null
   const ended = item.stopReason && item.stopReason !== 'end_turn' ? ACTIVITY_STOP_LABEL[item.stopReason] : null
   const meta = [
     item.userName,
@@ -126,6 +130,11 @@ function ActivityRow({ item }: { item: AiActivityItem }) {
                 <Zap aria-hidden className="h-3.5 w-3.5" /> Automation:
               </span>
             )}
+            {mtc && (
+              <span className="mt-0.5 inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-brand-700 dark:text-brand-300">
+                <FileCheck2 aria-hidden className="h-3.5 w-3.5" /> MTC upload:
+              </span>
+            )}
             {/* The words in their own direction: an Arabic question starts at the right and is cut at its own end. */}
             <span dir={textDirection(item.text) ?? 'auto'} className={cn('min-w-0 flex-1 break-words text-start text-sm font-medium', open ? 'whitespace-pre-line' : 'line-clamp-1')}>
               {item.text}
@@ -133,6 +142,13 @@ function ActivityRow({ item }: { item: AiActivityItem }) {
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
             <span>{meta.join(' · ')}</span>
+            {/* The level the question was answered at, and why the router gave it (Models). */}
+            {item.level && (
+              <span data-tip={item.levelReason ? `Why: ${item.levelReason}` : 'The level set under Models'} className="font-semibold text-slate-600 dark:text-slate-300">
+                · {AI_ACTION_INFO[item.level].name}
+              </span>
+            )}
+            {open && item.levelReason && <span className="basis-full">Level chosen because: {item.levelReason}</span>}
             {running && <span className="font-semibold text-brand-700 dark:text-brand-300">· answering…</span>}
             {ended && <span className="font-semibold text-amber-700 dark:text-amber-300">· {ended}</span>}
             {item.partial && <span data-tip="A call was cut off: part of this cost is an estimate">· estimated</span>}

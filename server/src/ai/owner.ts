@@ -13,7 +13,7 @@
 // Who the owner is, is read again on every request: nothing is cached.
 // ============================================================================
 
-import { AI_DOMAIN_IDS, AI_MODEL } from '@qc/shared/ai'
+import { AI_DOMAIN_IDS } from '@qc/shared/ai'
 import { auditEvent } from '@qc/shared/audit'
 import type { Config } from '../config'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
@@ -23,9 +23,6 @@ import { loadAiSettings } from './settings'
 
 /** Serialises pinning across instances: two requests at once pin once. Next to the reader's lock (7_204_930_116). */
 const PIN_LOCK_KEY = 7_204_930_117
-
-/** The effort the owner's own access starts with. */
-const OWNER_EFFORT = 'medium'
 
 /** Settings already warned about, so the log says it once per process, not on every request. */
 const warned = new Set<string>()
@@ -86,8 +83,8 @@ export async function aiOwnerAccount(db: Db, config: Config): Promise<string | n
 
 /**
  * Pin the owner, if none is pinned and the configured account is live and
- * active; their own access is created with it (every domain, the default
- * model, medium effort, a personal cap of the assistant's cap). Returns the
+ * active; their own access is created with it (every domain, a personal cap
+ * of the assistant's cap). Returns the
  * owner's id (a pin made meanwhile by another request included), or null.
  */
 export async function pinAiOwner(db: Db, config: Config): Promise<string | null> {
@@ -115,7 +112,7 @@ export async function pinAiOwner(db: Db, config: Config): Promise<string | null>
       await saveAccess(
         tx,
         user,
-        { enabled: true, domains: [...AI_DOMAIN_IDS], model: AI_MODEL, effort: OWNER_EFFORT, monthlyCapUsd: cap },
+        { enabled: true, domains: [...AI_DOMAIN_IDS], monthlyCapUsd: cap },
         by,
       )
     }

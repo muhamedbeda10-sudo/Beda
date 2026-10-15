@@ -41,8 +41,7 @@ const delivery = (id: string, as = p.creator) => app.api<AutomationDelivery>('GE
 beforeAll(async () => {
   await app.start()
   p = await setUp(app)
-  // The creator's own model: the summary is written on it.
-  await grant(app, p.owner, p.creator, { automations: true, model: 'claude-haiku-5-5', effort: 'high' })
+  await grant(app, p.owner, p.creator, { automations: true })
 })
 afterAll(() => app.stop())
 beforeEach(async () => {
@@ -52,13 +51,13 @@ beforeEach(async () => {
 })
 
 describe('§21 a report delivered', () => {
-  it('runs its sections over its period, asks for a short summary on the creator’s model, and delivers both', async () => {
+  it('runs its sections over its period, asks for a short summary on the model set for summaries, and delivers both', async () => {
     app.model.reply({ content: [text('3 machines are registered.\nAll of them this week.\nNothing failed.\nOne more line.\nAnd a fifth.')], usage: { input_tokens: 1200, output_tokens: 300 } })
     const { id, run } = await deliver()
     expect(run).toMatchObject({ ok: true, error: null, notified: 4, note: null })
     expect(run.deliveryId).not.toBeNull()
 
-    // One call: the creator's model, low effort, no tools, the summary's own room.
+    // One call: the model and effort set for scheduled summaries (Haiku 5.5, low, as recommended), no tools, the summary's own room.
     expect(app.model.calls).toHaveLength(1)
     const call = app.model.calls[0].params
     expect(call).toMatchObject({ model: 'claude-haiku-5-5', max_tokens: SUMMARY_MAX_TOKENS, thinking: { type: 'adaptive' }, output_config: { effort: 'low' } })
@@ -173,11 +172,11 @@ describe('§21 a report delivered', () => {
     expect(app.model.calls).toHaveLength(0)
     await app.api('PUT', '/api/ai/settings', { token: p.owner.token, body: { enabled: true, monthlyCapUsd: 50 } })
     // The creator's own cap: what they spent this month, and the most the call could cost, would pass it.
-    await grant(app, p.owner, p.creator, { automations: true, model: 'claude-haiku-5-5', monthlyCapUsd: 0.02 })
+    await grant(app, p.owner, p.creator, { automations: true, monthlyCapUsd: 0.02 })
     await app.db.query(`INSERT INTO ai_usage (user_id, model, cost_usd) VALUES ($1, 'claude-haiku-5-5', 0.0199)`, [p.creator.user.id])
     await without(SUMMARY_NOTE.cap)
     expect(app.model.calls).toHaveLength(0)
-    await grant(app, p.owner, p.creator, { automations: true, model: 'claude-haiku-5-5', effort: 'high' })
+    await grant(app, p.owner, p.creator, { automations: true })
     // No key.
     expect((await app.api('DELETE', '/api/ai/key', { token: p.owner.token })).status).toBe(200)
     await without(SUMMARY_NOTE.unavailable)

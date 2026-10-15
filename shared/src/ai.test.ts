@@ -1,5 +1,34 @@
 import { describe, expect, it } from 'vitest'
-import { AI_DOMAIN_IDS, AI_MODEL_IDS, AI_PRICES, AI_UNKNOWN_MODEL_PRICE, aiCostUsd, isAiDomain, isAiEffort, isAiModel, describeAiDays, describeAiPeriod, isAiDay, resolveAiPeriod } from './ai'
+import {
+  AI_ACTION_IDS,
+  AI_ACTIONS,
+  AI_CHAT_TIERS,
+  AI_DEFAULT_SETTINGS,
+  AI_DOMAIN_IDS,
+  AI_MODEL_IDS,
+  AI_MODELS,
+  AI_MTC_REREAD_MODEL,
+  AI_PRICES,
+  AI_ROUTER_FALLBACK,
+  AI_ROUTER_MODEL,
+  AI_UNKNOWN_MODEL_PRICE,
+  aiChatModels,
+  aiCheapestChatModel,
+  aiCostUsd,
+  isAiAction,
+  isAiChatMode,
+  isAiDomain,
+  isAiEffort,
+  isAiModel,
+  describeAiDays,
+  describeAiPeriod,
+  isAiDay,
+  resolveAiAction,
+  resolveAiPeriod,
+  type AiAction,
+  type AiActionSetting,
+  type AiSettings,
+} from './ai'
 
 const none = { inputTokens: 0, outputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 }
 
@@ -73,5 +102,57 @@ describe('§20 — what the owner can give a person', () => {
     // The order is fixed: a set of domains is stored as bits in it, so a new domain goes last.
     expect([...AI_DOMAIN_IDS]).toEqual(['inspection', 'orders', 'materials', 'audit', 'production'])
     expect(isAiDomain('chat')).toBe(false)
+  })
+})
+
+describe('§20 Models: the model and effort of each thing the assistant does', () => {
+  const settings = (over: Partial<Record<AiAction, AiActionSetting>> = {}, chatMode: AiSettings['chatMode'] = 'auto') => ({
+    chatMode,
+    actions: { ...AI_DEFAULT_SETTINGS.actions, ...over },
+  })
+
+  it('names every action once, each with a recommended model and effort', () => {
+    expect(AI_ACTIONS.map((a) => a.id)).toEqual([...AI_ACTION_IDS])
+    for (const a of AI_ACTIONS) {
+      expect(isAiModel(a.recommended.model), a.id).toBe(true)
+      expect(isAiEffort(a.recommended.effort), a.id).toBe(true)
+    }
+    expect(AI_CHAT_TIERS.every((t) => isAiAction(t) && isAiChatMode(t))).toBe(true)
+    expect(isAiChatMode('auto')).toBe(true)
+    expect(isAiChatMode('chat-files')).toBe(false)
+    expect(isAiAction('translate')).toBe(false)
+    expect(AI_ACTIONS.map((a) => a.id)).toContain(AI_ROUTER_FALLBACK)
+  })
+
+  it('runs Auto on the recommended model and effort, and a choice as chosen, field by field', () => {
+    expect(resolveAiAction(AI_DEFAULT_SETTINGS, 'chat-simple')).toEqual({ model: 'claude-haiku-5-5', effort: 'low' })
+    expect(resolveAiAction(AI_DEFAULT_SETTINGS, 'chat-deep')).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
+    expect(resolveAiAction(AI_DEFAULT_SETTINGS, 'mtc')).toEqual({ model: 'claude-sonnet-5-5', effort: 'high' })
+    expect(resolveAiAction(settings({ mtc: { model: 'claude-opus-5-5', effort: 'auto' } }), 'mtc')).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
+    expect(resolveAiAction(settings({ mtc: { model: 'auto', effort: 'low' } }), 'mtc')).toEqual({ model: 'claude-sonnet-5-5', effort: 'low' })
+    // Settings saved before an action existed: that action runs as recommended.
+    const older = { actions: { ...AI_DEFAULT_SETTINGS.actions } } as { actions: Partial<AiSettings['actions']> }
+    delete older.actions['report-summary']
+    expect(resolveAiAction(older as Pick<AiSettings, 'actions'>, 'report-summary')).toEqual({ model: 'claude-haiku-5-5', effort: 'low' })
+  })
+
+  it('knows the models a chat question may run on, and the cheapest of them, by the chat mode', () => {
+    expect(aiChatModels(AI_DEFAULT_SETTINGS).sort()).toEqual(['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5'])
+    expect(aiCheapestChatModel(AI_DEFAULT_SETTINGS)).toBe('claude-haiku-5-5')
+    // A level fixed for every question: that level's model, and the files' (a question with files has its own).
+    expect(aiChatModels(settings({}, 'chat-deep')).sort()).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5'])
+    expect(aiCheapestChatModel(settings({}, 'chat-deep'))).toBe('claude-sonnet-5-5')
+    expect(aiCheapestChatModel(settings({ 'chat-deep': { model: 'claude-fable-5-1', effort: 'auto' }, 'chat-files': { model: 'claude-fable-5-1', effort: 'auto' } }, 'chat-deep'))).toBe(
+      'claude-fable-5-1',
+    )
+    // The other actions never count: they are not a person's questions.
+    expect(aiChatModels(settings({ mtc: { model: 'claude-fable-5-1', effort: 'auto' } }))).not.toContain('claude-fable-5-1')
+  })
+
+  it('reads an unclear certificate again on a stronger model than the recommended one', () => {
+    const order = AI_MODELS.map((m) => m.id)
+    expect(order.indexOf(AI_MTC_REREAD_MODEL)).toBeGreaterThan(order.indexOf(resolveAiAction(AI_DEFAULT_SETTINGS, 'mtc').model))
+    expect(AI_ROUTER_MODEL).toBe('claude-haiku-5-5')
+    expect(AI_DEFAULT_SETTINGS).toMatchObject({ chatMode: 'auto', mtcReread: true })
   })
 })

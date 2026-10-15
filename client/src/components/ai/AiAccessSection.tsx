@@ -13,8 +13,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { BellRing, FileSpreadsheet, Loader2, Pencil, Save, Trash2, UserPlus, UsersRound, Zap } from 'lucide-react'
-import { AI_DOMAINS, AI_EFFORTS, AI_MAX_MONTHLY_CAP_USD, AI_MODELS, type AiAccess } from '@qc/shared/ai'
+import { BellRing, FileCheck2, FileSpreadsheet, Loader2, Pencil, Save, Trash2, UserPlus, UsersRound, Zap } from 'lucide-react'
+import { AI_DOMAINS, AI_MAX_MONTHLY_CAP_USD, type AiAccess, type AiModelId } from '@qc/shared/ai'
 import { AI_EXCEL_KEEP_DAYS } from '@qc/shared/aiExcel'
 import { Badge, Button, Card, Drawer, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
 import { ScrollX } from '@/components/ui/ScrollX'
@@ -58,6 +58,8 @@ import { formatCap, formatUsd, spendBarClass, spendShare } from './format'
 
 /** What the Excel permission lets someone do, in a line. */
 const EXCEL_TIP = 'May ask the assistant for Excel files of the data they may ask about'
+/** What the MTC permission lets someone do, in a line. */
+const MTC_TIP = 'May upload mill test certificates on the MTC tab, the assistant on for them or not'
 
 /** The same tones as the Users page: administrators stand out, supervisors a little. */
 const ROLE_TONE: Record<string, BadgeTone> = { viewer: 'neutral', inspector: 'neutral', supervisor: 'blue', admin: 'violet' }
@@ -66,7 +68,8 @@ const ROW_BTN = 'grid h-11 w-11 place-items-center rounded-xl text-muted transit
 
 type Editing = { kind: 'add' } | { kind: 'edit'; row: AiAccess }
 
-export function AiAccessSection({ appCapUsd }: { appCapUsd: number | undefined }) {
+/** `chatModel`: the cheapest model a question runs on now (Models): the least a person's cap may be is one question on it. */
+export function AiAccessSection({ appCapUsd, chatModel }: { appCapUsd: number | undefined; chatModel: AiModelId }) {
   const { data, isLoading, isError, refetch } = useAiAccess(true)
   const [editing, setEditing] = useState<Editing | null>(null)
   const [removing, setRemoving] = useState<AiAccess | null>(null)
@@ -84,7 +87,7 @@ export function AiAccessSection({ appCapUsd }: { appCapUsd: number | undefined }
               Who can use it
             </h3>
             <p className="mt-0.5 text-sm text-muted">
-              Only the people listed here see the assistant. Each asks with the data, the model and the effort you give them, up to their own monthly cap — and the
+              Only the people listed here see the assistant. Each asks with the data you give them, up to their own monthly cap (the model and effort follow the question: Models) — and the
               app-wide cap stays on top. A change applies from their next question. They never see a price or an amount.
             </p>
           </div>
@@ -110,11 +113,11 @@ export function AiAccessSection({ appCapUsd }: { appCapUsd: number | undefined }
             Nobody has the assistant yet — you included. Add the first person.
           </p>
         ) : (
-          <AccessTable people={people} onEdit={(row) => setEditing({ kind: 'edit', row })} onRemove={setRemoving} />
+          <AccessTable people={people} chatModel={chatModel} onEdit={(row) => setEditing({ kind: 'edit', row })} onRemove={setRemoving} />
         ))}
 
       {editing && (
-        <AccessEditor key={editing.kind === 'edit' ? editing.row.userId : 'add'} editing={editing} appCapUsd={appCapUsd} onClose={() => setEditing(null)} />
+        <AccessEditor key={editing.kind === 'edit' ? editing.row.userId : 'add'} editing={editing} appCapUsd={appCapUsd} chatModel={chatModel} onClose={() => setEditing(null)} />
       )}
       {removing && <RemoveAccess row={removing} onClose={() => setRemoving(null)} />}
     </Card>
@@ -126,24 +129,34 @@ export function AiAccessSection({ appCapUsd }: { appCapUsd: number | undefined }
 /**
  * The list alone, drawn from the people as sorted (sortAccess). On a phone a
  * card per person; from 640 px the table, its actions kept in view while the
- * rest scrolls under them, Model and Effort shown from a wide screen only
- * (the editor names them), and a tap on a row opening the editor.
+ * rest scrolls under them, and a tap on a row opening the editor.
  */
-export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; onEdit: (row: AiAccess) => void; onRemove: (row: AiAccess) => void }) {
+export function AccessTable({
+  people,
+  chatModel,
+  onEdit,
+  onRemove,
+}: {
+  people: AiAccess[]
+  /** The cheapest model a question runs on now (Models): a cap under one question on it can never ask. */
+  chatModel: AiModelId
+  onEdit: (row: AiAccess) => void
+  onRemove: (row: AiAccess) => void
+}) {
   const th = 'px-3 py-2.5 font-bold'
   const phone = useMediaQuery(PHONE)
   if (phone) {
     return (
       <ul className="space-y-2">
         {people.map((p) => (
-          <AccessCard key={p.userId} row={p} onEdit={() => onEdit(p)} onRemove={() => onRemove(p)} />
+          <AccessCard key={p.userId} row={p} chatModel={chatModel} onEdit={() => onEdit(p)} onRemove={() => onRemove(p)} />
         ))}
       </ul>
     )
   }
   return (
     <ScrollX className="rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800" innerClassName="rounded-2xl" shadows="start">
-      <table className="table-sticky-last w-full min-w-[58rem] text-sm xl:min-w-[72rem]">
+      <table className="table-sticky-last w-full min-w-[64rem] text-sm xl:min-w-[78rem]">
         <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
           <tr>
             <th className={th}>Person</th>
@@ -152,9 +165,8 @@ export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; 
             <th className={th}>Automations</th>
             <th className={th}>Notices</th>
             <th className={th}>Excel</th>
+            <th className={th}>MTC</th>
             <th className={th}>Data</th>
-            <th className={cn(th, 'hidden xl:table-cell')}>Model</th>
-            <th className={cn(th, 'hidden xl:table-cell')}>Effort</th>
             <th className={th}>This month</th>
             <th className={cn(th, STICKY_TH, 'text-right')}>
               <span className="sr-only">Actions</span>
@@ -163,7 +175,7 @@ export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; 
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {people.map((p) => (
-            <AccessRow key={p.userId} row={p} onEdit={() => onEdit(p)} onRemove={() => onRemove(p)} />
+            <AccessRow key={p.userId} row={p} chatModel={chatModel} onEdit={() => onEdit(p)} onRemove={() => onRemove(p)} />
           ))}
         </tbody>
       </table>
@@ -220,9 +232,9 @@ function DomainBadges({ domains }: { domains: AiAccess['domains'] }) {
   )
 }
 
-function AccessCard({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => void; onRemove: () => void }) {
+function AccessCard({ row, chatModel, onEdit, onRemove }: { row: AiAccess; chatModel: AiModelId; onEdit: () => void; onRemove: () => void }) {
   const domains = orderDomains(row.domains)
-  const live = accessLive(row)
+  const live = accessLive(row, chatModel)
   const notices = noticesAccessView(row)
   return (
     <li className={cn('rounded-2xl p-3 ring-1 ring-slate-200 dark:ring-slate-800', !live && 'opacity-70')}>
@@ -249,18 +261,20 @@ function AccessCard({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => vo
             Excel
           </Badge>
         )}
+        {(row.owner || row.mtc) && (
+          <Badge tone="blue" icon={<FileCheck2 className="h-3 w-3" />}>
+            MTC
+          </Badge>
+        )}
       </div>
       <div className="mt-2">
         <DomainBadges domains={domains} />
       </div>
-      <p className="mt-2 text-xs text-muted">
-        {modelName(row.model)} · {effortName(row.effort)} effort
-      </p>
       <div className="mt-2 flex items-end justify-between gap-3">
         <div className="min-w-0">
           <SpendBar spent={row.spentUsd} cap={row.monthlyCapUsd} />
-          {!capFitsModel(row.monthlyCapUsd, row.model) && (
-            <span className="mt-1 block text-xs font-medium text-rose-700 dark:text-rose-300">Under the {formatCap(minCapUsd(row.model))} one call may cost: cannot ask</span>
+          {!capFitsModel(row.monthlyCapUsd, chatModel) && (
+            <span className="mt-1 block text-xs font-medium text-rose-700 dark:text-rose-300">Under the {formatCap(minCapUsd(chatModel))} one question may cost: cannot ask</span>
           )}
         </div>
         <span className="flex shrink-0 gap-0.5">
@@ -271,10 +285,10 @@ function AccessCard({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => vo
   )
 }
 
-function AccessRow({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => void; onRemove: () => void }) {
+function AccessRow({ row, chatModel, onEdit, onRemove }: { row: AiAccess; chatModel: AiModelId; onEdit: () => void; onRemove: () => void }) {
   const domains = orderDomains(row.domains)
   // A row that cannot ask now (switched off, no data, an account that cannot sign in) is drawn quieter.
-  const live = accessLive(row)
+  const live = accessLive(row, chatModel)
   const notices = noticesAccessView(row)
   return (
     <tr
@@ -327,18 +341,23 @@ function AccessRow({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => voi
         )}
       </td>
       <td className="px-3 py-2.5">
+        {row.owner || row.mtc ? (
+          <Badge tone="blue" icon={<FileCheck2 className="h-3 w-3" />} tip={row.owner ? 'You always can, as the assistant’s owner' : MTC_TIP}>
+            Can upload
+          </Badge>
+        ) : (
+          <span className="text-xs text-muted">No</span>
+        )}
+      </td>
+      <td className="px-3 py-2.5">
         <DomainBadges domains={domains} />
       </td>
-      <td className="hidden whitespace-nowrap px-3 py-2.5 xl:table-cell" data-tip={describeModelPrice(row.model)}>
-        {modelName(row.model)}
-      </td>
-      <td className="hidden whitespace-nowrap px-3 py-2.5 xl:table-cell">{effortName(row.effort)}</td>
       <td className="px-3 py-2.5">
         <SpendBar spent={row.spentUsd} cap={row.monthlyCapUsd} />
         {/* Below one call's cost they are told every month that the month's limit is reached: say why here. */}
-        {!capFitsModel(row.monthlyCapUsd, row.model) && (
+        {!capFitsModel(row.monthlyCapUsd, chatModel) && (
           <span className="mt-1 block max-w-[12rem] text-xs font-medium text-rose-700 dark:text-rose-300">
-            Under the {formatCap(minCapUsd(row.model))} one call may cost: cannot ask
+            Under the {formatCap(minCapUsd(chatModel))} one question may cost: cannot ask
           </span>
         )}
       </td>
@@ -374,13 +393,13 @@ const SWITCH_ROW = 'flex cursor-pointer items-center justify-between gap-4 round
 const optionTone = (on: boolean) =>
   on ? 'border-brand-300 bg-brand-50/60 dark:border-brand-500/40 dark:bg-brand-500/10' : 'border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50'
 
-function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCapUsd: number | undefined; onClose: () => void }) {
+function AccessEditor({ editing, appCapUsd, chatModel, onClose }: { editing: Editing; appCapUsd: number | undefined; chatModel: AiModelId; onClose: () => void }) {
   const qc = useQueryClient()
   const { toast } = useApp()
   const row = editing.kind === 'edit' ? editing.row : null
   const candidates = useAiPeople(!row)
   const [personId, setPersonId] = useState('')
-  const [draft, setDraft] = useState<AccessDraft>(() => (row ? draftFromAccess(row) : newAccessDraft(appCapUsd ?? AI_NEW_PERSON_CAP_USD)))
+  const [draft, setDraft] = useState<AccessDraft>(() => (row ? draftFromAccess(row) : newAccessDraft(appCapUsd ?? AI_NEW_PERSON_CAP_USD, chatModel)))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const errorRef = useRef<HTMLParagraphElement>(null)
@@ -402,9 +421,9 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
   const admin = isAdministrator(row?.role ?? person?.role ?? '')
   const noticesLocked = saving || !!row?.owner || (!admin && !row?.notices)
   const cap = parseCapUsd(draft.cap)
-  const minCap = minCapUsd(draft.model)
-  // An app-wide cap under one call's cost on their model holds every question of theirs back, whatever their own cap.
-  const appCapTooLow = draft.enabled && appCapUsd !== undefined && !capFitsModel(appCapUsd, draft.model)
+  const minCap = minCapUsd(chatModel)
+  // An app-wide cap under one question's cost on the cheapest model holds every question back, whatever their own cap.
+  const appCapTooLow = draft.enabled && appCapUsd !== undefined && !capFitsModel(appCapUsd, chatModel)
   // A personal cap above the app-wide one is allowed (the app-wide cap may be raised later), but worth a word.
   const appCapBelow = !appCapTooLow && cap !== null && appCapUsd !== undefined && cap > appCapUsd ? appCapUsd : null
   const ready = row ? accessChanged(row, draft) : person !== null
@@ -415,7 +434,7 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
       setError('Choose who to give the assistant to.')
       return
     }
-    const why = checkAccessDraft(draft)
+    const why = checkAccessDraft(draft, chatModel)
     if (why) {
       setError(why)
       return
@@ -543,6 +562,20 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
           <AiSwitch on={draft.excel} onChange={(on) => patch({ excel: on })} labelledBy="ai-access-excel" disabled={saving || !!row?.owner} />
         </label>
 
+        <label className={SWITCH_ROW}>
+          <div className="min-w-0">
+            <p id="ai-access-mtc" className="font-semibold">
+              Can upload MTC certificates
+            </p>
+            <p className="mt-0.5 text-xs text-muted">
+              {row?.owner
+                ? 'You always can, as the assistant’s owner.'
+                : 'They may upload mill test certificates on the MTC tab, and save the coils and wire read from them after checking them. Whether or not the assistant is on for them: with it off they never see the chat. Each reading counts toward their monthly cap and shows in Activity with its cost. Off: they can no longer upload or save.'}
+            </p>
+          </div>
+          <AiSwitch on={draft.mtc} onChange={(on) => patch({ mtc: on })} labelledBy="ai-access-mtc" disabled={saving || !!row?.owner} />
+        </label>
+
         <label className={cn(SWITCH_ROW, !admin && 'bg-slate-50/70 dark:bg-slate-800/30')}>
           <div className="min-w-0">
             <p id="ai-access-notices" className={cn('font-semibold', !admin && 'text-muted')}>
@@ -582,52 +615,10 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
           </div>
         </fieldset>
 
-        <fieldset className="space-y-2" disabled={saving}>
-          <legend className="label">Model</legend>
-          <p className="text-xs text-muted">
-            Prices per million tokens of the question read and the answer written, as Anthropic bills them (what the prompt cache reads back costs far less). Fixed
-            by you: they cannot change it.
-          </p>
-          <div className="grid gap-2">
-            {AI_MODELS.map((m) => {
-              const on = draft.model === m.id
-              return (
-                <label key={m.id} className={cn(OPTION, optionTone(on))}>
-                  <input type="radio" name="ai-access-model" checked={on} onChange={() => patch({ model: m.id })} className="mt-0.5 h-4 w-4 shrink-0 accent-brand-600" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-semibold">{m.name}</span>
-                    <span className="block text-xs text-muted">{m.note}</span>
-                    <span className="mt-1 block text-xs font-medium tabular-nums text-slate-600 dark:text-slate-300">{describeModelPrice(m.id)}</span>
-                  </span>
-                </label>
-              )
-            })}
-          </div>
-        </fieldset>
-
-        <fieldset className="space-y-2" disabled={saving}>
-          <legend className="label">Effort</legend>
-          <p className="text-xs text-muted">How much thought each answer gets: more is slower and costs more. Fixed by you as well.</p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {AI_EFFORTS.map((e) => {
-              const on = draft.effort === e.id
-              return (
-                <label key={e.id} className={cn(OPTION, 'py-2.5', optionTone(on))}>
-                  <input type="radio" name="ai-access-effort" checked={on} onChange={() => patch({ effort: e.id })} className="mt-0.5 h-4 w-4 shrink-0 accent-brand-600" />
-                  <span className="min-w-0">
-                    <span className="block text-sm font-semibold">{e.name}</span>
-                    <span className="block text-xs text-muted">{e.note}</span>
-                  </span>
-                </label>
-              )
-            })}
-          </div>
-        </fieldset>
-
         <div className="space-y-2">
           <Field
             label="Their monthly cap (USD)"
-            hint={`Theirs alone, per calendar month (UTC), from ${formatCap(minCap)} to ${formatCap(AI_MAX_MONTHLY_CAP_USD)}: one call to ${modelName(draft.model)} may cost up to ${formatCap(minCap)}, and a question goes ahead only while that much is left. Once reached, they are told this month's limit is reached, without an amount.${row ? ` Spent so far this month: ${formatUsd(row.spentUsd)}, ${Math.round(spendShare(row.spentUsd, row.monthlyCapUsd) * 100)}% of the cap set now.` : ''}`}
+            hint={`Theirs alone, per calendar month (UTC), from ${formatCap(minCap)} to ${formatCap(AI_MAX_MONTHLY_CAP_USD)}: everything Claude does for them counts in it — questions on the model of their level (Models), and certificates they upload. A question goes ahead only while what it may cost is left. Once reached, they are told this month's limit is reached, without an amount.${row ? ` Spent so far this month: ${formatUsd(row.spentUsd)}, ${Math.round(spendShare(row.spentUsd, row.monthlyCapUsd) * 100)}% of the cap set now.` : ''}`}
           >
             <Input
               type="number"
@@ -643,7 +634,7 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
           </Field>
           {appCapTooLow && appCapUsd !== undefined && (
             <Notice tone="amber">
-              The app-wide cap of {formatCap(appCapUsd)} is under the {formatCap(minCap)} one call to {modelName(draft.model)} may cost: they cannot ask until it is
+              The app-wide cap of {formatCap(appCapUsd)} is under the {formatCap(minCap)} one question to {modelName(chatModel)} may cost: nobody can ask until it is
               raised.
             </Notice>
           )}

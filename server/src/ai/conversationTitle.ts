@@ -20,8 +20,6 @@ import { usageOf } from './assistant'
 import type { AiModelClient, ModelMessage } from './model'
 import { CONVERSATION_SELECT, recordUsage, toConversation } from './transcript'
 
-/** The model that writes titles: the fastest and cheapest. */
-export const TITLE_MODEL = 'claude-haiku-5-5'
 /** A title is a few words: this is room enough, and a cap on the call's cost. */
 const TITLE_MAX_TOKENS = 60
 /** How much of the question the call reads: its start says what it is about. */
@@ -67,6 +65,8 @@ export interface TitleRequest {
   conversationId: string
   turnId: string
   question: string
+  /** The model the owner set for titles (Models; the cheapest unless changed). */
+  titleModel: string
 }
 
 /**
@@ -80,7 +80,7 @@ export async function giveConversationTitle(r: TitleRequest): Promise<AiConversa
     message = await r.model.complete(
       r.apiKey,
       {
-        model: TITLE_MODEL,
+        model: r.titleModel,
         max_tokens: TITLE_MAX_TOKENS,
         system: TITLE_SYSTEM,
         messages: [{ role: 'user', content: titleRequest(r.question) }],
@@ -92,7 +92,7 @@ export async function giveConversationTitle(r: TitleRequest): Promise<AiConversa
     console.warn(`[ai] conversation ${r.conversationId}: no title from the assistant:`, e instanceof Error ? e.message : String(e))
     return null
   }
-  const usage = usageOf(message, TITLE_MODEL)
+  const usage = usageOf(message, r.titleModel)
   await recordUsage(r.db, {
     userId: r.userId,
     conversationId: r.conversationId,

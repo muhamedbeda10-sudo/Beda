@@ -29,7 +29,7 @@ import {
 } from './access'
 import { STOP_TEXT } from './format'
 
-const me = (over: Partial<AiMeResponse>): AiMeResponse => ({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, ...over })
+const me = (over: Partial<AiMeResponse>): AiMeResponse => ({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, mtc: false, ...over })
 
 const row = (over: Partial<AiAccess>): AiAccess => ({
   userId: 'u1',
@@ -39,14 +39,13 @@ const row = (over: Partial<AiAccess>): AiAccess => ({
   active: true,
   enabled: true,
   domains: ['inspection'],
-  model: 'claude-sonnet-5-5',
-  effort: 'medium',
   monthlyCapUsd: 10,
   spentUsd: 1.25,
   owner: false,
   automations: false,
   notices: false,
   excel: false,
+  mtc: false,
   ...over,
 })
 
@@ -122,11 +121,11 @@ describe('the least a cap may be on a model', () => {
     }
   })
 
-  it('says why, with the least amount and the model, for the owner', () => {
+  it('says why, with the least amount and the cheapest model a question runs on, for the owner', () => {
     expect(capTooLowText('claude-fable-5-1')).toBe(
-      "On Claude Fable 5.1 the cap must be at least $2.40, the most one call to the model may cost. Below that they could never ask: they would be told the month's limit is reached, every month.",
+      "The cap must be at least $2.40, the most one question may cost on Claude Fable 5.1, the cheapest model set under Models. Below that they could never ask: they would be told the month's limit is reached, every month.",
     )
-    expect(capTooLowText('claude-haiku-5-5')).toMatch(/Claude Haiku 5\.5 .* at least \$0\.02,/)
+    expect(capTooLowText('claude-haiku-5-5')).toMatch(/^The cap must be at least \$0\.02, .* Claude Haiku 5\.5,/)
   })
 })
 
@@ -147,48 +146,56 @@ describe('the owner’s draft of one person’s access', () => {
     for (const bad of ['', '-1', '1.234', '2000.01', 'abc', '1e3', '10$']) expect(parseCapUsd(bad)).toBeNull()
   })
 
-  it('starts a newcomer narrow: on, the inspection record, Sonnet at medium effort, a small cap within the app’s, no automations', () => {
-    expect(newAccessDraft(50)).toEqual({ enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', cap: '10', automations: false, notices: false, excel: false })
-    expect(newAccessDraft(4).cap).toBe('4')
-    // Never a cap they could not ask with, even under a tiny app-wide cap (the drawer names that one).
-    expect(newAccessDraft(0.1).cap).toBe('0.64')
-    expect(newAccessDraft(-1).cap).toBe('0.64')
-    expect(checkAccessDraft(newAccessDraft(0))).toBeNull()
+  it('starts a newcomer narrow: on, the inspection record, a small cap within the app’s, no automations', () => {
+    expect(newAccessDraft(50, 'claude-haiku-5-5')).toEqual({ enabled: true, domains: ['inspection'], cap: '10', automations: false, notices: false, excel: false, mtc: false })
+    expect(newAccessDraft(4, 'claude-haiku-5-5').cap).toBe('4')
+    // Never a cap they could not ask with on the cheapest model a question runs on, even under a tiny app-wide cap (the drawer names that one).
+    expect(newAccessDraft(0.01, 'claude-haiku-5-5').cap).toBe('0.02')
+    expect(newAccessDraft(0.1, 'claude-sonnet-5-5').cap).toBe('0.64')
+    expect(newAccessDraft(-1, 'claude-sonnet-5-5').cap).toBe('0.64')
+    expect(checkAccessDraft(newAccessDraft(0, 'claude-opus-5-5'), 'claude-opus-5-5')).toBeNull()
   })
 
   it('asks for at least one kind of data and a cap the server takes', () => {
     const d = draftFromAccess(row({}))
-    expect(checkAccessDraft(d)).toBeNull()
-    expect(checkAccessDraft({ ...d, domains: [] })).toMatch(/at least one/)
-    expect(checkAccessDraft({ ...d, cap: '5000' })).toBe(CAP_RANGE_TEXT)
+    expect(checkAccessDraft(d, 'claude-haiku-5-5')).toBeNull()
+    expect(checkAccessDraft({ ...d, domains: [] }, 'claude-haiku-5-5')).toMatch(/at least one/)
+    expect(checkAccessDraft({ ...d, cap: '5000' }, 'claude-haiku-5-5')).toBe(CAP_RANGE_TEXT)
   })
 
-  it('refuses a cap under what one call to the chosen model may cost, which would close the assistant to them every month', () => {
+  it('refuses a cap under what one question may cost on the cheapest model set under Models, which would close the assistant to them every month', () => {
     const d = draftFromAccess(row({}))
-    // The reported case: Fable 5.1 with a $1 cap.
-    expect(checkAccessDraft({ ...d, model: 'claude-fable-5-1', cap: '1' })).toBe(capTooLowText('claude-fable-5-1'))
-    expect(checkAccessDraft({ ...d, model: 'claude-fable-5-1', cap: '2.39' })).toBe(capTooLowText('claude-fable-5-1'))
-    expect(checkAccessDraft({ ...d, model: 'claude-fable-5-1', cap: '2.40' })).toBeNull()
-    expect(checkAccessDraft({ ...d, model: 'claude-opus-5-5', cap: '1.43' })).toBe(capTooLowText('claude-opus-5-5'))
-    expect(checkAccessDraft({ ...d, model: 'claude-sonnet-5-5', cap: '0' })).toBe(capTooLowText('claude-sonnet-5-5'))
-    expect(checkAccessDraft({ ...d, model: 'claude-haiku-5-5', cap: '0.01' })).toBe(capTooLowText('claude-haiku-5-5'))
-    expect(checkAccessDraft({ ...d, model: 'claude-haiku-5-5', cap: '0.02' })).toBeNull()
+    // Every question on Fable 5.1 (a level fixed, files too): a $1 cap could never be used.
+    expect(checkAccessDraft({ ...d, cap: '1' }, 'claude-fable-5-1')).toBe(capTooLowText('claude-fable-5-1'))
+    expect(checkAccessDraft({ ...d, cap: '2.39' }, 'claude-fable-5-1')).toBe(capTooLowText('claude-fable-5-1'))
+    expect(checkAccessDraft({ ...d, cap: '2.40' }, 'claude-fable-5-1')).toBeNull()
+    expect(checkAccessDraft({ ...d, cap: '1.43' }, 'claude-opus-5-5')).toBe(capTooLowText('claude-opus-5-5'))
+    expect(checkAccessDraft({ ...d, cap: '0' }, 'claude-sonnet-5-5')).toBe(capTooLowText('claude-sonnet-5-5'))
+    // The recommended Models: a simple question on Haiku 5.5.
+    expect(checkAccessDraft({ ...d, cap: '0.01' }, 'claude-haiku-5-5')).toBe(capTooLowText('claude-haiku-5-5'))
+    expect(checkAccessDraft({ ...d, cap: '0.02' }, 'claude-haiku-5-5')).toBeNull()
     // Switching someone off is never held up by their cap.
-    expect(checkAccessDraft({ ...d, enabled: false, model: 'claude-fable-5-1', cap: '1' })).toBeNull()
-    expect(checkAccessDraft({ ...d, enabled: false, cap: '0' })).toBeNull()
+    expect(checkAccessDraft({ ...d, enabled: false, cap: '1' }, 'claude-fable-5-1')).toBeNull()
+    expect(checkAccessDraft({ ...d, enabled: false, cap: '0' }, 'claude-haiku-5-5')).toBeNull()
   })
 
   it('sends the draft as the server takes it, domains in order', () => {
-    expect(accessRequest({ enabled: false, domains: ['audit', 'inspection'], model: 'claude-haiku-5-5', effort: 'low', cap: '12.50', automations: true, notices: true, excel: true })).toEqual({
+    expect(accessRequest({ enabled: false, domains: ['audit', 'inspection'], cap: '12.50', automations: true, notices: true, excel: true, mtc: true })).toEqual({
       enabled: false,
       domains: ['inspection', 'audit'],
-      model: 'claude-haiku-5-5',
-      effort: 'low',
       monthlyCapUsd: 12.5,
       automations: true,
       notices: true,
       excel: true,
+      mtc: true,
     })
+  })
+
+  it('reads the MTC permission back, the owner’s always on, and sends it', () => {
+    expect(draftFromAccess(row({ mtc: true })).mtc).toBe(true)
+    expect(draftFromAccess(row({})).mtc).toBe(false)
+    expect(draftFromAccess(row({ owner: true, mtc: false })).mtc).toBe(true)
+    expect(accessChanged(row({}), { ...draftFromAccess(row({})), mtc: true })).toBe(true)
   })
 
   it('reads the automations permission back, the owner’s always on', () => {
@@ -222,8 +229,6 @@ describe('the owner’s draft of one person’s access', () => {
     expect(accessChanged(saved, { ...d, cap: '11' })).toBe(true)
     expect(accessChanged(saved, { ...d, enabled: false })).toBe(true)
     expect(accessChanged(saved, { ...d, domains: ['inspection'] })).toBe(true)
-    expect(accessChanged(saved, { ...d, model: 'claude-opus-5-5' })).toBe(true)
-    expect(accessChanged(saved, { ...d, effort: 'max' })).toBe(true)
     expect(accessChanged(saved, { ...d, automations: true })).toBe(true)
     expect(accessChanged(saved, { ...d, notices: true })).toBe(true)
     expect(accessChanged(saved, { ...d, excel: true })).toBe(true)
@@ -268,12 +273,12 @@ describe('the table of who can use it', () => {
   })
 
   it('counts a row as live only when the account can sign in, it is on, it has data and a cap one call fits in', () => {
-    expect(accessLive(row({}))).toBe(true)
-    expect(accessLive(row({ active: false }))).toBe(false)
-    expect(accessLive(row({ enabled: false }))).toBe(false)
-    expect(accessLive(row({ domains: [] }))).toBe(false)
-    expect(accessLive(row({ model: 'claude-fable-5-1', monthlyCapUsd: 1, spentUsd: 0 }))).toBe(false)
-    expect(accessLive(row({ model: 'claude-fable-5-1', monthlyCapUsd: 2.4 }))).toBe(true)
+    expect(accessLive(row({}), 'claude-haiku-5-5')).toBe(true)
+    expect(accessLive(row({ active: false }), 'claude-haiku-5-5')).toBe(false)
+    expect(accessLive(row({ enabled: false }), 'claude-haiku-5-5')).toBe(false)
+    expect(accessLive(row({ domains: [] }), 'claude-haiku-5-5')).toBe(false)
+    expect(accessLive(row({ monthlyCapUsd: 1, spentUsd: 0 }), 'claude-fable-5-1')).toBe(false)
+    expect(accessLive(row({ monthlyCapUsd: 2.4 }), 'claude-fable-5-1')).toBe(true)
   })
 
   it('groups the accounts to add by role, the widest rights first, each by name', () => {

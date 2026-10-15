@@ -114,7 +114,7 @@ describe('§21 — the system sender is in no list of people', () => {
     expect(people.body.map((p) => p.id)).not.toContain(systemId)
     const put = await app.api('PUT', `/api/ai/access/${systemId}`, {
       token: admin.token,
-      body: { enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'low', monthlyCapUsd: 50 },
+      body: { enabled: true, domains: ['inspection'], monthlyCapUsd: 50 },
     })
     expect(put.status).toBe(404)
     // Nor is it among the accounts the assistant itself can read.

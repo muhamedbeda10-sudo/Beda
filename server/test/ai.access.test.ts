@@ -6,7 +6,10 @@ import {
   aiCostUsd,
   type AiAccess,
   type AiAccessListResponse,
+  type AiActivityResponse,
   type AiConversationsResponse,
+  AI_DEFAULT_SETTINGS,
+  AI_ROUTER_MODEL,
   type AiEffort,
   type AiMeResponse,
   type AiMessagesResponse,
@@ -21,13 +24,14 @@ import {
 import { TestApp, type Session } from './harness'
 import { runSql, text, type FakeReply } from './aiFake'
 import { ACCESS_NOTICE } from '../src/ai/access'
+import { ROUTER_SYSTEM } from '../src/ai/router'
 import { WITHDRAWN_NOT_RUN } from '../src/ai/assistant'
 import { NO_ACCESS, findReport, runReportSections, type SectionReader } from '../src/ai/reports'
 import { runReadOnlyQuery } from '../src/ai/runQuery'
 
 // §20 — who may use the assistant, as its owner sets it, person by person:
 // on or off, the data they may ask about (enforced by the database), the
-// model and effort their questions run on, and a monthly cap of their own on
+// a monthly cap of their own on
 // top of the assistant's. Checked on every request and before every call to
 // the model. Costs never reach the chat; the assistant's own audit entries
 // reach nobody but the owner. The model is the scripted stand-in.
@@ -73,15 +77,13 @@ const me = async (as: Session) => (await app.api<AiMeResponse>('GET', '/api/ai/m
 interface Grant {
   enabled?: boolean
   domains?: string[]
-  model?: AiModelId
-  effort?: AiEffort
   monthlyCapUsd?: number
   /** §20 — may have Excel from the assistant. Left out: unchanged. */
   excel?: boolean
 }
 
 async function grant(person: Session, g: Grant = {}): Promise<AiAccess> {
-  const body = { enabled: true, domains: ALL, model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 50, ...g }
+  const body = { enabled: true, domains: ALL, monthlyCapUsd: 50, ...g }
   const res = await app.api<AiAccess>('PUT', `/api/ai/access/${person.user.id}`, { token: owner.token, body })
   expect(res.status, JSON.stringify(res.body)).toBe(200)
   return res.body
@@ -132,9 +134,9 @@ beforeEach(() => {
 describe('§20 what anyone signed in learns', () => {
   it('only whether to show the assistant and whether it can answer: no amounts, no model', async () => {
     expect((await app.api('GET', '/api/ai/me')).status).toBe(401)
-    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true, notices: true })
+    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true, notices: true, mtc: true })
     for (const s of [admin2, insp, sup, viewer]) {
-      expect(await me(s), s.user.role).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false })
+      expect(await me(s), s.user.role).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false, mtc: false })
     }
   })
 })
@@ -146,7 +148,7 @@ describe('§20 the owner gives the assistant, person by person', () => {
     expect(people.body.map((p) => p.username).sort()).toEqual(['admin2', 'insp', 'sup', 'watch'])
     expect(people.body.find((p) => p.username === 'insp')).toEqual({ id: insp.user.id, name: 'Inspector One', username: 'insp', role: 'inspector' })
 
-    const given = await grant(insp, { domains: ['orders', 'inspection'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 })
+    const given = await grant(insp, { domains: ['orders', 'inspection'], monthlyCapUsd: 5 })
     expect(given).toEqual({
       userId: insp.user.id,
       name: 'Inspector One',
@@ -155,14 +157,13 @@ describe('§20 the owner gives the assistant, person by person', () => {
       active: true,
       enabled: true,
       domains: ['inspection', 'orders'],
-      model: 'claude-haiku-5-5',
-      effort: 'low',
       monthlyCapUsd: 5,
       spentUsd: 0,
       owner: false,
       automations: false,
       notices: false,
       excel: false,
+      mtc: false,
       updatedAt: expect.any(String),
       updatedByName: 'Owner Admin',
     })
@@ -172,45 +173,62 @@ describe('§20 the owner gives the assistant, person by person', () => {
       ['admin', true],
       ['insp', false],
     ])
-    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false })
+    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, mtc: false })
   })
 
   it('audits every change: a person given it in one line, a change field by field', async () => {
-    await grant(insp, { domains: ['inspection', 'orders'], model: 'claude-sonnet-5-5', effort: 'low', monthlyCapUsd: 7.5 })
+    await grant(insp, { domains: ['inspection', 'orders'], monthlyCapUsd: 7.5 })
     // The same again changes nothing, and records nothing.
-    await grant(insp, { domains: ['orders', 'inspection'], model: 'claude-sonnet-5-5', effort: 'low', monthlyCapUsd: 7.5 })
+    await grant(insp, { domains: ['orders', 'inspection'], monthlyCapUsd: 7.5 })
     const audit = await app.db.query(
       `SELECT action, field, old_value AS "oldValue", new_value AS "newValue", user_name AS "by" FROM audit_log WHERE entity = 'AiAccess' AND entity_id = $1 ORDER BY id`,
       [insp.user.id],
     )
     expect(audit.rows).toEqual([
-      { action: 'create', field: 'access', oldValue: null, newValue: 'Inspector One (insp): on; Inspections, Orders and PDI; Claude Haiku 5.5; Low; $5.00 a month', by: 'Owner Admin' },
-      { action: 'update', field: 'model', oldValue: 'Claude Haiku 5.5', newValue: 'Claude Sonnet 5.5', by: 'Owner Admin' },
+      { action: 'create', field: 'access', oldValue: null, newValue: 'Inspector One (insp): on; Inspections, Orders and PDI; $5.00 a month', by: 'Owner Admin' },
       { action: 'update', field: 'monthlyCapUsd', oldValue: '5.00', newValue: '7.50', by: 'Owner Admin' },
     ])
   })
 
   it('takes only what the assistant offers, for an account that exists and can sign in', async () => {
-    const good = { enabled: true, domains: ['inspection'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 }
+    const good = { enabled: true, domains: ['inspection'], monthlyCapUsd: 5 }
     for (const body of [
       { ...good, domains: ['sales'] },
       { ...good, domains: ['orders', 'orders'] },
-      { ...good, model: 'claude-opus-4-8' },
-      { ...good, effort: 'extreme' },
+      // The model is the owner's Models', by what is asked: no longer a person's.
+      { ...good, model: 'claude-opus-5-5' },
+      { ...good, effort: 'low' },
       { ...good, monthlyCapUsd: -1 },
       { ...good, monthlyCapUsd: 2000.01 },
       { ...good, monthlyCapUsd: 1.234 },
-      // A cap no single call fits in: closed every month, so refused while the person is on.
-      { ...good, model: 'claude-fable-5-1', monthlyCapUsd: 2.39 },
-      { ...good, model: 'claude-sonnet-5-5', monthlyCapUsd: 0.63 },
+      // A cap no single call fits in, on the cheapest model a question may run on (Haiku 5.5, a simple one): closed every month, so refused while the person is on.
+      { ...good, monthlyCapUsd: 0.01 },
       { ...good, extra: true },
-      { enabled: true, domains: ['inspection'], model: 'claude-haiku-5-5', effort: 'low' },
+      { enabled: true, domains: ['inspection'] },
     ]) {
       expect((await app.api('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body })).status, JSON.stringify(body)).toBe(400)
     }
     // The least cap is the owner's page's figure exactly; switched off, any cap is kept.
-    expect((await app.api('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, model: 'claude-fable-5-1', monthlyCapUsd: 2.4 } })).status).toBe(200)
-    expect((await app.api('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, enabled: false, model: 'claude-fable-5-1', monthlyCapUsd: 0 } })).status).toBe(200)
+    expect((await app.api('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, monthlyCapUsd: 0.02 } })).status).toBe(200)
+    expect((await app.api('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, enabled: false, monthlyCapUsd: 0 } })).status).toBe(200)
+    // Every question a deep analysis, and those with files, on Fable 5.1: the least is that model's.
+    await app.api('PUT', '/api/ai/settings', {
+      token: owner.token,
+      body: {
+        enabled: true,
+        monthlyCapUsd: 50,
+        chatMode: 'chat-deep',
+        actions: { 'chat-deep': { model: 'claude-fable-5-1', effort: 'auto' }, 'chat-files': { model: 'claude-fable-5-1', effort: 'auto' } },
+      },
+    })
+    try {
+      const low = await app.api<ApiErrorBody>('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, monthlyCapUsd: 2.39 } })
+      expect(low.status).toBe(400)
+      expect(low.body.error.message).toBe('The monthly cap must be at least $2.40, the most one question may cost on the cheapest model set under Models.')
+      expect((await app.api('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, monthlyCapUsd: 2.4 } })).status).toBe(200)
+    } finally {
+      await app.api('PUT', '/api/ai/settings', { token: owner.token, body: { enabled: true, monthlyCapUsd: 50, chatMode: 'auto', actions: AI_DEFAULT_SETTINGS.actions } })
+    }
     await app.api('DELETE', `/api/ai/access/${viewer.user.id}`, { token: owner.token })
     expect((await app.api('PUT', '/api/ai/access/not-a-uuid', { token: owner.token, body: good })).status).toBe(400)
     expect((await app.api('PUT', `/api/ai/access/${randomUUID()}`, { token: owner.token, body: good })).status).toBe(404)
@@ -224,19 +242,46 @@ describe('§20 the owner gives the assistant, person by person', () => {
   })
 })
 
-describe('§20 a person asks on the model and effort the owner set', () => {
+describe('§20 a question runs on the model and effort the owner set for its level (Models)', () => {
   let conversationId = ''
+  /** The router's reply (Auto): a level and why, or a failure; anything else asked of the small model is not scripted. */
+  const routeAs = (level: 'simple' | 'analysis' | 'deep' | Error, reason = 'Because.') => {
+    app.model.completeWith = (params) => {
+      if (params.system !== ROUTER_SYSTEM) throw new Error('not scripted')
+      if (level instanceof Error) throw level
+      return JSON.stringify({ level, reason })
+    }
+  }
+  const routerCalls = () => app.model.completions.filter((c) => c.params.system === ROUTER_SYSTEM)
+  const setModels = (body: Record<string, unknown>) => app.api('PUT', '/api/ai/settings', { token: owner.token, body: { enabled: true, monthlyCapUsd: 50, ...body } })
 
-  it('answers a granted inspector, the request shaped for their model, with no cost in sight', async () => {
-    await grant(insp, { domains: ['inspection', 'orders'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 })
+  afterAll(async () => {
+    app.model.completeWith = () => {
+      throw new Error('not scripted')
+    }
+    await setModels({ chatMode: 'auto', actions: AI_DEFAULT_SETTINGS.actions })
+  })
+
+  it('answers a granted inspector at the level the router gives, the request shaped for its model, with no cost in sight', async () => {
+    await grant(insp, { domains: ['inspection', 'orders'], monthlyCapUsd: 5 })
+    routeAs('simple', 'One count of machines.')
     reply(
       { content: [text('Let me count.'), runSql('toolu_h1', 'Count the machines', 'SELECT count(*) AS n FROM ai.machines')], usage: { input_tokens: 2000, output_tokens: 300 } },
       { content: [text('There are **2** machines.')], usage: { input_tokens: 2100, output_tokens: 100 } },
     )
     const calls = app.model.calls.length
+    const routed = routerCalls().length
     const res = await ask(insp, 'How many machines?')
     expect(res.status).toBe(200)
     conversationId = res.conversationId
+
+    // The router read the question first, on the cheapest model, in a fixed shape.
+    const router = routerCalls().slice(routed)
+    expect(router).toHaveLength(1)
+    expect(router[0].params).toMatchObject({ model: AI_ROUTER_MODEL, max_tokens: 200, output_config: { format: { type: 'json_schema' } } })
+    expect(JSON.stringify(router[0].params.messages)).toContain('How many machines?')
+
+    // A simple question: Haiku 5.5 at low effort, as recommended.
     const params = app.model.calls[calls].params
     expect(params).toMatchObject({
       model: 'claude-haiku-5-5',
@@ -254,31 +299,64 @@ describe('§20 a person asks on the model and effort the owner set', () => {
     const shown = await app.api<AiMessagesResponse>('GET', `/api/ai/conversations/${conversationId}/messages`, { token: insp.token })
     expect(shown.body.messages.every((m) => !('costUsd' in m))).toBe(true)
 
-    // Billed at the person's model's rates, and the turn knows what it ran on.
+    // Billed at each call's model's rates — the router's call with the question's — and the turn knows its level, why, and what it ran on.
     const usage = await app.db.query<{ model: string; costUsd: number }>(`SELECT model, cost_usd AS "costUsd" FROM ai_usage WHERE conversation_id = $1 ORDER BY id`, [conversationId])
     const at = (input: number, output: number) => aiCostUsd('claude-haiku-5-5', { inputTokens: input, outputTokens: output, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 })
     expect(usage.rows).toEqual([
+      { model: AI_ROUTER_MODEL, costUsd: at(120, 8) },
       { model: 'claude-haiku-5-5', costUsd: at(2000, 300) },
       { model: 'claude-haiku-5-5', costUsd: at(2100, 100) },
     ])
-    const turn = await app.db.query(`SELECT model, effort FROM ai_turns WHERE conversation_id = $1`, [conversationId])
-    expect(turn.rows).toEqual([{ model: 'claude-haiku-5-5', effort: 'low' }])
-    expect((await app.api<AiAccessListResponse>('GET', '/api/ai/access', { token: owner.token })).body.people.find((p) => p.userId === insp.user.id)!.spentUsd).toBeCloseTo(at(2000, 300) + at(2100, 100), 6)
+    const turn = await app.db.query(`SELECT model, effort, level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1`, [conversationId])
+    expect(turn.rows).toEqual([{ model: 'claude-haiku-5-5', effort: 'low', level: 'chat-simple', levelReason: 'One count of machines.' }])
+    expect((await app.api<AiAccessListResponse>('GET', '/api/ai/access', { token: owner.token })).body.people.find((p) => p.userId === insp.user.id)!.spentUsd).toBeCloseTo(
+      at(120, 8) + at(2000, 300) + at(2100, 100),
+      6,
+    )
+
+    // The owner sees the level and why in Activity; the person sees neither.
+    const activity = await app.api<AiActivityResponse>('GET', `/api/ai/activity?user=${insp.user.id}`, { token: owner.token })
+    expect(activity.body.items[0]).toMatchObject({ kind: 'question', text: 'How many machines?', level: 'chat-simple', levelReason: 'One count of machines.' })
   })
 
-  it('takes a new model and effort from the next question, in the same conversation too, each shaped for its model', async () => {
+  it('gives each question of a conversation its own level, the follow-up read with the question before it', async () => {
     const prompt = systemOf()
-    const cases: [AiModelId, AiEffort, boolean][] = [
-      ['claude-opus-5-5', 'high', true],
-      ['claude-fable-5-1', 'max', true],
-      ['claude-sonnet-5-5', 'xhigh', true],
-      ['claude-haiku-5-5', 'medium', false],
+    routeAs('deep', 'Causes across several sources.')
+    reply({ ...answer('Here is why.'), model: 'claude-opus-5-5' })
+    const routed = routerCalls().length
+    expect((await ask(insp, 'Why did the defects rise?', conversationId)).status).toBe(200)
+    expect(JSON.stringify(routerCalls()[routed].params.messages)).toContain('answered as simple')
+    expect(lastCall().params).toMatchObject({ model: 'claude-opus-5-5', output_config: { effort: 'high' }, fallbacks: 'default', betas: [FALLBACK, BINDING] })
+    // The conversation keeps the prompt it began with, byte for byte, whatever model answers.
+    expect(systemOf()).toBe(prompt)
+
+    // The router failing (no answer in time, say): the middle level, with no reason; never a refusal.
+    routeAs(new Error('overloaded'))
+    reply(answer('A trend.'))
+    expect((await ask(insp, 'And the trend?', conversationId)).status).toBe(200)
+    expect(lastCall().params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'medium' } })
+
+    const turns = await app.db.query(`SELECT model, effort, level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1 ORDER BY created_at`, [conversationId])
+    expect(turns.rows.slice(1)).toEqual([
+      { model: 'claude-opus-5-5', effort: 'high', level: 'chat-deep', levelReason: 'Causes across several sources.' },
+      { model: 'claude-sonnet-5-5', effort: 'medium', level: 'chat-analysis', levelReason: null },
+    ])
+  })
+
+  it('takes the owner’s change from the next question: a level fixed for all, each level’s own model and effort', async () => {
+    const cases: [string, AiModelId, AiEffort, boolean][] = [
+      ['chat-analysis', 'claude-fable-5-1', 'max', true],
+      ['chat-deep', 'claude-sonnet-5-5', 'xhigh', true],
+      ['chat-simple', 'claude-haiku-5-5', 'medium', false],
     ]
-    for (const [model, effort, fallback] of cases) {
-      await grant(insp, { domains: ['inspection', 'orders'], model, effort, monthlyCapUsd: 5 })
+    routeAs(new Error('the router is not asked when the level is fixed'))
+    for (const [level, model, effort, fallback] of cases) {
+      expect((await setModels({ chatMode: level, actions: { [level]: { model, effort } } })).status, level).toBe(200)
       reply({ ...answer('Still two.'), model })
-      const res = await ask(insp, `Again, on ${model}?`, conversationId)
+      const routed = routerCalls().length
+      const res = await ask(insp, `Again, as ${level}?`, conversationId)
       expect(res.status, model).toBe(200)
+      expect(routerCalls()).toHaveLength(routed)
       const params = lastCall().params
       expect(params, model).toMatchObject({ model, output_config: { effort }, thinking: { type: 'adaptive', display: 'summarized' } })
       if (fallback) {
@@ -288,11 +366,10 @@ describe('§20 a person asks on the model and effort the owner set', () => {
         expect(params, model).not.toHaveProperty('fallbacks')
         expect(params.betas, model).toEqual([BINDING])
       }
-      // The conversation keeps the prompt it began with, byte for byte.
-      expect(systemOf()).toBe(prompt)
     }
-    const turns = await app.db.query(`SELECT model, effort FROM ai_turns WHERE conversation_id = $1 ORDER BY created_at`, [conversationId])
-    expect(turns.rows.slice(1)).toEqual(cases.map(([model, effort]) => ({ model, effort })))
+    const turns = await app.db.query(`SELECT model, effort, level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1 ORDER BY created_at`, [conversationId])
+    expect(turns.rows.slice(3)).toEqual(cases.map(([level, model, effort]) => ({ model, effort, level, levelReason: null })))
+    await setModels({ chatMode: 'auto', actions: AI_DEFAULT_SETTINGS.actions })
   })
 
   it('describes to the model only the views of the person’s domains', async () => {
@@ -307,7 +384,7 @@ describe('§20 a person asks on the model and effort the owner set', () => {
     expect(prompt.slice(0, prompt.indexOf('# Notices')) + prompt.slice(prompt.indexOf('# Read-only'))).not.toMatch(/administrator/i)
 
     // Coils and master data only: none of the meanings or links that concern other data.
-    await grant(viewer, { domains: ['materials'], model: 'claude-sonnet-5-5', effort: 'low', monthlyCapUsd: 5 })
+    await grant(viewer, { domains: ['materials'], monthlyCapUsd: 5 })
     reply(answer('Hello.'))
     expect((await ask(viewer, 'Hello')).status).toBe(200)
     const materials = systemOf()
@@ -339,7 +416,7 @@ describe('§20 when the owner changes a person’s data', () => {
   let inspectionQueryId = ''
 
   it('keeps an old conversation’s prompt; a revoked view fails there, and new conversations describe what is left', async () => {
-    await grant(insp, { domains: ['inspection', 'orders'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 5 })
+    await grant(insp, { domains: ['inspection', 'orders'], monthlyCapUsd: 5 })
     reply(
       {
         content: [
@@ -359,7 +436,7 @@ describe('§20 when the owner changes a person’s data', () => {
     expect(saved.body.status).toEqual({ available: true, model: '', spentUsd: 0, capUsd: 0, monthStart: expect.any(String) })
 
     // Allowed Excel, so the exports below show what their domains now let them read.
-    await grant(insp, { domains: ['orders'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 5, excel: true })
+    await grant(insp, { domains: ['orders'], monthlyCapUsd: 5, excel: true })
     reply({ content: [runSql('toolu_r3', 'Sessions again', 'SELECT count(*) AS n FROM ai.inspection_sessions')] }, answer('I can no longer read the inspections.'))
     await ask(insp, 'And now?', conversationId)
     expect(systemOf()).toBe(prompt)
@@ -388,7 +465,7 @@ describe('§20 when the owner changes a person’s data', () => {
     expect(query.status).toBe(400)
     expect(query.body.error.message).toBe('The query could not be run again: you no longer have access to this data.')
     // Given back, it runs again (and Excel goes, as the rest of these tests have it).
-    await grant(insp, { domains: ['inspection', 'orders'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 5, excel: false })
+    await grant(insp, { domains: ['inspection', 'orders'], monthlyCapUsd: 5, excel: false })
     const again = await app.api<AiReportRunResponse>('GET', `/api/ai/reports/${reportId}/run`, { token: insp.token })
     expect(again.body.sections.every((s) => s.ok)).toBe(true)
   })
@@ -430,11 +507,11 @@ describe('§20 when the owner changes a person’s data', () => {
     expect((await app.db.query(`SELECT 1 FROM ai_reports WHERE turn_id = $1`, [asked.done!.message.turnId])).rowCount).toBe(0)
     // The call was made, and is counted: the answer's two, and this one.
     expect((await app.db.query(`SELECT 1 FROM ai_usage WHERE turn_id = $1`, [asked.done!.message.turnId])).rowCount).toBe(3)
-    await grant(insp, { domains: ['inspection', 'orders'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 5 })
+    await grant(insp, { domains: ['inspection', 'orders'], monthlyCapUsd: 5 })
   })
 
   it('applies a domain taken away mid-answer to the next query, even one the call under way asked for', async () => {
-    await grant(insp, { domains: ['inspection', 'audit'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 5 })
+    await grant(insp, { domains: ['inspection', 'audit'], monthlyCapUsd: 5 })
     let release!: () => void
     reply(
       {
@@ -448,7 +525,7 @@ describe('§20 when the owner changes a person’s data', () => {
     const pending = ask(insp, 'Accounts and machines, then sessions')
     await until(() => app.model.calls.length > calls)
     // While the model writes the queries, the owner leaves the person the orders only.
-    await grant(insp, { domains: ['orders'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 5 })
+    await grant(insp, { domains: ['orders'], monthlyCapUsd: 5 })
     release()
     const res = await pending
     const ran = (p: AiQueryPart) => [p.purpose, p.ok]
@@ -470,14 +547,14 @@ describe('§20 when the owner changes a person’s data', () => {
     expect(firstResults[1]).toMatchObject({ tool_use_id: 'toolu_m2', content: expect.stringContaining('"rows":[[2]]') })
     const results = lastCall().params.messages.at(-1)!.content as Anthropic.Beta.BetaToolResultBlockParam[]
     expect(results[0]).toMatchObject({ tool_use_id: 'toolu_m3', is_error: true, content: expect.stringMatching(/permission denied for view inspection_sessions/) })
-    await grant(insp, { domains: ['inspection', 'orders'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 5 })
+    await grant(insp, { domains: ['inspection', 'orders'], monthlyCapUsd: 5 })
   })
 
   it('stops a person the owner switches off, gives nothing to ask about, or removes — at once; given back, their conversations are there', async () => {
     const reachable = async () => (await app.api('GET', '/api/ai/conversations', { token: insp.token })).status
     for (const g of [{ enabled: false }, { domains: [] }]) {
       await grant(insp, { domains: ['orders'], ...g })
-      expect(await me(insp)).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false })
+      expect(await me(insp)).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false, mtc: false })
       expect(await reachable()).toBe(403)
       expect((await ask(insp, 'Still there?')).status).toBe(403)
       expect((await app.api('GET', `/api/ai/reports/${reportId}/run`, { token: insp.token })).status).toBe(403)
@@ -490,9 +567,9 @@ describe('§20 when the owner changes a person’s data', () => {
     expect(await reachable()).toBe(403)
     expect((await app.api<{ username: string }[]>('GET', '/api/ai/people', { token: owner.token })).body.map((p) => p.username)).toContain('insp')
     const removed = await app.db.query(`SELECT action, old_value AS "oldValue" FROM audit_log WHERE entity = 'AiAccess' AND entity_id = $1 AND action = 'delete'`, [insp.user.id])
-    expect(removed.rows).toEqual([{ action: 'delete', oldValue: 'Inspector One (insp): on; Orders and PDI; Claude Sonnet 5.5; Medium; $50.00 a month' }])
+    expect(removed.rows).toEqual([{ action: 'delete', oldValue: 'Inspector One (insp): on; Orders and PDI; $50.00 a month' }])
 
-    await grant(insp, { domains: ['inspection', 'orders'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 })
+    await grant(insp, { domains: ['inspection', 'orders'], monthlyCapUsd: 5 })
     const list = await app.api<AiConversationsResponse>('GET', '/api/ai/conversations', { token: insp.token })
     expect(list.body.conversations.map((c) => c.id)).toContain(conversationId)
   })
@@ -504,7 +581,7 @@ describe('§20 when the owner changes a person’s data', () => {
       ['deactivated', () => app.api('PATCH', `/api/users/${insp.user.id}`, { token: owner.token, body: { isActive: false } })],
     ]
     for (const [how, revoke] of revocations) {
-      await grant(insp, { domains: ['inspection', 'audit'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 })
+      await grant(insp, { domains: ['inspection', 'audit'], monthlyCapUsd: 5 })
       let release!: () => void
       reply(
         {
@@ -533,7 +610,7 @@ describe('§20 when the owner changes a person’s data', () => {
       }
 
       // Given back, the conversation goes on: each query the model asked for has its answer, that it never ran.
-      await grant(insp, { domains: ['inspection', 'audit'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 })
+      await grant(insp, { domains: ['inspection', 'audit'], monthlyCapUsd: 5 })
       reply(answer('Ask me again.'))
       expect((await ask(insp, 'Still there?', res.conversationId)).done!.message.stopReason).toBe('end_turn')
       const replayed = lastCall().params.messages.find((m) => Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'))!
@@ -545,13 +622,13 @@ describe('§20 when the owner changes a person’s data', () => {
   })
 
   it('takes the assistant from a deactivated account at once', async () => {
-    await grant(insp, { domains: ['inspection', 'orders'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 })
+    await grant(insp, { domains: ['inspection', 'orders'], monthlyCapUsd: 5 })
     expect((await app.api('PATCH', `/api/users/${insp.user.id}`, { token: owner.token, body: { isActive: false } })).status).toBe(200)
     expect((await app.api('GET', '/api/ai/me', { token: insp.token })).status).toBe(401)
     expect((await app.api<AiAccessListResponse>('GET', '/api/ai/access', { token: owner.token })).body.people.find((p) => p.userId === insp.user.id)).toMatchObject({ active: false, enabled: true })
     expect((await app.api('PATCH', `/api/users/${insp.user.id}`, { token: owner.token, body: { isActive: true } })).status).toBe(200)
     insp = await app.login('insp')
-    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false })
+    expect(await me(insp)).toEqual({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, mtc: false })
   })
 })
 
@@ -560,24 +637,24 @@ describe('§20 the caps, a person’s own and the assistant’s', () => {
     Number((await app.db.query<{ n: number }>(`SELECT COALESCE(sum(cost_usd), 0)::float8 AS n FROM ai_usage WHERE user_id = $1`, [userId])).rows[0].n)
 
   it('holds a person to their own cap, saying so without an amount, and leaves the others be', async () => {
-    await grant(insp, { domains: ['inspection'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 1 })
+    await grant(insp, { domains: ['inspection'], monthlyCapUsd: 1 })
     await app.db.query(`INSERT INTO ai_usage (user_id, model, output_tokens, cost_usd) VALUES ($1, 'claude-haiku-5-5', 0, $2)`, [insp.user.id, 1 - (await spentBy(insp.user.id)) - 0.001])
-    expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'personal-cap', automations: false, excel: false, notices: false })
+    expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'personal-cap', automations: false, excel: false, notices: false, mtc: false })
     const refused = await ask(insp, 'One more?')
     expect(refused.status).toBe(402)
     expect(refused.error).toEqual({ code: 'ai_budget_reached', message: "You have reached this month's limit for the assistant. It is available again on the 1st." })
-    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true, notices: true })
+    expect(await me(owner)).toEqual({ granted: true, owner: true, available: true, automations: true, excel: true, notices: true, mtc: true })
     // The owner sees the figures on the settings page.
     const listed = (await app.api<AiAccessListResponse>('GET', '/api/ai/access', { token: owner.token })).body.people.find((p) => p.userId === insp.user.id)!
     expect(listed.spentUsd).toBeCloseTo(0.999, 6)
   })
 
   it('holds everyone to the assistant’s cap; only the owner is told where to raise it', async () => {
-    await grant(insp, { domains: ['inspection'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 50 })
+    await grant(insp, { domains: ['inspection'], monthlyCapUsd: 50 })
     const status = (await app.api<AiStatusResponse>('GET', '/api/ai/status', { token: owner.token })).body
     await app.api('PUT', '/api/ai/settings', { token: owner.token, body: { enabled: true, monthlyCapUsd: Math.ceil((status.spentUsd + 0.005) * 100) / 100 } })
     try {
-      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'cap-reached', automations: false, excel: false, notices: false })
+      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'cap-reached', automations: false, excel: false, notices: false, mtc: false })
       const refused = await ask(insp, 'At the cap?')
       expect(refused.error).toEqual({ code: 'ai_budget_reached', message: "The assistant's monthly limit is reached. It is available again on the 1st." })
       const ownerAsks = await ask(owner, 'At the cap?')
@@ -587,7 +664,7 @@ describe('§20 the caps, a person’s own and the assistant’s', () => {
       })
       // Switched off: a person is told only that it is not available.
       await app.api('PUT', '/api/ai/settings', { token: owner.token, body: { enabled: false, monthlyCapUsd: 50 } })
-      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'unavailable', automations: false, excel: false, notices: false })
+      expect(await me(insp)).toEqual({ granted: true, owner: false, available: false, reason: 'unavailable', automations: false, excel: false, notices: false, mtc: false })
       expect((await ask(insp, 'Off?')).error).toEqual({ code: 'ai_unavailable', message: 'The assistant is not available right now. Try again later.' })
       expect((await ask(owner, 'Off?')).error?.message).toMatch(/switched off/)
     } finally {
@@ -597,8 +674,12 @@ describe('§20 the caps, a person’s own and the assistant’s', () => {
 
   it('stops an answer before a call that could pass the person’s own cap', async () => {
     const spent = await spentBy(insp.user.id)
-    // Room for one Haiku call's worst case (32 000 tokens at $0.50 a million, and the prompt), not two.
-    await grant(insp, { domains: ['inspection'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: Math.ceil((spent + 0.02) * 100) / 100 })
+    // A simple question, on Haiku 5.5: room for one call's worst case (32 000 tokens at $0.50 a million, and the prompt), not two.
+    app.model.completeWith = (params) => {
+      if (params.system !== ROUTER_SYSTEM) throw new Error('not scripted')
+      return '{"level":"simple","reason":"One count."}'
+    }
+    await grant(insp, { domains: ['inspection'], monthlyCapUsd: Math.ceil((spent + 0.02) * 100) / 100 })
     reply({ content: [runSql('toolu_c1', 'Machines', 'SELECT count(*) AS n FROM ai.machines')], usage: { input_tokens: 1000, output_tokens: 40_000 } }, answer('Never sent.'))
     const res = await ask(insp, 'An expensive one')
     expect(res.done!.message).toMatchObject({ stopReason: 'cap', notice: ACCESS_NOTICE.personalCap })
@@ -606,7 +687,7 @@ describe('§20 the caps, a person’s own and the assistant’s', () => {
     expect(res.done!.status).toEqual({ available: false, reason: 'cap-reached', model: '', spentUsd: 0, capUsd: 0, monthStart: expect.any(String) })
     expect(app.model.pending).toBe(1)
     app.model.reset()
-    await grant(insp, { domains: ['inspection', 'orders'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 50 })
+    await grant(insp, { domains: ['inspection', 'orders'], monthlyCapUsd: 50 })
   })
 })
 

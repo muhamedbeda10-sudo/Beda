@@ -38,7 +38,7 @@ const ALL = ['inspection', 'orders', 'materials', 'audit', 'production'] as cons
 const deps = () => ({ db: app.db, readers: app.aiReader, timeZone: app.config.FACTORY_TIMEZONE })
 
 async function grant(person: Session, domains: string[]): Promise<AiAccess> {
-  const body = { enabled: true, domains, model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 50 }
+  const body = { enabled: true, domains, monthlyCapUsd: 50 }
   const res = await app.api<AiAccess>('PUT', `/api/ai/access/${person.user.id}`, { token: owner.token, body })
   expect(res.status, JSON.stringify(res.body)).toBe(200)
   return res.body
