@@ -28,6 +28,17 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-15.1',
+    date: '2026-10-15',
+    title: 'MTC: coils read from the mill’s certificate',
+    items: [
+      { text: 'A new MTC tab, last in the bar, shows the coil register as a table for everyone: search by coil number, grade, supplier or certificate number, filter by supplier and SM type, newest first if you like.' },
+      { text: 'Upload MTC: Claude reads the mill test certificate (PDF, scanned ones too) and lists every coil with the register’s fields. You check each row against the paper, correct it, and save. Values Claude was not sure of are marked amber; nothing is saved until you press Save.' },
+      { text: 'A coil already registered is never changed unless you tick Overwrite for it; a blank cell never erases a registered value. Every coil added or changed is in the audit log, with the certificate’s file name. The PDF itself is not kept: the certificate’s number goes into the coil’s notes.' },
+      { text: 'Who may upload is set person by person under Administration → Users (“May upload MTC certificates”). It does not need, or give, access to the AI assistant.' },
+    ],
+  },
+  {
     id: '2026-10-14.11',
     date: '2026-10-14',
     title: 'Twelve new charts in the assistant: SPC, capability, FMEA and more',

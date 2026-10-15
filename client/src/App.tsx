@@ -9,6 +9,7 @@ import { AccessPage } from '@/pages/AccessPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { ChatPage } from '@/pages/ChatPage'
 import { CoilSearchPage } from '@/pages/CoilSearchPage'
+import { MtcPage } from '@/pages/MtcPage'
 import { PDIPage } from '@/pages/PDIPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { ConfigurationPage } from '@/pages/admin/ConfigurationPage'
@@ -134,6 +135,7 @@ export default function App() {
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/access" element={<Only cap="view-order-sheet"><AccessPage /></Only>} />
         <Route path="/dashboard" element={<Only cap="view-dashboard"><DashboardPage /></Only>} />
+        <Route path="/mtc" element={<MtcPage />} />
         <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
         {/* §20 — the assistant's addresses (/ai?c=<conversation>, /ai/reports/<id>) open its popup, large, on that place. */}
         <Route path="/ai/*" element={<OnlyAiGranted><AiAddress /></OnlyAiGranted>} />

@@ -20,6 +20,7 @@ import { masterRoutes } from './modules/master.routes'
 import { integrationsRoutes, orderSyncAgentRoutes } from './modules/integrations.routes'
 import { ordersRoutes } from './modules/orders.routes'
 import { coilsRoutes } from './modules/coils.routes'
+import { mtcRoutes } from './modules/mtc.routes'
 import { sessionsRoutes } from './modules/sessions.routes'
 import { samplesRoutes } from './modules/samples.routes'
 import { imagesRoutes } from './modules/images.routes'
@@ -98,6 +99,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/agent/order-sync', orderSyncAgentRoutes(ctx))
   app.use('/api/orders', guard, ordersRoutes(ctx))
   app.use('/api/coils', guard, coilsRoutes(ctx))
+  app.use('/api/mtc', guard, mtcRoutes(ctx))
   app.use('/api/sessions', guard, sessionsRoutes(ctx))
   app.use('/api/samples', guard, samplesRoutes(ctx))
   app.use('/api/images', guard, imagesRoutes(ctx))

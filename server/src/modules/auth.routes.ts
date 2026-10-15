@@ -51,7 +51,7 @@ const registerSchema = z.object({
   name: z.string().trim().min(1, 'Enter your name.').max(120),
 })
 
-export const USER_COLUMNS = `id, username, name, role, is_active AS "isActive", created_at AS "createdAt", last_login_at AS "lastLoginAt"`
+export const USER_COLUMNS = `id, username, name, role, is_active AS "isActive", mtc_upload AS "mtcUpload", created_at AS "createdAt", last_login_at AS "lastLoginAt"`
 
 /** People with an account. The system sender (§21) is nobody: the first person to register still becomes the admin. */
 async function countUsers(q: Queryable): Promise<number> {

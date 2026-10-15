@@ -4,7 +4,7 @@
 // the assistant. Automations (§21) open from the assistant's header, and
 // follow-ups (§21) from the bell, beside the notices: neither is a tab here.
 
-import { ClipboardCheck, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
+import { ClipboardCheck, FileCheck2, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
 import { can, type Capability } from '@qc/shared/rules'
 import type { Role } from '@qc/shared/types'
 
@@ -26,6 +26,8 @@ export const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true },
   { to: '/history', label: 'History', icon: History },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
+  // The coil register, for everyone; uploading a mill test certificate into it is a permission of its own (users.mtc_upload).
+  { to: '/mtc', label: 'MTC', icon: FileCheck2 },
 ]
 
 /**
