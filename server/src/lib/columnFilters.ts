@@ -98,7 +98,10 @@ export async function columnValues(
   const p = (v: unknown) => `$${params.push(v)}`
   const where = [...input.where, ...columnFilterClauses(input.columns, input.filters, p, input.column)]
   if (input.search?.trim()) where.push(`COALESCE(${c.text}, '') ILIKE ${p(`%${escapeLike(input.search.trim())}%`)}`)
-  const order = c.sort ? `min(${c.sort}) NULLS LAST, 1` : `1`
+  // Then by the text, case aside, and its exact bytes last: two spellings of one value ("Ezz", "ezz") keep one order
+  // whatever the database's collation (a server's default and a test container's can differ).
+  const byText = `lower(COALESCE(${c.text}, '')), COALESCE(${c.text}, '') COLLATE "C"`
+  const order = c.sort ? `min(${c.sort}) NULLS LAST, ${byText}` : byText
   const { rows } = await db.query<{ value: string; count: number }>(
     `SELECT COALESCE(${c.text}, '') AS value, count(*)::int AS count
        ${input.from}
