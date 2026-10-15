@@ -15,7 +15,9 @@ import { letterDirection, textDirection } from '@/lib/direction'
 export function cellText(v: AiCell | unknown): string {
   if (v === null || v === undefined) return ''
   if (typeof v === 'string') return v
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  // A sum in double precision can carry noise in its last digits (36.900000000000006): shown to 15 significant digits, as stored otherwise.
+  if (typeof v === 'number') return Number.isFinite(v) && !Number.isInteger(v) ? String(Number(v.toPrecision(15))) : String(v)
+  if (typeof v === 'boolean') return String(v)
   return JSON.stringify(v)
 }
 

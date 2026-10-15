@@ -313,6 +313,10 @@ body {
 .ai-workspace .ai-figure .ai-table-scroll {
   max-height: 20rem;
 }
+/* A saved report on the full page is for reading: its tables run most of the screen before they scroll. */
+.ai-workspace .ai-report .ai-table-scroll {
+  max-height: max(28rem, 70vh);
+}
 /* The caret after the last word of an answer being written. */
 .ai-caret > :is(p, h3, h4, h5, h6, blockquote):last-child::after,
 .ai-caret > :is(ul, ol):last-child > li:last-child::after {

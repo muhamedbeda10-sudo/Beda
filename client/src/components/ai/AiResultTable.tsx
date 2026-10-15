@@ -25,7 +25,8 @@ export function queryDirection(part: Pick<AiQueryPart, 'columns' | 'rows'>): 'rt
  * table and whatever else the caller offers (`tools`: Open table, Export
  * Excel).
  */
-export function PreviewTable({ part, tools }: { part: AiQueryPart; tools?: ReactNode }) {
+/** `wrap`: long text over several lines instead of cut (a saved report, read rather than scanned). */
+export function PreviewTable({ part, tools, wrap = false }: { part: AiQueryPart; tools?: ReactNode; wrap?: boolean }) {
   const numeric = useMemo(() => numericColumns(part.columns, part.rows), [part.columns, part.rows])
   const dir = useMemo(() => queryDirection(part), [part])
   if (part.rows.length === 0) return <p className="rounded-xl bg-slate-50 px-3 py-2 text-13 text-muted dark:bg-slate-800/60">No rows matched.</p>
@@ -54,7 +55,7 @@ export function PreviewTable({ part, tools }: { part: AiQueryPart; tools?: React
           {part.rows.map((row, i) => (
             <tr key={i} className={TR_CLASS}>
               {part.columns.map((_, c) => (
-                <ResultCell key={c} value={row[c] ?? null} numeric={numeric[c]} dir={dir} />
+                <ResultCell key={c} value={row[c] ?? null} numeric={numeric[c]} dir={dir} wrap={wrap} />
               ))}
             </tr>
           ))}

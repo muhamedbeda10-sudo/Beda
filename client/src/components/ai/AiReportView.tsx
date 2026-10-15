@@ -1,8 +1,11 @@
 // ============================================================================
 // §20 — one saved report, run now. Opening it runs every section's SQL
 // through the server's read-only runner (no model, no cost) and shows each
-// as the answer showed it: what it looks for, its rows in a preview, a large
-// table with Excel's filters, the SQL. A report that kept its question's
+// as a report reads: its title, its figures, chart or rows in full (names
+// over several lines, never cut), a large table with Excel's filters. What
+// the report and each section are about sits behind an info button, out of
+// the way; the SQL stays in the conversation it came from, not here. On the
+// full page it takes the page's width. A report that kept its question's
 // period ("last 30 days") runs over that period as of today; other days can
 // be chosen for a run (not saved), and reset. A report the assistant built
 // may ask for inputs (orders, a week…): a form over its sections, run with
@@ -18,9 +21,8 @@ import { useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft,
   CalendarRange,
-  CheckCircle2,
-  ChevronDown,
   FileSpreadsheet,
+  Info,
   Loader2,
   MessageSquareText,
   OctagonX,
@@ -54,7 +56,6 @@ import { ReportPrint } from '@/components/print/reportPrints'
 import { usePrint } from '@/components/print/usePrint'
 import { useApp } from '@/store/AppContext'
 import { useAi } from './AiAssistantProvider'
-import { AiCode } from './AiCode'
 import { Notice } from './AiNotice'
 import { DeleteReportModal, ReportTitleEditor } from './AiReportList'
 import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figureView'
@@ -96,7 +97,7 @@ export function AiReportView({
   known?: AiReportSummary
   onBack: () => void
   onOpenConversation: (conversationId: string) => void
-  /** The full page: the report is a centred column of at most 1100 px. */
+  /** The full page: the report takes the page's width. */
   wide?: boolean
 }) {
   const qc = useQueryClient()
@@ -122,6 +123,8 @@ export function AiReportView({
   const [removing, setRemoving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [exporting, setExporting] = useState(false)
+  // What the report is about (its description, or the question it came from): behind the info button.
+  const [about, setAbout] = useState(false)
 
   const report: AiReport | AiReportSummary | undefined = detail.data ?? run.data?.report ?? known
   const full: AiReport | undefined = detail.data ?? run.data?.report
@@ -215,9 +218,33 @@ export function AiReportView({
         ) : (
           <>
             {/* Two lines, then cut: one line cut short splits a figure in an Arabic title ("آخر 30 يوم" read as "آخر 0…"). */}
-            <h3 dir="auto" className="line-clamp-2 min-w-0 flex-1 break-words px-1 text-start text-sm font-bold leading-snug" data-tip={report?.title}>
-              {report?.title ?? 'Report'}
-            </h3>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 px-1">
+              <h3 dir="auto" className={cn('line-clamp-2 min-w-0 break-words text-start font-bold leading-snug', wide ? 'text-base' : 'text-sm')} data-tip={report?.title}>
+                {report?.title ?? 'Report'}
+              </h3>
+              {report?.shared && (
+                <Badge tone="blue" tip="Everyone given the assistant may open it; each sees the data they may read">
+                  <Users className="h-3 w-3" /> Shared
+                </Badge>
+              )}
+              {report && !report.mine && (
+                <span dir="auto" className="text-[11px] text-muted">
+                  by {report.ownerName}
+                </span>
+              )}
+            </div>
+            {report && !gone && (
+              <button
+                type="button"
+                onClick={() => setAbout((a) => !a)}
+                aria-expanded={about}
+                className={cn('icon-btn h-9 w-9 shrink-0 touch:h-11 touch:w-11', about && 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300')}
+                aria-label="About this report"
+                data-tip="About this report"
+              >
+                <Info className="h-4 w-4" />
+              </button>
+            )}
             {report && !gone && report.mine && (
               <>
                 <button type="button" onClick={() => setRenaming(true)} className="icon-btn h-9 w-9 shrink-0 touch:h-11 touch:w-11" aria-label="Rename the report" data-tip="Rename">
@@ -233,8 +260,8 @@ export function AiReportView({
       </div>
 
       {printer.node}
-      <div className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4', wide && 'sm:px-6 lg:px-8 lg:py-5')}>
-        <div className={cn('space-y-3', wide && 'mx-auto w-full max-w-[1100px]')}>
+      <div className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4', wide && 'ai-report sm:px-6 lg:px-8 lg:py-5')}>
+        <div className={cn('w-full', wide ? 'space-y-4' : 'space-y-3')}>
           {gone ? (
             <Notice
               tone="red"
@@ -248,27 +275,11 @@ export function AiReportView({
             </Notice>
           ) : (
             <>
-              {report && (
-                <div className="space-y-1">
-                  {report.description ? (
-                    <p dir="auto" className="whitespace-pre-wrap break-words text-13 text-muted">
-                      {report.description}
-                    </p>
-                  ) : (
-                    <p dir="auto" className="whitespace-pre-wrap break-words text-13 text-muted">
-                      {report.question}
-                    </p>
-                  )}
-                  {(report.shared || !report.mine) && (
-                    <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
-                      {report.shared && (
-                        <Badge tone="blue" tip="Everyone given the assistant may open it; each sees the data they may read">
-                          <Users className="h-3 w-3" /> Shared
-                        </Badge>
-                      )}
-                      {!report.mine && <span dir="auto">by {report.ownerName}</span>}
-                    </p>
-                  )}
+              {report && about && (
+                <div className="space-y-1.5 rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200/70 dark:bg-slate-800/50 dark:ring-slate-800">
+                  <p dir="auto" className="whitespace-pre-wrap break-words text-13 text-slate-700 dark:text-slate-200">
+                    {report.description || report.question}
+                  </p>
                   {full?.conversationId && (
                     <button
                       type="button"
@@ -364,10 +375,10 @@ export function AiReportView({
               {waiting && <Notice tone="neutral">Fill in {inputs.filter((i) => i.required).map((i) => i.label).join(', ') || 'the fields'} above and press Run.</Notice>}
 
               {/* Other days' tables are dimmed and still while the asked-for ones come; the same days', only dimmed. */}
-              <div className={cn('space-y-2 transition-opacity', stale ? 'pointer-events-none opacity-50' : run.isFetching && shown && 'opacity-70')} aria-busy={run.isFetching}>
+              <div className={cn(wide ? 'space-y-4' : 'space-y-2', 'transition-opacity', stale ? 'pointer-events-none opacity-50' : run.isFetching && shown && 'opacity-70')} aria-busy={run.isFetching}>
                 {parts && shown
                   ? parts.map((part, i) => (
-                      <ReportSection key={i} part={part} layout={shown.sections[i]} templated={shown.report.adjustable} onExport={excel ? onExport : undefined} exporting={exporting} />
+                      <ReportSection key={i} part={part} layout={shown.sections[i]} onExport={excel ? onExport : undefined} exporting={exporting} />
                     ))
                   : run.isPending && !waiting && Array.from({ length: Math.max(1, sectionCount) }, (_, i) => <SectionSkeleton key={i} title={full?.sections[i]?.title} />)}
               </div>
@@ -504,108 +515,80 @@ function SectionSkeleton({ title }: { title?: string }) {
 }
 
 /**
- * A section as run: the answer's query card turned out — its rows show at
- * once (they are what a report is for), the SQL on request. `templated`: the
- * SQL carries {{from}} and {{to}} for the period's first and last day.
+ * A section as run, as a report reads: its title, its figures, chart, tree or
+ * rows (names in full), and the large table. What it means (its note) is
+ * behind the info button by its title; a section that failed says why.
  */
 const ReportSection = memo(function ReportSection({
   part,
   layout,
-  templated,
   onExport,
   exporting,
 }: {
   part: AiQueryPart
   /** How the section shows its rows (a table, figures, a tree), and its note. */
   layout?: Pick<AiReportSectionRun, 'display' | 'tree' | 'note'>
-  templated: boolean
   onExport?: () => void
   exporting: boolean
 }) {
-  const { toast } = useApp()
-  const [showSql, setShowSql] = useState(false)
   const [table, setTable] = useState(false)
-
-  const copySql = async () => {
-    try {
-      await navigator.clipboard.writeText(part.sql)
-      toast('SQL copied.', 'success')
-    } catch {
-      toast('Could not copy — select the SQL and copy it by hand.', 'error')
-    }
-  }
-
-  const meta = part.ok
-    ? `${part.rowCount.toLocaleString()}${part.truncated ? '+' : ''} ${part.rowCount === 1 && !part.truncated ? 'row' : 'rows'} · ${part.ms.toLocaleString()} ms`
-    : `Failed · ${part.ms.toLocaleString()} ms`
-  const placeholders = templated && /\{\{(from|to)\}\}/.test(part.sql)
+  const [note, setNote] = useState(false)
   const display = layout?.display ?? 'table'
   // Drawn as the answer drew it, from this run's rows; the switch shows it or the rows themselves.
   const chart = useMemo(() => queryChart(part), [part])
   const [view, setView] = useState<FigureView>('chart')
+  const tree = part.ok && display === 'tree' && layout?.tree && part.columns.includes(layout.tree.key) && part.columns.includes(layout.tree.parent)
 
   return (
-    <section className={cn('overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', part.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
-      <header className="flex items-start gap-2.5 px-3 py-2">
-        <span className="mt-0.5 shrink-0">{part.ok ? <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> : <OctagonX className="h-4 w-4 text-rose-600 dark:text-rose-400" />}</span>
-        <div className="min-w-0 flex-1">
-          <h4 dir="auto" className="line-clamp-2 text-13 font-semibold text-slate-800 dark:text-slate-100">
-            {part.purpose}
-          </h4>
-          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] tabular-nums text-muted">
-            <span>{meta}</span>
-            {part.truncated && (
-              <Badge tone="amber" tip={`More rows matched than the ${AI_PREVIEW_ROWS} shown here. Export Excel runs the report again for all of them (up to ${AI_EXPORT_MAX_ROWS.toLocaleString()} a section).`}>
-                Truncated
-              </Badge>
-            )}
-          </p>
-        </div>
-        {chart && part.ok && display === 'table' && <ChartTableSwitch value={view} onChange={setView} className="mt-0.5" />}
+    <section className={cn('overflow-hidden rounded-2xl bg-white shadow-sm ring-1 dark:bg-slate-900', part.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
+      <header className="flex items-center gap-2 px-4 pb-2 pt-3">
+        {!part.ok && <OctagonX className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" aria-label="Failed" />}
+        <h4 dir="auto" className="min-w-0 flex-1 break-words text-sm font-bold text-slate-900 dark:text-white">
+          {part.purpose}
+        </h4>
+        {part.truncated && (
+          <Badge tone="amber" tip={`More rows matched than the ${AI_PREVIEW_ROWS} shown here. Export Excel runs the report again for all of them (up to ${AI_EXPORT_MAX_ROWS.toLocaleString()} a section).`}>
+            First {AI_PREVIEW_ROWS}
+          </Badge>
+        )}
+        {layout?.note && (
+          <button
+            type="button"
+            onClick={() => setNote((n) => !n)}
+            aria-expanded={note}
+            aria-label="What this section shows"
+            data-tip={note ? undefined : layout.note.slice(0, 600)}
+            className={cn('icon-btn h-8 w-8 shrink-0 touch:h-11 touch:w-11', note && 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300')}
+          >
+            <Info className="h-4 w-4" />
+          </button>
+        )}
+        {chart && part.ok && display === 'table' && <ChartTableSwitch value={view} onChange={setView} />}
       </header>
 
-      <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
-        {layout?.note && (
-          <p dir="auto" className="text-[11px] leading-snug text-muted">
+      <div className="space-y-2.5 px-4 pb-4">
+        {note && layout?.note && (
+          <p dir="auto" className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs leading-snug text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
             {layout.note}
           </p>
         )}
         {part.ok && display === 'figures' ? (
           <SectionFigures columns={part.columns} rows={part.rows} />
-        ) : part.ok && display === 'tree' && layout?.tree && part.columns.includes(layout.tree.key) && part.columns.includes(layout.tree.parent) ? (
-          <SectionTree columns={part.columns} rows={part.rows} tree={layout.tree} truncated={part.truncated} />
+        ) : tree ? (
+          <SectionTree columns={part.columns} rows={part.rows} tree={layout!.tree!} truncated={part.truncated} />
         ) : chart && view === 'chart' && display === 'table' ? (
           <AiChart model={chart} />
         ) : part.ok ? (
-          <PreviewTable part={part} />
+          <PreviewTable part={part} wrap />
         ) : (
           <p dir="auto" className="whitespace-pre-wrap break-words rounded-lg bg-rose-50 px-2.5 py-2 text-xs text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
             {part.error || 'The query failed.'}
           </p>
         )}
-        <div className="flex flex-wrap gap-2">
-          {part.ok && (
-            <button type="button" onClick={() => setTable(true)} className={SMALL_BTN} disabled={part.rows.length === 0}>
-              <Table2 className="h-3.5 w-3.5" /> Open table
-            </button>
-          )}
-          {part.sql && (
-            <button type="button" onClick={() => setShowSql((s) => !s)} aria-expanded={showSql} className={SMALL_BTN}>
-              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform duration-200', showSql && 'rotate-180')} /> {showSql ? 'Hide SQL' : 'SQL'}
-            </button>
-          )}
-        </div>
-        {showSql && (
-          <div className="space-y-1">
-            <AiCode label="SQL" onCopy={() => void copySql()} copyLabel="Copy the SQL" className="rounded-lg" codeClassName="max-h-56 p-2.5 text-[11px]">
-              {part.sql}
-            </AiCode>
-            {placeholders && (
-              <p className="text-[11px] text-muted">
-                <code dir="ltr" className="font-mono">{'{{from}}'}</code> and <code dir="ltr" className="font-mono">{'{{to}}'}</code> stand for the first and last day of the period it runs over.
-              </p>
-            )}
-          </div>
+        {part.ok && display !== 'figures' && part.rows.length > 0 && (
+          <button type="button" onClick={() => setTable(true)} className={SMALL_BTN}>
+            <Table2 className="h-3.5 w-3.5" /> Open table
+          </button>
         )}
       </div>
 
