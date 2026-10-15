@@ -7,7 +7,11 @@
 
 import { keepPreviousData, useInfiniteQuery, useQuery, type QueryClient } from '@tanstack/react-query'
 import type { ColumnValuesResponse } from '@qc/shared/api'
+import { AI_IMAGE_LONG_EDGE } from '@qc/shared/ai'
 import {
+  MTC_MAX_IMAGES,
+  MTC_MAX_PDF_BYTES,
+  MTC_MAX_SHEET_CHARS,
   type MtcExistingResponse,
   type MtcExtractResult,
   type MtcKind,
@@ -20,6 +24,9 @@ import {
 } from '@qc/shared/mtc'
 import { ApiError, api, apiStream, qs } from '@/lib/api'
 import { readSse } from '@/lib/sse'
+import { pickedKind, sheetText } from '@/components/ai/attachments'
+import { AI_PHOTO_QUALITY, AttachRejected, readSheets } from './aiAttachments'
+import { ImageRejected, prepareImage } from './imageStore'
 
 /** Where each register's reads are cached: the coils' under ['coils'], which the coil import refreshes too. */
 const root = (kind: MtcKind) => (kind === 'coils' ? ['coils'] : [kind])
@@ -80,9 +87,67 @@ export function useExistingItems(kind: MtcKind, ids: string[], key: string) {
  * failed. Aborting `signal` closes the connection, which stops the reading on
  * the server.
  */
-export async function readCertificate(file: File, signal: AbortSignal): Promise<MtcExtractResult> {
+/** Files that cannot be read as one certificate, with a sentence to show. */
+export class CertificateRejected extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CertificateRejected'
+  }
+}
+
+/**
+ * The picked files as one certificate for the server: one PDF as it is; up to
+ * MTC_MAX_IMAGES photos of its pages, in the order picked, each brought down on
+ * the device to the most Claude reads (and re-encoded as JPEG, which drops its
+ * location data); or one spreadsheet (.xlsx or .csv), read here into text.
+ * Throws CertificateRejected for anything else.
+ */
+export async function certificateForm(files: readonly File[]): Promise<{ form: FormData; name: string }> {
+  if (files.length === 0) throw new CertificateRejected('Pick the certificate: its PDF, photos of its pages, or its spreadsheet.')
+  const kinds = files.map((f) => pickedKind(f))
+  const unknown = files.find((_, i) => kinds[i] === null)
+  if (unknown) throw new CertificateRejected(`“${unknown.name}” is not a PDF, a photo or a spreadsheet.`)
   const form = new FormData()
-  form.set('file', file, file.name)
+  if (kinds.every((k) => k === 'image')) {
+    if (files.length > MTC_MAX_IMAGES) throw new CertificateRejected(`Pick at most ${MTC_MAX_IMAGES} photos: one for each page of the certificate.`)
+    for (const f of files) {
+      try {
+        const prepared = await prepareImage(f, AI_PHOTO_QUALITY, AI_IMAGE_LONG_EDGE)
+        form.append('images', prepared.blob, `${f.name.replace(/\.[^.]*$/, '') || 'photo'}.jpg`)
+      } catch (e) {
+        if (e instanceof ImageRejected) throw new CertificateRejected(`“${f.name}”: ${e.message}`)
+        throw e
+      }
+    }
+    const name = files.length === 1 ? files[0].name : `${files[0].name} (+${files.length - 1} photos)`
+    form.set('fileName', name)
+    return { form, name }
+  }
+  if (files.length > 1) throw new CertificateRejected('Pick one PDF, one spreadsheet, or photos of the pages — one certificate at a time.')
+  const file = files[0]
+  if (kinds[0] === 'pdf') {
+    if (file.size > MTC_MAX_PDF_BYTES) throw new CertificateRejected(`A certificate may be at most ${MTC_MAX_PDF_BYTES / 1024 / 1024} MB. Split the PDF and upload the parts.`)
+    form.set('file', file, file.name)
+    return { form, name: file.name }
+  }
+  let sheets
+  try {
+    sheets = await readSheets(file)
+  } catch (e) {
+    if (e instanceof AttachRejected) throw new CertificateRejected(e.message)
+    throw e
+  }
+  const read = sheetText(sheets, MTC_MAX_SHEET_CHARS)
+  if (!read) throw new CertificateRejected('That spreadsheet is empty.')
+  // Every row is an item to register: a spreadsheet cut short would lose some without a word.
+  if (read.omittedRows > 0) throw new CertificateRejected('That spreadsheet is too long to read in one go. Split it and upload the parts.')
+  form.set('sheet', read.text)
+  form.set('fileName', file.name)
+  return { form, name: file.name }
+}
+
+export async function readCertificate(files: readonly File[], signal: AbortSignal): Promise<MtcExtractResult> {
+  const { form } = await certificateForm(files)
   const body = await apiStream('/mtc/extract', { form, signal })
   for await (const frame of readSse(body)) {
     const event = JSON.parse(frame.data) as MtcStreamEvent

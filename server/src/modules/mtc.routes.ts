@@ -33,7 +33,10 @@ import multer from 'multer'
 import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import {
+  MTC_MAX_IMAGE_BYTES,
+  MTC_MAX_IMAGES,
   MTC_MAX_PDF_BYTES,
+  MTC_MAX_SHEET_CHARS,
   MTC_MAX_ROWS,
   MTC_TABLE_PAGE,
   MTC_TABLE_PAGE_MAX,
@@ -77,7 +80,8 @@ import { resolveApiKey } from '../ai/credentials'
 import { monthSpend, personalMonthSpend, recordUsage } from '../ai/transcript'
 import type { ModelMessage, ModelStream } from '../ai/model'
 import { SseStream } from '../ai/sse'
-import { MTC_MAX_TOKENS, MTC_PROMPT_TOKENS, MtcReadError, mtcMessages, mtcRequest, readMtcReply } from '../mtc/reader'
+import { MTC_MAX_TOKENS, MTC_PROMPT_TOKENS, MtcReadError, mtcMessages, mtcRequest, readMtcReply, type MtcImageType, type MtcSource } from '../mtc/reader'
+import { sniffImageMime } from '../images/storage'
 import { REGISTER_TABLES, col, rowSql, valuesSql, type RegisterTable } from '../mtc/registers'
 import { columnFilterClauses, columnOrderBy, columnQuerySchema, columnValues, type SqlColumns } from '../lib/columnFilters'
 
@@ -197,19 +201,58 @@ export function mtcRoutes(ctx: AppContext): Router {
     }
 
   // A name in Arabic arrives as UTF-8: read it so, not as Latin-1 (multer's default; its types do not list the option yet).
+  // A certificate comes as one PDF ("file"), as photos of its pages ("images", in order), or as its spreadsheet's text read on
+  // the device ("sheet", with "fileName"): one of the three.
   const uploadOptions: multer.Options & { defParamCharset: string } = {
     storage: multer.memoryStorage(),
     defParamCharset: 'utf8',
-    limits: { fileSize: MTC_MAX_PDF_BYTES, files: 1, fields: 0 },
+    limits: { fileSize: MTC_MAX_PDF_BYTES, files: MTC_MAX_IMAGES + 1, fields: 2, fieldSize: MTC_MAX_SHEET_CHARS * 4 },
   }
   const upload = multer(uploadOptions)
   const receiveFile: RequestHandler = (req, res, next) =>
-    upload.single('file')(req, res, (err: unknown) => {
-      if ((err as { code?: string } | undefined)?.code === 'LIMIT_FILE_SIZE') {
+    upload.fields([
+      { name: 'file', maxCount: 1 },
+      { name: 'images', maxCount: MTC_MAX_IMAGES },
+    ])(req, res, (err: unknown) => {
+      const code = (err as { code?: string } | undefined)?.code
+      if (code === 'LIMIT_FILE_SIZE') {
         return next(new HttpError(413, 'payload_too_large', `A certificate may be at most ${MTC_MAX_PDF_BYTES / 1024 / 1024} MB. Split the PDF and upload the parts.`))
       }
+      if (code === 'LIMIT_FILE_COUNT' || code === 'LIMIT_UNEXPECTED_FILE') {
+        return next(badRequest(`Upload one PDF, one spreadsheet, or up to ${MTC_MAX_IMAGES} photos of the certificate’s pages.`))
+      }
+      if (code === 'LIMIT_FIELD_VALUE') return next(badRequest('That spreadsheet is too long to read in one go. Split it and upload the parts.'))
       next(err)
     })
+
+  /** The certificate as it was uploaded, checked by its bytes; its name for the review and the Activity. */
+  const sourceOf = (req: Parameters<RequestHandler>[0]): { source: MtcSource; fileName: string } => {
+    const files = (req.files ?? {}) as Record<string, Express.Multer.File[] | undefined>
+    const pdf = files.file?.[0]
+    const images = files.images ?? []
+    // A form's text field arrives with its line breaks as CRLF: one LF each, as read.
+    const sheet = typeof req.body?.sheet === 'string' ? (req.body.sheet as string).replace(/\r\n?/g, '\n').trim() : ''
+    const named = (raw: string | undefined, fallback: string) => (raw ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 255) || fallback
+    const given = [pdf ? 1 : 0, images.length ? 1 : 0, sheet ? 1 : 0].reduce((a, b) => a + b, 0)
+    if (given === 0) throw badRequest('Upload the certificate: its PDF, photos of its pages, or its spreadsheet.')
+    if (given > 1) throw badRequest('Upload one certificate at a time: its PDF, its photos, or its spreadsheet.')
+    if (pdf) {
+      if (!isPdf(pdf.buffer)) throw badRequest('This is not a PDF. Upload the certificate as the supplier sent it, or photos of its pages.')
+      return { source: { kind: 'pdf', data: pdf.buffer }, fileName: named(pdf.originalname, 'certificate.pdf') }
+    }
+    if (images.length) {
+      const read = images.map((f) => {
+        const type = sniffImageMime(f.buffer.subarray(0, 16))
+        if (!type) throw badRequest(`“${named(f.originalname, 'photo')}” is not a photo Claude can read. Take or save it as JPEG or PNG.`)
+        if (f.size > MTC_MAX_IMAGE_BYTES) throw badRequest(`“${named(f.originalname, 'photo')}” is larger than ${MTC_MAX_IMAGE_BYTES / 1024 / 1024} MB.`)
+        return { type: type as MtcImageType, data: f.buffer }
+      })
+      const first = named(images[0].originalname, 'photo')
+      return { source: { kind: 'images', images: read }, fileName: named(req.body?.fileName, images.length === 1 ? first : `${first} (+${images.length - 1} photos)`) }
+    }
+    if (sheet.length > MTC_MAX_SHEET_CHARS) throw badRequest('That spreadsheet is too long to read in one go. Split it and upload the parts.')
+    return { source: { kind: 'sheet', text: sheet }, fileName: named(req.body?.fileName, 'certificate.xlsx') }
+  }
 
   /** One certificate at a time per person, and so many an hour: checked before the file is taken in. */
   const oneAtATime: RequestHandler = (req, _res, next) => {
@@ -222,10 +265,7 @@ export function mtcRoutes(ctx: AppContext): Router {
 
   r.post('/extract', uploaderOnly, oneAtATime, receiveFile, async (req, res) => {
     const user = requireUser(req)
-    if (!req.file) throw badRequest('Upload the certificate as the "file" field.')
-    const pdf = req.file.buffer
-    if (!isPdf(pdf)) throw badRequest('This is not a PDF. Upload the certificate as the supplier sent it, as a PDF.')
-    const fileName = (req.file.originalname || 'certificate.pdf').replace(/[\u0000-\u001f]/g, '').slice(0, 255) || 'certificate.pdf'
+    const { source, fileName } = sourceOf(req)
 
     // Read one after another, as the answer loop does: the assistant's switch, its key, its monthly cap, the model for certificates.
     const owner = (await aiOwnerAccount(ctx.db, ctx.config)) === user.id
@@ -249,10 +289,16 @@ export function mtcRoutes(ctx: AppContext): Router {
     /** What Claude makes of the file on a model (free): it proves the file can be read, and prices the call's worst case. */
     const count = async (model: string): Promise<number> => {
       try {
-        return await ctx.ai.countTokens(apiKey, { model, messages: mtcMessages(pdf, fileName) })
+        return await ctx.ai.countTokens(apiKey, { model, messages: mtcMessages(source, fileName) })
       } catch (e) {
         if (e instanceof Anthropic.BadRequestError) {
-          throw badRequest('Claude cannot read this PDF. It may be damaged, password-protected or longer than 100 pages: split it, or upload another copy.')
+          throw badRequest(
+            source.kind === 'pdf'
+              ? 'Claude cannot read this PDF. It may be damaged, password-protected or longer than 100 pages: split it, or upload another copy.'
+              : source.kind === 'images'
+                ? 'Claude cannot read these photos. Take them again as JPEG or PNG, one page each.'
+                : 'Claude cannot read this spreadsheet. Save it again as .xlsx and upload it.',
+          )
         }
         const failure = describeModelFailure(e, 'none (counting an MTC)', owner)
         throw new HttpError(failure.code === 'rate_limited' ? 429 : failure.code === 'ai_unavailable' ? 503 : 502, failure.code, failure.message)
@@ -304,7 +350,7 @@ export function mtcRoutes(ctx: AppContext): Router {
       let current: { stream: ModelStream; model: string } | null = null
       /** One reading of the file: its reply, kept with what it cost. */
       const readOn = async (run: { model: string; effort: AiEffort }): Promise<ModelMessage> => {
-        const call = ctx.ai.stream(apiKey, mtcRequest(pdf, fileName, run), { signal: abort.signal })
+        const call = ctx.ai.stream(apiKey, mtcRequest(source, fileName, run), { signal: abort.signal })
         current = { stream: call, model: run.model }
         const message = await call.finalMessage()
         current = null

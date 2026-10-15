@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-16.3',
+    date: '2026-10-16',
+    title: 'MTC: certificates from photos and Excel, and reading fixed',
+    items: [
+      { text: 'Reading a certificate failed every time with “Claude could not take this request”: the reading’s format was more complex than Anthropic accepts. It is fixed; certificates are read again.' },
+      { text: 'Upload MTC now takes photos of the certificate’s pages (up to 10, picked together, in page order) and the mill’s Excel sheet (.xlsx or .csv), as well as the PDF. Photos are made smaller on the phone before they are sent.' },
+    ],
+  },
+  {
     id: '2026-10-16.2',
     date: '2026-10-16',
     title: 'Order tracking and Week tracking, and reports the assistant builds',

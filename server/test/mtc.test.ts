@@ -41,6 +41,11 @@ const reply = (kind: MtcKind | 'other', items: Item[] = [], problem: string | nu
 async function extract(bytes: Buffer, name: string, as: Session = uploader) {
   const form = new FormData()
   form.set('file', new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }), name)
+  return extractForm(form, as)
+}
+
+/** A reading of whatever the form carries: a PDF, photos, a spreadsheet's text. */
+async function extractForm(form: FormData, as: Session = uploader) {
   const res = await app.api<string | ApiErrorBody>('POST', '/api/mtc/extract', { token: as.token, raw: form })
   const events: MtcStreamEvent[] =
     res.status === 200
@@ -298,6 +303,52 @@ describe('reading a certificate', () => {
     expect((await extract(PDF, 'invoice.pdf')).result).toEqual({ fileName: 'invoice.pdf', kind: null, rows: [], problem: 'This is an invoice, not a certificate.' })
   })
 
+  it('reads photos of a certificate’s pages, in order, as images', async () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1])
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d])
+    const full = { grade: 'S350GD', smType: 'HR', supplier: 'Ezz', thickness: '2', width: '1000', yield: '380' }
+    app.model.reply({ content: [reply('coils', [{ coilNumber: 'P1', ...full, page: 2 }])] })
+    const form = new FormData()
+    form.append('images', new Blob([new Uint8Array(jpeg)], { type: 'image/jpeg' }), 'page 1.jpg')
+    form.append('images', new Blob([new Uint8Array(png)], { type: 'image/png' }), 'page 2.png')
+    const { res, result } = await extractForm(form)
+    expect(res.status).toBe(200)
+    expect(result).toMatchObject({ fileName: 'page 1.jpg (+1 photos)', kind: 'coils', rows: [{ values: { coilNumber: 'P1' }, page: 2 }] })
+    const content = app.model.calls[0].params.messages[0].content as Anthropic.Beta.BetaContentBlockParam[]
+    expect(content.map((b) => b.type)).toEqual(['text', 'text', 'image', 'text', 'image', 'text'])
+    expect(content[2]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: jpeg.toString('base64') } })
+    expect(content[4]).toMatchObject({ type: 'image', source: { media_type: 'image/png' } })
+    // Counted as it is read.
+    expect(app.model.counted[0].messages).toEqual(app.model.calls[0].params.messages)
+  })
+
+  it('reads a certificate’s spreadsheet from its text, read on the device', async () => {
+    app.model.reply({ content: [reply('coils', [{ coilNumber: 'X9', grade: 'S350GD', smType: 'HR', supplier: 'Ezz', thickness: '2.5', width: '1250', yield: '' }])] })
+    const form = new FormData()
+    form.set('sheet', '## Sheet1\nCoil,Thickness\nX9,2.5')
+    form.set('fileName', 'Ezz coils.xlsx')
+    const { result } = await extractForm(form)
+    expect(result).toMatchObject({ fileName: 'Ezz coils.xlsx', kind: 'coils', rows: [{ values: { coilNumber: 'X9', thickness: 2.5 } }] })
+    const content = app.model.calls[0].params.messages[0].content as Anthropic.Beta.BetaContentBlockParam[]
+    expect(content[0]).toEqual({ type: 'text', text: '<spreadsheet name="Ezz coils.xlsx">\n## Sheet1\nCoil,Thickness\nX9,2.5\n</spreadsheet>' })
+  })
+
+  it('takes one certificate at a time, as a PDF, photos or a spreadsheet, and nothing else', async () => {
+    const message = async (form: FormData) => ((await extractForm(form)).res.body as ApiErrorBody).error?.message
+    const both = new FormData()
+    both.set('file', new Blob([new Uint8Array(PDF)], { type: 'application/pdf' }), 'a.pdf')
+    both.set('sheet', 'a,b')
+    expect(await message(both)).toMatch(/one certificate at a time/)
+    expect(await message(new FormData())).toMatch(/its PDF, photos of its pages, or its spreadsheet/)
+    const notPhoto = new FormData()
+    notPhoto.append('images', new Blob([new Uint8Array(PDF)], { type: 'image/jpeg' }), 'scan.jpg')
+    expect(await message(notPhoto)).toMatch(/“scan\.jpg” is not a photo Claude can read/)
+    const many = new FormData()
+    for (let i = 0; i < 11; i++) many.append('images', new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], { type: 'image/jpeg' }), `p${i}.jpg`)
+    expect(await message(many)).toMatch(/up to 10 photos/)
+    expect(app.model.calls).toHaveLength(0)
+  })
+
   it('refuses what is not a PDF, and a PDF Claude cannot read, before anything is billed', async () => {
     expect((await extract(Buffer.from('hello'), 'cert.pdf')).res.status).toBe(400)
     app.model.tokenCount = () => {
@@ -312,7 +363,7 @@ describe('reading a certificate', () => {
   it('tells the person when a certificate is too long for one reading, and still counts what it cost', async () => {
     app.model.reply({ content: [text('{"documentKind":"coils","problem":null,"coils":[')], stopReason: 'max_tokens', usage: { input_tokens: 9_000, output_tokens: 48_000 } })
     const { events } = await extract(PDF, 'long.pdf')
-    expect(events.at(-1)).toEqual({ type: 'error', code: 'validation', message: expect.stringMatching(/Split the PDF/) })
+    expect(events.at(-1)).toEqual({ type: 'error', code: 'validation', message: expect.stringMatching(/Split it into parts/) })
     const usage = await app.db.query(`SELECT output_tokens AS out FROM ai_usage WHERE user_id = $1 ORDER BY id DESC LIMIT 1`, [uploader.user.id])
     expect(usage.rows[0].out).toBe(48_000)
   })

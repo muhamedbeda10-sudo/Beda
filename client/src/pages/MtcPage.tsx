@@ -8,13 +8,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Cable, FileUp, Grid3x3, Loader2, Package2, X } from 'lucide-react'
-import { MTC_ADDED_COLUMN, MTC_KINDS, MTC_MAX_PDF_BYTES, MTC_REGISTERS, MTC_TABLE_PAGE, isMtcKind, type MtcExtractResult, type MtcKind, type MtcRegister, type MtcRegisterRow } from '@qc/shared/mtc'
+import { MTC_ACCEPT, MTC_ADDED_COLUMN, MTC_KINDS, MTC_REGISTERS, MTC_TABLE_PAGE, isMtcKind, type MtcExtractResult, type MtcKind, type MtcRegister, type MtcRegisterRow } from '@qc/shared/mtc'
 import { Button, Card, EmptyState } from '@/components/ui'
 import { FilterBar, Segmented } from '@/components/ui/PageShell'
 import { ColumnPicker, GridFrame, GridHead, SkeletonRows, TableFooter, useResizableColumns, type ColumnDef } from '@/components/ui/ResizableColumns'
 import { useServerColumns } from '@/components/ui/ColumnFilter'
 import { MtcReview } from '@/components/mtc/MtcReview'
-import { loadMtcValues, readCertificate, useMtcOptions, useMtcTable } from '@/services/mtc'
+import { CertificateRejected, loadMtcValues, readCertificate, useMtcOptions, useMtcTable } from '@/services/mtc'
 import { useAiMe, useDebounced } from '@/services/queries'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useApp } from '@/store/AppContext'
@@ -46,13 +46,14 @@ export function MtcPage() {
     void refetchMe()
   }, [refetchMe])
 
-  async function startReading(file: File) {
-    if (file.size > MTC_MAX_PDF_BYTES) return toast(`A certificate may be at most ${MTC_MAX_PDF_BYTES / 1024 / 1024} MB. Split the PDF and upload the parts.`, 'error')
+  /** One certificate: its PDF, photos of its pages (in the order picked), or its spreadsheet. */
+  async function startReading(files: File[]) {
+    if (files.length === 0) return
     const abort = new AbortController()
     readingRef.current = abort
-    setReading({ name: file.name, abort })
+    setReading({ name: files.length === 1 ? files[0].name : `${files[0].name} and ${files.length - 1} more`, abort })
     try {
-      const read = await readCertificate(file, abort.signal)
+      const read = await readCertificate(files, abort.signal)
       if (!read.kind) {
         toast(read.problem ? `Nothing was read: ${read.problem}` : 'This document is not a certificate of coils, welding wire or mesh wire: nothing was read.', 'error')
       } else {
@@ -61,7 +62,8 @@ export function MtcPage() {
         setResult(read)
       }
     } catch (e) {
-      if ((e as Error).name !== 'AbortError') toast(e instanceof Error ? e.message : 'The certificate could not be read.', 'error')
+      if (e instanceof CertificateRejected) toast(e.message, 'error')
+      else if ((e as Error).name !== 'AbortError') toast(e instanceof Error ? e.message : 'The certificate could not be read.', 'error')
     } finally {
       readingRef.current = null
       setReading(null)
@@ -98,15 +100,22 @@ export function MtcPage() {
             <input
               ref={fileInput}
               type="file"
-              accept="application/pdf,.pdf"
+              accept={MTC_ACCEPT}
+              multiple
               className="hidden"
               onChange={(e) => {
-                const file = e.target.files?.[0]
+                const files = Array.from(e.target.files ?? [])
                 e.target.value = ''
-                if (file) void startReading(file)
+                void startReading(files)
               }}
             />
-            <Button variant="primary" className="h-10 touch:h-11" disabled={reading !== null} onClick={() => fileInput.current?.click()}>
+            <Button
+              variant="primary"
+              className="h-10 touch:h-11"
+              disabled={reading !== null}
+              data-tip="The certificate’s PDF, photos of its pages, or its Excel sheet"
+              onClick={() => fileInput.current?.click()}
+            >
               <FileUp className="h-4 w-4" /> Upload MTC
             </Button>
           </>

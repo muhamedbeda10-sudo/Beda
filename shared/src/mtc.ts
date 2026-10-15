@@ -16,11 +16,19 @@
 // a description and a table, not a fourth copy of the code.
 // ============================================================================
 
-import { AI_MAX_PDF_BYTES } from './ai'
+import { AI_MAX_PDF_BYTES, AI_MAX_SHEET_CHARS } from './ai'
 import type { ApiErrorCode } from './api'
 
 /** The largest certificate accepted: the same as a PDF given to the assistant. */
 export const MTC_MAX_PDF_BYTES = AI_MAX_PDF_BYTES
+/** A certificate photographed page by page: at most this many photos in one reading. */
+export const MTC_MAX_IMAGES = 10
+/** One photo, as the device sends it after bringing it down to the most Claude reads (Anthropic takes up to 5 MB an image). */
+export const MTC_MAX_IMAGE_BYTES = 5 * 1024 * 1024
+/** A spreadsheet's text, read on the device: the same room as a sheet given to the assistant. */
+export const MTC_MAX_SHEET_CHARS = AI_MAX_SHEET_CHARS
+/** What Upload MTC offers to pick: the PDF, photos of its pages, or the mill's spreadsheet. */
+export const MTC_ACCEPT = 'application/pdf,.pdf,image/*,.jpg,.jpeg,.png,.webp,.xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 /** Items saved in one go: the longest certificates seen hold about a hundred. */
 export const MTC_MAX_ROWS = 500
 /** numeric(10, 3): seven digits before the point. */

@@ -92,7 +92,8 @@ The **first account created becomes the admin**. Afterwards, set
 - **MTC** (last tab, everyone) — the material registers as tables: **Coils**,
   **Welding wire** (by batch) and **Mesh wire** (by cast + diameter); search,
   supplier and type filters, newest first. **Upload MTC**: Claude reads the
-  supplier's certificate PDF on the server, tells which register it belongs to
+  supplier's certificate (its PDF, photos of its pages, or its Excel sheet read
+  into text on the device) on the server, tells which register it belongs to
   and lists every item with that register's fields; the person reviews and
   corrects each row (doubtful values marked), chooses per registered item
   whether to overwrite it, and saves in one audited transaction. The PDF is
