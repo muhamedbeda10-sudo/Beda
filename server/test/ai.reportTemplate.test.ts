@@ -213,7 +213,7 @@ describe('§20 report templates: what the model is asked, and what is taken from
   ]
 
   it('asks once, with no tools, at low effort, for JSON in a fixed shape', () => {
-    const params = templateRequest({ question: 'Changes in the last 30 days?', askedOn: '2026-10-09', sections }, AI_MODEL)
+    const params = templateRequest({ question: 'Changes in the last 30 days?', askedOn: '2026-10-09', sections }, { model: AI_MODEL, effort: 'low' })
     expect(params).toMatchObject({
       model: AI_MODEL,
       max_tokens: 8000,

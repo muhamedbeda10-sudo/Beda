@@ -39,7 +39,9 @@ import {
   MTC_TABLE_PAGE_MAX,
   MTC_ADDED_COLUMN,
   isMtcKind,
+  MTC_REGISTERS,
   mtcChangedFields,
+  mtcDoubtShare,
   mtcDuplicateKeys,
   mtcIdField,
   mtcKeyLabel,
@@ -48,6 +50,7 @@ import {
   mtcRowProblems,
   mtcValuesOf,
   type MtcExistingResponse,
+  type MtcExtractResult,
   type MtcRegisterRow,
   type MtcSaveResponse,
   type MtcStreamEvent,
@@ -55,6 +58,7 @@ import {
   type MtcTableResponse,
   type MtcValues,
 } from '@qc/shared/mtc'
+import { AI_MODEL_IDS, AI_MTC_REREAD_MODEL, AI_MTC_REREAD_SHARE, resolveAiAction, type AiEffort, type AiModelId } from '@qc/shared/ai'
 import { auditEvent, type AuditDraft } from '@qc/shared/audit'
 import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode } from '../db/pool'
@@ -71,7 +75,7 @@ import { loadAccess, mayUploadMtc } from '../ai/access'
 import { loadAiSettings } from '../ai/settings'
 import { resolveApiKey } from '../ai/credentials'
 import { monthSpend, personalMonthSpend, recordUsage } from '../ai/transcript'
-import type { ModelMessage } from '../ai/model'
+import type { ModelMessage, ModelStream } from '../ai/model'
 import { SseStream } from '../ai/sse'
 import { MTC_MAX_TOKENS, MTC_PROMPT_TOKENS, MtcReadError, mtcMessages, mtcRequest, readMtcReply } from '../mtc/reader'
 import { REGISTER_TABLES, col, rowSql, valuesSql, type RegisterTable } from '../mtc/registers'
@@ -85,32 +89,44 @@ const AUDIT_CHUNK = 2_000
 /** How a reading ended, as the owner's Activity tells it. */
 type ReadingOutcome = 'read' | 'not-certificate' | 'failed' | 'stopped'
 
+/** One call of a reading, as far as it got: what it is billed for. */
+interface ReadingCall {
+  message: ModelMessage
+  model: string
+  requestId: string | null
+  partial: boolean
+}
+
 /**
- * Log one reading and what it cost, in one transaction: the reading, then its
- * usage pointing at it. Only a reading that cost something is logged: one
- * refused before the call is no reading.
+ * Log one reading and what each of its calls cost (two when it was read
+ * again), in one transaction: the reading, then each call's usage pointing at
+ * it. Only a reading that cost something is logged: one refused before any
+ * call is no reading.
  */
 async function logReading(
   ctx: AppContext,
-  r: { userId: string; fileName: string; outcome: ReadingOutcome; kind: string | null; items: number | null; message: ModelMessage; model: string; requestId: string | null; partial: boolean },
+  r: { userId: string; fileName: string; outcome: ReadingOutcome; kind: string | null; items: number | null; reread: boolean; calls: ReadingCall[] },
 ): Promise<void> {
-  const usage = usageOf(r.message, r.model)
+  if (r.calls.length === 0) return
   await withTransaction(ctx.db, async (tx) => {
     const { rows } = await tx.query<{ id: string }>(
-      `INSERT INTO mtc_readings (user_id, file_name, kind, items, outcome) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [r.userId, r.fileName, r.kind, r.items, r.outcome],
+      `INSERT INTO mtc_readings (user_id, file_name, kind, items, outcome, reread) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [r.userId, r.fileName, r.kind, r.items, r.outcome, r.reread],
     )
-    await recordUsage(tx, {
-      userId: r.userId,
-      conversationId: null,
-      turnId: null,
-      mtcReadingId: rows[0].id,
-      model: usage.model,
-      tokens: usage.tokens,
-      costUsd: usage.costUsd,
-      requestId: r.requestId,
-      partial: r.partial,
-    })
+    for (const c of r.calls) {
+      const usage = usageOf(c.message, c.model)
+      await recordUsage(tx, {
+        userId: r.userId,
+        conversationId: null,
+        turnId: null,
+        mtcReadingId: rows[0].id,
+        model: usage.model,
+        tokens: usage.tokens,
+        costUsd: usage.costUsd,
+        requestId: c.requestId,
+        partial: c.partial,
+      })
+    }
   })
 }
 
@@ -205,14 +221,16 @@ export function mtcRoutes(ctx: AppContext): Router {
           : 'Certificates cannot be read right now: the AI service is not available. Ask your administrator.',
       )
     }
-    const model = settings.mtcModel
+    // The model and effort the owner set for certificates (Models); a doubtful reading is read again on a stronger one.
+    const first = resolveAiAction(settings, 'mtc')
+    const strength = (m: string) => AI_MODEL_IDS.indexOf(m as AiModelId)
+    const rereadOn = settings.mtcReread && strength(AI_MTC_REREAD_MODEL) > strength(first.model) ? AI_MTC_REREAD_MODEL : null
+    const access = await loadAccess(ctx.db, user.id)
 
-    reading.add(user.id)
-    try {
-      // Counted first (free): it proves Claude can read the file, and prices the call's worst case for the cap.
-      let tokens: number
+    /** What Claude makes of the file on a model (free): it proves the file can be read, and prices the call's worst case. */
+    const count = async (model: string): Promise<number> => {
       try {
-        tokens = await ctx.ai.countTokens(apiKey, { model, messages: mtcMessages(pdf, fileName) })
+        return await ctx.ai.countTokens(apiKey, { model, messages: mtcMessages(pdf, fileName) })
       } catch (e) {
         if (e instanceof Anthropic.BadRequestError) {
           throw badRequest('Claude cannot read this PDF. It may be damaged, password-protected or longer than 100 pages: split it, or upload another copy.')
@@ -220,10 +238,21 @@ export function mtcRoutes(ctx: AppContext): Router {
         const failure = describeModelFailure(e, 'none (counting an MTC)', owner)
         throw new HttpError(failure.code === 'rate_limited' ? 429 : failure.code === 'ai_unavailable' ? 503 : 502, failure.code, failure.message)
       }
+    }
+    /** Why a call of this many tokens on this model may not be made now — the assistant's cap, then the person's — or null. */
+    const overCap = async (model: string, tokens: number): Promise<'app' | 'personal' | null> => {
       const price = modelPrice(model)
       const worstUsd = ((tokens + MTC_PROMPT_TOKENS) * Math.max(price.input, price.cacheWrite5m) + MTC_MAX_TOKENS * price.output) / 1_000_000
-      const spend = await monthSpend(ctx.db)
-      if (Number(spend.spentUsd) + worstUsd > settings.monthlyCapUsd) {
+      if (Number((await monthSpend(ctx.db)).spentUsd) + worstUsd > settings.monthlyCapUsd) return 'app'
+      // The person's own monthly cap, set with the permission: certificates count in it like questions.
+      if (access && (await personalMonthSpend(ctx.db, user.id)) + worstUsd > access.monthlyCapUsd) return 'personal'
+      return null
+    }
+
+    reading.add(user.id)
+    try {
+      const over = await overCap(first.model, await count(first.model))
+      if (over === 'app') {
         throw new HttpError(
           402,
           'ai_budget_reached',
@@ -232,9 +261,7 @@ export function mtcRoutes(ctx: AppContext): Router {
             : 'The AI service’s monthly limit is reached, so certificates cannot be read until the 1st.',
         )
       }
-      // The person's own monthly cap, set with the permission: certificates count in it like questions.
-      const access = await loadAccess(ctx.db, user.id)
-      if (access && (await personalMonthSpend(ctx.db, user.id)) + worstUsd > access.monthlyCapUsd) {
+      if (over === 'personal') {
         throw new HttpError(
           402,
           'ai_budget_reached',
@@ -254,30 +281,58 @@ export function mtcRoutes(ctx: AppContext): Router {
       res.on('close', () => {
         if (!res.writableFinished) abort.abort()
       })
-      const call = ctx.ai.stream(apiKey, mtcRequest(pdf, fileName, model), { signal: abort.signal })
-      const log = { userId: user.id, fileName, model, requestId: call.request_id ?? null }
-      let logged = false
-      try {
+      const calls: ReadingCall[] = []
+      let current: { stream: ModelStream; model: string } | null = null
+      /** One reading of the file: its reply, kept with what it cost. */
+      const readOn = async (run: { model: string; effort: AiEffort }): Promise<ModelMessage> => {
+        const call = ctx.ai.stream(apiKey, mtcRequest(pdf, fileName, run), { signal: abort.signal })
+        current = { stream: call, model: run.model }
         const message = await call.finalMessage()
-        let result
+        current = null
+        calls.push({ message, model: run.model, requestId: call.request_id ?? null, partial: false })
+        return message
+      }
+      const log = { userId: user.id, fileName }
+      let reread = false
+      try {
+        let result: MtcExtractResult | null = null
+        let failed: unknown = null
         try {
-          result = readMtcReply(message, fileName)
+          result = readMtcReply(await readOn(first), fileName)
         } catch (e) {
-          logged = true
-          await logReading(ctx, { ...log, outcome: 'failed', kind: null, items: null, message, partial: false })
-          throw e
+          if (!(e instanceof MtcReadError)) throw e
+          failed = e
         }
-        logged = true
-        await logReading(ctx, { ...log, outcome: result.kind ? 'read' : 'not-certificate', kind: result.kind, items: result.rows.length, message, partial: false })
+        // Too doubtful to hand over as it is — nothing usable, nothing listed, or too many values unsure: read again on the stronger model.
+        const doubtful =
+          (failed instanceof MtcReadError && !failed.tooLong) ||
+          (result?.kind && (result.rows.length === 0 || mtcDoubtShare(MTC_REGISTERS[result.kind], result.rows) > AI_MTC_REREAD_SHARE))
+        if (rereadOn && doubtful) {
+          if (await overCap(rereadOn, await count(rereadOn).catch(() => Number.POSITIVE_INFINITY))) {
+            if (result) result.problem = [result.problem, 'Many values were unclear, and the monthly AI limit is too close to read it again on a stronger model: check every amber cell.'].filter(Boolean).join(' ')
+          } else {
+            send({ type: 'rereading', model: rereadOn })
+            try {
+              result = readMtcReply(await readOn({ model: rereadOn, effort: 'high' }), fileName)
+              failed = null
+              reread = true
+            } catch (e) {
+              // The second reading failed in its turn: the first stands, if there was one.
+              if (!(e instanceof MtcReadError)) throw e
+              if (!result) failed = e
+            }
+          }
+        }
+        if (!result) throw failed
+        await logReading(ctx, { ...log, outcome: result.kind ? 'read' : 'not-certificate', kind: result.kind, items: result.rows.length, reread, calls })
         send({ type: 'result', result })
       } catch (e) {
         // Whatever was read before it failed or was stopped is still billed: kept as partial, like a cut-off answer.
-        const partial = call.currentMessage
-        if (partial && !logged) {
-          await logReading(ctx, { ...log, outcome: abort.signal.aborted ? 'stopped' : 'failed', kind: null, items: null, message: partial, partial: true }).catch((err: unknown) =>
-            console.error('[mtc] could not log a reading that did not finish', err),
-          )
-        }
+        const cut = current as { stream: ModelStream; model: string } | null
+        if (cut?.stream.currentMessage) calls.push({ message: cut.stream.currentMessage, model: cut.model, requestId: cut.stream.request_id ?? null, partial: true })
+        await logReading(ctx, { ...log, outcome: abort.signal.aborted ? 'stopped' : 'failed', kind: null, items: null, reread, calls }).catch((err: unknown) =>
+          console.error('[mtc] could not log a reading that did not finish', err),
+        )
         if (abort.signal.aborted) return
         if (e instanceof MtcReadError) send({ type: 'error', code: 'validation', message: e.message })
         else {

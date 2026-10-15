@@ -23,6 +23,7 @@
 
 import type Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
+import type { AiEffort } from '@qc/shared/ai'
 import {
   MTC_KINDS,
   MTC_REGISTERS,
@@ -142,22 +143,26 @@ export function mtcMessages(pdf: Buffer, fileName: string): Anthropic.Beta.BetaM
   ]
 }
 
-/** The whole request, on the model the assistant's owner chose for certificates. Thinking is shown to nobody, so it is not sent back. */
-export function mtcRequest(pdf: Buffer, fileName: string, model: string): ModelParams {
+/** The whole request, on the model and effort the owner set for certificates (Models). Thinking is shown to nobody, so it is not sent back. */
+export function mtcRequest(pdf: Buffer, fileName: string, run: { model: string; effort: AiEffort }): ModelParams {
   return {
-    model,
+    model: run.model,
     max_tokens: MTC_MAX_TOKENS,
     betas: [STRUCTURED_OUTPUTS_BETA],
     system: MTC_SYSTEM,
     thinking: { type: 'adaptive', display: 'omitted' },
-    output_config: { effort: 'high', format: { type: 'json_schema', schema: MTC_OUTPUT_SCHEMA as unknown as Record<string, unknown> } },
+    output_config: { effort: run.effort, format: { type: 'json_schema', schema: MTC_OUTPUT_SCHEMA as unknown as Record<string, unknown> } },
     messages: mtcMessages(pdf, fileName),
   }
 }
 
 /** A reply that could not be turned into rows: the person is told why, in words. */
 export class MtcReadError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** The list ran past the reply's room: a stronger model would run past it too. */
+    readonly tooLong = false,
+  ) {
     super(message)
     this.name = 'MtcReadError'
   }
@@ -196,7 +201,7 @@ function cleanField(field: MtcField, v: unknown): string | number | undefined {
 export function readMtcReply(message: ModelMessage, fileName: string): MtcExtractResult {
   if (message.stop_reason === 'refusal') throw new MtcReadError('Claude would not read this document. Check that it is a material certificate.')
   if (message.stop_reason === 'max_tokens') {
-    throw new MtcReadError('This certificate lists too many items to read in one go. Split the PDF into parts and upload them one by one.')
+    throw new MtcReadError('This certificate lists too many items to read in one go. Split the PDF into parts and upload them one by one.', true)
   }
   const text = message.content
     .filter((b): b is Extract<(typeof message.content)[number], { type: 'text' }> => b.type === 'text')

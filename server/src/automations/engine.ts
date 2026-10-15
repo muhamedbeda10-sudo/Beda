@@ -36,7 +36,7 @@
 // The clock is injectable: the tests drive ticks directly at chosen moments.
 // ============================================================================
 
-import { AI_MODEL, AI_PREVIEW_ROWS } from '@qc/shared/ai'
+import { AI_PREVIEW_ROWS } from '@qc/shared/ai'
 import {
   AUTOMATION_FAILURES_BEFORE_STOP,
   AUTOMATION_WATCH_MAX_ROWS,
@@ -210,7 +210,6 @@ export async function runClaimed(deps: EngineDeps, c: Claimed, halt?: AbortSigna
           ? { ok: false, blocked: pool.blocked, error: blockedNote(pool.blocked), notified: 0, casesNotified: 0, digest: false, notes: [] }
           : await runWatch({ db: deps.db, timeZone: deps.config.FACTORY_TIMEZONE, automation: a, runId: c.runId, now: c.startedAt, pool, signal: ac.signal, ownerId: (await appState(deps.db, deps.config, deps.readers.ready)).ownerId })
     } else {
-      const state = (await creatorStates(deps.db, [a.creatorId])).get(a.creatorId)
       result = await runReport({
         db: deps.db,
         config: deps.config,
@@ -220,8 +219,6 @@ export async function runClaimed(deps: EngineDeps, c: Claimed, halt?: AbortSigna
         now: c.startedAt,
         slotAt: c.slotAt,
         reader,
-        // The creator's model as it is now (the claim found them able to run it).
-        modelId: state?.access?.model ?? AI_MODEL,
         signal: ac.signal,
       })
     }

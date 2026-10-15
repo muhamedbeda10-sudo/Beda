@@ -15,6 +15,7 @@ import { TestApp, type Session } from './harness'
 import { text } from './aiFake'
 import { foldForSearch, likePattern, snippetAround } from '../src/ai/conversationSearch'
 import { cleanTitle, giveConversationTitle, titleRequest } from '../src/ai/conversationTitle'
+import { ROUTER_SYSTEM } from '../src/ai/router'
 
 // §20 — keeping one's conversations in order (migration 0052): renamed,
 // pinned, in groups, archived, and found again by what was said in them.
@@ -67,7 +68,7 @@ beforeAll(async () => {
   other = await app.login('admin2')
   const granted = await app.api('PUT', `/api/ai/access/${other.user.id}`, {
     token: admin.token,
-    body: { enabled: true, domains: ['inspection'], model: AI_MODEL, effort: 'medium', monthlyCapUsd: 50 },
+    body: { enabled: true, domains: ['inspection'], monthlyCapUsd: 50 },
   })
   expect(granted.status).toBe(200)
   expect((await app.api('PUT', '/api/ai/key', { token: admin.token, body: { apiKey: KEY } })).status).toBe(200)
@@ -327,7 +328,9 @@ describe('a title by the assistant', () => {
     expect(events[titled]).toMatchObject({ type: 'title', conversation: { id: start.conversation.id, title: 'Scrap by machine, last week' } })
     expect(await sourceOf(start.conversation.id)).toEqual({ title: 'Scrap by machine, last week', title_source: 'assistant' })
 
-    const call = app.model.completions.at(-1)!
+    // The router's call (Auto) is not the title's.
+    const titles = () => app.model.completions.filter((c) => c.params.system !== ROUTER_SYSTEM)
+    const call = titles().at(-1)!
     expect(call.params).toMatchObject({ model: 'claude-haiku-5-5', max_tokens: 60, messages: [{ role: 'user', content: 'what was the scrap on each machine last week? I need it for the morning meeting' }] })
     expect(String(call.params.system)).toMatch(/language and the script of the question/)
     const { rows } = await app.db.query<{ model: string; turn: boolean; cost: number }>(
@@ -340,9 +343,9 @@ describe('a title by the assistant', () => {
     expect(turn.rows[0].cost).toBeCloseTo(rows.reduce((s, r) => s + r.cost, 0), 6)
 
     // A later question in it asks for no title.
-    const asked = app.model.completions.length
+    const asked = titles().length
     await ask('And this week?', 'Lower.', { conversationId: start.conversation.id })
-    expect(app.model.completions).toHaveLength(asked)
+    expect(titles()).toHaveLength(asked)
     app.model.completeWith = () => {
       throw new Error('unused')
     }
@@ -370,7 +373,7 @@ describe('a title by the assistant', () => {
       [admin.user.id, AI_MODEL, randomUUID()],
     )
     app.model.completeWith = () => 'Something else'
-    const kept = await giveConversationTitle({ db: app.db, model: app.model, apiKey: KEY, userId: admin.user.id, conversationId: rows[0].id, turnId: rows[0].turn, question: 'q' })
+    const kept = await giveConversationTitle({ db: app.db, model: app.model, apiKey: KEY, userId: admin.user.id, conversationId: rows[0].id, turnId: rows[0].turn, question: 'q', titleModel: 'claude-haiku-5-5' })
     expect(kept).toBeNull()
     expect(await sourceOf(rows[0].id)).toEqual({ title: 'My own name', title_source: 'person' })
     // Renamed after the assistant named it: the person's name stands.

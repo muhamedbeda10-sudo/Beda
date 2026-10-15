@@ -64,7 +64,14 @@ import {
   AI_MAX_MESSAGE_CHARS,
   AI_MAX_MONTHLY_CAP_USD,
   AI_MODEL,
+  AI_ROUTER_MODEL,
+  AI_ACTIONS,
+  AI_MODELS,
+  aiCheapestChatModel,
   aiMinCapUsd,
+  isAiAction,
+  isAiChatMode,
+  resolveAiAction,
   isAiDay,
   isAiDomain,
   isAiEffort,
@@ -92,6 +99,8 @@ import {
   type AiReportSection,
   type AiReportsResponse,
   type AiSaveReportResponse,
+  type AiChatMode,
+  type AiChatLevel,
   type AiSettings,
   type AiSettingsResponse,
   type AiTaskProposalResponse,
@@ -129,7 +138,8 @@ import {
   type PersonAvailability,
 } from '../ai/access'
 import { LOST_TURN } from '../ai/answerRunner'
-import { describeModelFailure } from '../ai/assistant'
+import { describeModelFailure, usageOf } from '../ai/assistant'
+import { chooseLevel, type RouterResult } from '../ai/router'
 import {
   attachmentBlocks,
   buildAiAttachmentKey,
@@ -201,6 +211,7 @@ import {
   loadDisplayMessages,
   loadReplay,
   personalMonthSpend,
+  recordUsage,
   repairDanglingToolUse,
   runningAnswer,
   toConversation,
@@ -223,14 +234,43 @@ const capUsd = z
   .refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'The cap is in dollars and cents: at most two decimals.')
 const cents = (v: number) => Math.round(v * 100) / 100
 
+/** One action's choice: a model and an effort, each the recommended one ("auto") or one offered. */
+const actionSettingSchema = z
+  .object({
+    model: z.string().refine((v) => v === 'auto' || isAiModel(v), 'Choose one of the models offered, or Auto.'),
+    effort: z.string().refine((v) => v === 'auto' || isAiEffort(v), 'Choose one of the effort levels, or Auto.'),
+  })
+  .strict()
+
 const settingsSchema = z
   .object({
     enabled: z.boolean(),
     monthlyCapUsd: capUsd,
-    /** Left out, the model chosen before stays. */
-    mtcModel: z.string().refine(isAiModel, 'Choose one of the models offered.').optional(),
+    /** The Models: each left out stays as it was. */
+    chatMode: z.string().refine(isAiChatMode, 'Auto, or one of the levels.').optional(),
+    actions: z
+      .record(z.string(), actionSettingSchema)
+      .refine((a) => Object.keys(a).every(isAiAction), 'Not one of the actions.')
+      .optional(),
+    mtcReread: z.boolean().optional(),
   })
   .strict()
+
+/** The settings as the audit trail shows them: one value per field, an action's choice in words. */
+function settingsSnapshot(s: AiSettings): Record<string, string> {
+  const model = (m: string) => (m === 'auto' ? 'Auto' : (AI_MODELS.find((x) => x.id === m)?.name ?? m))
+  const out: Record<string, string> = {
+    enabled: String(s.enabled),
+    monthlyCapUsd: String(s.monthlyCapUsd),
+    chatMode: s.chatMode,
+    mtcReread: s.mtcReread ? 'on' : 'off',
+  }
+  for (const a of AI_ACTIONS) {
+    const set = s.actions[a.id]
+    out[`model: ${a.name}`] = a.usesEffort ? `${model(set.model)} · effort ${set.effort === 'auto' ? 'Auto' : set.effort}` : model(set.model)
+  }
+  return out
+}
 
 const keySchema = z
   .object({
@@ -250,8 +290,6 @@ const accessSchema = z
       .array(z.string().refine(isAiDomain, 'Not one of the data domains.'))
       .max(AI_DOMAIN_IDS.length)
       .refine((d) => new Set(d).size === d.length, 'Each domain once.'),
-    model: z.string().refine(isAiModel, 'Not one of the models the assistant offers.'),
-    effort: z.string().refine(isAiEffort, 'Not one of the effort levels.'),
     monthlyCapUsd: capUsd,
     /** §21 — may create automations; left out, unchanged (off for a new row). */
     automations: z.boolean().optional(),
@@ -566,7 +604,13 @@ export function aiRoutes(ctx: AppContext): Router {
     const body = parse(settingsSchema, req.body)
     await withTransaction(db, async (tx) => {
       const before = (await loadAiSettings(tx)).settings
-      const next: AiSettings = { enabled: body.enabled, monthlyCapUsd: cents(body.monthlyCapUsd), mtcModel: (body.mtcModel as AiSettings['mtcModel'] | undefined) ?? before.mtcModel }
+      const next: AiSettings = {
+        enabled: body.enabled,
+        monthlyCapUsd: cents(body.monthlyCapUsd),
+        chatMode: (body.chatMode as AiChatMode | undefined) ?? before.chatMode,
+        actions: { ...before.actions, ...(body.actions as Partial<AiSettings['actions']> | undefined) },
+        mtcReread: body.mtcReread ?? before.mtcReread,
+      }
       await tx.query(
         `INSERT INTO app_settings (key, value, updated_by_id, updated_by_name, updated_at)
          VALUES ($1, $2::jsonb, $3, $4, now())
@@ -574,7 +618,7 @@ export function aiRoutes(ctx: AppContext): Router {
            updated_by_name = EXCLUDED.updated_by_name, updated_at = now()`,
         [AI_SETTINGS_KEY, JSON.stringify(next), user.id, user.name],
       )
-      await auditChanges(tx, { userId: user.id, userName: user.name, entity: 'AppSettings', entityId: AI_SETTINGS_KEY }, { ...before }, { ...next })
+      await auditChanges(tx, { userId: user.id, userName: user.name, entity: 'AppSettings', entityId: AI_SETTINGS_KEY }, settingsSnapshot(before), settingsSnapshot(next))
     })
     res.json(await settingsResponse())
   })
@@ -638,8 +682,10 @@ export function aiRoutes(ctx: AppContext): Router {
     const body = parse(accessSchema, req.body)
     const next = { ...body, domains: canonicalDomains(body.domains), monthlyCapUsd: cents(body.monthlyCapUsd) } as AiAccessRequest
     // A cap no single call fits in would close the assistant to them every month: say so now, as the owner's page does.
-    if (next.enabled && next.monthlyCapUsd < aiMinCapUsd(next.model)) {
-      throw badRequest(`On this model the monthly cap must be at least $${aiMinCapUsd(next.model).toFixed(2)}, the most one call may cost.`)
+    // The least is the cheapest model a question may run on now (Models); a dearer level is held to the cap call by call.
+    const least = aiMinCapUsd(aiCheapestChatModel((await loadAiSettings(db)).settings))
+    if (next.enabled && next.monthlyCapUsd < least) {
+      throw badRequest(`The monthly cap must be at least $${least.toFixed(2)}, the most one question may cost on the cheapest model set under Models.`)
     }
     await withTransaction(db, async (tx) => {
       const { rows } = await tx.query<{ id: string; name: string; username: string; active: boolean; listed: boolean }>(
@@ -801,6 +847,40 @@ export function aiRoutes(ctx: AppContext): Router {
       : renderSystemPrompt(tz, await dictionary(), access.domains, { automations, notices, tasks: true, excel, playbook: await promptPlaybook(db, user.id, tz), savedTables: true, diagrams: true })
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return
+
+    // The question's level, and so its model and effort (the owner's Models): files have a level of their own; otherwise
+    // the router chooses (auto), or the level the owner fixed. The router reads the question before it for a follow-up.
+    const settings = avail.app.settings.settings
+    let routed: RouterResult | null = null
+    let level: AiChatLevel
+    if (body.attachmentIds.length > 0) level = 'chat-files'
+    else if (settings.chatMode !== 'auto') level = settings.chatMode
+    else {
+      const previous = body.conversationId
+        ? (
+            await db.query<{ question: string; level: AiChatLevel | null }>(
+              `SELECT t.question, t.level FROM ai_turns t JOIN ai_conversations c ON c.id = t.conversation_id
+                WHERE t.conversation_id = $1 AND c.user_id = $2 ORDER BY t.created_at DESC LIMIT 1`,
+              [body.conversationId, user.id],
+            )
+          ).rows[0]
+        : null
+      routed = await chooseLevel({ model: ctx.ai, apiKey: avail.app.apiKey, question: body.message, previous, signal: ac.signal })
+      level = routed.level
+    }
+    const chosen = resolveAiAction(settings, level)
+    /** The router's call when no question is kept to carry it (refused, or the asker gone): billed all the same, to the asker. */
+    const keepRouterCost = async () => {
+      if (!routed?.message) return
+      const usage = usageOf(routed.message, AI_ROUTER_MODEL)
+      await recordUsage(db, { userId: user.id, conversationId: null, turnId: null, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd }).catch((err: unknown) =>
+        console.error('[ai] could not record the router call of a question not kept', err),
+      )
+    }
+    if (ac.signal.aborted) {
+      await keepRouterCost()
+      return
+    }
     const askedAt = new Date()
     const started = await withTransaction(db, async (tx) => {
       const repeated = await tx.query(`SELECT 1 FROM ai_turns WHERE user_id = $1 AND client_id = $2`, [user.id, body.clientId])
@@ -819,7 +899,7 @@ export function aiRoutes(ctx: AppContext): Router {
         conversation = await createConversation(tx, {
           userId: user.id,
           title: conversationTitle(body.message || (await firstAttachmentName(tx, user.id, body.attachmentIds))),
-          model: access.model,
+          model: chosen.model,
           systemPrompt: systemPrompt!,
           tools: conversationTools(
             automations ? AUTOMATION_TOOLS : null,
@@ -829,14 +909,19 @@ export function aiRoutes(ctx: AppContext): Router {
           ),
         })
       }
-      // The model and effort the owner set for the person now: an earlier conversation goes on with them too.
+      // The model and effort of the question's level, and the level and why: the answer runs on them whoever takes it over.
       const { rows } = await tx.query<{ id: string }>(
         // Written by this instance from the start: its runner and heartbeat set as it is kept, so no other takes it.
-        `INSERT INTO ai_turns (conversation_id, user_id, client_id, question, model, effort, runner, heartbeat_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now()) RETURNING id`,
-        [conversation.id, user.id, body.clientId, body.message, access.model, access.effort, ctx.answers.id],
+        `INSERT INTO ai_turns (conversation_id, user_id, client_id, question, model, effort, runner, heartbeat_at, level, level_reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8, $9) RETURNING id`,
+        [conversation.id, user.id, body.clientId, body.message, chosen.model, chosen.effort, ctx.answers.id, level, routed?.reason ?? null],
       )
       const turnId = rows[0].id
+      // The router's call is the question's cost, with the answer's.
+      if (routed?.message) {
+        const usage = usageOf(routed.message, AI_ROUTER_MODEL)
+        await recordUsage(tx, { userId: user.id, conversationId: conversation.id, turnId, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd })
+      }
       await repairDanglingToolUse(tx, conversation.id, turnId)
       // The question's files, taken for it in order: each the asker's, attached and not yet sent.
       const files = await takeAttachments(tx, { userId: user.id, conversationId: conversation.id, turnId, ids: body.attachmentIds })
@@ -845,12 +930,13 @@ export function aiRoutes(ctx: AppContext): Router {
       const asked = (await findConversation(tx, conversation.id, user.id))!
       // The loop's own test before its first call (on what the loop is handed), made before anything is kept
       // or streamed: a question it would stop without calling the model is refused here, no turn left behind.
-      const worst = minCallWorstCaseUsd(access.model, { conversation: asked, messages: replay })
+      const worst = minCallWorstCaseUsd(chosen.model, { conversation: asked, messages: replay })
       const hint = body.conversationId ? ' A new conversation costs less to start.' : ''
       if (avail.app.status.spentUsd + worst > avail.app.status.capUsd) throw tooClose('app', 'Answering this', owner, hint)
       if ((await personalMonthSpend(tx, user.id)) + worst > access.monthlyCapUsd) throw tooClose('personal', 'Answering this', owner, hint)
       return { conversation: asked, turnId, questionId: question.id, replay }
-    }).catch((e) => {
+    }).catch(async (e: unknown) => {
+      await keepRouterCost()
       // Two sends racing past the checks above: the database keeps one.
       if (pgCode(e) === PG.UNIQUE_VIOLATION) {
         const running = (e as { constraint?: string }).constraint === 'ai_turns_one_running'
@@ -875,7 +961,16 @@ export function aiRoutes(ctx: AppContext): Router {
     const titled =
       body.conversationId || !body.message.trim()
         ? null
-        : giveConversationTitle({ db, model: ctx.ai, apiKey: avail.app.apiKey, userId: user.id, conversationId: conversation.id, turnId, question: body.message })
+        : giveConversationTitle({
+            db,
+            model: ctx.ai,
+            apiKey: avail.app.apiKey,
+            userId: user.id,
+            conversationId: conversation.id,
+            turnId,
+            question: body.message,
+            titleModel: resolveAiAction(settings, 'title').model,
+          })
             .then((c) => {
               if (c) sse.send({ type: 'title', conversation: c })
             })
@@ -964,7 +1059,9 @@ export function aiRoutes(ctx: AppContext): Router {
     const id = randomUUID()
     const name = (req.file.originalname || (sniffed.kind === 'pdf' ? 'document.pdf' : 'photo.jpg')).replace(/[\u0000-\u001f]/g, '').slice(0, 255) || 'file'
     const record: AttachmentRecord = { id, kind: sniffed.kind, name, mimeType: sniffed.mimeType, storageKey: null, contentText: null, summary: null }
-    const tokens = await countFile(avail.app.apiKey, access.model, avail.me.owner, record, bytes)
+    // Counted on the model a question with files is answered on (Models).
+    const filesModel = resolveAiAction(avail.app.settings.settings, 'chat-files').model
+    const tokens = await countFile(avail.app.apiKey, filesModel, avail.me.owner, record, bytes)
     checkTokens(tokens)
     const key = buildAiAttachmentKey(id, sniffed.kind)
     await ctx.images.put(key, bytes, sniffed.mimeType)
@@ -983,7 +1080,7 @@ export function aiRoutes(ctx: AppContext): Router {
         height: sniffed.height,
         thumbnailDataUrl: thumbnail,
         tokens,
-        tokenModel: access.model,
+        tokenModel: filesModel,
       })
       res.status(201).json(body)
     } catch (e) {
@@ -1001,7 +1098,9 @@ export function aiRoutes(ctx: AppContext): Router {
     const id = randomUUID()
     const name = body.name.replace(/[\u0000-\u001f]/g, '').slice(0, 255) || 'spreadsheet'
     const record: AttachmentRecord = { id, kind: 'sheet', name, mimeType: 'text/plain', storageKey: null, contentText: body.text, summary: body.summary || null }
-    const tokens = await countFile(avail.app.apiKey, access.model, avail.me.owner, record, null)
+    // Counted on the model a question with files is answered on (Models).
+    const filesModel = resolveAiAction(avail.app.settings.settings, 'chat-files').model
+    const tokens = await countFile(avail.app.apiKey, filesModel, avail.me.owner, record, null)
     checkTokens(tokens)
     const saved: AiAttachment = await insertAttachment(db, {
       id,
@@ -1016,7 +1115,7 @@ export function aiRoutes(ctx: AppContext): Router {
       contentText: body.text,
       summary: body.summary || undefined,
       tokens,
-      tokenModel: access.model,
+      tokenModel: filesModel,
     })
     res.status(201).json(saved)
   })
@@ -1140,29 +1239,31 @@ export function aiRoutes(ctx: AppContext): Router {
     const page = await db.query<AiActivityItem & { place: string }>(
       `WITH items AS (
          SELECT 'question'::text AS kind, t.id::text AS id, t.created_at AS at, t.user_id, t.question AS text,
-                CASE WHEN t.status = 'done' THEN t.stop_reason END AS stop_reason, t.id AS turn_id, NULL::bigint AS usage_id
+                CASE WHEN t.status = 'done' THEN t.stop_reason END AS stop_reason, t.id AS turn_id, NULL::bigint AS usage_id,
+                NULL::uuid AS reading_id, t.level, t.level_reason
            FROM ai_turns t
           WHERE t.created_at >= $1 AND t.created_at < $2 AND ($3::uuid IS NULL OR t.user_id = $3) AND ($4::text IS NULL OR $4 = 'question')
          UNION ALL
-         SELECT 'automation', g.id::text, g.created_at, g.user_id, a.name, NULL, NULL, g.id
+         SELECT 'automation', g.id::text, g.created_at, g.user_id, a.name, NULL, NULL, g.id, NULL, NULL, NULL
            FROM ai_usage g JOIN ai_automations a ON a.id = g.automation_id
           WHERE g.turn_id IS NULL AND g.created_at >= $1 AND g.created_at < $2 AND ($3::uuid IS NULL OR g.user_id = $3) AND ($4::text IS NULL OR $4 = 'automation')
          UNION ALL
-         -- A certificate read on the MTC tab: its file, and what was read from it.
-         SELECT 'mtc', g.id::text, g.created_at, g.user_id,
+         -- A certificate read on the MTC tab, once however many calls it took: its file, and what was read from it.
+         SELECT 'mtc', m.id::text, m.created_at, m.user_id,
                 m.file_name || ' — ' || CASE m.outcome
                   WHEN 'read' THEN m.items || ' ' || CASE m.kind WHEN 'coils' THEN 'coil' WHEN 'welding-wire' THEN 'welding wire batch' ELSE 'mesh wire' END
                                   || CASE WHEN m.items = 1 THEN '' WHEN m.kind = 'welding-wire' THEN 'es' ELSE 's' END || ' read'
                   WHEN 'not-certificate' THEN 'not a certificate of coils or wire'
                   WHEN 'stopped' THEN 'stopped before the end'
-                  ELSE 'could not be read' END,
-                NULL, NULL, g.id
-           FROM ai_usage g JOIN mtc_readings m ON m.id = g.mtc_reading_id
-          WHERE g.created_at >= $1 AND g.created_at < $2 AND ($3::uuid IS NULL OR g.user_id = $3) AND ($4::text IS NULL OR $4 = 'mtc')
+                  ELSE 'could not be read' END
+                || CASE WHEN m.reread THEN ' (unclear, read again on a stronger model)' ELSE '' END,
+                NULL, NULL, NULL, m.id, NULL, NULL
+           FROM mtc_readings m
+          WHERE m.created_at >= $1 AND m.created_at < $2 AND ($3::uuid IS NULL OR m.user_id = $3) AND ($4::text IS NULL OR $4 = 'mtc')
        ),
        page AS (SELECT * FROM items i ${after} ORDER BY i.at DESC, i.id DESC LIMIT $5)
        SELECT p.kind, p.id, p.at, to_char(p.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') || '|' || p.id AS place,
-              p.user_id AS "userId", u.name AS "userName", p.text, p.stop_reason AS "stopReason",
+              p.user_id AS "userId", u.name AS "userName", p.text, p.stop_reason AS "stopReason", p.level, p.level_reason AS "levelReason",
               COALESCE(c.cost, 0)::numeric(14, 6) AS "costUsd", COALESCE(c.models, '{}') AS models, COALESCE(c.partial, false) AS partial,
               COALESCE(n.lookups, 0)::int AS lookups
          FROM page p
@@ -1172,7 +1273,9 @@ export function aiRoutes(ctx: AppContext): Router {
              FROM (SELECT g.model, sum(g.cost_usd) AS cost, bool_or(g.partial) AS partial, min(g.id) AS first
                      FROM (SELECT model, cost_usd, partial, id FROM ai_usage WHERE turn_id = p.turn_id
                            UNION ALL
-                           SELECT model, cost_usd, partial, id FROM ai_usage WHERE id = p.usage_id) g
+                           SELECT model, cost_usd, partial, id FROM ai_usage WHERE id = p.usage_id
+                           UNION ALL
+                           SELECT model, cost_usd, partial, id FROM ai_usage WHERE mtc_reading_id = p.reading_id) g
                     GROUP BY g.model) m
          ) c ON true
          LEFT JOIN LATERAL (SELECT count(*) AS lookups FROM ai_queries WHERE turn_id = p.turn_id) n ON true
@@ -1509,8 +1612,8 @@ export function aiRoutes(ctx: AppContext): Router {
       if (!app.settings.settings.enabled || !app.apiKey) notice = FIXED_NOTICE.unavailable
       else if (!ctx.aiReader.ready) notice = FIXED_NOTICE.noReader
       else {
-        // On the person's own model, like their questions, and counted with them against both caps.
-        const params = templateRequest(turn, access.model)
+        // On the model and effort the owner set for it (Models), and counted with the person's questions against both caps.
+        const params = templateRequest(turn, resolveAiAction(app.settings.settings, 'report-template'))
         const worst = worstCaseUsd(params)
         const what = "Making this report's period adjustable"
         const instead = ' Save it with its period as asked instead, which needs no call to Claude.'

@@ -18,7 +18,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import type pg from 'pg'
-import type { AiCell, AiModelId, AiReportSectionRun } from '@qc/shared/ai'
+import { resolveAiAction, type AiCell, type AiEffort, type AiModelId, type AiReportSectionRun } from '@qc/shared/ai'
 import { AUTOMATION_DELIVERY_MAX_ROWS, type AutomationBlockedReason, type AutomationLanguage, type AutomationScheduleSpec } from '@qc/shared/automation'
 import type { Role } from '@qc/shared/types'
 import type { Config } from '../config'
@@ -28,6 +28,7 @@ import { checkCall } from '../ai/access'
 import { recordCutOffUsage, usageOf, watchStream } from '../ai/assistant'
 import { cutChars } from '../ai/blocks'
 import { resolveApiKey } from '../ai/credentials'
+import { loadAiSettings } from '../ai/settings'
 import type { AiModelClient, ModelMessage, ModelParams } from '../ai/model'
 import { worstCaseUsd } from '../ai/models'
 import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
@@ -142,8 +143,6 @@ export interface ReportRunArgs {
   /** The time it was due, for a scheduled run: its period is the one of that moment, however late it runs. Null for a run asked for now. */
   slotAt: Date | null
   reader: ReportReader
-  /** The creator's model, for the summary. */
-  modelId: AiModelId
   signal: AbortSignal
 }
 
@@ -289,16 +288,16 @@ export function summaryInput(a: Pick<AutomationRow, 'name' | 'description'>, per
 
 /** The one request for a report's summary, on the creator's model. No tools; low effort. */
 export function summaryRequest(
-  modelId: AiModelId,
+  run: { model: AiModelId; effort: AiEffort },
   a: Pick<AutomationRow, 'name' | 'description' | 'language'>,
   period: { from: string; to: string; label: string } | null,
   sections: AiReportSectionRun[],
 ): ModelParams {
   return {
-    model: modelId,
+    model: run.model,
     max_tokens: SUMMARY_MAX_TOKENS,
     thinking: { type: 'adaptive' },
-    output_config: { effort: 'low' },
+    output_config: { effort: run.effort },
     system: [{ type: 'text', text: summarySystemPrompt(a.language, sections) }],
     messages: [{ role: 'user', content: summaryInput(a, period, sections) }],
   }
@@ -313,7 +312,8 @@ async function summarize(args: ReportRunArgs, period: { from: string; to: string
   const a = args.automation
   const { apiKey } = await resolveApiKey(args.db, args.config)
   if (!apiKey) return { note: SUMMARY_NOTE.unavailable }
-  const params = summaryRequest(args.modelId, a, period, sections)
+  // On the model and effort the owner set for scheduled summaries (Models).
+  const params = summaryRequest(resolveAiAction((await loadAiSettings(args.db)).settings, 'report-summary'), a, period, sections)
   const stop = await checkCall(args.db, a.creatorId, worstCaseUsd(params))
   if (stop) return { note: stop.stopReason === 'cap' ? SUMMARY_NOTE.cap : SUMMARY_NOTE.unavailable }
 

@@ -38,6 +38,7 @@ import {
   isAiDay,
   resolveAiPeriod,
   type AiDayRange,
+  type AiEffort,
   type AiModelId,
   type AiReport,
   type AiReportExportResponse,
@@ -301,17 +302,17 @@ const ProposalSchema = z.object({
 })
 
 /** The one request that rewrites a report's queries, on the person's own model. No tools; it answers in JSON. */
-export function templateRequest(turn: Pick<SavedTurn, 'question' | 'askedOn' | 'sections'>, model: AiModelId): ModelParams {
+export function templateRequest(turn: Pick<SavedTurn, 'question' | 'askedOn' | 'sections'>, run: { model: AiModelId; effort: AiEffort }): ModelParams {
   const input = {
     question: turn.question,
     today: turn.askedOn,
     sections: turn.sections.map((s, index) => ({ index, purpose: s.title, sql: s.sql })),
   }
   return {
-    model,
+    model: run.model,
     max_tokens: TEMPLATE_MAX_TOKENS,
     thinking: { type: 'adaptive' },
-    output_config: { effort: 'low', format: { type: 'json_schema', schema: TEMPLATE_SCHEMA } },
+    output_config: { effort: run.effort, format: { type: 'json_schema', schema: TEMPLATE_SCHEMA } },
     system: [{ type: 'text', text: TEMPLATE_SYSTEM_PROMPT }],
     // JSON: the question and the SQL go in as values, whatever characters they hold.
     messages: [{ role: 'user', content: JSON.stringify(input, null, 2) }],

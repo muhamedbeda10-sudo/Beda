@@ -23,8 +23,6 @@ const access = (userId: string, over: Partial<AiAccess> = {}): AiAccess => ({
   active: true,
   enabled: true,
   domains: ['inspection'],
-  model: 'claude-sonnet-5-5',
-  effort: 'medium',
   monthlyCapUsd: 10,
   spentUsd: 0,
   owner: false,
@@ -39,7 +37,7 @@ const list: AiAccessListResponse = { people: [access('a'), access('b')] }
 
 describe('the access list as cached', () => {
   it('replaces a person’s row in place, or adds it at the end', () => {
-    const changed = access('b', { effort: 'high' })
+    const changed = access('b', { monthlyCapUsd: 20 })
     expect(upsertAiAccess(list, changed)?.people).toEqual([list.people[0], changed])
     const added = access('c')
     expect(upsertAiAccess(list, added)?.people.map((p) => p.userId)).toEqual(['a', 'b', 'c'])
@@ -55,7 +53,7 @@ describe('the access list as cached', () => {
 
 describe('giving, changing and taking away the assistant', () => {
   let qc: QueryClient
-  const body: AiAccessRequest = { enabled: true, domains: ['inspection', 'orders'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 }
+  const body: AiAccessRequest = { enabled: true, domains: ['inspection', 'orders'], monthlyCapUsd: 5 }
 
   beforeEach(() => {
     apiMock.mockReset()
@@ -66,7 +64,7 @@ describe('giving, changing and taking away the assistant', () => {
   })
 
   it('saving puts the server’s row in the table and asks again who is left to add and what the owner may do', async () => {
-    const saved = access('c', { domains: ['inspection', 'orders'], model: 'claude-haiku-5-5', effort: 'low', monthlyCapUsd: 5 })
+    const saved = access('c', { domains: ['inspection', 'orders'], monthlyCapUsd: 5 })
     apiMock.mockResolvedValueOnce(saved)
     expect(await saveAiAccess(qc, 'c', body)).toBe(saved)
     expect(apiMock).toHaveBeenCalledWith('/ai/access/c', { method: 'PUT', body })

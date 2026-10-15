@@ -27,7 +27,7 @@
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'
-import { AI_MODEL, isAiEffort, isAiModel, type AiEffort, type AiModelId, type AiStreamEvent } from '@qc/shared/ai'
+import { AI_ROUTER_FALLBACK, isAiEffort, isAiModel, resolveAiAction, type AiEffort, type AiModelId, type AiStreamEvent } from '@qc/shared/ai'
 import type { ApiErrorCode } from '@qc/shared/api'
 import type { Config } from '../config'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
@@ -35,7 +35,6 @@ import type { ImageStorage } from '../images/storage'
 import type { RateLimiter } from '../lib/rateLimit'
 import { clipText, createNotifications } from '../automations/notify'
 import { isolate } from '../automations/text'
-import { loadAccess } from './access'
 import { HANDED_OVER, NOT_AVAILABLE_MESSAGE, TURN_DEADLINE_MS, TurnLost, answerQuestion, describeModelFailure, type Outcome, type Question, type TurnControl } from './assistant'
 import { AttachmentExpander } from './attachments'
 import { turnToolHandlers } from './conversationTools'
@@ -343,10 +342,10 @@ export class AnswerRunner {
     if (!conversation) return { end: { stopReason: 'stopped', notice: CONVERSATION_GONE_NOTICE } }
     const availability = await loadAvailability(db, config, this.deps.readers.ready)
     if (!availability.apiKey) return { end: { stopReason: 'error', notice: run.owner ? NO_KEY_NOTICE : NOT_AVAILABLE_MESSAGE } }
-    const access = await loadAccess(db, run.userId)
-    // As asked: the owner's settings for the asker when the question was sent (older turns carry none).
-    const modelId: AiModelId = turn.model && isAiModel(turn.model) ? turn.model : (access?.model ?? AI_MODEL)
-    const effort: AiEffort = turn.effort && isAiEffort(turn.effort) ? turn.effort : (access?.effort ?? 'medium')
+    // As asked: the model and effort of the question's level when it was sent (Models); a turn that carries none, the middle level's now.
+    const fallback = resolveAiAction(availability.settings.settings, AI_ROUTER_FALLBACK)
+    const modelId: AiModelId = turn.model && isAiModel(turn.model) ? turn.model : fallback.model
+    const effort: AiEffort = turn.effort && isAiEffort(turn.effort) ? turn.effort : fallback.effort
 
     // A step stored before its tools ran is finished first; otherwise a call left without its result (a crash under
     // the version before hand-overs) is answered as interrupted, as a new question would.

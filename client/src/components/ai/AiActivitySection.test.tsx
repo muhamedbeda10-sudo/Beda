@@ -26,6 +26,8 @@ const item = (over: Partial<AiActivityItem>): AiActivityItem => ({
   text: 'How many coils were held yesterday?',
   costUsd: 0.07,
   models: ['claude-sonnet-5-5'],
+  level: null,
+  levelReason: null,
   lookups: 2,
   partial: false,
   stopReason: 'end_turn',

@@ -7,6 +7,7 @@ import { TestApp, type Session } from './harness'
 import { apiError, text } from './aiFake'
 import { attachmentTokens, jpegSize, type AttachmentRef } from '../src/ai/attachments'
 import { worstCaseUsd } from '../src/ai/models'
+import { ROUTER_SYSTEM } from '../src/ai/router'
 
 // §20 — files a question carries: a photo, a PDF or a spreadsheet is
 // attached first (counted by Anthropic on the person's model, which refuses a
@@ -77,7 +78,7 @@ beforeAll(async () => {
   inspector = await app.login('insp')
   const granted = await app.api('PUT', `/api/ai/access/${other.user.id}`, {
     token: admin.token,
-    body: { enabled: true, domains: ['inspection'], model: AI_MODEL, effort: 'medium', monthlyCapUsd: 50 },
+    body: { enabled: true, domains: ['inspection'], monthlyCapUsd: 50 },
   })
   expect(granted.status).toBe(200)
   expect((await app.api('PUT', '/api/ai/key', { token: admin.token, body: { apiKey: KEY } })).status).toBe(200)
@@ -204,6 +205,11 @@ describe('§20 asking with files', () => {
     expect(content[5]).toEqual({ type: 'text', text: 'What do these say?' })
     // A new conversation is told how to read files.
     expect(JSON.stringify(app.model.calls[0].params.system)).toContain('# Files the person attaches')
+    // A question with files runs at its own level (Models: Sonnet 5.5, medium, as recommended), the router not asked.
+    expect(app.model.calls[0].params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'medium' } })
+    expect(app.model.completions.filter((c) => c.params.system === ROUTER_SYSTEM)).toHaveLength(0)
+    const turn = await app.db.query(`SELECT level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1`, [conversationId])
+    expect(turn.rows).toEqual([{ level: 'chat-files', levelReason: null }])
 
     // The stored question holds references, never the bytes.
     const { rows } = await app.db.query<{ content: unknown[] }>(`SELECT content FROM ai_messages WHERE conversation_id = $1 AND kind = 'question'`, [conversationId])

@@ -388,7 +388,7 @@ describe('§24 the production domain', () => {
 
   it('can be granted by the owner, on its own or with the rest; nobody has it until then', async () => {
     const grant = (domains: string[]) =>
-      app.api<AiAccess>('PUT', `/api/ai/access/${inspector.user.id}`, { token: owner.token, body: { enabled: true, domains, model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 5 } })
+      app.api<AiAccess>('PUT', `/api/ai/access/${inspector.user.id}`, { token: owner.token, body: { enabled: true, domains, monthlyCapUsd: 5 } })
     const four = await grant(OLD_DOMAINS)
     expect(four.status, JSON.stringify(four.body)).toBe(200)
     expect(four.body.domains).toEqual(OLD_DOMAINS)

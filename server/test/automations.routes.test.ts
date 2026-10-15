@@ -53,7 +53,7 @@ describe('§21 who may create automations', () => {
     // Left out of a change, the permission stays as it is; changed, it is audited like the rest of the row.
     const kept = await app.api<AiAccess>('PUT', `/api/ai/access/${p.creator.user.id}`, {
       token: p.owner.token,
-      body: { enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 40 },
+      body: { enabled: true, domains: ['inspection'], monthlyCapUsd: 40 },
     })
     expect(kept.body).toMatchObject({ automations: true, monthlyCapUsd: 40 })
     await grant(app, p.owner, p.creator, { automations: false })
@@ -65,7 +65,7 @@ describe('§21 who may create automations', () => {
       ['may create', 'may not create'],
     ])
     // Nobody else may set it: the owner's routes do not exist for them.
-    expect((await app.api('PUT', `/api/ai/access/${p.plain.user.id}`, { token: p.admin2.token, body: { enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 5, automations: true } })).status).toBe(404)
+    expect((await app.api('PUT', `/api/ai/access/${p.plain.user.id}`, { token: p.admin2.token, body: { enabled: true, domains: ['inspection'], monthlyCapUsd: 5, automations: true } })).status).toBe(404)
   })
 })
 

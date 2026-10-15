@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto'
 import { expect } from 'vitest'
 import type { ApiErrorBody } from '@qc/shared/api'
-import type { AiAccess, AiEffort, AiModelId, AiStreamEvent } from '@qc/shared/ai'
+import type { AiAccess, AiStreamEvent } from '@qc/shared/ai'
 import type {
   AutomationActions,
   AutomationChannels,
@@ -45,8 +45,6 @@ export interface People {
 export interface Grant {
   enabled?: boolean
   domains?: string[]
-  model?: AiModelId
-  effort?: AiEffort
   monthlyCapUsd?: number
   automations?: boolean
   /** §23 — may have the assistant write notices (while an administrator). */
@@ -56,7 +54,7 @@ export interface Grant {
 }
 
 export async function grant(app: TestApp, owner: Session, person: Session, g: Grant = {}): Promise<AiAccess> {
-  const body = { enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 50, ...g }
+  const body = { enabled: true, domains: ['inspection'], monthlyCapUsd: 50, ...g }
   const res = await app.api<AiAccess>('PUT', `/api/ai/access/${person.user.id}`, { token: owner.token, body })
   expect(res.status, JSON.stringify(res.body)).toBe(200)
   return res.body

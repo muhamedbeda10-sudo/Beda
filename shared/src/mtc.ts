@@ -16,15 +16,13 @@
 // a description and a table, not a fourth copy of the code.
 // ============================================================================
 
-import { AI_MAX_PDF_BYTES, AI_MTC_DEFAULT_MODEL } from './ai'
+import { AI_MAX_PDF_BYTES } from './ai'
 import type { ApiErrorCode } from './api'
 
 /** The largest certificate accepted: the same as a PDF given to the assistant. */
 export const MTC_MAX_PDF_BYTES = AI_MAX_PDF_BYTES
 /** Items saved in one go: the longest certificates seen hold about a hundred. */
 export const MTC_MAX_ROWS = 500
-/** The model that reads certificates unless the assistant's owner chose another (AI settings). */
-export const MTC_DEFAULT_MODEL = AI_MTC_DEFAULT_MODEL
 /** numeric(10, 3): seven digits before the point. */
 export const MTC_NUMBER_MAX = 9_999_999.999
 
@@ -173,6 +171,8 @@ export interface MtcExtractResult {
 /** The events of POST /api/mtc/extract, which streams: reading a long certificate takes minutes. */
 export type MtcStreamEvent =
   | { type: 'reading' }
+  /** The first reading came back too doubtful: read again on a stronger model (named). */
+  | { type: 'rereading'; model: string }
   | { type: 'result'; result: MtcExtractResult }
   | { type: 'error'; code: ApiErrorCode; message: string }
 
@@ -358,6 +358,18 @@ export function mtcRowProblems(register: MtcRegister, values: MtcValues): MtcPro
     }
   }
   return problems
+}
+
+/**
+ * How doubtful a reading is: the share of its values Claude marked unsure,
+ * the notes left out (a certificate with no number is no doubt). Nothing
+ * listed is wholly doubtful.
+ */
+export function mtcDoubtShare(register: MtcRegister, rows: readonly { uncertain: readonly string[] }[]): number {
+  const fields = register.fields.filter((f) => f.key !== 'notes').map((f) => f.key)
+  if (rows.length === 0 || fields.length === 0) return 1
+  const unsure = rows.reduce((n, r) => n + r.uncertain.filter((u) => fields.includes(u)).length, 0)
+  return unsure / (rows.length * fields.length)
 }
 
 /** The keys that appear more than once in the batch. */

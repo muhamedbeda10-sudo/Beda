@@ -10,7 +10,10 @@
 import {
   AI_DEFAULT_SETTINGS,
   AI_MAX_MONTHLY_CAP_USD,
-  AI_MODEL,
+  AI_ACTION_IDS,
+  aiCheapestChatModel,
+  isAiChatMode,
+  isAiEffort,
   isAiModel,
   type AiKeyState,
   type AiSettings,
@@ -38,14 +41,25 @@ export async function loadAiSettings(q: Queryable): Promise<StoredAiSettings> {
     [AI_SETTINGS_KEY],
   )
   const row = rows[0]
-  const settings: AiSettings = { ...AI_DEFAULT_SETTINGS }
+  const settings: AiSettings = { ...AI_DEFAULT_SETTINGS, actions: { ...AI_DEFAULT_SETTINGS.actions } }
   if (row) {
     if (typeof row.value.enabled === 'boolean') settings.enabled = row.value.enabled
     const cap = row.value.monthlyCapUsd
     if (typeof cap === 'number' && Number.isFinite(cap) && cap >= 0 && cap <= AI_MAX_MONTHLY_CAP_USD) settings.monthlyCapUsd = cap
-    // A model no longer offered reads as the default, never as something unchecked.
-    const mtcModel: unknown = row.value.mtcModel
-    if (typeof mtcModel === 'string' && isAiModel(mtcModel)) settings.mtcModel = mtcModel
+    if (isAiChatMode(row.value.chatMode)) settings.chatMode = row.value.chatMode
+    if (typeof row.value.mtcReread === 'boolean') settings.mtcReread = row.value.mtcReread
+    // Each action's choice as stored; a model or an effort no longer offered reads as auto, never as something unchecked.
+    const stored: unknown = row.value.actions
+    if (stored && typeof stored === 'object') {
+      for (const action of AI_ACTION_IDS) {
+        const set = (stored as Record<string, { model?: unknown; effort?: unknown } | undefined>)[action]
+        if (!set) continue
+        settings.actions[action] = {
+          model: typeof set.model === 'string' && isAiModel(set.model) ? set.model : 'auto',
+          effort: typeof set.effort === 'string' && isAiEffort(set.effort) ? set.effort : 'auto',
+        }
+      }
+    }
   }
   return { settings, updatedAt: row?.updatedAt ?? undefined, updatedByName: row?.updatedByName ?? undefined }
 }
@@ -60,13 +74,14 @@ export interface AiAvailability {
 
 /**
  * Available when switched on, with a usable key, with the readers ready, and
- * far enough under the cap for an answer to start on `model` (the default
- * model unless a person's is given); otherwise the first of those that fails
- * is the reason.
+ * far enough under the cap for an answer to start on `model` (unless given,
+ * the cheapest a chat question may run on now: the owner's Models); otherwise
+ * the first of those that fails is the reason.
  */
-export async function loadAvailability(q: Queryable, config: Config, readerReady: boolean, model: string = AI_MODEL): Promise<AiAvailability> {
+export async function loadAvailability(q: Queryable, config: Config, readerReady: boolean, given?: string): Promise<AiAvailability> {
   // One after another: `q` may be a transaction's single connection.
   const settings = await loadAiSettings(q)
+  const model = given ?? aiCheapestChatModel(settings.settings)
   const resolved = await resolveApiKey(q, config)
   const spend = await monthSpend(q)
   const capUsd = settings.settings.monthlyCapUsd

@@ -63,7 +63,7 @@ import type {
   AiSaveReportRequest,
   AiSaveReportResponse,
   AiSetKeyRequest,
-  AiSettings,
+  AiSettingsRequest,
   AiSettingsResponse,
   AiStopResponse,
 } from '@qc/shared/ai'
@@ -515,7 +515,7 @@ export async function removeMyAvatar(qc: QueryClient, myId: string): Promise<voi
 // ---- §20 AI assistant --------------------------------------------------------
 
 /** The switch and the app-wide cap. The usage reads the cap, and the owner's own "can it answer?" may change. */
-export async function saveAiSettings(qc: QueryClient, body: AiSettings): Promise<AiSettingsResponse> {
+export async function saveAiSettings(qc: QueryClient, body: AiSettingsRequest): Promise<AiSettingsResponse> {
   const res = await api<AiSettingsResponse>('/ai/settings', { method: 'PUT', body })
   qc.setQueryData(keys.aiSettings, res)
   void qc.invalidateQueries({ queryKey: keys.aiMe })

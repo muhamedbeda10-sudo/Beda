@@ -136,7 +136,7 @@ describe('§23 who may have notices written', () => {
       { field: 'notices', oldValue: 'may manage', newValue: 'may not manage' },
     ])
     // Only the owner gives it, as everything about access.
-    expect((await app.api('PUT', `/api/ai/access/${p.insp.user.id}`, { token: p.boss.token, body: { enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 50, notices: true } })).status).toBe(404)
+    expect((await app.api('PUT', `/api/ai/access/${p.insp.user.id}`, { token: p.boss.token, body: { enabled: true, domains: ['inspection'], monthlyCapUsd: 50, notices: true } })).status).toBe(404)
   })
 
   it('gives the writing tools to administrators allowed only, and refuses a press from anyone else', async () => {

@@ -28,6 +28,18 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-15.3',
+    date: '2026-10-15',
+    title: 'AI models chosen by what Claude is doing',
+    items: [
+      { text: 'A new Models tab in the AI assistant’s settings, for its owner: the model and effort for each thing Claude does — a simple question, an analysis, a deep analysis, a question with files, reading a certificate, naming a conversation, saving a report with an adjustable period, and a scheduled report’s summary. Auto runs the recommended one, named beside it.' },
+      { text: 'Auto for questions: before each question, Claude Haiku reads it (about a second, a fraction of a cent) and gives it a level — simple (Haiku), analysis (Sonnet) or deep (Opus). The owner can instead fix one level for every question. A question with photos, PDFs or spreadsheets always runs as “with files”.' },
+      { text: 'The model is no longer set per person: everyone’s questions follow the Models tab. Each person keeps their switch, their data, their permissions and their own monthly cap. The least a cap may be is one question on the cheapest model set under Models.' },
+      { text: 'Activity shows the level each question was answered at, and why the router chose it; the router’s small cost is counted with the question.' },
+      { text: 'A certificate read with too many unclear values (a poor scan, say) is read again on Claude Opus by itself, and both readings’ cost is shown in Activity. The owner can switch this off under Models.' },
+    ],
+  },
+  {
     id: '2026-10-15.2',
     date: '2026-10-15',
     title: 'MTC: welding wire and mesh wire registers',
@@ -35,7 +47,6 @@ export const RELEASES: readonly Release[] = [
       { text: 'The MTC tab now holds three registers: Coils, Welding wire (by batch: classification, type, diameter, weight, yield, tensile) and Mesh wire (by cast and diameter: galvanized or bright, grade, tensile).' },
       { text: 'One Upload MTC for all three: Claude tells from the certificate whether it is coils, welding wire or mesh wire, and opens the matching review. For welding wire it takes the deposited metal’s test results, never the required values.' },
       { text: 'In the PT step, the welding wire batch number now suggests the batches registered from certificates as you type. Any batch can still be typed by hand.' },
-      { text: 'The AI assistant’s owner chooses the model that reads certificates under AI assistant → Settings. It is Sonnet unless changed.' },
       { text: 'Who may upload certificates is now set in the AI settings, under Who can use it (“Can upload MTC certificates”), not under Users. It does not need the assistant to be on for that person. Anyone allowed before keeps it.' },
       { text: 'Each certificate read shows in the AI settings’ Activity: who uploaded which file, what was read from it, and what it cost. It counts toward the month’s spend and the person’s own monthly cap.' },
     ],

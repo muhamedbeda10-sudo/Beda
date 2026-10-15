@@ -83,8 +83,10 @@ The **first account created becomes the admin**. Afterwards, set
   set by the AI assistant's owner per person (AI settings → Who can use it →
   "Can upload MTC certificates"; the assistant may be off for them). Each
   reading is logged with its cost in the owner's Activity and counts toward
-  the assistant's and the person's monthly caps, on the model the owner sets
-  for certificates (Sonnet by default). The PT step suggests registered
+  the assistant's and the person's monthly caps, on the model and effort the
+  owner sets for certificates under Models (Sonnet, high, by default); a
+  reading with too many unsure values is read again on Opus by itself
+  (`mtc_readings.reread`, switchable). The PT step suggests registered
   welding wire batches.
 - **PDI documents** — pre-delivery photos attached to an order.
 - **Installable** — a Progressive Web App: "Install" on Android and desktop
@@ -190,7 +192,20 @@ warning; recovery, should that account go, is a database operation). Only the
 owner sees its settings, key, access list and costs; to anyone else those
 endpoints answer 404 and the assistant's audit entries are not in the log.
 The owner gives the assistant to people one by one (`ai_access`): the data
-domains each may ask about, the model and effort, and a personal monthly cap.
+domains each may ask about, their permissions, and a personal monthly cap.
+
+The model and effort are set by what the assistant is doing, not by who asks
+(AI settings → Models, stored with the assistant's settings in
+`app_settings`): a chat question's level — simple, analysis, deep, or with
+files — and each other action (reading a certificate, a conversation's title,
+a report's adjustable-period template, a scheduled report's summary), each
+"Auto" (the recommended model and effort, `AI_ACTIONS` in `shared/src/ai.ts`)
+or a fixed choice. In Auto chat mode a short call to Haiku
+(`server/src/ai/router.ts`, 8-second deadline) gives each question without
+files its level and a reason, stored on the turn (`ai_turns.level`,
+`level_reason`) and shown in Activity; any failure gives the analysis level.
+The router's call is billed with the question. A person's cap must allow one
+question on the cheapest model a question may run on.
 
 The assistant reads the record only through the views in schema `ai`, and the
 database enforces the domains: migrations 0033 and 0041 create one role
