@@ -67,7 +67,7 @@ import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
 import { MAX_TOKENS, MAX_TOKENS_RETRY, modelRequest, systemBlocks, worstCaseUsd } from './models'
 import { MAX_STEPS_PER_ANSWER, RUN_SQL_TOOL_NAME, RunSqlInput, TURN_DEADLINE_MINUTES, WRAP_UP_STEPS, WRAP_UP_TAG, WRAP_UP_TIME_SHARE } from './prompt'
-import { AI_QUERY_STOPPED, AI_QUERY_TIMEOUT_MS, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
+import { AI_LONG_QUERY_TIMEOUT_MS, AI_QUERY_STOPPED, AI_QUERY_TIMEOUT_MS, planSummary, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
 import { withQueryOrigin } from './slowQueries'
 import { checkingLine, writingLine } from './toolProgress'
 import { appendMessages, insertQueries, queryPart, recordUsage, settleStep, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
@@ -86,8 +86,15 @@ export { TURN_DEADLINE_MINUTES }
 export const TURN_DEADLINE_MS = TURN_DEADLINE_MINUTES * 60_000
 /** Tool input the SDK could not parse at all: the call is made again, this many times. */
 const JSON_RETRIES = 2
-/** A query the assistant runs may take this long: the most the runner allows, so an analysis over years of the record can finish. */
+/** A query the assistant runs may take this long; a long analysis (run_sql with long), AI_LONG_QUERY_TIMEOUT_MS. */
 export const CHAT_QUERY_TIMEOUT_MS = AI_QUERY_TIMEOUT_MS
+/** The line the person sees while a long analysis runs. */
+export const LONG_QUERY_LINE = 'A large analysis: it may take up to 10 minutes. You can leave this page; the bell tells you when the answer is ready.'
+/** Told with a query stopped for time: narrow it where its time went, or run it as a long analysis when it cannot be. */
+export const TIMEOUT_ADVICE =
+  'Narrow it where that time goes (a shorter period, one machine or item, filter before joining, aggregate before joining, read a sample\'s or session\'s figures from its own columns rather than counting their rows). If the question truly needs all of it, run it again with "long": true, up to 10 minutes.'
+export const LONG_TIMEOUT_ADVICE =
+  'Even 10 minutes were not enough: split it into several smaller queries (by year, by machine) and put their results together, or tell the person what to narrow.'
 /** At most this often a line on what the model is doing. */
 const PROGRESS_EVERY_MS = 250
 const PROGRESS_CHARS = 200
@@ -706,12 +713,20 @@ async function runToolUse(
   if (!parsed.success) {
     return { type: 'tool_result', tool_use_id: tu.id, is_error: true, content: JSON.stringify({ INVALID_JSON: JSON.stringify(tu.input) }) }
   }
-  const { purpose, sql, chart: askedChart } = parsed.data
+  const { purpose, sql, chart: askedChart, long } = parsed.data
   const queryId = randomUUID()
   qn.emit({ type: 'query_start', queryId, purpose, sql })
+  // A long analysis: the person is told it may take minutes, and that the bell tells them when the answer is ready.
+  if (long) qn.emit({ type: 'progress', text: LONG_QUERY_LINE })
+  const timeoutMs = long ? AI_LONG_QUERY_TIMEOUT_MS : CHAT_QUERY_TIMEOUT_MS
   const run = await withQueryOrigin({ purpose }, () =>
-    runReadOnlyQuery(reader, sql, { maxRows: AI_PREVIEW_ROWS, timeoutMs: CHAT_QUERY_TIMEOUT_MS, timeZone: qn.config.FACTORY_TIMEZONE, signal }),
+    runReadOnlyQuery(reader, sql, { maxRows: AI_PREVIEW_ROWS, timeoutMs, timeZone: qn.config.FACTORY_TIMEZONE, signal, exclusive: long }),
   )
+  // Stopped for time: where its time went, so the next query is narrower there, or a long analysis when it cannot be.
+  if (!run.ok && run.failure === 'timeout') {
+    const plan = await planSummary(reader, sql, { timeZone: qn.config.FACTORY_TIMEZONE, signal }).catch(() => null)
+    run.error = [run.error, plan, long ? LONG_TIMEOUT_ADVICE : TIMEOUT_ADVICE].filter(Boolean).join(' ')
+  }
   // Stopped through the signal (not a failure of its own that came first): the replay keeps why.
   // (Handed over, the step is not kept at all; the words never reach the replay.)
   if (!run.ok && run.error === AI_QUERY_STOPPED) run.error = INTERRUPTED[cause() === 'time' ? 'time' : 'user'].running

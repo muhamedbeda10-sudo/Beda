@@ -28,6 +28,18 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-16.7',
+    date: '2026-10-16',
+    title: 'AI: fast on any question, and long analyses',
+    items: [
+      { text: 'The AI assistant’s data is now much faster to read: each sample’s and session’s figures (dimension and defect counts, pieces, coils, material) are kept as the inspection is saved, instead of being counted again on every question. Reading all samples or all sessions is several times faster; questions about one machine read only that machine’s records.' },
+      { text: 'Samples and measurements have a new Material column (black or galvanized), so SPC or capability by material no longer needs a slow join to the coils.' },
+      { text: 'When a query is stopped after a minute, the assistant is told where its time went and rewrites it narrower by itself.' },
+      { text: 'A question that truly needs the whole record (every machine over years) runs as a long analysis, up to 10 minutes, one at a time across the app. The assistant says so; you can leave the page and the bell tells you when the answer is ready.' },
+      { text: 'Saved reports and automations run unchanged, only faster.' },
+    ],
+  },
+  {
     id: '2026-10-16.6',
     date: '2026-10-16',
     title: 'AI: the models are fixed, Sonnet and Opus at high effort',

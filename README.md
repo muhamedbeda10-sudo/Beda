@@ -227,6 +227,18 @@ prompt cache, and the router is not asked. A certificate whose reading came
 back doubtful is read again on Opus. A person's cap must allow one question
 on Sonnet.
 
+The views stay fast for any question the assistant writes (CLAUDE.md, "The
+assistant's views stay fast"): a sample's and a session's figures are kept as
+the record is written (`sample_rollups`, `session_rollups`, migration 0067,
+kept by statement triggers that work the affected rows out again whole), a
+machine's key is indexed, and `server/test/aiViewsPerf.test.ts` holds every
+view (found from the catalog) to no per-row figures beyond single indexed
+lookups and to a time on a made-up factory (`server/test/perf/factoryData.ts`).
+A query stopped at 60 s is told where its time went (EXPLAIN, `planSummary`);
+one that needs the whole record runs with `long: true`, up to 10 minutes, one
+at a time across the app (a transaction advisory lock), the asker told by the
+bell when the answer is ready.
+
 The assistant reads the record only through the views in schema `ai`, and the
 database enforces the domains: migrations 0033 and 0041 create one role
 without LOGIN per domain (`<database>_ai_base`, `_ai_inspection`,
