@@ -36,7 +36,8 @@ export class SseStream {
     return !this.res.writableEnded && !this.res.destroyed
   }
 
-  send(event: AiStreamEvent): void {
+  /** One event, named by its `type`: an answer's (AiStreamEvent), or another stream's, such as a certificate being read (MTC). */
+  send(event: AiStreamEvent | { type: string }): void {
     // JSON.stringify escapes line breaks, so the data is always one line.
     this.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
   }

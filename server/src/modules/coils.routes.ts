@@ -7,6 +7,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { EXISTING_KEYS_MAX, type CoilUsage, type ExistingKeysResponse, type ImportResult } from '@qc/shared/api'
 import type { Coil } from '@qc/shared/types'
+import { COIL_TABLE_PAGE, COIL_TABLE_PAGE_MAX, COIL_TABLE_SORTS, type CoilTableOptionsResponse, type CoilTableResponse } from '@qc/shared/mtc'
 import type { AppContext } from '../context'
 import { withTransaction } from '../db/pool'
 import { parse } from '../lib/validate'
@@ -47,6 +48,59 @@ export function coilsRoutes(ctx: AppContext): Router {
       [prefix, q.search, q.limit],
     )
     res.json(rows.map(dropNulls))
+  })
+
+  /**
+   * The register as a table (MTC page), for everyone signed in: a page of it
+   * at a time, the total with it. The search finds its words anywhere in the
+   * coil number, grade, supplier or notes (a certificate's number is in the
+   * notes); supplier and SM type filter exactly.
+   */
+  r.get('/table', async (req, res) => {
+    const q = parse(
+      z.object({
+        search: z.string().trim().max(120).default(''),
+        supplier: z.string().trim().max(200).default(''),
+        smType: z.string().trim().max(60).default(''),
+        sort: z.enum(COIL_TABLE_SORTS).default('coilNumber'),
+        offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
+        limit: z.coerce.number().int().min(1).max(COIL_TABLE_PAGE_MAX).default(COIL_TABLE_PAGE),
+      }),
+      req.query,
+    )
+    const where = ['deleted_at IS NULL']
+    const params: unknown[] = []
+    const p = (v: unknown) => {
+      params.push(v)
+      return `$${params.length}`
+    }
+    if (q.search) {
+      const term = p(`%${q.search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
+      where.push(`(coil_number ILIKE ${term} OR grade ILIKE ${term} OR supplier ILIKE ${term} OR notes ILIKE ${term})`)
+    }
+    if (q.supplier) where.push(`lower(supplier) = lower(${p(q.supplier)})`)
+    if (q.smType) where.push(`lower(sm_type) = lower(${p(q.smType)})`)
+    const order = q.sort === 'newest' ? 'created_at DESC, lower(coil_number)' : 'lower(coil_number)'
+    const filter = where.join(' AND ')
+    const total = await ctx.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM coils WHERE ${filter}`, params)
+    const { rows } = await ctx.db.query<Coil>(
+      `SELECT ${COIL_SELECT} FROM coils WHERE ${filter} ORDER BY ${order} LIMIT ${p(q.limit)} OFFSET ${p(q.offset)}`,
+      params,
+    )
+    const body: CoilTableResponse = { rows: rows.map(dropNulls), total: total.rows[0].n }
+    res.json(body)
+  })
+
+  /** The table's filter choices: the suppliers and SM types registered. */
+  r.get('/table/options', async (_req, res) => {
+    const { rows } = await ctx.db.query<{ suppliers: string[] | null; smTypes: string[] | null }>(
+      `SELECT (SELECT array_agg(s ORDER BY lower(s)) FROM (SELECT DISTINCT ON (lower(btrim(supplier))) btrim(supplier) AS s FROM coils
+                 WHERE deleted_at IS NULL AND btrim(COALESCE(supplier, '')) <> '' ORDER BY lower(btrim(supplier)), btrim(supplier)) x) AS suppliers,
+              (SELECT array_agg(s ORDER BY lower(s)) FROM (SELECT DISTINCT ON (lower(btrim(sm_type))) btrim(sm_type) AS s FROM coils
+                 WHERE deleted_at IS NULL AND btrim(COALESCE(sm_type, '')) <> '' ORDER BY lower(btrim(sm_type)), btrim(sm_type)) y) AS "smTypes"`,
+    )
+    const body: CoilTableOptionsResponse = { suppliers: rows[0].suppliers ?? [], smTypes: rows[0].smTypes ?? [] }
+    res.json(body)
   })
 
   /** Where each coil has been used — the traceability the search exists for. */

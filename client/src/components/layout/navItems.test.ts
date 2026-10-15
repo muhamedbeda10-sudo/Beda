@@ -14,8 +14,14 @@ describe('the sections each person sees', () => {
 
   it('keeps every other entry to its capability', () => {
     expect(paths(visibleNav(ADMIN_NAV, 'admin', false))).toEqual(['/admin/configuration', '/admin/import', '/admin/users', '/admin/audit', '/admin/whats-new'])
-    expect(paths(visibleNav(NAV, 'inspector', false))).toEqual(['/', '/history'])
-    expect(paths(visibleNav(NAV, undefined, false))).toEqual(['/', '/history'])
+    expect(paths(visibleNav(NAV, 'inspector', false))).toEqual(['/', '/history', '/mtc'])
+    expect(paths(visibleNav(NAV, undefined, false))).toEqual(['/', '/history', '/mtc'])
+  })
+
+  it('shows the MTC tab to everyone, last: the coil register is for all to read', () => {
+    for (const role of ['viewer', 'inspector', 'supervisor', 'admin'] as const) {
+      expect(paths(visibleNav(NAV, role, false)).at(-1)).toBe('/mtc')
+    }
   })
 
   it('has no tab for Automations or Follow-ups: they open from the assistant and from the bell', () => {

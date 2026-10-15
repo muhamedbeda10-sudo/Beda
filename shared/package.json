@@ -21,7 +21,8 @@
     "./playbook": "./src/playbook.ts",
     "./aiExcel": "./src/aiExcel.ts",
     "./savedTables": "./src/savedTables.ts",
-    "./aiDiagram": "./src/aiDiagram.ts"
+    "./aiDiagram": "./src/aiDiagram.ts",
+    "./mtc": "./src/mtc.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",

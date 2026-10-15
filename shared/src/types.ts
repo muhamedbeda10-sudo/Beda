@@ -617,6 +617,8 @@ export interface UserProfile {
   name: string
   role: Role
   isActive: boolean
+  /** May upload mill test certificates (MTC) and save the coils read from them; the administrator's to give. Absent reads as no. */
+  mtcUpload?: boolean
   createdAt?: ISODate
   lastLoginAt?: ISODate | null
 }
