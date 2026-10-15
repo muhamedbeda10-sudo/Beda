@@ -305,8 +305,8 @@ export async function loadSavedTurn(q: Queryable, turnId: string, userId: string
 
 // ---- Making the period adjustable: the model's part ---------------------------------
 
-/** Room for the model's thinking and the rewritten queries. */
-const TEMPLATE_MAX_TOKENS = 8000
+/** Room for the model's thinking at high effort and the rewritten queries. */
+const TEMPLATE_MAX_TOKENS = 16_000
 /** How long the model may take to answer. */
 const TEMPLATE_TIMEOUT_MS = 120_000
 

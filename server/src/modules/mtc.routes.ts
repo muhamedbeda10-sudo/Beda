@@ -61,7 +61,7 @@ import {
   type MtcTableResponse,
   type MtcValues,
 } from '@qc/shared/mtc'
-import { AI_MODEL_IDS, AI_MTC_REREAD_MODEL, AI_MTC_REREAD_SHARE, resolveAiAction, type AiEffort, type AiModelId } from '@qc/shared/ai'
+import { AI_JOBS, AI_MTC_REREAD_SHARE, type AiEffort } from '@qc/shared/ai'
 import { auditEvent, type AuditDraft } from '@qc/shared/audit'
 import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode } from '../db/pool'
@@ -280,10 +280,9 @@ export function mtcRoutes(ctx: AppContext): Router {
           : 'Certificates cannot be read right now: the AI service is not available. Ask your administrator.',
       )
     }
-    // The model and effort the owner set for certificates (Models); a doubtful reading is read again on a stronger one.
-    const first = resolveAiAction(settings, 'mtc')
-    const strength = (m: string) => AI_MODEL_IDS.indexOf(m as AiModelId)
-    const rereadOn = settings.mtcReread && strength(AI_MTC_REREAD_MODEL) > strength(first.model) ? AI_MTC_REREAD_MODEL : null
+    // Read on Sonnet; a doubtful reading is read again on Opus (AI_JOBS).
+    const first = AI_JOBS.mtc
+    const rereadOn = AI_JOBS['mtc-reread'].model
     const access = await loadAccess(ctx.db, user.id)
 
     /** What Claude makes of the file on a model (free): it proves the file can be read, and prices the call's worst case. */
@@ -372,13 +371,13 @@ export function mtcRoutes(ctx: AppContext): Router {
         const doubtful =
           (failed instanceof MtcReadError && !failed.tooLong) ||
           (result?.kind && (result.rows.length === 0 || mtcDoubtShare(MTC_REGISTERS[result.kind], result.rows) > AI_MTC_REREAD_SHARE))
-        if (rereadOn && doubtful) {
+        if (doubtful) {
           if (await overCap(rereadOn, await count(rereadOn).catch(() => Number.POSITIVE_INFINITY))) {
             if (result) result.problem = [result.problem, 'Many values were unclear, and the monthly AI limit is too close to read it again on a stronger model: check every amber cell.'].filter(Boolean).join(' ')
           } else {
             send({ type: 'rereading', model: rereadOn })
             try {
-              result = readMtcReply(await readOn({ model: rereadOn, effort: 'high' }), fileName)
+              result = readMtcReply(await readOn(AI_JOBS['mtc-reread']), fileName)
               failed = null
               reread = true
             } catch (e) {

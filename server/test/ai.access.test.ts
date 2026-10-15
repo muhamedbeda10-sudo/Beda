@@ -8,12 +8,8 @@ import {
   type AiAccessListResponse,
   type AiActivityResponse,
   type AiConversationsResponse,
-  AI_DEFAULT_SETTINGS,
-  AI_ROUTER_MODEL,
-  type AiEffort,
   type AiMeResponse,
   type AiMessagesResponse,
-  type AiModelId,
   type AiQueryPart,
   type AiReportExportResponse,
   type AiReportRunResponse,
@@ -202,34 +198,18 @@ describe('§20 the owner gives the assistant, person by person', () => {
       { ...good, monthlyCapUsd: -1 },
       { ...good, monthlyCapUsd: 2000.01 },
       { ...good, monthlyCapUsd: 1.234 },
-      // A cap no single call fits in, on the cheapest model a question may run on (Haiku 5.5, a simple one): closed every month, so refused while the person is on.
-      { ...good, monthlyCapUsd: 0.01 },
+      // A cap no single call fits in, on Sonnet 5.5, the model every question starts on: closed every month, so refused while the person is on.
+      { ...good, monthlyCapUsd: 0.63 },
       { ...good, extra: true },
       { enabled: true, domains: ['inspection'] },
     ]) {
       expect((await app.api('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body })).status, JSON.stringify(body)).toBe(400)
     }
     // The least cap is the owner's page's figure exactly; switched off, any cap is kept.
-    expect((await app.api('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, monthlyCapUsd: 0.02 } })).status).toBe(200)
+    const low = await app.api<ApiErrorBody>('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, monthlyCapUsd: 0.63 } })
+    expect(low.body.error.message).toBe('The monthly cap must be at least $0.64, the most one question may cost on Sonnet.')
+    expect((await app.api('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, monthlyCapUsd: 0.64 } })).status).toBe(200)
     expect((await app.api('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, enabled: false, monthlyCapUsd: 0 } })).status).toBe(200)
-    // Every question a deep analysis, and those with files, on Fable 5.1: the least is that model's.
-    await app.api('PUT', '/api/ai/settings', {
-      token: owner.token,
-      body: {
-        enabled: true,
-        monthlyCapUsd: 50,
-        chatMode: 'chat-deep',
-        actions: { 'chat-deep': { model: 'claude-fable-5-1', effort: 'auto' }, 'chat-files': { model: 'claude-fable-5-1', effort: 'auto' } },
-      },
-    })
-    try {
-      const low = await app.api<ApiErrorBody>('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, monthlyCapUsd: 2.39 } })
-      expect(low.status).toBe(400)
-      expect(low.body.error.message).toBe('The monthly cap must be at least $2.40, the most one question may cost on the cheapest model set under Models.')
-      expect((await app.api('PUT', `/api/ai/access/${viewer.user.id}`, { token: owner.token, body: { ...good, monthlyCapUsd: 2.4 } })).status).toBe(200)
-    } finally {
-      await app.api('PUT', '/api/ai/settings', { token: owner.token, body: { enabled: true, monthlyCapUsd: 50, chatMode: 'auto', actions: AI_DEFAULT_SETTINGS.actions } })
-    }
     await app.api('DELETE', `/api/ai/access/${viewer.user.id}`, { token: owner.token })
     expect((await app.api('PUT', '/api/ai/access/not-a-uuid', { token: owner.token, body: good })).status).toBe(400)
     expect((await app.api('PUT', `/api/ai/access/${randomUUID()}`, { token: owner.token, body: good })).status).toBe(404)
@@ -243,10 +223,10 @@ describe('§20 the owner gives the assistant, person by person', () => {
   })
 })
 
-describe('§20 a question runs on the model and effort the owner set for its level (Models)', () => {
+describe('§20 a question runs on Sonnet at high, or on Opus at high when the router finds it deep', () => {
   let conversationId = ''
-  /** The router's reply (Auto): a level and why, or a failure; anything else asked of the small model is not scripted. */
-  const routeAs = (level: 'simple' | 'analysis' | 'deep' | Error, reason = 'Because.') => {
+  /** The router's reply: a level and why, or a failure; anything else asked by a completion is not scripted. */
+  const routeAs = (level: 'standard' | 'deep' | Error, reason = 'Because.') => {
     app.model.completeWith = (params) => {
       if (params.system !== ROUTER_SYSTEM) throw new Error('not scripted')
       if (level instanceof Error) throw level
@@ -254,18 +234,15 @@ describe('§20 a question runs on the model and effort the owner set for its lev
     }
   }
   const routerCalls = () => app.model.completions.filter((c) => c.params.system === ROUTER_SYSTEM)
-  const setModels = (body: Record<string, unknown>) => app.api('PUT', '/api/ai/settings', { token: owner.token, body: { enabled: true, monthlyCapUsd: 50, ...body } })
-
   afterAll(async () => {
     app.model.completeWith = () => {
       throw new Error('not scripted')
     }
-    await setModels({ chatMode: 'auto', actions: AI_DEFAULT_SETTINGS.actions })
   })
 
   it('answers a granted inspector at the level the router gives, the request shaped for its model, with no cost in sight', async () => {
     await grant(insp, { domains: ['inspection', 'orders'], monthlyCapUsd: 5 })
-    routeAs('simple', 'One count of machines.')
+    routeAs('standard', 'One count of machines.')
     reply(
       { content: [text('Let me count.'), runSql('toolu_h1', 'Count the machines', 'SELECT count(*) AS n FROM ai.machines')], usage: { input_tokens: 2000, output_tokens: 300 } },
       { content: [text('There are **2** machines.')], usage: { input_tokens: 2100, output_tokens: 100 } },
@@ -276,23 +253,22 @@ describe('§20 a question runs on the model and effort the owner set for its lev
     expect(res.status).toBe(200)
     conversationId = res.conversationId
 
-    // The router read the question first, on the cheapest model, in a fixed shape.
+    // The router read the question first, on Sonnet, in a fixed shape.
     const router = routerCalls().slice(routed)
     expect(router).toHaveLength(1)
-    expect(router[0].params).toMatchObject({ model: AI_ROUTER_MODEL, max_tokens: 200, output_config: { format: { type: 'json_schema' } } })
+    expect(router[0].params).toMatchObject({ model: 'claude-sonnet-5-5', max_tokens: 200, output_config: { format: { type: 'json_schema' } } })
     expect(JSON.stringify(router[0].params.messages)).toContain('How many machines?')
 
-    // A simple question: Haiku 5.5 at low effort, as recommended.
+    // A standard question: Sonnet 5.5 at high effort, with its server-side fallback.
     const params = app.model.calls[calls].params
     expect(params).toMatchObject({
-      model: 'claude-haiku-5-5',
-      output_config: { effort: 'low' },
-      betas: [BINDING],
+      model: 'claude-sonnet-5-5',
+      output_config: { effort: 'high' },
+      fallbacks: 'default',
+      betas: [FALLBACK, BINDING],
       thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'error' } },
       max_tokens: 32_000,
     })
-    // Haiku 5.5 has no server-side fallback: neither the parameter nor its beta.
-    expect(params).not.toHaveProperty('fallbacks')
 
     // Whether they may ask on, and nothing of the assistant's figures or model.
     expect(res.done!.status).toEqual({ available: true, model: '', spentUsd: 0, capUsd: 0, monthStart: expect.any(String) })
@@ -302,14 +278,14 @@ describe('§20 a question runs on the model and effort the owner set for its lev
 
     // Billed at each call's model's rates — the router's call with the question's — and the turn knows its level, why, and what it ran on.
     const usage = await app.db.query<{ model: string; costUsd: number }>(`SELECT model, cost_usd AS "costUsd" FROM ai_usage WHERE conversation_id = $1 ORDER BY id`, [conversationId])
-    const at = (input: number, output: number) => aiCostUsd('claude-haiku-5-5', { inputTokens: input, outputTokens: output, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 })
+    const at = (input: number, output: number) => aiCostUsd('claude-sonnet-5-5', { inputTokens: input, outputTokens: output, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 })
     expect(usage.rows).toEqual([
-      { model: AI_ROUTER_MODEL, costUsd: at(120, 8) },
-      { model: 'claude-haiku-5-5', costUsd: at(2000, 300) },
-      { model: 'claude-haiku-5-5', costUsd: at(2100, 100) },
+      { model: 'claude-sonnet-5-5', costUsd: at(120, 8) },
+      { model: 'claude-sonnet-5-5', costUsd: at(2000, 300) },
+      { model: 'claude-sonnet-5-5', costUsd: at(2100, 100) },
     ])
     const turn = await app.db.query(`SELECT model, effort, level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1`, [conversationId])
-    expect(turn.rows).toEqual([{ model: 'claude-haiku-5-5', effort: 'low', level: 'chat-simple', levelReason: 'One count of machines.' }])
+    expect(turn.rows).toEqual([{ model: 'claude-sonnet-5-5', effort: 'high', level: 'chat-standard', levelReason: 'One count of machines.' }])
     expect((await app.api<AiAccessListResponse>('GET', '/api/ai/access', { token: owner.token })).body.people.find((p) => p.userId === insp.user.id)!.spentUsd).toBeCloseTo(
       at(120, 8) + at(2000, 300) + at(2100, 100),
       6,
@@ -317,30 +293,30 @@ describe('§20 a question runs on the model and effort the owner set for its lev
 
     // The owner sees the level and why in Activity; the person sees neither.
     const activity = await app.api<AiActivityResponse>('GET', `/api/ai/activity?user=${insp.user.id}`, { token: owner.token })
-    expect(activity.body.items[0]).toMatchObject({ kind: 'question', text: 'How many machines?', level: 'chat-simple', levelReason: 'One count of machines.' })
+    expect(activity.body.items[0]).toMatchObject({ kind: 'question', text: 'How many machines?', level: 'chat-standard', levelReason: 'One count of machines.' })
   })
 
   it('raises a conversation’s level when a question asks more, and never lowers it: its cache holds', async () => {
     const prompt = systemOf()
-    // The router failing (no answer in time, say): the middle level, with no reason; never a refusal. Up from simple.
+    // The router failing (no answer in time, say): the standard level, with no reason; never a refusal.
     routeAs(new Error('overloaded'))
     reply(answer('A trend.'))
     let routed = routerCalls().length
     expect((await ask(insp, 'And the trend?', conversationId)).status).toBe(200)
-    expect(JSON.stringify(routerCalls()[routed].params.messages)).toContain('answered as simple')
-    expect(lastCall().params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'medium' } })
+    expect(JSON.stringify(routerCalls()[routed].params.messages)).toContain('answered as standard')
+    expect(lastCall().params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'high' } })
 
     routeAs('deep', 'Causes across several sources.')
     reply({ ...answer('Here is why.'), model: 'claude-opus-5-5' })
     routed = routerCalls().length
     expect((await ask(insp, 'Why did the defects rise?', conversationId)).status).toBe(200)
-    expect(JSON.stringify(routerCalls()[routed].params.messages)).toContain('answered as analysis')
+    expect(JSON.stringify(routerCalls()[routed].params.messages)).toContain('answered as standard')
     expect(lastCall().params).toMatchObject({ model: 'claude-opus-5-5', output_config: { effort: 'high' }, fallbacks: 'default', betas: [FALLBACK, BINDING] })
     // The conversation keeps the prompt it began with, byte for byte, whatever model answers.
     expect(systemOf()).toBe(prompt)
 
-    // At the top level the router is not asked: a simple follow-up stays on Opus, in the conversation's cache.
-    routeAs('simple', 'A thank-you.')
+    // Deep already, the router is not asked: a light follow-up stays on Opus, in the conversation's cache.
+    routeAs('standard', 'A thank-you.')
     reply({ ...answer('You are welcome.'), model: 'claude-opus-5-5' })
     routed = routerCalls().length
     expect((await ask(insp, 'Thanks!', conversationId)).status).toBe(200)
@@ -350,46 +326,23 @@ describe('§20 a question runs on the model and effort the owner set for its lev
     const kept = 'Kept at Deep analysis: the conversation is there already, and keeps its cache.'
     const turns = await app.db.query(`SELECT model, effort, level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1 ORDER BY created_at`, [conversationId])
     expect(turns.rows.slice(1)).toEqual([
-      { model: 'claude-sonnet-5-5', effort: 'medium', level: 'chat-analysis', levelReason: null },
+      { model: 'claude-sonnet-5-5', effort: 'high', level: 'chat-standard', levelReason: null },
       { model: 'claude-opus-5-5', effort: 'high', level: 'chat-deep', levelReason: 'Causes across several sources.' },
       { model: 'claude-opus-5-5', effort: 'high', level: 'chat-deep', levelReason: kept },
     ])
   })
 
-  it('takes the owner’s change from the next new conversation: a level fixed for all, each level’s own model and effort', async () => {
-    const cases: [string, AiModelId, AiEffort, boolean][] = [
-      ['chat-analysis', 'claude-fable-5-1', 'max', true],
-      ['chat-deep', 'claude-sonnet-5-5', 'xhigh', true],
-      ['chat-simple', 'claude-haiku-5-5', 'medium', false],
-    ]
-    routeAs(new Error('the router is not asked when the level is fixed'))
-    for (const [level, model, effort, fallback] of cases) {
-      expect((await setModels({ chatMode: level, actions: { [level]: { model, effort } } })).status, level).toBe(200)
-      reply({ ...answer('Still two.'), model })
-      const routed = routerCalls().length
-      const res = await ask(insp, `Again, as ${level}?`)
-      expect(res.status, model).toBe(200)
-      expect(routerCalls()).toHaveLength(routed)
-      const params = lastCall().params
-      expect(params, model).toMatchObject({ model, output_config: { effort }, thinking: { type: 'adaptive', display: 'summarized' } })
-      if (fallback) {
-        expect(params.fallbacks, model).toBe('default')
-        expect(params.betas, model).toEqual([FALLBACK, BINDING])
-      } else {
-        expect(params, model).not.toHaveProperty('fallbacks')
-        expect(params.betas, model).toEqual([BINDING])
-      }
-      const turn = await app.db.query(`SELECT model, effort, level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1`, [res.conversationId])
-      expect(turn.rows).toEqual([{ model, effort, level, levelReason: null }])
-    }
-    // A conversation already at a higher level keeps it, a level fixed lower notwithstanding.
-    // (Deep analysis runs on Sonnet 5.5 at xhigh now, as set above.)
-    reply({ ...answer('Still deep.'), model: 'claude-sonnet-5-5' })
-    expect((await ask(insp, 'And now?', conversationId)).status).toBe(200)
-    expect(lastCall().params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'xhigh' } })
+  it('goes on as a standard conversation from a level of before the levels were fixed', async () => {
+    await app.db.query(`UPDATE ai_turns SET level = 'chat-simple', model = 'claude-haiku-5-5', effort = 'low' WHERE conversation_id = $1`, [conversationId])
+    // Back below deep: the router is asked again, told the level as it was.
+    routeAs('standard', 'A count.')
+    reply(answer('Two.'))
+    const routed = routerCalls().length
+    expect((await ask(insp, 'How many now?', conversationId)).status).toBe(200)
+    expect(JSON.stringify(routerCalls()[routed].params.messages)).toContain('answered as simple question')
+    expect(lastCall().params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'high' } })
     const last = await app.db.query(`SELECT level FROM ai_turns WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT 1`, [conversationId])
-    expect(last.rows).toEqual([{ level: 'chat-deep' }])
-    await setModels({ chatMode: 'auto', actions: AI_DEFAULT_SETTINGS.actions })
+    expect(last.rows).toEqual([{ level: 'chat-standard' }])
   })
 
   it('describes to the model only the views of the person’s domains', async () => {
@@ -694,12 +647,13 @@ describe('§20 the caps, a person’s own and the assistant’s', () => {
 
   it('stops an answer before a call that could pass the person’s own cap', async () => {
     const spent = await spentBy(insp.user.id)
-    // A simple question, on Haiku 5.5: room for one call's worst case (32 000 tokens at $0.50 a million, and the prompt), not two.
+    // A standard question, on Sonnet 5.5: room for one call's worst case (32 000 tokens at $10 a million, as much again for
+    // its fallback, and the prompt), not two once the first has written 40 000 tokens.
     app.model.completeWith = (params) => {
       if (params.system !== ROUTER_SYSTEM) throw new Error('not scripted')
-      return '{"level":"simple","reason":"One count."}'
+      return '{"level":"standard","reason":"One count."}'
     }
-    await grant(insp, { domains: ['inspection'], monthlyCapUsd: Math.ceil((spent + 0.02) * 100) / 100 })
+    await grant(insp, { domains: ['inspection'], monthlyCapUsd: Math.ceil((spent + 0.95) * 100) / 100 })
     reply({ content: [runSql('toolu_c1', 'Machines', 'SELECT count(*) AS n FROM ai.machines')], usage: { input_tokens: 1000, output_tokens: 40_000 } }, answer('Never sent.'))
     const res = await ask(insp, 'An expensive one')
     expect(res.done!.message).toMatchObject({ stopReason: 'cap', notice: ACCESS_NOTICE.personalCap })

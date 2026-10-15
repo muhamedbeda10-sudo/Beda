@@ -65,7 +65,7 @@ export interface TitleRequest {
   conversationId: string
   turnId: string
   question: string
-  /** The model the owner set for titles (Models; the cheapest unless changed). */
+  /** The model titles are given on (AI_JOBS). */
   titleModel: string
 }
 

@@ -51,7 +51,7 @@ beforeEach(async () => {
 })
 
 describe('§21 a report delivered', () => {
-  it('runs its sections over its period, asks for a short summary on the model set for summaries, and delivers both', async () => {
+  it('runs its sections over its period, asks for a short summary on Sonnet at high effort, and delivers both', async () => {
     app.model.reply({ content: [text('3 machines are registered.\nAll of them this week.\nNothing failed.\nOne more line.\nAnd a fifth.')], usage: { input_tokens: 1200, output_tokens: 300 } })
     const { id, run } = await deliver()
     expect(run).toMatchObject({ ok: true, error: null, notified: 4, note: null })
@@ -60,7 +60,7 @@ describe('§21 a report delivered', () => {
     // One call: the model and effort set for scheduled summaries (Haiku 5.5, low, as recommended), no tools, the summary's own room.
     expect(app.model.calls).toHaveLength(1)
     const call = app.model.calls[0].params
-    expect(call).toMatchObject({ model: 'claude-haiku-5-5', max_tokens: SUMMARY_MAX_TOKENS, thinking: { type: 'adaptive' }, output_config: { effort: 'low' } })
+    expect(call).toMatchObject({ model: 'claude-sonnet-5-5', max_tokens: SUMMARY_MAX_TOKENS, thinking: { type: 'adaptive' }, output_config: { effort: 'high' } })
     expect(call).not.toHaveProperty('tools')
     // In the automation's language, on the factory's figures; nothing failed or was cut off, so neither is spoken of.
     const system = (call.system as { type: string; text: string }[]).map((b) => b.text).join('\n')
@@ -88,8 +88,8 @@ describe('§21 a report delivered', () => {
         conversation_id: null,
         turn_id: null,
         automation_id: id,
-        model: 'claude-haiku-5-5',
-        cost_usd: aiCostUsd('claude-haiku-5-5', { inputTokens: 1200, outputTokens: 300, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 }),
+        model: 'claude-sonnet-5-5',
+        cost_usd: aiCostUsd('claude-sonnet-5-5', { inputTokens: 1200, outputTokens: 300, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 }),
       },
     ])
 
@@ -172,8 +172,8 @@ describe('§21 a report delivered', () => {
     expect(app.model.calls).toHaveLength(0)
     await app.api('PUT', '/api/ai/settings', { token: p.owner.token, body: { enabled: true, monthlyCapUsd: 50 } })
     // The creator's own cap: what they spent this month, and the most the call could cost, would pass it.
-    await grant(app, p.owner, p.creator, { automations: true, monthlyCapUsd: 0.02 })
-    await app.db.query(`INSERT INTO ai_usage (user_id, model, cost_usd) VALUES ($1, 'claude-haiku-5-5', 0.0199)`, [p.creator.user.id])
+    await grant(app, p.owner, p.creator, { automations: true, monthlyCapUsd: 0.64 })
+    await app.db.query(`INSERT INTO ai_usage (user_id, model, cost_usd) VALUES ($1, 'claude-sonnet-5-5', 0.6)`, [p.creator.user.id])
     await without(SUMMARY_NOTE.cap)
     expect(app.model.calls).toHaveLength(0)
     await grant(app, p.owner, p.creator, { automations: true })
@@ -276,14 +276,14 @@ describe('§21 what summaries cost: the owner’s page only', () => {
     const month = new Date().toISOString().slice(0, 7)
     const usage = await app.api<AiUsageResponse>('GET', `/api/ai/usage?month=${month}`, { token: p.owner.token })
     expect(usage.status).toBe(200)
-    const cost = aiCostUsd('claude-haiku-5-5', { inputTokens: 2000, outputTokens: 400, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 })
+    const cost = aiCostUsd('claude-sonnet-5-5', { inputTokens: 2000, outputTokens: 400, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 })
     expect(usage.body.byAutomation.find((a) => a.automationId === id)).toEqual({ automationId: id, name: 'Machine register', creatorName: 'Cara Creator', costUsd: cost, runs: 1 })
     expect(usage.body.byUser.find((u) => u.userId === p.creator.user.id)!.costUsd).toBeGreaterThanOrEqual(cost)
     for (const s of [p.creator, p.plain, p.admin2]) expect((await app.api('GET', `/api/ai/usage?month=${month}`, { token: s.token })).status, s.user.name).toBe(404)
     // The owner's Activity lists the summary under its automation's name, as its creator's, with what it cost.
     const activity = await app.api<AiActivityResponse>('GET', `/api/ai/activity?month=${month}&kind=automation`, { token: p.owner.token })
     expect(activity.status).toBe(200)
-    expect(activity.body.items[0]).toMatchObject({ kind: 'automation', text: 'Machine register', userId: p.creator.user.id, userName: 'Cara Creator', costUsd: cost, models: ['claude-haiku-5-5'], lookups: 0, stopReason: null })
+    expect(activity.body.items[0]).toMatchObject({ kind: 'automation', text: 'Machine register', userId: p.creator.user.id, userName: 'Cara Creator', costUsd: cost, models: ['claude-sonnet-5-5'], lookups: 0, stopReason: null })
     expect(activity.body.items.every((i) => i.kind === 'automation')).toBe(true)
     for (const s of [p.creator, p.plain, p.admin2]) expect((await app.api('GET', `/api/ai/activity?month=${month}`, { token: s.token })).status, s.user.name).toBe(404)
     // Nor in the run's history or the delivery.

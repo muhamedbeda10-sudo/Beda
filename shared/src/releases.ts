@@ -28,6 +28,18 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-16.6',
+    date: '2026-10-16',
+    title: 'AI: the models are fixed, Sonnet and Opus at high effort',
+    items: [
+      { text: 'Every AI question is now answered by Claude Sonnet at high effort. A question that needs heavy work, such as a root cause, an FMEA or an investigation over many steps, goes to Claude Opus at high effort. Claude Sonnet reads each question first and decides, including questions with photos, PDFs or Excel files.' },
+      { text: 'Once a conversation goes to Opus, it stays on Opus until it ends.' },
+      { text: 'Mill test certificates are read by Sonnet at high effort, and read again by Opus by themselves when the first reading is doubtful. Conversation titles and scheduled report summaries are written by Sonnet too.' },
+      { text: 'The Models tab is gone from the AI settings: there is nothing to set. Activity still shows which model answered each question and why.' },
+      { text: 'Questions cost more than before, when simple ones went to Claude Haiku: the monthly caps still stop the spending. The least a person’s monthly cap may be is now $0.64, one question on Sonnet.' },
+    ],
+  },
+  {
     id: '2026-10-16.5',
     date: '2026-10-16',
     title: 'AI: a conversation keeps its level',

@@ -2,8 +2,7 @@
 // §20 — who may use the assistant, as the owner set it. Each person granted
 // has a row: on or off, the data domains they may ask about, and a personal
 // monthly cap on top of the assistant's own. The model and effort are not the
-// person's: they are set by what Claude is doing (the owner's Models, in the
-// assistant's settings). Everything is read again on every request, before
+// person's: they are the app's, by what Claude is doing (AI_JOBS). Everything is read again on every request, before
 // every call to the model and before every query, so a change the owner makes
 // — or an account being deactivated — takes effect at once.
 //
@@ -342,7 +341,7 @@ export async function personAvailability(
 ): Promise<PersonAvailability> {
   // One after another: `q` may be a transaction's single connection.
   const access = known !== undefined ? known : await loadAccess(q, userId)
-  // Judged on the cheapest model a question may run on now (the owner's Models): a dearer level is held to the caps call by call.
+  // Judged on Sonnet, the model every question starts on: a deep one, on Opus, is held to the caps call by call.
   const app = await loadAvailability(q, config, readerReady)
   const model = app.status.model
   const owner = ownerId !== null && ownerId === userId

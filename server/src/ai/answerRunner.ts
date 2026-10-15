@@ -27,7 +27,7 @@
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'
-import { AI_ROUTER_FALLBACK, isAiEffort, isAiModel, resolveAiAction, type AiEffort, type AiModelId, type AiStreamEvent } from '@qc/shared/ai'
+import { AI_JOBS, AI_ROUTER_FALLBACK, isAiEffort, isAiModel, type AiEffort, type AiModelId, type AiStreamEvent } from '@qc/shared/ai'
 import type { ApiErrorCode } from '@qc/shared/api'
 import type { Config } from '../config'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
@@ -342,8 +342,8 @@ export class AnswerRunner {
     if (!conversation) return { end: { stopReason: 'stopped', notice: CONVERSATION_GONE_NOTICE } }
     const availability = await loadAvailability(db, config, this.deps.readers.ready)
     if (!availability.apiKey) return { end: { stopReason: 'error', notice: run.owner ? NO_KEY_NOTICE : NOT_AVAILABLE_MESSAGE } }
-    // As asked: the model and effort of the question's level when it was sent (Models); a turn that carries none, the middle level's now.
-    const fallback = resolveAiAction(availability.settings.settings, AI_ROUTER_FALLBACK)
+    // As asked: the model and effort of the question's level when it was sent; a turn that carries none, the standard level's.
+    const fallback = AI_JOBS[AI_ROUTER_FALLBACK]
     const modelId: AiModelId = turn.model && isAiModel(turn.model) ? turn.model : fallback.model
     const effort: AiEffort = turn.effort && isAiEffort(turn.effort) ? turn.effort : fallback.effort
 

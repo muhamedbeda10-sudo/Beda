@@ -10,11 +10,7 @@
 import {
   AI_DEFAULT_SETTINGS,
   AI_MAX_MONTHLY_CAP_USD,
-  AI_ACTION_IDS,
-  aiCheapestChatModel,
-  isAiChatMode,
-  isAiEffort,
-  isAiModel,
+  AI_STANDARD_MODEL,
   type AiKeyState,
   type AiSettings,
   type AiStatusResponse,
@@ -34,32 +30,18 @@ export interface StoredAiSettings {
   updatedByName?: string
 }
 
-/** The stored settings over the defaults, so a setting added later still has a value. */
+/** The stored settings over the defaults, so a setting added later still has a value; anything else stored is not read. */
 export async function loadAiSettings(q: Queryable): Promise<StoredAiSettings> {
   const { rows } = await q.query<{ value: Partial<AiSettings>; updatedAt: string; updatedByName: string | null }>(
     `SELECT value, updated_at AS "updatedAt", updated_by_name AS "updatedByName" FROM app_settings WHERE key = $1`,
     [AI_SETTINGS_KEY],
   )
   const row = rows[0]
-  const settings: AiSettings = { ...AI_DEFAULT_SETTINGS, actions: { ...AI_DEFAULT_SETTINGS.actions } }
+  const settings: AiSettings = { ...AI_DEFAULT_SETTINGS }
   if (row) {
     if (typeof row.value.enabled === 'boolean') settings.enabled = row.value.enabled
     const cap = row.value.monthlyCapUsd
     if (typeof cap === 'number' && Number.isFinite(cap) && cap >= 0 && cap <= AI_MAX_MONTHLY_CAP_USD) settings.monthlyCapUsd = cap
-    if (isAiChatMode(row.value.chatMode)) settings.chatMode = row.value.chatMode
-    if (typeof row.value.mtcReread === 'boolean') settings.mtcReread = row.value.mtcReread
-    // Each action's choice as stored; a model or an effort no longer offered reads as auto, never as something unchecked.
-    const stored: unknown = row.value.actions
-    if (stored && typeof stored === 'object') {
-      for (const action of AI_ACTION_IDS) {
-        const set = (stored as Record<string, { model?: unknown; effort?: unknown } | undefined>)[action]
-        if (!set) continue
-        settings.actions[action] = {
-          model: typeof set.model === 'string' && isAiModel(set.model) ? set.model : 'auto',
-          effort: typeof set.effort === 'string' && isAiEffort(set.effort) ? set.effort : 'auto',
-        }
-      }
-    }
   }
   return { settings, updatedAt: row?.updatedAt ?? undefined, updatedByName: row?.updatedByName ?? undefined }
 }
@@ -75,13 +57,13 @@ export interface AiAvailability {
 /**
  * Available when switched on, with a usable key, with the readers ready, and
  * far enough under the cap for an answer to start on `model` (unless given,
- * the cheapest a chat question may run on now: the owner's Models); otherwise
+ * Sonnet, the model every question starts on); otherwise
  * the first of those that fails is the reason.
  */
 export async function loadAvailability(q: Queryable, config: Config, readerReady: boolean, given?: string): Promise<AiAvailability> {
   // One after another: `q` may be a transaction's single connection.
   const settings = await loadAiSettings(q)
-  const model = given ?? aiCheapestChatModel(settings.settings)
+  const model = given ?? AI_STANDARD_MODEL
   const resolved = await resolveApiKey(q, config)
   const spend = await monthSpend(q)
   const capUsd = settings.settings.monthlyCapUsd

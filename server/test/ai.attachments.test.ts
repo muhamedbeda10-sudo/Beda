@@ -193,7 +193,14 @@ describe('§20 asking with files', () => {
     pdf = (await attach(PDF, 'cert.pdf')).body
     sheet = (await attachSheet({ name: 'orders.csv', text: 'order,qty\nA-1,12', summary: '1 row × 2 columns' })).body
     app.model.reply({ content: [text('The sheet shows 12 pieces.')] })
+    app.model.completeWith = (params) => {
+      if (params.system !== ROUTER_SYSTEM) throw new Error('not scripted')
+      return '{"level":"standard","reason":"Reading the files."}'
+    }
     const asked = await ask('What do these say?', [photo.id, pdf.id, sheet.id])
+    app.model.completeWith = () => {
+      throw new Error('not scripted')
+    }
     expect(asked.res.status).toBe(200)
     conversationId = asked.conversationId
     const content = lastUser(0)
@@ -205,11 +212,13 @@ describe('§20 asking with files', () => {
     expect(content[5]).toEqual({ type: 'text', text: 'What do these say?' })
     // A new conversation is told how to read files.
     expect(JSON.stringify(app.model.calls[0].params.system)).toContain('# Files the person attaches')
-    // A question with files runs at its own level (Models: Sonnet 5.5, medium, as recommended), the router not asked.
-    expect(app.model.calls[0].params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'medium' } })
-    expect(app.model.completions.filter((c) => c.params.system === ROUTER_SYSTEM)).toHaveLength(0)
+    // A question with files is given its level by the router as any other, told what files it carries.
+    const router = app.model.completions.filter((c) => c.params.system === ROUTER_SYSTEM)
+    expect(router).toHaveLength(1)
+    expect(JSON.stringify(router[0].params.messages)).toContain('It carries a photo, a PDF and a spreadsheet.')
+    expect(app.model.calls[0].params).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'high' } })
     const turn = await app.db.query(`SELECT level, level_reason AS "levelReason" FROM ai_turns WHERE conversation_id = $1`, [conversationId])
-    expect(turn.rows).toEqual([{ level: 'chat-files', levelReason: null }])
+    expect(turn.rows).toEqual([{ level: 'chat-standard', levelReason: 'Reading the files.' }])
 
     // The stored question holds references, never the bytes.
     const { rows } = await app.db.query<{ content: unknown[] }>(`SELECT content FROM ai_messages WHERE conversation_id = $1 AND kind = 'question'`, [conversationId])

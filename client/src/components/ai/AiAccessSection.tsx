@@ -67,7 +67,7 @@ const ROW_BTN = 'grid h-11 w-11 place-items-center rounded-xl text-muted transit
 
 type Editing = { kind: 'add' } | { kind: 'edit'; row: AiAccess }
 
-/** `chatModel`: the cheapest model a question runs on now (Models): the least a person's cap may be is one question on it. */
+/** `chatModel`: the model every question starts on (Sonnet): the least a person's cap may be is one question on it. */
 export function AiAccessSection({ appCapUsd, chatModel }: { appCapUsd: number | undefined; chatModel: AiModelId }) {
   const { data, isLoading, isError, refetch } = useAiAccess(true)
   const [editing, setEditing] = useState<Editing | null>(null)
@@ -86,7 +86,7 @@ export function AiAccessSection({ appCapUsd, chatModel }: { appCapUsd: number | 
               Who can use it
             </h3>
             <p className="mt-0.5 text-sm text-muted">
-              Only the people listed here see the assistant. Each asks with the data you give them, up to their own monthly cap (the model and effort follow the question: Models) — and the
+              Only the people listed here see the assistant. Each asks with the data you give them, up to their own monthly cap (the model follows the question: Sonnet, or Opus for heavy work) — and the
               app-wide cap stays on top. A change applies from their next question. They never see a price or an amount.
             </p>
           </div>
@@ -137,7 +137,7 @@ export function AccessTable({
   onRemove,
 }: {
   people: AiAccess[]
-  /** The cheapest model a question runs on now (Models): a cap under one question on it can never ask. */
+  /** The model every question starts on (Sonnet): a cap under one question on it can never ask. */
   chatModel: AiModelId
   onEdit: (row: AiAccess) => void
   onRemove: (row: AiAccess) => void
@@ -617,7 +617,7 @@ function AccessEditor({ editing, appCapUsd, chatModel, onClose }: { editing: Edi
         <div className="space-y-2">
           <Field
             label="Their monthly cap (USD)"
-            hint={`Theirs alone, per calendar month (UTC), from ${formatCap(minCap)} to ${formatCap(AI_MAX_MONTHLY_CAP_USD)}: everything Claude does for them counts in it — questions on the model of their level (Models), and certificates they upload. A question goes ahead only while what it may cost is left. Once reached, they are told this month's limit is reached, without an amount.${row ? ` Spent so far this month: ${formatUsd(row.spentUsd)}, ${Math.round(spendShare(row.spentUsd, row.monthlyCapUsd) * 100)}% of the cap set now.` : ''}`}
+            hint={`Theirs alone, per calendar month (UTC), from ${formatCap(minCap)} to ${formatCap(AI_MAX_MONTHLY_CAP_USD)}: everything Claude does for them counts in it — questions on Sonnet, or Opus for heavy work, and certificates they upload. A question goes ahead only while what it may cost is left. Once reached, they are told this month's limit is reached, without an amount.${row ? ` Spent so far this month: ${formatUsd(row.spentUsd)}, ${Math.round(spendShare(row.spentUsd, row.monthlyCapUsd) * 100)}% of the cap set now.` : ''}`}
           >
             <Input
               type="number"

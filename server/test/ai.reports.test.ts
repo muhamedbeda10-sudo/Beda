@@ -198,8 +198,8 @@ describe('§20 saving an answer as a report', () => {
     const res = await save({ turnId: first.turnId })
     expect(res.status).toBe(201)
     expect(res.body.notice).toBeUndefined()
-    // The status's model: the cheapest a question may run on (Models).
-    expect(res.body.status).toMatchObject({ available: true, model: 'claude-haiku-5-5' })
+    // The status's model: Sonnet, the model every question starts on.
+    expect(res.body.status).toMatchObject({ available: true, model: 'claude-sonnet-5-5' })
     saved = res.body.report
     expect(saved).toEqual({
       id: expect.any(String),
@@ -225,15 +225,15 @@ describe('§20 saving an answer as a report', () => {
       ],
     })
 
-    // One call: no tools, low effort, JSON in a fixed shape, the question's day and the queries as input.
+    // One call: no tools, high effort, JSON in a fixed shape, the question's day and the queries as input.
     expect(callsSoFar()).toBe(calls + 1)
     const call = app.model.calls[calls]
     expect(call.apiKey).toBe(KEY)
     expect(call.params).toMatchObject({
       model: AI_MODEL,
-      max_tokens: 8000,
+      max_tokens: 16_000,
       thinking: { type: 'adaptive' },
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: TEMPLATE_SCHEMA } },
+      output_config: { effort: 'high', format: { type: 'json_schema', schema: TEMPLATE_SCHEMA } },
     })
     expect(call.params).not.toHaveProperty('tools')
     expect(JSON.parse(call.params.messages[0].content as string)).toEqual({

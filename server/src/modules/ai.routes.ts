@@ -64,21 +64,14 @@ import {
   AI_MAX_MESSAGE_CHARS,
   AI_MAX_MONTHLY_CAP_USD,
   AI_MODEL,
-  AI_ACTION_INFO,
-  AI_ROUTER_MODEL,
-  AI_ACTIONS,
-  AI_MODELS,
-  aiCheapestChatModel,
+  AI_JOBS,
+  AI_LEVEL_NAMES,
+  AI_STANDARD_MODEL,
   aiMinCapUsd,
-  isAiAction,
-  isAiChatMode,
   isTopLevel,
-  resolveAiAction,
   stickyLevel,
   isAiDay,
   isAiDomain,
-  isAiEffort,
-  isAiModel,
   type AiAccessListResponse,
   type AiAccessRequest,
   type AiAttachment,
@@ -102,8 +95,8 @@ import {
   type AiReportSection,
   type AiReportsResponse,
   type AiSaveReportResponse,
-  type AiChatMode,
   type AiChatLevel,
+  type AiRecordedChatLevel,
   type AiSettings,
   type AiSettingsResponse,
   type AiTaskProposalResponse,
@@ -156,6 +149,7 @@ import {
   sha256Hex,
   sniffAttachment,
   takeAttachments,
+  attachmentKinds,
   type AttachmentRecord,
 } from '../ai/attachments'
 import { auditKeyLabel, last4, removeApiKey, storeApiKey, storedKeyTail } from '../ai/credentials'
@@ -239,42 +233,16 @@ const capUsd = z
   .refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'The cap is in dollars and cents: at most two decimals.')
 const cents = (v: number) => Math.round(v * 100) / 100
 
-/** One action's choice: a model and an effort, each the recommended one ("auto") or one offered. */
-const actionSettingSchema = z
-  .object({
-    model: z.string().refine((v) => v === 'auto' || isAiModel(v), 'Choose one of the models offered, or Auto.'),
-    effort: z.string().refine((v) => v === 'auto' || isAiEffort(v), 'Choose one of the effort levels, or Auto.'),
-  })
-  .strict()
-
 const settingsSchema = z
   .object({
     enabled: z.boolean(),
     monthlyCapUsd: capUsd,
-    /** The Models: each left out stays as it was. */
-    chatMode: z.string().refine(isAiChatMode, 'Auto, or one of the levels.').optional(),
-    actions: z
-      .record(z.string(), actionSettingSchema)
-      .refine((a) => Object.keys(a).every(isAiAction), 'Not one of the actions.')
-      .optional(),
-    mtcReread: z.boolean().optional(),
   })
   .strict()
 
-/** The settings as the audit trail shows them: one value per field, an action's choice in words. */
+/** The settings as the audit trail shows them: one value per field. */
 function settingsSnapshot(s: AiSettings): Record<string, string> {
-  const model = (m: string) => (m === 'auto' ? 'Auto' : (AI_MODELS.find((x) => x.id === m)?.name ?? m))
-  const out: Record<string, string> = {
-    enabled: String(s.enabled),
-    monthlyCapUsd: String(s.monthlyCapUsd),
-    chatMode: s.chatMode,
-    mtcReread: s.mtcReread ? 'on' : 'off',
-  }
-  for (const a of AI_ACTIONS) {
-    const set = s.actions[a.id]
-    out[`model: ${a.name}`] = a.usesEffort ? `${model(set.model)} · effort ${set.effort === 'auto' ? 'Auto' : set.effort}` : model(set.model)
-  }
-  return out
+  return { enabled: String(s.enabled), monthlyCapUsd: String(s.monthlyCapUsd) }
 }
 
 const keySchema = z
@@ -628,13 +596,7 @@ export function aiRoutes(ctx: AppContext): Router {
     const body = parse(settingsSchema, req.body)
     await withTransaction(db, async (tx) => {
       const before = (await loadAiSettings(tx)).settings
-      const next: AiSettings = {
-        enabled: body.enabled,
-        monthlyCapUsd: cents(body.monthlyCapUsd),
-        chatMode: (body.chatMode as AiChatMode | undefined) ?? before.chatMode,
-        actions: { ...before.actions, ...(body.actions as Partial<AiSettings['actions']> | undefined) },
-        mtcReread: body.mtcReread ?? before.mtcReread,
-      }
+      const next: AiSettings = { enabled: body.enabled, monthlyCapUsd: cents(body.monthlyCapUsd) }
       await tx.query(
         `INSERT INTO app_settings (key, value, updated_by_id, updated_by_name, updated_at)
          VALUES ($1, $2::jsonb, $3, $4, now())
@@ -706,10 +668,10 @@ export function aiRoutes(ctx: AppContext): Router {
     const body = parse(accessSchema, req.body)
     const next = { ...body, domains: canonicalDomains(body.domains), monthlyCapUsd: cents(body.monthlyCapUsd) } as AiAccessRequest
     // A cap no single call fits in would close the assistant to them every month: say so now, as the owner's page does.
-    // The least is the cheapest model a question may run on now (Models); a dearer level is held to the cap call by call.
-    const least = aiMinCapUsd(aiCheapestChatModel((await loadAiSettings(db)).settings))
+    // The least is one question on Sonnet, the model every question starts on; a deep one on Opus is held to the cap call by call.
+    const least = aiMinCapUsd(AI_STANDARD_MODEL)
     if (next.enabled && next.monthlyCapUsd < least) {
-      throw badRequest(`The monthly cap must be at least $${least.toFixed(2)}, the most one question may cost on the cheapest model set under Models.`)
+      throw badRequest(`The monthly cap must be at least $${least.toFixed(2)}, the most one question may cost on Sonnet.`)
     }
     await withTransaction(db, async (tx) => {
       const { rows } = await tx.query<{ id: string; name: string; username: string; active: boolean; listed: boolean }>(
@@ -872,14 +834,12 @@ export function aiRoutes(ctx: AppContext): Router {
     // Gone already (Stop, or the connection lost, while the checks ran): nobody to answer, so nothing is kept.
     if (ac.signal.aborted) return
 
-    // The question's level, and so its model and effort (the owner's Models): files have a level of their own; otherwise
-    // the router chooses (auto), or the level the owner fixed. The router reads the question before it for a follow-up.
-    // A conversation's level only goes up (stickyLevel): a follow-up asking less keeps it, and its prompt cache with it;
-    // one already at the top level asks the router nothing.
-    const settings = avail.app.settings.settings
+    // The question's level, and so its model and effort (AI_JOBS): standard (Sonnet) or deep (Opus), as the router
+    // gives it from the question, the kinds of its files, and for a follow-up the question before it. A conversation's
+    // level only goes up (stickyLevel): once deep, it stays deep, and keeps its prompt cache; the router is not asked.
     const previous = body.conversationId
       ? (
-          await db.query<{ question: string; level: AiChatLevel | null }>(
+          await db.query<{ question: string; level: AiRecordedChatLevel | null }>(
             `SELECT t.question, t.level FROM ai_turns t JOIN ai_conversations c ON c.id = t.conversation_id
               WHERE t.conversation_id = $1 AND c.user_id = $2 ORDER BY t.created_at DESC LIMIT 1`,
             [body.conversationId, user.id],
@@ -887,23 +847,18 @@ export function aiRoutes(ctx: AppContext): Router {
         ).rows[0] ?? null
       : null
     let routed: RouterResult | null = null
-    let wanted: AiChatLevel
-    if (body.attachmentIds.length > 0) wanted = 'chat-files'
-    else if (settings.chatMode !== 'auto') wanted = settings.chatMode
-    else if (isTopLevel(previous?.level)) wanted = previous!.level!
-    else {
-      routed = await chooseLevel({ model: ctx.ai, apiKey: avail.app.apiKey, question: body.message, previous, signal: ac.signal })
-      wanted = routed.level
+    if (!isTopLevel(previous?.level)) {
+      const files = await attachmentKinds(db, user.id, body.attachmentIds)
+      routed = await chooseLevel({ model: ctx.ai, apiKey: avail.app.apiKey, question: body.message, previous, files, signal: ac.signal })
     }
-    const level = stickyLevel(previous?.level, wanted)
-    // Why, for Activity: the router's reason, or that the conversation's level held (raised by nothing, or the router not asked).
-    const held = level !== wanted || (settings.chatMode === 'auto' && body.attachmentIds.length === 0 && routed === null)
-    const levelReason = held ? `Kept at ${AI_ACTION_INFO[level].name}: the conversation is there already, and keeps its cache.` : (routed?.reason ?? null)
-    const chosen = resolveAiAction(settings, level)
+    const level: AiChatLevel = stickyLevel(previous?.level, routed?.level ?? 'chat-deep')
+    // Why, for Activity: the router's reason, or that the conversation is deep already (the router not asked).
+    const levelReason = routed ? routed.reason : `Kept at ${AI_LEVEL_NAMES[level]}: the conversation is there already, and keeps its cache.`
+    const chosen = AI_JOBS[level]
     /** The router's call when no question is kept to carry it (refused, or the asker gone): billed all the same, to the asker. */
     const keepRouterCost = async () => {
       if (!routed?.message) return
-      const usage = usageOf(routed.message, AI_ROUTER_MODEL)
+      const usage = usageOf(routed.message, AI_JOBS.router.model)
       await recordUsage(db, { userId: user.id, conversationId: null, turnId: null, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd }).catch((err: unknown) =>
         console.error('[ai] could not record the router call of a question not kept', err),
       )
@@ -950,7 +905,7 @@ export function aiRoutes(ctx: AppContext): Router {
       const turnId = rows[0].id
       // The router's call is the question's cost, with the answer's.
       if (routed?.message) {
-        const usage = usageOf(routed.message, AI_ROUTER_MODEL)
+        const usage = usageOf(routed.message, AI_JOBS.router.model)
         await recordUsage(tx, { userId: user.id, conversationId: conversation.id, turnId, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd })
       }
       await repairDanglingToolUse(tx, conversation.id, turnId)
@@ -1000,7 +955,7 @@ export function aiRoutes(ctx: AppContext): Router {
             conversationId: conversation.id,
             turnId,
             question: body.message,
-            titleModel: resolveAiAction(settings, 'title').model,
+            titleModel: AI_JOBS.title.model,
           })
             .then((c) => {
               if (c) sse.send({ type: 'title', conversation: c })
@@ -1090,8 +1045,8 @@ export function aiRoutes(ctx: AppContext): Router {
     const id = randomUUID()
     const name = (req.file.originalname || (sniffed.kind === 'pdf' ? 'document.pdf' : 'photo.jpg')).replace(/[\u0000-\u001f]/g, '').slice(0, 255) || 'file'
     const record: AttachmentRecord = { id, kind: sniffed.kind, name, mimeType: sniffed.mimeType, storageKey: null, contentText: null, summary: null }
-    // Counted on the model a question with files is answered on (Models).
-    const filesModel = resolveAiAction(avail.app.settings.settings, 'chat-files').model
+    // Counted on Sonnet, the model questions start on; Opus reads a file in as many tokens.
+    const filesModel = AI_STANDARD_MODEL
     const tokens = await countFile(avail.app.apiKey, filesModel, avail.me.owner, record, bytes)
     checkTokens(tokens)
     const key = buildAiAttachmentKey(id, sniffed.kind)
@@ -1129,8 +1084,8 @@ export function aiRoutes(ctx: AppContext): Router {
     const id = randomUUID()
     const name = body.name.replace(/[\u0000-\u001f]/g, '').slice(0, 255) || 'spreadsheet'
     const record: AttachmentRecord = { id, kind: 'sheet', name, mimeType: 'text/plain', storageKey: null, contentText: body.text, summary: body.summary || null }
-    // Counted on the model a question with files is answered on (Models).
-    const filesModel = resolveAiAction(avail.app.settings.settings, 'chat-files').model
+    // Counted on Sonnet, the model questions start on; Opus reads a file in as many tokens.
+    const filesModel = AI_STANDARD_MODEL
     const tokens = await countFile(avail.app.apiKey, filesModel, avail.me.owner, record, null)
     checkTokens(tokens)
     const saved: AiAttachment = await insertAttachment(db, {
@@ -1643,8 +1598,8 @@ export function aiRoutes(ctx: AppContext): Router {
       if (!app.settings.settings.enabled || !app.apiKey) notice = FIXED_NOTICE.unavailable
       else if (!ctx.aiReader.ready) notice = FIXED_NOTICE.noReader
       else {
-        // On the model and effort the owner set for it (Models), and counted with the person's questions against both caps.
-        const params = templateRequest(turn, resolveAiAction(app.settings.settings, 'report-template'))
+        // On its job's model and effort (AI_JOBS), and counted with the person's questions against both caps.
+        const params = templateRequest(turn, AI_JOBS['report-template'])
         const worst = worstCaseUsd(params)
         const what = "Making this report's period adjustable"
         const instead = ' Save it with its period as asked instead, which needs no call to Claude.'

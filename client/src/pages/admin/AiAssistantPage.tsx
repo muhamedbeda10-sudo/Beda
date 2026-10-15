@@ -14,10 +14,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Activity, Bot, ChevronDown, Coins, Eye, EyeOff, Hash, KeyRound, Loader2, MessageSquareText, Save, SlidersHorizontal, Trash2, Zap } from 'lucide-react'
-import { AI_MAX_MONTHLY_CAP_USD, AI_ROUTER_MODEL, aiCheapestChatModel, type AiKeyState, type AiSettingsResponse, type AiStatusResponse, type AiUsageResponse } from '@qc/shared/ai'
+import { AI_MAX_MONTHLY_CAP_USD, AI_STANDARD_MODEL, type AiKeyState, type AiSettingsResponse, type AiStatusResponse, type AiUsageResponse } from '@qc/shared/ai'
 import { CAP_RANGE_TEXT, parseCapUsd } from '@/components/ai/access'
 import { AiAccessSection } from '@/components/ai/AiAccessSection'
-import { AiModelsSection } from '@/components/ai/AiModelsSection'
 import { AiActivitySection } from '@/components/ai/AiActivitySection'
 import { AiSlowQueriesSection } from '@/components/ai/AiSlowQueriesSection'
 import { Notice, UnavailableNotice } from '@/components/ai/AiNotice'
@@ -70,8 +69,7 @@ export function AiSettings() {
           <SettingsCard data={data} />
         </div>
       )}
-      {shown === 'models' && data && <AiModelsSection data={data} />}
-      {shown === 'people' && <AiAccessSection appCapUsd={data?.settings.monthlyCapUsd} chatModel={data ? aiCheapestChatModel(data.settings) : AI_ROUTER_MODEL} />}
+      {shown === 'people' && <AiAccessSection appCapUsd={data?.settings.monthlyCapUsd} chatModel={AI_STANDARD_MODEL} />}
       {shown === 'usage' && <UsageSection enabled={owner} />}
       {shown === 'activity' && <AiActivitySection enabled={owner} />}
       {shown === 'slow' && <AiSlowQueriesSection enabled={owner} />}
@@ -79,12 +77,11 @@ export function AiSettings() {
   )
 }
 
-type SettingsTab = 'settings' | 'models' | 'people' | 'usage' | 'activity' | 'slow'
+type SettingsTab = 'settings' | 'people' | 'usage' | 'activity' | 'slow'
 
 /** The page's sections, one at a time under the figures: the setup, the people, what it cost, what was asked, what was slow. */
 const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
   { value: 'settings', label: 'Key and cap' },
-  { value: 'models', label: 'Models' },
   { value: 'people', label: 'Who can use it' },
   { value: 'usage', label: 'Usage' },
   { value: 'activity', label: 'Activity' },
@@ -92,7 +89,7 @@ const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
 ]
 
 const INTRO =
-  "Only you see this page. The people you choose ask about the factory's record in plain words, in English or Arabic; Claude answers by running read-only queries over curated views of the record, and every query is shown with its rows and can be taken to Excel. It cannot change anything. You decide who may ask, about which data, and up to what each may spend a month, and which model and effort each kind of work runs on (Models); the app-wide cap stops everyone before the bill runs away. Nobody sees a price or an amount in the chat — the figures are here alone."
+  "Only you see this page. The people you choose ask about the factory's record in plain words, in English or Arabic; Claude answers by running read-only queries over curated views of the record, and every query is shown with its rows and can be taken to Excel. It cannot change anything. You decide who may ask, about which data, and up to what each may spend a month; every question runs on Claude Sonnet at high effort, or on Claude Opus when it needs heavy work (a root cause, an FMEA), as Claude decides, and Activity shows which and why. The app-wide cap stops everyone before the bill runs away. Nobody sees a price or an amount in the chat — the figures are here alone."
 
 /** The heading: what this is, whether the assistant is answering, who changed its settings last; what it is, folded. */
 function SettingsHeading({ data }: { data: AiSettingsResponse | undefined }) {

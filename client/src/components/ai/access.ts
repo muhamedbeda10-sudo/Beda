@@ -103,9 +103,9 @@ export function orderDomains(domains: readonly string[]): AiDomain[] {
 /** The least a monthly cap must be for anyone on this model to ask at all: the server's own figure (output and fallback). */
 export const minCapUsd = (model: string): number => aiMinCapUsd(model)
 
-/** Why a cap is too small, for the owner: the least it may be on the cheapest model a question runs on (Models), and what happens below it. */
+/** Why a cap is too small, for the owner: the least it may be on the model every question starts on, and what happens below it. */
 export function capTooLowText(model: string): string {
-  return `The cap must be at least ${formatCap(minCapUsd(model))}, the most one question may cost on ${modelName(model)}, the cheapest model set under Models. Below that they could never ask: they would be told the month's limit is reached, every month.`
+  return `The cap must be at least ${formatCap(minCapUsd(model))}, the most one question may cost on ${modelName(model)}, the model every question starts on. Below that they could never ask: they would be told the month's limit is reached, every month.`
 }
 
 /** Whether a cap lets a person on this model ask at all. */
@@ -149,7 +149,7 @@ export const AI_NEW_PERSON_CAP_USD = 10
  * Where a person newly given the assistant starts: on, the inspection record
  * only (the narrowest useful data — the owner adds the rest), and a small cap
  * — within the app-wide cap, but never so small that they could not ask at
- * all on `chatModel`, the cheapest model a question runs on (Models; the
+ * all on `chatModel`, the model every question starts on (Sonnet; the
  * drawer then says the app-wide cap is the one in the way).
  */
 export function newAccessDraft(appCapUsd: number, chatModel: AiModelId): AccessDraft {
@@ -170,7 +170,7 @@ export function draftFromAccess(a: AiAccess): AccessDraft {
   }
 }
 
-/** Why the draft cannot be saved, or null when it can; `chatModel` is the cheapest model a question runs on now (Models). */
+/** Why the draft cannot be saved, or null when it can; `chatModel` is the model every question starts on (Sonnet). */
 export function checkAccessDraft(d: AccessDraft, chatModel: AiModelId): string | null {
   if (orderDomains(d.domains).length === 0) return 'Choose at least one kind of data they may ask about.'
   const cap = parseCapUsd(d.cap)
@@ -269,7 +269,7 @@ export function sortAccess(people: readonly AiAccess[]): AiAccess[] {
 /**
  * Whether a person can ask now, as far as the owner set it: an account that
  * can sign in, switched on, with data to ask about and a cap that lets one
- * question through on the cheapest model a question runs on (Models).
+ * question through on the model every question starts on (Sonnet).
  */
 export function accessLive(a: AiAccess, chatModel: AiModelId): boolean {
   return a.active && a.enabled && a.domains.length > 0 && capFitsModel(a.monthlyCapUsd, chatModel)
