@@ -1,92 +1,170 @@
 // ============================================================================
-// MTC — a mill test certificate read into the coil register.
+// MTC — mill test certificates read into the factory's material registers:
+// coils, welding wire and mesh wire.
 //
-// Someone the administrator allowed uploads the mill's PDF; Claude reads it on
-// the server and lists every coil in it, with the register's own eight fields
-// and nothing more; the person checks that list against the paper, corrects
-// it, chooses for each coil already registered whether to overwrite it, and
-// saves. The PDF itself is never kept: the certificate's number goes into the
-// coil's notes instead.
+// Someone the administrator allowed uploads the supplier's PDF; Claude reads it
+// on the server, tells which register it belongs to, and lists every item in
+// it with that register's fields and nothing more; the person checks the list
+// against the paper, corrects it, chooses for each item already registered
+// whether to overwrite it, and saves. The PDF itself is never kept: the
+// certificate's number goes into each item's notes instead.
 //
-// Everything both sides must agree on lives here: the shapes on the wire, the
-// limits, and the checks the review screen shows and the API enforces.
+// The three registers are described once, here (MTC_REGISTERS): their fields,
+// the fields that identify an item, the values a choice field takes, the range
+// a measurement is expected in. The API, the reader's instructions and the
+// review screen are all driven by these descriptions, so a fourth register is
+// a description and a table, not a fourth copy of the code.
 // ============================================================================
 
-import { AI_MAX_PDF_BYTES } from './ai'
+import { AI_MAX_PDF_BYTES, AI_MTC_DEFAULT_MODEL } from './ai'
 import type { ApiErrorCode } from './api'
-import type { Coil } from './types'
 
 /** The largest certificate accepted: the same as a PDF given to the assistant. */
 export const MTC_MAX_PDF_BYTES = AI_MAX_PDF_BYTES
-/** Coils saved in one go: the longest certificates seen hold about a hundred. */
+/** Items saved in one go: the longest certificates seen hold about a hundred. */
 export const MTC_MAX_ROWS = 500
-/**
- * The model that reads certificates. The most capable reader of dense and
- * scanned tables: a digit misread in a yield or a coil number costs far more
- * than the difference in price (about half a dollar for a 40-page certificate).
- */
-export const MTC_MODEL = 'claude-opus-5-5'
-
-/** What the reader writes as the SM type: hot-rolled black coil, or galvanised. */
-export const MTC_SM_TYPES = ['HR', 'GI'] as const
-/** The mills' names as the register spells them; any other mill is named by its short name. */
-export const MTC_SUPPLIERS = ['Baosteel', 'ArcelorMittal', 'Ezz', 'Tosyali'] as const
-
-/** The register's fields, in its column order. */
-export const MTC_COIL_FIELDS = ['coilNumber', 'grade', 'smType', 'supplier', 'thickness', 'width', 'yield', 'notes'] as const
-export type MtcCoilField = (typeof MTC_COIL_FIELDS)[number]
-
-export const MTC_FIELD_LABEL: Record<MtcCoilField, string> = {
-  coilNumber: 'Coil number',
-  grade: 'Grade',
-  smType: 'SM type',
-  supplier: 'Supplier',
-  thickness: 'Thickness',
-  width: 'Width',
-  yield: 'Yield',
-  notes: 'Notes',
-}
-
-/** The register's limits, the same as the coil import's. */
-export const MTC_TEXT_MAX: Record<'coilNumber' | 'grade' | 'smType' | 'supplier' | 'notes', number> = {
-  coilNumber: 120,
-  grade: 60,
-  smType: 60,
-  supplier: 200,
-  notes: 1000,
-}
+/** The model that reads certificates unless the assistant's owner chose another (AI settings). */
+export const MTC_DEFAULT_MODEL = AI_MTC_DEFAULT_MODEL
 /** numeric(10, 3): seven digits before the point. */
 export const MTC_NUMBER_MAX = 9_999_999.999
 
-/** A coil as the register holds it: its eight fields. */
-export interface MtcCoil {
-  coilNumber: string
-  grade?: string
-  smType?: string
-  supplier?: string
-  /** mm */
-  thickness?: number
-  /** mm */
-  width?: number
-  /** MPa */
-  yield?: number
-  notes?: string
+export const MTC_KINDS = ['coils', 'welding-wire', 'mesh-wire'] as const
+export type MtcKind = (typeof MTC_KINDS)[number]
+export const isMtcKind = (v: unknown): v is MtcKind => typeof v === 'string' && (MTC_KINDS as readonly string[]).includes(v)
+
+export interface MtcField {
+  key: string
+  label: string
+  type: 'text' | 'number'
+  /** Text: the register's limit, in characters. */
+  max?: number
+  /** Number: shown after the value's label. */
+  unit?: 'mm' | 'MPa' | 'kg'
+  /** Number: outside it a value is still saved, but the review asks for a second look (a misread digit lands here). */
+  plausible?: { min: number; max: number }
+  /** The values the reader writes, and the review suggests; anything else may still be typed. */
+  choices?: readonly string[]
+  /** Part of what identifies the item: required, and never changed by an overwrite. */
+  identifies?: boolean
+  /** Upper case without spaces, as grades are written ("S420 MC" is "S420MC"): applied to what the reader returns. */
+  compact?: boolean
+  /** Shown in a monospace font: an identifier read digit by digit. */
+  mono?: boolean
 }
 
-/** A coil as read from the certificate. */
-export interface MtcExtractedCoil extends MtcCoil {
+export interface MtcRegister {
+  kind: MtcKind
+  /** The sub-tab's name. */
+  label: string
+  /** One item, in a sentence: "coil". */
+  singular: string
+  plural: string
+  /** The audit trail's entity. */
+  entity: string
+  fields: readonly MtcField[]
+  /** The choice field the table filters on, beside the supplier. */
+  filter: string
+}
+
+const TEXT = (key: string, label: string, max: number, extra: Partial<MtcField> = {}): MtcField => ({ key, label, type: 'text', max, ...extra })
+const NUMBER = (key: string, label: string, unit: MtcField['unit'], plausible: MtcField['plausible'], extra: Partial<MtcField> = {}): MtcField => ({
+  key,
+  label,
+  type: 'number',
+  unit,
+  plausible,
+  ...extra,
+})
+
+/** What the reader writes as a coil's SM type: hot-rolled black coil, or galvanised. */
+export const MTC_SM_TYPES = ['HR', 'GI'] as const
+export const MTC_WIRE_TYPES = ['Flux-cored', 'Solid'] as const
+export const MTC_MESH_PRODUCTS = ['Galvanized', 'Bright'] as const
+/** The steel mills' names as the coil register spells them; any other supplier is named by its short name. */
+export const MTC_SUPPLIERS = ['Baosteel', 'ArcelorMittal', 'Ezz', 'Tosyali'] as const
+
+export const MTC_REGISTERS: Readonly<Record<MtcKind, MtcRegister>> = {
+  coils: {
+    kind: 'coils',
+    label: 'Coils',
+    singular: 'coil',
+    plural: 'coils',
+    entity: 'Coil',
+    filter: 'smType',
+    fields: [
+      TEXT('coilNumber', 'Coil number', 120, { identifies: true, mono: true }),
+      TEXT('grade', 'Grade', 60, { compact: true }),
+      TEXT('smType', 'SM type', 60, { choices: MTC_SM_TYPES }),
+      TEXT('supplier', 'Supplier', 200),
+      NUMBER('thickness', 'Thickness', 'mm', { min: 0.1, max: 25 }),
+      NUMBER('width', 'Width', 'mm', { min: 10, max: 2500 }),
+      NUMBER('yield', 'Yield', 'MPa', { min: 100, max: 1500 }),
+      TEXT('notes', 'Notes', 1000),
+    ],
+  },
+  'welding-wire': {
+    kind: 'welding-wire',
+    label: 'Welding wire',
+    singular: 'welding wire batch',
+    plural: 'welding wire batches',
+    entity: 'WeldingWire',
+    filter: 'wireType',
+    fields: [
+      TEXT('batchNumber', 'Batch number', 120, { identifies: true, mono: true }),
+      TEXT('classification', 'Classification', 60, { compact: true }),
+      TEXT('wireType', 'Type', 60, { choices: MTC_WIRE_TYPES }),
+      NUMBER('diameter', 'Diameter', 'mm', { min: 0.6, max: 6 }),
+      TEXT('supplier', 'Supplier', 200),
+      NUMBER('weightKg', 'Weight', 'kg', { min: 1, max: 100_000 }),
+      NUMBER('yield', 'Yield', 'MPa', { min: 250, max: 1000 }),
+      NUMBER('tensile', 'Tensile', 'MPa', { min: 300, max: 1200 }),
+      TEXT('notes', 'Notes', 1000),
+    ],
+  },
+  'mesh-wire': {
+    kind: 'mesh-wire',
+    label: 'Mesh wire',
+    singular: 'mesh wire',
+    plural: 'mesh wires',
+    entity: 'MeshWire',
+    filter: 'product',
+    fields: [
+      TEXT('castNumber', 'Cast number', 120, { identifies: true, mono: true }),
+      NUMBER('diameter', 'Diameter', 'mm', { min: 1, max: 16 }, { identifies: true }),
+      TEXT('product', 'Product', 60, { choices: MTC_MESH_PRODUCTS }),
+      TEXT('grade', 'Grade', 60, { compact: true }),
+      TEXT('supplier', 'Supplier', 200),
+      NUMBER('tensile', 'Tensile', 'MPa', { min: 250, max: 1200 }),
+      TEXT('notes', 'Notes', 1000),
+    ],
+  },
+}
+
+/** An item's fields: text, a number, or nothing. */
+export type MtcValues = Record<string, string | number | undefined>
+
+/** An item as a register holds it. */
+export interface MtcRegisterRow {
+  id: string
+  values: MtcValues
+  deletedAt?: string | null
+}
+
+/** An item as read from the certificate. */
+export interface MtcExtractedRow {
+  values: MtcValues
   /** The PDF page its row is on, from 1. */
   page?: number
   /** The fields Claude could not read with full confidence, or converted: the review marks them. */
-  uncertain: MtcCoilField[]
+  uncertain: string[]
 }
 
 export interface MtcExtractResult {
   fileName: string
-  coils: MtcExtractedCoil[]
-  /** The document certifies something other than steel coils (wire, welding consumables…): nothing is listed. */
-  notCoils: boolean
-  /** One sentence for the person when part of the document could not be read, or what it is when it is not a coil certificate. */
+  /** The register the certificate belongs to; null when it is none of them (nothing is listed). */
+  kind: MtcKind | null
+  rows: MtcExtractedRow[]
+  /** One sentence for the person when part of the document could not be read, or what it is when it fits no register. */
   problem?: string
 }
 
@@ -96,17 +174,19 @@ export type MtcStreamEvent =
   | { type: 'result'; result: MtcExtractResult }
   | { type: 'error'; code: ApiErrorCode; message: string }
 
-/** POST /api/mtc/existing — the register's rows for these coil numbers, removed ones included. */
+/** POST /api/mtc/:kind/existing — the register's items whose first key field is one of these (removed ones included). */
 export interface MtcExistingRequest {
-  coilNumbers: string[]
+  ids: string[]
 }
-export type MtcExistingResponse = Coil[]
+export type MtcExistingResponse = MtcRegisterRow[]
 
-/** One reviewed coil. `overwrite` matters only for a coil already registered: off, it is left as it is. */
-export interface MtcSaveRow extends MtcCoil {
+/** One reviewed item. `overwrite` matters only for an item already registered: off, it is left as it is. */
+export interface MtcSaveRow {
+  values: MtcValues
   overwrite: boolean
 }
 
+/** POST /api/mtc/:kind/save */
 export interface MtcSaveRequest {
   /** The certificate's file name, for the audit trail. */
   fileName: string
@@ -114,50 +194,53 @@ export interface MtcSaveRequest {
 }
 
 export interface MtcSaveResponse {
-  /** Coil numbers, as saved. */
+  /** Each item by its key, as saved ("213417-506", "62920 · Ø3.9"). */
   inserted: string[]
   updated: string[]
   /** Already registered and not overwritten, or overwritten with the same values. */
   skipped: string[]
 }
 
-// ---- The coil register's table --------------------------------------------------------
+// ---- A register's table -----------------------------------------------------------------
 
-export const COIL_TABLE_SORTS = ['coilNumber', 'newest'] as const
-export type CoilTableSort = (typeof COIL_TABLE_SORTS)[number]
-export const COIL_TABLE_PAGE = 100
-export const COIL_TABLE_PAGE_MAX = 200
+export const MTC_TABLE_SORTS = ['key', 'newest'] as const
+export type MtcTableSort = (typeof MTC_TABLE_SORTS)[number]
+export const MTC_TABLE_PAGE = 100
+export const MTC_TABLE_PAGE_MAX = 200
 
-export interface CoilTableQuery {
+/** GET /api/mtc/:kind/table */
+export interface MtcTableQuery {
   search?: string
   supplier?: string
-  smType?: string
-  sort?: CoilTableSort
+  /** A value of the register's filter field (SM type, wire type, product). */
+  filter?: string
+  sort?: MtcTableSort
   offset?: number
   limit?: number
 }
 
-export interface CoilTableResponse {
-  rows: Coil[]
-  /** Every coil the filters match, not only this page. */
+export interface MtcTableResponse {
+  rows: MtcRegisterRow[]
+  /** Every item the filters match, not only this page. */
   total: number
 }
 
-export interface CoilTableOptionsResponse {
+/** GET /api/mtc/:kind/options — the table's filter choices, as registered. */
+export interface MtcTableOptionsResponse {
   suppliers: string[]
-  smTypes: string[]
+  filterValues: string[]
 }
 
-// ---- Checks -----------------------------------------------------------------------------
+// ---- Values -----------------------------------------------------------------------------
 
-/** Text as the register keeps it: one line, single spaces, nothing when empty. */
+/** Text as a register keeps it: one line, single spaces, nothing when empty. */
 export function cleanMtcText(v: unknown): string | undefined {
   if (typeof v !== 'string') return undefined
   const t = v.replace(/\s+/g, ' ').trim()
   return t === '' ? undefined : t
 }
 
-/** A measurement as the register keeps it: three decimals; nothing for a blank, a non-number or a negative. */
+/** A measurement as a register keeps it: three decimals; nothing for a blank, a non-number or a negative. */
 export function cleanMtcNumber(v: unknown): number | undefined {
   if (v === null || v === undefined || v === '') return undefined
   const n = typeof v === 'number' ? v : Number(String(v).replace(',', '.').trim())
@@ -165,89 +248,119 @@ export function cleanMtcNumber(v: unknown): number | undefined {
   return Math.round(n * 1000) / 1000
 }
 
-/** The key two coil numbers are the same coil by: the register's unique key ignores case. */
-export const mtcCoilKey = (coilNumber: string): string => coilNumber.trim().toLowerCase()
+/** One field of an item, cleaned by its kind. */
+export function cleanMtcValue(field: MtcField, v: unknown): string | number | undefined {
+  return field.type === 'number' ? cleanMtcNumber(v) : cleanMtcText(v)
+}
 
-/** The eight fields of a registered coil, as a reviewed row compares with them. */
-export function mtcCoilOf(c: Coil): MtcCoil {
-  const out: MtcCoil = { coilNumber: c.coilNumber }
-  for (const f of ['grade', 'smType', 'supplier', 'notes'] as const) {
-    const v = cleanMtcText(c[f])
-    if (v !== undefined) out[f] = v
-  }
-  for (const f of ['thickness', 'width', 'yield'] as const) {
-    const v = cleanMtcNumber(c[f])
-    if (v !== undefined) out[f] = v
+/** An item's fields, every one cleaned; fields the register does not have are dropped. */
+export function mtcValuesOf(register: MtcRegister, raw: Record<string, unknown>): MtcValues {
+  const out: MtcValues = {}
+  for (const f of register.fields) {
+    const v = cleanMtcValue(f, raw[f.key])
+    if (v !== undefined) out[f.key] = v
   }
   return out
 }
 
+export const mtcKeyFields = (register: MtcRegister): MtcField[] => register.fields.filter((f) => f.identifies)
+/** The field an item is first looked up by: the register's identifier (coil, batch or cast number). */
+export const mtcIdField = (register: MtcRegister): MtcField => register.fields[0]
+
 /**
- * The coil as it would be after an overwrite: the certificate's values, and
- * the register's where the certificate has none (a blank never erases a
- * value, as in the coil import).
+ * The key two items are the same item by: their key fields, text with case
+ * ignored (as the registers' unique indexes do). Empty when a key field is
+ * missing: such an item cannot be matched, or saved.
  */
-export function mtcMerged(existing: MtcCoil, incoming: MtcCoil): MtcCoil {
-  const out: MtcCoil = { ...existing, coilNumber: existing.coilNumber }
-  for (const f of MTC_COIL_FIELDS) {
-    if (f === 'coilNumber') continue
-    const v = incoming[f]
-    if (v !== undefined) (out as unknown as Record<string, unknown>)[f] = v
+export function mtcKeyOf(register: MtcRegister, values: MtcValues): string {
+  const parts: string[] = []
+  for (const f of mtcKeyFields(register)) {
+    const v = values[f.key]
+    if (v === undefined || v === '' || (typeof v === 'number' && !Number.isFinite(v))) return ''
+    parts.push(typeof v === 'number' ? String(v) : String(v).trim().toLowerCase())
+  }
+  return parts.join('|')
+}
+
+/** An item named by its key, for people: "62920 · Ø3.9 mm". */
+export function mtcKeyLabel(register: MtcRegister, values: MtcValues): string {
+  return mtcKeyFields(register)
+    .map((f) => {
+      const v = values[f.key]
+      if (v === undefined) return '—'
+      return f.type === 'number' ? `${f.key === 'diameter' ? 'Ø' : ''}${v}${f.unit ? ` ${f.unit}` : ''}` : String(v)
+    })
+    .join(' · ')
+}
+
+/**
+ * The item as it would be after an overwrite: the certificate's values, and
+ * the register's where the certificate has none (a blank never erases a
+ * value). Key fields never change.
+ */
+export function mtcMerged(register: MtcRegister, existing: MtcValues, incoming: MtcValues): MtcValues {
+  const out: MtcValues = { ...existing }
+  for (const f of register.fields) {
+    if (f.identifies) continue
+    const v = incoming[f.key]
+    if (v !== undefined) out[f.key] = v
   }
   return out
 }
 
 /** The fields an overwrite would change, in column order. */
-export function mtcChangedFields(existing: MtcCoil, incoming: MtcCoil): MtcCoilField[] {
-  const merged = mtcMerged(existing, incoming)
-  return MTC_COIL_FIELDS.filter((f) => f !== 'coilNumber' && merged[f] !== existing[f])
+export function mtcChangedFields(register: MtcRegister, existing: MtcValues, incoming: MtcValues): string[] {
+  const merged = mtcMerged(register, existing, incoming)
+  return register.fields.filter((f) => !f.identifies && merged[f.key] !== existing[f.key]).map((f) => f.key)
 }
 
 export interface MtcProblem {
-  field: MtcCoilField
+  field: string
   message: string
   /** True: the row cannot be saved as it is. False: worth a second look at the paper. */
   blocking: boolean
 }
 
-/** Outside these a value is still saved, but the review asks for a second look: a misread digit lands here. */
-export const MTC_PLAUSIBLE = {
-  thickness: { min: 0.1, max: 25 },
-  width: { min: 10, max: 2500 },
-  yield: { min: 100, max: 1500 },
-} as const
-
-/** What is wrong with one row, before the batch is considered. */
-export function mtcRowProblems(row: MtcCoil): MtcProblem[] {
+/**
+ * What is wrong with one item, before the batch is considered. A number that
+ * is not one arrives as NaN (the review keeps what was typed): it blocks.
+ */
+export function mtcRowProblems(register: MtcRegister, values: MtcValues): MtcProblem[] {
   const problems: MtcProblem[] = []
-  const number = row.coilNumber.trim()
-  if (number === '') problems.push({ field: 'coilNumber', message: 'A coil number is required.', blocking: true })
-  for (const f of ['coilNumber', 'grade', 'smType', 'supplier', 'notes'] as const) {
-    const v = f === 'coilNumber' ? number : row[f]
-    if (v && v.length > MTC_TEXT_MAX[f]) problems.push({ field: f, message: `At most ${MTC_TEXT_MAX[f]} characters.`, blocking: true })
-  }
-  for (const f of ['thickness', 'width', 'yield'] as const) {
-    const v = row[f]
-    if (v === undefined) continue
-    if (!Number.isFinite(v) || v < 0 || v > MTC_NUMBER_MAX) {
-      problems.push({ field: f, message: 'Not a valid measurement.', blocking: true })
+  for (const f of register.fields) {
+    const v = values[f.key]
+    if (v === undefined || v === '') {
+      if (f.identifies) problems.push({ field: f.key, message: `${f.label} is required.`, blocking: true })
       continue
     }
-    const range = MTC_PLAUSIBLE[f]
-    if (v < range.min || v > range.max) {
-      const unit = f === 'yield' ? 'MPa' : 'mm'
-      problems.push({ field: f, message: `Unusual (${range.min}–${range.max} ${unit} expected): check it.`, blocking: false })
+    if (f.type === 'text') {
+      if (typeof v !== 'string') problems.push({ field: f.key, message: 'Not valid text.', blocking: true })
+      else if (f.max !== undefined && v.length > f.max) problems.push({ field: f.key, message: `At most ${f.max} characters.`, blocking: true })
+      continue
+    }
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > MTC_NUMBER_MAX) {
+      problems.push({ field: f.key, message: 'Not a valid measurement.', blocking: true })
+      continue
+    }
+    if (f.identifies && v === 0) {
+      problems.push({ field: f.key, message: `${f.label} is required.`, blocking: true })
+      continue
+    }
+    const range = f.plausible
+    if (range && (v < range.min || v > range.max)) {
+      const unit = f.unit ? ` ${f.unit}` : ''
+      problems.push({ field: f.key, message: `Unusual (${range.min}–${range.max}${unit} expected): check it.`, blocking: false })
     }
   }
   return problems
 }
 
-/** The coil numbers that appear more than once in the batch (by the register's key). */
-export function mtcDuplicateKeys(rows: readonly { coilNumber: string }[]): Set<string> {
+/** The keys that appear more than once in the batch. */
+export function mtcDuplicateKeys(register: MtcRegister, rows: readonly MtcValues[]): Set<string> {
   const seen = new Set<string>()
   const dup = new Set<string>()
   for (const r of rows) {
-    const k = mtcCoilKey(r.coilNumber)
+    const k = mtcKeyOf(register, r)
     if (k === '') continue
     if (seen.has(k)) dup.add(k)
     seen.add(k)

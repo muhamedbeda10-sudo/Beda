@@ -118,6 +118,7 @@ import {
   loadAccess,
   mayAutomate,
   mayMakeExcel,
+  mayUploadMtc,
   mayManageNotices,
   personAvailability,
   removeAccess,
@@ -222,7 +223,14 @@ const capUsd = z
   .refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'The cap is in dollars and cents: at most two decimals.')
 const cents = (v: number) => Math.round(v * 100) / 100
 
-const settingsSchema = z.object({ enabled: z.boolean(), monthlyCapUsd: capUsd }).strict()
+const settingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    monthlyCapUsd: capUsd,
+    /** Left out, the model chosen before stays. */
+    mtcModel: z.string().refine(isAiModel, 'Choose one of the models offered.').optional(),
+  })
+  .strict()
 
 const keySchema = z
   .object({
@@ -254,6 +262,8 @@ const accessSchema = z
     notices: z.boolean().optional(),
     /** §20 — may have the assistant make Excel files; left out, unchanged (off for a new row). */
     excel: z.boolean().optional(),
+    /** May upload mill test certificates (MTC tab), the assistant on for them or not; left out, unchanged (off for a new row). */
+    mtc: z.boolean().optional(),
   })
   .strict()
 
@@ -344,7 +354,7 @@ const usageQuery = z.object({ month: z.string().regex(/^2\d{3}-(0[1-9]|1[0-2])$/
 /** The Activity list: a month, perhaps one person or one kind, and where the page starts (the last one's `next`). */
 const activityQuery = usageQuery.extend({
   userId: z.string().uuid().optional(),
-  kind: z.enum(['question', 'automation']).optional(),
+  kind: z.enum(['question', 'automation', 'mtc']).optional(),
   before: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\|[0-9a-f-]{1,36}$/, 'Not a place in the list.')
@@ -524,7 +534,17 @@ export function aiRoutes(ctx: AppContext): Router {
     const access = await loadAccess(db, user.id)
     // Most people were never given the assistant: asked on every page, they cost two reads and no more.
     if (!isGranted(access)) {
-      const body: AiMeResponse = { granted: false, owner: owner === user.id, available: false, reason: 'not-granted', automations: false, excel: false, notices: false }
+      // Certificates are not the assistant: someone may upload them with the assistant off for them.
+      const body: AiMeResponse = {
+        granted: false,
+        owner: owner === user.id,
+        available: false,
+        reason: 'not-granted',
+        automations: false,
+        excel: false,
+        notices: false,
+        mtc: mayUploadMtc(access, owner === user.id, true),
+      }
       res.json(body)
       return
     }
@@ -544,9 +564,9 @@ export function aiRoutes(ctx: AppContext): Router {
   r.put('/settings', async (req, res) => {
     const user = requireUser(req)
     const body = parse(settingsSchema, req.body)
-    const next: AiSettings = { enabled: body.enabled, monthlyCapUsd: cents(body.monthlyCapUsd) }
     await withTransaction(db, async (tx) => {
       const before = (await loadAiSettings(tx)).settings
+      const next: AiSettings = { enabled: body.enabled, monthlyCapUsd: cents(body.monthlyCapUsd), mtcModel: (body.mtcModel as AiSettings['mtcModel'] | undefined) ?? before.mtcModel }
       await tx.query(
         `INSERT INTO app_settings (key, value, updated_by_id, updated_by_name, updated_at)
          VALUES ($1, $2::jsonb, $3, $4, now())
@@ -1127,6 +1147,18 @@ export function aiRoutes(ctx: AppContext): Router {
          SELECT 'automation', g.id::text, g.created_at, g.user_id, a.name, NULL, NULL, g.id
            FROM ai_usage g JOIN ai_automations a ON a.id = g.automation_id
           WHERE g.turn_id IS NULL AND g.created_at >= $1 AND g.created_at < $2 AND ($3::uuid IS NULL OR g.user_id = $3) AND ($4::text IS NULL OR $4 = 'automation')
+         UNION ALL
+         -- A certificate read on the MTC tab: its file, and what was read from it.
+         SELECT 'mtc', g.id::text, g.created_at, g.user_id,
+                m.file_name || ' — ' || CASE m.outcome
+                  WHEN 'read' THEN m.items || ' ' || CASE m.kind WHEN 'coils' THEN 'coil' WHEN 'welding-wire' THEN 'welding wire batch' ELSE 'mesh wire' END
+                                  || CASE WHEN m.items = 1 THEN '' WHEN m.kind = 'welding-wire' THEN 'es' ELSE 's' END || ' read'
+                  WHEN 'not-certificate' THEN 'not a certificate of coils or wire'
+                  WHEN 'stopped' THEN 'stopped before the end'
+                  ELSE 'could not be read' END,
+                NULL, NULL, g.id
+           FROM ai_usage g JOIN mtc_readings m ON m.id = g.mtc_reading_id
+          WHERE g.created_at >= $1 AND g.created_at < $2 AND ($3::uuid IS NULL OR g.user_id = $3) AND ($4::text IS NULL OR $4 = 'mtc')
        ),
        page AS (SELECT * FROM items i ${after} ORDER BY i.at DESC, i.id DESC LIMIT $5)
        SELECT p.kind, p.id, p.at, to_char(p.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') || '|' || p.id AS place,
@@ -1151,7 +1183,7 @@ export function aiRoutes(ctx: AppContext): Router {
       `SELECT u.id, u.name
          FROM (SELECT user_id FROM ai_turns WHERE created_at >= $1 AND created_at < $2
                UNION
-               SELECT user_id FROM ai_usage WHERE automation_id IS NOT NULL AND turn_id IS NULL AND created_at >= $1 AND created_at < $2) x
+               SELECT user_id FROM ai_usage WHERE (automation_id IS NOT NULL OR mtc_reading_id IS NOT NULL) AND turn_id IS NULL AND created_at >= $1 AND created_at < $2) x
          JOIN users u ON u.id = x.user_id
         ORDER BY u.name, u.id`,
       [from, to],

@@ -28,6 +28,19 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-15.2',
+    date: '2026-10-15',
+    title: 'MTC: welding wire and mesh wire registers',
+    items: [
+      { text: 'The MTC tab now holds three registers: Coils, Welding wire (by batch: classification, type, diameter, weight, yield, tensile) and Mesh wire (by cast and diameter: galvanized or bright, grade, tensile).' },
+      { text: 'One Upload MTC for all three: Claude tells from the certificate whether it is coils, welding wire or mesh wire, and opens the matching review. For welding wire it takes the deposited metal’s test results, never the required values.' },
+      { text: 'In the PT step, the welding wire batch number now suggests the batches registered from certificates as you type. Any batch can still be typed by hand.' },
+      { text: 'The AI assistant’s owner chooses the model that reads certificates under AI assistant → Settings. It is Sonnet unless changed.' },
+      { text: 'Who may upload certificates is now set in the AI settings, under Who can use it (“Can upload MTC certificates”), not under Users. It does not need the assistant to be on for that person. Anyone allowed before keeps it.' },
+      { text: 'Each certificate read shows in the AI settings’ Activity: who uploaded which file, what was read from it, and what it cost. It counts toward the month’s spend and the person’s own monthly cap.' },
+    ],
+  },
+  {
     id: '2026-10-15.1',
     date: '2026-10-15',
     title: 'MTC: coils read from the mill’s certificate',

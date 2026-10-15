@@ -247,6 +247,8 @@ export interface AiAccess {
   notices: boolean
   /** May have the assistant make Excel files (§20); always true for the owner. */
   excel: boolean
+  /** May upload mill test certificates on the MTC tab, whether or not the assistant is on for them; always true for the owner. */
+  mtc: boolean
   updatedAt?: string
   updatedByName?: string
 }
@@ -267,6 +269,8 @@ export interface AiAccessRequest {
   notices?: boolean
   /** May have the assistant make Excel files (§20). Absent: unchanged (false for a new row). */
   excel?: boolean
+  /** May upload mill test certificates (MTC tab). Absent: unchanged (false for a new row). */
+  mtc?: boolean
 }
 
 /** What anyone signed in learns about the assistant: no amounts, no models, no settings. */
@@ -286,6 +290,8 @@ export interface AiMeResponse {
   excel: boolean
   /** May have the assistant write notices (§23): an administrator by role now, given the assistant, the owner or allowed by the owner. */
   notices: boolean
+  /** May upload mill test certificates on the MTC tab: the owner, and people the owner allowed, the assistant on for them or not. */
+  mtc: boolean
 }
 
 // ---- Settings ----------------------------------------------------------------
@@ -295,9 +301,14 @@ export interface AiSettings {
   enabled: boolean
   /** USD per calendar month (UTC, as Anthropic bills); reached, the assistant stops until the 1st. */
   monthlyCapUsd: number
+  /** The model that reads mill test certificates (MTC) for everyone allowed to upload them. */
+  mtcModel: AiModelId
 }
 
-export const AI_DEFAULT_SETTINGS: AiSettings = { enabled: true, monthlyCapUsd: AI_DEFAULT_MONTHLY_CAP_USD }
+/** The model that reads certificates unless the owner chose another: accurate enough for printed tables, at half Opus's price. */
+export const AI_MTC_DEFAULT_MODEL: AiModelId = 'claude-sonnet-5-5'
+
+export const AI_DEFAULT_SETTINGS: AiSettings = { enabled: true, monthlyCapUsd: AI_DEFAULT_MONTHLY_CAP_USD, mtcModel: AI_MTC_DEFAULT_MODEL }
 
 /** The API key, as far as anyone may see it: whether there is one, where from, and its last four characters. */
 export interface AiKeyState {
@@ -794,12 +805,12 @@ export interface AiUsageResponse {
 export interface AiActivityItem {
   /** The question's turn id, or the summary's usage row (as text). Unique within its kind. */
   id: string
-  kind: 'question' | 'automation'
-  /** ISO time it was asked (or the summary written). */
+  kind: 'question' | 'automation' | 'mtc'
+  /** ISO time it was asked (or the summary written, or the certificate read). */
   at: string
   userId: string
   userName: string
-  /** The question as asked, or the automation's name. */
+  /** The question as asked, the automation's name, or the certificate's file name and what was read from it. */
   text: string
   costUsd: number
   /** The models that served it, in the order first used (a refusal's fallback adds one). */

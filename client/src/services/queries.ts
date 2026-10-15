@@ -1007,7 +1007,7 @@ export function useAiUsage(month: string, enabled: boolean) {
  * The owner's Activity: each question of a month (and each scheduled report's summary) with what it cost, newest
  * first; "Load more" is fetchNextPage. One person ('' for everyone) and one kind ('' for both) narrow it.
  */
-export function useAiActivity(month: string, userId: string, kind: '' | 'question' | 'automation', enabled: boolean) {
+export function useAiActivity(month: string, userId: string, kind: '' | 'question' | 'automation' | 'mtc', enabled: boolean) {
   return useInfiniteQuery({
     queryKey: keys.aiActivity(month, userId, kind),
     queryFn: ({ pageParam }) => api<AiActivityResponse>(`/ai/activity${qs({ month, userId, kind, before: pageParam })}`),

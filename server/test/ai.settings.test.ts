@@ -1,7 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import type { ApiErrorBody } from '@qc/shared/api'
-import { AI_DEFAULT_MONTHLY_CAP_USD, AI_MODEL, type AiSettingsResponse, type AiStatusResponse } from '@qc/shared/ai'
+import { AI_DEFAULT_MONTHLY_CAP_USD, AI_MODEL, AI_MTC_DEFAULT_MODEL, type AiSettingsResponse, type AiStatusResponse } from '@qc/shared/ai'
 import { TestApp, type Session } from './harness'
 import { resolveApiKey } from '../src/ai/credentials'
 import { runReadOnlyQuery } from '../src/ai/runQuery'
@@ -127,7 +127,7 @@ describe('§20 the API key', () => {
     expect(res.body.monthStart).toMatch(/^\d{4}-\d{2}-01T00:00:00\.000Z$/)
     const s = await settings(admin)
     expect(s.body.key).toEqual({ set: false, source: null })
-    expect(s.body.settings).toEqual({ enabled: true, monthlyCapUsd: AI_DEFAULT_MONTHLY_CAP_USD })
+    expect(s.body.settings).toEqual({ enabled: true, monthlyCapUsd: AI_DEFAULT_MONTHLY_CAP_USD, mtcModel: AI_MTC_DEFAULT_MODEL })
     const q = await ask()
     expect(q.status).toBe(503)
     expect(q.headers.get('content-type')).toMatch(/application\/json/)
@@ -240,12 +240,13 @@ describe('§20 the switch and the monthly cap', () => {
       { enabled: true, monthlyCapUsd: 12.345 },
       { enabled: 'yes', monthlyCapUsd: 10 },
       { enabled: true, monthlyCapUsd: 10, extra: 1 },
+      { enabled: true, monthlyCapUsd: 10, mtcModel: 'gpt-5' },
     ]) {
       expect((await app.api('PUT', '/api/ai/settings', { token: admin.token, body })).status, JSON.stringify(body)).toBe(400)
     }
     const res = await app.api<AiSettingsResponse>('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 12.3 } })
     expect(res.status).toBe(200)
-    expect(res.body.settings).toEqual({ enabled: true, monthlyCapUsd: 12.3 })
+    expect(res.body.settings).toEqual({ enabled: true, monthlyCapUsd: 12.3, mtcModel: AI_MTC_DEFAULT_MODEL })
     expect(res.body.updatedByName).toBe('Admin')
     expect(res.body.status.capUsd).toBe(12.3)
     const audit = await app.db.query<{ field: string; oldValue: string; newValue: string }>(

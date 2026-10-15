@@ -29,7 +29,7 @@ import {
 } from './access'
 import { STOP_TEXT } from './format'
 
-const me = (over: Partial<AiMeResponse>): AiMeResponse => ({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, ...over })
+const me = (over: Partial<AiMeResponse>): AiMeResponse => ({ granted: true, owner: false, available: true, automations: false, excel: false, notices: false, mtc: false, ...over })
 
 const row = (over: Partial<AiAccess>): AiAccess => ({
   userId: 'u1',
@@ -47,6 +47,7 @@ const row = (over: Partial<AiAccess>): AiAccess => ({
   automations: false,
   notices: false,
   excel: false,
+  mtc: false,
   ...over,
 })
 
@@ -148,7 +149,7 @@ describe('the owner’s draft of one person’s access', () => {
   })
 
   it('starts a newcomer narrow: on, the inspection record, Sonnet at medium effort, a small cap within the app’s, no automations', () => {
-    expect(newAccessDraft(50)).toEqual({ enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', cap: '10', automations: false, notices: false, excel: false })
+    expect(newAccessDraft(50)).toEqual({ enabled: true, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', cap: '10', automations: false, notices: false, excel: false, mtc: false })
     expect(newAccessDraft(4).cap).toBe('4')
     // Never a cap they could not ask with, even under a tiny app-wide cap (the drawer names that one).
     expect(newAccessDraft(0.1).cap).toBe('0.64')
@@ -179,7 +180,7 @@ describe('the owner’s draft of one person’s access', () => {
   })
 
   it('sends the draft as the server takes it, domains in order', () => {
-    expect(accessRequest({ enabled: false, domains: ['audit', 'inspection'], model: 'claude-haiku-5-5', effort: 'low', cap: '12.50', automations: true, notices: true, excel: true })).toEqual({
+    expect(accessRequest({ enabled: false, domains: ['audit', 'inspection'], model: 'claude-haiku-5-5', effort: 'low', cap: '12.50', automations: true, notices: true, excel: true, mtc: true })).toEqual({
       enabled: false,
       domains: ['inspection', 'audit'],
       model: 'claude-haiku-5-5',
@@ -188,7 +189,15 @@ describe('the owner’s draft of one person’s access', () => {
       automations: true,
       notices: true,
       excel: true,
+      mtc: true,
     })
+  })
+
+  it('reads the MTC permission back, the owner’s always on, and sends it', () => {
+    expect(draftFromAccess(row({ mtc: true })).mtc).toBe(true)
+    expect(draftFromAccess(row({})).mtc).toBe(false)
+    expect(draftFromAccess(row({ owner: true, mtc: false })).mtc).toBe(true)
+    expect(accessChanged(row({}), { ...draftFromAccess(row({})), mtc: true })).toBe(true)
   })
 
   it('reads the automations permission back, the owner’s always on', () => {

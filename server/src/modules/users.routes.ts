@@ -13,15 +13,11 @@ import { USER_COLUMNS, usernameSchema } from './auth.routes'
 
 const uuid = z.string().uuid()
 
-/** The MTC permission as the audit log reads it. */
-const MTC_UPLOAD_WORDS = { true: 'may upload MTC', false: 'may not upload MTC' } as const
-
 const createSchema = z.object({
   username: usernameSchema,
   password: z.string().min(MIN_PASSWORD_LENGTH).max(200),
   name: z.string().trim().min(1).max(120),
   role: z.enum(ROLES as unknown as [string, ...string[]]),
-  mtcUpload: z.boolean().optional(),
 })
 
 const updateSchema = z
@@ -30,8 +26,6 @@ const updateSchema = z
     name: z.string().trim().min(1).max(120).optional(),
     role: z.enum(ROLES as unknown as [string, ...string[]]).optional(),
     isActive: z.boolean().optional(),
-    /** May upload mill test certificates (MTC): a permission of its own, given person by person. */
-    mtcUpload: z.boolean().optional(),
     password: z.string().min(MIN_PASSWORD_LENGTH).max(200).optional(),
   })
   .refine((b) => Object.keys(b).length > 0, 'Nothing to update.')
@@ -60,8 +54,8 @@ export function usersRoutes(ctx: AppContext): Router {
       try {
         row = (
           await tx.query<UserProfile>(
-            `INSERT INTO users (username, name, role, password_hash, mtc_upload) VALUES ($1, $2, $3, $4, $5) RETURNING ${USER_COLUMNS}`,
-            [body.username, body.name, body.role, passwordHash, body.mtcUpload ?? false],
+            `INSERT INTO users (username, name, role, password_hash) VALUES ($1, $2, $3, $4) RETURNING ${USER_COLUMNS}`,
+            [body.username, body.name, body.role, passwordHash],
           )
         ).rows[0]
       } catch (e) {
@@ -69,9 +63,6 @@ export function usersRoutes(ctx: AppContext): Router {
         throw e
       }
       await auditCreate(tx, { userId: admin.id, userName: admin.name, entity: 'User', entityId: row.id })
-      if (row.mtcUpload) {
-        await auditChanges(tx, { userId: admin.id, userName: admin.name, entity: 'User', entityId: row.id }, { mtcUpload: '' }, { mtcUpload: MTC_UPLOAD_WORDS.true })
-      }
       return row
     })
     res.status(201).json(user)
@@ -108,11 +99,10 @@ export function usersRoutes(ctx: AppContext): Router {
                     name = COALESCE($3, name),
                     role = COALESCE($4, role),
                     is_active = COALESCE($5, is_active),
-                    password_hash = COALESCE($6, password_hash),
-                    mtc_upload = COALESCE($7, mtc_upload)
+                    password_hash = COALESCE($6, password_hash)
               WHERE id = $1
               RETURNING ${USER_COLUMNS}`,
-            [id, body.username ?? null, body.name ?? null, body.role ?? null, body.isActive ?? null, passwordHash, body.mtcUpload ?? null],
+            [id, body.username ?? null, body.name ?? null, body.role ?? null, body.isActive ?? null, passwordHash],
           )
         ).rows[0]
       } catch (e) {
@@ -127,8 +117,8 @@ export function usersRoutes(ctx: AppContext): Router {
       await auditChanges(
         tx,
         ctxAudit,
-        { username: before.username, name: before.name, role: before.role, isActive: before.isActive, mtcUpload: MTC_UPLOAD_WORDS[String(!!before.mtcUpload) as 'true' | 'false'] },
-        { username: after.username, name: after.name, role: after.role, isActive: after.isActive, mtcUpload: MTC_UPLOAD_WORDS[String(!!after.mtcUpload) as 'true' | 'false'] },
+        { username: before.username, name: before.name, role: before.role, isActive: before.isActive },
+        { username: after.username, name: after.name, role: after.role, isActive: after.isActive },
       )
       if (passwordHash) {
         await auditChanges(tx, ctxAudit, { password: '' }, { password: '(reset by administrator)' })

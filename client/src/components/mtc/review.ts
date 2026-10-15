@@ -1,42 +1,42 @@
 // ============================================================================
-// MTC review — the rows Claude read, as the person edits them, and what each
-// would do on Save. Pure: the screen renders it, the tests check it.
+// MTC review — the items Claude read, as the person edits them, and what each
+// would do on Save. Pure, and the same for every register (coils, welding
+// wire, mesh wire): the register's description says which fields there are
+// and which of them identify an item.
 //
-// Each row is compared with the register by its coil number (case ignored):
+// Each row is compared with the register by its key (text with case ignored):
 //   new        not registered: it is added.
 //   same       registered with these very values: left alone.
 //   different  registered with other values: left alone unless the person
 //              ticks Overwrite (then the certificate's values replace the
 //              register's, a blank keeping the register's).
 //   removed    registered and since removed: Overwrite brings it back.
-//   duplicate  the number appears twice in the review: one must go.
-// A row with a blocking problem (no number, a bad measurement) stops the save.
+//   duplicate  the key appears twice in the review: one must go.
+// A row with a blocking problem (no identifier, a bad measurement) stops the save.
 // ============================================================================
 
 import {
-  MTC_COIL_FIELDS,
   cleanMtcNumber,
   cleanMtcText,
   mtcChangedFields,
-  mtcCoilKey,
-  mtcCoilOf,
   mtcDuplicateKeys,
+  mtcKeyOf,
   mtcRowProblems,
-  type MtcCoil,
-  type MtcCoilField,
-  type MtcExtractedCoil,
+  type MtcExtractedRow,
   type MtcProblem,
+  type MtcRegister,
+  type MtcRegisterRow,
   type MtcSaveRow,
+  type MtcValues,
 } from '@qc/shared/mtc'
-import type { Coil } from '@qc/shared/types'
 
 /** A row as its inputs hold it: every field as typed. */
 export interface ReviewRow {
   /** Stable across edits, for React. */
   id: string
-  values: Record<MtcCoilField, string>
+  values: Record<string, string>
   /** Fields Claude was unsure of; a field the person edits is no longer marked. */
-  uncertain: MtcCoilField[]
+  uncertain: string[]
   page?: number
   overwrite: boolean
 }
@@ -45,12 +45,12 @@ export type ReviewStatus = 'new' | 'same' | 'different' | 'removed' | 'duplicate
 
 export interface ReviewedRow {
   row: ReviewRow
-  coil: MtcCoil
+  values: MtcValues
   status: ReviewStatus
-  /** The register's coil with this number, when there is one. */
-  existing?: MtcCoil
+  /** The register's item with this key, when there is one. */
+  existing?: MtcValues
   /** The fields an overwrite would change. */
-  changed: MtcCoilField[]
+  changed: string[]
   problems: MtcProblem[]
 }
 
@@ -60,61 +60,55 @@ const nextId = () => `mtc-row-${++seq}`
 const show = (v: string | number | undefined): string => (v === undefined ? '' : String(v))
 
 /** The review's rows from what Claude read. */
-export function toReviewRows(coils: readonly MtcExtractedCoil[]): ReviewRow[] {
-  return coils.map((c) => ({
+export function toReviewRows(register: MtcRegister, read: readonly MtcExtractedRow[]): ReviewRow[] {
+  return read.map((r) => ({
     id: nextId(),
-    values: Object.fromEntries(MTC_COIL_FIELDS.map((f) => [f, show(c[f])])) as Record<MtcCoilField, string>,
-    uncertain: [...c.uncertain],
-    page: c.page,
+    values: Object.fromEntries(register.fields.map((f) => [f.key, show(r.values[f.key])])),
+    uncertain: [...r.uncertain],
+    page: r.page,
     overwrite: false,
   }))
 }
 
-/** An empty row, for a coil Claude missed. */
-export function blankReviewRow(): ReviewRow {
-  return { id: nextId(), values: Object.fromEntries(MTC_COIL_FIELDS.map((f) => [f, ''])) as Record<MtcCoilField, string>, uncertain: [], overwrite: false }
+/** An empty row, for an item Claude missed. */
+export function blankReviewRow(register: MtcRegister): ReviewRow {
+  return { id: nextId(), values: Object.fromEntries(register.fields.map((f) => [f.key, ''])), uncertain: [], overwrite: false }
 }
 
 /** The row's field edited: the mark of doubt goes, the person has looked. */
-export function editReviewRow(row: ReviewRow, field: MtcCoilField, value: string): ReviewRow {
+export function editReviewRow(row: ReviewRow, field: string, value: string): ReviewRow {
   return { ...row, values: { ...row.values, [field]: value }, uncertain: row.uncertain.filter((f) => f !== field) }
 }
 
-const NUMBER_FIELDS = new Set<MtcCoilField>(['thickness', 'width', 'yield'])
-
-/** A typed measurement that is not one: kept as NaN so the checks block it rather than dropping it silently. */
-function typedNumber(v: string): number | undefined {
-  if (v.trim() === '') return undefined
-  return cleanMtcNumber(v) ?? Number.NaN
-}
-
-/** The coil a row describes, as it would be saved. */
-export function coilOfRow(row: ReviewRow): MtcCoil {
-  const coil: MtcCoil = { coilNumber: cleanMtcText(row.values.coilNumber) ?? '' }
-  for (const f of MTC_COIL_FIELDS) {
-    if (f === 'coilNumber') continue
-    const raw = row.values[f]
-    const v = NUMBER_FIELDS.has(f) ? typedNumber(raw) : cleanMtcText(raw)
-    if (v !== undefined) (coil as unknown as Record<string, unknown>)[f] = v
+/** The item a row describes, as it would be saved. A typed measurement that is not one is kept as NaN, so the checks block it rather than drop it. */
+export function valuesOfRow(register: MtcRegister, row: ReviewRow): MtcValues {
+  const out: MtcValues = {}
+  for (const f of register.fields) {
+    const raw = row.values[f.key] ?? ''
+    if (f.type === 'number') {
+      if (raw.trim() !== '') out[f.key] = cleanMtcNumber(raw) ?? Number.NaN
+    } else {
+      const v = cleanMtcText(raw)
+      if (v !== undefined) out[f.key] = v
+    }
   }
-  return coil
+  return out
 }
 
 /** Every row judged against the register and the rest of the review. */
-export function reviewRows(rows: readonly ReviewRow[], existing: readonly Coil[]): ReviewedRow[] {
-  const registered = new Map(existing.map((c) => [mtcCoilKey(c.coilNumber), c]))
-  const coils = rows.map(coilOfRow)
-  const dup = mtcDuplicateKeys(coils)
+export function reviewRows(register: MtcRegister, rows: readonly ReviewRow[], existing: readonly MtcRegisterRow[]): ReviewedRow[] {
+  const registered = new Map(existing.map((e) => [mtcKeyOf(register, e.values), e]))
+  const all = rows.map((r) => valuesOfRow(register, r))
+  const dup = mtcDuplicateKeys(register, all)
   return rows.map((row, i) => {
-    const coil = coils[i]
-    const key = mtcCoilKey(coil.coilNumber)
+    const values = all[i]
+    const key = mtcKeyOf(register, values)
     const found = key ? registered.get(key) : undefined
-    const current = found ? mtcCoilOf(found) : undefined
-    const changed = current ? mtcChangedFields(current, coil) : []
+    const changed = found ? mtcChangedFields(register, found.values, values) : []
     const status: ReviewStatus = dup.has(key) ? 'duplicate' : !found ? 'new' : found.deletedAt ? 'removed' : changed.length === 0 ? 'same' : 'different'
-    const problems = mtcRowProblems(coil)
-    if (status === 'duplicate') problems.unshift({ field: 'coilNumber', message: 'This coil number is listed more than once. Keep one row.', blocking: true })
-    return { row, coil, status, existing: current, changed, problems }
+    const problems = mtcRowProblems(register, values)
+    if (status === 'duplicate') problems.unshift({ field: register.fields[0].key, message: `Listed more than once. Keep one row.`, blocking: true })
+    return { row, values, status, existing: found?.values, changed, problems }
   })
 }
 
@@ -124,7 +118,7 @@ export interface ReviewSummary {
   overwritten: number
   /** Registered and not overwritten, or registered with the same values. */
   kept: number
-  /** Registered with other values: each waits for the person's choice. */
+  /** Registered with other values (or removed): each waits for the person's choice. */
   different: number
   blocking: number
   warnings: number
@@ -148,7 +142,7 @@ export function summarise(reviewed: readonly ReviewedRow[]): ReviewSummary {
   return s
 }
 
-/** The rows sent to the API: the coils to add or overwrite, with the choice made for each. Unchanged ones need no trip. */
+/** The rows sent to the API: the items to add or overwrite, with the choice made for each. Unchanged ones need no trip. */
 export function saveRows(reviewed: readonly ReviewedRow[]): MtcSaveRow[] {
-  return reviewed.filter((r) => r.status !== 'same').map((r) => ({ ...r.coil, overwrite: r.status === 'new' ? false : r.row.overwrite }))
+  return reviewed.filter((r) => r.status !== 'same').map((r) => ({ values: r.values, overwrite: r.status === 'new' ? false : r.row.overwrite }))
 }

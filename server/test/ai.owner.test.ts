@@ -45,7 +45,7 @@ describe('§20 pinning the owner', () => {
     const owner = await createUser('mo.beda', 'Mohamed Beda')
     const mo = await app.login('mo.beda')
     const me = await app.api<AiMeResponse>('GET', '/api/ai/me', { token: admin.token })
-    expect(me.body).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false })
+    expect(me.body).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false, mtc: false })
     expect(await ownerRow()).toBe(owner)
     expect((await app.api<AiMeResponse>('GET', '/api/ai/me', { token: mo.token })).body).toMatchObject({ granted: true, owner: true })
   })
@@ -97,6 +97,7 @@ describe('§20 pinning the owner', () => {
         automations: false,
         excel: false,
         notices: false,
+        mtc: false,
       })
       // Another setting names another account: still the first.
       expect(await aiOwner(app.db, config('admin'))).toBe(owner)

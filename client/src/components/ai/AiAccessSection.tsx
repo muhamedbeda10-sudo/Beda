@@ -13,7 +13,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { BellRing, FileSpreadsheet, Loader2, Pencil, Save, Trash2, UserPlus, UsersRound, Zap } from 'lucide-react'
+import { BellRing, FileCheck2, FileSpreadsheet, Loader2, Pencil, Save, Trash2, UserPlus, UsersRound, Zap } from 'lucide-react'
 import { AI_DOMAINS, AI_EFFORTS, AI_MAX_MONTHLY_CAP_USD, AI_MODELS, type AiAccess } from '@qc/shared/ai'
 import { AI_EXCEL_KEEP_DAYS } from '@qc/shared/aiExcel'
 import { Badge, Button, Card, Drawer, Field, Input, Modal, Select, type BadgeTone } from '@/components/ui'
@@ -58,6 +58,8 @@ import { formatCap, formatUsd, spendBarClass, spendShare } from './format'
 
 /** What the Excel permission lets someone do, in a line. */
 const EXCEL_TIP = 'May ask the assistant for Excel files of the data they may ask about'
+/** What the MTC permission lets someone do, in a line. */
+const MTC_TIP = 'May upload mill test certificates on the MTC tab, the assistant on for them or not'
 
 /** The same tones as the Users page: administrators stand out, supervisors a little. */
 const ROLE_TONE: Record<string, BadgeTone> = { viewer: 'neutral', inspector: 'neutral', supervisor: 'blue', admin: 'violet' }
@@ -143,7 +145,7 @@ export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; 
   }
   return (
     <ScrollX className="rounded-2xl ring-1 ring-slate-200 dark:ring-slate-800" innerClassName="rounded-2xl" shadows="start">
-      <table className="table-sticky-last w-full min-w-[58rem] text-sm xl:min-w-[72rem]">
+      <table className="table-sticky-last w-full min-w-[64rem] text-sm xl:min-w-[78rem]">
         <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted dark:bg-slate-800/60">
           <tr>
             <th className={th}>Person</th>
@@ -152,6 +154,7 @@ export function AccessTable({ people, onEdit, onRemove }: { people: AiAccess[]; 
             <th className={th}>Automations</th>
             <th className={th}>Notices</th>
             <th className={th}>Excel</th>
+            <th className={th}>MTC</th>
             <th className={th}>Data</th>
             <th className={cn(th, 'hidden xl:table-cell')}>Model</th>
             <th className={cn(th, 'hidden xl:table-cell')}>Effort</th>
@@ -249,6 +252,11 @@ function AccessCard({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => vo
             Excel
           </Badge>
         )}
+        {(row.owner || row.mtc) && (
+          <Badge tone="blue" icon={<FileCheck2 className="h-3 w-3" />}>
+            MTC
+          </Badge>
+        )}
       </div>
       <div className="mt-2">
         <DomainBadges domains={domains} />
@@ -321,6 +329,15 @@ function AccessRow({ row, onEdit, onRemove }: { row: AiAccess; onEdit: () => voi
         {row.owner || row.excel ? (
           <Badge tone="blue" icon={<FileSpreadsheet className="h-3 w-3" />} tip={row.owner ? 'You always can, as the assistant’s owner' : EXCEL_TIP}>
             Can have made
+          </Badge>
+        ) : (
+          <span className="text-xs text-muted">No</span>
+        )}
+      </td>
+      <td className="px-3 py-2.5">
+        {row.owner || row.mtc ? (
+          <Badge tone="blue" icon={<FileCheck2 className="h-3 w-3" />} tip={row.owner ? 'You always can, as the assistant’s owner' : MTC_TIP}>
+            Can upload
           </Badge>
         ) : (
           <span className="text-xs text-muted">No</span>
@@ -541,6 +558,20 @@ function AccessEditor({ editing, appCapUsd, onClose }: { editing: Editing; appCa
             </p>
           </div>
           <AiSwitch on={draft.excel} onChange={(on) => patch({ excel: on })} labelledBy="ai-access-excel" disabled={saving || !!row?.owner} />
+        </label>
+
+        <label className={SWITCH_ROW}>
+          <div className="min-w-0">
+            <p id="ai-access-mtc" className="font-semibold">
+              Can upload MTC certificates
+            </p>
+            <p className="mt-0.5 text-xs text-muted">
+              {row?.owner
+                ? 'You always can, as the assistant’s owner.'
+                : 'They may upload mill test certificates on the MTC tab, and save the coils and wire read from them after checking them. Whether or not the assistant is on for them: with it off they never see the chat. Each reading counts toward their monthly cap and shows in Activity with its cost. Off: they can no longer upload or save.'}
+            </p>
+          </div>
+          <AiSwitch on={draft.mtc} onChange={(on) => patch({ mtc: on })} labelledBy="ai-access-mtc" disabled={saving || !!row?.owner} />
         </label>
 
         <label className={cn(SWITCH_ROW, !admin && 'bg-slate-50/70 dark:bg-slate-800/30')}>

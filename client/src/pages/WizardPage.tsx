@@ -32,7 +32,8 @@ import { WorkInstructionLinks } from '@/components/documents/WorkInstructionLink
 import { WorkInstructionViewer } from '@/components/documents/WorkInstructionViewer'
 import { EdgeShadows, useScrollEdges } from '@/components/ui/ScrollX'
 import { UndoStrip, insertAt, useUndo } from '@/components/inspection/UndoStrip'
-import { useSampleDetail, useWizardContext, useWizardPreview } from '@/services/queries'
+import { useDebounced, useSampleDetail, useWizardContext, useWizardPreview } from '@/services/queries'
+import { useWeldingWireSuggestions } from '@/services/mtc'
 import { discardSession, matchNotices, reRecordSample, saveSample, startSessionWithSample } from '@/services/mutations'
 import { NoticeGate } from '@/components/notices/NoticeGate'
 import type { NoticeForUser } from '@qc/shared/types'
@@ -1154,6 +1155,9 @@ function SetupStep({
   }
   const connectorMissing = !draft.pt?.connectorCoilNumber?.trim()
   const connectorBad = connectorRefused && connectorMissing
+  // The welding wire register's batches (MTC tab) suggested as the batch is typed; any batch may still be typed by hand.
+  const wireSearch = useDebounced((draft.pt?.weldingWireBatch ?? '').trim(), 250)
+  const { data: wireSuggestions } = useWeldingWireSuggestions(wireSearch, draft.process === 'welding')
   // A refused save lands here for the connector coil number: the cursor goes to it, centred clear of the Back / Next
   // bar. On the next frame, as the wizard first brings a newly opened step's card to the top of the page.
   const connectorRef = useRef<HTMLInputElement>(null)
@@ -1257,7 +1261,16 @@ function SetupStep({
                 className="min-h-[48px] pl-9"
                 placeholder="e.g. WW-24-0388"
                 autoCapitalize="characters"
+                list="wizard-welding-wires"
+                autoComplete="off"
               />
+              <datalist id="wizard-welding-wires">
+                {(wireSuggestions?.rows ?? []).map((w) => (
+                  <option key={w.id} value={String(w.values.batchNumber ?? '')}>
+                    {[w.values.classification, w.values.diameter !== undefined ? `Ø${w.values.diameter}` : undefined, w.values.supplier].filter(Boolean).join(' · ')}
+                  </option>
+                ))}
+              </datalist>
             </div>
           </Field>
           <div className="mt-3">

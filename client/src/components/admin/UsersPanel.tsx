@@ -54,12 +54,11 @@ export function UsersPanel() {
   const [removing, setRemoving] = useState<UserProfile | null>(null)
   /** Deactivating signs the person out everywhere: asked first, as Remove is. Bringing an account back is not. */
   const [deactivating, setDeactivating] = useState<UserProfile | null>(null)
-  const [editDraft, setEditDraft] = useState<{ username: string; name: string; role: Role; password: string; mtcUpload: boolean }>({
+  const [editDraft, setEditDraft] = useState<{ username: string; name: string; role: Role; password: string }>({
     username: '',
     name: '',
     role: 'inspector',
     password: '',
-    mtcUpload: false,
   })
   const [busy, setBusy] = useState(false)
   // On a phone each account is a card; from 640 px the table, its Actions column kept in view while the rest scrolls.
@@ -107,7 +106,6 @@ export function UsersPanel() {
         name: editDraft.name.trim(),
         role: editDraft.role,
         password: editDraft.password || undefined,
-        mtcUpload: editDraft.mtcUpload !== !!editing.mtcUpload ? editDraft.mtcUpload : undefined,
       })
       toast('Account updated.', 'success')
       setEditing(null)
@@ -147,7 +145,7 @@ export function UsersPanel() {
 
   const openEdit = (u: UserProfile) => {
     setEditing(u)
-    setEditDraft({ username: u.username, name: u.name, role: u.role, password: '', mtcUpload: !!u.mtcUpload })
+    setEditDraft({ username: u.username, name: u.name, role: u.role, password: '' })
   }
 
   /** Edit, then Deactivate or Reactivate in words, then Remove; a person's own account offers Edit alone. */
@@ -201,7 +199,6 @@ export function UsersPanel() {
                 </button>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <Badge tone={ROLE_TONE[u.role]}>{u.role}</Badge>
-                  {u.mtcUpload && <Badge tone="blue">MTC</Badge>}
                   <Badge tone={u.isActive ? 'green' : 'red'}>{u.isActive ? 'Active' : 'Deactivated'}</Badge>
                   <span className="ml-auto flex items-center gap-0.5">{actions(u)}</span>
                 </div>
@@ -235,14 +232,7 @@ export function UsersPanel() {
                     </td>
                     <td className="px-3 py-2.5 font-mono text-[13px]">{u.username}</td>
                     <td className="px-3 py-2.5">
-                      <span className="inline-flex flex-wrap items-center gap-1.5">
-                        <Badge tone={ROLE_TONE[u.role]}>{u.role}</Badge>
-                        {u.mtcUpload && (
-                          <span data-tip="May upload mill test certificates">
-                            <Badge tone="blue">MTC</Badge>
-                          </span>
-                        )}
-                      </span>
+                      <Badge tone={ROLE_TONE[u.role]}>{u.role}</Badge>
                     </td>
                     <td className="px-3 py-2.5">
                       <Badge tone={u.isActive ? 'green' : 'red'}>{u.isActive ? 'Active' : 'Deactivated'}</Badge>
@@ -357,21 +347,6 @@ export function UsersPanel() {
                 ))}
               </Select>
             </Field>
-            <label className="flex min-h-[48px] cursor-pointer items-start gap-3 rounded-xl px-1 py-2">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-5 w-5 shrink-0"
-                checked={editDraft.mtcUpload}
-                onChange={(e) => setEditDraft({ ...editDraft, mtcUpload: e.target.checked })}
-              />
-              <span>
-                <span className="block text-sm font-semibold">May upload MTC certificates</span>
-                <span className="block text-xs text-muted">
-                  Uploads mill test certificates on the MTC tab and saves the coils read from them. Whatever the role; it gives no access to the AI
-                  assistant.
-                </span>
-              </span>
-            </label>
             <Field label="Reset password" hint="Leave empty to keep the current password. Setting one signs the person out everywhere.">
               <div className="relative">
                 <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />

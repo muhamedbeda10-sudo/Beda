@@ -277,6 +277,8 @@ export interface UsageRecord {
   turnId: string | null
   /** §21 — the automation whose report the call summarised. */
   automationId?: string | null
+  /** MTC — the certificate reading the call was (mtc_readings). */
+  mtcReadingId?: string | null
   model: string
   tokens: AiTokenUsage
   costUsd: number
@@ -308,8 +310,8 @@ export async function personalMonthSpend(q: Queryable, userId: string): Promise<
 export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
   await q.query(
     `INSERT INTO ai_usage (user_id, conversation_id, turn_id, model, input_tokens, output_tokens, cache_write_5m_tokens,
-                           cache_write_1h_tokens, cache_read_tokens, cost_usd, request_id, partial, automation_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+                           cache_write_1h_tokens, cache_read_tokens, cost_usd, request_id, partial, automation_id, mtc_reading_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
     [
       u.userId,
       u.conversationId,
@@ -324,6 +326,7 @@ export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
       u.requestId ?? null,
       u.partial ?? false,
       u.automationId ?? null,
+      u.mtcReadingId ?? null,
     ],
   )
 }

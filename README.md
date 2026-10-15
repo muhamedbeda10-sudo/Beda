@@ -72,14 +72,20 @@ The **first account created becomes the admin**. Afterwards, set
 - **History** — the latest sessions → samples → the full record, with audited
   corrections and optimistic concurrency (a stale edit is rejected).
 - **Coil search** — coil → sample → order → customer traceability.
-- **MTC** (last tab, everyone) — the coil register as a table: search, supplier
-  and SM type filters, newest first. **Upload MTC** (a per-person permission,
-  set under Users; no AI-assistant access needed): Claude reads the mill test
-  certificate PDF on the server and lists every coil with the register's eight
-  fields; the person reviews and corrects each row (doubtful values marked),
-  chooses per registered coil whether to overwrite it, and saves in one
-  audited transaction. The PDF is never stored; the certificate number goes
-  into the coil's notes. Reading counts toward the AI assistant's monthly cap.
+- **MTC** (last tab, everyone) — the material registers as tables: **Coils**,
+  **Welding wire** (by batch) and **Mesh wire** (by cast + diameter); search,
+  supplier and type filters, newest first. **Upload MTC**: Claude reads the
+  supplier's certificate PDF on the server, tells which register it belongs to
+  and lists every item with that register's fields; the person reviews and
+  corrects each row (doubtful values marked), chooses per registered item
+  whether to overwrite it, and saves in one audited transaction. The PDF is
+  never stored; the certificate number goes into the notes. Who may upload is
+  set by the AI assistant's owner per person (AI settings → Who can use it →
+  "Can upload MTC certificates"; the assistant may be off for them). Each
+  reading is logged with its cost in the owner's Activity and counts toward
+  the assistant's and the person's monthly caps, on the model the owner sets
+  for certificates (Sonnet by default). The PT step suggests registered
+  welding wire batches.
 - **PDI documents** — pre-delivery photos attached to an order.
 - **Installable** — a Progressive Web App: "Install" on Android and desktop
   Chrome/Edge, "Add to Home Screen" from Safari's share sheet on iPhone and
@@ -168,7 +174,7 @@ API on start (or by `npm run db:migrate`). Migrations are forward-only; add a
 new numbered file rather than editing an applied one.
 
 Main tables: `users`, `auth_sessions`, `machines`, `production_orders`,
-`coils`, `item_dimension_order`,
+`coils`, `welding_wires`, `mesh_wires`, `mtc_readings`, `item_dimension_order`,
 `item_reference_images`, `work_center_defects`, `grade_mappings`,
 `pt_consumables`, `images`, `inspection_sessions`, `inspection_samples`,
 `dimension_results`, `defect_results`, `sample_coils`, `paint_samples`,
@@ -265,8 +271,8 @@ in `shared/src/api.ts`.
 | Users    | `GET/POST /users` `PATCH /users/:id` (admin)                                                 |
 | Master   | `GET/POST /master/:kind` `PUT/DELETE /master/:kind/:id` `POST /master/{item-dimension-order,machines,work-center-defects}/{import,existing-keys}` |
 | Orders   | `GET /orders?search=&machine=&orderNumber=` `GET /orders/numbers?machine=` `GET /orders/:id` `GET /orders/:id/history` `POST /orders/import` `POST /orders/existing-keys` |
-| Coils    | `GET /coils?search=` `GET /coils/usage` `POST /coils/import` `GET /coils/table` `GET /coils/table/options` |
-| MTC      | `POST /mtc/extract` (multipart PDF → SSE) `POST /mtc/existing` `POST /mtc/save` (per-person MTC permission) |
+| Coils    | `GET /coils?search=` `GET /coils/usage` `POST /coils/import`                                |
+| MTC      | `POST /mtc/extract` (multipart PDF → SSE) `GET /mtc/:kind/table` `GET /mtc/:kind/options` `POST /mtc/:kind/existing` `POST /mtc/:kind/save` (`kind`: coils, welding-wire, mesh-wire; reading and saving need the MTC permission, `ai_access.mtc`) |
 | Production record | `POST /production-records/import` `POST /production-records/existing-keys` `DELETE /production-records` `GET /production-records/summary` (admin) |
 | Sessions | `GET /sessions/open` `GET /sessions/history` `POST /sessions` `GET /sessions/:id/wizard` `POST /sessions/:id/close` `DELETE /sessions/:id` `POST /sessions/:id/samples` |
 | Samples  | `GET /samples/:id` `PATCH /samples/dimensions/:id` `PATCH /samples/defects/:id`             |

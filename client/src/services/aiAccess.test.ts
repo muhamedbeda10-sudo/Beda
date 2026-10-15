@@ -31,6 +31,7 @@ const access = (userId: string, over: Partial<AiAccess> = {}): AiAccess => ({
   automations: false,
   notices: false,
   excel: false,
+  mtc: false,
   ...over,
 })
 

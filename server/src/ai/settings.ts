@@ -11,6 +11,7 @@ import {
   AI_DEFAULT_SETTINGS,
   AI_MAX_MONTHLY_CAP_USD,
   AI_MODEL,
+  isAiModel,
   type AiKeyState,
   type AiSettings,
   type AiStatusResponse,
@@ -42,6 +43,9 @@ export async function loadAiSettings(q: Queryable): Promise<StoredAiSettings> {
     if (typeof row.value.enabled === 'boolean') settings.enabled = row.value.enabled
     const cap = row.value.monthlyCapUsd
     if (typeof cap === 'number' && Number.isFinite(cap) && cap >= 0 && cap <= AI_MAX_MONTHLY_CAP_USD) settings.monthlyCapUsd = cap
+    // A model no longer offered reads as the default, never as something unchecked.
+    const mtcModel: unknown = row.value.mtcModel
+    if (typeof mtcModel === 'string' && isAiModel(mtcModel)) settings.mtcModel = mtcModel
   }
   return { settings, updatedAt: row?.updatedAt ?? undefined, updatedByName: row?.updatedByName ?? undefined }
 }

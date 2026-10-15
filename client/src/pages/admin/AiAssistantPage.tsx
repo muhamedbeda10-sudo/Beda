@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Activity, Bot, ChevronDown, Coins, Eye, EyeOff, Hash, KeyRound, Loader2, MessageSquareText, Save, SlidersHorizontal, Trash2, Zap } from 'lucide-react'
-import { AI_MAX_MONTHLY_CAP_USD, type AiKeyState, type AiSettingsResponse, type AiStatusResponse, type AiUsageResponse } from '@qc/shared/ai'
+import { AI_MAX_MONTHLY_CAP_USD, AI_MODELS, isAiModel, type AiKeyState, type AiModelId, type AiSettingsResponse, type AiStatusResponse, type AiUsageResponse } from '@qc/shared/ai'
 import { CAP_RANGE_TEXT, parseCapUsd } from '@/components/ai/access'
 import { AiAccessSection } from '@/components/ai/AiAccessSection'
 import { AiActivitySection } from '@/components/ai/AiActivitySection'
@@ -22,7 +22,7 @@ import { AiSlowQueriesSection } from '@/components/ai/AiSlowQueriesSection'
 import { Notice, UnavailableNotice } from '@/components/ai/AiNotice'
 import { AiSwitch } from '@/components/ai/AiSwitch'
 import { formatCap, formatMonth, formatTokens, formatUsd, formatUtcDay, spendBarClass, spendShare, utcMonth } from '@/components/ai/format'
-import { Badge, Button, Card, Field, Input, Modal, Stat } from '@/components/ui'
+import { Badge, Button, Card, Field, Input, Modal, Select, Stat } from '@/components/ui'
 import { Segmented } from '@/components/ui/PageShell'
 import { ApiError } from '@/lib/api'
 import { cn, formatDateTime } from '@/lib/utils'
@@ -377,18 +377,21 @@ function SettingsCard({ data }: { data: AiSettingsResponse }) {
   const { toast } = useApp()
   const [enabled, setEnabled] = useState(data.settings.enabled)
   const [cap, setCap] = useState(String(data.settings.monthlyCapUsd))
+  const [mtcModel, setMtcModel] = useState<AiModelId>(data.settings.mtcModel)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // The server's values replace the draft only when they change, not on every refetch.
   const serverEnabled = data.settings.enabled
   const serverCap = data.settings.monthlyCapUsd
+  const serverMtcModel = data.settings.mtcModel
   useEffect(() => {
     setEnabled(serverEnabled)
     setCap(String(serverCap))
-  }, [serverEnabled, serverCap])
+    setMtcModel(serverMtcModel)
+  }, [serverEnabled, serverCap, serverMtcModel])
 
-  const dirty = enabled !== serverEnabled || cap.trim() !== String(serverCap)
+  const dirty = enabled !== serverEnabled || cap.trim() !== String(serverCap) || mtcModel !== serverMtcModel
 
   const save = async () => {
     const n = parseCapUsd(cap)
@@ -399,7 +402,7 @@ function SettingsCard({ data }: { data: AiSettingsResponse }) {
     setError(null)
     setSaving(true)
     try {
-      await saveAiSettings(qc, { enabled, monthlyCapUsd: n })
+      await saveAiSettings(qc, { enabled, monthlyCapUsd: n, mtcModel })
       toast('Settings saved. The change is in the audit log.', 'success')
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Could not save the settings.')
@@ -458,7 +461,27 @@ function SettingsCard({ data }: { data: AiSettingsResponse }) {
         />
       </Field>
 
-      {/* Saved together, under what is saved: the switch and the cap are one change in the audit log. */}
+      <Field
+        label="Model for reading certificates (MTC)"
+        hint="Reads every mill test certificate uploaded on the MTC tab, for everyone allowed to upload. A stronger model reads scanned or dense tables better and costs more per certificate; its cost counts in the cap above."
+      >
+        <Select
+          className="min-h-[44px] max-w-[22rem]"
+          value={mtcModel}
+          disabled={saving}
+          onChange={(e) => {
+            if (isAiModel(e.target.value)) setMtcModel(e.target.value)
+          }}
+        >
+          {AI_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+
+      {/* Saved together, under what is saved: the switch, the cap and the certificates' model are one change in the audit log. */}
       <div className="flex justify-end border-t border-slate-100 pt-4 dark:border-slate-800">
         <Button variant="primary" className="min-h-[44px]" onClick={() => void save()} disabled={saving || !dirty}>
           <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save'}

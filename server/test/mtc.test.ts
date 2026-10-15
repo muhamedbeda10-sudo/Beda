@@ -1,14 +1,17 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
 import type Anthropic from '@anthropic-ai/sdk'
 import type { ApiErrorBody } from '@qc/shared/api'
-import type { Coil, UserProfile } from '@qc/shared/types'
-import { MTC_MODEL, type CoilTableOptionsResponse, type CoilTableResponse, type MtcExistingResponse, type MtcSaveResponse, type MtcStreamEvent } from '@qc/shared/mtc'
+import { AI_MTC_DEFAULT_MODEL, type AiActivityResponse, type AiMeResponse } from '@qc/shared/ai'
+import type { MtcExistingResponse, MtcKind, MtcSaveResponse, MtcStreamEvent, MtcTableOptionsResponse, MtcTableResponse } from '@qc/shared/mtc'
 import { TestApp, type Session } from './harness'
 import { apiError, text } from './aiFake'
 
-// MTC — a mill test certificate read into the coil register: allowed person
-// by person, read by Claude with the company's key (no access to the
-// assistant needed), never stored, reviewed, then saved with an audit trail.
+// MTC — suppliers' certificates read into the material registers (coils,
+// welding wire, mesh wire): allowed person by person by the AI assistant's
+// owner with the rest of their AI settings (the assistant itself may be off
+// for them), read by Claude with the company's key on the model the owner
+// chose, never stored, reviewed, then saved with an audit trail; every
+// reading's cost in the owner's Activity.
 
 const app = new TestApp()
 let admin: Session
@@ -18,32 +21,21 @@ let viewer: Session
 const KEY = `sk-ant-api03-${'m_7-'.repeat(20)}MtCk`
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n')
 
-interface ReplyCoil {
-  coilNumber: string
-  grade?: string | null
-  smType?: string | null
-  supplier?: string | null
-  thickness?: number | null
-  width?: number | null
-  yield?: number | null
-  certificateNumber?: string | null
-  page?: number
-  uncertain?: string[]
-}
-const coilOf = (c: ReplyCoil) => ({
-  grade: null,
-  smType: null,
-  supplier: null,
-  thickness: null,
-  width: null,
-  yield: null,
-  certificateNumber: null,
-  page: 1,
-  uncertain: [],
-  ...c,
-})
-const reply = (coils: ReplyCoil[], extra: { documentKind?: string; problem?: string | null } = {}) =>
-  text(JSON.stringify({ documentKind: extra.documentKind ?? 'coil-certificate', problem: extra.problem ?? null, coils: coils.map(coilOf) }))
+const COIL = { grade: null, smType: null, supplier: null, thickness: null, width: null, yield: null, certificateNumber: null, page: 1, uncertain: [] }
+const WELD = { classification: null, wireType: null, diameter: null, supplier: null, weightKg: null, yield: null, tensile: null, certificateNumber: null, page: 1, uncertain: [] }
+const MESH = { product: null, grade: null, supplier: null, tensile: null, certificateNumber: null, page: 1, uncertain: [] }
+
+type Item = Record<string, unknown>
+const reply = (kind: MtcKind | 'other', items: Item[] = [], problem: string | null = null) =>
+  text(
+    JSON.stringify({
+      documentKind: kind,
+      problem,
+      coils: kind === 'coils' ? items.map((i) => ({ ...COIL, ...i })) : [],
+      weldingWires: kind === 'welding-wire' ? items.map((i) => ({ ...WELD, ...i })) : [],
+      meshWires: kind === 'mesh-wire' ? items.map((i) => ({ ...MESH, ...i })) : [],
+    }),
+  )
 
 async function extract(bytes: Buffer, name: string, as: Session = uploader) {
   const form = new FormData()
@@ -59,14 +51,27 @@ async function extract(bytes: Buffer, name: string, as: Session = uploader) {
   return { res, events, result: events.find((e): e is Extract<MtcStreamEvent, { type: 'result' }> => e.type === 'result')?.result }
 }
 
-const save = (rows: object[], as: Session = uploader, fileName = 'MTC 067711.pdf') =>
-  app.api<MtcSaveResponse & ApiErrorBody>('POST', '/api/mtc/save', { token: as.token, body: { fileName, rows } })
+const save = (kind: MtcKind, rows: { values: Item; overwrite: boolean }[], as: Session = uploader, fileName = 'MTC 067711.pdf') =>
+  app.api<MtcSaveResponse & ApiErrorBody>('POST', `/api/mtc/${kind}/save`, { token: as.token, body: { fileName, rows } })
+const row = (values: Item, overwrite = false) => ({ values, overwrite })
 
 const coilRow = async (coilNumber: string) =>
-  (await app.db.query<Coil & { deleted: boolean }>(
-    `SELECT coil_number AS "coilNumber", grade, sm_type AS "smType", supplier, thickness, width, yield, notes, deleted_at IS NOT NULL AS deleted FROM coils WHERE lower(coil_number) = lower($1)`,
-    [coilNumber],
-  )).rows[0]
+  (
+    await app.db.query(
+      `SELECT coil_number AS "coilNumber", grade, sm_type AS "smType", supplier, thickness, width, yield, notes, deleted_at IS NOT NULL AS deleted FROM coils WHERE lower(coil_number) = lower($1)`,
+      [coilNumber],
+    )
+  ).rows[0]
+
+/** The owner's AI settings for a person: the assistant off for them, certificates allowed or not. */
+const setMtc = (who: Session, mtc: boolean, monthlyCapUsd = 50) =>
+  app.api('PUT', `/api/ai/access/${who.user.id}`, {
+    token: admin.token,
+    body: { enabled: false, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd, mtc },
+  })
+const me = async (who: Session) => (await app.api<AiMeResponse>('GET', '/api/ai/me', { token: who.token })).body
+
+const table = async (kind: string, q = '', as: Session = inspector) => (await app.api<MtcTableResponse & ApiErrorBody>('GET', `/api/mtc/${kind}/table${q}`, { token: as.token })).body
 
 beforeAll(async () => {
   await app.start()
@@ -82,52 +87,53 @@ beforeAll(async () => {
   uploader = await app.login('upl')
   inspector = await app.login('insp')
   viewer = await app.login('view')
-  const granted = await app.api<UserProfile>('PATCH', `/api/users/${uploader.user.id}`, { token: admin.token, body: { mtcUpload: true } })
-  expect(granted.status).toBe(200)
-  expect(granted.body.mtcUpload).toBe(true)
+  expect((await setMtc(uploader, true)).status).toBe(200)
   expect((await app.api('PUT', '/api/ai/key', { token: admin.token, body: { apiKey: KEY } })).status).toBe(200)
 })
 afterAll(() => app.stop())
 beforeEach(async () => {
   app.model.reset()
-  await app.db.query(`ALTER TABLE coils DISABLE TRIGGER coils_no_delete; DELETE FROM coils; ALTER TABLE coils ENABLE TRIGGER coils_no_delete;`)
+  for (const t of ['coils', 'welding_wires', 'mesh_wires']) {
+    await app.db.query(`ALTER TABLE ${t} DISABLE TRIGGER ${t}_no_delete; DELETE FROM ${t}; ALTER TABLE ${t} ENABLE TRIGGER ${t}_no_delete;`)
+  }
 })
 
 describe('the MTC permission', () => {
-  it('is given person by person by an administrator, shows on the profile and is audited', async () => {
-    const me = await app.api<UserProfile>('GET', '/api/auth/me', { token: uploader.token })
-    expect(me.body.mtcUpload).toBe(true)
-    expect((await app.api<UserProfile>('GET', '/api/auth/me', { token: inspector.token })).body.mtcUpload).toBe(false)
-    const { rows } = await app.db.query(`SELECT field, old_value AS "oldValue", new_value AS "newValue" FROM audit_log WHERE entity = 'User' AND entity_id = $1 AND field = 'mtcUpload'`, [
-      uploader.user.id,
-    ])
-    expect(rows).toEqual([{ field: 'mtcUpload', oldValue: 'may not upload MTC', newValue: 'may upload MTC' }])
-    // Not an administrator: they cannot give it to themselves.
-    expect((await app.api('PATCH', `/api/users/${inspector.user.id}`, { token: uploader.token, body: { mtcUpload: true } })).status).toBe(403)
+  it('is given person by person by the AI assistant’s owner, with the assistant off for them, and is audited', async () => {
+    expect(await me(uploader)).toMatchObject({ granted: false, mtc: true })
+    expect(await me(inspector)).toMatchObject({ granted: false, mtc: false })
+    expect((await me(admin)).mtc).toBe(true)
+    const { rows } = await app.db.query(`SELECT action, new_value AS "newValue" FROM audit_log WHERE entity = 'AiAccess' AND entity_id = $1`, [uploader.user.id])
+    expect(rows).toEqual([{ action: 'create', newValue: expect.stringContaining('may upload MTC certificates') }])
+    // The owner's alone to give: anyone else does not even see the route.
+    expect((await app.api('PUT', `/api/ai/access/${inspector.user.id}`, { token: uploader.token, body: { enabled: false, domains: ['inspection'], model: 'claude-sonnet-5-5', effort: 'medium', monthlyCapUsd: 5, mtc: true } })).status).toBe(404)
+    // The Users page no longer carries it.
+    expect((await app.api('PATCH', `/api/users/${inspector.user.id}`, { token: admin.token, body: { mtcUpload: true } })).status).toBe(400)
   })
 
   it('is needed to read and to save, and nothing of the file is taken in without it', async () => {
-    const read = await extract(PDF, 'cert.pdf', inspector)
-    expect(read.res.status).toBe(403)
+    expect((await extract(PDF, 'cert.pdf', inspector)).res.status).toBe(403)
     expect(app.model.counted).toHaveLength(0)
-    expect((await save([{ coilNumber: 'X1', overwrite: false }], inspector)).status).toBe(403)
-    // Taken away, it stops at once: the token still says nothing about it.
-    await app.api('PATCH', `/api/users/${uploader.user.id}`, { token: admin.token, body: { mtcUpload: false } })
+    for (const kind of ['coils', 'welding-wire', 'mesh-wire'] as const) {
+      expect((await save(kind, [row({ coilNumber: 'X1', batchNumber: 'B1', castNumber: 'C1', diameter: 4 })], inspector)).status).toBe(403)
+    }
+    // Taken away, it stops at once: the token says nothing about it.
+    await setMtc(uploader, false)
     expect((await extract(PDF, 'cert.pdf')).res.status).toBe(403)
-    await app.api('PATCH', `/api/users/${uploader.user.id}`, { token: admin.token, body: { mtcUpload: true } })
+    await setMtc(uploader, true)
   })
 })
 
 describe('reading a certificate', () => {
-  it('sends the PDF to Claude on the MTC model, held to the schema, and returns the cleaned rows', async () => {
+  it('reads coils on the model the owner chose, held to the schema, and returns the cleaned rows', async () => {
     app.model.reply({
       content: [
-        reply([
-          { coilNumber: '213417-506', grade: 'S450GD+Z275', smType: 'GI', supplier: 'arcelormittal', thickness: 3.5, width: 1285, yield: 464, certificateNumber: '20230055086-00', page: 1 },
+        reply('coils', [
+          { coilNumber: '213417-506', grade: 'S450GD+Z275', smType: 'GI', supplier: 'arcelormittal', thickness: 3.5, width: 1285, yield: 464, certificateNumber: '20230055086-00' },
           { coilNumber: ' 306043-0-02 ', grade: 's420 mc', smType: 'HR', supplier: 'Ezz', thickness: 2, width: 320, yield: 433, certificateNumber: '067711', page: 2, uncertain: ['yield'] },
           // The same coil in a second table: one row, the second table's value where the first had none.
           { coilNumber: '306043-0-02', grade: 'S420MC', smType: 'HR', supplier: 'Ezz', thickness: 2, width: 320, yield: 433, certificateNumber: '067711', page: 2 },
-          { coilNumber: 'S021480625', grade: 'S550GD+Z275', smType: 'GI', supplier: 'Tosyali', thickness: 2.7, width: 347, yield: null, certificateNumber: '21GB12875', page: 1, uncertain: ['width'] },
+          { coilNumber: 'S021480625', grade: 'S550GD+Z275', smType: 'GI', supplier: 'Tosyali', thickness: 2.7, width: 347, yield: null, certificateNumber: '21GB12875', uncertain: ['width'] },
           { coilNumber: '   ' },
         ]),
       ],
@@ -138,50 +144,100 @@ describe('reading a certificate', () => {
     expect(events.map((e) => e.type)).toEqual(['reading', 'result'])
     expect(result).toEqual({
       fileName: 'شهادة MTC.pdf',
-      notCoils: false,
-      coils: [
-        { coilNumber: '213417-506', grade: 'S450GD+Z275', smType: 'GI', supplier: 'ArcelorMittal', thickness: 3.5, width: 1285, yield: 464, notes: 'MTC 20230055086-00', page: 1, uncertain: [] },
-        { coilNumber: '306043-0-02', grade: 'S420MC', smType: 'HR', supplier: 'Ezz', thickness: 2, width: 320, yield: 433, notes: 'MTC 067711', page: 2, uncertain: [] },
-        { coilNumber: 'S021480625', grade: 'S550GD+Z275', smType: 'GI', supplier: 'Tosyali', thickness: 2.7, width: 347, notes: 'MTC 21GB12875', page: 1, uncertain: ['width', 'yield'] },
+      kind: 'coils',
+      rows: [
+        {
+          values: { coilNumber: '213417-506', grade: 'S450GD+Z275', smType: 'GI', supplier: 'ArcelorMittal', thickness: 3.5, width: 1285, yield: 464, notes: 'MTC 20230055086-00' },
+          page: 1,
+          uncertain: [],
+        },
+        { values: { coilNumber: '306043-0-02', grade: 'S420MC', smType: 'HR', supplier: 'Ezz', thickness: 2, width: 320, yield: 433, notes: 'MTC 067711' }, page: 2, uncertain: [] },
+        { values: { coilNumber: 'S021480625', grade: 'S550GD+Z275', smType: 'GI', supplier: 'Tosyali', thickness: 2.7, width: 347, notes: 'MTC 21GB12875' }, page: 1, uncertain: ['width', 'yield'] },
       ],
     })
 
-    // Counted, then read, on the MTC model; the PDF as a document; the reply held to the schema.
-    expect(app.model.counted).toHaveLength(1)
-    expect(app.model.counted[0].model).toBe(MTC_MODEL)
-    expect(app.model.calls).toHaveLength(1)
+    // Counted, then read, on the default model for certificates; the PDF as a document; the reply held to the schema.
+    expect(app.model.counted.map((c) => c.model)).toEqual([AI_MTC_DEFAULT_MODEL])
     const params = app.model.calls[0].params
-    expect(params.model).toBe(MTC_MODEL)
+    expect(params.model).toBe(AI_MTC_DEFAULT_MODEL)
     expect(params.output_config?.format?.type).toBe('json_schema')
     const content = params.messages[0].content as Anthropic.Beta.BetaContentBlockParam[]
     expect(content[0]).toMatchObject({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: PDF.toString('base64') } })
-    expect(String(params.system)).toContain('"213417-506"')
-    expect(String(params.system)).toContain('"S450GD+Z275"')
+    for (const rule of ['"213417-506"', '"S450GD+Z275"', '"E71T-1C"', '"FE360B"', 'never the required values']) expect(String(params.system)).toContain(rule)
 
-    // The call is counted in the assistant's spend, for this person; the file is kept nowhere.
+    // The call is counted in the assistant's spend, for this person; the file is kept nowhere; nothing is registered yet.
     const usage = await app.db.query(`SELECT user_id AS "userId", model, input_tokens AS "in", conversation_id AS "conversationId" FROM ai_usage`)
-    expect(usage.rows).toEqual([{ userId: uploader.user.id, model: MTC_MODEL, in: 40_000, conversationId: null }])
+    expect(usage.rows).toEqual([{ userId: uploader.user.id, model: AI_MTC_DEFAULT_MODEL, in: 40_000, conversationId: null }])
     expect((await app.db.query(`SELECT count(*)::int AS n FROM ai_attachments`)).rows[0].n).toBe(0)
-    // Reading writes nothing to the register.
     expect((await app.db.query(`SELECT count(*)::int AS n FROM coils`)).rows[0].n).toBe(0)
   })
 
-  it('needs no access to the AI assistant', async () => {
-    const { rows } = await app.db.query(`SELECT count(*)::int AS n FROM ai_access WHERE user_id = $1`, [uploader.user.id])
-    expect(rows[0].n).toBe(0)
-    app.model.reply({ content: [reply([{ coilNumber: 'C1' }])] })
-    expect((await extract(PDF, 'cert.pdf')).result?.coils).toHaveLength(1)
+  it('reads on the model the owner set in the AI settings, and needs no access to the assistant', async () => {
+    const set = await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 100, mtcModel: 'claude-opus-5-5' } })
+    expect(set.status).toBe(200)
+    // The assistant is off for them: they cannot ask it anything, and still read certificates.
+    expect((await app.db.query(`SELECT enabled FROM ai_access WHERE user_id = $1`, [uploader.user.id])).rows).toEqual([{ enabled: false }])
+    expect((await me(uploader)).granted).toBe(false)
+    app.model.reply({ content: [reply('coils', [{ coilNumber: 'C1' }])] })
+    expect((await extract(PDF, 'cert.pdf')).result?.rows).toHaveLength(1)
+    expect(app.model.calls[0].params.model).toBe('claude-opus-5-5')
+    const audit = await app.db.query(`SELECT old_value AS "oldValue", new_value AS "newValue" FROM audit_log WHERE entity = 'AppSettings' AND field = 'mtcModel'`)
+    expect(audit.rows).toEqual([{ oldValue: AI_MTC_DEFAULT_MODEL, newValue: 'claude-opus-5-5' }])
+    // The owner alone sets it.
+    expect((await app.api('PUT', '/api/ai/settings', { token: uploader.token, body: { enabled: true, monthlyCapUsd: 100, mtcModel: 'claude-haiku-5-5' } })).status).toBe(404)
+    await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 100, mtcModel: AI_MTC_DEFAULT_MODEL } })
   })
 
-  it('lists nothing from a document that is not a coil certificate, and says what it is', async () => {
-    app.model.reply({ content: [reply([], { documentKind: 'other', problem: 'This is a certificate for galvanized wire, not steel coils.' })] })
-    const { result } = await extract(PDF, 'TSG wire.pdf')
-    expect(result).toEqual({ fileName: 'TSG wire.pdf', notCoils: true, coils: [], problem: 'This is a certificate for galvanized wire, not steel coils.' })
+  it('tells a welding wire certificate apart and reads its batch, the deposited metal’s results and the weight', async () => {
+    app.model.reply({
+      content: [
+        reply('welding-wire', [
+          { batchNumber: '22285', classification: 'E71T-1C', wireType: 'Flux-cored', diameter: 1.2, supplier: 'Shiqiao', weightKg: 50000, yield: 485, tensile: 515, uncertain: ['weightKg'] },
+        ]),
+      ],
+    })
+    const { result } = await extract(PDF, '20261015065126.pdf')
+    expect(result).toEqual({
+      fileName: '20261015065126.pdf',
+      kind: 'welding-wire',
+      rows: [
+        {
+          values: { batchNumber: '22285', classification: 'E71T-1C', wireType: 'Flux-cored', diameter: 1.2, supplier: 'Shiqiao', weightKg: 50000, yield: 485, tensile: 515 },
+          page: 1,
+          uncertain: ['weightKg'],
+        },
+      ],
+    })
+  })
+
+  it('reads mesh wire by cast and diameter, a cast drawn to two diameters being two rows', async () => {
+    app.model.reply({
+      content: [
+        reply('mesh-wire', [
+          { castNumber: '62920', diameter: 3.9, product: 'galvanized', grade: 'FE 360 B', supplier: 'TSG', tensile: 658, certificateNumber: '240733' },
+          { castNumber: '62920', diameter: 4.8, product: 'Galvanized', grade: 'FE360B', supplier: 'TSG', tensile: 652, certificateNumber: '240733' },
+          { castNumber: '701688', diameter: null, product: 'Bright', grade: 'FE360B', supplier: 'TSG', tensile: 690, certificateNumber: '240726', page: 2 },
+        ]),
+      ],
+    })
+    const { result } = await extract(PDF, 'Certificate - LINK MISR.pdf')
+    expect(result?.kind).toBe('mesh-wire')
+    expect(result?.rows.map((r) => r.values)).toEqual([
+      { castNumber: '62920', diameter: 3.9, product: 'Galvanized', grade: 'FE360B', supplier: 'TSG', tensile: 658, notes: 'MTC 240733' },
+      { castNumber: '62920', diameter: 4.8, product: 'Galvanized', grade: 'FE360B', supplier: 'TSG', tensile: 652, notes: 'MTC 240733' },
+      // Its diameter unread: kept for the person to complete, marked.
+      { castNumber: '701688', product: 'Bright', grade: 'FE360B', supplier: 'TSG', tensile: 690, notes: 'MTC 240726' },
+    ])
+    expect(result?.rows[2].uncertain).toEqual(['diameter'])
+  })
+
+  it('lists nothing from a document that fits no register, and says what it is', async () => {
+    app.model.reply({ content: [reply('other', [], 'This is an invoice, not a certificate.')] })
+    expect((await extract(PDF, 'invoice.pdf')).result).toEqual({ fileName: 'invoice.pdf', kind: null, rows: [], problem: 'This is an invoice, not a certificate.' })
   })
 
   it('refuses what is not a PDF, and a PDF Claude cannot read, before anything is billed', async () => {
-    const notPdf = await extract(Buffer.from('hello'), 'cert.pdf')
-    expect(notPdf.res.status).toBe(400)
+    expect((await extract(Buffer.from('hello'), 'cert.pdf')).res.status).toBe(400)
     app.model.tokenCount = () => {
       throw apiError(400, 'The PDF has more than 100 pages.')
     }
@@ -192,11 +248,52 @@ describe('reading a certificate', () => {
   })
 
   it('tells the person when a certificate is too long for one reading, and still counts what it cost', async () => {
-    app.model.reply({ content: [text('{"documentKind":"coil-certificate","problem":null,"coils":[')], stopReason: 'max_tokens', usage: { input_tokens: 9_000, output_tokens: 48_000 } })
+    app.model.reply({ content: [text('{"documentKind":"coils","problem":null,"coils":[')], stopReason: 'max_tokens', usage: { input_tokens: 9_000, output_tokens: 48_000 } })
     const { events } = await extract(PDF, 'long.pdf')
     expect(events.at(-1)).toEqual({ type: 'error', code: 'validation', message: expect.stringMatching(/Split the PDF/) })
     const usage = await app.db.query(`SELECT output_tokens AS out FROM ai_usage WHERE user_id = $1 ORDER BY id DESC LIMIT 1`, [uploader.user.id])
     expect(usage.rows[0].out).toBe(48_000)
+  })
+
+  it('shows the owner, in Activity, who read which certificate and what it cost, counted in the month’s spend', async () => {
+    app.model.reply({ content: [reply('coils', [{ coilNumber: 'A1' }, { coilNumber: 'A2' }, { coilNumber: 'A3' }])], usage: { input_tokens: 30_000, output_tokens: 2_000 } })
+    await extract(PDF, 'Baosteel 14192.pdf')
+    app.model.reply({ content: [reply('welding-wire', [{ batchNumber: '22285' }])], usage: { input_tokens: 3_000, output_tokens: 500 } })
+    await extract(PDF, 'Shiqiao.pdf')
+    app.model.reply({ content: [reply('other', [], 'An invoice.')] })
+    await extract(PDF, 'invoice.pdf')
+    const activity = await app.api<AiActivityResponse>('GET', '/api/ai/activity?kind=mtc', { token: admin.token })
+    expect(activity.status).toBe(200)
+    // Newest first; the readings of the tests before are further down.
+    expect(activity.body.items.slice(0, 3).map((i) => ({ kind: i.kind, userName: i.userName, text: i.text }))).toEqual([
+      { kind: 'mtc', userName: 'Uploader', text: 'invoice.pdf — not a certificate of coils or wire' },
+      { kind: 'mtc', userName: 'Uploader', text: 'Shiqiao.pdf — 1 welding wire batch read' },
+      { kind: 'mtc', userName: 'Uploader', text: 'Baosteel 14192.pdf — 3 coils read' },
+    ])
+    // Sonnet 5.5: 30,000 in at $2 and 2,000 out at $10 a million.
+    expect(Number(activity.body.items[2].costUsd)).toBeCloseTo(0.08, 6)
+    expect(activity.body.people.map((p) => p.name)).toContain('Uploader')
+    const all = await app.api<AiActivityResponse>('GET', '/api/ai/activity', { token: admin.token })
+    expect(all.body.items.filter((i) => i.kind === 'mtc').length).toBe(activity.body.items.length)
+    expect(activity.body.items.map((i) => i.text)).toContain('long.pdf — could not be read')
+    // Nobody but the owner sees it.
+    expect((await app.api('GET', '/api/ai/activity', { token: uploader.token })).status).toBe(404)
+    const readings = await app.db.query(`SELECT file_name, kind, items, outcome FROM mtc_readings ORDER BY created_at DESC LIMIT 3`)
+    expect(readings.rows.reverse()).toEqual([
+      { file_name: 'Baosteel 14192.pdf', kind: 'coils', items: 3, outcome: 'read' },
+      { file_name: 'Shiqiao.pdf', kind: 'welding-wire', items: 1, outcome: 'read' },
+      { file_name: 'invoice.pdf', kind: null, items: 0, outcome: 'not-certificate' },
+    ])
+  })
+
+  it('is held to the person’s own monthly cap, set with the permission', async () => {
+    await setMtc(uploader, true, 0.01)
+    app.model.tokenCount = () => 50_000
+    const capped = await extract(PDF, 'cert.pdf')
+    expect(capped.res.status).toBe(402)
+    expect((capped.res.body as ApiErrorBody).error.message).toMatch(/this month’s AI limit/)
+    expect(app.model.calls).toHaveLength(0)
+    await setMtc(uploader, true)
   })
 
   it('is held to the assistant’s switch and monthly cap', async () => {
@@ -204,25 +301,24 @@ describe('reading a certificate', () => {
     expect((await extract(PDF, 'cert.pdf')).res.status).toBe(503)
     await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 0.5 } })
     app.model.tokenCount = () => 200_000
-    const capped = await extract(PDF, 'cert.pdf')
-    expect(capped.res.status).toBe(402)
+    expect((await extract(PDF, 'cert.pdf')).res.status).toBe(402)
     expect(app.model.calls).toHaveLength(0)
     await app.api('PUT', '/api/ai/settings', { token: admin.token, body: { enabled: true, monthlyCapUsd: 100 } })
   })
 })
 
-describe('saving the reviewed coils', () => {
+describe('saving the reviewed items', () => {
   it('adds new coils, leaves registered ones unless asked, and overwrites without erasing', async () => {
     await app.db.query(
       `INSERT INTO coils (coil_number, grade, sm_type, supplier, thickness, width, yield, notes) VALUES
          ('OLD-1', 'S355MC', 'HR', 'Ezz', 2, 1000, 380, 'from the sheet'),
          ('OLD-2', 'S355MC', 'HR', 'Ezz', 2, 1000, 380, 'from the sheet')`,
     )
-    const res = await save([
-      { coilNumber: '213417-506', grade: 'S450GD+Z275', smType: 'GI', supplier: 'ArcelorMittal', thickness: 3.5, width: 1285, yield: 464, notes: 'MTC 20230055086-00', overwrite: false },
-      { coilNumber: 'old-1', grade: 'S420MC', yield: 433, notes: 'MTC 067711', overwrite: false },
+    const res = await save('coils', [
+      row({ coilNumber: '213417-506', grade: 'S450GD+Z275', smType: 'GI', supplier: 'ArcelorMittal', thickness: 3.5, width: 1285, yield: 464, notes: 'MTC 20230055086-00' }),
+      row({ coilNumber: 'old-1', grade: 'S420MC', yield: 433, notes: 'MTC 067711' }),
       // A blank keeps the register's value: the supplier and width stay.
-      { coilNumber: 'OLD-2', grade: 'S420MC', thickness: '2.4', yield: 433, notes: 'MTC 067711', overwrite: true },
+      row({ coilNumber: 'OLD-2', grade: 'S420MC', thickness: '2.4', yield: 433, notes: 'MTC 067711' }, true),
     ])
     expect(res.status).toBe(200)
     expect(res.body).toEqual({ inserted: ['213417-506'], updated: ['OLD-2'], skipped: ['OLD-1'] })
@@ -230,7 +326,7 @@ describe('saving the reviewed coils', () => {
     expect(await coilRow('OLD-1')).toMatchObject({ grade: 'S355MC', yield: 380, notes: 'from the sheet' })
     expect(await coilRow('OLD-2')).toMatchObject({ grade: 'S420MC', smType: 'HR', supplier: 'Ezz', thickness: 2.4, width: 1000, yield: 433, notes: 'MTC 067711' })
 
-    const audit = await app.db.query<{ action: string; field: string; oldValue: string | null; newValue: string | null; userName: string }>(
+    const audit = await app.db.query(
       `SELECT a.action, a.field, a.old_value AS "oldValue", a.new_value AS "newValue", a.user_name AS "userName"
          FROM audit_log a JOIN coils c ON c.id::text = a.entity_id WHERE a.entity = 'Coil' ORDER BY c.coil_number, a.id`,
     )
@@ -250,46 +346,67 @@ describe('saving the reviewed coils', () => {
     ])
   })
 
-  it('brings back a removed coil only when asked to overwrite it', async () => {
-    await app.db.query(`INSERT INTO coils (coil_number, grade, deleted_at) VALUES ('GONE-1', 'S235JR', now()), ('GONE-2', 'S235JR', now())`)
-    const res = await save([
-      { coilNumber: 'GONE-1', grade: 'S235JR', overwrite: true },
-      { coilNumber: 'GONE-2', grade: 'S235JR', overwrite: false },
-    ])
-    expect(res.body).toEqual({ inserted: [], updated: ['GONE-1'], skipped: ['GONE-2'] })
+  it('brings back a removed item only when asked to overwrite it, and skips an overwrite that changes nothing', async () => {
+    await app.db.query(`INSERT INTO coils (coil_number, grade, deleted_at) VALUES ('GONE-1', 'S235JR', now()), ('GONE-2', 'S235JR', now()), ('SAME', 'S315MC', NULL)`)
+    const res = await save('coils', [row({ coilNumber: 'GONE-1', grade: 'S235JR' }, true), row({ coilNumber: 'GONE-2', grade: 'S235JR' }), row({ coilNumber: 'SAME', grade: 'S315MC' }, true)])
+    expect(res.body).toEqual({ inserted: [], updated: ['GONE-1'], skipped: ['GONE-2', 'SAME'] })
     expect((await coilRow('GONE-1')).deleted).toBe(false)
     expect((await coilRow('GONE-2')).deleted).toBe(true)
   })
 
-  it('skips an overwrite that changes nothing', async () => {
-    await app.db.query(`INSERT INTO coils (coil_number, grade, yield) VALUES ('SAME', 'S315MC', 349)`)
-    const res = await save([{ coilNumber: 'SAME', grade: 'S315MC', yield: 349, overwrite: true }])
-    expect(res.body).toEqual({ inserted: [], updated: [], skipped: ['SAME'] })
-    const audited = await app.db.query(`SELECT count(*)::int AS n FROM audit_log a JOIN coils c ON c.id::text = a.entity_id WHERE a.entity = 'Coil'`)
-    expect(audited.rows[0].n).toBe(0)
+  it('registers welding wire by batch, audited as such', async () => {
+    const res = await save('welding-wire', [
+      row({ batchNumber: '22285', classification: 'E71T-1C', wireType: 'Flux-cored', diameter: 1.2, supplier: 'Shiqiao', weightKg: 50000, yield: 485, tensile: 515 }),
+    ])
+    expect(res.body).toEqual({ inserted: ['22285'], updated: [], skipped: [] })
+    const { rows } = await app.db.query(`SELECT batch_number, classification, wire_type, diameter, weight_kg, yield, tensile FROM welding_wires`)
+    expect(rows).toEqual([{ batch_number: '22285', classification: 'E71T-1C', wire_type: 'Flux-cored', diameter: 1.2, weight_kg: 50000, yield: 485, tensile: 515 }])
+    const audit = await app.db.query(`SELECT action FROM audit_log WHERE entity = 'WeldingWire'`)
+    expect(audit.rows).toEqual([{ action: 'create' }])
+    // The same batch again, in another case: the same batch.
+    expect((await save('welding-wire', [row({ batchNumber: '22285', tensile: 520 })])).body).toEqual({ inserted: [], updated: [], skipped: ['22285'] })
   })
 
-  it('refuses the whole batch when a row is wrong: a coil twice, no number, a bad measurement', async () => {
-    expect((await save([{ coilNumber: 'A1', overwrite: false }, { coilNumber: 'a1', overwrite: false }])).status).toBe(400)
-    expect((await save([{ coilNumber: '  ', overwrite: false }])).status).toBe(400)
-    expect((await save([{ coilNumber: 'A2', thickness: -1, overwrite: false }])).status).toBe(400)
-    expect((await save([{ coilNumber: 'A3', yield: 'abc', overwrite: false }])).status).toBe(400)
-    expect((await save([{ coilNumber: 'A4', grade: 'G'.repeat(61), overwrite: false }])).status).toBe(400)
+  it('registers mesh wire by cast and diameter: another diameter of a cast is another wire', async () => {
+    await app.db.query(`INSERT INTO mesh_wires (cast_number, diameter, product, tensile) VALUES ('62920', 3.900, 'Galvanized', 640)`)
+    const res = await save('mesh-wire', [
+      row({ castNumber: '62920', diameter: 3.9, product: 'Galvanized', grade: 'FE360B', supplier: 'TSG', tensile: 658, notes: 'MTC 240733' }, true),
+      row({ castNumber: '62920', diameter: '4.80', product: 'Galvanized', grade: 'FE360B', supplier: 'TSG', tensile: 652, notes: 'MTC 240733' }),
+    ])
+    expect(res.body).toEqual({ inserted: ['62920 · Ø4.8 mm'], updated: ['62920 · Ø3.9 mm'], skipped: [] })
+    const { rows } = await app.db.query(`SELECT cast_number, diameter, tensile FROM mesh_wires ORDER BY diameter`)
+    expect(rows).toEqual([
+      { cast_number: '62920', diameter: 3.9, tensile: 658 },
+      { cast_number: '62920', diameter: 4.8, tensile: 652 },
+    ])
+    // A mesh wire with no diameter cannot be told apart: refused.
+    expect((await save('mesh-wire', [row({ castNumber: '701688', tensile: 690 })])).status).toBe(400)
+  })
+
+  it('refuses the whole batch when a row is wrong: an item twice, no identifier, a bad measurement, too long', async () => {
+    expect((await save('coils', [row({ coilNumber: 'A1' }), row({ coilNumber: 'a1' })])).status).toBe(400)
+    expect((await save('mesh-wire', [row({ castNumber: 'M1', diameter: 4 }), row({ castNumber: 'M1', diameter: 4.0 })])).status).toBe(400)
+    expect((await save('coils', [row({ coilNumber: '  ' })])).status).toBe(400)
+    expect((await save('coils', [row({ coilNumber: 'A2', thickness: -1 })])).status).toBe(400)
+    expect((await save('coils', [row({ coilNumber: 'A3', yield: 'abc' })])).status).toBe(400)
+    expect((await save('coils', [row({ coilNumber: 'A4', grade: 'G'.repeat(61) })])).status).toBe(400)
+    expect((await save('welding-wire', [row({ batchNumber: 'B1', classification: 42 })])).status).toBe(400)
+    expect((await app.api('POST', '/api/mtc/pipes/save', { token: uploader.token, body: { fileName: 'x.pdf', rows: [row({})] } })).status).toBe(404)
     expect((await app.db.query(`SELECT count(*)::int AS n FROM coils`)).rows[0].n).toBe(0)
   })
 
-  it('shows the review what is already registered, removed coils included', async () => {
+  it('shows the review what is already registered, removed items included', async () => {
     await app.db.query(`INSERT INTO coils (coil_number, grade, deleted_at) VALUES ('E-1', 'S315MC', NULL), ('E-2', 'S355MC', now())`)
-    const res = await app.api<MtcExistingResponse>('POST', '/api/mtc/existing', { token: inspector.token, body: { coilNumbers: ['e-1', 'E-2', 'E-3', ''] } })
+    const res = await app.api<MtcExistingResponse>('POST', '/api/mtc/coils/existing', { token: inspector.token, body: { ids: ['e-1', 'E-2', 'E-3', ''] } })
     expect(res.status).toBe(200)
-    expect(res.body.map((c) => ({ coilNumber: c.coilNumber, grade: c.grade, deleted: !!c.deletedAt })).sort((a, b) => a.coilNumber.localeCompare(b.coilNumber))).toEqual([
-      { coilNumber: 'E-1', grade: 'S315MC', deleted: false },
-      { coilNumber: 'E-2', grade: 'S355MC', deleted: true },
+    expect(res.body.map((c) => ({ values: c.values, deleted: !!c.deletedAt })).sort((a, b) => String(a.values.coilNumber).localeCompare(String(b.values.coilNumber)))).toEqual([
+      { values: { coilNumber: 'E-1', grade: 'S315MC' }, deleted: false },
+      { values: { coilNumber: 'E-2', grade: 'S355MC' }, deleted: true },
     ])
   })
 })
 
-describe('the coil register’s table', () => {
+describe('the registers’ tables', () => {
   beforeEach(async () => {
     await app.db.query(
       `INSERT INTO coils (coil_number, grade, sm_type, supplier, notes, created_at) VALUES
@@ -299,31 +416,37 @@ describe('the coil register’s table', () => {
          ('D-400', 'S420MC', 'HR', 'Ezz', NULL, now())`,
     )
     await app.db.query(`INSERT INTO coils (coil_number, deleted_at) VALUES ('Z-999', now())`)
+    await app.db.query(`INSERT INTO welding_wires (batch_number, wire_type, supplier) VALUES ('22285', 'Flux-cored', 'Shiqiao'), ('31001', 'Solid', 'ESAB')`)
+    await app.db.query(`INSERT INTO mesh_wires (cast_number, diameter, product, supplier) VALUES ('62920', 4.8, 'Galvanized', 'TSG'), ('62920', 3.9, 'Galvanized', 'TSG'), ('701688', 3, 'Bright', 'TSG')`)
   })
 
-  it('is open to everyone signed in, a viewer too, a page at a time with the total', async () => {
-    const res = await app.api<CoilTableResponse>('GET', '/api/coils/table?limit=2', { token: viewer.token })
-    expect(res.status).toBe(200)
-    expect(res.body.total).toBe(4)
-    expect(res.body.rows.map((c) => c.coilNumber)).toEqual(['A-100', 'B-200'])
-    const next = await app.api<CoilTableResponse>('GET', '/api/coils/table?limit=2&offset=2', { token: viewer.token })
-    expect(next.body.rows.map((c) => c.coilNumber)).toEqual(['C-300', 'D-400'])
+  it('are open to everyone signed in, a viewer too, a page at a time with the total', async () => {
+    const first = await table('coils', '?limit=2', viewer)
+    expect(first.total).toBe(4)
+    expect(first.rows.map((c) => c.values.coilNumber)).toEqual(['A-100', 'B-200'])
+    expect((await table('coils', '?limit=2&offset=2', viewer)).rows.map((c) => c.values.coilNumber)).toEqual(['C-300', 'D-400'])
+    expect((await table('welding-wire', '', viewer)).rows.map((w) => w.values.batchNumber)).toEqual(['22285', '31001'])
+    // By cast, then diameter.
+    expect((await table('mesh-wire', '', viewer)).rows.map((w) => `${w.values.castNumber}/${w.values.diameter}`)).toEqual(['62920/3.9', '62920/4.8', '701688/3'])
+    expect((await app.api('GET', '/api/mtc/pipes/table', { token: viewer.token })).status).toBe(404)
   })
 
-  it('searches the number, grade, supplier and notes, filters exactly, and sorts the newest first', async () => {
-    const get = async (q: string) => (await app.api<CoilTableResponse>('GET', `/api/coils/table${q}`, { token: inspector.token })).body
-    expect((await get('?search=23-01')).rows.map((c) => c.coilNumber)).toEqual(['B-200'])
-    expect((await get('?search=gd%2Bz')).rows.map((c) => c.coilNumber)).toEqual(['A-100'])
-    expect((await get('?search=%25')).total).toBe(0)
-    expect((await get('?supplier=EZZ')).rows.map((c) => c.coilNumber)).toEqual(['C-300', 'D-400'])
-    expect((await get('?smType=GI')).rows.map((c) => c.coilNumber)).toEqual(['A-100'])
-    expect((await get('?sort=newest')).rows.map((c) => c.coilNumber)).toEqual(['D-400', 'C-300', 'A-100', 'B-200'])
+  it('search the text fields, filter exactly, and sort the newest first', async () => {
+    expect((await table('coils', '?search=23-01')).rows.map((c) => c.values.coilNumber)).toEqual(['B-200'])
+    expect((await table('coils', '?search=gd%2Bz')).rows.map((c) => c.values.coilNumber)).toEqual(['A-100'])
+    expect((await table('coils', '?search=%25')).total).toBe(0)
+    expect((await table('coils', '?supplier=EZZ')).rows.map((c) => c.values.coilNumber)).toEqual(['C-300', 'D-400'])
+    expect((await table('coils', '?filter=GI')).rows.map((c) => c.values.coilNumber)).toEqual(['A-100'])
+    expect((await table('coils', '?sort=newest')).rows.map((c) => c.values.coilNumber)).toEqual(['D-400', 'C-300', 'A-100', 'B-200'])
+    expect((await table('welding-wire', '?filter=solid')).rows.map((w) => w.values.batchNumber)).toEqual(['31001'])
+    expect((await table('mesh-wire', '?filter=Bright')).rows.map((w) => w.values.castNumber)).toEqual(['701688'])
   })
 
-  it('offers the registered suppliers and SM types as filters, once each whatever their case', async () => {
-    const res = await app.api<CoilTableOptionsResponse>('GET', '/api/coils/table/options', { token: viewer.token })
-    expect(res.body.suppliers).toHaveLength(3)
-    expect(res.body.suppliers.map((s) => s.toLowerCase())).toEqual(['arcelormittal', 'baosteel', 'ezz'])
-    expect(res.body.smTypes.map((s) => s.toUpperCase())).toEqual(['GI', 'HR'])
+  it('offer the registered suppliers and filter values, once each whatever their case', async () => {
+    const coils = (await app.api<MtcTableOptionsResponse>('GET', '/api/mtc/coils/options', { token: viewer.token })).body
+    expect(coils.suppliers.map((s) => s.toLowerCase())).toEqual(['arcelormittal', 'baosteel', 'ezz'])
+    expect(coils.filterValues.map((s) => s.toUpperCase())).toEqual(['GI', 'HR'])
+    const weld = (await app.api<MtcTableOptionsResponse>('GET', '/api/mtc/welding-wire/options', { token: viewer.token })).body
+    expect(weld).toEqual({ suppliers: ['ESAB', 'Shiqiao'], filterValues: ['Flux-cored', 'Solid'] })
   })
 })

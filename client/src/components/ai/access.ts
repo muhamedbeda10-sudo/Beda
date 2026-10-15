@@ -143,6 +143,8 @@ export interface AccessDraft {
   notices: boolean
   /** §20 — may have the assistant make Excel files (the owner always may). */
   excel: boolean
+  /** May upload mill test certificates on the MTC tab, the assistant on for them or not (the owner always may). */
+  mtc: boolean
 }
 
 /** A newcomer's monthly cap: a fifth of the default app-wide cap, never above the app-wide cap set now. The owner raises it. */
@@ -158,7 +160,7 @@ export const AI_NEW_PERSON_CAP_USD = 10
 export function newAccessDraft(appCapUsd: number): AccessDraft {
   const model: AiModelId = 'claude-sonnet-5-5'
   const cap = Math.max(minCapUsd(model), Math.min(AI_NEW_PERSON_CAP_USD, appCapUsd))
-  return { enabled: true, domains: ['inspection'], model, effort: 'medium', cap: String(cap), automations: false, notices: false, excel: false }
+  return { enabled: true, domains: ['inspection'], model, effort: 'medium', cap: String(cap), automations: false, notices: false, excel: false, mtc: false }
 }
 
 /** A person's access as it is saved, to edit. The owner's notices switch reads on while they are an administrator, as it then holds. */
@@ -172,6 +174,7 @@ export function draftFromAccess(a: AiAccess): AccessDraft {
     automations: a.owner || a.automations,
     notices: a.notices || (a.owner && isAdministrator(a.role)),
     excel: a.owner || a.excel,
+    mtc: a.owner || a.mtc,
   }
 }
 
@@ -196,6 +199,7 @@ export function accessRequest(d: AccessDraft): AiAccessRequest {
     automations: d.automations,
     notices: d.notices,
     excel: d.excel,
+    mtc: d.mtc,
   }
 }
 
@@ -210,6 +214,7 @@ export function accessChanged(a: AiAccess, d: AccessDraft): boolean {
     saved.automations !== d.automations ||
     saved.notices !== d.notices ||
     saved.excel !== d.excel ||
+    saved.mtc !== d.mtc ||
     cap !== a.monthlyCapUsd ||
     saved.domains.join() !== orderDomains(d.domains).join()
   )
