@@ -28,6 +28,18 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-16.9',
+    date: '2026-10-16',
+    title: 'Reports as PDF for management, inspection photos, charts as images',
+    items: [
+      { text: 'Printing an AI answer, a saved report or a scheduled report now makes a PDF ready to hand to management: A4 standing, the LinkMisr logo and the Quality Control Department at the top, numbered sections, ruled tables, and on every page the report’s name and "Page 2 of 5".' },
+      { text: 'An AI answer is printed under a title the assistant gives it (for example "Dimension J capability – Stam Upright 24"), never the question as typed; the suggestions and the queries stay off the paper. The PDF file is named after the report and its day.' },
+      { text: 'A section with a chart prints the chart alone; its rows stay in Excel.' },
+      { text: 'Ask the AI assistant to show photos (of a defect, a machine’s defects this week, a PT record, a paint check, a note or a PDI) and it shows them in the chat, each with what it is of; tap one to open it large. Saved and scheduled reports can show photos too, and they print three to a row at one size.' },
+      { text: 'Every chart now has Download image, and a diagram’s PNG and SVG became one Download image: it saves a PNG on the device (on a phone or a tablet, through Save image), drawn light with its title.' },
+    ],
+  },
+  {
     id: '2026-10-16.8',
     date: '2026-10-16',
     title: 'My reports: a cleaner, full-width page',

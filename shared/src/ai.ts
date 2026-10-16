@@ -461,6 +461,18 @@ export const AI_CONVERSATION_SCOPES: readonly AiConversationScope[] = ['recent',
 
 /** A conversation's title at most, in characters. */
 export const AI_CONVERSATION_TITLE_MAX = 80
+/** The longest title an answer is printed under. */
+export const AI_ANSWER_REPORT_TITLE_MAX = 100
+
+/**
+ * The title an answer is printed under, as a report handed to management: named by the assistant once (kept with
+ * the answer), else the conversation's title when it is not the question itself, else a plain "Quality report".
+ */
+export interface AiAnswerReportTitleResponse {
+  title: string
+  /** Named by the assistant for this answer (kept): false for a stand-in, asked again next time. */
+  named: boolean
+}
 /** Conversations one person may have pinned at once. */
 export const AI_MAX_PINNED_CONVERSATIONS = 30
 /** A group's name at most, in characters. */
@@ -516,6 +528,12 @@ export interface AiConversationSearchResponse {
 }
 
 export type AiCell = string | number | boolean | null
+
+/**
+ * A result with a column of this name holds photos (ai.inspection_photos, ai.pdi_photos): the app draws it as the
+ * photos themselves, each captioned by its row's other columns — in an answer, a saved or scheduled report, on paper.
+ */
+export const AI_PHOTO_COLUMN = 'photo_id'
 
 /** A query the assistant ran, with what came back. */
 export interface AiQueryPart {

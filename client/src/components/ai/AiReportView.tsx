@@ -52,6 +52,7 @@ import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { cn, formatDate, formatFullTimestamp, formatTime } from '@/lib/utils'
 import { deleteAiReport, renameAiReport } from '@/services/mutations'
 import { keys, loadAiReportExport, newerAiReport, useAiExcel, useAiReport, useAiReportRun } from '@/services/queries'
+import { paperWhen, type PrintPart } from '@/components/print/PrintSheet'
 import { ReportPrint } from '@/components/print/reportPrints'
 import { usePrint } from '@/components/print/usePrint'
 import { useApp } from '@/store/AppContext'
@@ -60,8 +61,11 @@ import { Notice } from './AiNotice'
 import { DeleteReportModal, ReportTitleEditor } from './AiReportList'
 import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figureView'
 import { AiChart } from './AiChart'
+import { AiPhotoGallery } from './AiPhotoGallery'
 import { AiResultModal, PreviewTable } from './AiResultTable'
 import { queryChart } from './chartData'
+import { ChartImageTool } from './chartImage'
+import { queryPhotos } from './photos'
 import { aiReportExportMessage, aiReportFilename, aiReportSheets } from './exportAiReport'
 import { ReportInputsForm, SectionFigures, SectionTree } from './AiReportLayouts'
 import { inputDrafts, inputsKey, inputsLine, localDay, readDrafts, runsOnOpen, treeAsTable } from './reportInputs'
@@ -194,13 +198,15 @@ export function AiReportView({
 
   // Each section in the shape the answer's cards take, built once per run so the cards keep their state.
   const parts = useMemo(() => shown?.sections.map((s, i) => sectionAsQuery(s, shown.report.sections[i]?.sql ?? '', i)) ?? null, [shown])
-  // As print shows them: a tree as its rows in order, stepped in, without its key and parent columns.
+  // As print shows them: headline figures as figures, a tree as its rows in order, stepped in, without its key and
+  // parent columns.
   const printParts = useMemo(
     () =>
-      parts?.map((part, i) => {
+      parts?.map((part, i): PrintPart => {
         const s = shown?.sections[i]
         const flat = s?.display === 'tree' && s.tree && part.ok ? treeAsTable(part.columns, part.rows, s.tree) : null
-        return flat ? { ...part, columns: flat.columns, rows: flat.rows } : part
+        if (flat) return { part: { ...part, columns: flat.columns, rows: flat.rows } }
+        return { part, display: s?.display === 'figures' ? 'figures' : 'table' }
       }) ?? null,
     [parts, shown],
   )
@@ -325,14 +331,15 @@ export function AiReportView({
                           kind="Saved report"
                           title={shown.report.title}
                           lines={[
-                            // The question it came from, unless it is the title already.
-                            shown.report.description ?? (shown.report.question.trim() !== shown.report.title.trim() ? shown.report.question : ''),
+                            // What it shows, when the assistant said; never the question it came from.
+                            shown.report.description ?? '',
                             inputsLine(shown.report.inputs, shown.inputs),
                             shown.period ? `Covers ${shown.period.label}` : '',
-                            `Data read ${formatFullTimestamp(shown.ranAt)}`,
+                            `Data read ${paperWhen(shown.ranAt)}`,
                           ].filter(Boolean)}
-                          parts={printParts}
+                          sections={printParts}
                         />,
+                        { title: shown.report.title, day: localDay(new Date(shown.ranAt)) },
                       )
                     }
                     disabled={run.isFetching}
@@ -538,6 +545,8 @@ const ReportSection = memo(function ReportSection({
   const chart = useMemo(() => queryChart(part), [part])
   const [view, setView] = useState<FigureView>('chart')
   const tree = part.ok && display === 'tree' && layout?.tree && part.columns.includes(layout.tree.key) && part.columns.includes(layout.tree.parent)
+  // A section of photos is shown as the photos, whatever else it was built as.
+  const photos = useMemo(() => queryPhotos(part), [part])
 
   return (
     <section className={cn('overflow-hidden rounded-2xl bg-white shadow-sm ring-1 dark:bg-slate-900', part.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
@@ -563,7 +572,7 @@ const ReportSection = memo(function ReportSection({
             <Info className="h-4 w-4" />
           </button>
         )}
-        {chart && part.ok && display === 'table' && <ChartTableSwitch value={view} onChange={setView} />}
+        {chart && part.ok && display === 'table' && !photos && <ChartTableSwitch value={view} onChange={setView} />}
       </header>
 
       <div className="space-y-2.5 px-4 pb-4">
@@ -572,7 +581,9 @@ const ReportSection = memo(function ReportSection({
             {layout.note}
           </p>
         )}
-        {part.ok && display === 'figures' ? (
+        {photos ? (
+          <AiPhotoGallery photos={photos} />
+        ) : part.ok && display === 'figures' ? (
           <SectionFigures columns={part.columns} rows={part.rows} />
         ) : tree ? (
           <SectionTree columns={part.columns} rows={part.rows} tree={layout!.tree!} truncated={part.truncated} />
@@ -586,9 +597,12 @@ const ReportSection = memo(function ReportSection({
           </p>
         )}
         {part.ok && display !== 'figures' && part.rows.length > 0 && (
-          <button type="button" onClick={() => setTable(true)} className={SMALL_BTN}>
-            <Table2 className="h-3.5 w-3.5" /> Open table
-          </button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button type="button" onClick={() => setTable(true)} className={SMALL_BTN}>
+              <Table2 className="h-3.5 w-3.5" /> Open table
+            </button>
+            {chart && view === 'chart' && display === 'table' && !photos && <ChartImageTool model={chart} title={chart.title ?? part.purpose} className="text-xs text-muted" />}
+          </div>
         )}
       </div>
 

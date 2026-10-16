@@ -160,6 +160,7 @@ import { conversationTitle, conversationTools, factoryDay, questionContent, rend
 import { conversationTitleProblem, createGroup, groupNameProblem, listGroups, oneLine, removeGroup, renameGroup, updateConversation } from '../ai/conversationOrganize'
 import { searchConversations } from '../ai/conversationSearch'
 import { giveConversationTitle } from '../ai/conversationTitle'
+import { answerReportTitle } from '../ai/answerReportTitle'
 import { rangeProblem } from '../ai/reportTemplate'
 import {
   AI_REPORT_TITLE_CHARS,
@@ -773,6 +774,25 @@ export function aiRoutes(ctx: AppContext): Router {
     await ctx.answers.watched(id)
     const running = await runningAnswer(db, id)
     const body: AiMessagesResponse = { conversation: { ...toConversation(conversation), ...(running ? { answering: true } : {}) }, messages: await loadDisplayMessages(db, id), running }
+    res.json(body)
+  })
+
+  /**
+   * The title an answer is printed under, as a report: named by the assistant the first time and kept, or a stand-in
+   * while the person may not ask (the call is theirs, like any). Only the asker's own answers.
+   */
+  r.post('/turns/:id/report-title', async (req, res) => {
+    const { user, avail } = await asker(req)
+    const id = parse(uuid, req.params.id)
+    const body = await answerReportTitle({
+      db,
+      model: ctx.ai,
+      apiKey: avail.me.available ? avail.app.apiKey : null,
+      userId: user.id,
+      turnId: id,
+      titleModel: AI_JOBS.title.model,
+    })
+    if (!body) throw notFound('That answer')
     res.json(body)
   })
 

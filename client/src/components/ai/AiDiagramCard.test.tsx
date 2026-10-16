@@ -66,7 +66,8 @@ describe('the diagram card', () => {
     expect(t).toContain('Dashed: a hypothesis to check — the data does not show it.')
     expect(t).toContain('Figures from 1 query')
     expect(t).toContain('Defect pieces by machine 2 rows · 1.2 s')
-    expect(t).toContain('Full screen PNG SVG')
+    expect(t).toContain('Full screen Download image')
+    expect(t).not.toContain('SVG')
     // The drawing names itself, and a box with a link opens its page.
     expect(html(fishbone)).toContain('aria-label="Twist on Forming 2, October"')
     expect(html(fishbone)).toContain('href="/history?machine=58"')

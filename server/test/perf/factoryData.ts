@@ -2,8 +2,8 @@
 // §20 — a factory's worth of made-up records, to time the assistant's views
 // against (aiViewsPerf.test.ts, and by hand: scripts in this folder). One
 // session in five per order, five samples a session, a dozen dimensions a
-// sample; defects, coils, PT, notes, stages, paint, production tasks, PDI and
-// the audit log in the proportions the floor writes them. `sessions` scales
+// sample; defects, coils, PT, notes, stages, paint, production tasks, PDI,
+// photos and the audit log in the proportions the floor writes them. `sessions` scales
 // it all: 30 000 is a few years of a busy factory.
 //
 // Written straight into the tables through their triggers, so the samples'
@@ -63,6 +63,23 @@ SELECT o.line_key, o.line_key || '-' || k, 10 FROM production_orders o CROSS JOI
 INSERT INTO pdi_documents (order_id, created_by_id, created_by_name)
 SELECT o.id, u.id, u.name FROM production_orders o, (SELECT id, name FROM users WHERE username = 'perf1') u WHERE abs(hashtext(o.id::text)) % 10 = 0;
 INSERT INTO pdi_lines (pdi_id, order_id) SELECT d.id, d.order_id FROM pdi_documents d;
+-- Photos: two of every other defect, one of every note, PT record, paint check and PDI.
+CREATE TEMP TABLE perf_photo_owner (kind text, owner_id uuid, position int);
+INSERT INTO perf_photo_owner SELECT 'defect', d.id, k FROM defect_results d CROSS JOIN generate_series(0, 1) k WHERE abs(hashtext(d.id::text)) % 2 = 0;
+INSERT INTO perf_photo_owner SELECT 'note', n.id, 0 FROM session_notes n;
+INSERT INTO perf_photo_owner SELECT 'pt', p.id, 0 FROM pt_records p;
+INSERT INTO perf_photo_owner SELECT 'paint', p.id, 0 FROM paint_samples p;
+INSERT INTO perf_photo_owner SELECT 'pdi', d.id, 0 FROM pdi_documents d;
+ALTER TABLE perf_photo_owner ADD COLUMN image_id uuid NOT NULL DEFAULT gen_random_uuid();
+INSERT INTO images (id, storage_key, driver, original_filename, mime_type, byte_size, width, height, sha256, uploaded_by_id, uploaded_by_name)
+SELECT p.image_id, 'perf/' || p.image_id, 'local', 'photo.jpg', 'image/jpeg', 200000, 1600, 1200, repeat('0', 64), u.id, u.name
+  FROM perf_photo_owner p, (SELECT id, name FROM users WHERE username = 'perf1') u;
+INSERT INTO defect_images (defect_id, image_id, position) SELECT owner_id, image_id, position FROM perf_photo_owner WHERE kind = 'defect';
+INSERT INTO session_note_images (note_id, image_id, position) SELECT owner_id, image_id, position FROM perf_photo_owner WHERE kind = 'note';
+INSERT INTO pt_record_images (pt_record_id, image_id, position) SELECT owner_id, image_id, position FROM perf_photo_owner WHERE kind = 'pt';
+INSERT INTO paint_sample_images (paint_sample_id, image_id, position) SELECT owner_id, image_id, position FROM perf_photo_owner WHERE kind = 'paint';
+INSERT INTO pdi_images (pdi_id, image_id, position) SELECT owner_id, image_id, position FROM perf_photo_owner WHERE kind = 'pdi';
+DROP TABLE perf_photo_owner;
 INSERT INTO audit_log (user_id, user_name, action, entity, entity_id, field, old_value, new_value, at)
 SELECT u.id, u.name, 'update', 'InspectionSample', g::text, 'qty', '1', '2', timestamptz '2024-01-01' + (random() * 1000 || ' days')::interval
   FROM generate_series(1, ${sessions * 4}) g, (SELECT id, name FROM users WHERE username = 'perf1') u;
