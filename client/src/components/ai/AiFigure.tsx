@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import type { AiChartType, AiQueryPart } from '@qc/shared/ai'
 import { AiChart } from './AiChart'
+import { ChartImageTool } from './chartImage'
 import { useAiExcel } from '@/services/queries'
 import { EXPORT_TIP, useQueryExport } from './AiQueryCard'
 import { AiResultModal, PreviewTable } from './AiResultTable'
@@ -119,7 +120,10 @@ export const AiFigure = memo(function AiFigure({ part, model, question }: { part
               {part.truncated && `Drawn from the first ${part.rows.length.toLocaleString('en-US')} ${part.rows.length === 1 ? 'row' : 'rows'}; more matched — Export Excel has them all.`}
             </p>
           )}
-          <div className="print-hidden mt-2 flex flex-wrap justify-end gap-1 text-xs text-muted">{tools}</div>
+          <div className="print-hidden mt-2 flex flex-wrap justify-end gap-1 text-xs text-muted">
+            <ChartImageTool model={model} title={title} />
+            {tools}
+          </div>
         </>
       ) : (
         <PreviewTable part={part} tools={tools} />

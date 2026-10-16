@@ -239,6 +239,24 @@ one that needs the whole record runs with `long: true`, up to 10 minutes, one
 at a time across the app (a transaction advisory lock), the asker told by the
 bell when the answer is ready.
 
+The assistant shows the floor's photos: `ai.inspection_photos` (domain
+inspection: defects, notes, PT records, paint checks) and `ai.pdi_photos`
+(domain orders) list them one row per photo (migration 0068). A result with a
+column named `photo_id` is drawn as the photos themselves, captioned by its
+other columns — in an answer, a saved or scheduled report, and on paper
+(`client/src/components/ai/photos.ts`); the bytes stay behind
+`/api/images/:id/content`.
+
+Printed, an answer, a saved report or a delivered one is a report for
+management (`client/src/components/print`): A4 standing, the company's
+letterhead, numbered sections (a chart alone, rows as a ruled table, photos
+three to a row), the report's name and "Page n of m" at every page's foot,
+and the page's title — the PDF's file name — set to the report's name and
+day. An answer goes out under a title the assistant gives it once and keeps
+(`ai_turns.report_title`, migration 0069, `POST /api/ai/turns/:id/report-title`).
+Every chart and diagram saves as a PNG (`lib/imageExport.ts`; on a phone,
+through the share sheet's Save image).
+
 The assistant reads the record only through the views in schema `ai`, and the
 database enforces the domains: migrations 0033 and 0041 create one role
 without LOGIN per domain (`<database>_ai_base`, `_ai_inspection`,

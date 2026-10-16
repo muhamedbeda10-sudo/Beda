@@ -611,6 +611,12 @@ const TABLE_WORDS: Record<string, string> = {
   session_stage_quantities: 'stage quantities',
   pdi_documents: 'PDI documents',
   pdi_lines: 'PDI lines',
+  images: 'photos',
+  defect_images: 'defect photos',
+  session_note_images: 'note photos',
+  pt_record_images: 'PT photos',
+  paint_sample_images: 'paint photos',
+  pdi_images: 'PDI photos',
 }
 
 interface PlanNode {

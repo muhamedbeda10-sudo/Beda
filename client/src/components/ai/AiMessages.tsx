@@ -25,6 +25,7 @@ import { formatFullTimestamp, formatTime, cn } from '@/lib/utils'
 import { useApp } from '@/store/AppContext'
 import { AiAttachmentList } from './AiAttachments'
 import { AiFigure } from './AiFigure'
+import { AiPhotoFigure } from './AiPhotoFigure'
 import { AiKpiCards } from './AiKpiCards'
 import { AiMarkdown } from './AiMarkdown'
 import { AiQueryCard } from './AiQueryCard'
@@ -40,11 +41,13 @@ import { AiSavedTableCard } from './AiSavedTableCard'
 import { AiReportCard } from './AiReportCard'
 import { AiDiagramCard } from './AiDiagramCard'
 import { AiTableExcel } from './AiTable'
-import { useAiExcel } from '@/services/queries'
+import { loadAiAnswerReportTitle, useAiExcel } from '@/services/queries'
 import { AnswerPrint } from '@/components/print/reportPrints'
 import { usePrint } from '@/components/print/usePrint'
 import { answerBlocks, type AnswerBlock } from './answerLayout'
 import { queryChart, type ChartModel } from './chartData'
+import { queryPhotos } from './photos'
+import { localDay } from './reportInputs'
 import { kpiCards, liveKpis } from './kpis'
 import { answerText, isInFlight, type LivePart, type LiveTurn } from './liveTurn'
 import { liveDisplayParts, suggestionChips } from './suggestions'
@@ -162,9 +165,24 @@ const FOOTER_BTN = 'inline-flex h-7 items-center gap-1 rounded-md px-1.5 font-se
 
 /**
  * `extra`: what else the answer offers, beside Copy and Print (Save as report). `onPrint`: prints it on its own, laid out
- * for paper (Save as PDF in the browser's print makes a file). No cost: the chat shows no amounts, to anyone.
+ * for paper (Save as PDF in the browser's print makes a file); `preparing` while its title is fetched. No cost: the chat
+ * shows no amounts, to anyone.
  */
-function AnswerFooter({ parts, kpis, at, extra, onPrint }: { parts: readonly LivePart[]; kpis: readonly AiKpi[]; at: string; extra?: ReactNode; onPrint?: () => void }) {
+function AnswerFooter({
+  parts,
+  kpis,
+  at,
+  extra,
+  onPrint,
+  preparing = false,
+}: {
+  parts: readonly LivePart[]
+  kpis: readonly AiKpi[]
+  at: string
+  extra?: ReactNode
+  onPrint?: () => void
+  preparing?: boolean
+}) {
   const { toast } = useApp()
   const text = answerCopyText(parts, kpis)
   const copy = async () => {
@@ -187,8 +205,16 @@ function AnswerFooter({ parts, kpis, at, extra, onPrint }: { parts: readonly Liv
         </button>
       )}
       {text && onPrint && (
-        <button type="button" onClick={onPrint} className={FOOTER_BTN} aria-label="Print the answer" data-tip="Print it, or save it as a PDF from the print window">
-          <Printer className="h-3.5 w-3.5" /> Print
+        <button
+          type="button"
+          onClick={onPrint}
+          disabled={preparing}
+          aria-busy={preparing}
+          className={FOOTER_BTN}
+          aria-label="Print the answer"
+          data-tip="Print it as a report, or save it as a PDF from the print window"
+        >
+          {preparing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />} {preparing ? 'Preparing…' : 'Print'}
         </button>
       )}
     </div>
@@ -197,6 +223,7 @@ function AnswerFooter({ parts, kpis, at, extra, onPrint }: { parts: readonly Liv
 
 const NO_PARTS: readonly LivePart[] = []
 const NO_CHARTS: ReadonlyMap<string, ChartModel> = new Map()
+const NO_PHOTOS: ReadonlySet<string> = new Set()
 
 /**
  * An answer: saved (`message`), or being written (`turn`). One component for
@@ -257,9 +284,34 @@ export const Answer = memo(function Answer({
     }
     return out
   }, [parts, writing])
-  const blocks = useMemo(() => answerBlocks(parts, { settled: !writing, kpis: kpis.length > 0, charted: new Set(charts.keys()) }), [parts, writing, kpis.length, charts])
+  // Photos a query found, once the answer has ended: shown as the photos, where a chart would be.
+  const photos = useMemo(() => {
+    if (writing) return NO_PHOTOS
+    const out = new Set<string>()
+    for (const p of parts) if (p.type === 'query' && queryPhotos(p) !== null) out.add(p.queryId)
+    return out
+  }, [parts, writing])
+  const blocks = useMemo(
+    () => answerBlocks(parts, { settled: !writing, kpis: kpis.length > 0, charted: new Set(charts.keys()), photos }),
+    [parts, writing, kpis.length, charts, photos],
+  )
   const save = useSaveAsReport(ended, onOpenReport)
   const printer = usePrint()
+  const [preparing, setPreparing] = useState(false)
+  // Printed as a report under the title the assistant gives it (kept with the answer), never the question typed.
+  const print = async () => {
+    if (!ended || preparing) return
+    setPreparing(true)
+    let title = 'Quality report'
+    try {
+      if (ended.turnId) title = (await loadAiAnswerReportTitle(ended.turnId)).title
+    } catch {
+      // Printed all the same, under a report's plain name.
+    } finally {
+      setPreparing(false)
+    }
+    printer.print(<AnswerPrint title={title} at={ended.createdAt} parts={ended.parts} kpis={kpis} />, { title, day: localDay(new Date(ended.createdAt)) })
+  }
   const chips = latest && ended && onSuggestion ? suggestionChips(ended.suggestions) : []
   const last = parts.at(-1)
   // Between queries and before the first word, say what the model is doing: its latest word on it, or "Thinking…".
@@ -289,6 +341,10 @@ export const Answer = memo(function Answer({
             const part = queryOf(b.queryId)
             const model = charts.get(b.queryId)
             return part && model ? <AiFigure key={b.key} part={part} model={model} question={question} /> : null
+          }
+          case 'photos': {
+            const part = queryOf(b.queryId)
+            return part ? <AiPhotoFigure key={b.key} part={part} question={question} /> : null
           }
           case 'queries':
             return <HowIGotThis key={b.key} queries={b.queries} writing={writing} question={question} />
@@ -324,7 +380,8 @@ export const Answer = memo(function Answer({
           kpis={kpis}
           at={ended.createdAt}
           extra={save.button}
-          onPrint={() => printer.print(<AnswerPrint question={question} at={ended.createdAt} parts={ended.parts} kpis={kpis} />)}
+          onPrint={() => void print()}
+          preparing={preparing}
         />
       )}
       {printer.node}

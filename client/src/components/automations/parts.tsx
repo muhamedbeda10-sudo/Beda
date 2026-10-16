@@ -21,6 +21,8 @@ import { AiChart } from '@/components/ai/AiChart'
 import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figureView'
 import { AiResultModal, PreviewTable } from '@/components/ai/AiResultTable'
 import { queryChart } from '@/components/ai/chartData'
+import { AiPhotoGallery } from '@/components/ai/AiPhotoGallery'
+import { queryPhotos } from '@/components/ai/photos'
 import { sectionAsQuery } from '@/components/ai/reports'
 import { SectionFigures, SectionTree, sectionDisplay } from '@/components/ai/AiReportLayouts'
 import { TableTool, aiTableFilename } from '@/components/ai/AiTable'
@@ -308,7 +310,9 @@ function SectionPreview({ section, index, initiallyOpen }: { section: AiReportSe
   const shown = section.rows.slice(0, AI_PREVIEW_ROWS)
   // The chart the delivered report will draw, as this run would draw it; the switch shows it or the rows themselves.
   const display = sectionDisplay(section)
-  const chart = useMemo(() => (section.ok && display === 'table' ? queryChart(sectionAsQuery(section, '', index)) : null), [section, index, display])
+  // A section of photos is shown as the photos, whatever else it was built as.
+  const photos = useMemo(() => queryPhotos(section), [section])
+  const chart = useMemo(() => (section.ok && display === 'table' && !photos ? queryChart(sectionAsQuery(section, '', index)) : null), [section, index, display, photos])
   const [view, setView] = useState<FigureView>('chart')
   return (
     <section className={cn('overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', section.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
@@ -332,7 +336,9 @@ function SectionPreview({ section, index, initiallyOpen }: { section: AiReportSe
               <ChartTableSwitch value={view} onChange={setView} />
             </div>
           )}
-          {display === 'figures' ? (
+          {photos ? (
+            <AiPhotoGallery photos={photos.slice(0, AI_PREVIEW_ROWS)} />
+          ) : display === 'figures' ? (
             <SectionFigures columns={section.columns} rows={section.rows} />
           ) : display === 'tree' && section.tree ? (
             <SectionTree columns={section.columns} rows={shown} tree={section.tree} truncated={section.truncated || section.rows.length > shown.length} />

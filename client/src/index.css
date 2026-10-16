@@ -464,15 +464,79 @@ fieldset {
   }
 }
 
-/* Printed on its own (components/print/usePrint): drawn off the screen at the paper's width — A4 lying down, less its
-   margins — so its charts measure it before the browser prints; on paper, alone, as it is laid out, every row shown. */
+/* Printed on its own (components/print/usePrint): drawn off the screen at the paper's width — A4 standing, less its
+   margins (usePrint's @page) — so its charts measure it before the browser prints; on paper, alone, as it is laid out,
+   every row shown. A report handed to management: the letterhead's rule in the company's blue and red, numbered
+   sections, ruled tables with a shaded header, photos three to a row at one size. */
 .print-root {
   position: fixed;
   top: 0;
   left: -10000px;
-  width: 273mm;
+  width: 186mm;
   background: #fff;
   color: #0f172a;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.print-root .print-rule {
+  height: 3px;
+  background: linear-gradient(to right, #1e46a8 0 78%, #e3202a 78% 100%);
+}
+.print-root .print-section-title {
+  border-bottom: 1px solid #cbd5e1;
+  padding-bottom: 3px;
+}
+.print-root .print-section-number {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.45em;
+  height: 1.45em;
+  padding: 0 0.3em;
+  border-radius: 4px;
+  background: #1e46a8;
+  color: #fff;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.print-root .print-kpi {
+  border-top: 3px solid #1e46a8;
+}
+.print-root .print-table thead th {
+  background: #eef2f8;
+  color: #0f172a;
+  border-top: 1px solid #94a3b8;
+  border-bottom: 1px solid #94a3b8;
+}
+.print-root .print-table tbody td {
+  border-bottom: 1px solid #e2e8f0;
+}
+.print-root .print-table tbody tr:nth-child(even) td {
+  background: #f8fafc;
+}
+.print-root .print-photos {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4mm;
+}
+.print-root .print-photo-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 52mm;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+}
+.print-root .print-photo-frame img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.print-root a {
+  color: inherit;
+  text-decoration: none;
 }
 @media print {
   body.printing > :not(.print-root) {

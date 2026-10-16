@@ -40,10 +40,10 @@ export const titleRequest = (question: string): string => question.replace(/\s+/
 /**
  * The model's reply as a title: its first line, without the quotes, the
  * "Title:" or the full stop it may have added, on one line, at most the
- * title's length (by characters, never cutting an emoji). Null when nothing
+ * `max` characters (never cutting an emoji). Null when nothing
  * is left.
  */
-export function cleanTitle(reply: string): string | null {
+export function cleanTitle(reply: string, max = AI_CONVERSATION_TITLE_MAX): string | null {
   let t = reply.split('\n').map((l) => l.trim()).find((l) => l !== '') ?? ''
   t = t.replace(/^(title|العنوان)\s*[:：]\s*/i, '')
   // Quotes, marks and a full stop in any order around it: taken off until none is left.
@@ -54,7 +54,7 @@ export function cleanTitle(reply: string): string | null {
   t = t.replace(/\s+/g, ' ').trim()
   if (!t) return null
   const chars = Array.from(t)
-  return chars.length <= AI_CONVERSATION_TITLE_MAX ? t : `${chars.slice(0, AI_CONVERSATION_TITLE_MAX - 1).join('').trimEnd()}…`
+  return chars.length <= max ? t : `${chars.slice(0, max - 1).join('').trimEnd()}…`
 }
 
 export interface TitleRequest {

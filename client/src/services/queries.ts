@@ -55,6 +55,7 @@ import type { ChatUser, Coil, ImageAsset, NoticeAcknowledgement, NoticeAdminRow,
 import type { RolePermissionsResponse } from '@qc/shared/permissions'
 import type {
   AiAccessListResponse,
+  AiAnswerReportTitleResponse,
   AiConversationGroupsResponse,
   AiConversationScope,
   AiConversationSearchResponse,
@@ -1046,6 +1047,11 @@ export function useAiSlowQueries(enabled: boolean) {
 /** A query of an answer run again now, in full (up to AI_EXPORT_MAX_ROWS rows), for Excel. */
 export function loadAiQueryExport(queryId: string): Promise<AiQueryExportResponse> {
   return api<AiQueryExportResponse>(`/ai/queries/${encodeURIComponent(queryId)}/export`)
+}
+
+/** The title an answer is printed under: named by the assistant the first time, and kept with the answer. */
+export function loadAiAnswerReportTitle(turnId: string): Promise<AiAnswerReportTitleResponse> {
+  return api<AiAnswerReportTitleResponse>(`/ai/turns/${encodeURIComponent(turnId)}/report-title`, { method: 'POST' })
 }
 
 /** An Excel file the assistant made, as the server made and keeps it. */

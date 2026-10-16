@@ -3,8 +3,8 @@
 // kind, the drawing (./diagram), and under it what a reader needs to trust
 // it — which boxes are hypotheses (dashed: the data does not show them) and
 // the queries its figures came from, with their SQL. Full screen opens it to
-// be read on a tablet, pinch to zoom; PNG and SVG download it, drawn light
-// with its typefaces inside.
+// be read on a tablet, pinch to zoom; Download image saves it on the device
+// as a PNG, drawn light with its typefaces inside.
 //
 // It is drawn at its own size where the answer is wide enough, scaled down
 // to fit where it is not (never below MIN_SCALE: its words must stay
@@ -14,7 +14,7 @@
 
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Columns3, FileDown, Fish, ImageDown, Loader2, Maximize2, Network, Rows3, Workflow } from 'lucide-react'
+import { ChevronRight, Columns3, Fish, ImageDown, Loader2, Maximize2, Network, Rows3, Workflow } from 'lucide-react'
 import { AI_DIAGRAM_LAYOUT_NAME, type AiDiagramLayout, type AiDiagramPart, type AiDiagramSpec } from '@qc/shared/aiDiagram'
 import { cn } from '@/lib/utils'
 import { textDirection } from '@/lib/direction'
@@ -23,7 +23,7 @@ import { TableTool } from './AiTable'
 import { classifyAiLink } from './links'
 import { DiagramDrawing } from './diagram/DiagramDrawing'
 import { DiagramViewer } from './diagram/DiagramViewer'
-import { downloadDiagramPng, downloadDiagramSvg } from './diagram/exportDiagram'
+import { downloadDiagramPng } from './diagram/exportDiagram'
 import { layoutDiagram, type DiagramLayout } from './diagram/layout'
 import { canvasMeasure, DIAGRAM_FONT_FAMILY } from './diagram/measure'
 
@@ -127,7 +127,7 @@ export const AiDiagramCard = memo(function AiDiagramCard({ part }: { part: AiDia
   const { toast } = useApp()
   const { ref, width } = useWidth()
   const [full, setFull] = useState(false)
-  const [busy, setBusy] = useState<'png' | 'svg' | null>(null)
+  const [busy, setBusy] = useState(false)
   const scale = width ? Math.min(1, Math.max(MIN_SCALE, width / layout.width)) : 1
   const Icon = ICON[spec.layout]
   const hypotheses = spec.nodes.filter((n) => n.hypothesis).length
@@ -137,15 +137,15 @@ export const AiDiagramCard = memo(function AiDiagramCard({ part }: { part: AiDia
     setFull(false)
     navigate(link.to)
   }
-  const download = async (kind: 'png' | 'svg') => {
+  const download = async () => {
     if (busy) return
-    setBusy(kind)
+    setBusy(true)
     try {
-      await (kind === 'png' ? downloadDiagramPng : downloadDiagramSvg)(layout, spec.title)
+      await downloadDiagramPng(layout, spec.title)
     } catch (e) {
       toast(e instanceof Error ? e.message : 'The diagram could not be downloaded. Try again.', 'error')
     } finally {
-      setBusy(null)
+      setBusy(false)
     }
   }
   const drawing = <DiagramDrawing layout={layout} title={spec.title} onOpen={open} />
@@ -184,11 +184,8 @@ export const AiDiagramCard = memo(function AiDiagramCard({ part }: { part: AiDia
           <TableTool onClick={() => setFull(true)} icon={<Maximize2 className="h-3.5 w-3.5" />} tip="Open it on the whole screen, to zoom in">
             Full screen
           </TableTool>
-          <TableTool onClick={() => void download('png')} disabled={!!busy} icon={busy === 'png' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageDown className="h-3.5 w-3.5" />} tip="Download it as an image">
-            PNG
-          </TableTool>
-          <TableTool onClick={() => void download('svg')} disabled={!!busy} icon={busy === 'svg' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5" />} tip="Download it as a drawing, sharp at any size (opens in Word and PowerPoint)">
-            SVG
+          <TableTool onClick={() => void download()} disabled={busy} icon={busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageDown className="h-3.5 w-3.5" />} tip="Save it on this device as an image (PNG)">
+            Download image
           </TableTool>
         </div>
       </div>

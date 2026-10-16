@@ -37,6 +37,7 @@ export function Lightbox({
   startIndex = 0,
   onClose,
   onRemove,
+  onIndexChange,
 }: {
   images: ViewableImage[]
   startIndex?: number
@@ -47,8 +48,13 @@ export function Lightbox({
    * decides whether the viewer stays open on the rest.
    */
   onRemove?: (index: number) => void
+  /** Told which photo is on screen as it changes, so the caller can fetch it in full. */
+  onIndexChange?: (index: number) => void
 }) {
   const [idx, setIdx] = useState(startIndex)
+  useEffect(() => {
+    onIndexChange?.(idx)
+  }, [idx, onIndexChange])
   // A photo removed from under the viewer shortens the list: stay on the last one rather than past the end.
   useEffect(() => {
     if (images.length > 0 && idx > images.length - 1) setIdx(images.length - 1)
