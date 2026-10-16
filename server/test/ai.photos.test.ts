@@ -20,6 +20,18 @@ beforeAll(async () => {
   await app.start()
   await app.resetDatabase()
   await app.db.query(factoryDataSql(40))
+  // The made-up factory writes a PDI for about one order in ten: one with a photo, whatever it drew.
+  await app.db.query(`
+    WITH d AS (
+      INSERT INTO pdi_documents (order_id, created_by_id, created_by_name)
+      SELECT o.id, u.id, u.name FROM production_orders o, users u WHERE u.username = 'perf1' ORDER BY o.order_number LIMIT 1
+      RETURNING id, created_by_id, created_by_name
+    ), i AS (
+      INSERT INTO images (storage_key, driver, original_filename, mime_type, byte_size, width, height, sha256, uploaded_by_id, uploaded_by_name)
+      SELECT 'test/pdi-photo', 'local', 'pdi.jpg', 'image/jpeg', 1000, 800, 600, repeat('0', 64), created_by_id, created_by_name FROM d
+      RETURNING id
+    )
+    INSERT INTO pdi_images (pdi_id, image_id, position) SELECT d.id, i.id, 0 FROM d, i`)
 }, 60_000)
 afterAll(() => app.stop())
 
@@ -34,6 +46,7 @@ describe('§20 the photos the assistant can show', () => {
     ])
     for (const row of byKind.rows) expect(row.n, row.photo_of).toBeGreaterThan(0)
     expect(await count(`SELECT count(*)::int AS n FROM ai.pdi_photos`)).toBe(await count(`SELECT count(*)::int AS n FROM pdi_images`))
+    expect(await count(`SELECT count(*)::int AS n FROM ai.pdi_photos`)).toBeGreaterThan(0)
 
     // A defect's photo says which defect, its sample, session and order line, numbered from 1.
     const { rows } = await app.db.query(
