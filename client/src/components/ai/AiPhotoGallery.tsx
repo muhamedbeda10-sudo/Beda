@@ -17,7 +17,7 @@ import type { ImageAsset } from '@qc/shared/types'
 import { Lightbox } from '@/components/ui/Lightbox'
 import { PRINT_PENDING_ATTR } from '@/components/print/usePrint'
 import { useImages } from '@/services/queries'
-import { resolveImageUrl } from '@/services/uploadImage'
+import { loadImageBlob, resolveImageUrl } from '@/services/uploadImage'
 import { cn } from '@/lib/utils'
 import { photoCount, type AiPhoto } from './photos'
 
@@ -122,7 +122,7 @@ export const AiPhotoGallery = memo(function AiPhotoGallery({ photos, className }
         <Lightbox
           images={viewable.map((p) => {
             const a: ImageAsset = byId.get(p.id)!
-            return { id: p.id, dataUrl: full[a.id] ?? a.thumbnailDataUrl ?? '', caption: caption(p) }
+            return { id: p.id, dataUrl: full[a.id] ?? a.thumbnailDataUrl ?? '', caption: caption(p), save: { name: caption(p).replace(/ · /g, ' - '), load: () => loadImageBlob(a.id) } }
           })}
           startIndex={Math.max(0, viewer.start)}
           onIndexChange={onIndexChange}

@@ -4,12 +4,17 @@
 // screen, swipe sideways between photos and down to put them away. Touch and
 // mouse go through the same pointer events, so a tablet on the floor and a
 // desktop in the office behave alike. Where the photos can be changed, the
-// viewer also offers to remove the one on screen.
+// viewer also offers to remove the one on screen. A photo the caller can load
+// in full is saved on the device as it was taken: on a phone or a tablet
+// through the share sheet ("Save image" puts it with the photos), on a
+// computer as a download. Its bytes are fetched as it comes on screen, so the
+// press saves at once (a phone only lets a share follow a tap closely).
 // ============================================================================
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronLeft, ChevronRight, RotateCw, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, Loader2, RotateCw, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { photoFileName, saveImageFile } from '@/lib/imageExport'
 import { lockBodyScroll } from '@/lib/utils'
 
 /** Minimal shape the viewer needs — decoupled from any storage model. */
@@ -17,6 +22,8 @@ export interface ViewableImage {
   id: string
   dataUrl: string
   caption?: string
+  /** How to save it: its name (an extension is added from what it is) and its bytes in full. None: no Save button. */
+  save?: { name: string; load: () => Promise<Blob> }
 }
 
 const MIN_ZOOM = 1
@@ -64,6 +71,44 @@ export function Lightbox({
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
   /** Animate the transform: on for a snap back or a button, off while a finger is down. */
   const [smooth, setSmooth] = useState(false)
+
+  // Each photo's bytes, asked for as it comes on screen: ready when Save is pressed.
+  const loads = useRef(new Map<string, Promise<Blob>>())
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const onScreen = images[Math.min(idx, images.length - 1)]
+  const loadOf = useCallback((im: ViewableImage): Promise<Blob> | null => {
+    if (!im.save) return null
+    let p = loads.current.get(im.id)
+    if (!p) {
+      p = im.save.load()
+      // A failure is said when Save is pressed, not as an unhandled rejection meanwhile.
+      p.catch(() => undefined)
+      loads.current.set(im.id, p)
+    }
+    return p
+  }, [])
+  useEffect(() => {
+    setSaveError(null)
+    if (onScreen) loadOf(onScreen)
+  }, [onScreen, loadOf])
+  const save = async () => {
+    const im = onScreen
+    const p = im && loadOf(im)
+    if (!im?.save || !p || saving) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const blob = await p
+      await saveImageFile(photoFileName(im.save.name, blob.type), blob)
+    } catch {
+      // Asked again on the next press.
+      loads.current.delete(im.id)
+      setSaveError('The photo could not be saved. Check the connection and try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const stage = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
@@ -280,6 +325,11 @@ export function Lightbox({
         <span className="min-w-0 flex-1 truncate text-xs opacity-80 sm:text-sm">
           {images.length > 1 && <span className="font-semibold tabular-nums">{idx + 1} / {images.length}</span>}
           {img.caption ? `${images.length > 1 ? ' · ' : ''}${img.caption}` : ''}
+          {saveError && (
+            <span role="alert" className="block truncate font-semibold text-rose-300">
+              {saveError}
+            </span>
+          )}
         </span>
         <div className="flex shrink-0 items-center gap-0.5">
           <button
@@ -315,6 +365,11 @@ export function Lightbox({
           >
             <ZoomIn className="h-5 w-5" />
           </button>
+          {img.save && (
+            <button className={control} onClick={() => void save()} disabled={saving} aria-label="Save photo" data-tip="Save photo">
+              {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Download className="h-5 w-5" />}
+            </button>
+          )}
           <button
             className={control}
             onClick={() => {

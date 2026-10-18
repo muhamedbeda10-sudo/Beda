@@ -39,7 +39,10 @@ export const AiAttachmentList = memo(function AiAttachmentList({ attachments }: 
     setOpening(photos[index].id)
     try {
       const urls = await Promise.all(photos.map(fullUrl))
-      setViewing({ images: photos.map((p, i) => ({ id: p.id, dataUrl: urls[i], caption: p.name })), index })
+      setViewing({
+        images: photos.map((p, i) => ({ id: p.id, dataUrl: urls[i], caption: p.name, save: { name: p.name, load: () => cachedBlob(contentPath(p), () => apiBlob(contentPath(p))) } })),
+        index,
+      })
     } catch {
       toast('The photo could not be opened.', 'error')
     } finally {
