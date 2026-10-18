@@ -464,26 +464,63 @@ fieldset {
   }
 }
 
-/* Printed on its own (components/print/usePrint): drawn off the screen at the paper's width — A4 standing, less its
-   margins (usePrint's @page) — so its charts measure it before the browser prints; on paper, alone, as it is laid out,
-   every row shown. A report handed to management: the letterhead's rule in the company's blue and red, numbered
-   sections, ruled tables with a shaded header, photos three to a row at one size. */
+/* Printed on its own (components/print/usePrint): drawn off the screen at the paper's width — A4 less its margins, in
+   the style's orientation (usePrint sets --print-width) — so its charts measure it before the browser prints; on paper,
+   alone, as it is laid out, every row shown. A report handed to management, drawn in its style (print/printStyle): the
+   letterhead's rule, numbered sections, ruled tables with a shaded header and the figures in the style's colours and
+   choices (the sheet's --ps-* properties and data-* attributes); photos three to a row at one size. */
 .print-root {
   position: fixed;
   top: 0;
   left: -10000px;
-  width: 186mm;
+  width: var(--print-width, 186mm);
   background: #fff;
   color: #0f172a;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
+.print-root .print-sheet {
+  color: var(--ps-text, #0f172a);
+}
+/* A sheet drawn on the screen as it will print (the report styles' preview): in place, scaled to its box. */
+.print-root.print-preview {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 10mm 0;
+  transform-origin: top left;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 0.12), 0 8px 24px rgb(15 23 42 / 0.08);
+}
+.print-root.print-preview > * {
+  margin-inline: 0;
+}
+.print-root .print-heading {
+  color: var(--ps-heading, #0f172a);
+}
+.print-root .print-primary {
+  color: var(--ps-primary, #1e46a8);
+}
 .print-root .print-rule {
   height: 3px;
-  background: linear-gradient(to right, #1e46a8 0 78%, #e3202a 78% 100%);
+  background: linear-gradient(to right, var(--ps-primary, #1e46a8) 0 78%, var(--ps-accent, #e3202a) 78% 100%);
+}
+.print-root [data-rule='single'] .print-rule {
+  height: 2px;
+  background: var(--ps-primary, #1e46a8);
+}
+.print-root [data-rule='none'] .print-rule {
+  display: none;
+}
+.print-root .print-doc-control th,
+.print-root .print-doc-control td {
+  border: 1px solid var(--ps-border, #cbd5e1);
+}
+.print-root .print-doc-control th {
+  background: var(--ps-th-bg, #eef2f8);
+  color: var(--ps-th-text, #0f172a);
 }
 .print-root .print-section-title {
-  border-bottom: 1px solid #cbd5e1;
+  border-bottom: 1px solid var(--ps-border, #cbd5e1);
   padding-bottom: 3px;
 }
 .print-root .print-section-number {
@@ -493,25 +530,70 @@ fieldset {
   height: 1.45em;
   padding: 0 0.3em;
   border-radius: 4px;
-  background: #1e46a8;
+  background: var(--ps-primary, #1e46a8);
   color: #fff;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
+.print-root [data-numbering='false'] .print-section-number {
+  display: none;
+}
 .print-root .print-kpi {
-  border-top: 3px solid #1e46a8;
+  border: 1px solid #e2e8f0;
+  border-top: 3px solid var(--ps-primary, #1e46a8);
+}
+.print-root [data-figures='boxed'] .print-kpi {
+  border: 1.5px solid var(--ps-primary, #1e46a8);
+  border-radius: 0;
+}
+.print-root [data-figures='plain'] .print-kpi {
+  border: 0;
+  padding-inline: 0;
 }
 .print-root .print-table thead th {
-  background: #eef2f8;
-  color: #0f172a;
-  border-top: 1px solid #94a3b8;
-  border-bottom: 1px solid #94a3b8;
+  background: var(--ps-th-bg, #eef2f8);
+  color: var(--ps-th-text, #0f172a);
+  border-top: 1px solid var(--ps-border, #94a3b8);
+  border-bottom: 1px solid var(--ps-border, #94a3b8);
 }
 .print-root .print-table tbody td {
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--ps-border, #e2e8f0);
+}
+.print-root [data-borders='all'] .print-table th,
+.print-root [data-borders='all'] .print-table td {
+  border: 1px solid var(--ps-border, #cbd5e1);
+}
+.print-root [data-borders='none'] .print-table thead th {
+  border-top: 0;
+  border-bottom: 1.5px solid var(--ps-primary, #1e46a8);
+}
+.print-root [data-borders='none'] .print-table tbody td {
+  border: 0;
 }
 .print-root .print-table tbody tr:nth-child(even) td {
-  background: #f8fafc;
+  background: var(--ps-stripe, #f8fafc);
+}
+.print-root [data-stripes='false'] .print-table tbody tr:nth-child(even) td {
+  background: transparent;
+}
+.print-root [data-compact='true'] .print-table th,
+.print-root [data-compact='true'] .print-table td {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+.print-root .print-approval {
+  border: 1px solid var(--ps-border, #cbd5e1);
+}
+.print-root .print-approval-label {
+  background: var(--ps-th-bg, #eef2f8);
+  color: var(--ps-th-text, #0f172a);
+  border-bottom: 1px solid var(--ps-border, #cbd5e1);
+}
+.print-root .print-approval p + p {
+  border-top: 1px dashed #e2e8f0;
+}
+.print-root .print-foot {
+  border-top: 1px solid var(--ps-border, #cbd5e1);
 }
 .print-root .print-photos {
   display: grid;

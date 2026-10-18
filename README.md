@@ -257,6 +257,39 @@ day. An answer goes out under a title the assistant gives it once and keeps
 Every chart and diagram saves as a PNG (`lib/imageExport.ts`; on a phone,
 through the share sheet's Save image).
 
+How a report looks when it leaves the app is a **report style**
+(`shared/src/reportStyles.ts`, migration 0070, `/report-styles`): choices,
+never code — colours, a typeface from a short list, the logo (a small PNG or
+JPEG kept in the style) and where it sits, the letterhead's lines, ISO
+document control (Doc. No., revision, issue date — the revision moves on by
+itself when the look changes), table and figure styles, the page's foot and
+approval boxes. The printed sheet draws them (`components/print/printStyle.ts`:
+CSS custom properties and data attributes, A4 in the style's orientation), and
+so does Excel: a saved or delivered report's workbook is made by the server in
+its style (`server/src/reportStyles/styledWorkbook.ts`, ExcelJS). Anyone given
+the assistant keeps their own styles; one with the Configuration permission
+shares them and chooses the company's default, which answers and reports
+without a style of their own print in. Every save is a version
+(`report_style_versions`). The assistant proposes a style from a sample — a
+PDF drawn into pictures on the device with pdf.js, or photos — or from a change
+put in words, and finds the logo on the page, which the device cuts out
+(`/report-styles/draft`, job `report-style`; counted with the person's
+questions, after the same caps and rate checks). What it answers is checked by
+the same schema as anything typed.
+
+A saved report can also keep the company's own **Excel forms**
+(`report_forms`): an .xlsx (checked before it is opened —
+`reportForms/zipGuard.ts` refuses macros and files that unpack to more than
+40 MB), with where each value goes: cells take a report field, an input, a
+section's first value or total, or text; tables take a section's rows from a
+starting row and, past what the form holds, either insert rows (merges,
+formulas, images and the print area below move down; a total's range grows)
+or copy the sheet page after page (`reportForms/formBook.ts`). The assistant
+proposes the mapping from the sheet and the columns the report showed (job
+`report-form`). Anyone who may open the report fills a form from a run, and
+the people a scheduled report goes to fill its report's forms from what was
+delivered.
+
 The assistant reads the record only through the views in schema `ai`, and the
 database enforces the domains: migrations 0033 and 0041 create one role
 without LOGIN per domain (`<database>_ai_base`, `_ai_inspection`,
@@ -344,4 +377,6 @@ in `shared/src/api.ts`.
 | Images   | `POST /images` (multipart) `GET /images?ids=` `GET /images/:id/content`                      |
 | PDI      | `GET/POST /pdi`                                                                             |
 | Audit    | `GET /audit` `GET /audit/stats` `POST /audit/purge`                                         |
+| Report styles | `GET/POST /report-styles` `PUT/DELETE /report-styles/:id` `GET /report-styles/:id/versions` `POST /report-styles/:id/share` `GET/PUT /report-styles/default` `POST /report-styles/draft`; `PATCH /ai/reports/:id/style` `GET /ai/reports/:id/workbook` `GET /automations/deliveries/:id/workbook` |
+| Report forms | `GET /report-forms?reportId=` `POST /report-forms` (multipart .xlsx) `GET/PUT/DELETE /report-forms/:id` `GET /report-forms/:id/file` `POST /report-forms/:id/suggest`; `GET /ai/reports/:id/forms/:formId/fill` `GET /automations/deliveries/:id/forms/:formId` |
 | Health   | `GET /health`                                                                               |

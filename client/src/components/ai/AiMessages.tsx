@@ -41,7 +41,9 @@ import { AiSavedTableCard } from './AiSavedTableCard'
 import { AiReportCard } from './AiReportCard'
 import { AiDiagramCard } from './AiDiagramCard'
 import { AiTableExcel } from './AiTable'
+import { useQueryClient } from '@tanstack/react-query'
 import { loadAiAnswerReportTitle, useAiExcel } from '@/services/queries'
+import { loadDefaultReportStyle } from '@/services/reportStyles'
 import { AnswerPrint } from '@/components/print/reportPrints'
 import { usePrint } from '@/components/print/usePrint'
 import { answerBlocks, type AnswerBlock } from './answerLayout'
@@ -297,20 +299,22 @@ export const Answer = memo(function Answer({
   )
   const save = useSaveAsReport(ended, onOpenReport)
   const printer = usePrint()
+  const qc = useQueryClient()
   const [preparing, setPreparing] = useState(false)
   // Printed as a report under the title the assistant gives it (kept with the answer), never the question typed.
   const print = async () => {
     if (!ended || preparing) return
     setPreparing(true)
     let title = 'Quality report'
-    try {
-      if (ended.turnId) title = (await loadAiAnswerReportTitle(ended.turnId)).title
-    } catch {
-      // Printed all the same, under a report's plain name.
-    } finally {
-      setPreparing(false)
-    }
-    printer.print(<AnswerPrint title={title} at={ended.createdAt} parts={ended.parts} kpis={kpis} />, { title, day: localDay(new Date(ended.createdAt)) })
+    // In the company's default style; the built-in look when it cannot be read.
+    const [named, style] = await Promise.all([
+      ended.turnId ? loadAiAnswerReportTitle(ended.turnId).then((r) => r.title).catch(() => null) : Promise.resolve(null),
+      loadDefaultReportStyle(qc).catch(() => null),
+    ])
+    // Printed all the same, under a report's plain name, when it cannot be named.
+    if (named) title = named
+    setPreparing(false)
+    printer.print(<AnswerPrint title={title} at={ended.createdAt} parts={ended.parts} kpis={kpis} style={style} />, { title, day: localDay(new Date(ended.createdAt)), style })
   }
   const chips = latest && ended && onSuggestion ? suggestionChips(ended.suggestions) : []
   const last = parts.at(-1)

@@ -17,6 +17,7 @@
 // closed. It never changes the factory's record.
 // ============================================================================
 
+import type { ResolvedReportStyle } from './reportStyles'
 import type { AiCell, AiChartSpec, AiDayRange, AiReportPeriod, AiReportSectionRun } from './ai'
 import type { AiReportInput, AiReportInputValues } from './aiReportInputs'
 import type { Role } from './types'
@@ -442,6 +443,10 @@ export interface AutomationDelivery {
   report?: { id: string; title: string; open: boolean }
   /** The values its inputs took on this run, as read. */
   inputs?: { label: string; value: string }[]
+  /** The style it prints in: its saved report's, else the company's default; absent, the built-in look. */
+  style?: ResolvedReportStyle
+  /** Its saved report's Excel forms, filled from what was delivered. */
+  forms?: { id: string; name: string }[]
 }
 
 /** People and roles a recipient can be. */

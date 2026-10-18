@@ -4,7 +4,8 @@
 // assistant draws an answer, though only links to the app's own pages are
 // followed: it goes to whole roles), the days it covered, and each section's rows
 // as they ran — in the assistant's tables, opening large with Excel's
-// filters — with Export Excel for the whole of it. It shows what was sent,
+// filters — with Export Excel for the whole of it (in its style, made by the
+// server) and its saved report's Excel forms, filled. It shows what was sent,
 // never runs again; the people it went to may open it (whether or not they
 // use the assistant), as may its creator and the assistant's owner. To
 // anyone else it does not exist.
@@ -31,14 +32,14 @@ import { localDay, treeAsTable } from '@/components/ai/reportInputs'
 import { AiPhotoGallery } from '@/components/ai/AiPhotoGallery'
 import { queryPhotos } from '@/components/ai/photos'
 import { periodText } from '@/components/automations/parts'
-import { deliveryExportMessage, deliveryFilename, deliverySheets } from '@/components/automations/exportDelivery'
+import { deliveryFilename } from '@/components/automations/exportDelivery'
 import { factoryMoment, factoryTimestamp } from '@/components/automations/wording'
 import { ApiError } from '@/lib/api'
-import { downloadWorkbook } from '@/lib/xlsxWrite'
 import type { PrintPart } from '@/components/print/PrintSheet'
 import { ReportPrint } from '@/components/print/reportPrints'
 import { usePrint } from '@/components/print/usePrint'
-import { cn } from '@/lib/utils'
+import { cn, saveBlob } from '@/lib/utils'
+import { loadDeliveryWorkbook, loadFilledDeliveryForm } from '@/services/reportStyles'
 import { useAutomationDelivery } from '@/services/automations'
 import { mayOpenAutomation } from '@/components/followUps/wording'
 import { useOwnAutomationIds } from '@/services/followUps'
@@ -104,19 +105,27 @@ function Delivery({ d }: { d: AutomationDelivery }) {
         lines={[`Delivered ${factoryTimestamp(d.ranAt, factoryTimeZone)}`, values, days ? `Covers ${days}` : ''].filter(Boolean)}
         summary={d.summary}
         sections={printParts}
+        style={d.style}
       />,
       // Its file is named with the days it covers (a daily report's files tell apart), else the day it went out.
-      { title: d.automationName, day: d.period ? (d.period.from === d.period.to ? d.period.from : `${d.period.from} to ${d.period.to}`) : localDay(new Date(d.ranAt)) },
+      { title: d.automationName, day: d.period ? (d.period.from === d.period.to ? d.period.from : `${d.period.from} to ${d.period.to}`) : localDay(new Date(d.ranAt)), style: d.style },
     )
 
-  const exportExcel = () => {
+  // Drawn by the server in its style, from what was delivered; its saved report's forms filled the same way.
+  const [making, setMaking] = useState<string | null>(null)
+  const saveFile = async (key: string, name: string, load: () => Promise<Blob>, done: string) => {
+    if (making) return
+    setMaking(key)
     try {
-      downloadWorkbook(deliveryFilename(d), deliverySheets(d))
-      toast(deliveryExportMessage(d), 'success')
+      saveBlob(name, await load())
+      toast(done, 'success')
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Could not export the report.', 'error')
+      toast(e instanceof Error ? e.message : 'Could not make the file.', 'error')
+    } finally {
+      setMaking(null)
     }
   }
+  const exportExcel = () => void saveFile('workbook', deliveryFilename(d), () => loadDeliveryWorkbook(d.id), 'Exported the report to Excel, in its style.')
 
   return (
     <>
@@ -151,9 +160,20 @@ function Delivery({ d }: { d: AutomationDelivery }) {
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          <Button className="h-10 min-h-0 gap-1.5 px-3 py-0 text-13 touch:h-11" onClick={exportExcel} data-tip="The whole report as it was delivered: a sheet on the report, then a sheet per section">
-            <FileSpreadsheet className="h-4 w-4" /> Export Excel
+          <Button className="h-10 min-h-0 gap-1.5 px-3 py-0 text-13 touch:h-11" onClick={exportExcel} disabled={making !== null} data-tip="The whole report as it was delivered, in its style: a sheet on the report, then a sheet per section">
+            {making === 'workbook' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} Export Excel
           </Button>
+          {(d.forms ?? []).map((f) => (
+            <Button
+              key={f.id}
+              className="h-10 min-h-0 gap-1.5 px-3 py-0 text-13 touch:h-11"
+              onClick={() => void saveFile(f.id, deliveryFilename({ automationName: f.name, ranAt: d.ranAt }), () => loadFilledDeliveryForm(d.id, f.id), `Filled the form “${f.name}”.`)}
+              disabled={making !== null}
+              data-tip="The company's form, filled with what was delivered"
+            >
+              {making === f.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} <span dir="auto">{f.name}</span>
+            </Button>
+          ))}
           <Button className="h-10 min-h-0 gap-1.5 px-3 py-0 text-13 touch:h-11" onClick={print} data-tip="Print the report as it was delivered, or save it as a PDF from the print window">
             <Printer className="h-4 w-4" /> Print
           </Button>

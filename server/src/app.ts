@@ -38,6 +38,8 @@ import { tasksRoutes } from './modules/tasks.routes'
 import { automationsRoutes } from './modules/automations.routes'
 import { productionRecordsRoutes } from './modules/productionRecords.routes'
 import { pushRoutes } from './modules/push.routes'
+import { reportStylesRoutes } from './modules/reportStyles.routes'
+import { reportFormsRoutes } from './modules/reportForms.routes'
 import { keepSlowQueries } from './ai/slowQueries'
 
 export function createApp(ctx: AppContext): Express {
@@ -74,6 +76,8 @@ export function createApp(ctx: AppContext): Express {
     ['/api/orders/import', '/api/orders/import/compare', '/api/production-records/import', '/api/production-records/import/compare'],
     express.json({ limit: '8mb' }),
   )
+  // Pages of a sample report, as pictures, for the assistant to read a style from (REPORT_STYLE_SAMPLE_MAX_CHARS).
+  app.use('/api/report-styles/draft', express.json({ limit: '6mb' }))
   app.use(express.json({ limit: '2mb' }))
   app.use(cookieParser())
 
@@ -117,6 +121,8 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/automations', guard, automationsRoutes(ctx))
   app.use('/api/production-records', guard, productionRecordsRoutes(ctx))
   app.use('/api/push', guard, pushRoutes(ctx))
+  app.use('/api/report-styles', guard, reportStylesRoutes(ctx))
+  app.use('/api/report-forms', guard, reportFormsRoutes(ctx))
 
   app.all('/api/{*rest}', (_req, res) => {
     const body: ApiErrorBody = { error: { code: 'not_found', message: 'No such endpoint.' } }

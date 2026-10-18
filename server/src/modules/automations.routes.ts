@@ -11,7 +11,8 @@
 //
 // The exception is a delivered report: the people it went to may open it
 // whether or not they may create automations, as may its creator and the
-// owner; to anyone else it does not exist.
+// owner; to anyone else it does not exist. They also take it as a workbook in
+// its style, and fill its saved report's Excel forms from it.
 // ============================================================================
 
 import { Router, type Request, type Response } from 'express'
@@ -23,10 +24,12 @@ import type {
   AutomationPeopleResponse,
   AutomationsResponse,
 } from '@qc/shared/automation'
+import { BUILTIN_RESOLVED_STYLE, type ReportFormMapping } from '@qc/shared/reportStyles'
 import { ROLES, type Role } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { HttpError, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
+import { sendWorkbook } from '../lib/download'
 import { requireUser, type AuthUser } from '../auth/middleware'
 import { loadAccess, mayAutomate, type AccessRecord } from '../ai/access'
 import { aiOwner } from '../ai/owner'
@@ -34,6 +37,9 @@ import { EditsInput } from '../automations/draft'
 import { blockedNote, runNow, testAutomation, type EngineDeps } from '../automations/engine'
 import { automationFor, deleteAutomation, pauseAutomation, resumeAutomation, updateAutomation } from '../automations/lifecycle'
 import { listRuns } from '../automations/runs'
+import { styleOfReport } from '../reportStyles/styles'
+import { styledWorkbook } from '../reportStyles/styledWorkbook'
+import { deliveryFormData, deliveryWorkbookDoc, filledForm, reportFileName } from '../reportStyles/documents'
 import { AUTOMATION_COLUMNS, AUTOMATION_FROM, appState, findAutomation, toAutomations, type AutomationRow } from '../automations/views'
 
 const uuid = z.string().uuid()
@@ -54,10 +60,16 @@ export function automationsRoutes(ctx: AppContext): Router {
   const r = Router()
   const db = ctx.db
   const deps: EngineDeps = { db, config: ctx.config, readers: ctx.aiReader, model: ctx.ai }
+  const tz = ctx.config.FACTORY_TIMEZONE
 
   // ---- A delivered report: its recipients, its creator, the owner -------------------------
 
-  r.get('/deliveries/:id', async (req, res) => {
+  /**
+   * A delivery as the person may read it, with its saved report's style and
+   * forms (a form with no mapping yet is not offered); 404 to anyone it was
+   * not sent to.
+   */
+  async function readDelivery(req: Request): Promise<{ delivery: AutomationDelivery; reportId: string | null; reportDescription?: string; inputNames: { name: string; label: string }[] }> {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const owner = (await aiOwner(db, ctx.config)) === user.id
@@ -74,12 +86,18 @@ export function automationsRoutes(ctx: AppContext): Router {
       reportId: string | null
       reportTitle: string | null
       reportOpen: boolean
+      reportLive: boolean
+      reportStyleId: string | null
+      reportDescription: string | null
+      reportInputs: { name: string; label: string }[] | null
       inputs: { label: string; value: string }[] | null
     }>(
       // The saved report it sent, when it sent one, and whether the viewer may open it in My reports (their own, or shared).
       `SELECT d.id, d.automation_id AS "automationId", d.automation_name AS "automationName", d.ran_at AS "ranAt", d.period, d.summary,
               d.summary_note AS "summaryNote", d.language, d.sections, d.report_id AS "reportId", d.inputs, rep.title AS "reportTitle",
-              COALESCE(rep.deleted_at IS NULL AND (rep.user_id = $2 OR rep.shared), false) AS "reportOpen"
+              COALESCE(rep.deleted_at IS NULL AND (rep.user_id = $2 OR rep.shared), false) AS "reportOpen",
+              COALESCE(rep.deleted_at IS NULL, false) AS "reportLive", rep.style_id AS "reportStyleId",
+              rep.description AS "reportDescription", rep.inputs AS "reportInputs"
          FROM ai_report_deliveries d JOIN ai_automations a ON a.id = d.automation_id
          LEFT JOIN ai_reports rep ON rep.id = d.report_id
         WHERE d.id = $1
@@ -101,7 +119,52 @@ export function automationsRoutes(ctx: AppContext): Router {
     if (d.summaryNote) body.summaryNote = d.summaryNote
     if (d.reportId) body.report = { id: d.reportId, title: d.reportTitle ?? d.automationName, open: d.reportOpen }
     if (d.inputs && d.inputs.length > 0) body.inputs = d.inputs
-    res.json(body)
+    // Printed in its saved report's style while that report is there; else the company's default.
+    const style = await styleOfReport(db, d.reportLive ? d.reportStyleId : null)
+    if (style) body.style = style
+    const reportId = d.reportId && d.reportLive ? d.reportId : null
+    if (reportId) {
+      const forms = await db.query<{ id: string; name: string }>(
+        `SELECT id, name FROM report_forms WHERE report_id = $1 AND deleted_at IS NULL AND mapping IS NOT NULL ORDER BY created_at, id`,
+        [reportId],
+      )
+      if (forms.rows.length > 0) body.forms = forms.rows
+    }
+    return {
+      delivery: body,
+      reportId,
+      ...(d.reportDescription ? { reportDescription: d.reportDescription } : {}),
+      inputNames: (d.reportInputs ?? []).map((i) => ({ name: i.name, label: i.label })),
+    }
+  }
+
+  r.get('/deliveries/:id', async (req, res) => {
+    res.json((await readDelivery(req)).delivery)
+  })
+
+  /** What was delivered, as a workbook drawn in its style: never run again. */
+  r.get('/deliveries/:id/workbook', async (req, res) => {
+    const user = requireUser(req)
+    const { delivery, reportDescription, inputNames } = await readDelivery(req)
+    const style = delivery.style ?? BUILTIN_RESOLVED_STYLE
+    const doc = deliveryWorkbookDoc({ delivery, inputNames, reportDescription, style, madeBy: user.name, timeZone: tz })
+    sendWorkbook(res, reportFileName(delivery.automationName, delivery.ranAt, tz), await styledWorkbook(doc, style))
+  })
+
+  /** One of its saved report's Excel forms, filled from what was delivered. */
+  r.get('/deliveries/:id/forms/:formId', async (req, res) => {
+    const user = requireUser(req)
+    const formId = parse(uuid, req.params.formId)
+    const { delivery, reportId, reportDescription, inputNames } = await readDelivery(req)
+    const { rows } = await db.query<{ name: string; mapping: ReportFormMapping | null; bytes: Buffer }>(
+      `SELECT name, mapping, file_bytes AS bytes FROM report_forms WHERE id = $1 AND report_id = $2 AND deleted_at IS NULL`,
+      [formId, reportId],
+    )
+    const form = rows[0]
+    if (!reportId || !form || !form.mapping) throw notFound('That form')
+    const style = delivery.style ?? BUILTIN_RESOLVED_STYLE
+    const data = deliveryFormData({ delivery, inputNames, reportDescription, style, madeBy: user.name, timeZone: tz })
+    sendWorkbook(res, reportFileName(form.name, delivery.ranAt, tz), await filledForm(form.bytes, form.mapping, data))
   })
 
   // ---- Everything else: people who may create automations ----------------------------------

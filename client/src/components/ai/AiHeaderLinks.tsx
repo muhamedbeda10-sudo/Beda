@@ -1,13 +1,13 @@
 // ============================================================================
-// §20 — the assistant's own pages, from its header: the Playbook and the
-// saved tables, for everyone given the assistant, Automations (§21) for the people who may
+// §20 — the assistant's own pages, from its header: the Playbook, the
+// saved tables and the report styles, for everyone given the assistant, Automations (§21) for the people who may
 // create them, and its settings (the gear) for its owner alone. They open inside the popup (its own router: AiPopup), with the
 // way back to the conversation, rather than as tabs of the app's bar. Tasks
 // are not here: they are the bell's, though the assistant still drafts them.
 // ============================================================================
 
 import { useLocation, useNavigate } from 'react-router-dom'
-import { BookMarked, Settings, Table2, Zap } from 'lucide-react'
+import { BookMarked, Palette, Settings, Table2, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAi } from './AiAssistantProvider'
 
@@ -18,6 +18,7 @@ export function AiHeaderLinks({ buttonClass, onClass }: { buttonClass: string; o
   const onAutomations = pathname.startsWith('/automations')
   const onPlaybook = pathname.startsWith('/playbook')
   const onTables = pathname.startsWith('/saved-tables')
+  const onStyles = pathname.startsWith('/report-styles')
   const onSettings = pathname.startsWith('/admin/ai')
   return (
     <>
@@ -29,6 +30,11 @@ export function AiHeaderLinks({ buttonClass, onClass }: { buttonClass: string; o
       {enabled && (
         <button type="button" onClick={() => navigate('/saved-tables')} className={cn(buttonClass, onTables && onClass)} aria-label="Saved tables" aria-current={onTables ? 'page' : undefined} data-tip="Saved tables: what the assistant keeps to build on">
           <Table2 className="h-5 w-5" />
+        </button>
+      )}
+      {enabled && (
+        <button type="button" onClick={() => navigate('/report-styles')} className={cn(buttonClass, onStyles && onClass)} aria-label="Report styles" aria-current={onStyles ? 'page' : undefined} data-tip="Report styles: how reports look in PDF and Excel">
+          <Palette className="h-5 w-5" />
         </button>
       )}
       {automations && (

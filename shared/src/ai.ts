@@ -8,6 +8,7 @@
 // cap an administrator sets, so the bill cannot run away.
 // ============================================================================
 
+import type { ResolvedReportStyle } from './reportStyles'
 import type { ApiErrorCode } from './api'
 import type { AiAutomationPart } from './automation'
 import type { AiNoticePart } from './noticeAssistant'
@@ -321,7 +322,7 @@ export const AI_DEEP_MODEL: AiModelId = 'claude-opus-5-5'
 /** The effort of every job that thinks. */
 export const AI_EFFORT: AiEffort = 'high'
 
-export const AI_JOB_IDS = ['chat-standard', 'chat-deep', 'router', 'title', 'mtc', 'mtc-reread', 'report-template', 'report-summary'] as const
+export const AI_JOB_IDS = ['chat-standard', 'chat-deep', 'router', 'title', 'mtc', 'mtc-reread', 'report-template', 'report-summary', 'report-style', 'report-form'] as const
 export type AiJob = (typeof AI_JOB_IDS)[number]
 
 export interface AiJobRun {
@@ -339,6 +340,8 @@ export const AI_JOBS: Readonly<Record<AiJob, AiJobRun>> = {
   'mtc-reread': { model: AI_DEEP_MODEL, effort: AI_EFFORT },
   'report-template': { model: AI_STANDARD_MODEL, effort: AI_EFFORT },
   'report-summary': { model: AI_STANDARD_MODEL, effort: AI_EFFORT },
+  'report-style': { model: AI_STANDARD_MODEL, effort: AI_EFFORT },
+  'report-form': { model: AI_STANDARD_MODEL, effort: AI_EFFORT },
 }
 
 /** A chat question's level, as the router gives it: standard (Sonnet) or deep (Opus). Questions with files too. */
@@ -1160,6 +1163,8 @@ export interface AiReport extends AiReportSummary {
   sections: AiReportSection[]
   /** What a run asks for besides the period. */
   inputs: AiReportInput[]
+  /** The style its owner chose for it (reportStyles); absent: the company's default. */
+  styleId?: string
 }
 
 export interface AiReportsResponse {
@@ -1206,6 +1211,8 @@ export interface AiReportRunResponse {
   /** The inputs' values the run used (what was typed, or each one's default). */
   inputs: AiReportInputValues
   ranAt: string
+  /** The style it prints in: its own, else the company's default; absent, the built-in look. */
+  style?: ResolvedReportStyle
 }
 
 export interface AiReportExportResponse {

@@ -53,11 +53,12 @@ import { currentAiOwner } from './owner'
 import { factoryClock } from './prompt'
 import { AI_EXPORT_LIMITS, AI_MAX_SQL_CHARS, AI_QUERY_TIMEOUT_MS, exportRows, runReadOnlyQuery, type QueryRun } from './runQuery'
 import { withQueryOrigin } from './slowQueries'
+import { XLSX_CONTENT_TYPE } from '../lib/download'
 
 type ToolUse = Anthropic.Beta.BetaToolUseBlock
 
 export const MAKE_EXCEL_TOOL_NAME = 'make_excel'
-export const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+export { XLSX_CONTENT_TYPE }
 
 /** How long a sheet's query may run: an export's time. */
 const SHEET_QUERY_TIMEOUT_MS = AI_QUERY_TIMEOUT_MS

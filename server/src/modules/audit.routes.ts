@@ -53,7 +53,7 @@ function auditColumns(tz: string): SqlColumns {
 }
 
 /** The assistant's own entries, its automations' included (§21), which only its owner sees. */
-const AI_ENTRIES = `(entity IN ('AiAssistant', 'AiAccess', 'AiReport', 'Automation') OR (entity = 'AppSettings' AND entity_id LIKE 'ai%'))`
+const AI_ENTRIES = `(entity IN ('AiAssistant', 'AiAccess', 'AiReport', 'ReportForm', 'Automation') OR (entity = 'AppSettings' AND entity_id LIKE 'ai%'))`
 
 /** The entries a reader of the log may see: everything but the assistant's own, unless they own it. */
 const visible = (aiOwner: boolean) => (aiOwner ? 'deleted_at IS NULL' : `deleted_at IS NULL AND NOT ${AI_ENTRIES}`)

@@ -93,6 +93,7 @@ interface ReportRow {
   conversationId?: string | null
   sections?: AiReportSection[]
   inputs?: AiReportInput[]
+  styleId?: string | null
 }
 
 /** A report's columns as one person reads them ($2: who asks). */
@@ -100,7 +101,7 @@ const SUMMARY_COLUMNS = `r.id, r.title, r.question, r.period, r.adjustable, json
        r.created_at AS "createdAt", r.updated_at AS "updatedAt", r.last_run_at AS "lastRunAt",
        r.description, r.shared, (r.user_id = $2) AS mine, COALESCE(u.name, '') AS "ownerName", r.made_by AS "madeBy",
        json_array_length(r.inputs) AS "inputCount"`
-const REPORT_COLUMNS = `${SUMMARY_COLUMNS}, r.conversation_id AS "conversationId", r.sections, r.inputs`
+const REPORT_COLUMNS = `${SUMMARY_COLUMNS}, r.conversation_id AS "conversationId", r.sections, r.inputs, r.style_id AS "styleId"`
 /** The reports a person may open: their own, and the shared ones. */
 const VISIBLE = `r.deleted_at IS NULL AND (r.user_id = $2 OR r.shared)`
 const FROM = `ai_reports r LEFT JOIN users u ON u.id = r.user_id`
@@ -139,6 +140,7 @@ function toSection(s: AiReportSection): AiReportSection {
 function toReport(r: ReportRow): AiReport {
   const report: AiReport = { ...toSummary(r), sections: (r.sections ?? []).map(toSection), inputs: r.inputs ?? [] }
   if (r.conversationId) report.conversationId = r.conversationId
+  if (r.styleId) report.styleId = r.styleId
   return report
 }
 
