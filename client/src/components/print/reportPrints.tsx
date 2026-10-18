@@ -5,10 +5,12 @@
 // each diagram it drew, each chart it drew (the chart alone) and each set of
 // photos it showed — and a report, saved or delivered: the lines that place
 // it, its summary, then each section. The workings (an answer's other
-// queries, the SQL, the suggestions under it) stay off.
+// queries, the SQL, the suggestions under it) stay off. An answer prints in
+// the company's default style; a report in its own (else the default).
 // ============================================================================
 
 import type { AiKpi, AiQueryPart } from '@qc/shared/ai'
+import type { ResolvedReportStyle } from '@qc/shared/reportStyles'
 import { DiagramPrint } from '@/components/ai/AiDiagramCard'
 import { AiMarkdown } from '@/components/ai/AiMarkdown'
 import type { LivePart } from '@/components/ai/liveTurn'
@@ -30,11 +32,11 @@ export const chartedQueries = (parts: readonly LivePart[]): AiQueryPart[] => par
 export const shownQueries = (parts: readonly LivePart[]): AiQueryPart[] =>
   parts.filter((p): p is AiQueryPart => p.type === 'query' && p.ok && (!!p.chart || queryPhotos(p) !== null))
 
-export function AnswerPrint({ title, at, parts, kpis }: { title: string; at: string; parts: readonly LivePart[]; kpis: readonly AiKpi[] }) {
+export function AnswerPrint({ title, at, parts, kpis, style }: { title: string; at: string; parts: readonly LivePart[]; kpis: readonly AiKpi[]; style?: ResolvedReportStyle | null }) {
   const texts = parts.filter((p): p is Extract<LivePart, { type: 'text' }> => p.type === 'text' && p.text.trim() !== '')
   const shown = shownQueries(parts)
   return (
-    <PrintSheet kind="AI assistant report" title={printTitle(title, 'Quality report')} lines={[`Prepared ${paperWhen(at)}`]}>
+    <PrintSheet kind="AI assistant report" title={printTitle(title, 'Quality report')} lines={[`Prepared ${paperWhen(at)}`]} style={style}>
       <PrintKpis kpis={kpis} />
       {texts.map((t, i) => (
         <div key={i} className="ai-prose">
@@ -49,9 +51,23 @@ export function AnswerPrint({ title, at, parts, kpis }: { title: string; at: str
   )
 }
 
-export function ReportPrint({ kind, title, lines, summary, sections }: { kind: string; title: string; lines: readonly string[]; summary?: string; sections: readonly PrintPart[] }) {
+export function ReportPrint({
+  kind,
+  title,
+  lines,
+  summary,
+  sections,
+  style,
+}: {
+  kind: string
+  title: string
+  lines: readonly string[]
+  summary?: string
+  sections: readonly PrintPart[]
+  style?: ResolvedReportStyle | null
+}) {
   return (
-    <PrintSheet kind={kind} title={printTitle(title, 'Report')} lines={lines}>
+    <PrintSheet kind={kind} title={printTitle(title, 'Report')} lines={lines} style={style}>
       {summary && (
         <div className="ai-prose">
           {/* Its links stay words: paper has nothing to press. */}

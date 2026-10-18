@@ -24,7 +24,8 @@
     "./aiDiagram": "./src/aiDiagram.ts",
     "./aiReportInputs": "./src/aiReportInputs.ts",
     "./mtc": "./src/mtc.ts",
-    "./permissions": "./src/permissions.ts"
+    "./permissions": "./src/permissions.ts",
+    "./reportStyles": "./src/reportStyles.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",

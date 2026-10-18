@@ -39,6 +39,7 @@ const TasksPage = lazy(() => import('@/pages/TasksPage').then((m) => ({ default:
 const TaskPage = lazy(() => import('@/pages/TaskPage').then((m) => ({ default: m.TaskPage })))
 const PlaybookPage = lazy(() => import('@/pages/PlaybookPage').then((m) => ({ default: m.PlaybookPage })))
 const SavedTablesPage = lazy(() => import('@/pages/SavedTablesPage').then((m) => ({ default: m.SavedTablesPage })))
+const ReportStylesPage = lazy(() => import('@/pages/ReportStylesPage').then((m) => ({ default: m.ReportStylesPage })))
 
 /** A page the person may not open (§14) sends them home; the API refuses its data anyway. */
 function Only({ cap, children }: { cap: Permission; children: ReactElement }) {
@@ -164,6 +165,7 @@ export default function App() {
         <Route path="/tasks/:id" element={<LazyPage what="The task"><TaskPage /></LazyPage>} />
         <Route path="/playbook" element={<OnlyAiGranted><LazyPage what="The playbook"><PlaybookPage /></LazyPage></OnlyAiGranted>} />
         <Route path="/saved-tables" element={<OnlyAiGranted><LazyPage what="The saved tables"><SavedTablesPage /></LazyPage></OnlyAiGranted>} />
+        <Route path="/report-styles" element={<OnlyAiGranted><LazyPage what="The report styles"><ReportStylesPage /></LazyPage></OnlyAiGranted>} />
         {/* Administration lives behind the gear; every section keeps its own address. */}
         <Route path="/admin" element={<Navigate to="/admin/configuration" replace />} />
         <Route path="/admin/configuration/:section?" element={<Only cap="manage-configuration"><ConfigurationPage /></Only>} />

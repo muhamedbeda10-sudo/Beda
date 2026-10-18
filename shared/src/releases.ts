@@ -28,6 +28,19 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-18.1',
+    date: '2026-10-18',
+    title: 'Report styles and the company’s own Excel forms',
+    items: [
+      { text: 'New: Report styles (the palette icon in the AI assistant’s header). A style sets how reports look when printed as PDF and in Excel: colours, typeface, the logo and where it sits, the company and department, portrait or landscape, table lines and stripes, the text at the foot of the page, and signature boxes (Prepared by, Reviewed by, Approved by).' },
+      { text: 'Make a style from a sample: upload a PDF of a report you like, or photos of its pages, and the assistant copies its look and cuts out its logo. Or say what to change in words (“make the header dark green”, “add a box for the plant manager’s signature”). You see it in the preview before saving.' },
+      { text: 'Document control for the quality system: a box with the Doc. No., revision and issue date. When the look changes, the revision moves on by itself (02 → 03) and the issue date becomes today; every save is kept as a version.' },
+      { text: 'Choose a style for each saved report from the report itself. Someone with the Configuration permission shares styles with everyone and chooses the company’s default: AI answers and reports without their own style print in it.' },
+      { text: 'Export Excel of a saved or scheduled report now comes in its style too: the letterhead with the logo, the document control box, coloured headers, filters on every table, A4 page setup with page numbers, and the signature boxes.' },
+      { text: 'New: Excel forms. Add the company’s own workbook (QF-07, an inspection sheet…) to a saved report, say where each value goes — or let the assistant match it — and fill it from the report in one click. When there are more rows than the form holds, it inserts rows (the totals and signatures below move down) or carries on to a copy of the sheet, as you choose. A scheduled report’s page offers its report’s forms, filled with what was delivered.' },
+    ],
+  },
+  {
     id: '2026-10-16.9',
     date: '2026-10-16',
     title: 'Reports as PDF for management, inspection photos, charts as images',

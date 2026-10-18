@@ -18,7 +18,7 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }))
 vi.mock('@/lib/api', async () => ({ ...(await vi.importActual<typeof import('@/lib/api')>('@/lib/api')), api: apiMock }))
 
 const { deleteAiReport, markSavedReport, renameAiReport, saveAiReport, startSavingAiReport } = await import('./mutations')
-const { aiReportListOptions, keys, loadAiReportExport, loadAiReportsPage, newerAiReport, runAiReport } = await import('./queries')
+const { aiReportListOptions, keys, loadAiReportsPage, newerAiReport, runAiReport, runQs } = await import('./queries')
 
 const conversation = { id: 'c1', title: 'Top defects', createdAt: '2026-10-09T10:00:00Z', lastMessageAt: '2026-10-09T10:00:00Z', pinnedAt: null, groupId: null, archivedAt: null }
 const question: AiMessage = { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Top defects?' }], createdAt: '2026-10-09T10:00:00Z', turnId: 't1' }
@@ -131,13 +131,11 @@ describe('saved reports and the cache', () => {
 
   it('asks for the days of an export only when they were chosen, both together', async () => {
     apiMock.mockResolvedValue({})
-    await loadAiReportExport('r1', null)
-    await loadAiReportExport('r/1', { from: '2026-09-01', to: '2026-09-30' })
+    expect(runQs(null, '')).toBe('')
+    expect(runQs({ from: '2026-09-01', to: '2026-09-30' }, '')).toBe('?from=2026-09-01&to=2026-09-30')
     await loadAiReportsPage('', null)
     await loadAiReportsPage('عيوب L1', { updatedAt: '2026-10-01T08:00:00.000Z', id: 'a1b2' })
     expect(apiMock.mock.calls.map(([path]) => path)).toEqual([
-      '/ai/reports/r1/export',
-      '/ai/reports/r%2F1/export?from=2026-09-01&to=2026-09-30',
       '/ai/reports?limit=50',
       `/ai/reports?q=${encodeURIComponent('عيوب')}+L1&before=2026-10-01T08%3A00%3A00.000Z&beforeId=a1b2&limit=50`,
     ])

@@ -12,8 +12,10 @@
 // Run, each field starting from its default; one that cannot run before
 // something is typed waits for it. Its sections may be headline figures or a
 // tree as well as tables. Export Excel takes every section in full, a sheet
-// each, after a sheet on the report itself. Only its maker renames or
-// deletes a report; a shared one says whose it is.
+// each, after a sheet on the report itself, drawn in the report's style (the
+// server makes it); Print draws it in that style too. Only its maker
+// renames or deletes a report, chooses its style and adds its Excel forms; a
+// shared one says whose it is, and anyone who opens it fills its forms.
 // ============================================================================
 
 import { memo, useCallback, useMemo, useReducer, useState, type Dispatch } from 'react'
@@ -48,10 +50,11 @@ import {
 import type { AiReportInputValues } from '@qc/shared/aiReportInputs'
 import { Badge, Button } from '@/components/ui'
 import { ApiError } from '@/lib/api'
-import { downloadWorkbook } from '@/lib/xlsxWrite'
-import { cn, formatDate, formatFullTimestamp, formatTime } from '@/lib/utils'
+import { cn, formatDate, formatFullTimestamp, formatTime, saveBlob } from '@/lib/utils'
 import { deleteAiReport, renameAiReport } from '@/services/mutations'
-import { keys, loadAiReportExport, newerAiReport, useAiExcel, useAiReport, useAiReportRun } from '@/services/queries'
+import { keys, useAiExcel, useAiReport, useAiReportRun } from '@/services/queries'
+import { loadReportWorkbook } from '@/services/reportStyles'
+import { ReportLookPanel } from '@/components/reportStyles/ReportLookPanel'
 import { paperWhen, type PrintPart } from '@/components/print/PrintSheet'
 import { ReportPrint } from '@/components/print/reportPrints'
 import { usePrint } from '@/components/print/usePrint'
@@ -66,7 +69,7 @@ import { AiResultModal, PreviewTable } from './AiResultTable'
 import { queryChart } from './chartData'
 import { ChartImageTool } from './chartImage'
 import { queryPhotos } from './photos'
-import { aiReportExportMessage, aiReportFilename, aiReportSheets } from './exportAiReport'
+import { aiReportFilename } from './exportAiReport'
 import { ReportInputsForm, SectionFigures, SectionTree } from './AiReportLayouts'
 import { inputDrafts, inputsKey, inputsLine, localDay, readDrafts, runsOnOpen, treeAsTable } from './reportInputs'
 import {
@@ -84,7 +87,7 @@ import {
 
 const SMALL_BTN = 'btn-secondary h-8 min-h-0 gap-1.5 px-2.5 py-0 text-xs touch:h-11 touch:px-3'
 const EXPORT_LABEL = 'Export report'
-const EXPORT_TIP = 'Runs every section again now, in full, and saves them as a workbook: a sheet each, after a sheet on the report'
+const EXPORT_TIP = 'Runs every section again now, in full, and saves them as a workbook in the report’s style: a sheet each, after a sheet on the report'
 
 /** Today's time, or the day and the time. */
 const when = (iso: string) => (new Date(iso).toDateString() === new Date().toDateString() ? formatTime(iso) : `${formatDate(iso)}, ${formatTime(iso)}`)
@@ -174,22 +177,22 @@ export function AiReportView({
     }
   }
 
-  // Over the days on screen: the saved period as of now, or the days chosen.
+  // Over the days on screen: the saved period as of now, or the days chosen; drawn by the server in the report's style.
+  const title = report?.title
   const exportExcel = useCallback(async () => {
     setExporting(true)
     try {
-      const res = await loadAiReportExport(id, override, inputsJson)
-      // A rename made while it ran is newer than the copy the export carries: the file takes the title on screen.
-      const report = newerAiReport(qc.getQueryData<AiReport>(keys.aiReport(id)), res.report)
-      const data = report === res.report ? res : { ...res, report }
-      downloadWorkbook(aiReportFilename(data.report.title, data.ranAt), aiReportSheets(data))
-      toast(aiReportExportMessage(data), 'success')
+      const file = await loadReportWorkbook(id, override, inputsJson)
+      saveBlob(aiReportFilename(qc.getQueryData<AiReport>(keys.aiReport(id))?.title ?? title ?? 'Report', new Date().toISOString()), file)
+      // Its last run moved.
+      void qc.invalidateQueries({ queryKey: keys.aiReports })
+      toast('Exported the report to Excel, in its style.', 'success')
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Could not export the report.', 'error')
     } finally {
       setExporting(false)
     }
-  }, [id, override, inputsJson, qc, toast])
+  }, [id, override, inputsJson, qc, toast, title])
   const onExport = useCallback(() => void exportExcel(), [exportExcel])
   // Excel is for the people the assistant's owner allows (§20).
   const excel = useAiExcel()
@@ -338,8 +341,9 @@ export function AiReportView({
                             `Data read ${paperWhen(shown.ranAt)}`,
                           ].filter(Boolean)}
                           sections={printParts}
+                          style={shown.style}
                         />,
-                        { title: shown.report.title, day: localDay(new Date(shown.ranAt)) },
+                        { title: shown.report.title, day: localDay(new Date(shown.ranAt)), style: shown.style },
                       )
                     }
                     disabled={run.isFetching}
@@ -351,6 +355,8 @@ export function AiReportView({
                 )}
                 {shown && <RunLine run={shown} running={run.isFetching ? (stale ? 'Running over the days chosen…' : 'Running again…') : null} />}
               </div>
+
+              {full && <ReportLookPanel report={full} run={shown} range={override} inputs={inputsJson} excel={excel} canRun={canRun} />}
 
               {/* Heard when a run ends, not while the tables are drawn. */}
               <p role="status" aria-live="polite" className="sr-only">

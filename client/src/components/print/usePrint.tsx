@@ -2,7 +2,8 @@
 // Printing one thing on its own — an answer of the assistant, a saved report,
 // a delivered report — with the browser's own print, as the dashboard prints
 // (its Save as PDF makes the file). What is printed is drawn into a root of
-// its own under <body>: off the screen, at the paper's width (A4 standing),
+// its own under <body>: off the screen, at the paper's width (A4, standing
+// or lying as the report's style says),
 // so its charts measure it before the browser prints; and alone on the
 // paper, the app (the assistant's window among it) left off. Paper is light:
 // the dark theme steps aside while the browser prints, and comes back after.
@@ -15,9 +16,11 @@
 // prints once nothing is, or after PENDING_WAIT_MS whatever is left.
 // ============================================================================
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Loader2 } from 'lucide-react'
+import type { ResolvedReportStyle } from '@qc/shared/reportStyles'
+import { PRINT_WIDTH, fontStack, printStyleOf } from './printStyle'
 
 /** On <body> while something is printed on its own: index.css leaves everything else off the paper. */
 export const PRINTING_CLASS = 'printing'
@@ -31,14 +34,13 @@ const SETTLE_FRAMES = 2
 export const PENDING_WAIT_MS = 20_000
 const PENDING_POLL_MS = 100
 
-/** Who the paper is from, at the foot of every page. */
-export const PRINT_COMPANY = 'LinkMisr · Quality Control'
-
 export interface PrintOptions {
   /** The report's name: the PDF's file name, and the foot of every page. */
   title: string
   /** Its day (YYYY-MM-DD), after the name in the file's: a daily report's files tell apart. */
   day?: string
+  /** The style it is drawn in (./printStyle): the paper's orientation and the foot of every page are its. None: the built-in look. */
+  style?: ResolvedReportStyle | null
 }
 
 /** The file name the browser gives the PDF (from the page's title): the report's name and day, without the marks a file name cannot hold. */
@@ -50,18 +52,23 @@ export function printFileName(o: PrintOptions): string {
 /** Text as a CSS string, quotes and line breaks escaped. */
 const cssString = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ')}"`
 
-/** The paper: A4 standing, its margins, and at the foot of each page the company with the report's name, and the page's number. */
+/**
+ * The paper: A4 in the style's orientation, its margins, and at the foot of each page the style's line (the company)
+ * with the report's name, and the page's number when the style keeps them.
+ */
 export function pageRules(o: PrintOptions): string {
+  const spec = printStyleOf(o.style).spec
   const name = o.title.replace(/\s+/g, ' ').trim()
   const foot = name.length > 90 ? `${name.slice(0, 89).trimEnd()}…` : name
-  const box = 'font-family: Inter, "IBM Plex Sans Arabic", system-ui, sans-serif; font-size: 7.5pt; color: #64748b;'
+  const company = spec.footer.text.trim()
+  const left = [company, foot].filter(Boolean).join(' — ')
+  const box = `font-family: ${fontStack(spec.font)}; font-size: 7.5pt; color: #64748b;`
   return `@media print {
   @page {
-    size: A4 portrait;
+    size: A4 ${spec.orientation};
     margin: 14mm 12mm 16mm 12mm;
-    @bottom-left { content: ${cssString(foot ? `${PRINT_COMPANY} — ${foot}` : PRINT_COMPANY)}; ${box} }
-    @bottom-right { content: "Page " counter(page) " of " counter(pages); ${box} }
-  }
+    @bottom-left { content: ${cssString(left)}; ${box} }
+${spec.footer.pageNumbers ? `    @bottom-right { content: "Page " counter(page) " of " counter(pages); ${box} }\n` : ''}  }
 }`
 }
 
@@ -151,7 +158,12 @@ export function usePrint(): Printer {
   const node =
     job === null || typeof document === 'undefined' ? null : (
       <>
-        {createPortal(<div className="print-root">{job.doc}</div>, document.body)}
+        {createPortal(
+          <div className="print-root" style={{ '--print-width': PRINT_WIDTH[printStyleOf(job.options.style).spec.orientation] } as CSSProperties}>
+            {job.doc}
+          </div>,
+          document.body,
+        )}
         {waiting &&
           createPortal(
             <div role="status" className="fixed inset-x-0 bottom-6 z-[100] flex justify-center">

@@ -111,10 +111,16 @@ import type { AutomationActivateResponse, AutomationDiscardResponse } from '@qc/
 import type { AiNoticeApplyResponse, AiNoticeDiscardResponse } from '@qc/shared/noticeAssistant'
 import { PLAYBOOK_BASIS_MAX, PLAYBOOK_TEXT_MAX, type PlaybookEntry, type PlaybookResponse } from '@qc/shared/playbook'
 import type { SavedTableRowsResponse, SavedTablesResponse } from '@qc/shared/savedTables'
+import { BUILTIN_RESOLVED_STYLE } from '@qc/shared/reportStyles'
 import type { AppContext } from '../context'
 import { PG, pgCode, withTransaction, type Queryable } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
+import { attachmentDisposition, sendWorkbook } from '../lib/download'
+import { findStyle, styleOfReport } from '../reportStyles/styles'
+import { styledWorkbook } from '../reportStyles/styledWorkbook'
+import { filledForm, reportFileName, reportFormData, reportWorkbookDoc } from '../reportStyles/documents'
+import { findForm, formBytes } from '../reportForms/forms'
 import { requireUser, type AuthUser } from '../auth/middleware'
 import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
 import {
@@ -134,6 +140,7 @@ import {
   type PersonAvailability,
 } from '../ai/access'
 import { LOST_TURN } from '../ai/answerRunner'
+import { notGranted, tooClose, unavailable } from '../ai/refusals'
 import { describeModelFailure, usageOf } from '../ai/assistant'
 import { chooseLevel, type RouterResult } from '../ai/router'
 import {
@@ -223,8 +230,6 @@ const uuid = z.string().uuid()
 const EXPORT_QUERY_TIMEOUT_MS = AI_QUERY_TIMEOUT_MS
 /** How long a finished answer waits for its conversation's title before it closes without it. */
 const TITLE_WAIT_MS = 3_000
-/** Where the owner fixes what stops the assistant. */
-const SETTINGS_PAGE = 'Administration → AI assistant'
 
 /** A cap in dollars and cents. */
 const capUsd = z
@@ -388,6 +393,7 @@ const saveReportSchema = z
   .strict()
 
 const renameReportSchema = z.object({ title: reportTitleSchema }).strict()
+const reportStyleSchema = z.object({ styleId: uuid.nullable() }).strict()
 
 const reportsQuery = z.object({
   before: z.string().datetime({ offset: true }).optional(),
@@ -441,53 +447,6 @@ const OWNER_PATHS = ['/status', '/settings', '/key', '/access', '/people', '/usa
 
 /** What anyone but the owner gets from the owner's routes: what an endpoint that does not exist answers. */
 const noSuchEndpoint = () => new HttpError(404, 'not_found', 'No such endpoint.')
-/** What someone the owner has not given the assistant (or has stopped) gets from its routes. */
-const notGranted = () => new HttpError(403, 'forbidden', 'You do not have access to the assistant.')
-
-/** A download's Content-Disposition: the name as written (RFC 5987), and a plain one for clients that read only that. */
-function attachmentDisposition(name: string): string {
-  const plain = name.replace(/[^\x20-\x7e]/g, '').replace(/["\\]/g, '').trim()
-  const encoded = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
-  return `attachment; filename="${plain === '.xlsx' || plain === '' ? 'file.xlsx' : plain}"; filename*=UTF-8''${encoded}`
-}
-
-const LIMIT = {
-  app: "The assistant's monthly limit is reached. It is available again on the 1st.",
-  personal: "You have reached this month's limit for the assistant. It is available again on the 1st.",
-}
-
-/**
- * The refusal for a question the person cannot ask now, by why. No amounts
- * for anyone; the owner is also told where to put it right, and precisely
- * what stops the assistant, which is nobody else's to know.
- */
-function unavailable(p: PersonAvailability): HttpError {
-  const owner = p.me.owner
-  switch (p.me.reason) {
-    case 'cap-reached':
-      return new HttpError(402, 'ai_budget_reached', owner ? `${LIMIT.app} You can raise it under ${SETTINGS_PAGE}.` : LIMIT.app)
-    case 'personal-cap':
-      return new HttpError(402, 'ai_budget_reached', owner ? `${LIMIT.personal} You can raise your own limit under ${SETTINGS_PAGE}.` : LIMIT.personal)
-    case 'not-granted':
-      return notGranted()
-  }
-  if (!owner) return new HttpError(503, 'ai_unavailable', 'The assistant is not available right now. Try again later.')
-  switch (p.app.status.reason) {
-    case 'disabled':
-      return new HttpError(503, 'ai_unavailable', `The AI assistant is switched off. Switch it on under ${SETTINGS_PAGE}.`)
-    case 'no-key':
-      return new HttpError(503, 'ai_unavailable', `The AI assistant has no API key. Set it under ${SETTINGS_PAGE}.`)
-    default:
-      return new HttpError(503, 'ai_unavailable', 'The AI assistant cannot reach its data right now. Try again later.')
-  }
-}
-
-/** The refusal for a call whose worst case could pass a cap: which one, without its amount. */
-function tooClose(which: 'app' | 'personal', what: string, owner: boolean, hint = ''): HttpError {
-  const limit = which === 'app' ? "the assistant's monthly limit" : 'your monthly limit for the assistant'
-  const raise = owner ? ` You can raise ${which === 'app' ? 'it' : 'your own limit'} under ${SETTINGS_PAGE}.` : ''
-  return new HttpError(402, 'ai_budget_reached', `${what} could pass ${limit}, so it was not started.${hint}${raise}`)
-}
 
 /** The first instant of a YYYY-MM month and of the next one, in UTC. */
 function monthRange(month: string): { from: string; to: string } {
@@ -1777,7 +1736,8 @@ export function aiRoutes(ctx: AppContext): Router {
     const sections = await withQueryOrigin({ source: 'report', userId: requireUser(req).id, purpose: report.title }, () =>
       runReportSections(reader, report, period, { timeZone: tz, signal, values }),
     )
-    const body: AiReportRunResponse = { report: await markReportRun(db, report), period, sections, inputs: values, ranAt }
+    const style = (await styleOfReport(db, report.styleId)) ?? BUILTIN_RESOLVED_STYLE
+    const body: AiReportRunResponse = { report: await markReportRun(db, report), period, sections, inputs: values, ranAt, style }
     res.json(body)
   })
 
@@ -1792,6 +1752,68 @@ export function aiRoutes(ctx: AppContext): Router {
     )
     const body: AiReportExportResponse = { report: await markReportRun(db, report), period, sections, inputs: values, ranAt }
     res.json(body)
+  })
+
+  /** The style a report prints in, as its owner chooses it: one of the styles they may use, or none (the company's default). */
+  r.patch('/reports/:id/style', async (req, res) => {
+    const { user } = await aiUser(req)
+    const id = parse(uuid, req.params.id)
+    const { styleId } = parse(reportStyleSchema, req.body)
+    const report = await withTransaction(db, async (tx) => {
+      const { rows } = await tx.query<{ styleId: string | null }>(
+        `SELECT style_id AS "styleId" FROM ai_reports WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+        [id, user.id],
+      )
+      if (!rows[0]) throw notFound('That report')
+      if (styleId && !(await findStyle(tx, styleId, user.id))) throw notFound('That style')
+      if (rows[0].styleId !== styleId) {
+        await tx.query(`UPDATE ai_reports SET style_id = $2 WHERE id = $1`, [id, styleId])
+        await writeAudit(tx, [
+          auditEvent('update', { userId: user.id, userName: user.name, entity: 'AiReport', entityId: id }, new Date().toISOString(), {
+            field: 'style',
+            oldValue: rows[0].styleId ?? '',
+            newValue: styleId ?? '',
+          }),
+        ])
+      }
+      return (await findReport(tx, id, user.id))!
+    })
+    res.json(report)
+  })
+
+  /** A report run now in full, as a workbook drawn in its style; for someone allowed Excel. */
+  r.get('/reports/:id/workbook', async (req, res) => {
+    const { user, access } = await aiUser(req)
+    await mayHaveExcel(user, access)
+    const { report, period, reader, values, signal } = await reportToRun(req, res)
+    const ranAt = new Date().toISOString()
+    const sections = await withQueryOrigin({ source: 'export', userId: user.id, purpose: report.title }, () =>
+      exportReportSections(reader, report, period, { timeZone: tz, signal, values }),
+    )
+    await markReportRun(db, report)
+    const style = (await styleOfReport(db, report.styleId)) ?? BUILTIN_RESOLVED_STYLE
+    const file = { report, period, values, sections, ranAt, style, madeBy: user.name, timeZone: tz }
+    const bytes = await styledWorkbook(reportWorkbookDoc(file), style)
+    sendWorkbook(res, reportFileName(report.title, ranAt, tz), bytes)
+  })
+
+  /** One of the report's Excel forms, filled from the report run now in full; for someone allowed Excel. */
+  r.get('/reports/:id/forms/:formId/fill', async (req, res) => {
+    const { user, access } = await aiUser(req)
+    await mayHaveExcel(user, access)
+    const formId = parse(uuid, req.params.formId)
+    const form = await findForm(db, formId, user.id)
+    if (!form || form.reportId !== parse(uuid, req.params.id).toLowerCase()) throw notFound('That form')
+    if (!form.mapping) throw badRequest('Say where the report’s values go in this form first.')
+    const { report, period, reader, values, signal } = await reportToRun(req, res)
+    const ranAt = new Date().toISOString()
+    const sections = await withQueryOrigin({ source: 'export', userId: user.id, purpose: `${report.title}: ${form.name}` }, () =>
+      exportReportSections(reader, report, period, { timeZone: tz, signal, values }),
+    )
+    await markReportRun(db, report)
+    const style = (await styleOfReport(db, report.styleId)) ?? BUILTIN_RESOLVED_STYLE
+    const data = reportFormData({ report, period, values, sections, ranAt, style, madeBy: user.name, timeZone: tz })
+    sendWorkbook(res, reportFileName(form.name, ranAt, tz), await filledForm(await formBytes(db, form.id), form.mapping, data))
   })
 
   return r

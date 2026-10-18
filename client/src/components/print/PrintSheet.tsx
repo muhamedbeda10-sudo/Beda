@@ -8,6 +8,11 @@
 // printed it and when. Every page's foot carries the company, the report's
 // name and the page's number (usePrint). No buttons, no scrolling, no
 // question as typed, no suggestions: what is on the paper is the report.
+//
+// All of it is drawn in the report's style (./printStyle): its colours and
+// typeface, where its logo sits and which logo, the company's lines, the
+// document control box, the rule, how tables and figures look, whether
+// sections are numbered, the foot's text and the approval boxes at the end.
 // ============================================================================
 
 import '@/components/ai/fonts'
@@ -20,6 +25,8 @@ import { queryChart } from '@/components/ai/chartData'
 import { queryPhotos } from '@/components/ai/photos'
 import { cellText } from '@/components/ai/tables'
 import { cn } from '@/lib/utils'
+import type { ReportStyleSpec, ResolvedReportStyle } from '@qc/shared/reportStyles'
+import { printStyleOf, sheetAttributes, sheetStyle } from './printStyle'
 import { useAuth } from '@/store/AuthContext'
 
 /** Rows a section prints at most: past them, the paper says how many more there were. */
@@ -63,24 +70,110 @@ export function PrintLogo({ className }: { className?: string }) {
   )
 }
 
-/**
- * The sheet. `kind`: what report it is ("AI assistant report", "Scheduled report"); `title`: its name; `lines`: what
- * places it (when, the period, the values it ran with), each a line of its own under the name.
- */
-export function PrintSheet({ kind, title, lines, children }: { kind: string; title: string; lines: readonly string[]; children: ReactNode }) {
-  const { profile } = useAuth()
+const LOGO_HEIGHT = { small: 'h-8', medium: 'h-11', large: 'h-14' } as const
+
+/** The company's logo as the style has it: its own picture, or the LinkMisr wordmark. */
+function SheetLogo({ style }: { style: ResolvedReportStyle }) {
+  const height = LOGO_HEIGHT[style.spec.logo.size]
+  if (style.logoDataUrl) return <img src={style.logoDataUrl} alt="" className={cn(height, 'w-auto max-w-[70mm] shrink-0 object-contain')} />
+  return <PrintLogo className={cn(height, 'w-auto shrink-0')} />
+}
+
+/** A quality system's document control: the form's number, its revision and its issue date, in a small ruled box. */
+function DocControl({ spec }: { spec: ReportStyleSpec }) {
+  if (!spec.docControl.enabled) return null
+  const rows: [string, string][] = [
+    ['Doc. No.', spec.docControl.docNo],
+    ['Rev.', spec.docControl.revision],
+    ['Issue date', spec.docControl.issueDate],
+  ]
   return (
-    <article className="print-sheet ai-type text-[11.5px] leading-snug text-slate-900">
-      <header className="print-keep mb-5">
-        <div className="flex items-end justify-between gap-6 pb-2.5">
-          <PrintLogo className="h-11 w-auto shrink-0" />
-          <div className="text-end leading-tight">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#1e46a8]">Quality Control Department</p>
-            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{kind}</p>
-          </div>
+    <table className="print-doc-control shrink-0 border-collapse text-[8.5px] leading-tight">
+      <tbody>
+        {rows.map(([label, value]) => (
+          <tr key={label}>
+            <th scope="row" className="px-1.5 py-0.5 text-start font-semibold">
+              {label}
+            </th>
+            <td dir="auto" className="min-w-[22mm] px-1.5 py-0.5 font-bold">
+              {value || '\u00a0'}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+/** Boxes to sign at the end of the report, one per label: the name, the signature and the date. */
+function Approvals({ spec }: { spec: ReportStyleSpec }) {
+  if (!spec.approvals.enabled || spec.approvals.labels.length === 0) return null
+  return (
+    <div className="print-keep print-approvals mt-6 grid gap-3" style={{ gridTemplateColumns: `repeat(${spec.approvals.labels.length}, minmax(0, 1fr))` }}>
+      {spec.approvals.labels.map((label, i) => (
+        <div key={i} className="print-approval text-[9px]">
+          <p dir="auto" className="print-approval-label px-2 py-1 text-[9.5px] font-bold">
+            {label}
+          </p>
+          <p className="px-2 pt-1.5 text-slate-500">Name:</p>
+          <p className="h-9 px-2 pt-1.5 text-slate-500">Signature:</p>
+          <p className="px-2 pb-1.5 pt-1.5 text-slate-500">Date:</p>
         </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The sheet, drawn in `style` (none: the built-in look). `kind`: what report it is ("AI assistant report",
+ * "Scheduled report"); `title`: its name; `lines`: what places it (when, the period, the values it ran with), each a
+ * line of its own under the name.
+ */
+export function PrintSheet({ kind, title, lines, style, children }: { kind: string; title: string; lines: readonly string[]; style?: ResolvedReportStyle | null; children: ReactNode }) {
+  const { profile } = useAuth()
+  const look = printStyleOf(style)
+  const spec = look.spec
+  const position = spec.logo.position
+  const words = (
+    <div className={cn('min-w-0 leading-tight', position === 'left' ? 'text-end' : position === 'right' ? 'text-start' : 'text-center')}>
+      {spec.header.companyName && (
+        <p dir="auto" className="print-heading text-[12px] font-extrabold">
+          {spec.header.companyName}
+        </p>
+      )}
+      {spec.header.department && (
+        <p dir="auto" className="print-primary mt-0.5 text-[10px] font-bold uppercase tracking-[0.18em]">
+          {spec.header.department}
+        </p>
+      )}
+      {spec.header.showKind && <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{kind}</p>}
+    </div>
+  )
+  return (
+    <article className="print-sheet text-[11.5px] leading-snug" style={sheetStyle(spec)} {...sheetAttributes(spec)}>
+      <header className="print-keep mb-5">
+        {position === 'center' ? (
+          <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-4 pb-2.5">
+            <span />
+            <div className="flex flex-col items-center gap-1.5">
+              <SheetLogo style={look} />
+              {words}
+            </div>
+            <div className="flex justify-end">
+              <DocControl spec={spec} />
+            </div>
+          </div>
+        ) : (
+          <div className={cn('flex items-end justify-between gap-6 pb-2.5', position === 'right' && 'flex-row-reverse')}>
+            <SheetLogo style={look} />
+            <div className={cn('flex min-w-0 items-end gap-4', position === 'right' && 'flex-row-reverse')}>
+              {words}
+              <DocControl spec={spec} />
+            </div>
+          </div>
+        )}
         <div aria-hidden className="print-rule" />
-        <h1 dir="auto" className="mt-4 text-start text-[22px] font-extrabold leading-tight tracking-tight text-slate-900">
+        <h1 dir="auto" className="print-heading mt-4 text-start text-[22px] font-extrabold leading-tight tracking-tight">
           {title}
         </h1>
         {lines.length > 0 && (
@@ -94,8 +187,9 @@ export function PrintSheet({ kind, title, lines, children }: { kind: string; tit
         )}
       </header>
       <div className="space-y-5">{children}</div>
-      <footer className="mt-8 flex justify-between gap-4 border-t border-slate-300 pt-1.5 text-[8.5px] text-slate-500">
-        <span>LinkMisr · Quality Control</span>
+      <Approvals spec={spec} />
+      <footer className="print-foot mt-8 flex justify-between gap-4 pt-1.5 text-[8.5px] text-slate-500">
+        <span dir="auto">{spec.footer.text}</span>
         <span>{printedLine(new Date(), profile?.name)}</span>
       </footer>
     </article>
@@ -108,11 +202,11 @@ export function PrintKpis({ kpis }: { kpis: readonly AiKpi[] }) {
   return (
     <div className="print-keep grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2">
       {kpis.map((k, i) => (
-        <div key={i} className="print-kpi rounded-md border border-slate-200 px-3 py-2">
+        <div key={i} className="print-kpi rounded-md px-3 py-2">
           <p dir="auto" className="text-[9.5px] font-semibold tracking-wide text-slate-500">
             {k.label}
           </p>
-          <p dir="auto" className="mt-1 text-[17px] font-extrabold leading-none tabular-nums text-slate-900">
+          <p dir="auto" className="print-heading mt-1 text-[17px] font-extrabold leading-none tabular-nums">
             {k.value}
           </p>
         </div>
@@ -167,6 +261,16 @@ export function PrintTable({ columns, rows }: { columns: readonly string[]; rows
   )
 }
 
+/** A section's heading on paper: its number (when the style numbers them) and its title. */
+export function PrintSectionTitle({ number, children }: { number?: number; children: ReactNode }) {
+  return (
+    <h2 dir="auto" className="print-keep-with-next print-section-title print-heading flex items-baseline gap-2 text-start text-[13px] font-bold">
+      {number !== undefined && <span className="print-section-number">{number}</span>}
+      <span className="min-w-0 flex-1">{children}</span>
+    </h2>
+  )
+}
+
 /** A section as printed: its rows, and how they are shown (a table unless built otherwise). */
 export interface PrintPart {
   part: AiQueryPart
@@ -183,10 +287,7 @@ export function PrintSection({ part, display = 'table', number }: PrintPart & { 
   const { rows, note } = printedRows(part)
   return (
     <section className="space-y-2">
-      <h2 dir="auto" className="print-keep-with-next print-section-title flex items-baseline gap-2 text-start text-[13px] font-bold text-slate-900">
-        {number !== undefined && <span className="print-section-number">{number}</span>}
-        <span className="min-w-0 flex-1">{part.purpose}</span>
-      </h2>
+      <PrintSectionTitle number={number}>{part.purpose}</PrintSectionTitle>
       {!part.ok ? (
         <p dir="auto" className="text-[10.5px] text-rose-700">
           {part.error || 'The query failed.'}

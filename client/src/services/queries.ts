@@ -66,7 +66,6 @@ import type {
   AiMessagesResponse,
   AiQueryExportResponse,
   AiReport,
-  AiReportExportResponse,
   AiReportRunResponse,
   AiReportsResponse,
   AiSettingsResponse,
@@ -1064,7 +1063,7 @@ export const AI_REPORTS_PAGE = 50
 
 /** The days of a run as the server takes them: both or neither. */
 /** A run's days and its inputs' values (`inputs`: their JSON, '' for each one's default), as the query the server reads. */
-const runQs = (range: AiDayRange | null, inputs: string) => qs({ from: range?.from, to: range?.to, inputs: inputs || undefined })
+export const runQs = (range: AiDayRange | null, inputs: string) => qs({ from: range?.from, to: range?.to, inputs: inputs || undefined })
 
 /** The longest search of My reports the server takes. */
 export const AI_REPORT_SEARCH_MAX = 200
@@ -1158,7 +1157,3 @@ export async function runAiReport(qc: QueryClient, id: string, range: AiDayRange
   return report === run.report ? run : { ...run, report }
 }
 
-/** A report run again in full (up to AI_EXPORT_MAX_ROWS rows a section) over the same days and values, for Excel. */
-export function loadAiReportExport(id: string, range: AiDayRange | null, inputs = ''): Promise<AiReportExportResponse> {
-  return api<AiReportExportResponse>(`/ai/reports/${encodeURIComponent(id)}/export${runQs(range, inputs)}`)
-}
