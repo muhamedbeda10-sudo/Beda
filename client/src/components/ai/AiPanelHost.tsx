@@ -25,12 +25,12 @@
 
 import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState, type ContextType, type ReactNode } from 'react'
 import { MemoryRouter, UNSAFE_LocationContext, useLocation, useNavigate, type NavigateFunction } from 'react-router-dom'
-import { Loader2, ShieldOff, X } from 'lucide-react'
+import { Loader2, MessagesSquare, ShieldOff, X } from 'lucide-react'
 import { Button } from '@/components/ui'
 import { ErrorBoundary, LoadFailed } from '@/components/ui/ErrorBoundary'
 import { cn, lockBodyScroll } from '@/lib/utils'
 import { useAi } from './AiAssistantProvider'
-import { isAiWorkspacePath } from './workspace'
+import { AI_WORKSPACE_PATH, isAiWorkspacePath } from './workspace'
 
 const AiPopup = lazy(() => import('./AiPopup'))
 
@@ -86,19 +86,7 @@ export function AiPanelHost() {
     <AppNavigateContext.Provider value={appNavigate}>
       <PopupRouter>
         <AiPopupFrame>
-          {/* The popup's file not arriving (a deploy since the page opened, a dropped connection) leaves the page as it was. */}
-          <ErrorBoundary
-            fallback={
-              <LoadFailed
-                what="The assistant"
-                action={
-                  <Button className="min-h-[44px]" onClick={() => setOpen(false)}>
-                    <X className="h-4 w-4" /> Close
-                  </Button>
-                }
-              />
-            }
-          >
+          <PopupBoundary onClose={() => setOpen(false)}>
             <Suspense
               fallback={
                 <p className="flex flex-1 items-center justify-center gap-2 text-sm text-muted">
@@ -108,10 +96,45 @@ export function AiPanelHost() {
             >
               <AiPopup />
             </Suspense>
-          </ErrorBoundary>
+          </PopupBoundary>
         </AiPopupFrame>
       </PopupRouter>
     </AppNavigateContext.Provider>
+  )
+}
+
+/**
+ * The popup's file not arriving (a deploy since the page opened, a dropped connection), or one of its places failing to
+ * draw, leaves the page as it was: a word, what broke, and the ways on — reload, back to the conversation (the popup
+ * draws again there), or close.
+ */
+function PopupBoundary({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const { pathname } = useLocation()
+  const navigate = useNavigate()
+  return (
+    <ErrorBoundary
+      resetKey={pathname}
+      fallback={(error) => (
+        <LoadFailed
+          what="The assistant"
+          error={error}
+          action={
+            <>
+              {!isAiWorkspacePath(pathname) && (
+                <Button className="min-h-[44px]" onClick={() => navigate(AI_WORKSPACE_PATH)}>
+                  <MessagesSquare className="h-4 w-4" /> Conversation
+                </Button>
+              )}
+              <Button className="min-h-[44px]" onClick={onClose}>
+                <X className="h-4 w-4" /> Close
+              </Button>
+            </>
+          }
+        />
+      )}
+    >
+      {children}
+    </ErrorBoundary>
   )
 }
 

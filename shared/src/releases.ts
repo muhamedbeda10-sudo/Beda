@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-18.2',
+    date: '2026-10-18',
+    title: 'The assistant recovers by itself after an update',
+    items: [
+      { text: 'When the app is updated while it is open, the AI assistant (and any page loaded on demand) no longer stops at “could not be loaded”: it reloads once by itself and opens the new version.' },
+      { text: 'If something still fails, the message has a “Conversation” button that brings the assistant back without reloading, and “Technical details” with the exact error to send to support.' },
+    ],
+  },
+  {
     id: '2026-10-18.1',
     date: '2026-10-18',
     title: 'Report styles and the company’s own Excel forms',
