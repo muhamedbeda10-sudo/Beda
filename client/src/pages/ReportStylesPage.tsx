@@ -97,7 +97,8 @@ interface Draft {
 const newDraft = (from?: Pick<ReportStyle, 'name' | 'spec' | 'logoDataUrl'>, copy = false): Draft => ({
   base: null,
   name: from ? (copy ? `Copy of ${from.name}`.slice(0, REPORT_STYLE_NAME_MAX) : from.name) : 'New style',
-  spec: structuredClone(from?.spec ?? BUILTIN_REPORT_STYLE),
+  // A copy of plain choices (JSON): every browser makes it, old ones too.
+  spec: JSON.parse(JSON.stringify(from?.spec ?? BUILTIN_REPORT_STYLE)) as ReportStyleSpec,
   logoDataUrl: from?.logoDataUrl ?? null,
 })
 

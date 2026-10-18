@@ -70,6 +70,19 @@ export class ErrorBoundary extends Component<BoundaryProps, { error: Error | nul
   }
 }
 
+/** The error and where it happened (its stack's first frames: the files and places in them, enough to find the line). */
+export function errorDetails(error: Error): string {
+  const head = `${error.name}: ${error.message}`.slice(0, 300)
+  const frames = (error.stack ?? '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^at |@/.test(l))
+    .slice(0, 6)
+    // The page's origin adds nothing; the file names and positions are what count.
+    .map((l) => l.replace(/https?:\/\/[^/\s]+\//g, '/'))
+  return [head, ...frames].join('\n')
+}
+
 /**
  * What stands in for a piece that could not be loaded. A reload tries again:
  * React keeps a failed lazy import, and after a deploy the file the page asks
@@ -93,8 +106,8 @@ export function LoadFailed({ what, action, error }: { what: string; action?: Rea
       {error && (
         <details className="max-w-full text-start text-xs text-muted">
           <summary className="cursor-pointer select-none">Technical details</summary>
-          <p dir="ltr" className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono">
-            {`${error.name}: ${error.message}`.slice(0, 600)}
+          <p dir="ltr" className="mt-1 max-h-48 select-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px]">
+            {errorDetails(error)}
           </p>
         </details>
       )}

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ErrorBoundary, LoadFailed, isStaleChunkError, mayReloadForStaleChunk } from './ErrorBoundary'
+import { ErrorBoundary, LoadFailed, errorDetails, isStaleChunkError, mayReloadForStaleChunk } from './ErrorBoundary'
 
 describe('a part of the app that failed to draw', () => {
   it('draws its children until one throws, then the fallback in their place, with the error', () => {
@@ -22,6 +22,17 @@ describe('a part of the app that failed to draw', () => {
     expect(html).toContain('Technical details')
     expect(html).toContain('TypeError: x is undefined')
     expect(renderToStaticMarkup(<LoadFailed what="The page" />)).not.toContain('Technical details')
+  })
+})
+
+describe('what broke, as the screen says it', () => {
+  it('is the error and its first frames, without the site’s address', () => {
+    const e = new TypeError('n is not a function')
+    e.stack = 'TypeError: n is not a function\n    at Ue (https://qc.example.net/assets/ReportStylesPage-CPk5AbKQ.js:1:2345)\n    at Ma (https://qc.example.net/assets/react-D-YA9vRu.js:38:1)'
+    expect(errorDetails(e)).toBe('TypeError: n is not a function\nat Ue (/assets/ReportStylesPage-CPk5AbKQ.js:1:2345)\nat Ma (/assets/react-D-YA9vRu.js:38:1)')
+    // Safari's and Firefox's way: name@file:line:column.
+    e.stack = 'Ue@https://qc.example.net/assets/ReportStylesPage-CPk5AbKQ.js:1:2345'
+    expect(errorDetails(e)).toBe('TypeError: n is not a function\nUe@/assets/ReportStylesPage-CPk5AbKQ.js:1:2345')
   })
 })
 
