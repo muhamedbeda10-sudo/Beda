@@ -407,7 +407,10 @@ function StyleEditor({ initial, startWithSample, onClose }: { initial: Draft; st
   const logoInput = useRef<HTMLInputElement>(null)
   const top = useRef<HTMLDivElement>(null)
   // Opened from further down the list: the editor starts at its top.
-  useEffect(() => top.current?.scrollIntoView({ block: 'start' }), [])
+  // In braces: a browser's scroll methods may answer a promise, which React would take for the effect's cleanup.
+  useEffect(() => {
+    top.current?.scrollIntoView({ block: 'start' })
+  }, [])
 
   const set = <K extends keyof ReportStyleSpec>(key: K, value: ReportStyleSpec[K]) => setSpec((s) => ({ ...s, [key]: value }))
   const setIn = <K extends 'colors' | 'logo' | 'header' | 'docControl' | 'table' | 'footer' | 'approvals'>(key: K, part: Partial<ReportStyleSpec[K]>) =>
