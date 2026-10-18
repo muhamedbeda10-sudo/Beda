@@ -28,6 +28,14 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-18.3',
+    date: '2026-10-18',
+    title: 'Report styles open in the newest Chrome',
+    items: [
+      { text: 'Fixed: in the newest Chrome and Edge, the Report styles page (and the assistant after leaving it) showed “could not be loaded”. It now opens and closes normally.' },
+    ],
+  },
+  {
     id: '2026-10-18.2',
     date: '2026-10-18',
     title: 'The assistant recovers by itself after an update',
