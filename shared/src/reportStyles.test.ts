@@ -13,7 +13,8 @@ describe('a style’s document control', () => {
   })
 
   it('compares two specs choice by choice, the order keys were written in aside', () => {
-    const shuffled = JSON.parse(JSON.stringify({ footer: BUILTIN_REPORT_STYLE.footer, ...BUILTIN_REPORT_STYLE }))
+    // The same choices, written in the reverse order.
+    const shuffled = Object.fromEntries(Object.entries(BUILTIN_REPORT_STYLE).reverse()) as typeof BUILTIN_REPORT_STYLE
     expect(sameSpec(BUILTIN_REPORT_STYLE, shuffled)).toBe(true)
     expect(sameSpec(BUILTIN_REPORT_STYLE, { ...BUILTIN_REPORT_STYLE, numbering: false })).toBe(false)
   })
