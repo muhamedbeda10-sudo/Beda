@@ -102,7 +102,7 @@ function OnlyAutomator({ children }: { children: ReactElement }) {
 /** A page fetched when first opened, with a word should its file not arrive. */
 function LazyPage({ what, children }: { what: string; children: ReactElement }) {
   return (
-    <ErrorBoundary fallback={<LoadFailed what={what} />}>
+    <ErrorBoundary fallback={(error) => <LoadFailed what={what} error={error} />}>
       <Suspense fallback={<PageLoading />}>{children}</Suspense>
     </ErrorBoundary>
   )
