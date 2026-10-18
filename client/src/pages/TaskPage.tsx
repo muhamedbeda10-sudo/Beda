@@ -37,7 +37,7 @@ import { ApiError } from '@/lib/api'
 import { textDirection } from '@/lib/direction'
 import { cn } from '@/lib/utils'
 import { endTask, markTaskSeen, reviewTask, setTaskState, updateTask, useTask, writeOnTask } from '@/services/tasks'
-import { resolveImageUrl } from '@/services/uploadImage'
+import { loadImageBlob, resolveImageUrl } from '@/services/uploadImage'
 import { useApp } from '@/store/AppContext'
 import { useAuth } from '@/store/AuthContext'
 
@@ -467,7 +467,7 @@ function Photos({ photos }: { photos: TaskPhoto[] }) {
   const open = async (index: number) => {
     try {
       const urls = await Promise.all(photos.map((p) => resolveImageUrl({ id: p.id, thumbnailDataUrl: p.thumbnailDataUrl ?? undefined })))
-      setViewing({ images: photos.map((p, i) => ({ id: p.id, dataUrl: urls[i] })), index })
+      setViewing({ images: photos.map((p, i) => ({ id: p.id, dataUrl: urls[i], save: { name: `Task photo ${i + 1}`, load: () => loadImageBlob(p.id) } })), index })
     } catch {
       toast('The photo could not be opened.', 'error')
     }

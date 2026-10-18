@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-18.4',
+    date: '2026-10-18',
+    title: 'Save any photo on the device',
+    items: [
+      { text: 'Every photo opened large now has a Save button (the arrow next to Rotate): inspection photos (defects, paint, PT, notes), PDI photos, reference images, photos in the chat, in notices and in tasks, the photos the AI assistant shows, and photos attached to a question. It saves the photo in full, as it was taken, under its own name.' },
+      { text: 'On a phone or a tablet it opens the share sheet: choose “Save image” to put it with the photos. On a computer it downloads.' },
+      { text: 'Fixed: moving from one photo to the next in the viewer of a sample’s or a session’s photos now shows each one in full, not its small preview.' },
+    ],
+  },
+  {
     id: '2026-10-18.3',
     date: '2026-10-18',
     title: 'Report styles open in the newest Chrome',

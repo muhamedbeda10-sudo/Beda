@@ -5,13 +5,13 @@
 // the sample number opens that sample. Nothing here is edited.
 // ============================================================================
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Camera, Droplets, FlaskConical, MessageSquareText, TriangleAlert } from 'lucide-react'
 import type { SessionImageGroup, SessionImageItem, SessionImageKind } from '@qc/shared/api'
 import type { ImageAsset } from '@qc/shared/types'
 import { Lightbox } from '@/components/ui/Lightbox'
 import { useImages, useSessionImages } from '@/services/queries'
-import { resolveImageUrl } from '@/services/uploadImage'
+import { loadImageBlob, resolveImageUrl } from '@/services/uploadImage'
 import { cn } from '@/lib/utils'
 
 const KIND: Record<SessionImageKind, { title: string; icon: typeof Camera; tone: string }> = {
@@ -40,6 +40,7 @@ export function SessionPhotos({
   const byId = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets])
   const [viewer, setViewer] = useState<{ group: SessionImageGroup; index: number } | null>(null)
   const [fullUrls, setFullUrls] = useState<Record<string, string>>({})
+  const onViewerMove = useCallback((index: number) => setViewer((v) => (v && v.index !== index ? { ...v, index } : v)), [])
 
   // Full-resolution content only for the photo on screen in the viewer.
   useEffect(() => {
@@ -112,9 +113,12 @@ export function SessionPhotos({
               id: `${item.imageId}`,
               dataUrl: (a && (fullUrls[a.id] ?? a.thumbnailDataUrl)) ?? '',
               caption: `${KIND[viewer.group.kind].title} · sample ${sampleLabel(item)} · ${item.label}`,
+              save: { name: `${KIND[viewer.group.kind].title} - sample ${sampleLabel(item)} - ${item.label}`, load: () => loadImageBlob(item.imageId) },
             }
           })}
           startIndex={viewer.index}
+          // The photo on screen is the one fetched in full, as the viewer moves from one to the next.
+          onIndexChange={onViewerMove}
           onClose={() => setViewer(null)}
         />
       )}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, ImagePlus, Trash2, Loader2, AlertCircle } from 'lucide-react'
-import { uploadImage, resolveImageUrl } from '@/services/uploadImage'
+import { loadImageBlob, uploadImage, resolveImageUrl } from '@/services/uploadImage'
 import { ImageRejected } from '@/services/imageStore'
 import { useApp } from '@/store/AppContext'
 import { useImages } from '@/services/queries'
@@ -197,8 +197,11 @@ export function ImagePicker({
             id: a.id,
             dataUrl: fullUrls[a.id] ?? a.thumbnailDataUrl ?? '',
             caption: `${a.originalFilename} · ${(a.byteSize / 1024).toFixed(0)} KB · sha256 ${a.sha256.slice(0, 12)}…`,
+            save: { name: a.originalFilename, load: () => loadImageBlob(a.id) },
           }))}
           startIndex={viewer}
+          // The photo on screen is the one fetched in full, as the viewer moves from one to the next.
+          onIndexChange={setViewer}
           onClose={() => setViewer(null)}
           // Removed from the viewer, the photo leaves it at once: the row behind then shows it gone, with the Undo.
           onRemove={

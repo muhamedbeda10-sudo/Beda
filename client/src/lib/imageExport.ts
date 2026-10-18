@@ -1,5 +1,6 @@
 // ============================================================================
-// Pictures the app makes into files (a chart, a diagram): an SVG drawn on a
+// Pictures saved as files: a photo as it was taken, and the pictures the app
+// makes (a chart, a diagram): an SVG drawn on a
 // canvas, on white, at twice its size (sharp on a phone and on paper), as a
 // PNG; with the page's own typefaces carried inside it (the Latin and Arabic
 // faces it has loaded), so its words keep the size their boxes were made for.
@@ -22,6 +23,24 @@ export function imageFileName(title: string, at: Date, ext: 'png' | 'svg', fallb
   const pad = (n: number) => String(n).padStart(2, '0')
   const stamp = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}${pad(at.getMinutes())}`
   return `${name} ${stamp}.${ext}`
+}
+
+const PHOTO_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif', 'image/gif': 'gif' }
+
+/**
+ * A photo's file name: the name it is known by (its own extension, and marks a file name cannot hold, taken out),
+ * with the extension of what it is; "Photo" for none.
+ */
+export function photoFileName(name: string, mimeType: string): string {
+  const base =
+    name
+      .replace(/\.(jpe?g|png|webp|heic|heif|gif)$/i, '')
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80)
+      .trim() || 'Photo'
+  return `${base}.${PHOTO_EXT[mimeType.toLowerCase()] ?? 'jpg'}`
 }
 
 /** The page's @font-face rules for the faces carried, with where each file is. */

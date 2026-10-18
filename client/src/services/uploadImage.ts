@@ -41,6 +41,11 @@ export async function uploadImage(file: File, ctx: UploadContext): Promise<Image
 
 const objectUrls = new Map<string, string>()
 
+/** A stored photo's bytes in full, as it was uploaded: from the device's cache when it has been seen, else the server. */
+export function loadImageBlob(id: string): Promise<Blob> {
+  return cachedBlob(`/images/${id}/content`, () => apiBlob(`/images/${id}/content`))
+}
+
 /**
  * Full-resolution content for a stored image as an object URL. Fetched with
  * the access token (an <img src> cannot carry one), then cached for the life
@@ -51,7 +56,7 @@ export async function resolveImageUrl(asset: Pick<ImageAsset, 'id' | 'thumbnailD
   if (cached) return cached
   try {
     // Fetched once per device; a photo never changes once stored.
-    const blob = await cachedBlob(`/images/${asset.id}/content`, () => apiBlob(`/images/${asset.id}/content`))
+    const blob = await loadImageBlob(asset.id)
     const url = URL.createObjectURL(blob)
     objectUrls.set(asset.id, url)
     return url
