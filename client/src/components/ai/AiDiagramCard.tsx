@@ -156,8 +156,8 @@ export const AiDiagramCard = memo(function AiDiagramCard({ part }: { part: AiDia
           <Icon className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-bold leading-snug text-slate-900 dark:text-white">{spec.title}</span>
-          <span className="block text-[11px] leading-snug text-muted">
+          <span className="block text-sm font-bold leading-snug text-slate-900 dark:text-white [overflow-wrap:anywhere]">{spec.title}</span>
+          <span className="block text-[11px] leading-snug text-muted [overflow-wrap:anywhere]">
             <bdi>{diagramSubtitle(spec)}</bdi>
           </span>
         </span>

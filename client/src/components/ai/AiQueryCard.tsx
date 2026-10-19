@@ -92,11 +92,11 @@ export const AiQueryCard = memo(function AiQueryCard({ part, question, writing =
         <span className="min-w-0 flex-1">
           {running ? (
             // The words are this app's, the purpose the asker's language: the purpose keeps its own direction.
-            <span className="line-clamp-2 text-13 font-semibold text-slate-800 dark:text-slate-100">
+            <span className="line-clamp-2 text-13 font-semibold text-slate-800 [overflow-wrap:anywhere] dark:text-slate-100">
               <span className="font-medium text-brand-700 dark:text-brand-300">Running a query:</span> <bdi dir="auto">{part.purpose}</bdi>
             </span>
           ) : (
-            <span dir="auto" className="line-clamp-2 text-13 font-semibold text-slate-800 dark:text-slate-100">
+            <span dir="auto" className="line-clamp-2 text-13 font-semibold text-slate-800 [overflow-wrap:anywhere] dark:text-slate-100">
               {part.purpose}
             </span>
           )}

@@ -23,6 +23,8 @@ import {
   isTopLevel,
   stickyLevel,
   resolveAiPeriod,
+  readableModelInput,
+  readableModelText,
 } from './ai'
 
 const none = { inputTokens: 0, outputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 }
@@ -138,5 +140,40 @@ describe('§20 a conversation’s level only goes up', () => {
     expect(isTopLevel('chat-standard')).toBe(false)
     expect(isTopLevel('chat-analysis')).toBe(false)
     expect(isTopLevel(null)).toBe(false)
+  })
+})
+
+describe('text the model wrote with its letters as codes', () => {
+  it('reads as it was meant: Arabic, and a character beyond the first plane', () => {
+    expect(readableModelText('\\u0627\\u0644\\u0639\\u064a\\u0648\\u0628 by machine')).toBe('العيوب by machine')
+    expect(readableModelText('Done \\uD83D\\uDC4D')).toBe('Done 👍')
+    expect(readableModelText('\\u00e9t\\u00C9')).toBe('étÉ')
+    // Nothing escaped: the same text.
+    expect(readableModelText('العيوب حسب الماكينة')).toBe('العيوب حسب الماكينة')
+  })
+
+  it('leaves what would change an SQL string or a pattern: ASCII, control characters, half a pair, not a code', () => {
+    expect(readableModelText("name ~ '\\u0027' OR x = '\\u005c'")).toBe("name ~ '\\u0027' OR x = '\\u005c'")
+    expect(readableModelText('\\u0000')).toBe('\\u0000')
+    expect(readableModelText('\\uD83D alone')).toBe('\\uD83D alone')
+    expect(readableModelText('\\u06 and \\u06zz')).toBe('\\u06 and \\u06zz')
+  })
+
+  it('reads a tool’s whole input that way, its SQL and the columns its chart names alike, without changing it', () => {
+    const input = {
+      purpose: '\\u0627\\u0644\\u0639\\u064a\\u0648\\u0628',
+      sql: 'SELECT machine AS "\\u0627\\u0644\\u0645\\u0627\\u0643\\u064a\\u0646\\u0629", count(*) AS n FROM ai.sample_defects GROUP BY 1',
+      chart: { type: 'bar', x: '\\u0627\\u0644\\u0645\\u0627\\u0643\\u064a\\u0646\\u0629', y: ['n'], title: '\\u0639\\u064a\\u0648\\u0628', goal: 5 },
+      long: false,
+    }
+    const before = structuredClone(input)
+    expect(readableModelInput(input)).toEqual({
+      purpose: 'العيوب',
+      sql: 'SELECT machine AS "الماكينة", count(*) AS n FROM ai.sample_defects GROUP BY 1',
+      chart: { type: 'bar', x: 'الماكينة', y: ['n'], title: 'عيوب', goal: 5 },
+      long: false,
+    })
+    expect(input).toEqual(before)
+    expect(readableModelInput(null)).toBeNull()
   })
 })

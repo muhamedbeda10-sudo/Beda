@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-19.2',
+    date: '2026-10-19',
+    title: 'Chart titles read as Arabic again, on phones too',
+    items: [
+      { text: 'Fixed: some chart and query titles from the AI assistant showed codes such as “\\u0627\\u0644…” instead of Arabic words. The assistant sometimes writes its letters that way; the app now reads them as the words they are, in new answers and in conversations and reports already kept.' },
+      { text: 'Fixed on phones: a long chart title ran across the Chart/Table switch and pushed the page sideways. Titles now wrap within the card, and on a narrow screen the switch moves under the title.' },
+    ],
+  },
+  {
     id: '2026-10-19.1',
     date: '2026-10-19',
     title: 'Hard questions go to Opus again',

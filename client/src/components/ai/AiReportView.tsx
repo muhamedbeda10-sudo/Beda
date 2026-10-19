@@ -556,9 +556,9 @@ const ReportSection = memo(function ReportSection({
 
   return (
     <section className={cn('overflow-hidden rounded-2xl bg-white shadow-sm ring-1 dark:bg-slate-900', part.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
-      <header className="flex items-center gap-2 px-4 pb-2 pt-3">
+      <header className="flex flex-wrap items-center gap-2 px-4 pb-2 pt-3">
         {!part.ok && <OctagonX className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" aria-label="Failed" />}
-        <h4 dir="auto" className="min-w-0 flex-1 break-words text-sm font-bold text-slate-900 dark:text-white">
+        <h4 dir="auto" className="min-w-0 flex-1 basis-40 text-sm font-bold text-slate-900 dark:text-white [overflow-wrap:anywhere]">
           {part.purpose}
         </h4>
         {part.truncated && (
@@ -578,7 +578,7 @@ const ReportSection = memo(function ReportSection({
             <Info className="h-4 w-4" />
           </button>
         )}
-        {chart && part.ok && display === 'table' && !photos && <ChartTableSwitch value={view} onChange={setView} />}
+        {chart && part.ok && display === 'table' && !photos && <ChartTableSwitch value={view} onChange={setView} className="ms-auto" />}
       </header>
 
       <div className="space-y-2.5 px-4 pb-4">
