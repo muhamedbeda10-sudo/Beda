@@ -164,31 +164,31 @@ function supplierRules(o: Draft): KpiInsight[] {
   ]
 }
 
+// Counted from every Hold (holdTotals), never from the list: that is only the oldest few.
 function holdRules(o: Draft, t: KpiThresholds): KpiInsight[] {
-  if (o.holds.length === 0) return []
-  const red = o.holds.filter((h) => h.ageDays >= t.holdAgeRedDays)
-  const amber = o.holds.filter((h) => h.ageDays >= t.holdAgeAmberDays && h.ageDays < t.holdAgeRedDays)
-  const pieces = o.holds.reduce((n, h) => n + h.qty, 0)
-  if (red.length > 0) {
-    const oldest = red.sort((a, b) => b.ageDays - a.ageDays)[0]
+  const { defects, pieces, amber, red } = o.holdTotals
+  if (defects === 0) return []
+  if (red > 0) {
+    // The list is the oldest first, so the oldest Hold of all is in it.
+    const oldest = [...o.holds].sort((a, b) => b.ageDays - a.ageDays)[0]
     return [
       {
         id: 'hold-aging-red',
         severity: 'critical',
-        title: `${plural(red.length, 'defect')} on Hold for ${t.holdAgeRedDays}+ days`,
-        detail: `Oldest: ${oldest.defectName} on order ${oldest.orderNumber} (${oldest.item}), ${plural(oldest.ageDays, 'day')}. ${pieces} pieces on Hold in total.`,
+        title: `${plural(red, 'defect')} on Hold for ${t.holdAgeRedDays}+ days`,
+        detail: `${oldest ? `Oldest: ${oldest.defectName} on order ${oldest.orderNumber} (${oldest.item}), ${plural(oldest.ageDays, 'day')}. ` : ''}${pieces} pieces on Hold in total.`,
         action: 'Decide each one today: rework, use-as-is or scrap. Material on Hold blocks the line and the invoice.',
         link: { kind: 'history-hold', value: 'Hold' },
       },
     ]
   }
-  if (amber.length > 0) {
+  if (amber > 0) {
     return [
       {
         id: 'hold-aging-amber',
         severity: 'warning',
-        title: `${plural(amber.length, 'defect')} on Hold for ${t.holdAgeAmberDays}+ days`,
-        detail: `${pieces} pieces on Hold in total across ${plural(o.holds.length, 'defect')}.`,
+        title: `${plural(amber, 'defect')} on Hold for ${t.holdAgeAmberDays}+ days`,
+        detail: `${pieces} pieces on Hold in total across ${plural(defects, 'defect')}.`,
         action: 'Set the disposition before they pass the red line.',
         link: { kind: 'history-hold', value: 'Hold' },
       },
@@ -198,7 +198,7 @@ function holdRules(o: Draft, t: KpiThresholds): KpiInsight[] {
     {
       id: 'hold-open',
       severity: 'info',
-      title: `${plural(o.holds.length, 'defect')} on Hold, ${pieces} pieces`,
+      title: `${plural(defects, 'defect')} on Hold, ${pieces} pieces`,
       detail: 'All within the age limit.',
       link: { kind: 'history-hold', value: 'Hold' },
     },
@@ -274,18 +274,23 @@ function inspectorRules(o: Draft): KpiInsight[] {
   ]
 }
 
+/**
+ * Shifts compared on what they inspected: production belongs to a whole
+ * session, never to a shift, so a shift's row has no reject rate. A night
+ * shift is one shift whole, on the factory day it started.
+ */
 function shiftRules(o: Draft): KpiInsight[] {
-  const rows = o.byShift.filter((r) => r.pieces >= 50 && r.defectRatePct !== null)
+  const rows = o.byShift.filter((r) => r.pieces >= 50 && r.inspectedDefectPct !== null)
   if (rows.length < 2) return []
-  const sorted = [...rows].sort((a, b) => (b.defectRatePct ?? 0) - (a.defectRatePct ?? 0))
+  const sorted = [...rows].sort((a, b) => (b.inspectedDefectPct ?? 0) - (a.inspectedDefectPct ?? 0))
   const worst = sorted[0]
   const best = sorted[sorted.length - 1]
-  if ((best.defectRatePct ?? 0) <= 0 || (worst.defectRatePct ?? 0) < (best.defectRatePct ?? 0) * 2 || (worst.defectRatePct ?? 0) <= 1) return []
+  if ((best.inspectedDefectPct ?? 0) <= 0 || (worst.inspectedDefectPct ?? 0) < (best.inspectedDefectPct ?? 0) * 2 || (worst.inspectedDefectPct ?? 0) <= 1) return []
   return [
     {
       id: 'shift-outlier',
       severity: 'warning',
-      title: `Shift ${worst.label} runs at ${pctText(worst.defectRatePct)} defects, shift ${best.label} at ${pctText(best.defectRatePct)}`,
+      title: `Shift ${worst.label} runs at ${pctText(worst.inspectedDefectPct)} defects of inspected, shift ${best.label} at ${pctText(best.inspectedDefectPct)}`,
       detail: `${worst.pieces} and ${best.pieces} pieces inspected respectively.`,
       action: 'Same machines, different results: look at handover, supervision and lighting on the worse shift.',
     },
@@ -299,7 +304,7 @@ function goodRules(o: Draft, t: KpiThresholds, count: number): KpiInsight[] {
       id: 'on-target',
       severity: 'good',
       title: 'Every KPI is on target for this period',
-      detail: `Defect rate ${pctText(o.current.defectRatePct)} (target ≤ ${t.defectRateGreen}%), first-pass yield ${pctText(o.current.fpyPct)} (target ≥ ${t.fpyGreen}%), ${o.holds.length} defects on Hold.`,
+      detail: `Defect rate ${pctText(o.current.defectRatePct)} (target ≤ ${t.defectRateGreen}%), first-pass yield ${pctText(o.current.fpyPct)} (target ≥ ${t.fpyGreen}%), ${o.holdTotals.defects} defects on Hold.`,
     },
   ]
 }

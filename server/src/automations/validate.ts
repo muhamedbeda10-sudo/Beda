@@ -361,7 +361,7 @@ function checkSchedule(s: AutomationScheduleSpec, errors: string[]): boolean {
       } else {
         const problem = periodProblem(section.sql)
         if (problem) {
-          errors.push(`${where}.sql: ${problem}. Bound the data by both days, e.g. x_at >= {{from}} AND x_at < {{to}} + 1.`)
+          errors.push(`${where}.sql: ${problem}. Bound the data by both days, e.g. x_at >= ai.factory_day_start({{from}}) AND x_at < ai.factory_day_start({{to}} + 1).`)
           runnable = false
         }
       }

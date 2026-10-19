@@ -1509,10 +1509,10 @@ const historyRows = (where: string) => `(
        WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
    WHERE ${where}) h`
 
-/** The columns as History shows them: each cell's text, and what a figure or a day sorts by. */
+/** The columns as History shows them: each cell's text, and what a figure or a day sorts by. A day is a factory day (08:00 to 08:00, ai.factory_day). */
 function historyColumns(tz: string): SqlColumns {
   const figure = (sql: string) => ({ text: `trim_scale((${sql})::numeric)::text`, sort: `(${sql})` })
-  const day = (sql: string) => ({ text: `to_char((${sql}) AT TIME ZONE '${tz.replace(/'/g, "''")}', 'YYYY-MM-DD')`, sort: `(${sql})` })
+  const day = (sql: string) => ({ text: `to_char(ai.factory_day(${sql}, '${tz.replace(/'/g, "''")}'), 'YYYY-MM-DD')`, sort: `(${sql})` })
   const percent = (part: string, whole: string, when: string) => {
     const value = `round((${part})::numeric / NULLIF((${whole})::numeric, 0) * 100, 1)`
     return { text: `CASE WHEN ${when} AND (${whole}) > 0 THEN trim_scale(${value})::text || '%' ELSE '—' END`, sort: `CASE WHEN ${when} AND (${whole}) > 0 THEN ${value} END` }
@@ -1611,13 +1611,13 @@ function historyWhere(q: z.infer<typeof historyFilterSchema>, tz: string): { whe
                     SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.created_at >= ${since}::timestamptz))`)
   }
   if (q.from || q.to) {
-    // Factory days, both ends inclusive, in the factory's zone — the same
-    // reading of a day the dashboard uses. A session is in the range when it
-    // started in it or a sample was recorded in it.
+    // Factory days (08:00 to 08:00), both ends inclusive, in the factory's
+    // zone — the same reading of a day the dashboard uses. A session is in
+    // the range when it started in it or a sample was recorded in it.
     if (q.from && q.to && q.from > q.to) throw badRequest('The range ends before it starts.')
     const zone = p(tz)
-    const start = q.from ? `(${p(q.from)}::date)::timestamp AT TIME ZONE ${zone}` : null
-    const end = q.to ? `((${p(q.to)}::date + 1)::timestamp) AT TIME ZONE ${zone}` : null
+    const start = q.from ? `ai.factory_day_start(${p(q.from)}::date, ${zone})` : null
+    const end = q.to ? `ai.factory_day_start(${p(q.to)}::date + 1, ${zone})` : null
     const within = (col: string) => [start && `${col} >= ${start}`, end && `${col} < ${end}`].filter(Boolean).join(' AND ')
     clauses.push(`(${within('s.started_at')} OR EXISTS (
                     SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND ${within('x.created_at')}))`)
