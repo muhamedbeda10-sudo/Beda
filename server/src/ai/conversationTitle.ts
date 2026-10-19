@@ -8,17 +8,20 @@
 //     'question'): a title the person gave is never touched, even one given
 //     while this call was out.
 //   • The call is the person's: its cost is kept with the question's, in
-//     their month and the app's, like any call.
+//     their month and the app's, like any call — at its worst when it timed
+//     out once sent (failedCallUsage), since it may have been answered and
+//     billed all the same.
 //   • It never stands in the answer's way: it has its own short deadline, is
 //     not stopped by Stop, and a failure leaves the first question as the
 //     title, quietly.
 // ============================================================================
 
-import { AI_CONVERSATION_TITLE_MAX, type AiConversation } from '@qc/shared/ai'
+import Anthropic from '@anthropic-ai/sdk'
+import { AI_CONVERSATION_TITLE_MAX, aiCostUsd, type AiConversation, type AiTokenUsage } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
 import { usageOf } from './assistant'
-import { noThinking, type AiModelClient, type ModelMessage } from './model'
-import { CONVERSATION_SELECT, recordUsage, toConversation } from './transcript'
+import { noThinking, type AiModelClient, type CompleteParams, type ModelMessage } from './model'
+import { CONVERSATION_SELECT, keepUsage, toConversation, type UsageRecord } from './transcript'
 
 /** A title is a few words: this is room enough, and a cap on the call's cost. */
 const TITLE_MAX_TOKENS = 60
@@ -57,6 +60,41 @@ export function cleanTitle(reply: string, max = AI_CONVERSATION_TITLE_MAX): stri
   return chars.length <= max ? t : `${chars.slice(0, max - 1).join('').trimEnd()}…`
 }
 
+/**
+ * What one of the app's short calls (complete) that failed is billed as, at most, or null when it cost nothing. Its
+ * time ran out, here or in the SDK, or it was stopped: it had been sent, and may have been answered and billed with
+ * nothing to show for it — counted as its worst, every character of the request a token (a token is at least one)
+ * and all of its max_tokens written, on its model's rates. Any other failure is Anthropic refusing it (an error with
+ * its status: nothing is billed) or the request never getting there.
+ */
+export function failedCallUsage(params: Pick<CompleteParams, 'model' | 'max_tokens' | 'system' | 'messages'>, e: unknown): { tokens: AiTokenUsage; costUsd: number } | null {
+  const outOfTime =
+    e instanceof Anthropic.APIUserAbortError ||
+    e instanceof Anthropic.APIConnectionTimeoutError ||
+    // The deadline's own signal, when it is what the call threw.
+    (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError'))
+  if (!outOfTime) return null
+  const tokens: AiTokenUsage = {
+    inputTokens: Array.from(JSON.stringify([params.system ?? '', params.messages])).length,
+    outputTokens: params.max_tokens,
+    cacheWrite5mTokens: 0,
+    cacheWrite1hTokens: 0,
+    cacheReadTokens: 0,
+  }
+  return { tokens, costUsd: aiCostUsd(params.model, tokens) }
+}
+
+/** Keep the cost a short call that failed may have had (failedCallUsage), as a partial call; nothing when it had none. Never throws. */
+export async function keepFailedCallCost(
+  db: Queryable,
+  owner: Pick<UsageRecord, 'userId' | 'conversationId' | 'turnId'>,
+  params: Pick<CompleteParams, 'model' | 'max_tokens' | 'system' | 'messages'>,
+  e: unknown,
+): Promise<void> {
+  const usage = failedCallUsage(params, e)
+  if (usage) await keepUsage(db, { ...owner, model: params.model, tokens: usage.tokens, costUsd: usage.costUsd, partial: true })
+}
+
 export interface TitleRequest {
   db: Queryable
   model: AiModelClient
@@ -75,29 +113,26 @@ export interface TitleRequest {
  * title was not changed (the call failed, said nothing, or was too late).
  */
 export async function giveConversationTitle(r: TitleRequest): Promise<AiConversation | null> {
+  const owner = { userId: r.userId, conversationId: r.conversationId, turnId: r.turnId }
+  const params: CompleteParams = {
+    model: r.titleModel,
+    max_tokens: TITLE_MAX_TOKENS,
+    ...noThinking(r.titleModel),
+    system: TITLE_SYSTEM,
+    messages: [{ role: 'user', content: titleRequest(r.question) }],
+  }
   let message: ModelMessage
   try {
-    message = await r.model.complete(
-      r.apiKey,
-      {
-        model: r.titleModel,
-        max_tokens: TITLE_MAX_TOKENS,
-        ...noThinking(r.titleModel),
-        system: TITLE_SYSTEM,
-        messages: [{ role: 'user', content: titleRequest(r.question) }],
-      },
-      { signal: AbortSignal.timeout(TITLE_TIMEOUT_MS) },
-    )
+    message = await r.model.complete(r.apiKey, params, { signal: AbortSignal.timeout(TITLE_TIMEOUT_MS) })
   } catch (e) {
     // The message only: an error's request details are never logged.
     console.warn(`[ai] conversation ${r.conversationId}: no title from the assistant:`, e instanceof Error ? e.message : String(e))
+    await keepFailedCallCost(r.db, owner, params, e)
     return null
   }
   const usage = usageOf(message, r.titleModel)
-  await recordUsage(r.db, {
-    userId: r.userId,
-    conversationId: r.conversationId,
-    turnId: r.turnId,
+  await keepUsage(r.db, {
+    ...owner,
     model: usage.model,
     tokens: usage.tokens,
     costUsd: usage.costUsd,

@@ -218,6 +218,15 @@ function dollarTagAt(sql: string, i: number): string | null {
  * of role, but pg_sleep runs until the statement timeout, and
  * pg_cancel_backend / pg_terminate_backend reach the reader's own other
  * sessions (another person's query).
+ *
+ * Reading by name is refused here whatever the database allows: the *_to_xml
+ * family, ts_stat and ts_rewrite run a query given as text or read a table
+ * named in a string, and pg_stats shows a table's most common values. What
+ * they read is checked only as they run, so planning the query cannot see it,
+ * and planning is how a saved table learns which domains it reads
+ * (savedTables.ts). Migration 0072 takes them from every role where the
+ * migration may (a superuser); on a managed server it may not, and this is
+ * all that stops them.
  */
 const DENIED: { pattern: RegExp; what: string }[] = [
   { pattern: /\bpg_(try_)?advisory\w*/i, what: 'Advisory locks' },
@@ -228,7 +237,8 @@ const DENIED: { pattern: RegExp; what: string }[] = [
   { pattern: /\blo_\w+\s*\(/i, what: 'Large-object functions' },
   { pattern: /\bdblink\w*/i, what: 'dblink' },
   { pattern: /\bpg_read_\w+/i, what: 'Reading server files' },
-  { pattern: /\b(query|cursor)_to_xml\w*|\bts_(stat|rewrite)\b/i, what: 'Running SQL from text' },
+  { pattern: /\b(query|cursor|table|schema|database)_to_xml\w*|\bts_(stat|rewrite)\b/i, what: 'Running SQL from text, or reading a table by its name,' },
+  { pattern: /\bpg_stat(s|istic)\w*/i, what: "PostgreSQL's statistics of tables" },
   { pattern: /\bpg_notify\b/i, what: 'pg_notify' },
   { pattern: /\bcopy\b/i, what: 'COPY' },
   // codeOnly blanks a quoted name with escapes in it, so U&"pg\005fsleep" would hide what it names.

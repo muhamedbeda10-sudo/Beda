@@ -177,12 +177,17 @@ export async function claimDue(deps: EngineDeps, now: Date): Promise<Claim> {
   })
 }
 
-/** Where a run's next query runs: its creator's domains as they are at that moment, or why the creator cannot run it any more. */
+/**
+ * Where a run's next query runs: its creator's domains as they are at that moment — within `within`, those of a saved
+ * report's author, when given — or why the creator cannot run it any more.
+ */
 function readerFor(deps: EngineDeps, creatorId: string): ReportReader {
-  return async () => {
+  return async (within) => {
     const state = (await creatorStates(deps.db, [creatorId])).get(creatorId)
     const blocked = blockedReason(creatorId, state, await appState(deps.db, deps.config, deps.readers.ready))
-    return blocked ? { blocked } : deps.readers.poolFor(creatorDomains(state))
+    if (blocked) return { blocked }
+    const domains = creatorDomains(state).filter((d) => !within || within.includes(d))
+    return domains.length > 0 ? deps.readers.poolFor(domains) : { outside: true }
   }
 }
 
@@ -205,7 +210,9 @@ export async function runClaimed(deps: EngineDeps, c: Claimed, halt?: AbortSigna
   let result: RunResult
   try {
     if (a.kind === 'watch') {
-      const pool = await reader()
+      const read = await reader()
+      // A watch is its creator's own query: read as their domains, never outside them.
+      const pool = read && 'outside' in read ? null : read
       result =
         pool && 'blocked' in pool
           ? { ok: false, blocked: pool.blocked, error: blockedNote(pool.blocked), notified: 0, casesNotified: 0, digest: false, notes: [] }
@@ -442,7 +449,7 @@ export async function testAutomation(deps: EngineDeps, a: AutomationRow, opts: {
       const period = prepared.period
       // The rows a card shows, not a delivery's: nothing is kept. Each section as its creator's domains are when it starts.
       const ran = await withQueryOrigin({ source: 'scheduled-report', userId: a.creatorId, purpose: a.name }, () =>
-        runSections(readerFor(deps, a.creatorId), prepared.sections, tz, ac.signal, AI_PREVIEW_ROWS),
+        runSections(readerFor(deps, a.creatorId), prepared.sections, tz, ac.signal, AI_PREVIEW_ROWS, prepared.within),
       )
       if (ran.blocked) return { ranAt, ok: false, error: blockedNote(ran.blocked) }
       const sections = ran.sections.map((s) => ({ ...s, ...previewOf(s) }))

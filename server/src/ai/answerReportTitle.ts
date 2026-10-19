@@ -18,9 +18,9 @@
 import { AI_ANSWER_REPORT_TITLE_MAX, type AiAnswerReportTitleResponse } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
 import { usageOf } from './assistant'
-import { cleanTitle } from './conversationTitle'
-import { noThinking, type AiModelClient, type ModelMessage } from './model'
-import { recordUsage } from './transcript'
+import { cleanTitle, keepFailedCallCost } from './conversationTitle'
+import { noThinking, type AiModelClient, type CompleteParams, type ModelMessage } from './model'
+import { keepUsage } from './transcript'
 
 /** A title is a line: room enough, and a cap on the call's cost. */
 const REPORT_TITLE_MAX_TOKENS = 80
@@ -94,29 +94,27 @@ export async function answerReportTitle(r: ReportTitleRequest): Promise<AiAnswer
   const answer = (turn.answerText ?? '').trim()
   if (!r.apiKey || !turn.done || !answer) return { title: standInTitle(turn), named: false }
 
+  const owner = { userId: r.userId, conversationId: turn.conversationId, turnId: turn.id }
+  const params: CompleteParams = {
+    model: r.titleModel,
+    max_tokens: REPORT_TITLE_MAX_TOKENS,
+    ...noThinking(r.titleModel),
+    system: REPORT_TITLE_SYSTEM,
+    messages: [{ role: 'user', content: reportTitleRequest(turn.question, answer) }],
+  }
   let message: ModelMessage
   try {
-    message = await r.model.complete(
-      r.apiKey,
-      {
-        model: r.titleModel,
-        max_tokens: REPORT_TITLE_MAX_TOKENS,
-        ...noThinking(r.titleModel),
-        system: REPORT_TITLE_SYSTEM,
-        messages: [{ role: 'user', content: reportTitleRequest(turn.question, answer) }],
-      },
-      { signal: AbortSignal.timeout(REPORT_TITLE_TIMEOUT_MS) },
-    )
+    message = await r.model.complete(r.apiKey, params, { signal: AbortSignal.timeout(REPORT_TITLE_TIMEOUT_MS) })
   } catch (e) {
     // The message only: an error's request details are never logged.
     console.warn(`[ai] answer ${turn.id}: no report title from the assistant:`, e instanceof Error ? e.message : String(e))
+    // Timed out once sent, it may have been billed all the same: kept at its worst.
+    await keepFailedCallCost(r.db, owner, params, e)
     return { title: standInTitle(turn), named: false }
   }
   const usage = usageOf(message, r.titleModel)
-  await recordUsage(r.db, {
-    userId: r.userId,
-    conversationId: turn.conversationId,
-    turnId: turn.id,
+  await keepUsage(r.db, {
+    ...owner,
     model: usage.model,
     tokens: usage.tokens,
     costUsd: usage.costUsd,

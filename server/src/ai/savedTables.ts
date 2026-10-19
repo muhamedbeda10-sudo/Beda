@@ -16,7 +16,10 @@
 //     belongs to one domain, and a saved table is granted to the roles that
 //     cover its own, so this holds through tables built on tables;
 //   • the table is granted to exactly the combination roles that hold all of
-//     those domains — rows written out, to every role;
+//     those domains. Rows the assistant writes out may have been copied from
+//     anything the conversation read before, so theirs are the domains of
+//     every query the assistant ran or built in it (conversationDomains),
+//     asked of PostgreSQL the same way;
 //   • it is written in one transaction as the API: built beside the old one,
 //     then put in its place with its grants, so a reader sees the old rows or
 //     the new ones, never half; and only when its definition has not changed
@@ -51,8 +54,9 @@ import {
 import { auditEvent } from '@qc/shared/audit'
 import { auditCreate, auditDelete, writeAudit } from '../audit/service'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
-import { AI_DOMAIN_COMBINATIONS, combinationRole, storedDomains } from './domains'
+import { AI_DOMAIN_COMBINATIONS, canonicalDomains, combinationRole, domainRole, storedDomains } from './domains'
 import { AI_QUERY_TIMEOUT_MS, codeOnly, precheckSql, runReadOnlyQuery } from './runQuery'
+import { RUN_SQL_TOOL_NAME } from './prompt'
 import { withQueryOrigin } from './slowQueries'
 
 /** A computation's query may take this long: the most the runner allows. */
@@ -119,7 +123,13 @@ export type SavedTableDefinition = {
   description: string
 } & (
   | { source: 'query'; sql: string; refresh: SavedTableRefresh; notes: Record<string, string> }
-  | { source: 'rows'; columns: LiteralColumn[]; rows: unknown[][] }
+  | {
+      source: 'rows'
+      columns: LiteralColumn[]
+      rows: unknown[][]
+      /** The domains of the data the rows may have been copied from (conversationDomains): only those who hold them all may read them. None: everyone. */
+      domains?: AiDomain[]
+    }
 )
 
 /** What a save, a computation or a removal did; or, when nothing changed, why. */
@@ -299,6 +309,159 @@ export async function domainsRead(readers: SavedTableReaders, sql: string): Prom
   return { domains: needed }
 }
 
+/**
+ * Plan each query as a pool's role, reading nothing, on one connection: each in its own savepoint, so one refused
+ * leaves the next its chance. `untilRefused`: stop at the first refused for want of a privilege (42501).
+ */
+async function planEach(pool: pg.Pool, sqls: readonly string[], untilRefused = false): Promise<Planned[]> {
+  const client = await pool.connect()
+  const out: Planned[] = []
+  try {
+    await client.query('BEGIN READ ONLY')
+    await client.query(`SET LOCAL statement_timeout = '${EXPLAIN_TIMEOUT_MS}ms'`)
+    for (const sql of sqls) {
+      await client.query('SAVEPOINT ai_plan')
+      try {
+        // The extended protocol: one statement only, as the runner sends it.
+        const explain: pg.QueryConfig & { queryMode: 'extended' } = { text: `EXPLAIN (COSTS OFF) ${sql}`, queryMode: 'extended' }
+        await client.query(explain)
+        out.push({ ok: true })
+      } catch (e) {
+        const err = e as { code?: string; message?: string }
+        out.push({ ok: false, code: err.code, message: err.message ?? 'The query could not be planned.' })
+      }
+      await client.query('ROLLBACK TO SAVEPOINT ai_plan')
+      if (untilRefused && out.at(-1)?.ok === false && (out.at(-1) as { code?: string }).code === '42501') break
+    }
+  } finally {
+    // The connection goes, as the runner's do: nothing the plans left in its session outlives it.
+    await client.query('ROLLBACK').catch(() => undefined)
+    client.release(true)
+  }
+  return out
+}
+
+/** Every string under a key named `sql` in a tool call's input, however deep, and the saved reports it names by id. */
+function sqlOf(input: unknown, sqls: Set<string>, reports: Set<string>): void {
+  if (Array.isArray(input)) {
+    for (const v of input) sqlOf(v, sqls, reports)
+  } else if (input && typeof input === 'object') {
+    for (const [key, v] of Object.entries(input)) {
+      if (key === 'sql' && typeof v === 'string') sqls.add(v)
+      else if ((key === 'reportId' || key === 'report_id') && typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v.trim())) reports.add(v.trim().toLowerCase())
+      else sqlOf(v, sqls, reports)
+    }
+  }
+}
+
+/**
+ * The domains a query names, read from its text: the ai views and functions it names that belong to a domain, and
+ * the saved tables it names, as they were kept (a table removed since too). For a query that can no longer be planned
+ * (a template with placeholders, a table removed since): wider than its plan would be, never narrower.
+ */
+async function domainsNamed(q: Queryable, sqls: readonly string[]): Promise<AiDomain[]> {
+  if (sqls.length === 0) return []
+  const { rows: db } = await q.query<{ database: string }>(`SELECT current_database() AS database`)
+  const roles = AI_DOMAIN_IDS.map((d) => domainRole(db[0].database, d))
+  const { rows: owned } = await q.query<{ name: string; domains: AiDomain[] }>(
+    `SELECT o.name, array_agg(d.domain ORDER BY d.domain) AS domains
+       FROM (SELECT c.relname AS name, c.oid, 'table' AS what FROM pg_class c WHERE c.relnamespace = 'ai'::regnamespace AND c.relkind IN ('v', 'm', 'r', 'p', 'f')
+             UNION ALL
+             SELECT p.proname, p.oid, 'function' FROM pg_proc p WHERE p.pronamespace = 'ai'::regnamespace) o
+      CROSS JOIN unnest($1::text[], $2::text[]) AS d(domain, role)
+      WHERE CASE o.what WHEN 'table' THEN has_table_privilege(d.role, o.oid, 'SELECT') ELSE has_function_privilege(d.role, o.oid, 'EXECUTE') END
+      GROUP BY o.name`,
+    [AI_DOMAIN_IDS, roles],
+  )
+  // What every domain may use (the shared helpers) belongs to none.
+  const byName = new Map(owned.filter((o) => o.domains.length < AI_DOMAIN_IDS.length).map((o) => [o.name.toLowerCase(), o.domains]))
+  const found = new Set<AiDomain>()
+  const tables = new Set<string>()
+  for (const sql of sqls) {
+    const code = codeOnly(sql)
+    for (const word of code.match(/[A-Za-z_][A-Za-z0-9_$]*/g) ?? []) for (const d of byName.get(word.toLowerCase()) ?? []) found.add(d)
+    for (const t of savedTablesNamed(sql)) tables.add(t)
+  }
+  if (tables.size > 0) {
+    const { rows } = await q.query<{ domains: string[] }>(`SELECT domains FROM ai_saved_tables WHERE name = ANY($1::text[])`, [[...tables]])
+    for (const r of rows) for (const d of storedDomains(r.domains)) found.add(d)
+  }
+  return canonicalDomains([...found])
+}
+
+/** The domains a set of queries reads together: each planned as domainsRead plans one, or read from its text when it cannot be planned. */
+async function domainsReadByAll(deps: SavedTableDeps, texts: Iterable<string>): Promise<{ domains: AiDomain[] } | { error: string }> {
+  // Only what could have run: a query the runner refuses never read anything.
+  const sqls = [...new Set(texts)].flatMap((t) => {
+    const checked = precheckSql(t)
+    return 'sql' in checked ? [checked.sql] : []
+  })
+  if (sqls.length === 0) return { domains: [] }
+  const all = deps.readers.poolFor(AI_DOMAIN_IDS)
+  if (!deps.readers.ready || !all) return { error: 'The assistant cannot read the database right now. Try again later.' }
+  const whole = await planEach(all, sqls)
+  const planned = sqls.filter((_, i) => whole[i].ok)
+  const needed = new Set<AiDomain>(await domainsNamed(deps.db, sqls.filter((_, i) => !whole[i].ok)))
+  for (const d of AI_DOMAIN_IDS) {
+    if (needed.has(d) || planned.length === 0) continue
+    const pool = deps.readers.poolFor(AI_DOMAIN_IDS.filter((x) => x !== d))
+    if (!pool) return { error: 'The assistant cannot read the database right now. Try again later.' }
+    const plans = await planEach(pool, planned, true)
+    if (plans.some((p) => !p.ok && p.code === '42501')) needed.add(d)
+  }
+  return { domains: canonicalDomains([...needed]) }
+}
+
+/**
+ * The domains of the data a conversation has read so far, as far as the assistant may have copied it: those of every
+ * query it ran or built there — run_sql, and the SQL of a report, a saved table, a diagram, an Excel file or an
+ * automation it made, and of the saved reports it named — each planned as save_table plans a query (domainsRead), or
+ * read from its text when it can no longer be planned. A table of rows written out in the conversation is read only
+ * by those who hold them all: the rows may be any of that data, copied.
+ *
+ * A query known to have run (run_sql, kept with its result) counts whatever it read, even a domain the person has
+ * lost since: they read it then. Any other counts within the person's domains as they are now: one reading beyond
+ * them was refused when it ran (the readers hold only the person's domains), and read nothing.
+ */
+export async function conversationDomains(
+  deps: SavedTableDeps,
+  conversationId: string,
+  person: { id: string; domains: readonly AiDomain[] },
+): Promise<{ domains: AiDomain[] } | { error: string }> {
+  const { rows: calls } = await deps.db.query<{ id: string | null; name: string | null; input: unknown }>(
+    `SELECT b ->> 'id' AS id, b ->> 'name' AS name, b -> 'input' AS input FROM ai_messages m CROSS JOIN LATERAL json_array_elements(m.content) b
+      WHERE m.conversation_id = $1 AND m.role = 'assistant' AND json_typeof(m.content) = 'array' AND b ->> 'type' = 'tool_use'`,
+    [conversationId],
+  )
+  const { rows: ran } = await deps.db.query<{ toolUseId: string; ok: boolean }>(`SELECT tool_use_id AS "toolUseId", ok FROM ai_queries WHERE conversation_id = $1`, [conversationId])
+  const outcome = new Map(ran.map((r) => [r.toolUseId, r.ok]))
+  const read = new Set<string>()
+  const maybe = new Set<string>()
+  const reportIds = new Set<string>()
+  for (const c of calls) {
+    const ok = c.id ? outcome.get(c.id) : undefined
+    // A near-miss of the name's case is still the query tool (assistant.ts).
+    if (c.name?.toLowerCase() === RUN_SQL_TOOL_NAME && ok !== undefined) {
+      // Its result is kept: it read what it read, or (failed) nothing.
+      const sql = (c.input as { sql?: unknown } | null)?.sql
+      if (ok && typeof sql === 'string') read.add(sql)
+    } else sqlOf(c.input, maybe, reportIds)
+  }
+  if (reportIds.size > 0) {
+    // A saved report the person may open: its queries reached the conversation when a schedule sending it was tried.
+    const { rows } = await deps.db.query<{ sections: { sql?: unknown }[] }>(
+      `SELECT sections FROM ai_reports WHERE id = ANY($1::uuid[]) AND (user_id = $2 OR shared)`,
+      [[...reportIds], person.id],
+    )
+    for (const r of rows) for (const section of r.sections) if (typeof section.sql === 'string') maybe.add(section.sql)
+  }
+  const certain = await domainsReadByAll(deps, read)
+  if ('error' in certain) return certain
+  const possible = await domainsReadByAll(deps, maybe)
+  if ('error' in possible) return possible
+  return { domains: canonicalDomains([...certain.domains, ...possible.domains.filter((d) => person.domains.includes(d))]) }
+}
+
 // ---- Computing ---------------------------------------------------------------------
 
 interface Computed {
@@ -405,8 +568,8 @@ function literalCell(v: unknown, type: SavedTableColumnType): { cell: AiCell } |
   }
 }
 
-/** Rows written out, checked and as their columns take them. */
-function computeLiteral(columns: LiteralColumn[], rows: unknown[][]): Computed | { error: string } {
+/** Rows written out, checked and as their columns take them; read by those who hold `domains`. */
+function computeLiteral(columns: LiteralColumn[], rows: unknown[][], domains: readonly AiDomain[] = []): Computed | { error: string } {
   const problems = columnProblems(columns.map((c) => c.name))
   if (rows.length > SAVED_TABLE_MAX_LITERAL_ROWS) problems.push(`Rows written out are at most ${SAVED_TABLE_MAX_LITERAL_ROWS.toLocaleString('en-US')}; build a longer table from a query.`)
   if (JSON.stringify(rows).length > LITERAL_MAX_CHARS) problems.push('The rows are too long to write out; build the table from a query.')
@@ -423,7 +586,7 @@ function computeLiteral(columns: LiteralColumn[], rows: unknown[][]): Computed |
     }
     out.push(cells)
   }
-  return { columns: columns.map((c) => ({ name: c.name, type: LITERAL_TYPES[c.type] })), rows: out, domains: [], dependsOn: [], ms: 0 }
+  return { columns: columns.map((c) => ({ name: c.name, type: LITERAL_TYPES[c.type] })), rows: out, domains: canonicalDomains(domains), dependsOn: [], ms: 0 }
 }
 
 // ---- Writing -----------------------------------------------------------------------
@@ -553,8 +716,11 @@ export async function saveTable(
   const computed =
     def.source === 'query'
       ? await withQueryOrigin({ source: 'saved-table', userId: actor.id, purpose: def.name }, () => computeQuery(deps, def.sql, actor.domains))
-      : computeLiteral(def.columns, def.rows)
+      : computeLiteral(def.columns, def.rows, def.domains)
   if ('error' in computed) return fail(`Nothing was saved: ${computed.error}`)
+  // Rows copied from data the person no longer reads would be a table they could not read: as a query reading it is refused.
+  const unread = computed.domains.filter((d) => !actor.domains.includes(d))
+  if (def.source === 'rows' && unread.length > 0) return fail(`Nothing was saved: the rows may come from data this person may no longer read (${unread.join(', ')}).`)
   const notes = def.source === 'query' ? noteMap(def.notes, computed) : noteMap(Object.fromEntries(def.columns.map((c) => [c.name, c.note ?? ''])), computed)
   const refresh: SavedTableRefresh = def.source === 'query' ? def.refresh : 'never'
 
@@ -752,10 +918,17 @@ export interface SavedTableChanges {
   rows?: unknown[][]
   /** For rows written out: rows added after the table's. */
   addRows?: unknown[][]
+  /** For rows written out: the domains of the data new rows may have been copied from (conversationDomains), added to the table's own. */
+  readFrom?: AiDomain[]
 }
 
 /** Whether the changes touch what the table holds, and so compute it again. */
 export const changesData = (c: SavedTableChanges) => c.sql !== undefined || c.columns !== undefined || c.rows !== undefined || c.addRows !== undefined
+
+/** Who made a live table, found by its id or its name; null when there is none. */
+export async function tableMaker(q: Queryable, by: { id?: string; name?: string }): Promise<string | null> {
+  return (await findLive(q, by))?.createdById ?? null
+}
 
 /** What is wrong with changes to a table of this source, before anything is read or run. */
 export function changeProblems(source: SavedTableSource, c: SavedTableChanges): string[] {
@@ -815,7 +988,8 @@ export async function updateTable(
         ? changes.columns.map((c) => ({ ...c, note: changes.columnNotes?.[c.name] !== undefined ? notes[c.name] : c.note }))
         : literal.columns.map((c) => ({ ...c, note: notes[c.name] }))
       const rows = changes.rows ?? [...literal.rows, ...(changes.addRows ?? [])]
-      def = { ...base, source: 'rows', columns, rows }
+      // Never wider than before: what its rows were copied from stays, and what the new ones may be is added.
+      def = { ...base, source: 'rows', columns, rows, domains: canonicalDomains([...storedDomains(row.domains), ...(changes.readFrom ?? [])]) }
     }
     const outcome = await saveTable(deps, actor, def, true, origin, row.version)
     return outcome.ok ? { ...outcome, dataChanged: true } : outcome

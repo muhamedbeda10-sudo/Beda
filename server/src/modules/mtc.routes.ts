@@ -74,10 +74,10 @@ import { isPdf } from '../ai/attachments'
 import { describeModelFailure, usageOf } from '../ai/assistant'
 import { modelPrice } from '../ai/models'
 import { aiOwnerAccount } from '../ai/owner'
-import { loadAccess, mayUploadMtc } from '../ai/access'
+import { capPassed, holdUnderCaps, loadAccess, mayUploadMtc, releaseHold } from '../ai/access'
 import { loadAiSettings } from '../ai/settings'
 import { resolveApiKey } from '../ai/credentials'
-import { monthSpend, personalMonthSpend, recordUsage } from '../ai/transcript'
+import { recordUsage } from '../ai/transcript'
 import type { ModelMessage, ModelStream } from '../ai/model'
 import { SseStream } from '../ai/sse'
 import { MTC_MAX_TOKENS, MTC_PROMPT_TOKENS, MtcReadError, mtcMessages, mtcRequest, readMtcReply, type MtcImageType, type MtcSource } from '../mtc/reader'
@@ -99,6 +99,8 @@ interface ReadingCall {
   model: string
   requestId: string | null
   partial: boolean
+  /** The hold the call was made under: settled as its cost is kept. */
+  holdId: string
 }
 
 /**
@@ -129,6 +131,7 @@ async function logReading(
         costUsd: usage.costUsd,
         requestId: c.requestId,
         partial: c.partial,
+        holdId: c.holdId,
       })
     }
   })
@@ -254,17 +257,31 @@ export function mtcRoutes(ctx: AppContext): Router {
     return { source: { kind: 'sheet', text: sheet }, fileName: named(req.body?.fileName, 'certificate.xlsx') }
   }
 
-  /** One certificate at a time per person, and so many an hour: checked before the file is taken in. */
-  const oneAtATime: RequestHandler = (req, _res, next) => {
-    const user = requireUser(req)
-    if (reading.has(user.id)) return next(new HttpError(429, 'rate_limited', 'A certificate of yours is still being read. Wait for it to finish.'))
-    const wait = reads.hit(user.id)
-    if (wait > 0) return next(new HttpError(429, 'rate_limited', `Too many certificates read in the last hour. Try again in ${Math.ceil(wait / 60)} min.`))
-    next()
-  }
+  /** The certificate taken in: its parts, as the upload's own checks let them through. */
+  const receive = (req: Parameters<RequestHandler>[0], res: Parameters<RequestHandler>[1]): Promise<void> =>
+    new Promise((resolve, reject) => {
+      void receiveFile(req, res, (err?: unknown) => (err ? reject(err) : resolve()))
+    })
 
-  r.post('/extract', uploaderOnly, oneAtATime, receiveFile, async (req, res) => {
+  r.post('/extract', uploaderOnly, async (req, res) => {
     const user = requireUser(req)
+    // One certificate at a time per person, and so many an hour: checked before the file is taken in. The reading is
+    // marked as under way in the same tick as the check, before anything is awaited, so a second upload sent meanwhile
+    // is refused; and let go however this request ends.
+    if (reading.has(user.id)) throw new HttpError(429, 'rate_limited', 'A certificate of yours is still being read. Wait for it to finish.')
+    const wait = reads.hit(user.id)
+    if (wait > 0) throw new HttpError(429, 'rate_limited', `Too many certificates read in the last hour. Try again in ${Math.ceil(wait / 60)} min.`)
+    reading.add(user.id)
+    try {
+      await receive(req, res)
+      await extract(req, res, user)
+    } finally {
+      reading.delete(user.id)
+    }
+  })
+
+  /** Read the certificate taken in, streaming how it goes; each call's worst case held against the caps while it is under way. */
+  async function extract(req: Parameters<RequestHandler>[0], res: Parameters<RequestHandler>[1], user: ReturnType<typeof requireUser>): Promise<void> {
     const { source, fileName } = sourceOf(req)
 
     // Read one after another, as the answer loop does: the assistant's switch, its key, its monthly cap, the model for certificates.
@@ -303,20 +320,25 @@ export function mtcRoutes(ctx: AppContext): Router {
         throw new HttpError(failure.code === 'rate_limited' ? 429 : failure.code === 'ai_unavailable' ? 503 : 502, failure.code, failure.message)
       }
     }
-    /** Why a call of this many tokens on this model may not be made now — the assistant's cap, then the person's — or null. */
-    const overCap = async (model: string, tokens: number): Promise<'app' | 'personal' | null> => {
+    /**
+     * A call of this many tokens on this model, its worst case held against the assistant's cap and the person's own
+     * (certificates count in it like questions) while it is under way; or the cap it would pass.
+     */
+    const hold = async (model: string, tokens: number): Promise<{ holdId: string } | { refused: 'app' | 'personal' }> => {
       const price = modelPrice(model)
       const worstUsd = ((tokens + MTC_PROMPT_TOKENS) * Math.max(price.input, price.cacheWrite5m) + MTC_MAX_TOKENS * price.output) / 1_000_000
-      if (Number((await monthSpend(ctx.db)).spentUsd) + worstUsd > settings.monthlyCapUsd) return 'app'
-      // The person's own monthly cap, set with the permission: certificates count in it like questions.
-      if (access && (await personalMonthSpend(ctx.db, user.id)) + worstUsd > access.monthlyCapUsd) return 'personal'
-      return null
+      return holdUnderCaps(ctx.db, user.id, worstUsd, async (tx) =>
+        capPassed(tx, user.id, worstUsd, { appUsd: (await loadAiSettings(tx)).settings.monthlyCapUsd, personalUsd: access ? access.monthlyCapUsd : null }),
+      )
     }
 
-    reading.add(user.id)
+    const calls: ReadingCall[] = []
+    const holds: string[] = []
+    // Whether the calls' costs were kept (which settles their holds): until they are, the holds keep counting, and lapse.
+    let logged = false
     try {
-      const over = await overCap(first.model, await count(first.model))
-      if (over === 'app') {
+      const held = await hold(first.model, await count(first.model))
+      if ('refused' in held && held.refused === 'app') {
         throw new HttpError(
           402,
           'ai_budget_reached',
@@ -325,7 +347,7 @@ export function mtcRoutes(ctx: AppContext): Router {
             : 'The AI service’s monthly limit is reached, so certificates cannot be read until the 1st.',
         )
       }
-      if (over === 'personal') {
+      if ('refused' in held) {
         throw new HttpError(
           402,
           'ai_budget_reached',
@@ -334,6 +356,7 @@ export function mtcRoutes(ctx: AppContext): Router {
             : 'You have reached this month’s AI limit, so certificates cannot be read until the 1st. Ask the AI assistant’s owner to raise it.',
         )
       }
+      holds.push(held.holdId)
 
       const stream = new SseStream(res)
       stream.open()
@@ -345,15 +368,14 @@ export function mtcRoutes(ctx: AppContext): Router {
       res.on('close', () => {
         if (!res.writableFinished) abort.abort()
       })
-      const calls: ReadingCall[] = []
-      let current: { stream: ModelStream; model: string } | null = null
-      /** One reading of the file: its reply, kept with what it cost. */
-      const readOn = async (run: { model: string; effort: AiEffort }): Promise<ModelMessage> => {
+      let current: { stream: ModelStream; model: string; holdId: string } | null = null
+      /** One reading of the file under its hold: its reply, kept with what it cost. */
+      const readOn = async (run: { model: string; effort: AiEffort }, holdId: string): Promise<ModelMessage> => {
         const call = ctx.ai.stream(apiKey, mtcRequest(source, fileName, run), { signal: abort.signal })
-        current = { stream: call, model: run.model }
+        current = { stream: call, model: run.model, holdId }
         const message = await call.finalMessage()
         current = null
-        calls.push({ message, model: run.model, requestId: call.request_id ?? null, partial: false })
+        calls.push({ message, model: run.model, requestId: call.request_id ?? null, partial: false, holdId })
         return message
       }
       const log = { userId: user.id, fileName }
@@ -362,7 +384,7 @@ export function mtcRoutes(ctx: AppContext): Router {
         let result: MtcExtractResult | null = null
         let failed: unknown = null
         try {
-          result = readMtcReply(await readOn(first), fileName)
+          result = readMtcReply(await readOn(first, held.holdId), fileName)
         } catch (e) {
           if (!(e instanceof MtcReadError)) throw e
           failed = e
@@ -372,12 +394,14 @@ export function mtcRoutes(ctx: AppContext): Router {
           (failed instanceof MtcReadError && !failed.tooLong) ||
           (result?.kind && (result.rows.length === 0 || mtcDoubtShare(MTC_REGISTERS[result.kind], result.rows) > AI_MTC_REREAD_SHARE))
         if (doubtful) {
-          if (await overCap(rereadOn, await count(rereadOn).catch(() => Number.POSITIVE_INFINITY))) {
+          const again = await hold(rereadOn, await count(rereadOn).catch(() => Number.POSITIVE_INFINITY))
+          if ('refused' in again) {
             if (result) result.problem = [result.problem, 'Many values were unclear, and the monthly AI limit is too close to read it again on a stronger model: check every amber cell.'].filter(Boolean).join(' ')
           } else {
+            holds.push(again.holdId)
             send({ type: 'rereading', model: rereadOn })
             try {
-              result = readMtcReply(await readOn(AI_JOBS['mtc-reread']), fileName)
+              result = readMtcReply(await readOn(AI_JOBS['mtc-reread'], again.holdId), fileName)
               failed = null
               reread = true
             } catch (e) {
@@ -389,14 +413,20 @@ export function mtcRoutes(ctx: AppContext): Router {
         }
         if (!result) throw failed
         await logReading(ctx, { ...log, outcome: result.kind ? 'read' : 'not-certificate', kind: result.kind, items: result.rows.length, reread, calls })
+        logged = true
         send({ type: 'result', result })
       } catch (e) {
         // Whatever was read before it failed or was stopped is still billed: kept as partial, like a cut-off answer.
-        const cut = current as { stream: ModelStream; model: string } | null
-        if (cut?.stream.currentMessage) calls.push({ message: cut.stream.currentMessage, model: cut.model, requestId: cut.stream.request_id ?? null, partial: true })
-        await logReading(ctx, { ...log, outcome: abort.signal.aborted ? 'stopped' : 'failed', kind: null, items: null, reread, calls }).catch((err: unknown) =>
-          console.error('[mtc] could not log a reading that did not finish', err),
-        )
+        const cut = current as { stream: ModelStream; model: string; holdId: string } | null
+        if (cut?.stream.currentMessage) calls.push({ message: cut.stream.currentMessage, model: cut.model, requestId: cut.stream.request_id ?? null, partial: true, holdId: cut.holdId })
+        if (!logged) {
+          await logReading(ctx, { ...log, outcome: abort.signal.aborted ? 'stopped' : 'failed', kind: null, items: null, reread, calls }).then(
+            () => {
+              logged = true
+            },
+            (err: unknown) => console.error('[mtc] could not log a reading that did not finish', err),
+          )
+        }
         if (abort.signal.aborted) return
         if (e instanceof MtcReadError) send({ type: 'error', code: 'validation', message: e.message })
         else {
@@ -407,9 +437,13 @@ export function mtcRoutes(ctx: AppContext): Router {
         stream.end()
       }
     } finally {
-      reading.delete(user.id)
+      // Settled as the calls' costs were kept; a call that cost nothing (refused, never begun) lets its hold go. Costs
+      // that could not be kept leave their holds counting until they lapse.
+      if (logged || calls.length === 0) {
+        for (const id of holds) await releaseHold(ctx.db, id).catch((e: unknown) => console.warn("[mtc] a call's hold could not be let go; it lapses on its own:", e instanceof Error ? e.message : String(e)))
+      }
     }
-  })
+  }
 
   /**
    * A register's columns for Excel's filter and sort: each field's text as the
