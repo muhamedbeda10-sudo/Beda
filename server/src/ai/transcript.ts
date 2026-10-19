@@ -310,11 +310,20 @@ export async function personalMonthSpend(q: Queryable, userId: string): Promise<
   return Number(rows[0].spent)
 }
 
+/**
+ * Keep what a call cost. A call of a turn already closed (the conversation's title, quicker than the answer most of
+ * the time but not always) adds to the turn's cost, which finishTurn summed without it; while the turn runs, its
+ * close sums it in. One statement: the close either saw this row or finds the turn's cost raised after it.
+ */
 export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
   await q.query(
-    `INSERT INTO ai_usage (user_id, conversation_id, turn_id, model, input_tokens, output_tokens, cache_write_5m_tokens,
-                           cache_write_1h_tokens, cache_read_tokens, cost_usd, request_id, partial, automation_id, mtc_reading_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+    `WITH kept AS (
+       INSERT INTO ai_usage (user_id, conversation_id, turn_id, model, input_tokens, output_tokens, cache_write_5m_tokens,
+                             cache_write_1h_tokens, cache_read_tokens, cost_usd, request_id, partial, automation_id, mtc_reading_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       RETURNING turn_id, cost_usd
+     )
+     UPDATE ai_turns t SET cost_usd = t.cost_usd + kept.cost_usd FROM kept WHERE t.id = kept.turn_id AND t.status <> 'running'`,
     [
       u.userId,
       u.conversationId,

@@ -353,6 +353,27 @@ describe('a title by the assistant', () => {
     }
   })
 
+  it('adds a title that comes after the answer closed to what the turn cost', async () => {
+    // The title is held until the answer's turn has closed (and summed its cost), as on a slow day.
+    app.model.completeWith = async (params) => {
+      const question = String((params.messages[0] as { content: string }).content)
+      for (let i = 0; i < 200; i++) {
+        const { rows } = await app.db.query(`SELECT 1 FROM ai_turns WHERE question = $1 AND status = 'done'`, [question])
+        if (rows.length > 0) break
+        await new Promise((done) => setTimeout(done, 10))
+      }
+      return '"Late title"'
+    }
+    const events = await askNew('Holds on line 58 this week')
+    const id = (events.find((e) => e.type === 'start') as Extract<AiStreamEvent, { type: 'start' }>).conversation.id
+    // The title's call is kept a moment after the stream ends at the latest.
+    for (let i = 0; i < 200 && (await sourceOf(id)).title_source !== 'assistant'; i++) await new Promise((done) => setTimeout(done, 10))
+    const used = await app.db.query<{ cost: number }>(`SELECT COALESCE(sum(cost_usd), 0)::float AS cost FROM ai_usage WHERE conversation_id = $1`, [id])
+    const turn = await app.db.query<{ cost: number }>(`SELECT cost_usd::float AS cost FROM ai_turns WHERE conversation_id = $1`, [id])
+    expect(used.rows[0].cost).toBeGreaterThan(0)
+    expect(turn.rows[0].cost).toBeCloseTo(used.rows[0].cost, 6)
+  })
+
   it('leaves the first question as the title when the call fails or says nothing', async () => {
     app.model.completeWith = () => {
       throw new Error('overloaded')
