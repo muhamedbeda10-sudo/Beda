@@ -6,6 +6,7 @@ import { useCallback, useState } from 'react'
 import { Image as ImageIcon, UploadCloud } from 'lucide-react'
 import { Badge, Button, Field, Input } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
+import { useUploadsInFlight } from '@/components/inspection/imageUploads'
 import { ReferenceImageBulkUpload } from '@/components/admin/ReferenceImageBulkUpload'
 import { useMaster } from '@/services/queries'
 import { MasterDataPanel, MachineSelect, numberOrNull, requireNumber, requireText } from '@/components/admin/MasterDataPanel'
@@ -17,13 +18,22 @@ interface RefImageDraft {
   workCenterCode: string
   caption: string
   imageId: string
-  /** The reference photo is still uploading: not saved until it is stored. */
-  uploading?: boolean
+}
+
+/**
+ * Why the entry cannot be saved yet, or null. While any photo is still
+ * uploading (`uploads`, a count — two taken back to back both hold it) the
+ * entry would be saved with the image before it.
+ */
+export function referenceImageProblem(d: RefImageDraft, uploads: number): string | null {
+  return requireText(d.itemCode, 'Item code') ?? (uploads > 0 ? 'Wait for the image to finish uploading.' : d.imageId.trim() ? null : 'Choose a reference image.')
 }
 
 export function ReferenceImagesSection() {
   const { data: rows = [], isLoading: loading } = useMaster('item-reference-images')
   const [bulkOpen, setBulkOpen] = useState(false)
+  // Batches of the reference photo still uploading: Save waits for every one of them.
+  const [uploads, onUploading] = useUploadsInFlight()
 
   const sort = useCallback(
     (a: ItemReferenceImage, b: ItemReferenceImage) =>
@@ -71,9 +81,7 @@ export function ReferenceImagesSection() {
       describe={(r) => `${r.itemCode}${r.workCenterCode ? ` on ${r.workCenterCode}` : ''}${r.caption ? ` · ${r.caption}` : ''}`}
       newDraft={() => ({ itemCode: '', item: '', workCenterCode: '', caption: '', imageId: '' })}
       toDraft={(r) => ({ itemCode: r.itemCode, item: r.item ?? '', workCenterCode: r.workCenterCode ?? '', caption: r.caption ?? '', imageId: r.imageId })}
-      validate={(d) =>
-        requireText(d.itemCode, 'Item code') ?? (d.uploading ? 'Wait for the image to finish uploading.' : d.imageId.trim() ? null : 'Choose a reference image.')
-      }
+      validate={(d) => referenceImageProblem(d, uploads)}
       toRecord={(d) => ({
         itemCode: d.itemCode.trim(),
         item: d.item.trim(),
@@ -106,7 +114,7 @@ export function ReferenceImagesSection() {
                 const ids = edit(d.imageId ? [d.imageId] : [])
                 patch({ imageId: ids[ids.length - 1] ?? '' })
               }}
-              onUploading={(uploading) => patch({ uploading })}
+              onUploading={onUploading}
             />
             <p className="mt-1 text-xs text-muted">
               One image per entry — adding another replaces the current reference.

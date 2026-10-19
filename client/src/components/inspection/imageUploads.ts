@@ -64,6 +64,27 @@ export async function uploadEach(
  */
 export function useUploadsInFlight(): [number, (uploading: boolean) => void] {
   const [count, setCount] = useState(0)
-  const onUploading = useCallback((uploading: boolean) => setCount((n) => Math.max(0, n + (uploading ? 1 : -1))), [])
+  const onUploading = useCallback((uploading: boolean) => setCount((n) => nextUploadCount(n, uploading)), [])
   return [count, onUploading]
+}
+
+/** What the person is told when photos are picked while the record is being saved, or after it was. */
+export const SAVED_AND_CLOSED = 'This record was saved and closed: open it again to add more photos.'
+
+/**
+ * Why photos picked now are not added, or null when they may be. Not while the
+ * record is being saved (`lockedReason`): the photo would land after the record
+ * was written and be lost from it. Not once the screen holding the record is
+ * gone (`open` false): there is no record left to put it on. Either way the
+ * person is told, rather than shown "added" for a photo that never is.
+ */
+export function intakeRefusal(lockedReason: string | undefined, open: boolean): string | null {
+  if (!open) return SAVED_AND_CLOSED
+  if (lockedReason) return lockedReason
+  return null
+}
+
+/** The number of batches uploading, after one starts (true) or ends (false). */
+export function nextUploadCount(count: number, uploading: boolean): number {
+  return Math.max(0, count + (uploading ? 1 : -1))
 }

@@ -113,6 +113,12 @@ const STEP_META: Record<WizardStep, { label: string; short: string; icon: typeof
 
 const CONSUMABLE_KINDS: PTConsumableKind[] = ['Cleaner', 'Penetrant', 'Developer']
 
+/**
+ * Said on every photo picker while the sample is being saved: a photo added or removed then would land after the
+ * sample was written and be lost from it without a word, so the pickers wait (ImagePicker's lockedReason).
+ */
+const PHOTOS_PAUSED = 'The sample is being saved: photos can be added again if the save does not go through.'
+
 /** The card that holds the open step: a step opened from further down the page is scrolled to its top. */
 const STEP_CARD_ID = 'wizard-step'
 
@@ -826,13 +832,13 @@ export function WizardPage() {
         {current === 'defects' && (
           <>
             {!short && <WorkInstructionLinks instructions={instructions} step="defects" />}
-            <DefectsStep draft={draft} update={update} options={defectOptions} sessionId={session?.id} orderId={order.id} onUploading={onUploading} />
+            <DefectsStep draft={draft} update={update} options={defectOptions} sessionId={session?.id} orderId={order.id} onUploading={onUploading} photosPaused={saving ? PHOTOS_PAUSED : undefined} />
           </>
         )}
         {current === 'paint' && (
           <>
             {!short && <WorkInstructionLinks instructions={instructions} step="paint" />}
-            <PaintStep draft={draft} update={update} sessionId={session?.id} orderId={order.id} onUploading={onUploading} />
+            <PaintStep draft={draft} update={update} sessionId={session?.id} orderId={order.id} onUploading={onUploading} photosPaused={saving ? PHOTOS_PAUSED : undefined} />
           </>
         )}
         {current === 'paintThickness' && (
@@ -844,7 +850,7 @@ export function WizardPage() {
         {current === 'pt' && (
           <>
             {!short && <WorkInstructionLinks instructions={instructions} step="pt" />}
-            <PTStep draft={draft} update={update} consumables={consumables} sessionId={session?.id} orderId={order.id} short={short} onUploading={onUploading} />
+            <PTStep draft={draft} update={update} consumables={consumables} sessionId={session?.id} orderId={order.id} short={short} onUploading={onUploading} photosPaused={saving ? PHOTOS_PAUSED : undefined} />
           </>
         )}
         {current === 'review' && (
@@ -859,6 +865,7 @@ export function WizardPage() {
             focusQty={focusQty}
             onQtyFocused={() => setFocusQty(false)}
             onUploading={onUploading}
+            saving={saving}
           />
         )}
       </Card>
@@ -2018,6 +2025,7 @@ function DefectsStep({
   sessionId,
   orderId,
   onUploading,
+  photosPaused,
 }: {
   draft: SampleDraft
   update: Updater
@@ -2025,6 +2033,8 @@ function DefectsStep({
   sessionId?: string
   orderId: string
   onUploading: (uploading: boolean) => void
+  /** Set while the sample is being saved: the photo pickers wait, and say why. */
+  photosPaused?: string
 }) {
   const [search, setSearch] = useState('')
   const typed = search.trim()
@@ -2143,6 +2153,7 @@ function DefectsStep({
           // Applied to the defect as it is when the upload lands, not as it was when the photo was taken.
           onChange={(edit) => update((dd) => ({ ...dd, defects: dd.defects.map((x) => (x.key === d.key ? { ...x, imageIds: edit(x.imageIds) } : x)) }))}
           onUploading={onUploading}
+          lockedReason={photosPaused}
           sessionId={sessionId}
           orderId={orderId}
         />
@@ -2300,12 +2311,15 @@ function PaintStep({
   sessionId,
   orderId,
   onUploading,
+  photosPaused,
 }: {
   draft: SampleDraft
   update: Updater
   sessionId?: string
   orderId: string
   onUploading: (uploading: boolean) => void
+  /** Set while the sample is being saved: the photo picker waits, and says why. */
+  photosPaused?: string
 }) {
   return (
     <div className="space-y-4">
@@ -2320,6 +2334,7 @@ function PaintStep({
           imageIds={draft.paint.imageIds}
           onChange={(edit) => update((d) => ({ ...d, paint: { ...d.paint, imageIds: edit(d.paint.imageIds) } }))}
           onUploading={onUploading}
+          lockedReason={photosPaused}
           sessionId={sessionId}
           orderId={orderId}
         />
@@ -2474,6 +2489,7 @@ function PTStep({
   orderId,
   short,
   onUploading,
+  photosPaused,
 }: {
   draft: SampleDraft
   update: Updater
@@ -2483,6 +2499,8 @@ function PTStep({
   /** A short landscape screen: the explanation folds to one line, so the materials are on the first screen. */
   short: boolean
   onUploading: (uploading: boolean) => void
+  /** Set while the sample is being saved: the photo picker waits, and says why. */
+  photosPaused?: string
 }) {
   const pt = draft.pt ?? emptyPT()
   const setPT = (patch: Partial<DraftPT>) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), ...patch } }))
@@ -2676,6 +2694,7 @@ function PTStep({
           imageIds={pt.imageIds}
           onChange={(edit) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), imageIds: edit(d.pt?.imageIds ?? []) } }))}
           onUploading={onUploading}
+          lockedReason={photosPaused}
           sessionId={sessionId}
           orderId={orderId}
         />
@@ -2695,6 +2714,7 @@ function ReviewStep({
   focusQty,
   onQtyFocused,
   onUploading,
+  saving,
 }: {
   draft: SampleDraft
   order: ProductionOrder
@@ -2708,6 +2728,8 @@ function ReviewStep({
   focusQty: boolean
   onQtyFocused: () => void
   onUploading: (uploading: boolean) => void
+  /** The sample is being saved: the note and its photos wait, so nothing added now is left off it. */
+  saving: boolean
 }) {
   const measured = draft.dimensions.filter((d) => d.actual.trim() !== '')
   const qty = Number(draft.sampleQty)
@@ -2922,6 +2944,7 @@ function ReviewStep({
               dir="auto"
               className="input min-h-[96px]"
               maxLength={4000}
+              readOnly={saving}
               value={note.text}
               onChange={(e) => setNote({ text: e.target.value })}
               placeholder="Write a note about the order…"
@@ -2932,6 +2955,7 @@ function ReviewStep({
               imageIds={note.imageIds}
               onChange={(edit) => update((d) => ({ ...d, note: { ...(d.note ?? { text: '', imageIds: [] }), imageIds: edit(d.note?.imageIds ?? []) } }))}
               onUploading={onUploading}
+              lockedReason={saving ? PHOTOS_PAUSED : undefined}
               sessionId={sessionId}
               orderId={orderId}
             />

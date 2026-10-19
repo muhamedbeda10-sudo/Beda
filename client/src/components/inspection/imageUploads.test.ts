@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ImageAsset } from '@qc/shared/types'
-import { appendIds, putBackId, removeId, uploadEach, type ImageIdsEdit } from './imageUploads'
+import { SAVED_AND_CLOSED, appendIds, intakeRefusal, nextUploadCount, putBackId, removeId, uploadEach, type ImageIdsEdit } from './imageUploads'
 
 /** The record's list, changed the way React applies a functional update: to the list as it stands. */
 function record(initial: string[]) {
@@ -71,5 +71,36 @@ describe('photos added while others upload', () => {
     expect(putBackId('b', 1)(['a', 'c'])).toEqual(['a', 'b', 'c'])
     expect(putBackId('b', 1)(['a', 'b'])).toEqual(['a', 'b'])
     expect(removeId('z')(['a'])).toEqual(['a'])
+  })
+})
+
+describe('photos picked while the record is being saved, or after', () => {
+  const saving = 'The sample is being saved: photos can be added again if the save does not go through.'
+
+  it('are refused with the reason while it is being saved, rather than landing after it was written', () => {
+    expect(intakeRefusal(saving, true)).toBe(saving)
+  })
+
+  it('are refused once the record is saved and its screen gone, rather than said to be added', () => {
+    expect(intakeRefusal(undefined, false)).toBe(SAVED_AND_CLOSED)
+    expect(intakeRefusal(saving, false)).toBe(SAVED_AND_CLOSED)
+  })
+
+  it('are taken otherwise', () => {
+    expect(intakeRefusal(undefined, true)).toBeNull()
+  })
+})
+
+describe('uploads counted for a record’s Save', () => {
+  it('holds while any of two overlapping uploads is still running', () => {
+    let n = 0
+    n = nextUploadCount(n, true) // the first photo
+    n = nextUploadCount(n, true) // the second, before the first is stored
+    n = nextUploadCount(n, false) // the first is stored
+    expect(n).toBe(1)
+    n = nextUploadCount(n, false)
+    expect(n).toBe(0)
+    // Never below nought, whatever order the ends arrive in.
+    expect(nextUploadCount(0, false)).toBe(0)
   })
 })
