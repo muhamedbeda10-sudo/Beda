@@ -335,7 +335,7 @@ describe('coils', () => {
         ],
       },
     })
-    expect(res.body).toEqual({ inserted: 2, updated: 0 })
+    expect(res.body).toEqual({ inserted: 2, updated: 0, unchanged: 0 })
     const byGrade = await app.api<Coil[]>('GET', '/api/coils?search=dx5', { token: inspector.token })
     expect(byGrade.body.map((c) => c.coilNumber)).toEqual(['C10023'])
     const bySupplier = await app.api<Coil[]>('GET', '/api/coils?search=ezz', { token: inspector.token })

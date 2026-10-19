@@ -663,6 +663,22 @@ export interface KpiListCounts {
   holds: number
 }
 
+/**
+ * Every defect on Hold behind the filters, counted whole: the list beside it
+ * is only the oldest few. Ages are whole days since the sample was recorded,
+ * against the thresholds' amber and red lines.
+ */
+export interface KpiHoldTotals {
+  /** Defects on Hold. */
+  defects: number
+  /** Their pieces. */
+  pieces: number
+  /** On Hold for holdAgeAmberDays or more, and under holdAgeRedDays. */
+  amber: number
+  /** On Hold for holdAgeRedDays or more. */
+  red: number
+}
+
 /** The defect types that did not fit on the Pareto chart, as one figure. */
 export interface KpiParetoOthers {
   types: number
@@ -705,7 +721,10 @@ export interface KpiOverview {
   /** Coils are consumed by roll forming; only forming samples count here. */
   suppliers: KpiSupplierRow[]
   paintByItem: KpiPaintItemRow[]
+  /** The oldest Holds (counts.holds says how many there are). */
   holds: KpiHoldRow[]
+  /** Every Hold counted whole: how many, their pieces, how many past each age line. */
+  holdTotals: KpiHoldTotals
   discipline: KpiDiscipline
   insights: KpiInsight[]
 }

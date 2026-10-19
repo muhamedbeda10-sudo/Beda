@@ -188,14 +188,18 @@ describe('§20 the ai views read like the screens', () => {
     ])
   })
 
-  it('counts days in the factory’s time zone', async () => {
-    // 21:30 UTC is 23:30 in Cairo in January; 22:30 UTC is already the next day there.
+  it('counts factory days (08:00 to 08:00) in the factory’s time zone', async () => {
+    // 21:30 UTC is 23:30 in Cairo in January: the 15th.
     await app.db.query(`UPDATE inspection_samples SET created_at = '2026-01-15 21:30:00+00' WHERE session_id = $1`, [ids.welding])
     expect(await read(`SELECT recorded_day::text FROM ai.inspection_samples WHERE session_id = '${ids.welding}'`)).toEqual([['2026-01-15']])
     // The penetrant test keeps the welding wire batch and the connector coil number.
     expect(await read(`SELECT welding_wire_batch, connector_coil_number FROM ai.pt_records WHERE session_id = '${ids.welding}'`)).toEqual([['WW-1', 'CC-1']])
+    // 22:30 UTC is 00:30 on the 16th there, still the night shift of the 15th: the 15th's factory day.
     await app.db.query(`UPDATE inspection_samples SET created_at = '2026-01-15 22:30:00+00' WHERE session_id = $1`, [ids.welding])
-    expect(await read(`SELECT recorded_day::text, recorded_at FROM ai.inspection_samples WHERE session_id = '${ids.welding}'`)).toEqual([['2026-01-16', '2026-01-16 00:30:00+02']])
+    expect(await read(`SELECT recorded_day::text, recorded_at, ai.factory_day(recorded_at)::text FROM ai.inspection_samples WHERE session_id = '${ids.welding}'`)).toEqual([['2026-01-15', '2026-01-16 00:30:00+02', '2026-01-15']])
+    // 08:00 opens the 16th, and a period of factory days is bounded there.
+    await app.db.query(`UPDATE inspection_samples SET created_at = '2026-01-16 06:00:00+00' WHERE session_id = $1`, [ids.welding])
+    expect(await read(`SELECT recorded_day::text, recorded_at >= ai.factory_day_start('2026-01-16') FROM ai.inspection_samples WHERE session_id = '${ids.welding}'`)).toEqual([['2026-01-16', true]])
   })
 
   it('leaves chat, notices and the assistant’s own key changes out of the audit trail it reads', async () => {

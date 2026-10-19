@@ -13,7 +13,7 @@ import type { SaveNoticeRequest } from '@qc/shared/api'
 import type { AiStreamEvent } from '@qc/shared/ai'
 import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import type { Notice } from '@qc/shared/types'
-import { factoryDay, type Session, type TestApp } from './harness'
+import { calendarDay, type Session, type TestApp } from './harness'
 import { KEY, grant } from './automationsKit'
 
 export interface NoticePeople {
@@ -86,7 +86,7 @@ export function noticeBody(over: Partial<SaveNoticeRequest> = {}): SaveNoticeReq
     severity: 'warning',
     requiresAck: true,
     matchMode: 'all',
-    validFrom: factoryDay(),
+    validFrom: calendarDay(),
     validTo: null,
     targets: [],
     imageIds: [],

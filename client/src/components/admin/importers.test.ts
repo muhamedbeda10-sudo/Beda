@@ -115,11 +115,17 @@ describe('cell coercion', () => {
   it('turns a spreadsheet date into an ISO timestamp and names a bad one', async () => {
     const { coerceCell, ORDERS_IMPORTER } = await import('./importers')
     const date = ORDERS_IMPORTER.fields.find((f) => f.key === 'date')!
-    expect(coerceCell(date, '2026-08-30 10:00:52')).toEqual({ value: new Date('2026-08-30 10:00:52').toISOString() })
-    expect(coerceCell(date, '2026-08-30')).toEqual({ value: new Date('2026-08-30').toISOString() })
-    expect(coerceCell(date, '10:00:52')).toEqual({ error: 'Date is not a date ("10:00:52")' })
+    // A time without an offset is the factory's (Cairo, UTC+3 in August), whatever zone the browser is in.
+    expect(coerceCell(date, '2026-08-30 10:00:52', 'Africa/Cairo')).toEqual({ value: '2026-08-30T07:00:52.000Z' })
+    expect(coerceCell(date, '2026-08-30', 'Africa/Cairo')).toEqual({ value: '2026-08-29T21:00:00.000Z' })
+    // Day first, as Access and Excel write it in Egypt: the 5th of January, and the 31st is a date.
+    expect(coerceCell(date, '05/01/2026 09:00', 'Africa/Cairo')).toEqual({ value: '2026-01-05T07:00:00.000Z' })
+    expect(coerceCell(date, '31/01/2026', 'Africa/Cairo')).toEqual({ value: '2026-01-30T22:00:00.000Z' })
+    // A moment that says its own offset keeps it.
+    expect(coerceCell(date, '2026-08-30T10:00:52Z', 'Africa/Cairo')).toEqual({ value: '2026-08-30T10:00:52.000Z' })
+    expect(coerceCell(date, '10:00:52', 'Africa/Cairo')).toEqual({ error: 'Date is not a date ("10:00:52")' })
     const qty = ORDERS_IMPORTER.fields.find((f) => f.key === 'requiredQty')!
-    expect(coerceCell(qty, '1,350')).toEqual({ value: 1350 })
-    expect(coerceCell(qty, 'many')).toEqual({ error: 'Required qty is not a number ("many")' })
+    expect(coerceCell(qty, '1,350', 'Africa/Cairo')).toEqual({ value: 1350 })
+    expect(coerceCell(qty, 'many', 'Africa/Cairo')).toEqual({ error: 'Required qty is not a number ("many")' })
   })
 })

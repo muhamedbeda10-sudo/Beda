@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AiReportInput } from '@qc/shared/aiReportInputs'
-import { inputDrafts, inputsKey, inputsLine, localDay, readDrafts, runsOnOpen, sectionFigures, treeAsTable, treeRows } from './reportInputs'
+import { inputDrafts, inputsKey, inputsLine, localDay, readDrafts, reportToday, runsOnOpen, sectionFigures, treeAsTable, treeRows } from './reportInputs'
 
 const ORDERS: AiReportInput = { name: 'orders', label: 'Orders', kind: 'list', required: true }
 const WEEK: AiReportInput = { name: 'week', label: 'Week', kind: 'number', required: true, dynamicDefault: 'this_week' }
@@ -30,6 +30,14 @@ describe('the form of a report', () => {
 
   it('knows today on this device', () => {
     expect(localDay(new Date(2026, 9, 5, 23, 30))).toBe('2026-10-05')
+  })
+
+  it('starts a report’s defaults from the factory day, in the factory’s zone', () => {
+    // 02:00 on 6 October in Cairo (UTC+3): still the 5th's night shift, as the server counts it.
+    expect(reportToday('Africa/Cairo', new Date('2026-10-05T23:00:00Z'))).toBe('2026-10-05')
+    expect(reportToday('Africa/Cairo', new Date('2026-10-06T05:00:00Z'))).toBe('2026-10-06')
+    // Whatever zone the browser is in.
+    expect(reportToday('Asia/Tokyo', new Date('2026-10-05T23:00:00Z'))).toBe('2026-10-06')
   })
 })
 

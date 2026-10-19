@@ -45,6 +45,7 @@ import {
   readableModelText,
   resolveAiPeriod,
   type AiDayRange,
+  type AiDomain,
   type AiEffort,
   type AiModelId,
   type AiReport,
@@ -59,6 +60,7 @@ import {
 import type { AiReportInput, AiReportInputValues } from '@qc/shared/aiReportInputs'
 import type { Db, Queryable } from '../db/pool'
 import { CHAT_QUERY_TIMEOUT_MS, recordCutOffUsage, usageOf, watchStream } from './assistant'
+import { releaseHold } from './access'
 import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams } from './model'
 import { contextDay, conversationTitle, factoryDay } from './prompt'
@@ -66,7 +68,7 @@ import { fillInputs } from './reportInputs'
 import { checkTemplate, fillTemplate, noDataRange, ordersRows, ownDays, periodProblem, rangeDays, readsClock, sameResult } from './reportTemplate'
 import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, AI_REPORT_RUN_CHARS, AI_REPORT_RUN_ROWS, exportRows, previewOf, reportPreview, runReadOnlyQuery, type QueryRun, type RunOptions } from './runQuery'
 import { withQueryPurpose } from './slowQueries'
-import { loadDisplayMessages, recordUsage, type UsageRecord } from './transcript'
+import { keepUsage, loadDisplayMessages, type UsageRecord } from './transcript'
 
 /** The longest title a report may have. */
 export const AI_REPORT_TITLE_CHARS = 120
@@ -196,12 +198,22 @@ export interface NewReport {
   description?: string | null
   madeBy?: AiReportMadeBy
   starterKey?: string
+  /**
+   * The domains its queries were run as to be kept: its maker's, as they are now (left out, read so). A scheduled
+   * delivery of it by someone else reads within them (automations/savedReport.ts). Null for the app's own starter
+   * reports.
+   */
+  authorDomains?: AiDomain[] | null
 }
+
+/** A report's author_domains as written: the domains given; none at all for the app's own (`appsOwn`); else its maker's as they are now. */
+const AUTHOR_DOMAINS_SQL = (given: string, appsOwn: string, maker: string) =>
+  `CASE WHEN ${appsOwn} THEN NULL ELSE COALESCE(${given}::text[], (SELECT a.domains FROM ai_access a WHERE a.user_id = ${maker}), '{}') END`
 
 export async function insertReport(q: Queryable, r: NewReport): Promise<AiReport> {
   const { rows } = await q.query<{ id: string }>(
-    `INSERT INTO ai_reports (id, user_id, conversation_id, turn_id, title, question, period, adjustable, sections, inputs, shared, description, made_by, starter_key)
-     VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7::json, $8, $9::json, $10::json, $11, $12, $13, $14)
+    `INSERT INTO ai_reports (id, user_id, conversation_id, turn_id, title, question, period, adjustable, sections, inputs, shared, description, made_by, starter_key, author_domains)
+     VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7::json, $8, $9::json, $10::json, $11, $12, $13, $14, ${AUTHOR_DOMAINS_SQL('$15', '$16::boolean', '$2')})
      RETURNING id`,
     [
       r.id ?? null,
@@ -218,6 +230,8 @@ export async function insertReport(q: Queryable, r: NewReport): Promise<AiReport
       r.description ?? null,
       r.madeBy ?? 'answer',
       r.starterKey ?? null,
+      r.authorDomains ?? null,
+      r.authorDomains === null,
     ],
   )
   return (await findReport(q, rows[0].id, r.userId))!
@@ -232,14 +246,16 @@ export interface ReportChanges {
   sections: AiReportSection[]
   inputs: AiReportInput[]
   shared: boolean
+  /** The domains its queries were just run as: its maker's as they are now (left out, read so; NewReport.authorDomains). */
+  authorDomains?: AiDomain[]
 }
 
 export async function changeReport(q: Queryable, id: string, userId: string, c: ReportChanges): Promise<AiReport> {
   await q.query(
     `UPDATE ai_reports SET title = $2, description = $3, period = $4::json, adjustable = $5, sections = $6::json, inputs = $7::json, shared = $8,
-            made_by = CASE WHEN made_by = 'answer' THEN 'assistant' ELSE made_by END
+            made_by = CASE WHEN made_by = 'answer' THEN 'assistant' ELSE made_by END, author_domains = ${AUTHOR_DOMAINS_SQL('$9', 'false', 'ai_reports.user_id')}
       WHERE id = $1`,
-    [id, c.title, c.description, c.period ? JSON.stringify(c.period) : null, c.adjustable, JSON.stringify(c.sections.map(toSection)), JSON.stringify(c.inputs), c.shared],
+    [id, c.title, c.description, c.period ? JSON.stringify(c.period) : null, c.adjustable, JSON.stringify(c.sections.map(toSection)), JSON.stringify(c.inputs), c.shared, c.authorDomains ?? null],
   )
   return (await findReport(q, id, userId))!
 }
@@ -328,10 +344,10 @@ Return:
 
 Rules for a template:
 - Change nothing but the period's bounds: every other part of the query stays exactly as it is (columns, joins, filters, grouping, ordering, limits).
-- Write the placeholders exactly as {{from}} and {{to}}, outside quotes and comments, each in place of a date value: recorded_at >= {{from}} AND recorded_at < {{to}} + 1; day BETWEEN {{from}} AND {{to}}; ai.production_between({{from}}, {{to}}, 'day').
-- An exclusive end (< '2026-10-01') becomes < {{to}} + 1; an inclusive one (<= '2026-09-30', BETWEEN … AND '2026-09-30') becomes {{to}}.
+- Write the placeholders exactly as {{from}} and {{to}}, outside quotes and comments, each in place of a date value: recorded_at >= ai.factory_day_start({{from}}) AND recorded_at < ai.factory_day_start({{to}} + 1); recorded_day BETWEEN {{from}} AND {{to}}; ai.production_between({{from}}, {{to}}, 'day').
+- The period is factory days, each from 08:00 to 08:00 the next morning: a timestamp is bounded with ai.factory_day_start, a *_day column with the days themselves. An exclusive end (< ai.factory_day_start('2026-10-01'), < '2026-10-01') becomes the same with {{to}} + 1 in place of the day; an inclusive one (<= '2026-09-30', BETWEEN … AND '2026-09-30') becomes {{to}}.
 - Bounds written with now(), current_date or intervals are replaced too, so that the template depends on {{from}} and {{to}} alone.
-- Every template with the period uses both {{from}} and {{to}} and holds the data between them: a lower bound and an upper bound, or both days given to a function such as ai.production_between. A query bounded on one side only (recorded_at >= current_date - 6, "since a week ago") gets the other bound too: recorded_at >= {{from}} AND recorded_at < {{to}} + 1.
+- Every template with the period uses both {{from}} and {{to}} and holds the data between them: a lower bound and an upper bound, or both days given to a function such as ai.production_between. A query bounded on one side only (recorded_at >= current_date - 6, "since a week ago") gets the other bound too: recorded_at >= ai.factory_day_start({{from}}) AND recorded_at < ai.factory_day_start({{to}} + 1).
 - Compare the placeholders with the data (a column, or an expression of one), never with each other or with constants alone.
 - In a report with a period, no query keeps a day of its own, whether it has placeholders or not: no date or time written out ('2026-09-01', DATE '2026-09-01', '2026-09' for a month), no day made from numbers (make_date), and no reading of the clock (now(), current_date, current_timestamp, 'today'). Such a report cannot be made adjustable, and keeps its period fixed.
 - Filled with the period as it stood on the day the question was asked, the template must return exactly what the query returned.
@@ -494,12 +510,14 @@ export function readProposal(message: ModelMessage, sectionCount: number): Templ
 }
 
 /** Who a call is counted against. */
-type UsageOwner = Pick<UsageRecord, 'userId' | 'conversationId' | 'turnId'>
+/** Whose call it is, and the hold it was made under (access.ts), settled as its cost is kept. */
+type UsageOwner = Pick<UsageRecord, 'userId' | 'conversationId' | 'turnId' | 'holdId'>
 
 /**
  * Ask the model for templates, once. The call is counted in the month's spend
- * as soon as it ends (or as far as it got, when it fails). Never throws for
- * the model's sake: a failure is a reason to keep the period fixed.
+ * as soon as it ends (or as far as it got, when it fails), settling the hold
+ * it was made under; a hold with no cost kept under it is let go here. Never
+ * throws for the model's sake: a failure is a reason to keep the period fixed.
  */
 export async function proposeTemplates(args: {
   db: Db
@@ -509,6 +527,25 @@ export async function proposeTemplates(args: {
   params: ModelParams
   sectionCount: number
 }): Promise<TemplateProposal | Fixed> {
+  // Null once the call's cost is kept (which settles it) or could not be (it then lapses); else let go at the end.
+  let holdId = args.owner.holdId ?? null
+  try {
+    const proposed = await askForTemplates(args)
+    if (proposed.cost !== 'nothing') holdId = null
+    return proposed.result
+  } finally {
+    await releaseHold(args.db, holdId).catch((e: unknown) => console.warn("[ai] a call's hold could not be let go; it lapses on its own:", e instanceof Error ? e.message : String(e)))
+  }
+}
+
+async function askForTemplates(args: {
+  db: Db
+  model: AiModelClient
+  apiKey: string
+  owner: UsageOwner
+  params: ModelParams
+  sectionCount: number
+}): Promise<{ result: TemplateProposal | Fixed; cost: 'kept' | 'nothing' | 'lost' }> {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), TEMPLATE_TIMEOUT_MS)
   timer.unref()
@@ -520,7 +557,7 @@ export async function proposeTemplates(args: {
   } catch (err) {
     // A stream that failed on its own may still be reading the response, which would go uncounted: stop it.
     if (!(err instanceof Anthropic.APIUserAbortError)) stream.abort()
-    await recordCutOffUsage(args.db, args.owner, stream, watch, args.params)
+    const cost = await recordCutOffUsage(args.db, args.owner, stream, watch, args.params)
     const detail =
       err instanceof Anthropic.APIUserAbortError
         ? `no answer within ${TEMPLATE_TIMEOUT_MS / 1000} s`
@@ -531,14 +568,14 @@ export async function proposeTemplates(args: {
             ? err.message
             : String(err)
     const refused = err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError
-    return { notice: refused ? FIXED_NOTICE.unavailable : FIXED_NOTICE.model, detail }
+    return { result: { notice: refused ? FIXED_NOTICE.unavailable : FIXED_NOTICE.model, detail }, cost }
   } finally {
     clearTimeout(timer)
   }
   const usage = usageOf(message, args.params.model)
-  await recordUsage(args.db, { ...args.owner, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd, requestId: stream.request_id ?? null })
+  const kept = await keepUsage(args.db, { ...args.owner, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd, requestId: stream.request_id ?? null })
   const proposal = readProposal(message, args.sectionCount)
-  return 'problem' in proposal ? { notice: FIXED_NOTICE.unusable, detail: proposal.problem } : proposal
+  return { result: 'problem' in proposal ? { notice: FIXED_NOTICE.unusable, detail: proposal.problem } : proposal, cost: kept ? 'kept' : 'lost' }
 }
 
 // ---- Making the period adjustable: the check ------------------------------------------

@@ -73,7 +73,7 @@ import { EXPORT_MAX_RECORDS, HISTORY_GROUP_LIMIT } from '@qc/shared/api'
 import type { AuditContext } from '@qc/shared/audit'
 import type { AppContext } from '../context'
 import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
-import { ConflictError, badRequest, forbidden, notFound } from '../lib/errors'
+import { ConflictError, HttpError, badRequest, forbidden, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { columnFilterClauses, columnOrderBy, columnQuerySchema, columnValues, type SqlColumns } from '../lib/columnFilters'
 import type { ColumnFilters } from '@qc/shared/api'
@@ -299,6 +299,76 @@ async function loadSessionWithOrder(q: Queryable, id: string, lock = false): Pro
     [id],
   )
   return rows[0] ? toSessionWithOrder(rows[0]) : null
+}
+
+/**
+ * One order line, one open session at a time (§4.4). Every path that opens a
+ * session on a line, reopens one, or closes one (a universal line's first
+ * close decides what the line is) takes the line's row lock first and the
+ * session's after it, always in that order. FOR NO KEY UPDATE: it serialises
+ * those paths per line, yet a sample written meanwhile — whose foreign key
+ * takes a key-share lock on the line — is not held up by it, nor deadlocked.
+ * The database refuses a second open session too (migration 0071).
+ */
+const LINE_LOCK = 'FOR NO KEY UPDATE'
+
+/** An order line, locked: what opening a session on it needs. */
+interface LockedLine {
+  id: string
+  workCenterCode: string
+  /** False when the line was retired (marked deleted): no session opens on it, though one may still be open. */
+  live: boolean
+}
+
+/**
+ * The line a start names, locked. A make-to-stock machine's STOCK line is
+ * found whether or not a catalogue clear retired it — a session open on it
+ * still is — and is created on the machine's first session.
+ */
+async function lockLineToStart(tx: Queryable, start: StartSessionRequest): Promise<LockedLine> {
+  const find = (where: string, key: string) =>
+    tx.query<LockedLine>(
+      `SELECT id, work_center_code AS "workCenterCode", deleted_at IS NULL AS live FROM production_orders WHERE ${where} ${LINE_LOCK}`,
+      [key],
+    )
+  if ('orderId' in start) {
+    const line = (await find('id = $1', start.orderId)).rows[0]
+    if (!line) throw badRequest('That order does not exist.')
+    return line
+  }
+  const key = stockLineKey(start.workCenterCode)
+  const line = (await find('lower(line_key) = lower($1)', key)).rows[0]
+  if (line) return line
+  await ensureStockLine(tx, start.workCenterCode)
+  return (await find('lower(line_key) = lower($1)', key)).rows[0]
+}
+
+/** The session open on a line (the latest, should an older pair exist), locked after the line; null when none is. */
+async function openSessionOn(tx: Queryable, orderId: string): Promise<SessionWithOrder | null> {
+  const open = (await tx.query<{ id: string }>(
+    `SELECT id FROM inspection_sessions WHERE order_id = $1 AND status = 'Open' AND deleted_at IS NULL ORDER BY started_at DESC LIMIT 1`,
+    [orderId],
+  )).rows[0]
+  return open ? loadSessionWithOrder(tx, open.id, true) : null
+}
+
+/** A session locked for a change of its state, its line locked first. Null when there is no such session. */
+async function lockSessionOnLine(tx: Queryable, id: string): Promise<SessionWithOrder | null> {
+  // A session never changes line, so its line is read before either lock.
+  const line = (await tx.query<{ orderId: string }>(`SELECT order_id AS "orderId" FROM inspection_sessions WHERE id = $1 AND deleted_at IS NULL`, [id])).rows[0]
+  if (!line) return null
+  await tx.query(`SELECT 1 FROM production_orders WHERE id = $1 ${LINE_LOCK}`, [line.orderId])
+  return loadSessionWithOrder(tx, id, true)
+}
+
+/** Refused: a session is open on the line already. Its id rides along, so a client can take the person to it. */
+function alreadyOpen(open: SessionWithOrder, advice: string): HttpError {
+  return new HttpError(
+    409,
+    'duplicate',
+    `Session #${open.seq} is already open on this line, started by ${open.inspectorName}. One session per line is open at a time: ${advice}`,
+    { sessionId: open.id },
+  )
 }
 
 function auditCtxFor(user: { id: string; name: string }, s: SessionWithOrder, entity: string, entityId: string, sampleId?: string): AuditContext {
@@ -636,51 +706,50 @@ export function sessionsRoutes(ctx: AppContext): Router {
   })
 
   /**
-   * §4 — open a session against an order, confirming the starting quantity.
-   * Called inside the transaction of the first sample (§4.4), so a session
-   * never exists without one.
+   * §4 — open a session against the line `lockLineToStart` locked, confirming
+   * the starting quantity. Only once no session is open on it: the caller
+   * looked, under the line's lock. Called inside the transaction of the first
+   * sample (§4.4), so a session never exists without one.
    */
-  async function createSession(tx: Queryable, user: AuthUser, body: StartSessionRequest): Promise<SessionWithOrder> {
-    {
-      // A make-to-stock machine has no order to pick: its one fixed STOCK line
-      // is kept (or restored, after a catalogue clear) and the session opens
-      // against it with the quantity that came out.
-      const orderId = 'orderId' in body ? body.orderId : await ensureStockLine(tx, body.workCenterCode)
-      // Lock the order so two inspectors starting at once get distinct seqs.
-      const order = (await tx.query<ProductionOrder>(
-        `SELECT id, order_number AS "orderNumber", item, work_center_code AS "workCenterCode"
-           FROM production_orders WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
-        [orderId],
-      )).rows[0]
-      if (!order) throw badRequest('That order does not exist.')
-      const seq = (await tx.query<{ next: number }>(
-        `SELECT COALESCE(max(seq), 0) + 1 AS next FROM inspection_sessions WHERE order_id = $1`,
-        [order.id],
-      )).rows[0].next
-      const { rows } =
-        'orderId' in body
-          ? await tx.query<{ id: string }>(
-              `INSERT INTO inspection_sessions
-                 (seq, order_id, work_center_code, inspector_id, inspector_name, start_qty, start_qty_by_id, start_qty_by_name, start_qty_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $4, $5, now()) RETURNING id`,
-              [seq, order.id, order.workCenterCode, user.id, user.name, body.startQty],
-            )
-          : await tx.query<{ id: string }>(
-              `INSERT INTO inspection_sessions (seq, order_id, work_center_code, inspector_id, inspector_name, produced_qty)
-               VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-              [seq, order.id, order.workCenterCode, user.id, user.name, body.producedQty],
-            )
-      const session = (await loadSessionWithOrder(tx, rows[0].id))!
-      await auditCreate(tx, auditCtxFor(user, session, 'InspectionSession', session.id))
-      return session
-    }
+  async function createSession(tx: Queryable, user: AuthUser, body: StartSessionRequest, line: LockedLine): Promise<SessionWithOrder> {
+    // A make-to-stock machine has no order to pick: its one fixed STOCK line
+    // is kept up to date (or restored, had it been retired) and the session
+    // opens against it with the quantity that came out.
+    if (!('orderId' in body)) await ensureStockLine(tx, body.workCenterCode)
+    else if (!line.live) throw badRequest('That order does not exist.')
+    // Under the line's lock, so two inspectors starting at once get distinct seqs.
+    const seq = (await tx.query<{ next: number }>(
+      `SELECT COALESCE(max(seq), 0) + 1 AS next FROM inspection_sessions WHERE order_id = $1`,
+      [line.id],
+    )).rows[0].next
+    const { rows } =
+      'orderId' in body
+        ? await tx.query<{ id: string }>(
+            `INSERT INTO inspection_sessions
+               (seq, order_id, work_center_code, inspector_id, inspector_name, start_qty, start_qty_by_id, start_qty_by_name, start_qty_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $4, $5, now()) RETURNING id`,
+            [seq, line.id, line.workCenterCode, user.id, user.name, body.startQty],
+          )
+        : await tx.query<{ id: string }>(
+            `INSERT INTO inspection_sessions (seq, order_id, work_center_code, inspector_id, inspector_name, produced_qty)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+            [seq, line.id, line.workCenterCode, user.id, user.name, body.producedQty],
+          )
+    const session = (await loadSessionWithOrder(tx, rows[0].id))!
+    await auditCreate(tx, auditCtxFor(user, session, 'InspectionSession', session.id))
+    return session
   }
 
-  /** Kept for the API's sake; the app itself opens a session with its first sample. */
+  /** Kept for the API's sake; the app itself opens a session with its first sample. One line, one open session: refused while one is open on it. */
   r.post('/', requirePermission('record-inspection'), async (req, res) => {
     const user = requireUser(req)
     const body = parse(startSchema, req.body)
-    const created = await withTransaction(db, (tx) => createSession(tx, user, body))
+    const created = await withTransaction(db, async (tx) => {
+      const line = await lockLineToStart(tx, body)
+      const open = await openSessionOn(tx, line.id)
+      if (open) throw alreadyOpen(open, 'record in it, or close it before opening another.')
+      return createSession(tx, user, body, line)
+    })
     res.status(201).json(created)
   })
 
@@ -700,12 +769,16 @@ export function sessionsRoutes(ctx: AppContext): Router {
         return { session, sample: { sampleId: dup.id, index: dup.index, deduped: true }, joined: false }
       }
       // One session per line at a time: if one is already open on it, the
-      // sample joins it under this inspector's name instead of opening a twin.
-      const lineId = 'orderId' in body.start ? body.start.orderId : (await tx.query<{ id: string }>(`SELECT id FROM production_orders WHERE lower(line_key) = lower($1) AND deleted_at IS NULL`, [stockLineKey(body.start.workCenterCode)])).rows[0]?.id
-      const open = lineId
-        ? (await tx.query<{ id: string }>(`SELECT id FROM inspection_sessions WHERE order_id = $1 AND status = 'Open' AND deleted_at IS NULL ORDER BY started_at DESC LIMIT 1 FOR UPDATE`, [lineId])).rows[0]
-        : undefined
-      const opened = open ? (await loadSessionWithOrder(tx, open.id, true))! : await createSession(tx, user, body.start)
+      // sample joins it under this inspector's name instead of opening a twin
+      // — as a sample added to it would, by its inspector or by someone who
+      // may correct open sessions. The line is locked before looking, so two
+      // inspectors starting at once find the same session.
+      const line = await lockLineToStart(tx, body.start)
+      const open = await openSessionOn(tx, line.id)
+      if (open && open.inspectorId !== user.id && !userCan(user, 'edit-open-session')) {
+        throw forbidden(`Session #${open.seq} is already open on this line, started by ${open.inspectorName}. Only they, or someone who may correct open sessions, can record in it.`)
+      }
+      const opened = open ?? (await createSession(tx, user, body.start, line))
       const sample = await saveSampleInSession(tx, user, opened, body.sample)
       const session = (await loadSessionWithOrder(tx, opened.id))!
       return { session, sample, joined: !!open }
@@ -969,10 +1042,16 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const id = parse(uuid, req.params.id)
     const body = parse(closeSchema, req.body)
     const closed = await withTransaction(db, async (tx) => {
-      const before = await loadSessionWithOrder(tx, id, true)
+      // The line first: on a universal machine the line's first close decides
+      // final or staged, so two closes on one line must not both find none.
+      const before = await lockSessionOnLine(tx, id)
       if (!before) throw notFound('That session')
       if (before.version !== body.version) throw new ConflictError(before)
       if (before.status === 'Closed') throw badRequest('This session is already closed.')
+      // Closing is a change to an open session: its inspector's, or anyone's who may correct open sessions — as adding a sample is.
+      if (before.inspectorId !== user.id && !userCan(user, 'edit-open-session')) {
+        throw forbidden(`This session was started by ${before.inspectorName}. Only they, or someone who may correct open sessions, can close it.`)
+      }
       // A session is an inspection record: with no sample it recorded nothing,
       // so it cannot be closed as one — it is discarded instead.
       if ((before.sampleCount ?? 0) === 0) throw badRequest('No sample has been recorded in this session. Record one before closing, or discard the session.')
@@ -1256,16 +1335,21 @@ export function sessionsRoutes(ctx: AppContext): Router {
     res.json(outcome)
   })
 
-  /** Reopen a closed session so samples can be added again. Closed-record rights required. */
+  /**
+   * Reopen a closed session so samples can be added again. Closed-record
+   * rights required, and no other session open on its line: one per line.
+   */
   r.post('/:id/reopen', requirePermission('edit-closed-session'), async (req, res) => {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const body = parse(reopenSchema, req.body)
     const reopened = await withTransaction(db, async (tx) => {
-      const before = await loadSessionWithOrder(tx, id, true)
+      const before = await lockSessionOnLine(tx, id)
       if (!before) throw notFound('That session')
       if (before.version !== body.version) throw new ConflictError(before)
       if (before.status === 'Open') throw badRequest('This session is already open.')
+      const open = await openSessionOn(tx, before.orderId)
+      if (open) throw alreadyOpen(open, 'close it before reopening this one.')
       await tx.query(`UPDATE inspection_sessions SET status = 'Open', closed_at = NULL, closed_by_id = NULL, version = version + 1 WHERE id = $1`, [id])
       const after = (await loadSessionWithOrder(tx, id))!
       await auditChanges(
@@ -1293,7 +1377,8 @@ export function sessionsRoutes(ctx: AppContext): Router {
     const id = parse(uuid, req.params.id)
     const body = parse(quantitiesSchema, req.body)
     const updated = await withTransaction(db, async (tx) => {
-      const before = await loadSessionWithOrder(tx, id, true)
+      // The line first, as a close takes it: a universal session's kind is read across the line's sessions.
+      const before = await lockSessionOnLine(tx, id)
       if (!before) throw notFound('That session')
       if (before.version !== body.version) throw new ConflictError(before)
       const may = before.status === 'Open' ? before.inspectorId === user.id || userCan(user, 'edit-open-session') : userCan(user, 'edit-closed-session')
@@ -1424,10 +1509,10 @@ const historyRows = (where: string) => `(
        WHERE lower(m.code) = lower(s.work_center_code) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 1) m ON true
    WHERE ${where}) h`
 
-/** The columns as History shows them: each cell's text, and what a figure or a day sorts by. */
+/** The columns as History shows them: each cell's text, and what a figure or a day sorts by. A day is a factory day (08:00 to 08:00, ai.factory_day). */
 function historyColumns(tz: string): SqlColumns {
   const figure = (sql: string) => ({ text: `trim_scale((${sql})::numeric)::text`, sort: `(${sql})` })
-  const day = (sql: string) => ({ text: `to_char((${sql}) AT TIME ZONE '${tz.replace(/'/g, "''")}', 'YYYY-MM-DD')`, sort: `(${sql})` })
+  const day = (sql: string) => ({ text: `to_char(ai.factory_day(${sql}, '${tz.replace(/'/g, "''")}'), 'YYYY-MM-DD')`, sort: `(${sql})` })
   const percent = (part: string, whole: string, when: string) => {
     const value = `round((${part})::numeric / NULLIF((${whole})::numeric, 0) * 100, 1)`
     return { text: `CASE WHEN ${when} AND (${whole}) > 0 THEN trim_scale(${value})::text || '%' ELSE '—' END`, sort: `CASE WHEN ${when} AND (${whole}) > 0 THEN ${value} END` }
@@ -1526,13 +1611,13 @@ function historyWhere(q: z.infer<typeof historyFilterSchema>, tz: string): { whe
                     SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND x.created_at >= ${since}::timestamptz))`)
   }
   if (q.from || q.to) {
-    // Factory days, both ends inclusive, in the factory's zone — the same
-    // reading of a day the dashboard uses. A session is in the range when it
-    // started in it or a sample was recorded in it.
+    // Factory days (08:00 to 08:00), both ends inclusive, in the factory's
+    // zone — the same reading of a day the dashboard uses. A session is in
+    // the range when it started in it or a sample was recorded in it.
     if (q.from && q.to && q.from > q.to) throw badRequest('The range ends before it starts.')
     const zone = p(tz)
-    const start = q.from ? `(${p(q.from)}::date)::timestamp AT TIME ZONE ${zone}` : null
-    const end = q.to ? `((${p(q.to)}::date + 1)::timestamp) AT TIME ZONE ${zone}` : null
+    const start = q.from ? `ai.factory_day_start(${p(q.from)}::date, ${zone})` : null
+    const end = q.to ? `ai.factory_day_start(${p(q.to)}::date + 1, ${zone})` : null
     const within = (col: string) => [start && `${col} >= ${start}`, end && `${col} < ${end}`].filter(Boolean).join(' AND ')
     clauses.push(`(${within('s.started_at')} OR EXISTS (
                     SELECT 1 FROM inspection_samples x WHERE x.session_id = s.id AND x.deleted_at IS NULL AND ${within('x.created_at')}))`)

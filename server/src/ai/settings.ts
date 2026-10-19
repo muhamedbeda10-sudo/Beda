@@ -72,8 +72,8 @@ export async function loadAvailability(q: Queryable, config: Config, readerReady
   else if (!resolved.apiKey) reason = 'no-key'
   else if (!readerReady) reason = 'reader-unavailable'
   // The same test the answer loop makes before every call: closer to the cap than one call may cost,
-  // no answer could start, so the composer must not offer one.
-  else if (spend.spentUsd + minCallWorstCaseUsd(model) > capUsd) reason = 'cap-reached'
+  // no answer could start, so the composer must not offer one. The calls under way count at their worst case.
+  else if (spend.spentUsd + spend.heldUsd + minCallWorstCaseUsd(model) > capUsd) reason = 'cap-reached'
   const status: AiStatusResponse = {
     available: reason === undefined,
     model,

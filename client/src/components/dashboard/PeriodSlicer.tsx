@@ -16,7 +16,8 @@
 import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
 import { CalendarRange, ChevronDown, GripVertical } from 'lucide-react'
 import type { KpiRange } from '@qc/shared/kpi'
-import { addDays, fromDay, toDay, PERIOD_PRESETS, presetRange, type PeriodPreset } from './period'
+import { addDays, factoryToday, fromDay, toDay, PERIOD_PRESETS, presetRange, type PeriodPreset } from './period'
+import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useCoarsePointer } from '@/lib/media'
@@ -60,7 +61,9 @@ export function PeriodSlicer({
   const [timelineOpen, setTimelineOpen] = usePersistedState<boolean>('qc-dash:timeline-open', false)
   // Under a finger the hint is printed under the strip; a tooltip would only pop up over the toolbar as it opens.
   const coarse = useCoarsePointer()
-  const today = toDay(new Date())
+  const { factoryTimeZone } = useAuth()
+  // The strip ends on today's factory day (08:00 to 08:00, the factory's zone).
+  const today = factoryToday(factoryTimeZone)
   // The strip runs from the first day of the record to today, never shorter
   // than a month. A period that begins before any record (This year, the
   // record starting in September) does not stretch it back: its start handle
@@ -227,7 +230,7 @@ export function PeriodSlicer({
               key={p.key}
               type="button"
               aria-pressed={preset === p.key}
-              onClick={() => onChange(presetRange(p.key, new Date()), p.key)}
+              onClick={() => onChange(presetRange(p.key, new Date(), undefined, factoryTimeZone), p.key)}
               className={cn(
                 'h-8 shrink-0 whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors touch:h-10',
                 preset === p.key ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white',

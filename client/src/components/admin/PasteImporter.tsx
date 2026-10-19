@@ -5,6 +5,7 @@ import { Badge, Button } from '@/components/ui'
 import { ScrollX } from '@/components/ui/ScrollX'
 import { existingKeys, importRows, refreshAfterImport } from '@/services/mutations'
 import { useApp } from '@/store/AppContext'
+import { useAuth } from '@/store/AuthContext'
 import { cn } from '@/lib/utils'
 import { BATCH_SIZE, coerceCell, normaliseHeader, normaliseKeyPart, type CellValue, type ImportField, type Importer } from '@/components/admin/importers'
 
@@ -19,6 +20,7 @@ import { BATCH_SIZE, coerceCell, normaliseHeader, normaliseKeyPart, type CellVal
 export function PasteImporter({ importer }: { importer: Importer }) {
   const queryClient = useQueryClient()
   const { toast } = useApp()
+  const { factoryTimeZone } = useAuth()
   const fields = importer.fields
   const [rows, setRows] = useState<string[][]>([])
   const [status, setStatus] = useState<'idle' | 'running' | 'done'>('idle')
@@ -33,7 +35,7 @@ export function PasteImporter({ importer }: { importer: Importer }) {
   const keyParts = useMemo(() => [...importer.businessKeys, ...(importer.optionalKeys ?? [])], [importer])
 
   /** The rows as the API will receive them, with their problems. */
-  const plan = useMemo(() => planRows(rows, importer, keyParts, existing), [rows, importer, keyParts, existing])
+  const plan = useMemo(() => planRows(rows, importer, keyParts, existing, factoryTimeZone), [rows, importer, keyParts, existing, factoryTimeZone])
 
   const lookupKeys = useMemo(() => Array.from(new Set(plan.valid.map((r) => r.key))), [plan.valid])
   const lookupSignature = `${importer.target}|${lookupKeys.join('')}`
@@ -276,12 +278,13 @@ interface PlannedRow {
   mode: 'new' | 'update'
 }
 
-/** Which rows can go, which are skipped and why — the same rules as the file importer. */
+/** Which rows can go, which are skipped and why — the same rules as the file importer (times without an offset read in `timeZone`, the factory's). */
 export function planRows(
   rows: string[][],
   importer: Importer,
   keyParts: string[],
   existing: Set<string>,
+  timeZone: string,
 ): { valid: PlannedRow[]; problems: Map<number, { cols: Set<string>; messages: string[] }> } {
   const valid: PlannedRow[] = []
   const problems = new Map<number, { cols: Set<string>; messages: string[] }>()
@@ -297,7 +300,7 @@ export function planRows(
         if (f.clearsWhenEmpty) values[f.key] = null
         return
       }
-      const cell = coerceCell(f, raw)
+      const cell = coerceCell(f, raw, timeZone)
       if ('error' in cell) {
         cols.add(f.key)
         messages.push(cell.error)

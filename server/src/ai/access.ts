@@ -24,7 +24,7 @@ import {
 import { auditEvent } from '@qc/shared/audit'
 import { can, type Permission } from '@qc/shared/permissions'
 import type { Config } from '../config'
-import type { Queryable } from '../db/pool'
+import { withTransaction, type Db, type Queryable } from '../db/pool'
 import { auditChanges, writeAudit } from '../audit/service'
 import { loadPermissions } from '../auth/permissions'
 import { storedDomains } from './domains'
@@ -292,25 +292,83 @@ export const ACCESS_NOTICE = {
   personalCap: "You have reached this month's limit for the assistant, so the answer stopped. It is available again on the 1st.",
 }
 
+/** Every cap check of the app, one at a time (pg_advisory_xact_lock): next to the migration's and the readers' locks. */
+const CAPS_LOCK_KEY = 7_204_930_117
+/**
+ * How long a call's hold counts: longer than any call can be under way (the SDK's five minutes, twice retried, and a
+ * report summary's own limit), so a hold that a server stopping mid-call left behind lapses on its own.
+ */
+export const HOLD_MINUTES = 30
+
+/**
+ * Which cap a call of up to `worstUsd` would pass now — the assistant's, then the person's own (none when null) —
+ * counting what this month cost and the worst case of every call under way (their holds).
+ */
+export async function capPassed(
+  q: Queryable,
+  userId: string,
+  worstUsd: number,
+  caps: { appUsd: number; personalUsd: number | null },
+): Promise<'app' | 'personal' | null> {
+  // One after another: `q` is a transaction's single connection.
+  const app = await monthSpend(q)
+  if (app.spentUsd + app.heldUsd + worstUsd > caps.appUsd) return 'app'
+  if (caps.personalUsd !== null && (await personalMonthSpend(q, userId)) + worstUsd > caps.personalUsd) return 'personal'
+  return null
+}
+
+/**
+ * Hold a call's worst case against the caps while it is under way, unless `refuse` says why it may not be made.
+ * `refuse` runs with every other cap check of the app waiting, so two calls checked at once are never both let
+ * through on the same room; the assistant's cap is everyone's, so one lock serves both caps. The hold is settled by
+ * the call's recordUsage (holdId), or let go (releaseHold) when the call ends without a cost; one left by a server
+ * that stopped mid-call lapses after HOLD_MINUTES.
+ */
+export async function holdUnderCaps<T>(
+  db: Db,
+  userId: string,
+  worstUsd: number,
+  refuse: (tx: Queryable) => Promise<T | null>,
+): Promise<{ holdId: string } | { refused: T }> {
+  return withTransaction(db, async (tx) => {
+    await tx.query('SELECT pg_advisory_xact_lock($1)', [CAPS_LOCK_KEY])
+    const refused = await refuse(tx)
+    if (refused !== null) return { refused }
+    const { rows } = await tx.query<{ id: string }>(
+      `WITH lapsed AS (DELETE FROM ai_usage_holds WHERE expires_at <= now())
+       INSERT INTO ai_usage_holds (user_id, usd, expires_at) VALUES ($1, $2, now() + make_interval(mins => $3)) RETURNING id`,
+      [userId, Math.max(0, worstUsd), HOLD_MINUTES],
+    )
+    return { holdId: rows[0].id }
+  })
+}
+
+/** Let a call's hold go: the call ended without a cost to keep. Nothing happens when it is settled or gone already. */
+export async function releaseHold(q: Queryable, holdId: string | null | undefined): Promise<void> {
+  if (!holdId) return
+  await q.query(`DELETE FROM ai_usage_holds WHERE id = $1`, [holdId])
+}
+
 /**
  * Whether a call that could cost up to `worstUsd` may be made for this
- * person now: their access as it stands (the owner may have changed it, or
- * the account gone, since the answer began), the switch, and both caps — the
- * assistant's and their own — with the call's worst case on top. Why the
- * answer stops, or null to go on. (The queries the call asks for read the
- * access again as each runs: a call can take minutes.)
+ * person now — their access as it stands (the owner may have changed it, or
+ * the account gone, since the answer began), the switch, and both caps, the
+ * assistant's and their own, with the call's worst case on top — and if so,
+ * that worst case held against both until the call ends (holdUnderCaps). Why
+ * the answer stops, or the hold to settle. (The queries the call asks for
+ * read the access again as each runs: a call can take minutes.)
  */
-export async function checkCall(q: Queryable, userId: string, worstUsd: number): Promise<Stop | null> {
-  // One after another: `q` may be a transaction's single connection.
-  const access = await loadAccess(q, userId)
-  if (!isGranted(access)) return { stopReason: 'stopped', notice: ACCESS_NOTICE.withdrawn }
-  const { settings } = await loadAiSettings(q)
-  if (!settings.enabled) return { stopReason: 'stopped', notice: ACCESS_NOTICE.unavailable }
-  const app = await monthSpend(q)
-  if (app.spentUsd + worstUsd > settings.monthlyCapUsd) return { stopReason: 'cap', notice: ACCESS_NOTICE.appCap }
-  const mine = await personalMonthSpend(q, userId)
-  if (mine + worstUsd > access.monthlyCapUsd) return { stopReason: 'cap', notice: ACCESS_NOTICE.personalCap }
-  return null
+export async function holdCall(db: Db, userId: string, worstUsd: number): Promise<{ holdId: string } | Stop> {
+  const held = await holdUnderCaps(db, userId, worstUsd, async (tx): Promise<Stop | null> => {
+    const access = await loadAccess(tx, userId)
+    if (!isGranted(access)) return { stopReason: 'stopped', notice: ACCESS_NOTICE.withdrawn }
+    const { settings } = await loadAiSettings(tx)
+    if (!settings.enabled) return { stopReason: 'stopped', notice: ACCESS_NOTICE.unavailable }
+    const passed = await capPassed(tx, userId, worstUsd, { appUsd: settings.monthlyCapUsd, personalUsd: access.monthlyCapUsd })
+    if (passed) return { stopReason: 'cap', notice: passed === 'app' ? ACCESS_NOTICE.appCap : ACCESS_NOTICE.personalCap }
+    return null
+  })
+  return 'holdId' in held ? held : held.refused
 }
 
 // ---- What a person learns --------------------------------------------------------------

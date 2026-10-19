@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from 'vitest'
 import type { Notice } from '@qc/shared/types'
-import { TestApp, factoryDay } from './harness'
+import { TestApp, calendarDay } from './harness'
 import { text } from './aiFake'
 import { ask } from './automationsKit'
 import {
@@ -48,7 +48,7 @@ const sorted = (...list: Notice[]) => list.map((x) => x.id).sort()
 beforeAll(async () => {
   await app.start()
   p = await setUpNotices(app)
-  today = factoryDay()
+  today = calendarDay()
   n.inspectors = await pageNotice(app, p.owner, { title: 'Wear cut-resistant gloves', body: 'From today, on every line.', targets: [{ kind: 'role', value: 'inspector', label: 'Inspector' }] })
   n.atWelding = await pageNotice(app, p.owner, {
     title: 'Check the weld start',
@@ -58,8 +58,8 @@ beforeAll(async () => {
     ],
   })
   n.everyone = await pageNotice(app, p.owner, { title: 'Canteen closed Thursday', severity: 'info', requiresAck: false })
-  n.expired = await pageNotice(app, p.owner, { title: 'Audit next week', severity: 'info', requiresAck: false, validFrom: factoryDay(-30), validTo: factoryDay(-20) })
-  n.upcoming = await pageNotice(app, p.owner, { title: 'New torque values', severity: 'critical', validFrom: factoryDay(5) })
+  n.expired = await pageNotice(app, p.owner, { title: 'Audit next week', severity: 'info', requiresAck: false, validFrom: calendarDay(-30), validTo: calendarDay(-20) })
+  n.upcoming = await pageNotice(app, p.owner, { title: 'New torque values', severity: 'critical', validFrom: calendarDay(5) })
   n.supervisors = await pageNotice(app, p.owner, { title: 'Shift handover form', targets: [{ kind: 'role', value: 'supervisor', label: 'Supervisor' }] })
 })
 afterAll(() => app.stop())
@@ -261,7 +261,7 @@ describe('§23 an administrator reads every notice and who read it', () => {
       listNotices({ status: 'withdrawn' }),
       listNotices({ status: 'all', text: 'GLOVES' }),
       listNotices({ status: 'all', targetKind: 'role', targetValue: 'Supervisor' }),
-      listNotices({ status: 'all', createdFrom: factoryDay(1) }),
+      listNotices({ status: 'all', createdFrom: calendarDay(1) }),
       listNotices({ status: 'all', limit: 2 }),
     ])
     const all = resultJson<Listed>(results[0])

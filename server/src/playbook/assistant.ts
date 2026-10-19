@@ -8,6 +8,12 @@
 // the Playbook page. The system prompt holds the playbook as the
 // conversation began (prompt.ts); what changes in it after applies to this
 // conversation from the change on, and to every new one.
+//
+// An instruction for everyone (the owner's) reaches every conversation of
+// everyone given the assistant, so adding, changing or removing one takes the
+// owner's own words asking for it, quoted from their message of this question
+// (confirmation, automations/confirmation.ts): nothing the assistant reads —
+// data, a file, a query's result — can set one.
 // ============================================================================
 
 import type Anthropic from '@anthropic-ai/sdk'
@@ -18,6 +24,7 @@ import type { Config } from '../config'
 import { withTransaction, type Db } from '../db/pool'
 import type { ToolHandler, ToolOutcome } from '../ai/assistant'
 import { isAiOwner } from '../ai/owner'
+import { personsOwnWords } from '../automations/confirmation'
 import { describeIssues } from '../automations/draft'
 import { HttpError } from '../lib/errors'
 import { loadPlaybookParts } from './parts'
@@ -42,11 +49,17 @@ export const UPDATE_PLAYBOOK_TOOL: Anthropic.Beta.BetaTool = {
       scope: {
         type: 'string',
         enum: ['personal', 'everyone'],
-        description: "For add. personal (the default): this person's own. everyone: an instruction for everyone given the assistant; only the assistant's owner may set one, and only when they say it is for everyone.",
+        description:
+          "For add. personal (the default): this person's own. everyone: an instruction for everyone given the assistant; only the assistant's owner may set one, only when they say it is for everyone, with their words as confirmation.",
       },
       text: { type: 'string', description: `For add and change: the entry, one clear point in at most ${PLAYBOOK_TEXT_MAX} characters, in the person's language, written as you will read it later (no "as I said").` },
       basis: { type: 'string', description: `For a conclusion: what it was drawn from - the data and the period, with the key figures - in at most ${PLAYBOOK_BASIS_MAX} characters.` },
       entryId: { type: 'string', description: 'For change and remove: the entry\'s id, as the Playbook section or an earlier update_playbook result gives it.' },
+      confirmation: {
+        type: 'string',
+        description:
+          "Only for an instruction for everyone (adding one with scope everyone, or changing or removing one that is for everyone): the person's own words in their latest message asking for it, copied exactly as they wrote them. Leave it out otherwise.",
+      },
     },
     required: ['action'],
     additionalProperties: false,
@@ -63,6 +76,7 @@ const Input = z
     text: z.string().nullish(),
     basis: z.string().nullish(),
     entryId: z.string().nullish(),
+    confirmation: z.string().nullish(),
   })
   .passthrough()
 
@@ -81,6 +95,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export function playbookToolHandlers(ctx: PlaybookToolContext): Record<string, ToolHandler> {
   return { [UPDATE_PLAYBOOK_TOOL_NAME]: { run: (tu) => update(ctx, tu) } }
+}
+
+/** Whether an entry is an instruction for everyone (an entry not there is no one's: the service says it is not found). */
+async function isForEveryone(ctx: PlaybookToolContext, entryId: string): Promise<boolean> {
+  const { rows } = await ctx.db.query<{ shared: boolean }>(`SELECT scope = 'shared' AS shared FROM ai_playbook_entries WHERE id = $1 AND deleted_at IS NULL`, [entryId])
+  return rows[0]?.shared ?? false
 }
 
 async function update(ctx: PlaybookToolContext, tu: ToolUse): Promise<ToolOutcome> {
@@ -105,6 +125,12 @@ async function update(ctx: PlaybookToolContext, tu: ToolUse): Promise<ToolOutcom
   if (problems.length > 0) return failed(tu, ['Nothing was saved. Fix these and call update_playbook again:', ...problems.map((p) => `- ${p}`)].join('\n'))
 
   const by = { id: ctx.userId, name: ctx.userName, owner: await isAiOwner(ctx.db, ctx.config, ctx.userId) }
+  // Everyone's instructions, at the person's own word only. (Only the owner may touch them; the service says so to anyone else.)
+  if (by.owner && (i.action === 'add' ? i.scope === 'everyone' : await isForEveryone(ctx, i.entryId!.trim()))) {
+    const what = i.action === 'add' ? 'Adding an instruction for everyone' : i.action === 'change' ? 'Changing an instruction for everyone' : 'Removing an instruction for everyone'
+    const refusal = await personsOwnWords(ctx.db, ctx.turnId, i.confirmation ?? null, what, UPDATE_PLAYBOOK_TOOL_NAME)
+    if (refusal) return failed(tu, refusal)
+  }
   const source = { conversationId: ctx.conversationId, turnId: ctx.turnId, toolUseId: tu.id }
   let change: PlaybookChange
   try {

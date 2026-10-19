@@ -287,33 +287,45 @@ export interface UsageRecord {
   costUsd: number
   requestId?: string | null
   partial?: boolean
+  /** The hold the call was made under (access.ts, holdCall): replaced by this cost in the same statement. */
+  holdId?: string | null
 }
 
 /** The first instant of the current calendar month in UTC — Anthropic bills by it. */
 const MONTH_START_SQL = `(date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`
 
-/** What this calendar month (UTC) has cost so far. Read on every check, never kept in memory, so every instance holds the same cap. */
-export async function monthSpend(q: Queryable): Promise<{ spentUsd: number; monthStart: string }> {
-  const { rows } = await q.query<{ spent: number; monthStart: string }>(
-    `SELECT COALESCE(sum(cost_usd), 0)::numeric(14, 6) AS spent, ${MONTH_START_SQL} AS "monthStart"
-       FROM ai_usage WHERE created_at >= ${MONTH_START_SQL}`,
+/**
+ * What this calendar month (UTC) has cost so far, and the worst case of the calls under way (their holds, which have
+ * not expired): a cap is held to both together. Read on every check, never kept in memory, so every instance holds
+ * the same cap.
+ */
+export async function monthSpend(q: Queryable): Promise<{ spentUsd: number; heldUsd: number; monthStart: string }> {
+  const { rows } = await q.query<{ spent: number; held: number; monthStart: string }>(
+    `SELECT (SELECT COALESCE(sum(cost_usd), 0) FROM ai_usage WHERE created_at >= ${MONTH_START_SQL})::numeric(14, 6) AS spent,
+            (SELECT COALESCE(sum(usd), 0) FROM ai_usage_holds WHERE expires_at > now())::numeric(14, 6) AS held,
+            ${MONTH_START_SQL} AS "monthStart"`,
   )
-  return { spentUsd: rows[0].spent, monthStart: rows[0].monthStart }
+  return { spentUsd: Number(rows[0].spent), heldUsd: Number(rows[0].held), monthStart: rows[0].monthStart }
 }
 
-/** What one person's questions have cost this calendar month (UTC): their own cap is held to it. */
+/**
+ * What one person's calls have cost this calendar month (UTC), with the worst case of theirs under way: their own cap
+ * is held to it.
+ */
 export async function personalMonthSpend(q: Queryable, userId: string): Promise<number> {
   const { rows } = await q.query<{ spent: number }>(
-    `SELECT COALESCE(sum(cost_usd), 0)::numeric(14, 6) AS spent FROM ai_usage WHERE user_id = $1 AND created_at >= ${MONTH_START_SQL}`,
+    `SELECT ((SELECT COALESCE(sum(cost_usd), 0) FROM ai_usage WHERE user_id = $1 AND created_at >= ${MONTH_START_SQL})
+           + (SELECT COALESCE(sum(usd), 0) FROM ai_usage_holds WHERE user_id = $1 AND expires_at > now()))::numeric(14, 6) AS spent`,
     [userId],
   )
   return Number(rows[0].spent)
 }
 
 /**
- * Keep what a call cost. A call of a turn already closed (the conversation's title, quicker than the answer most of
- * the time but not always) adds to the turn's cost, which finishTurn summed without it; while the turn runs, its
- * close sums it in. One statement: the close either saw this row or finds the turn's cost raised after it.
+ * Keep what a call cost, and add it to its turn's cost in the same statement. The turn's cost is kept as each call is
+ * written, not summed when the turn closes: a call that ends as the turn closes (the conversation's title, asked
+ * beside the answer) would fall between the sum and the close. The row lock of the turn orders the two writes. The
+ * call's hold goes in the same statement, so no cap check ever counts the call twice or not at all.
  */
 export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
   await q.query(
@@ -322,8 +334,10 @@ export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
                              cache_write_1h_tokens, cache_read_tokens, cost_usd, request_id, partial, automation_id, mtc_reading_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING turn_id, cost_usd
+     ), settled AS (
+       DELETE FROM ai_usage_holds WHERE id = $15::uuid
      )
-     UPDATE ai_turns t SET cost_usd = t.cost_usd + kept.cost_usd FROM kept WHERE t.id = kept.turn_id AND t.status <> 'running'`,
+     UPDATE ai_turns t SET cost_usd = t.cost_usd + kept.cost_usd FROM kept WHERE t.id = kept.turn_id`,
     [
       u.userId,
       u.conversationId,
@@ -339,18 +353,46 @@ export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
       u.partial ?? false,
       u.automationId ?? null,
       u.mtcReadingId ?? null,
+      u.holdId ?? null,
     ],
   )
 }
 
+/**
+ * Keep what a call that was made cost, without ever failing what made it: the call happened and is billed whatever
+ * becomes of the answer, so a write that fails is tried once more, then said loudly in the log with everything needed
+ * to put it right by hand. Its hold, when it has one, then stays and counts against the caps until it lapses. Whether
+ * the cost was kept.
+ */
+export async function keepUsage(q: Queryable, u: UsageRecord): Promise<boolean> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await recordUsage(q, u)
+      return true
+    } catch (e) {
+      if (attempt < 2) continue
+      console.error(
+        `[ai] THE COST OF A CALL WAS NOT RECORDED: ${u.costUsd} USD on ${u.model} for user ${u.userId}` +
+          `${u.turnId ? `, answer ${u.turnId}` : ''}${u.automationId ? `, automation ${u.automationId}` : ''}${u.requestId ? `, request ${u.requestId}` : ''}` +
+          ` (${u.tokens.inputTokens} in, ${u.tokens.outputTokens} out, ${u.tokens.cacheReadTokens} cache read, ${u.tokens.cacheWrite5mTokens + u.tokens.cacheWrite1hTokens} cache written).`,
+        e,
+      )
+      return false
+    }
+  }
+}
+
 // ---- Turns ---------------------------------------------------------------------------
 
-/** Close a question's turn with how it ended and everything it cost. Whether this call closed it: the first to close it wins. */
+/**
+ * Close a question's turn with how it ended. Whether this call closed it: the first to close it wins. Its cost is kept
+ * as each call is recorded (recordUsage); the sum here only completes a turn begun before that, never lowers it.
+ */
 export async function finishTurn(q: Queryable, turnId: string, stopReason: AiStopReason, notice: string | null): Promise<boolean> {
   const { rowCount } = await q.query(
     `UPDATE ai_turns
         SET status = 'done', stop_reason = $2, notice = $3, finished_at = now(), progress = NULL, answer_text = ai_turn_answer_text_or_null($1),
-            cost_usd = (SELECT COALESCE(sum(u.cost_usd), 0) FROM ai_usage u WHERE u.turn_id = $1)
+            cost_usd = GREATEST(cost_usd, (SELECT COALESCE(sum(u.cost_usd), 0) FROM ai_usage u WHERE u.turn_id = $1))
       WHERE id = $1 AND status = 'running'`,
     [turnId, stopReason, notice],
   )

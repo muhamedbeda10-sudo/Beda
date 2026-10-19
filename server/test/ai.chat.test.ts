@@ -258,7 +258,7 @@ describe('§20 asking a question', () => {
     const question = p.messages[0]
     expect(question.role).toBe('user')
     const blocks = question.content as { type: string; text: string }[]
-    expect(blocks[0].text).toMatch(/^<context>Today: \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(Africa\/Cairo\)<\/context>$/)
+    expect(blocks[0].text).toMatch(/^<context>Today: \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(Africa\/Cairo\), factory day \d{4}-\d{2}-\d{2}<\/context>$/)
     expect(blocks[1]).toEqual({ type: 'text', text: 'How many machines are there?' })
 
     // The second call: the question, the answer with its tool call verbatim, and every result in one message.
@@ -1125,6 +1125,38 @@ describe('§20 Excel and usage', () => {
     expect(full.body.rows).toHaveLength(AI_EXPORT_MAX_ROWS)
     expect(full.body.truncated).toBe(true)
     expect(full.body.rows[AI_EXPORT_MAX_ROWS - 1]).toEqual([AI_EXPORT_MAX_ROWS])
+  })
+
+  it('counts an export against the person’s report runs, and stops its query inside PostgreSQL when the browser leaves', async () => {
+    const part = first.done!.message.parts.find((p): p is AiQueryPart => p.type === 'query')!
+    for (let i = 0; i < 60; i++) app.aiReportLimiter.hit(admin.user.id)
+    try {
+      const limited = await app.api<ApiErrorBody>('GET', `/api/ai/queries/${part.queryId}/export`, { token: admin.token })
+      expect(limited.status).toBe(429)
+      expect(limited.body.error.message).toMatch(/Too many exports in a short time/)
+    } finally {
+      app.aiReportLimiter.reset(admin.user.id)
+    }
+
+    // A heavy query, its export left before it ends: cancelled at once, not run on to its time limit.
+    app.model.reply({ content: [runSql('toolu_heavy', 'Heavy', 'SELECT 1 AS one')] }, { content: [text('Done.')] })
+    const res = await ask('A heavy one')
+    const heavy = res.done!.message.parts.find((p): p is AiQueryPart => p.type === 'query')!
+    await app.db.query(`UPDATE ai_queries SET sql = 'SELECT count(*) AS n FROM generate_series(1, 2000000000) g' WHERE id = $1`, [heavy.queryId])
+    const running = async () =>
+      (await app.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name = 'qc-ai-reader' AND state = 'active'`)).rows[0].n
+    const leave = new AbortController()
+    const leaving = fetch(`${app.baseUrl}/api/ai/queries/${heavy.queryId}/export`, { headers: { authorization: `Bearer ${admin.token}` }, signal: leave.signal }).catch(() => null)
+    const waitFor = async (condition: () => Promise<boolean>) => {
+      for (const started = Date.now(); !(await condition()); ) {
+        if (Date.now() - started > 5000) throw new Error('Waited too long.')
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+    }
+    await waitFor(async () => (await running()) === 1)
+    leave.abort()
+    await leaving
+    await waitFor(async () => (await running()) === 0)
   })
 
   it('reports the month’s usage by day and by person', async () => {

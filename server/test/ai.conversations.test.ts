@@ -15,6 +15,7 @@ import { TestApp, type Session } from './harness'
 import { text } from './aiFake'
 import { foldForSearch, likePattern, snippetAround } from '../src/ai/conversationSearch'
 import { cleanTitle, giveConversationTitle, titleRequest } from '../src/ai/conversationTitle'
+import { finishTurn, recordUsage } from '../src/ai/transcript'
 import { ROUTER_SYSTEM } from '../src/ai/router'
 
 // §20 — keeping one's conversations in order (migration 0052): renamed,
@@ -372,6 +373,50 @@ describe('a title by the assistant', () => {
     const turn = await app.db.query<{ cost: number }>(`SELECT cost_usd::float AS cost FROM ai_turns WHERE conversation_id = $1`, [id])
     expect(used.rows[0].cost).toBeGreaterThan(0)
     expect(turn.rows[0].cost).toBeCloseTo(used.rows[0].cost, 6)
+  })
+
+  it('keeps in the turn’s cost a call written while the turn closes, in either order', async () => {
+    const none = { inputTokens: 0, outputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0 }
+    const newTurn = async () =>
+      (
+        await app.db.query<{ conversation: string; turn: string }>(
+          `WITH c AS (INSERT INTO ai_conversations (user_id, title, model, system_prompt, tools) VALUES ($1, 'race', $2, '', '[]') RETURNING id)
+           INSERT INTO ai_turns (conversation_id, user_id, client_id, question) SELECT c.id, $1, $3, 'q' FROM c RETURNING conversation_id AS conversation, id AS turn`,
+          [admin.user.id, AI_MODEL, randomUUID()],
+        )
+      ).rows[0]
+    const use = (t: { conversation: string; turn: string }, costUsd: number) =>
+      ({ userId: admin.user.id, conversationId: t.conversation, turnId: t.turn, model: AI_MODEL, tokens: none, costUsd })
+    const costOf = async (turn: string) => Number((await app.db.query(`SELECT cost_usd FROM ai_turns WHERE id = $1`, [turn])).rows[0].cost_usd)
+
+    for (const closeFirst of [true, false]) {
+      const t = await newTurn()
+      await recordUsage(app.db, use(t, 0.01))
+      // Two connections: one closes the turn, the other keeps a call of it (the title), each holding its transaction open.
+      const closing = await app.db.connect()
+      const keeping = await app.db.connect()
+      try {
+        await closing.query('BEGIN')
+        await keeping.query('BEGIN')
+        if (closeFirst) {
+          await finishTurn(closing, t.turn, 'end_turn', null)
+          const kept = recordUsage(keeping, use(t, 0.002)) // waits on the turn's row
+          await closing.query('COMMIT')
+          await kept
+          await keeping.query('COMMIT')
+        } else {
+          await recordUsage(keeping, use(t, 0.002))
+          const closed = finishTurn(closing, t.turn, 'end_turn', null) // waits on the turn's row
+          await keeping.query('COMMIT')
+          await closed
+          await closing.query('COMMIT')
+        }
+      } finally {
+        closing.release()
+        keeping.release()
+      }
+      expect(await costOf(t.turn)).toBeCloseTo(0.012, 6)
+    }
   })
 
   it('leaves the first question as the title when the call fails or says nothing', async () => {

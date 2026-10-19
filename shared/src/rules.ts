@@ -15,7 +15,7 @@ import {
   type WorkCenterCode,
 } from './types'
 
-// ---- §8.1 Shift derivation -------------------------------------------------
+// ---- §8.1 Shift derivation and the factory day ---------------------------
 
 /**
  * Derive the shift from a sample timestamp. Never typed by the inspector.
@@ -25,7 +25,7 @@ import {
  *   C  Night      19:00 – 07:59  (crosses midnight)
  *
  * A sample at 02:00 belongs to the night shift that started the previous
- * evening — hence `shiftStartDate` differs from the calendar date before 08:00.
+ * evening, and so to that evening's factory day (`factoryDay`).
  */
 export function deriveShift(at: Date | string, timeZone?: string): ShiftLetter {
   const d = typeof at === 'string' ? new Date(at) : at
@@ -54,17 +54,100 @@ export function shiftName(s: ShiftLetter): string {
 }
 
 /**
- * The date the shift *started*. For the night shift before 08:00 this is the
- * previous calendar day, so a 02:00 sample groups with the evening it began.
- * Returned as YYYY-MM-DD in local time.
+ * The hour a factory day starts, factory time. A factory (production) day
+ * runs 08:00 → 08:00: the morning shift opens it and the night shift
+ * (19:00–08:00) closes it, wholly, so a record at 02:00 on the 20th belongs
+ * to the 19th. Every place that counts the record by day — the dashboard's
+ * periods and points, History's day filters and exports, PDI, saved reports,
+ * the assistant's *_day columns — reads the day this way. The database's own
+ * copy of the rule is ai.factory_day (migration 0073): the two must agree.
  */
-export function shiftStartDate(at: Date | string): string {
-  const d = new Date(typeof at === 'string' ? new Date(at) : at)
-  if (d.getHours() < 8) d.setDate(d.getDate() - 1)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+export const FACTORY_DAY_START_HOUR = 8
+
+/** A moment's wall clock, in a named zone or, without one, where the code runs. */
+interface WallClock {
+  year: number
+  month: number
+  day: number
+  hour: number
+  minute: number
+  second: number
+}
+
+const wallClockFormats = new Map<string, Intl.DateTimeFormat>()
+
+function wallClock(d: Date, timeZone?: string): WallClock {
+  if (!timeZone) {
+    return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(), hour: d.getHours(), minute: d.getMinutes(), second: d.getSeconds() }
+  }
+  let f = wallClockFormats.get(timeZone)
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric', hourCycle: 'h23' })
+    wallClockFormats.set(timeZone, f)
+  }
+  const parts = f.formatToParts(d)
+  const get = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value ?? 0)
+  return { year: get('year'), month: get('month'), day: get('day'), hour: get('hour') % 24, minute: get('minute'), second: get('second') }
+}
+
+const ymd = (y: number, m: number, d: number): string => `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+
+/** A YYYY-MM-DD day `n` days from another: whole days, no clock involved. */
+function addCalendarDays(day: string, n: number): string {
+  const [y, m, d] = day.split('-').map(Number)
+  const t = new Date(Date.UTC(y, m - 1, d + n))
+  return ymd(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate())
+}
+
+/**
+ * The calendar date of a moment where the factory sits (in `timeZone`, or
+ * where the code runs without one), YYYY-MM-DD. For dates people keep — a
+ * notice's validity, a task's due date, a document's issue date — never for
+ * counting production by day: that is `factoryDay`.
+ */
+export function calendarDay(at: Date | string, timeZone?: string): string {
+  const c = wallClock(typeof at === 'string' ? new Date(at) : at, timeZone)
+  return ymd(c.year, c.month, c.day)
+}
+
+/**
+ * The factory day a moment belongs to, YYYY-MM-DD: its calendar date in the
+ * factory's zone (or where the code runs, without one), the day before when
+ * it is earlier than FACTORY_DAY_START_HOUR. A sample at 02:00 groups with
+ * the evening its night shift began.
+ */
+export function factoryDay(at: Date | string, timeZone?: string): string {
+  const c = wallClock(typeof at === 'string' ? new Date(at) : at, timeZone)
+  const day = ymd(c.year, c.month, c.day)
+  return c.hour < FACTORY_DAY_START_HOUR ? addCalendarDays(day, -1) : day
+}
+
+/** The factory month (YYYY-MM) of a moment: the month of its factory day. */
+export function factoryMonth(at: Date | string, timeZone?: string): string {
+  return factoryDay(at, timeZone).slice(0, 7)
+}
+
+/**
+ * The moment a wall-clock time happens in a zone (or where the code runs,
+ * without one). A time a change of clocks skips is read with the offset in
+ * force before the change; one it repeats, as its first occurrence.
+ */
+export function zonedInstant(year: number, month: number, day: number, hour = 0, minute = 0, second = 0, ms = 0, timeZone?: string): Date {
+  if (!timeZone) return new Date(year, month - 1, day, hour, minute, second, ms)
+  const wanted = Date.UTC(year, month - 1, day, hour, minute, second, ms)
+  // The zone's offset at a moment: its wall clock there, read as UTC, less the moment (to the whole second).
+  const offsetAt = (t: number) => {
+    const c = wallClock(new Date(t), timeZone)
+    return Date.UTC(c.year, c.month - 1, c.day, c.hour, c.minute, c.second) - Math.floor(t / 1000) * 1000
+  }
+  const guess = wanted - offsetAt(wanted)
+  return new Date(Math.min(guess, wanted - offsetAt(guess)))
+}
+
+/** The moment a factory day (YYYY-MM-DD) starts: FACTORY_DAY_START_HOUR on that date, in the factory's zone. */
+export function factoryDayStart(day: string, timeZone?: string): Date {
+  const [y, m, d] = day.split('-').map(Number)
+  return zonedInstant(y, m, d, FACTORY_DAY_START_HOUR, 0, 0, 0, timeZone)
 }
 
 // ---- §8.2 Dimension status -------------------------------------------------
@@ -72,6 +155,34 @@ export function shiftStartDate(at: Date | string): string {
 /** Fraction of the tolerance envelope, measured from each limit inward, that
  *  counts as Warning. Confirmed as 10%. */
 export const WARNING_BAND = 0.1
+
+/** The warning band as a whole fraction (1/10), so the band is decided exactly too. */
+const WARNING_BAND_PARTS = Math.round(1 / WARNING_BAND)
+
+/** The decimals a nominal, a tolerance and a reading are stored with: numeric(14, 4). */
+export const DIMENSION_DECIMALS = 4
+
+/**
+ * A value as a whole number of 1/10⁴ units, rounded half away from zero at
+ * the fourth decimal, exactly as PostgreSQL stores it in numeric(14, 4). Read
+ * from the number's shortest decimal form (the text the driver sends), never
+ * from its binary approximation: 50.15 is 501500 units, not 501499.99….
+ */
+export function storedUnits(x: number): number {
+  const [mantissa, exponent = '0'] = Math.abs(x).toString().split('e')
+  const [whole, fraction = ''] = mantissa.split('.')
+  // The figures without the decimal point, and where the point falls among them.
+  let figures = whole + fraction
+  let point = whole.length + Number(exponent)
+  if (point < 0) {
+    figures = '0'.repeat(-point) + figures
+    point = 0
+  }
+  figures = figures.padEnd(point + DIMENSION_DECIMALS + 1, '0')
+  const kept = Number(figures.slice(0, point + DIMENSION_DECIMALS))
+  const units = Number(figures[point + DIMENSION_DECIMALS]) >= 5 ? kept + 1 : kept
+  return x < 0 ? -units : units
+}
 
 /**
  * Compare a measured value against nominal ± tolerance.
@@ -82,6 +193,12 @@ export const WARNING_BAND = 0.1
  *
  * The warning band is computed per side, because tolerances are often
  * asymmetric (e.g. +0.5 / -0.1) and a shared band would misreport the tight side.
+ *
+ * Decided in exact decimals at the stored precision, never in floating
+ * point: 50.15 +0.05 has its upper limit at 50.2 exactly, so a reading of
+ * 50.2 is in tolerance (Warning, on the limit), and 100 ±0.3 read at 100.27
+ * is on the edge of the warning band (Warning). Migration 0073 holds the
+ * same rule in SQL, over the stored numerics.
  */
 export function dimensionStatus(input: {
   nominal: number | null | undefined
@@ -90,25 +207,28 @@ export function dimensionStatus(input: {
   actual: number | null | undefined
 }): DimensionStatus {
   const { nominal, tolPlus, tolMinus, actual } = input
-  if (actual === null || actual === undefined || Number.isNaN(actual)) return 'Pending'
+  if (actual === null || actual === undefined || !Number.isFinite(actual)) return 'Pending'
   // A measurement with no specification cannot be judged — it is not a pass.
-  if (nominal === null || nominal === undefined || Number.isNaN(nominal)) return 'Pending'
-  if (tolPlus === null || tolPlus === undefined || tolMinus === null || tolMinus === undefined)
+  if (nominal === null || nominal === undefined || !Number.isFinite(nominal)) return 'Pending'
+  if (tolPlus === null || tolPlus === undefined || tolMinus === null || tolMinus === undefined || !Number.isFinite(tolPlus) || !Number.isFinite(tolMinus))
     return 'Pending'
 
-  const upper = nominal + Math.abs(tolPlus)
-  const lower = nominal - Math.abs(tolMinus)
-  if (actual > upper || actual < lower) return 'Fail'
+  // Whole 1/10⁴ units: every sum and product below is an exact integer.
+  const n = storedUnits(nominal)
+  const a = storedUnits(actual)
+  const plus = Math.abs(storedUnits(tolPlus))
+  const minus = Math.abs(storedUnits(tolMinus))
+  const upper = n + plus
+  const lower = n - minus
+  if (a > upper || a < lower) return 'Fail'
 
-  // Distance to the nearest limit, as a fraction of that side's tolerance.
-  if (actual >= nominal) {
-    const span = Math.abs(tolPlus)
-    if (span === 0) return 'Pass'
-    if ((upper - actual) / span <= WARNING_BAND) return 'Warning'
+  // In the band when the distance to the nearest limit is at most a tenth of that side's tolerance.
+  if (a >= n) {
+    if (plus === 0) return 'Pass'
+    if ((upper - a) * WARNING_BAND_PARTS <= plus) return 'Warning'
   } else {
-    const span = Math.abs(tolMinus)
-    if (span === 0) return 'Pass'
-    if ((actual - lower) / span <= WARNING_BAND) return 'Warning'
+    if (minus === 0) return 'Pass'
+    if ((a - lower) * WARNING_BAND_PARTS <= minus) return 'Warning'
   }
   return 'Pass'
 }
@@ -306,8 +426,12 @@ export interface SampleDraftForValidation {
   coilRequired?: boolean
   coils: Array<{ coilNumber: string; grade?: string }>
   defects: Array<{ defectName: string; disposition: Disposition | null; qty: number; notes?: string | null }>
-  /** The measurement rows; a paint sample's thickness readings live here. */
-  dimensions?: Array<{ name: string; nominal: number | null; actual: number | null }>
+  /**
+   * The measurement rows; a paint sample's thickness readings live here. A
+   * figure is null when left blank; one typed that is not a number (a unit
+   * typed after it, a stray letter) arrives as NaN and is refused by name.
+   */
+  dimensions?: Array<{ name: string; nominal: number | null; actual: number | null; tolPlus?: number | null; tolMinus?: number | null }>
   paint?: { imageIds: string[] }
   pt?: {
     /** Older records typed a frequency by hand; the requirement is now worked out from the final quantity. */
@@ -317,6 +441,11 @@ export interface SampleDraftForValidation {
     connectorCoilNumber?: string | null
     testedLengths?: Array<{ lengthMm: number; verdict: PTVerdict | null | undefined }>
   }
+}
+
+/** A figure that was typed but is not a number: blank (null) is not this. */
+function notANumber(value: number | null | undefined): boolean {
+  return value !== null && value !== undefined && !Number.isFinite(value)
 }
 
 /**
@@ -384,12 +513,39 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
       // The first three are required; a reading added beyond them may be
       // left empty, and an empty one is simply not saved.
       readings.slice(0, PAINT_THICKNESS_READINGS).forEach((r, i) => {
-        if (r.actual === null || !Number.isFinite(r.actual)) {
+        if (r.actual === null || r.actual === undefined) {
           issues.push({ step: 'paintThickness', message: `Reading ${i + 1} is missing.`, ref: `reading-${i + 1}` })
         }
       })
     }
+    // A reading typed that is not a number would be saved as blank: say which one, required or extra.
+    readings.forEach((r, i) => {
+      if (notANumber(r.actual)) {
+        issues.push({ step: 'paintThickness', message: `Reading ${i + 1} is not a number. Type digits only, e.g. 62.5.`, ref: `reading-${i + 1}` })
+      }
+    })
   }
+
+  // A nominal, tolerance or actual typed that is not a number would be saved as
+  // blank — the row then reads Pending, or passes on screen with no limit at
+  // all. Each is refused by the dimension's name and the figure.
+  // A paint machine has no Dimensions step: anything else measured there is fixed from the review.
+  const dimensionsStep: WizardStep = steps.includes('dimensions') ? 'dimensions' : 'review'
+  const rows = draft.dimensions ?? []
+  rows.forEach((d, i) => {
+    if (process === 'paint' && isPaintThicknessName(d.name)) return
+    const figures: Array<[string, number | null | undefined]> = [
+      ['nominal', d.nominal],
+      ['+ tolerance', d.tolPlus],
+      ['− tolerance', d.tolMinus],
+      ['actual', d.actual],
+    ]
+    for (const [figure, value] of figures) {
+      if (notANumber(value)) {
+        issues.push({ step: dimensionsStep, message: `"${d.name}": the ${figure} is not a number. Type digits only, e.g. 12.5.`, ref: `dimension-${i + 1}` })
+      }
+    }
+  })
 
   // §5.6 — PT step rules.
   if (process === 'welding') {

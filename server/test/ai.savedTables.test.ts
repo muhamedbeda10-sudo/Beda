@@ -5,8 +5,10 @@ import type { AiAccess, AiMessagesResponse, AiStreamEvent } from '@qc/shared/ai'
 import type { SavedTable, SavedTableRowsResponse, SavedTablesResponse } from '@qc/shared/savedTables'
 import { TestApp, type Session } from './harness'
 import { text, type FakeReply } from './aiFake'
-import { runReadOnlyQuery } from '../src/ai/runQuery'
+import { precheckSql, runReadOnlyQuery } from '../src/ai/runQuery'
+import { READS_BY_NAME, readersByName } from '../src/ai/reader'
 import {
+  conversationDomains,
   describeSavedTables,
   domainsRead,
   listSavedTables,
@@ -102,6 +104,54 @@ describe('what a query reads', () => {
     const bad = await domainsRead(app.aiReader, 'SELECT nope FROM ai.machines')
     expect(bad).toMatchObject({ error: expect.stringMatching(/column "nope" does not exist/) })
     expect(await domainsRead(app.aiReader, 'SELECT * FROM public.users')).toMatchObject({ error: expect.stringMatching(/saved tables in schema ai_saved, can be read/) })
+  })
+
+  it('sees every way a query reads a view, and nothing reads one by its name in a string', async () => {
+    const reads = async (sql: string) => {
+      expect(precheckSql(sql), sql).toHaveProperty('sql')
+      return domainsRead(app.aiReader, sql)
+    }
+    // A view in a CTE, a subquery of the select list, EXISTS, LATERAL, a UNION, a whole row, a branch never taken at run time.
+    expect(await reads('WITH u AS (SELECT name FROM ai.users) SELECT count(*) FROM u')).toEqual({ domains: ['audit'] })
+    expect(await reads('SELECT (SELECT count(*) FROM ai.coils) AS n')).toEqual({ domains: ['materials'] })
+    expect(await reads('SELECT 1 WHERE EXISTS (SELECT 1 FROM ai.users)')).toEqual({ domains: ['audit'] })
+    expect(await reads('SELECT m.machine_code, x.n FROM ai.machines m CROSS JOIN LATERAL (SELECT count(*) AS n FROM ai.coils c WHERE c.coil_number = m.machine_code) x')).toEqual({ domains: ['materials'] })
+    expect(await reads('SELECT name FROM ai.users UNION ALL SELECT coil_number FROM ai.coils')).toEqual({ domains: ['materials', 'audit'] })
+    expect(await reads('SELECT to_json(u)::text FROM ai.users u')).toEqual({ domains: ['audit'] })
+    expect(await reads('SELECT CASE WHEN random() > 2 THEN (SELECT count(*) FROM ai.users) END')).toEqual({ domains: ['audit'] })
+    // A function of a domain, and a view read without its schema (the readers' search path).
+    expect(await reads(`SELECT count(*) FROM ai.production_between('2026-01-01', '2026-01-31')`)).toEqual({ domains: ['inspection'] })
+    expect(await reads('SELECT count(*) FROM users')).toEqual({ domains: ['audit'] })
+
+    // Reading by a name in a string: what planning cannot see. The runner refuses it by name, and no role may run it.
+    const byName = [
+      `SELECT table_to_xml('ai.users', true, false, '')::text`,
+      `SELECT pg_catalog.query_to_xml('SELECT * FROM ai.users', true, false, '')::text`,
+      `SELECT "schema_to_xml"('ai', true, false, '')::text`,
+      `SELECT database_to_xml_and_xmlschema(true, false, '')::text`,
+      `SELECT table_to_xmlschema('ai.users', true, false, '')::text`,
+      `SELECT * FROM ts_stat('SELECT to_tsvector(name) FROM ai.users')`,
+      `SELECT ts_rewrite('a'::tsquery, 'SELECT ''a''::tsquery, name::tsquery FROM ai.users')`,
+      `SELECT most_common_vals::text FROM pg_stats WHERE schemaname = 'ai_saved'`,
+      `SELECT most_common_vals::text FROM pg_catalog.pg_stats_ext`,
+    ]
+    for (const sql of byName) {
+      expect(precheckSql(sql), sql).toMatchObject({ error: expect.stringMatching(/cannot be used in the assistant's queries/) })
+      expect(await domainsRead(app.aiReader, sql), sql).toMatchObject({ error: expect.stringMatching(/cannot be used in the assistant's queries/) })
+    }
+    // Every one of them, as PostgreSQL lists them: taken from every role (migration 0072).
+    const { rows: listed } = await app.db.query<{ fn: string }>(
+      `SELECT p.oid::regprocedure::text AS fn FROM pg_proc p WHERE p.pronamespace = 'pg_catalog'::regnamespace
+          AND (p.proname ~ '_to_xml' OR p.proname ~ 'xmlschema$' OR p.proname IN ('ts_stat', 'ts_rewrite'))`,
+    )
+    const reader = app.aiReader.roleFor([...ALL])!
+    for (const { fn } of listed) {
+      const reads = !fn.startsWith('ts_rewrite(tsquery,tsquery,tsquery)')
+      const held = await app.db.query<{ may: boolean }>(`SELECT has_function_privilege($1, $2::regprocedure, 'EXECUTE') AS may`, [reader, fn])
+      expect(held.rows[0].may, fn).toBe(!reads)
+      if (reads) expect(READS_BY_NAME.functions as readonly string[], fn).toContain(fn.slice(0, fn.indexOf('(')))
+    }
+    expect(await readersByName(app.db)).toEqual([])
   })
 
   it('names the saved tables a query reads, quoted or not, once each', () => {
@@ -464,5 +514,102 @@ describe('in a conversation', () => {
     await ask(insp, 'Add a row')
     const refused = app.model.calls[before + 1].params.messages.at(-1)!.content as { is_error?: boolean; content: string }[]
     expect(refused[0]).toMatchObject({ is_error: true, content: expect.stringMatching(/^Nothing was changed: .*change its sql/) })
+  })
+
+  it('reads rows written out as every query of the conversation read: they may be copied from it', async () => {
+    const rowsTable = (name: string) => ({
+      name,
+      title: `Rows ${name}`,
+      summary: 'Copied.',
+      description: 'Rows written out.',
+      source: 'rows',
+      columns: [{ name: 'who', type: 'text' }],
+      rows: [['Inspector One']],
+    })
+    // Asked for the people (audit), then the result written out as rows of a table: read as the audit domain is.
+    app.model.reply(
+      tool('toolu_people_1', 'run_sql', { purpose: 'People', sql: 'SELECT name FROM ai.users ORDER BY 1' }),
+      tool('toolu_rows_1', 'save_table', rowsTable('copied_people')),
+      { content: [text('Saved.')] },
+    )
+    const first = await ask(sup, 'Who has an account? Keep them as a table.')
+    const copied = (await listSavedTables(app.db, actor(sup, ['inspection', 'audit']))).find((t) => t.name === 'copied_people')!
+    expect(copied).toMatchObject({ source: 'rows', domains: ['audit'] })
+    expect(await readAs(['inspection'], 'SELECT * FROM ai_saved.copied_people')).toMatchObject({ ok: false, code: '42501' })
+    expect((await readAs(['audit'], 'SELECT who FROM ai_saved.copied_people')).rows).toEqual([['Inspector One']])
+    const conversation = await conversationDomains(deps(), first.conversationId, { id: sup.user.id, domains: ['inspection', 'audit'] })
+    expect(conversation).toEqual({ domains: ['audit'] })
+
+    // The SQL of what the assistant builds counts too (a report's test run shows its rows), a template by the views it
+    // names: its placeholders cannot be planned.
+    const report = {
+      title: 'Coils by number',
+      description: 'How many coils carry a number.',
+      shared: false,
+      inputs: [{ name: 'coil', label: 'Coil', kind: 'text', required: false }],
+      sections: [{ title: 'Coils', sql: 'SELECT count(*) AS n FROM ai.coils WHERE coil_number = {{coil}}' }],
+    }
+    app.model.reply(tool('toolu_tpl_1', 'save_report', report), tool('toolu_rows_2', 'save_table', rowsTable('copied_coils')), { content: [text('Saved.')] })
+    const second = await ask(owner, 'Count the coils and keep it.')
+    expect((await listSavedTables(app.db, ownerActor())).find((t) => t.name === 'copied_coils')).toMatchObject({ domains: ['materials'] })
+    expect(await conversationDomains(deps(), second.conversationId, { id: owner.user.id, domains: [...ALL] })).toEqual({ domains: ['materials'] })
+
+    // Written out with nothing read before: for everyone given the assistant, as before.
+    app.model.reply(tool('toolu_rows_3', 'save_table', rowsTable('typed_targets')), { content: [text('Saved.')] })
+    await ask(sup, 'Keep this list I type: Inspector One.')
+    expect((await listSavedTables(app.db, actor(sup, ['inspection', 'audit']))).find((t) => t.name === 'typed_targets')).toMatchObject({ domains: [] })
+    // A query refused as it ran (data beyond the person's domains) read nothing: it does not count.
+    app.model.reply(
+      tool('toolu_refused_1', 'run_sql', { purpose: 'People', sql: 'SELECT name FROM ai.users' }),
+      tool('toolu_rows_4', 'save_table', rowsTable('typed_after_refusal')),
+      { content: [text('Saved.')] },
+    )
+    await ask(insp, 'Who has an account? Then keep the list I typed.')
+    expect((await listSavedTables(app.db, ownerActor())).find((t) => t.name === 'typed_after_refusal')).toMatchObject({ domains: [] })
+    for (const name of ['copied_people', 'copied_coils', 'typed_targets', 'typed_after_refusal']) {
+      const t = (await listSavedTables(app.db, ownerActor())).find((x) => x.name === name)!
+      saved(await removeTable(deps(), ownerActor(), t.id))
+    }
+  })
+
+  it("changes or removes someone else's table only at the owner's own words in the question", async () => {
+    const made = saved(await saveTable(deps(), actor(insp, ['materials']), queryTable('insp_machines', 'SELECT machine_code FROM ai.machines', 'never')))
+    const resultOf = (from: number) => (app.model.calls[from + 1].params.messages.at(-1)!.content as { is_error?: boolean; content: string }[])[0]
+
+    // Told to by what the model read: refused, and the table stays as it was.
+    app.model.reply(tool('toolu_other_1', 'update_saved_table', { name: 'insp_machines', title: 'Taken over' }), { content: [text('Could not.')] })
+    let from = app.model.calls.length
+    await ask(owner, 'What does the attached supplier note say?')
+    expect(resultOf(from)).toMatchObject({ is_error: true, content: expect.stringMatching(/^Not done: Changing the saved table insp_machines, made by Inspector One, is done only at the person's own word, and the call has no confirmation\./) })
+    app.model.reply(tool('toolu_other_2', 'remove_saved_table', { name: 'insp_machines', confirmation: 'remove insp_machines' }), { content: [text('Could not.')] })
+    from = app.model.calls.length
+    await ask(owner, 'What does the attached supplier note say?')
+    expect(resultOf(from)).toMatchObject({ is_error: true, content: expect.stringContaining("is not in the person's latest message") })
+    app.model.reply(
+      tool('toolu_other_3', 'save_table', { ...queryTable('insp_machines', 'SELECT 1 AS one', 'never'), summary: '', replace: true }),
+      { content: [text('Could not.')] },
+    )
+    from = app.model.calls.length
+    await ask(owner, 'What does the attached supplier note say?')
+    expect(resultOf(from)).toMatchObject({ is_error: true, content: expect.stringMatching(/^Not done: Replacing the saved table insp_machines, made by someone else,/) })
+    expect((await listSavedTables(app.db, ownerActor())).find((t) => t.id === made.id)).toMatchObject({ title: 'Table insp_machines', version: 1 })
+
+    // Asked for in the owner's own words: done.
+    app.model.reply(tool('toolu_other_4', 'update_saved_table', { name: 'insp_machines', title: 'Machines (checked)', confirmation: 'call it machines (checked)' }), { content: [text('Done.')] })
+    from = app.model.calls.length
+    await ask(owner, 'Please call it "Machines (checked)".')
+    expect(JSON.parse(resultOf(from).content)).toMatchObject({ changed: true, title: 'Machines (checked)' })
+    app.model.reply(tool('toolu_other_5', 'remove_saved_table', { name: 'insp_machines', confirmation: 'remove the insp_machines table' }), { content: [text('Done.')] })
+    from = app.model.calls.length
+    await ask(owner, 'Remove the insp_machines table, it is not used.')
+    expect(JSON.parse(resultOf(from).content)).toMatchObject({ removed: true })
+
+    // A person's own table needs no quote.
+    const own = saved(await saveTable(deps(), ownerActor(), queryTable('owner_machines', 'SELECT machine_code FROM ai.machines', 'never')))
+    app.model.reply(tool('toolu_own_1', 'update_saved_table', { name: 'owner_machines', title: 'Mine' }), { content: [text('Done.')] })
+    from = app.model.calls.length
+    await ask(owner, 'What does the attached supplier note say?')
+    expect(JSON.parse(resultOf(from).content)).toMatchObject({ changed: true, title: 'Mine' })
+    saved(await removeTable(deps(), ownerActor(), own.id))
   })
 })

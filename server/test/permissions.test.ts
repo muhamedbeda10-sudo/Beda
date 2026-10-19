@@ -78,6 +78,37 @@ describe('§14 screens are locked on the server', () => {
     expect(await status(sup, '/api/audit')).toBe(200)
   })
 
+  it('gives order lines to the screens that look them up, and a line’s sessions and notes to whoever opens sessions', async () => {
+    const imported = await app.api('POST', '/api/orders/import', {
+      token: owner.token,
+      body: { rows: [{ lineKey: 'P-1', orderNumber: '70001', item: 'Beam', itemCode: 'B-1', workCenterCode: '58', requiredQty: 10, finishedQty: 0, customer: 'C' }] },
+    })
+    expect(imported.status).toBe(200)
+    const line = (await app.db.query<{ id: string }>(`SELECT id FROM production_orders WHERE line_key = 'P-1'`)).rows[0].id
+    const lookups = ['/api/orders?search=7', '/api/orders/numbers?search=7', '/api/orders/items', `/api/orders/by-ids?ids=${line}`, `/api/orders/${line}`]
+    const record = [`/api/orders/${line}/history`, `/api/orders/${line}/notes`]
+    // Who records, a viewer of the board, a supervisor: every lookup, and the line's record.
+    for (const s of [insp, viewer, sup]) for (const path of [...lookups, ...record]) expect(await status(s, path), `${s.user.username} ${path}`).toBe(200)
+
+    // A viewer without the board or the Access sheet: History still opens sessions, so the line's record, but no lookups.
+    expect((await setOverrides(owner, viewer, [{ permission: 'view-inspections', granted: false }, { permission: 'view-order-sheet', granted: false }])).status).toBe(200)
+    for (const path of lookups) expect(await status(viewer, path), path).toBe(403)
+    for (const path of record) expect(await status(viewer, path), path).toBe(200)
+    // Without History too: none of it.
+    expect(
+      (await setOverrides(owner, viewer, [
+        { permission: 'view-inspections', granted: false },
+        { permission: 'view-order-sheet', granted: false },
+        { permission: 'view-history', granted: false },
+      ])).status,
+    ).toBe(200)
+    for (const path of [...lookups, ...record]) expect(await status(viewer, path), path).toBe(403)
+    // The chat looks lines up for its order chips; notices aim at them.
+    expect((await setOverrides(owner, viewer, [{ permission: 'view-inspections', granted: false }, { permission: 'view-order-sheet', granted: false }, { permission: 'view-history', granted: false }, { permission: 'use-chat', granted: true }])).status).toBe(200)
+    for (const path of lookups) expect(await status(viewer, path), path).toBe(200)
+    expect((await setOverrides(owner, viewer, [])).status).toBe(200)
+  })
+
   it('takes a screen away from one person at once, on the token they hold, and gives one back', async () => {
     const taken = await setOverrides(owner, insp, [
       { permission: 'view-history', granted: false },

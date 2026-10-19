@@ -19,6 +19,8 @@ import {
   LayoutGrid,
   LayoutList,
   Table2,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react'
 import { Badge, Button, Card, Field, Input, Modal } from '@/components/ui'
 import { FilterBar, FilterSelect, Segmented } from '@/components/ui/PageShell'
@@ -42,6 +44,8 @@ import { isStockOrder, processForMachine, sessionTone, shiftName, type Process, 
 import { cn, formatDateTime } from '@/lib/utils'
 import { useTableView, ViewNote, ViewTh } from '@/components/ui/ColumnFilter'
 import { usePersistedState } from '@/lib/usePersistedState'
+import { useBusyAction } from '@/lib/busyAction'
+import { useHoldUpdates } from '@/lib/appUpdate'
 import { PHONE, useMediaQuery } from '@/lib/media'
 import type { CloseSessionRequest, SampleSummary, SessionWithOrder } from '@qc/shared/api'
 import type { DefectResult, DimensionResult, Disposition, Machine } from '@qc/shared/types'
@@ -855,22 +859,15 @@ export function InspectionsPage() {
           process={processForMachine(machines.find((m) => m.code === closing.workCenterCode) ?? null, closing.workCenterCode)}
           session={closing}
           onClose={() => setClosing(null)}
+          // A failure is thrown back to the dialog, which stays open with what was typed and says why.
           onConfirm={async (body) => {
-            try {
-              await closeSession(queryClient, closing.id, { ...body, version: closing.version })
-              toast('Session closed.', 'success')
-            } catch (e) {
-              toast(e instanceof Error ? e.message : 'Could not close the session.', 'error')
-            }
+            await closeSession(queryClient, closing.id, { ...body, version: closing.version })
+            toast('Session closed.', 'success')
             setClosing(null)
           }}
           onDiscard={async () => {
-            try {
-              await discardSession(queryClient, closing.id)
-              toast('Session discarded. Nothing was recorded in it.', 'success')
-            } catch (e) {
-              toast(e instanceof Error ? e.message : 'Could not discard the session.', 'error')
-            }
+            await discardSession(queryClient, closing.id)
+            toast('Session discarded. Nothing was recorded in it.', 'success')
             setClosing(null)
           }}
         />
@@ -944,9 +941,19 @@ function CloseSessionDialog({
   /** The machine's process: a welding session shows its PT coverage against the quantity typed. */
   process: Process
   onClose: () => void
-  onConfirm: (body: Omit<CloseSessionRequest, 'version'>) => void
-  onDiscard: () => void
+  /** Closes the session; throws when it could not, and the dialog stays open with the reason. */
+  onConfirm: (body: Omit<CloseSessionRequest, 'version'>) => Promise<void>
+  /** Discards the session; throws when it could not. */
+  onDiscard: () => Promise<void>
 }) {
+  // One close or discard at a time — a second tap before the button greys out finds it under way — and a failure
+  // keeps the dialog, and the quantity typed in it, with the reason under it.
+  const { busy, error, run } = useBusyAction()
+  // A deploy waits while the quantity is being typed (lib/appUpdate.ts).
+  useHoldUpdates(true)
+  const dismiss = () => {
+    if (!busy) onClose()
+  }
   // A stock session confirms the quantity that came out; an order session its starting count.
   const stock = isStockOrder(session.order)
   const [qty, setQty] = useState(String(stock ? (session.producedQty ?? '') : (session.startQtyConfirmed?.qty ?? '')))
@@ -961,34 +968,46 @@ function CloseSessionDialog({
   const qtyValid = qty.trim() !== '' && !Number.isNaN(parsed) && parsed >= 0
   const valid = asksUniversal && stagesLoading ? false : universal ? read !== null && !('problem' in read) : qtyValid
   const confirm = () => {
-    if (universal && read && !('problem' in read)) onConfirm({ universal: read.choice, ...(read.finalQty !== undefined ? { finalQty: read.finalQty } : {}) })
-    else if (!universal) onConfirm({ finalQty: parsed })
+    if (universal && read && !('problem' in read)) {
+      const choice = read.choice
+      const finalQty = read.finalQty
+      void run(() => onConfirm({ universal: choice, ...(finalQty !== undefined ? { finalQty } : {}) }), 'Could not close the session.')
+    } else if (!universal) void run(() => onConfirm({ finalQty: parsed }), 'Could not close the session.')
   }
+  const discard = () => void run(onDiscard, 'Could not discard the session.')
+  const failure = error && (
+    <p role="alert" className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
+    </p>
+  )
 
   // With no sample there is nothing to close as a record: the session is discarded instead.
   if ((session.sampleCount ?? 0) === 0) {
     return (
       <Modal
         open
-        onClose={onClose}
+        onClose={dismiss}
         title="Nothing recorded yet"
         icon={<Lock className="h-5 w-5" />}
         size="sm"
         footer={
           <>
-            <Button variant="secondary" onClick={onClose}>
+            <Button variant="secondary" disabled={busy} onClick={onClose}>
               Keep it open
             </Button>
-            <Button variant="danger" onClick={onDiscard}>
-              Discard session
+            <Button variant="danger" disabled={busy} onClick={discard}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />} Discard session
             </Button>
           </>
         }
       >
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          This session has no sample, so it cannot be closed as an inspection record. Record a sample first, or discard the session: it leaves the board and
-          History, and the discard is written to the audit log with your name.
-        </p>
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            This session has no sample, so it cannot be closed as an inspection record. Record a sample first, or discard the session: it leaves the board and
+            History, and the discard is written to the audit log with your name.
+          </p>
+          {failure}
+        </div>
       </Modal>
     )
   }
@@ -996,18 +1015,18 @@ function CloseSessionDialog({
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={dismiss}
       title="Close session"
       icon={<Lock className="h-5 w-5" />}
       size="sm"
       footer={
         <>
           {/* The safe choice drawn as a button beside the solid one, not as stray text. */}
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={!valid} onClick={confirm}>
-            <Lock className="h-4 w-4" /> Close session
+          <Button variant="primary" disabled={!valid || busy} onClick={confirm}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />} {busy ? 'Closing…' : 'Close session'}
           </Button>
         </>
       }
@@ -1046,6 +1065,7 @@ function CloseSessionDialog({
         <p className="text-sm text-muted">
           A closed session becomes read-only for inspectors. A supervisor can still correct it, and any correction is audited.
         </p>
+        {failure}
       </div>
     </Modal>
   )

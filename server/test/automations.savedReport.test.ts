@@ -4,10 +4,10 @@ import type { AiStreamEvent } from '@qc/shared/ai'
 import { isoWeekOf, type AiReportInputValues } from '@qc/shared/aiReportInputs'
 import type { AiAutomationPart, Automation, AutomationActivateResponse, AutomationDelivery, AutomationScheduleSpec } from '@qc/shared/automation'
 import { insertReport, changeReport } from '../src/ai/reports'
-import { MISSING_REPORT } from '../src/automations/savedReport'
+import { BEYOND_AUTHOR, MISSING_REPORT, NOTHING_IN_COMMON } from '../src/automations/savedReport'
 import { TestApp, factoryDay } from './harness'
 import { text } from './aiFake'
-import { Clock, ask, engineFor, insertAutomation, runsOf, setUp, type People } from './automationsKit'
+import { Clock, ask, engineFor, grant, insertAutomation, runsOf, setUp, type People } from './automationsKit'
 
 // §21 — a scheduled report that sends a saved report (My reports): one its
 // creator may open, their own or shared; the values its inputs take fixed in
@@ -212,6 +212,58 @@ describe('§21 a schedule that sends a saved report', () => {
     expect(shown.body.sections[0].rows).toEqual([[week, '58. Machine']])
     // Its recipient may not open the creator's own report: the delivery says so.
     expect((await delivery(run.deliveryId!)).body.report).toMatchObject({ id: weekly, open: false })
+  })
+
+  it("runs someone else's report within the domains its author's queries were kept as, whatever its creator may read", async () => {
+    // The creator reads the audit trail too; Paula, who wrote the shared report, the inspections only.
+    await grant(app, p.owner, p.creator, { automations: true, domains: ['inspection', 'audit'] })
+    try {
+      // Her report as it stands, with a section on the accounts (audit): kept as if it had got past her own check.
+      const reportId = (
+        await insertReport(app.db, {
+          title: 'Machines and people',
+          question: 'Machines and people',
+          period: null,
+          adjustable: false,
+          sections: [
+            { title: 'Machines', sql: 'SELECT count(*)::int AS machines FROM ai.machines' },
+            { title: 'People', sql: 'SELECT name FROM ai.users ORDER BY 1' },
+          ],
+          userId: p.plain.user.id,
+          conversationId: null,
+          turnId: null,
+          shared: true,
+          madeBy: 'assistant',
+        })
+      ).id
+      const kept = await app.db.query<{ domains: string[] }>(`SELECT author_domains AS domains FROM ai_reports WHERE id = $1`, [reportId])
+      expect(kept.rows[0].domains).toEqual(['inspection'])
+
+      const { run } = await deliver(linkedSchedule(reportId))
+      expect(run).toMatchObject({ ok: false, error: `“People”: ${BEYOND_AUTHOR}` })
+      const shown = await delivery(run.deliveryId!, p.creator)
+      expect(shown.body.sections.map((x) => [x.title, x.ok, x.rows, x.error ?? null])).toEqual([
+        ['Machines', true, [[2]], null],
+        ['People', false, [], BEYOND_AUTHOR],
+      ])
+      // Proposed in the chat, its trial run is bounded the same way.
+      const proposed = await proposeLinked(linkedSchedule(reportId))
+      expect(proposed.ok).toBe(false)
+      expect(proposed.error).toContain(`its section "People": ${BEYOND_AUTHOR}`)
+
+      // Her domains and the creator's in nothing in common: not run at all.
+      await app.db.query(`UPDATE ai_reports SET author_domains = '{orders}' WHERE id = $1`, [reportId])
+      const none = (await deliver(linkedSchedule(reportId))).run
+      expect(none).toMatchObject({ ok: false, error: `No section ran. “Machines”: ${NOTHING_IN_COMMON}` })
+
+      // The app's own report, and the creator's own, run as the creator's domains.
+      await app.db.query(`UPDATE ai_reports SET author_domains = NULL WHERE id = $1`, [reportId])
+      expect((await deliver(linkedSchedule(reportId))).run).toMatchObject({ ok: true })
+      await app.db.query(`UPDATE ai_reports SET author_domains = '{inspection}', user_id = $2 WHERE id = $1`, [reportId, p.creator.user.id])
+      expect((await deliver(linkedSchedule(reportId))).run).toMatchObject({ ok: true })
+    } finally {
+      await grant(app, p.owner, p.creator, { automations: true })
+    }
   })
 
   it('fails, and says why, once the report is gone or no longer shared with its creator', async () => {

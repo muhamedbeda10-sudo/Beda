@@ -1,10 +1,21 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AuthConfigResponse, AuthResponse, LoginRequest, RegisterRequest } from '@qc/shared/api'
 import { can as holds, type Permission } from '@qc/shared/permissions'
 import type { Role, UserProfile } from '@qc/shared/types'
-import { ApiError, api, hasSessionMarker, refreshAccessToken, setAccessToken, setProfileHandler, setSessionLostHandler } from '@/lib/api'
+import {
+  ApiError,
+  api,
+  clearSessionMarker,
+  setAccessToken,
+  setProfileHandler,
+  setSessionChangedHandler,
+  setSessionLostHandler,
+  setSignedInUser,
+  shareToken,
+} from '@/lib/api'
 import { disablePush } from '@/lib/push'
+import { endSessionOnDevice, rememberProfile, resumeSession } from '@/lib/session'
 
 interface AuthValue {
   /** False until the first refresh attempt has settled. */
@@ -39,12 +50,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const [selfRegistrationOpen, setSelfRegistrationOpen] = useState(true)
   const [factoryTimeZone, setFactoryTimeZone] = useState('Africa/Cairo')
+  // Who is signed in now, for comparing an account the server sends back with.
+  const current = useRef<UserProfile | null>(null)
+  current.current = profile
 
+  // Remembered for opening the app offline (lib/session.ts), and told to the API client, which never uses a token
+  // for anyone else in this tab.
+  useEffect(() => {
+    setSignedInUser(profile?.id ?? null)
+    if (profile) rememberProfile(profile)
+  }, [profile])
+
+  // The session ended here — expired, revoked, signed out: nothing of it stays on the device.
   const clearSession = useCallback(() => {
-    setAccessToken(null)
+    endSessionOnDevice()
     setProfile(null)
     queryClient.clear()
   }, [queryClient])
+
+  // The session on this device is another person's now (someone signed in from another tab of a shared tablet):
+  // nothing of the old person's may go on under the new person's sign-in, so the app starts over as whoever it is.
+  const sessionChanged = useCallback(() => {
+    clearSession()
+    window.location.reload()
+  }, [clearSession])
 
   // §14 — the account as the server sends it again (each token refresh, and on coming back to the app):
   // a role or permission changed meanwhile shows at once, without signing in again.
@@ -55,7 +84,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (document.visibilityState !== 'visible' || Date.now() - last < 60_000) return
       last = Date.now()
       api<UserProfile>('/auth/me', { noRetry: true })
-        .then((me) => setProfile((p) => (p && p.id === me.id ? me : p)))
+        .then((me) => {
+          if (current.current && current.current.id !== me.id) sessionChanged()
+          else setProfile((p) => (p && p.id === me.id ? me : p))
+        })
         .catch(() => {})
     }
     document.addEventListener('visibilitychange', onFocus)
@@ -65,12 +97,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', onFocus)
       window.removeEventListener('focus', onFocus)
     }
-  }, [])
+  }, [sessionChanged])
 
-  // On load: try to resume the device session from the refresh cookie.
+  // On load: try to resume the device session from the refresh cookie. With the server out of reach, the person
+  // last signed in here carries on offline; with no one remembered, the sign-in screen says why and tries again
+  // when the network is back.
   useEffect(() => {
     setSessionLostHandler(clearSession)
+    setSessionChangedHandler(sessionChanged)
     let cancelled = false
+    let retryOnline: (() => void) | null = null
+    const resume = async () => {
+      const { profile: resumed, unreachable } = await resumeSession()
+      if (cancelled) return
+      setProfile(resumed)
+      setReady(true)
+      if (!resumed && unreachable) {
+        setError('Cannot reach the server — check your connection. You are still signed in on this device.')
+        retryOnline = () => {
+          window.removeEventListener('online', retryOnline!)
+          retryOnline = null
+          setError(null)
+          void resume()
+        }
+        window.addEventListener('online', retryOnline)
+      }
+    }
     void (async () => {
       try {
         const cfg = await api<AuthConfigResponse>('/auth/config', { noRetry: true })
@@ -81,21 +133,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         /* the login screen still works without it */
       }
-      if (hasSessionMarker() && (await refreshAccessToken())) {
-        try {
-          const me = await api<UserProfile>('/auth/me', { noRetry: true })
-          if (!cancelled) setProfile(me)
-        } catch {
-          setAccessToken(null)
-        }
-      }
-      if (!cancelled) setReady(true)
+      await resume()
     })()
     return () => {
       cancelled = true
+      if (retryOnline) window.removeEventListener('online', retryOnline)
       setSessionLostHandler(null)
+      setSessionChangedHandler(null)
     }
-  }, [clearSession])
+  }, [clearSession, sessionChanged])
 
   const accept = useCallback(
     (res: AuthResponse) => {
@@ -103,6 +149,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(res.user)
       setError(null)
       queryClient.clear()
+      // The app's other tabs go on as this person, or start over if they were someone else's.
+      shareToken(res.accessToken, res.user.id)
     },
     [queryClient],
   )
@@ -145,6 +193,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       /* the cookie is cleared locally either way */
     }
+    // Signed out with no network the API never heard of it: the next app opened here must not resume this session.
+    clearSessionMarker()
     clearSession()
     try {
       const cfg = await api<AuthConfigResponse>('/auth/config', { noRetry: true })
@@ -156,8 +206,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const reloadProfile = useCallback(async () => {
     const me = await api<UserProfile>('/auth/me')
-    setProfile(me)
-  }, [])
+    if (current.current && current.current.id !== me.id) sessionChanged()
+    else setProfile(me)
+  }, [sessionChanged])
 
   const value = useMemo<AuthValue>(
     () => ({

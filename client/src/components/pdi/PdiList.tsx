@@ -17,6 +17,7 @@ import { useAuth } from '@/store/AuthContext'
 import { useApp } from '@/store/AppContext'
 import { When } from '@/components/ui/Tooltip'
 import { formatDate } from '@/lib/utils'
+import { calendarDay, factoryDay } from '@qc/shared/rules'
 import { useMediaQuery } from '@/lib/media'
 import { useServerColumns } from '@/components/ui/ColumnFilter'
 
@@ -52,11 +53,14 @@ const RANGE_LABEL: Record<RangeFilter, string> = {
 /** From a wide screen the search box has room to say everything it searches; narrower, it says the gist. */
 const WIDE = '(min-width: 1280px)'
 
-/** A calendar day on this device, YYYY-MM-DD, `back` days ago. */
-function localDay(back = 0): string {
-  const d = new Date()
-  d.setDate(d.getDate() - back)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+/**
+ * The factory day (08:00 to 08:00, the factory's zone) `back` days before
+ * today's, YYYY-MM-DD: the API reads a PDI's day the same way, so a PDI
+ * recorded at 03:00 is in yesterday's.
+ */
+export function pdiDay(timeZone: string, back = 0, now: Date = new Date()): string {
+  const [y, m, d] = factoryDay(now, timeZone).split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d - back)).toISOString().slice(0, 10)
 }
 
 /** The items of a PDI in a line: each item with its drawing numbers. */
@@ -153,11 +157,12 @@ export function PdiDetail({ doc, onClose }: { doc: PDIWithOrder; onClose: () => 
 /** `leading` is the page's view switch (Sessions / PDI), at the head of the filter row. */
 export function PdiList({ leading }: { leading?: ReactNode }) {
   const { toast } = useApp()
-  const { can } = useAuth()
+  const { can, factoryTimeZone } = useAuth()
+  const today = () => pdiDay(factoryTimeZone)
   const [term, setTerm] = usePersistedState('qc-pdi:term', '')
   const [range, setRange] = usePersistedState<RangeFilter>('qc-pdi:range', 'all')
-  const [fromDay, setFromDay] = usePersistedState('qc-pdi:from', localDay())
-  const [toDay, setToDay] = usePersistedState('qc-pdi:to', localDay())
+  const [fromDay, setFromDay] = usePersistedState('qc-pdi:from', today())
+  const [toDay, setToDay] = usePersistedState('qc-pdi:to', today())
   const [item, setItem] = usePersistedState('qc-pdi:item', '')
   const [by, setBy] = usePersistedState('qc-pdi:by', 'all')
   const [exporting, setExporting] = useState(false)
@@ -178,9 +183,9 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
       const [a, b] = fromDay && toDay && fromDay > toDay ? [toDay, fromDay] : [fromDay, toDay]
       if (a) f.from = a
       if (b) f.to = b
-    } else if (range !== 'all') f.from = localDay(Number(range))
+    } else if (range !== 'all') f.from = pdiDay(factoryTimeZone, Number(range))
     return f
-  }, [settledTerm, settledItem, by, range, fromDay, toDay, columnsView.cf, columnsView.sortParam])
+  }, [settledTerm, settledItem, by, range, fromDay, toDay, columnsView.cf, columnsView.sortParam, factoryTimeZone])
   const filtersSet = term !== '' || item !== '' || by !== 'all' || range !== 'all' || columnsView.active
   const byName = (id: string) => options?.createdBy.find((c) => c.id === id)?.name ?? 'one person'
   const resetFilters = () => {
@@ -188,8 +193,8 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
     setItem('')
     setBy('all')
     setRange('all')
-    setFromDay(localDay())
-    setToDay(localDay())
+    setFromDay(today())
+    setToDay(today())
     columnsView.clear()
   }
 
@@ -237,7 +242,8 @@ export function PdiList({ leading }: { leading?: ReactNode }) {
         toast('No PDI matches these filters.', 'info')
         return
       }
-      downloadWorkbook(`QC-PDI-${localDay()}.xlsx`, pdiSheets(all))
+      // The file is named for the date it was made on, a calendar date.
+      downloadWorkbook(`QC-PDI-${calendarDay(new Date(), factoryTimeZone)}.xlsx`, pdiSheets(all))
       toast(`Exported ${all.length} ${all.length === 1 ? 'PDI' : 'PDIs'}.`, 'success')
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Could not build the export.', 'error')

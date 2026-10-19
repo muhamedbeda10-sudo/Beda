@@ -24,7 +24,7 @@ import type { Permission } from '@qc/shared/permissions'
 import type { PushPayload } from '@qc/shared/api'
 import type { Config } from '../config'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
-import { factoryDay } from '../ai/prompt'
+import { calendarDay } from '@qc/shared/rules'
 import { LIVE_PERSON } from '../automations/people'
 import { plainText } from '../modules/chat.routes'
 import { sendPushes, webPushSender, type PushMessage, type PushSender } from './send'
@@ -124,7 +124,7 @@ export async function noticeAudience(q: Queryable, notice: { id: string; matchMo
 
 /** Notices whose first day has come, marked pushed; and what goes to whom. */
 async function dueNotices(q: Queryable, config: Config, now: Date): Promise<PushMessage[]> {
-  const today = factoryDay(now, config.FACTORY_TIMEZONE)
+  const today = calendarDay(now, config.FACTORY_TIMEZONE)
   const { rows } = await q.query<{ id: string; title: string; body: string; severity: PushPayload['severity']; matchMode: string }>(
     `SELECT id, title, body, severity, match_mode AS "matchMode" FROM notices
       WHERE push_sent_at IS NULL AND deleted_at IS NULL AND withdrawn_at IS NULL

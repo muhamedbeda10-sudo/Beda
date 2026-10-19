@@ -71,7 +71,8 @@ describe('the Notices button, apart from the bell', () => {
   it('shows how many notices wait to be read, on a megaphone of its own', () => {
     const button = html(<NoticesButton receives manage={false} />, inbox)
     expect(button).toContain('aria-label="Notices, 1 to read"')
-    expect(button).toMatch(/rounded-full[^>]*bg-rose-600[^>]*>1</)
+    // The shared count badge (ui/CountBadge.tsx): round, rose, holding the count.
+    expect(button).toMatch(/class="[^"]*rounded-full[^"]*bg-rose-600[^"]*">1</)
     expect(html(<NoticesButton receives manage={false} />, { notices: [], pendingCount: 0 })).toContain('aria-label="Notices"')
   })
 

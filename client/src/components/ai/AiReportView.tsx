@@ -70,7 +70,8 @@ import { ChartImageTool } from './chartImage'
 import { queryPhotos } from './photos'
 import { aiReportFilename } from './exportAiReport'
 import { ReportInputsForm, SectionFigures, SectionTree } from './AiReportLayouts'
-import { inputDrafts, inputsKey, inputsLine, localDay, readDrafts, runsOnOpen, treeAsTable } from './reportInputs'
+import { useAuth } from '@/store/AuthContext'
+import { inputDrafts, inputsKey, inputsLine, localDay, readDrafts, reportToday, runsOnOpen, treeAsTable } from './reportInputs'
 import {
   REPORT_PERIOD_SAVED,
   daysInRange,
@@ -109,12 +110,13 @@ export function AiReportView({
   const qc = useQueryClient()
   const { toast } = useApp()
   const { enabled } = useAi()
+  const { factoryTimeZone } = useAuth()
   // The period control and the days of the run (override: days chosen; null runs the saved period, as of today), one state.
   const [period, setPeriod] = useReducer(reportPeriodReducer, REPORT_PERIOD_SAVED)
   const override = period.override
   const detail = useAiReport(id, enabled)
   // The inputs' values a run is asked for: null runs each with its default (the server's, as of the factory's today).
-  const today = useMemo(() => localDay(), [])
+  const today = useMemo(() => reportToday(factoryTimeZone), [factoryTimeZone])
   const [applied, setApplied] = useState<AiReportInputValues | null>(null)
   // What the fields hold once the person typed in them; untouched, they show what the last run used.
   const [drafts, setDrafts] = useState<Record<string, string> | null>(null)

@@ -12,12 +12,23 @@
 // The report is read as its creator may read it now: deleted, or no longer
 // shared with them, it cannot run — the run fails and says so, as a query
 // that fails does, and the automation stops after its failures in a row.
+//
+// Someone else's report runs as its creator's domains within its author's:
+// the domains whoever last wrote its queries had when they were kept (they
+// were run as them then; ai_reports.author_domains). A shared report changed
+// after it was scheduled, by someone who may read less, so reads no more than
+// they could, whatever the creator may read; the app's own starter reports,
+// and the creator's own, run as the creator's domains alone. Pinning the
+// queries at activation would hold as well, but a change to the report would
+// then never reach the deliveries, which is what scheduling a saved report is
+// for.
 // ============================================================================
 
-import { describeAiPeriod, resolveAiPeriod, type AiChartSpec, type AiReport, type AiReportSectionDisplay, type AiReportTree } from '@qc/shared/ai'
+import { describeAiPeriod, resolveAiPeriod, type AiChartSpec, type AiDomain, type AiReport, type AiReportSectionDisplay, type AiReportTree } from '@qc/shared/ai'
 import { inputValueText, readInputValue, readInputValues, type AiReportInputValues } from '@qc/shared/aiReportInputs'
 import type { AutomationLinkedReport, AutomationScheduleSpec } from '@qc/shared/automation'
 import type { Queryable } from '../db/pool'
+import { storedDomains } from '../ai/domains'
 import { factoryDay } from '../ai/prompt'
 import { findReport, runPeriod, sectionSql as savedSectionSql } from '../ai/reports'
 import { reportPeriodAt, sectionSql } from './validate'
@@ -39,12 +50,30 @@ export interface PreparedReport {
   report: { id: string; title: string } | null
   /** The values its inputs take on this run, as read. */
   inputs: { label: string; value: string }[]
+  /** The domains its sections may be read within, on top of the creator's own: a saved report someone else wrote; null for none. */
+  within: AiDomain[] | null
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/** A section of someone else's saved report that reads more than its author could when they last changed it. */
+export const BEYOND_AUTHOR = 'It reads data that whoever last changed the saved report may not read, so it is not run for this schedule.'
+/** Every section, when the creator and the saved report's author may read nothing in common. */
+export const NOTHING_IN_COMMON = "Whoever last changed the saved report may read none of the data its schedule's creator may, so it is not run for this schedule."
+
 /** Why a schedule's saved report cannot run, as its creator and its run's history read it. */
 export const MISSING_REPORT = 'The saved report it sends was deleted, or is no longer shared with its creator. Choose another report, or delete this automation.'
+
+/**
+ * The domains a saved report's queries may be read within when its schedule's creator did not write it: those of
+ * whoever last wrote them, as they were then. Null: the creator's own report, or the app's own.
+ */
+export async function authorDomains(db: Queryable, report: Pick<AiReport, 'id' | 'mine'>): Promise<AiDomain[] | null> {
+  if (report.mine) return null
+  const { rows } = await db.query<{ domains: string[] | null }>(`SELECT author_domains AS domains FROM ai_reports WHERE id = $1`, [report.id])
+  const domains = rows[0]?.domains
+  return domains === null || domains === undefined ? null : storedDomains(domains)
+}
 
 /** The saved report a schedule names, as its creator may open it now; null when they may not (or it is gone). */
 export async function linkedReportOf(db: Queryable, creatorId: string, s: Pick<AutomationScheduleSpec, 'report'>): Promise<AiReport | null> {
@@ -81,6 +110,7 @@ export async function prepareReport(db: Queryable, creatorId: string, s: Automat
       period,
       report: null,
       inputs: [],
+      within: null,
     }
   }
   const report = await linkedReportOf(db, creatorId, s)
@@ -108,6 +138,7 @@ export async function prepareReport(db: Queryable, creatorId: string, s: Automat
     period,
     report: { id: report.id, title: report.title },
     inputs: report.inputs.map((i) => ({ label: i.label, value: inputValueText(read.values[i.name] ?? null) })),
+    within: await authorDomains(db, report),
   }
 }
 

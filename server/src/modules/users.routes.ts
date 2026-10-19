@@ -21,7 +21,7 @@ import { requireAnyPermission, requirePermission, requireUser, type AuthUser } f
 import { loadRolePermissions } from '../auth/permissions'
 import { listManagedUsers, loadManagedUser } from '../auth/profile'
 import { auditChanges, auditCreate, auditDelete } from '../audit/service'
-import { aiOwner } from '../ai/owner'
+import { RESERVED_OWNER_NAME, isReservedForAiOwner } from '../ai/owner'
 import { usernameSchema } from './auth.routes'
 
 const uuid = z.string().uuid()
@@ -109,8 +109,6 @@ export function usersRoutes(ctx: AppContext): Router {
   }
 
   r.get('/', async (_req, res) => {
-    // ADMIN+ is known from its first pin: the owner is pinned here if their account has just come to exist.
-    await aiOwner(ctx.db, ctx.config)
     const body: ManagedUser[] = await listManagedUsers(ctx.db)
     res.json(body)
   })
@@ -121,6 +119,7 @@ export function usersRoutes(ctx: AppContext): Router {
     const passwordHash = await hashPassword(body.password)
     const user = await withTransaction(ctx.db, async (tx) => {
       assertHolds(editor, (await loadRolePermissions(tx))[body.role], `The ${body.role} role`)
+      if (await isReservedForAiOwner(tx, ctx.config, body.username)) throw duplicate(RESERVED_OWNER_NAME)
       let id: string
       try {
         id = (
@@ -145,12 +144,13 @@ export function usersRoutes(ctx: AppContext): Router {
     const editor = editorOf(requireUser(req))
     const body = parse(updateSchema, req.body)
     const id = parse(uuid, req.params.id)
-    // Pinned before the transaction, which locks the row a first pin would wait on.
-    await aiOwner(ctx.db, ctx.config)
 
     const user = await withTransaction(ctx.db, async (tx) => {
       const before = await lockUser(tx, id)
       assertManages(editor, before)
+      if (body.username !== undefined && body.username !== before.username.toLowerCase() && (await isReservedForAiOwner(tx, ctx.config, body.username))) {
+        throw duplicate(RESERVED_OWNER_NAME)
+      }
       const nextRole = body.role ?? before.role
       const nextActive = body.isActive ?? before.isActive
       if (id === editor.id && (nextRole !== before.role || !nextActive)) {
@@ -213,7 +213,6 @@ export function usersRoutes(ctx: AppContext): Router {
     const editor = editorOf(requireUser(req))
     const id = parse(uuid, req.params.id)
     if (id === editor.id) throw badRequest('You cannot remove your own account.')
-    await aiOwner(ctx.db, ctx.config)
 
     await withTransaction(ctx.db, async (tx) => {
       const before = await lockUser(tx, id)
@@ -275,7 +274,6 @@ export function usersRoutes(ctx: AppContext): Router {
     const id = parse(uuid, req.params.id)
     const { overrides } = parse(overridesSchema, req.body)
     if (id === editor.id) throw badRequest('You cannot change your own permissions.')
-    await aiOwner(ctx.db, ctx.config)
 
     const user = await withTransaction(ctx.db, async (tx) => {
       const before = await lockUser(tx, id)

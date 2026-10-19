@@ -5,7 +5,7 @@ import type { ChatConversation } from '@qc/shared/types'
 import type { ChatConversationsResponse } from '@qc/shared/api'
 import { createNotifications } from '../src/automations/notify'
 import { STALE_EVENT_MS, chatNotification, dispatchOnce } from '../src/push/dispatcher'
-import { TestApp, factoryDay, type Session } from './harness'
+import { TestApp, calendarDay, type Session } from './harness'
 
 // §24 — notifications on a device with the app closed. A person turns them on
 // for a device; the bell's alerts, chat messages (not one's own) and notices
@@ -131,10 +131,10 @@ describe('§24 what is pushed', () => {
     await subscribe(insp, insEp)
     await subscribe(sup, supEp)
     const post = (body: Record<string, unknown>) => app.api<{ id: string }>('POST', '/api/notices', { token: admin.token, body: { severity: 'warning', requiresAck: false, validTo: null, ...body } })
-    const forInspectors = await post({ title: 'Gloves on the press', body: 'From today.', validFrom: factoryDay(), targets: [{ kind: 'role', value: 'inspector', label: 'Inspector' }] })
+    const forInspectors = await post({ title: 'Gloves on the press', body: 'From today.', validFrom: calendarDay(), targets: [{ kind: 'role', value: 'inspector', label: 'Inspector' }] })
     expect(forInspectors.status).toBe(201)
-    await post({ title: 'Weld start on 58', validFrom: factoryDay(), targets: [{ kind: 'machine', value: '58', label: '58' }] })
-    const tomorrow = await post({ title: 'Audit tomorrow', validFrom: factoryDay(1) })
+    await post({ title: 'Weld start on 58', validFrom: calendarDay(), targets: [{ kind: 'machine', value: '58', label: '58' }] })
+    const tomorrow = await post({ title: 'Audit tomorrow', validFrom: calendarDay(1) })
     await dispatch()
     expect(pushedTo(insEp)).toEqual([{ kind: 'notice', title: 'Notice: Gloves on the press', body: 'From today.', url: '/', tag: `notice-${forInspectors.body.id}`, severity: 'warning' }])
     expect(pushedTo(supEp)).toEqual([])

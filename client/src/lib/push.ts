@@ -143,6 +143,26 @@ export async function disablePush(userId: string, keepChoice = false): Promise<v
   else window.dispatchEvent(new Event(PUSH_CHANGED_EVENT))
 }
 
+/**
+ * The session ended without the person signing out — it expired, it was
+ * revoked, or it became another person's: this device stops getting their
+ * notifications all the same (a shared tablet never shows them to the next
+ * one). The server cannot be told, the session being gone; it forgets the
+ * subscription when its push service reports it gone. Their choice is kept,
+ * so it is on again when they sign back in here. Quiet: never throws.
+ */
+export async function dropDeviceSubscription(): Promise<void> {
+  try {
+    const reg = await registration()
+    const sub = reg ? await reg.pushManager.getSubscription() : null
+    if (!sub) return
+    await sub.unsubscribe().catch(() => false)
+    window.dispatchEvent(new Event(PUSH_CHANGED_EVENT))
+  } catch {
+    /* no push here, or the browser refused: nothing was subscribed that could be dropped */
+  }
+}
+
 /** Signed in (or the app opened) with notifications allowed: this device is subscribed for this person. Quiet: never asks, never throws. */
 export async function resumePush(userId: string): Promise<void> {
   try {

@@ -8,6 +8,7 @@
 
 import type { AiCell, AiReportTree } from '@qc/shared/ai'
 import { inputDefault, readInputValues, type AiReportInput, type AiReportInputValue, type AiReportInputValues } from '@qc/shared/aiReportInputs'
+import { factoryDay } from '@qc/shared/rules'
 
 /** What a field shows for a value: a list joined with commas, nothing as empty. */
 export function valueDraft(value: AiReportInputValue | undefined): string {
@@ -111,7 +112,16 @@ export function treeRows(columns: readonly string[], rows: readonly AiCell[][], 
   return { rows: out, shown }
 }
 
-/** Today on this device, YYYY-MM-DD: what the form's defaults start from (the server fills its own for a run sent without values). */
+/**
+ * Today's factory day, YYYY-MM-DD (08:00 to 08:00 in the factory's zone): what
+ * the form's defaults start from, the day the server counts a run's defaults
+ * and period from (it fills its own for a run sent without values).
+ */
+export function reportToday(timeZone: string, at: Date = new Date()): string {
+  return factoryDay(at, timeZone)
+}
+
+/** The calendar date on this device, YYYY-MM-DD: the date a printed page carries. */
 export function localDay(at: Date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`

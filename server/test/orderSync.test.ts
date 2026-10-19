@@ -139,6 +139,24 @@ describe('§7.7 — order sync from Access', () => {
     expect((await app.db.query(`SELECT deleted_at FROM production_orders WHERE line_key = 'STOCK-31'`)).rows[0].deleted_at).toBeNull()
   })
 
+  it('reads Access moments without an offset as factory time, as the file importer does, so a line never flips', async () => {
+    const all = ['A1', 'A2', 'A3', 'A4', 'A5'].map((id) => accessRow(id, { 'Release Date': id === 'A1' ? '2026-09-01T14:30:00' : '2026-09-01T00:00:00.000Z' }))
+    // The agent's form, yyyy-MM-ddTHH:mm:ss: 14:30 on the factory floor (Cairo, UTC+3 in September).
+    await sync(all)
+    const stored = async () => (await app.db.query<{ at: string }>(`SELECT to_char(order_date AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI') AS at FROM production_orders WHERE line_key = 'A1'`)).rows[0].at
+    expect(await stored()).toBe('2026-09-01T11:30')
+    // The same line again, from either path, reads the same moment.
+    await sync(all)
+    expect(await stored()).toBe('2026-09-01T11:30')
+    const line = (await liveOrders()).find((o) => o.lineKey === 'A1')!
+    const viaFile = await app.api<{ inserted: number; updated: number; unchanged: number }>('POST', '/api/orders/import', {
+      token: admin.token,
+      body: { rows: [{ lineKey: 'A1', orderNumber: line.orderNumber, item: line.item, itemCode: line.itemCode, workCenterCode: line.workCenterCode, date: new Date(Date.UTC(2026, 8, 1, 11, 30)).toISOString() }] },
+    })
+    expect(viaFile.body).toMatchObject({ updated: 0, unchanged: 1 })
+    expect(await stored()).toBe('2026-09-01T11:30')
+  })
+
   it('runs one at a time, fails a run the agent gives up on, and says so', async () => {
     const first = await agent<OrderSyncStartResponse>('POST', '/runs', { source: 'PLANNING-PC' })
     expect((await agent('POST', '/runs', { source: 'OTHER' })).status).toBe(409)
