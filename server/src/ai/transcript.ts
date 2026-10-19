@@ -311,9 +311,9 @@ export async function personalMonthSpend(q: Queryable, userId: string): Promise<
 }
 
 /**
- * Keep what a call cost. A call of a turn already closed (the conversation's title, quicker than the answer most of
- * the time but not always) adds to the turn's cost, which finishTurn summed without it; while the turn runs, its
- * close sums it in. One statement: the close either saw this row or finds the turn's cost raised after it.
+ * Keep what a call cost, and add it to its turn's cost in the same statement. The turn's cost is kept as each call is
+ * written, not summed when the turn closes: a call that ends as the turn closes (the conversation's title, asked
+ * beside the answer) would fall between the sum and the close. The row lock of the turn orders the two writes.
  */
 export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
   await q.query(
@@ -323,7 +323,7 @@ export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING turn_id, cost_usd
      )
-     UPDATE ai_turns t SET cost_usd = t.cost_usd + kept.cost_usd FROM kept WHERE t.id = kept.turn_id AND t.status <> 'running'`,
+     UPDATE ai_turns t SET cost_usd = t.cost_usd + kept.cost_usd FROM kept WHERE t.id = kept.turn_id`,
     [
       u.userId,
       u.conversationId,
@@ -345,12 +345,15 @@ export async function recordUsage(q: Queryable, u: UsageRecord): Promise<void> {
 
 // ---- Turns ---------------------------------------------------------------------------
 
-/** Close a question's turn with how it ended and everything it cost. Whether this call closed it: the first to close it wins. */
+/**
+ * Close a question's turn with how it ended. Whether this call closed it: the first to close it wins. Its cost is kept
+ * as each call is recorded (recordUsage); the sum here only completes a turn begun before that, never lowers it.
+ */
 export async function finishTurn(q: Queryable, turnId: string, stopReason: AiStopReason, notice: string | null): Promise<boolean> {
   const { rowCount } = await q.query(
     `UPDATE ai_turns
         SET status = 'done', stop_reason = $2, notice = $3, finished_at = now(), progress = NULL, answer_text = ai_turn_answer_text_or_null($1),
-            cost_usd = (SELECT COALESCE(sum(u.cost_usd), 0) FROM ai_usage u WHERE u.turn_id = $1)
+            cost_usd = GREATEST(cost_usd, (SELECT COALESCE(sum(u.cost_usd), 0) FROM ai_usage u WHERE u.turn_id = $1))
       WHERE id = $1 AND status = 'running'`,
     [turnId, stopReason, notice],
   )
