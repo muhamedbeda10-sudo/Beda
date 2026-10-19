@@ -19,7 +19,7 @@ import { AI_ANSWER_REPORT_TITLE_MAX, type AiAnswerReportTitleResponse } from '@q
 import type { Queryable } from '../db/pool'
 import { usageOf } from './assistant'
 import { cleanTitle } from './conversationTitle'
-import type { AiModelClient, ModelMessage } from './model'
+import { noThinking, type AiModelClient, type ModelMessage } from './model'
 import { recordUsage } from './transcript'
 
 /** A title is a line: room enough, and a cap on the call's cost. */
@@ -101,6 +101,7 @@ export async function answerReportTitle(r: ReportTitleRequest): Promise<AiAnswer
       {
         model: r.titleModel,
         max_tokens: REPORT_TITLE_MAX_TOKENS,
+        ...noThinking(r.titleModel),
         system: REPORT_TITLE_SYSTEM,
         messages: [{ role: 'user', content: reportTitleRequest(turn.question, answer) }],
       },
