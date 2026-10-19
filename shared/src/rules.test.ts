@@ -360,6 +360,35 @@ describe('save-time validation', () => {
     ).toEqual([])
   })
 
+  it('refuses a nominal, tolerance or actual typed that is not a number, by name, and never a blank one', () => {
+    const row = { name: 'Length', nominal: 120 as number | null, tolPlus: 0.5 as number | null, tolMinus: 0.5 as number | null, actual: 120.2 as number | null }
+    expect(validateSample({ ...base, dimensions: [row] })).toEqual([])
+    // Blank figures are not this: a row with nothing typed yet, or no nominal, still saves (as Pending).
+    expect(validateSample({ ...base, dimensions: [{ ...row, nominal: null, tolPlus: null, tolMinus: null, actual: null }] })).toEqual([])
+    for (const [field, figure] of [
+      ['nominal', 'nominal'],
+      ['tolPlus', '+ tolerance'],
+      ['tolMinus', '− tolerance'],
+      ['actual', 'actual'],
+    ] as const) {
+      for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+        const issues = validateSample({ ...base, dimensions: [{ name: 'Width', nominal: 50, actual: 50 }, { ...row, [field]: bad }] })
+        expect(issues).toEqual([{ step: 'dimensions', message: `"Length": the ${figure} is not a number. Type digits only, e.g. 12.5.`, ref: 'dimension-2' }])
+      }
+    }
+  })
+
+  it('says a paint reading typed that is not a number is that, not missing, extra readings included', () => {
+    const paint = { ...base, process: 'paint' as const, drawing: '', paint: { imageIds: ['img'] } }
+    const reading = (actual: number | null) => ({ name: 'Paint thickness', nominal: null, actual })
+    const issues = validateSample({ ...paint, dimensions: [reading(61), reading(Number.NaN), reading(null), reading(60), reading(Number.NaN)] })
+    expect(issues).toEqual([
+      { step: 'paintThickness', message: 'Reading 3 is missing.', ref: 'reading-3' },
+      { step: 'paintThickness', message: 'Reading 2 is not a number. Type digits only, e.g. 62.5.', ref: 'reading-2' },
+      { step: 'paintThickness', message: 'Reading 5 is not a number. Type digits only, e.g. 62.5.', ref: 'reading-5' },
+    ])
+  })
+
   it('collects every problem in one pass rather than one per attempt', () => {
     const issues = validateSample({
       process: 'welding',

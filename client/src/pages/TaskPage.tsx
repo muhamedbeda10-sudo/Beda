@@ -30,6 +30,7 @@ import { Badge, Button, Card, EmptyState, Modal } from '@/components/ui'
 import { Segmented } from '@/components/ui/PageShell'
 import { Lightbox, type ViewableImage } from '@/components/ui/Lightbox'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
+import { useUploadsInFlight } from '@/components/inspection/imageUploads'
 import { factoryInstant, factoryMoment, factoryTimestamp, factoryWallTime } from '@/components/followUps/wording'
 import { PriorityBadge, TaskDue, TaskProgress, TaskStateBadge } from '@/components/tasks/parts'
 import { standing, taskNumber } from '@/components/tasks/wording'
@@ -380,6 +381,8 @@ function Thread({ task: t }: { task: TaskDetail }) {
   const { busy, run } = useRun()
   const [body, setBody] = useState('')
   const [photos, setPhotos] = useState<string[]>([])
+  // A photo still uploading is not yet on the message: Send waits for it.
+  const [photosUploading, onPhotosUploading] = useUploadsInFlight()
   const open = t.status === 'open'
   // Photos are stored where an inspection's are: whoever may record inspections may add them.
   const mayPhoto = can('record-inspection')
@@ -409,9 +412,9 @@ function Thread({ task: t }: { task: TaskDetail }) {
             placeholder="Write on the task: what you found, a question, an answer…"
             aria-label="Write on the task"
           />
-          {mayPhoto && photos.length <= TASK_MAX_PHOTOS && <ImagePicker imageIds={photos} onChange={(ids) => setPhotos(ids.slice(0, TASK_MAX_PHOTOS))} />}
+          {mayPhoto && photos.length <= TASK_MAX_PHOTOS && <ImagePicker imageIds={photos} onChange={(edit) => setPhotos((cur) => edit(cur).slice(0, TASK_MAX_PHOTOS))} onUploading={onPhotosUploading} />}
           <div className="flex justify-end">
-            <Button variant="primary" onClick={send} disabled={busy !== null || (body.trim() === '' && photos.length === 0)} className="min-h-[44px]">
+            <Button variant="primary" onClick={send} disabled={busy !== null || photosUploading > 0 || (body.trim() === '' && photos.length === 0)} className="min-h-[44px]">
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Send
             </Button>
           </div>

@@ -7,7 +7,8 @@ import { useImages } from '@/services/queries'
 import { Lightbox } from '@/components/ui/Lightbox'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { UndoStrip, insertAt, useUndo } from './UndoStrip'
+import { UndoStrip, useUndo } from './UndoStrip'
+import { appendIds, intakeRefusal, putBackId, removeId, uploadEach, type ImageIdsEdit } from './imageUploads'
 import type { ImageAsset } from '@qc/shared/types'
 
 /**
@@ -23,7 +24,13 @@ const BOX = {
 /**
  * Capture or pick photos. Uploads immediately (§9.5) and hands back the stored
  * image ids, so the record that references them is only ever written after the
- * bytes are safe.
+ * bytes are safe. What it hands back is an edit to apply to the list as it
+ * stands (imageUploads.ts): photos taken one after another, or one removed
+ * while another uploads, all end up as the person left them. `onUploading`
+ * says when uploads start and finish, so the record's Save can wait for them.
+ * While the record is being saved (`lockedReason`) no photo is added or
+ * removed — one would land after the record was written and be lost without a
+ * word — and the reason is said where the buttons are.
  *
  * Lists render the small preview; full resolution is fetched only in the zoom
  * viewer, so a history page with 50 photos does not stall on a phone (§10.7).
@@ -36,13 +43,20 @@ const BOX = {
 export function ImagePicker({
   imageIds,
   onChange,
+  onUploading,
+  lockedReason,
   sessionId,
   orderId,
   readOnly,
   size = 'sm',
 }: {
   imageIds: string[]
-  onChange: (ids: string[]) => void
+  /** Applies the edit to the record's list as it stands then (a functional state update). */
+  onChange: (edit: ImageIdsEdit) => void
+  /** Told true as a batch of uploads starts and false as it ends — once each, even if the picker is gone by then. */
+  onUploading?: (uploading: boolean) => void
+  /** Set while the record is being saved: photos can be neither added nor removed, and this says why. */
+  lockedReason?: string
   sessionId?: string
   orderId?: string
   readOnly?: boolean
@@ -60,6 +74,18 @@ export function ImagePicker({
   // Photos uploaded in this session — and a photo put back with Undo — render at once, before the query refetches.
   const [justUploaded, setJustUploaded] = useState<Record<string, ImageAsset>>({})
   const undo = useUndo<ImageAsset>()
+  // Files arrive from the camera or the gallery later than the tap that asked for them: by then the record may be
+  // being saved, or saved and gone. What holds at that moment decides (imageUploads.intakeRefusal).
+  const locked = useRef(lockedReason)
+  locked.current = lockedReason
+  const open = useRef(true)
+  useEffect(() => {
+    open.current = true
+    return () => {
+      open.current = false
+    }
+  }, [])
+  const editable = !readOnly && !lockedReason
 
   // Kept in the order the record lists them, not the order they arrive.
   const assets = useMemo(() => {
@@ -86,18 +112,17 @@ export function ImagePicker({
   /** Takes the photo off the record, and offers it back for a few seconds. */
   function remove(asset: ImageAsset) {
     const index = imageIds.indexOf(asset.id)
-    if (index < 0) return
-    onChange(imageIds.filter((id) => id !== asset.id))
+    if (index < 0 || locked.current) return
+    onChange(removeId(asset.id))
     undo.offer('Photo removed', asset, index)
   }
 
   function putBack() {
     const r = undo.removed
-    if (!r) return
+    if (!r || locked.current) return
     undo.clear()
-    if (imageIds.includes(r.item.id)) return
     setJustUploaded((m) => ({ ...m, [r.item.id]: r.item }))
-    onChange(insertAt(imageIds, r.item.id, r.index))
+    onChange(putBackId(r.item.id, r.index))
   }
 
   const box = BOX[size]
@@ -105,23 +130,33 @@ export function ImagePicker({
   async function handleFiles(list: FileList | null) {
     if (!list?.length) return
     const files = Array.from(list)
-    setBusy(files.length)
-    const added: string[] = []
-    for (const file of files) {
-      try {
-        const asset = await uploadImage(file, { sessionId, orderId })
-        setJustUploaded((m) => ({ ...m, [asset.id]: asset }))
-        added.push(asset.id)
-      } catch (e) {
-        // Tell the user exactly why this file was rejected (§10.5).
-        toast(e instanceof ImageRejected || e instanceof ApiError ? e.message : `Could not upload ${file.name}.`, 'error')
-      } finally {
-        setBusy((n) => Math.max(0, n - 1))
-      }
+    const refused = intakeRefusal(locked.current, open.current)
+    if (refused) {
+      toast(`${files.length === 1 ? 'Photo' : 'Photos'} not added. ${refused}`, 'error')
+      return
     }
-    if (added.length) {
-      onChange([...imageIds, ...added])
-      toast(`${added.length} photo${added.length === 1 ? '' : 's'} added.`, 'success')
+    // Added to what is already uploading: a second photo taken before the first is stored is a second spinner's worth.
+    setBusy((n) => n + files.length)
+    onUploading?.(true)
+    try {
+      const added = await uploadEach(
+        files,
+        (file) => uploadImage(file, { sessionId, orderId }),
+        (asset) => {
+          setBusy((n) => Math.max(0, n - 1))
+          setJustUploaded((m) => ({ ...m, [asset.id]: asset }))
+          // On the record as soon as its bytes are safe, at the end of the list as it is now.
+          onChange(appendIds([asset.id]))
+        },
+        (file, e) => {
+          setBusy((n) => Math.max(0, n - 1))
+          // Tell the user exactly why this file was rejected (§10.5).
+          toast(e instanceof ImageRejected || e instanceof ApiError ? e.message : `Could not upload ${file.name}.`, 'error')
+        },
+      )
+      if (added) toast(`${added} photo${added === 1 ? '' : 's'} added.`, 'success')
+    } finally {
+      onUploading?.(false)
     }
   }
 
@@ -132,7 +167,7 @@ export function ImagePicker({
           // Not clipped itself (the photo is rounded instead), so the remove button's hit area may reach past the corner.
           <div key={a.id} className={cn('group relative shrink-0 rounded-xl ring-1 ring-slate-200 dark:ring-slate-700', box)}>
             <img src={a.thumbnailDataUrl} alt={a.originalFilename} className="h-full w-full cursor-zoom-in rounded-xl object-cover" onClick={() => setViewer(i)} />
-            {!readOnly && (
+            {editable && (
               // A tab in the corner, 32 px drawn and 44 px to a finger (the ::before reaches 6 px past each side, out
               // over the edge), so the middle of the photo still opens it. A screen that cannot hover always shows
               // it; under a mouse it comes up on hover or keyboard focus, as before.
@@ -159,7 +194,8 @@ export function ImagePicker({
             <button
               type="button"
               onClick={() => camRef.current?.click()}
-              className={cn('grid place-items-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-muted transition-colors hover:border-brand-400 hover:text-brand-500 dark:border-slate-700', box)}
+              disabled={!!lockedReason}
+              className={cn('grid place-items-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-muted transition-colors hover:border-brand-400 hover:text-brand-500 disabled:pointer-events-none disabled:opacity-40 dark:border-slate-700', box)}
               aria-label="Take a photo"
             >
               <Camera className="h-6 w-6" />
@@ -167,7 +203,8 @@ export function ImagePicker({
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              className={cn('grid place-items-center rounded-xl border-2 border-dashed border-slate-300 text-muted transition-colors hover:border-brand-400 hover:text-brand-500 dark:border-slate-700', box)}
+              disabled={!!lockedReason}
+              className={cn('grid place-items-center rounded-xl border-2 border-dashed border-slate-300 text-muted transition-colors hover:border-brand-400 hover:text-brand-500 disabled:pointer-events-none disabled:opacity-40 dark:border-slate-700', box)}
               aria-label="Upload from gallery"
             >
               <ImagePlus className="h-6 w-6" />
@@ -176,7 +213,13 @@ export function ImagePicker({
         )}
       </div>
 
-      {undo.removed && (
+      {!readOnly && lockedReason && (
+        <p className="mt-2 flex items-center gap-2 text-sm text-muted">
+          <Loader2 className="h-4 w-4 animate-spin" /> {lockedReason}
+        </p>
+      )}
+
+      {undo.removed && !lockedReason && (
         <div className="mt-2 max-w-sm">
           <UndoStrip key={undo.removed.id} label={undo.removed.label} onUndo={putBack} />
         </div>
@@ -205,7 +248,7 @@ export function ImagePicker({
           onClose={() => setViewer(null)}
           // Removed from the viewer, the photo leaves it at once: the row behind then shows it gone, with the Undo.
           onRemove={
-            readOnly
+            !editable
               ? undefined
               : (index) => {
                   const asset = assets[index]

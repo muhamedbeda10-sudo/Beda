@@ -306,8 +306,12 @@ export interface SampleDraftForValidation {
   coilRequired?: boolean
   coils: Array<{ coilNumber: string; grade?: string }>
   defects: Array<{ defectName: string; disposition: Disposition | null; qty: number; notes?: string | null }>
-  /** The measurement rows; a paint sample's thickness readings live here. */
-  dimensions?: Array<{ name: string; nominal: number | null; actual: number | null }>
+  /**
+   * The measurement rows; a paint sample's thickness readings live here. A
+   * figure is null when left blank; one typed that is not a number (a unit
+   * typed after it, a stray letter) arrives as NaN and is refused by name.
+   */
+  dimensions?: Array<{ name: string; nominal: number | null; actual: number | null; tolPlus?: number | null; tolMinus?: number | null }>
   paint?: { imageIds: string[] }
   pt?: {
     /** Older records typed a frequency by hand; the requirement is now worked out from the final quantity. */
@@ -317,6 +321,11 @@ export interface SampleDraftForValidation {
     connectorCoilNumber?: string | null
     testedLengths?: Array<{ lengthMm: number; verdict: PTVerdict | null | undefined }>
   }
+}
+
+/** A figure that was typed but is not a number: blank (null) is not this. */
+function notANumber(value: number | null | undefined): boolean {
+  return value !== null && value !== undefined && !Number.isFinite(value)
 }
 
 /**
@@ -384,12 +393,39 @@ export function validateSample(draft: SampleDraftForValidation): ValidationIssue
       // The first three are required; a reading added beyond them may be
       // left empty, and an empty one is simply not saved.
       readings.slice(0, PAINT_THICKNESS_READINGS).forEach((r, i) => {
-        if (r.actual === null || !Number.isFinite(r.actual)) {
+        if (r.actual === null || r.actual === undefined) {
           issues.push({ step: 'paintThickness', message: `Reading ${i + 1} is missing.`, ref: `reading-${i + 1}` })
         }
       })
     }
+    // A reading typed that is not a number would be saved as blank: say which one, required or extra.
+    readings.forEach((r, i) => {
+      if (notANumber(r.actual)) {
+        issues.push({ step: 'paintThickness', message: `Reading ${i + 1} is not a number. Type digits only, e.g. 62.5.`, ref: `reading-${i + 1}` })
+      }
+    })
   }
+
+  // A nominal, tolerance or actual typed that is not a number would be saved as
+  // blank — the row then reads Pending, or passes on screen with no limit at
+  // all. Each is refused by the dimension's name and the figure.
+  // A paint machine has no Dimensions step: anything else measured there is fixed from the review.
+  const dimensionsStep: WizardStep = steps.includes('dimensions') ? 'dimensions' : 'review'
+  const rows = draft.dimensions ?? []
+  rows.forEach((d, i) => {
+    if (process === 'paint' && isPaintThicknessName(d.name)) return
+    const figures: Array<[string, number | null | undefined]> = [
+      ['nominal', d.nominal],
+      ['+ tolerance', d.tolPlus],
+      ['− tolerance', d.tolMinus],
+      ['actual', d.actual],
+    ]
+    for (const [figure, value] of figures) {
+      if (notANumber(value)) {
+        issues.push({ step: dimensionsStep, message: `"${d.name}": the ${figure} is not a number. Type digits only, e.g. 12.5.`, ref: `dimension-${i + 1}` })
+      }
+    }
+  })
 
   // §5.6 — PT step rules.
   if (process === 'welding') {

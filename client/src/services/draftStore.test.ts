@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import { draftIsUntouched, type SampleDraft } from './draftStore'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { clearDraft, draftIsUntouched, listDrafts, loadDraft, saveDraft, type SampleDraft } from './draftStore'
 
 const base: SampleDraft = {
+  userId: 'u-amal',
   sessionId: 's1',
   orderId: 'o1',
   workCenterCode: '24',
@@ -33,5 +34,58 @@ describe('an untouched draft', () => {
     expect(draftIsUntouched({ ...base, paint: { imageIds: ['img'] } })).toBe(false)
     expect(draftIsUntouched({ ...base, note: { text: 'coil cert missing', imageIds: [] } })).toBe(false)
     expect(draftIsUntouched({ ...base, editingSampleId: 'x' })).toBe(false)
+  })
+})
+
+/** localStorage as the browser has it, with its keys in order. */
+function storage(initial: Record<string, string> = {}) {
+  const m = new Map(Object.entries(initial))
+  return {
+    get length() {
+      return m.size
+    },
+    key: (i: number) => [...m.keys()][i] ?? null,
+    getItem: (k: string) => m.get(k) ?? null,
+    setItem: (k: string, v: string) => void m.set(k, v),
+    removeItem: (k: string) => void m.delete(k),
+    keys: () => [...m.keys()],
+  }
+}
+
+describe('a draft on a shared tablet', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('is resumed only by the person who typed it', () => {
+    vi.stubGlobal('localStorage', storage())
+    const typed = { ...base, sampleQty: '5' }
+    saveDraft(typed)
+    expect(loadDraft('u-amal', 's1')?.sampleQty).toBe('5')
+    // The next inspector to open the same session on this tablet starts their own sample.
+    expect(loadDraft('u-omar', 's1')).toBeNull()
+    expect(listDrafts('u-omar')).toEqual([])
+    expect(listDrafts('u-amal').map((d) => d.sampleQty)).toEqual(['5'])
+    // Their own draft of it is kept apart, and clearing one leaves the other.
+    saveDraft({ ...typed, userId: 'u-omar', sampleQty: '7' })
+    clearDraft('u-amal', 's1')
+    expect(loadDraft('u-amal', 's1')).toBeNull()
+    expect(loadDraft('u-omar', 's1')?.sampleQty).toBe('7')
+  })
+
+  it('keeps no draft without an owner, and never resumes one from before drafts had owners', () => {
+    const legacy = { ...base, userId: undefined, sampleQty: '9' }
+    const store = storage({ 'qc-draft-v3:s1': JSON.stringify(legacy), 'qc-other': 'kept' })
+    vi.stubGlobal('localStorage', store)
+    saveDraft({ ...base, userId: '' })
+    expect(store.keys()).toEqual(['qc-draft-v3:s1', 'qc-other'])
+    // Whose it is cannot be shown, so nobody gets it — it is dropped from the device.
+    expect(loadDraft('u-amal', 's1')).toBeNull()
+    expect(loadDraft('', 's1')).toBeNull()
+    expect(store.keys()).toEqual(['qc-other'])
+  })
+
+  it('refuses a draft stored under one person’s key that names another', () => {
+    const store = storage({ 'qc-draft-v4:u-amal:s1': JSON.stringify({ ...base, userId: 'u-omar' }) })
+    vi.stubGlobal('localStorage', store)
+    expect(loadDraft('u-amal', 's1')).toBeNull()
   })
 })

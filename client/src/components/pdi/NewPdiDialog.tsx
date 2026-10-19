@@ -9,6 +9,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Check, FileText, Search, Trash2, X } from 'lucide-react'
 import { Button, Field, Input, Modal, Select } from '@/components/ui'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
+import { useUploadsInFlight } from '@/components/inspection/imageUploads'
+import { useHoldUpdates } from '@/lib/appUpdate'
 import { useMaster, useOrderAllLines, useOrderItems, useOrderNumbersAnywhere } from '@/services/queries'
 import { cn } from '@/lib/utils'
 import { SearchSelect, byName, type PickOption } from '@/components/dashboard/filters'
@@ -36,6 +38,8 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
   const [unticked, setUnticked] = useState<Set<string>>(new Set())
   const [notes, setNotes] = useState('')
   const [imageIds, setImageIds] = useState<string[]>([])
+  // A photo still uploading is not yet on the document: Save waits for it.
+  const [photosUploading, onPhotosUploading] = useUploadsInFlight()
 
   const { data: machines = [] } = useMaster('machines')
   const factories = useMemo(() => Array.from(new Set(machines.map((m) => m.factory?.trim() ?? '').filter(Boolean))).sort(byName), [machines])
@@ -68,6 +72,8 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
 
   /** Something that would be lost: notes, photos, or an order with items ticked for this delivery. */
   const unsaved = notes.trim() !== '' || imageIds.length > 0 || orderIds.length > 0
+  // A deploy waits while something is typed or picked here (lib/appUpdate.ts).
+  useHoldUpdates(unsaved)
   const [confirmingClose, setConfirmingClose] = useState(false)
   /**
    * Every way out but Save — Cancel, the X, the dimmed page, Escape — asks first while something would be lost. While
@@ -106,8 +112,8 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
           <Button variant="ghost" onClick={requestClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={orderIds.length === 0 || saving} onClick={() => onSave(orderIds, notes, imageIds)}>
-            {saving ? 'Saving…' : `Save · ${ticked.length} ${ticked.length === 1 ? 'item' : 'items'}`}
+          <Button variant="primary" disabled={orderIds.length === 0 || saving || photosUploading > 0} onClick={() => onSave(orderIds, notes, imageIds)}>
+            {saving ? 'Saving…' : photosUploading > 0 ? 'Photo uploading…' : `Save · ${ticked.length} ${ticked.length === 1 ? 'item' : 'items'}`}
           </Button>
         </>
       }
@@ -244,7 +250,7 @@ export function NewPdiDialog({ onClose, onSave, saving }: { onClose: () => void;
         </Field>
         <div>
           <span className="label">Photos</span>
-          <ImagePicker imageIds={imageIds} onChange={setImageIds} orderId={orderIds[0]} />
+          <ImagePicker imageIds={imageIds} onChange={setImageIds} onUploading={onPhotosUploading} orderId={orderIds[0]} />
         </div>
       </div>
 

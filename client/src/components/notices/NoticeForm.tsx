@@ -27,6 +27,8 @@ import {
 } from '@qc/shared/types'
 import { normaliseMachineCode, shiftName } from '@qc/shared/rules'
 import { ImagePicker } from '@/components/inspection/ImagePicker'
+import { useUploadsInFlight } from '@/components/inspection/imageUploads'
+import { useHoldUpdates } from '@/lib/appUpdate'
 import { NoticeFileRow } from '@/components/notices/NoticeCard'
 import { Button, Field, Input, Modal, Select } from '@/components/ui'
 import { Segmented } from '@/components/ui/PageShell'
@@ -411,6 +413,10 @@ export function NoticeForm({ initial, id, onClose }: { initial: NoticeDraft; id:
   const [d, setD] = useState<NoticeDraft>(initial)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  // A photo still uploading is not yet on the notice: Publish waits for it.
+  const [photosUploading, onPhotosUploading] = useUploadsInFlight()
+  // A deploy waits while a notice is being written (lib/appUpdate.ts).
+  useHoldUpdates(true)
   const [error, setError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const patch = (p: Partial<NoticeDraft>) => setD((x) => ({ ...x, ...p }))
@@ -467,7 +473,7 @@ export function NoticeForm({ initial, id, onClose }: { initial: NoticeDraft; id:
       footer={
         <>
           <Button onClick={onClose} disabled={saving} className="min-h-[44px]">Cancel</Button>
-          <Button variant="primary" onClick={save} disabled={saving || uploading} className="min-h-[44px]">
+          <Button variant="primary" onClick={save} disabled={saving || uploading || photosUploading > 0} className="min-h-[44px]">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {id ? 'Save changes' : 'Publish'}
           </Button>
         </>
@@ -508,7 +514,7 @@ export function NoticeForm({ initial, id, onClose }: { initial: NoticeDraft; id:
         </div>
         <div>
           <span className="label">Photos</span>
-          <ImagePicker imageIds={d.imageIds} onChange={(imageIds) => patch({ imageIds })} />
+          <ImagePicker imageIds={d.imageIds} onChange={(edit) => setD((x) => ({ ...x, imageIds: edit(x.imageIds) }))} onUploading={onPhotosUploading} />
         </div>
         <div>
           <span className="label">Documents</span>

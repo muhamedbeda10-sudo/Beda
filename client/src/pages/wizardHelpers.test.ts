@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { validateSample } from '@qc/shared/rules'
-import { isBlankLength, keptLengths, keyboardLikelyOpen, opensKeyboard, renumberLengthIssues } from './wizardHelpers'
+import { buildGradeIndex } from '@qc/shared/rules'
+import { ApiError } from '@/lib/api'
+import type { SampleDraft } from '@/services/draftStore'
+import {
+  coveringAcknowledgement,
+  dimensionFigures,
+  isBlankLength,
+  keptLengths,
+  keyboardLikelyOpen,
+  opensKeyboard,
+  previewStatus,
+  renumberLengthIssues,
+  withCoilRule,
+  wizardLoadState,
+} from './wizardHelpers'
 
 describe('the tested lengths that go with a PT sample', () => {
   it('leaves out a row with neither a length nor a verdict, and nothing else', () => {
@@ -99,5 +113,83 @@ describe('the on-screen keyboard', () => {
     expect(opensKeyboard({ tagName: 'SELECT' })).toBe(false)
     expect(opensKeyboard({ tagName: 'BUTTON' })).toBe(false)
     expect(opensKeyboard(null)).toBe(false)
+  })
+})
+
+describe('a dimension as the wizard reads it', () => {
+  const row = (nominal: string, tolPlus: string, tolMinus: string, actual: string) => ({ nominal, tolPlus, tolMinus, actual })
+
+  it('reads a comma, the Arabic decimal mark and Arabic digits as the number they are', () => {
+    expect(dimensionFigures(row('0,5', '\u0660\u066B\u0661', '0.1', '\u0660\u066B\u0665'))).toEqual({ nominal: 0.5, tolPlus: 0.1, tolMinus: 0.1, actual: 0.5 })
+    expect(previewStatus(row('0,5', '0,1', '0,1', '0,5'))).toBe('Pass')
+    expect(previewStatus(row('0,5', '0,1', '0,1', '0,7'))).toBe('Fail')
+  })
+
+  it('previews a blank figure as the server stores it — Pending, not a Fail against 0', () => {
+    expect(previewStatus(row('', '0.5', '0.5', '12'))).toBe('Pending')
+    expect(previewStatus(row('12', '', '', '12.4'))).toBe('Pending')
+    expect(previewStatus(row('12', '0.5', '0.5', ''))).toBe('Pending')
+  })
+
+  it('never shows a pass on a tolerance that is not a number', () => {
+    expect(previewStatus(row('12', '0.5mm', '0.5', '30'))).toBe('Pending')
+    expect(previewStatus(row('12', 'abc', 'abc', '12'))).toBe('Pending')
+    expect(Number.isNaN(dimensionFigures(row('12', '0.5mm', '', '')).tolPlus)).toBe(true)
+  })
+})
+
+describe('§8.4 the grade acknowledgement holds for exactly what was acknowledged', () => {
+  const index = buildGradeIndex([])
+  const coils = [
+    { coilNumber: 'C1', grade: 'S235' },
+    { coilNumber: 'C2', grade: 'DX51D' },
+  ]
+  const ack = { coilNumbers: ['C1'], expectedGrade: 'DX51D', foundGrades: ['S235'], at: '2026-10-19T08:00:00Z' }
+
+  it('holds while the coils have the very mismatches it names', () => {
+    expect(coveringAcknowledgement(ack, 'DX51D', coils, index)).toBe(ack)
+    // Written another way, it is the same grade and the same coil.
+    expect(coveringAcknowledgement({ ...ack, coilNumbers: [' c1 '], foundGrades: ['s-235'] }, 'dx51d', coils, index)).toBeDefined()
+  })
+
+  it('does not hold for a different mismatch, a further one, or another expected grade', () => {
+    expect(coveringAcknowledgement(ack, 'DX51D', [{ coilNumber: 'C3', grade: 'S235' }], index)).toBeUndefined()
+    expect(coveringAcknowledgement(ack, 'DX51D', [{ coilNumber: 'C1', grade: 'S355' }], index)).toBeUndefined()
+    expect(coveringAcknowledgement(ack, 'DX51D', [...coils, { coilNumber: 'C3', grade: 'S355' }], index)).toBeUndefined()
+    expect(coveringAcknowledgement(ack, 'DX53D', coils, index)).toBeUndefined()
+  })
+
+  it('sends none when nothing mismatches', () => {
+    expect(coveringAcknowledgement(ack, 'DX51D', [{ coilNumber: 'C2', grade: 'DX51D' }], index)).toBeUndefined()
+    expect(coveringAcknowledgement(undefined, 'DX51D', coils, index)).toBeUndefined()
+  })
+
+  it('is let go of when a coil is added, removed or edited, and kept otherwise', () => {
+    const draft = { coils, gradeAcknowledged: ack, drawing: 'D-1' } as unknown as SampleDraft
+    expect(withCoilRule(draft, { ...draft, drawing: 'D-2' }).gradeAcknowledged).toBe(ack)
+    expect(withCoilRule(draft, { ...draft, coils: [...coils, { coilNumber: 'C3' }] }).gradeAcknowledged).toBeUndefined()
+    expect(withCoilRule(draft, { ...draft, coils: coils.slice(1) }).gradeAcknowledged).toBeUndefined()
+    expect(withCoilRule(draft, { ...draft, coils: [{ ...coils[0], grade: 'S355' }, coils[1]] }).gradeAcknowledged).toBeUndefined()
+    // Given anew with the change, it is the new one that stands.
+    const fresh = { ...ack, at: '2026-10-19T09:00:00Z' }
+    expect(withCoilRule(draft, { ...draft, coils: [...coils], gradeAcknowledged: fresh }).gradeAcknowledged).toBe(fresh)
+  })
+})
+
+describe('what the wizard shows when its session could not be loaded', () => {
+  const offline = new ApiError(0, 'internal', 'Network error — check your connection.')
+  const gone = new ApiError(404, 'not_found', 'Session not found.')
+
+  it('keeps working from what was loaded when a later refresh fails', () => {
+    expect(wizardLoadState(true, null)).toBe('ready')
+    expect(wizardLoadState(true, offline)).toBe('stale')
+    expect(wizardLoadState(true, new ApiError(500, 'internal', 'The server had a problem.'))).toBe('stale')
+  })
+
+  it('says not found only when the server says so, or nothing is there', () => {
+    expect(wizardLoadState(true, gone)).toBe('not-found')
+    expect(wizardLoadState(false, gone)).toBe('not-found')
+    expect(wizardLoadState(false, null)).toBe('not-found')
+    expect(wizardLoadState(false, offline)).toBe('failed')
   })
 })
