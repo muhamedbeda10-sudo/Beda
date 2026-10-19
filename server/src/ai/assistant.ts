@@ -57,6 +57,7 @@ import {
   type AiStopReason,
   type AiStreamEvent,
   type AiTokenUsage,
+  readableModelInput,
 } from '@qc/shared/ai'
 import type { ApiErrorCode } from '@qc/shared/api'
 import type { Config } from '../config'
@@ -575,7 +576,10 @@ async function runStep(
   // Said before the first tool runs: once the step's first card is out, the next words are the model's (followsKeptRound).
   const checking = checkingLine(toolUses.map((tu) => tu.name))
   if (checking && !signal.aborted) qn.emit({ type: 'progress', text: checking })
-  for (const tu of toolUses) {
+  for (const written of toolUses) {
+    // Run on what the model meant: a text it wrote with its letters as codes reads as letters (readableModelInput).
+    // The replay keeps the call as it was written.
+    const tu: ToolUse = { ...written, input: readableModelInput(written.input) }
     if (signal.aborted) {
       const c = cause()
       if (c === 'handover') return { outcome: HANDED_OVER_OUTCOME }

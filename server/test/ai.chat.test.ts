@@ -24,7 +24,7 @@ import { ACCESS_NOTICE } from '../src/ai/access'
 import { KEY_REFUSED_MESSAGE, answerQuestion, toReplayContent } from '../src/ai/assistant'
 import { minCallWorstCaseUsd } from '../src/ai/models'
 import { MAX_STEPS_PER_ANSWER, WRAP_UP_STEPS } from '../src/ai/prompt'
-import { appendMessages, findConversation, finishTurn, loadReplay } from '../src/ai/transcript'
+import { appendMessages, findConversation, finishTurn, loadReplay, queryPart } from '../src/ai/transcript'
 
 // §20 — asking: the answer streams as Server-Sent Events while the model
 // writes, queries run in the sandbox and their results go back to it, and
@@ -671,6 +671,24 @@ describe('§20 how answers end', () => {
     const parts = res.done!.message.parts.filter((p): p is AiQueryPart => p.type === 'query')
     expect(parts).toHaveLength(1)
     expect(parts[0]).toMatchObject({ ok: false, purpose: 'Users', error: expect.stringMatching(/permission denied/), rows: [], columns: [] })
+  })
+
+  it('runs a tool call whose letters the model wrote as codes on what it meant, and replays the call as written', async () => {
+    // "الماكينات" and "عدد" as the model now and then writes them: their codes, escaped twice.
+    const machines = '\\u0627\\u0644\\u0645\\u0627\\u0643\\u064a\\u0646\\u0627\\u062a'
+    const count = '\\u0639\\u062f\\u062f'
+    const call = runSql('toolu_codes', `${count} ${machines}`, `SELECT machine_code AS "${machines}", 1 AS n FROM ai.machines ORDER BY machine_code`, { type: 'bar', x: machines, y: ['n'], title: count })
+    app.model.reply({ content: [call] }, { content: [text('Two.')] })
+    const res = await ask('كام ماكينة؟')
+    const part = res.done!.message.parts.find((p): p is AiQueryPart => p.type === 'query')!
+    expect(part).toMatchObject({ ok: true, purpose: 'عدد الماكينات', columns: ['الماكينات', 'n'], rows: [['31', 1], ['58', 1]], chart: { type: 'bar', x: 'الماكينات', y: ['n'], title: 'عدد' } })
+    // The model is shown its own call unchanged, so the conversation replays byte for byte.
+    expect(last(app.model.calls).params.messages[1].content).toContainEqual(expect.objectContaining({ id: 'toolu_codes', input: (call as Anthropic.Beta.BetaToolUseBlock).input }))
+    const history = await messagesOf(res.start!.conversation.id)
+    expect(history.body.messages.at(-1)!.parts).toContainEqual(expect.objectContaining({ type: 'query', purpose: 'عدد الماكينات', chart: expect.objectContaining({ title: 'عدد' }) }))
+    // A query kept before the app read the codes shows as meant too.
+    expect(queryPart({ id: 'q', toolUseId: 't', purpose: machines, sql: 'SELECT 1', ok: true, columns: [], rows: [], rowCount: 0, truncated: false, ms: 1, chart: { type: 'bar', x: 'a', y: ['b'], title: count } }))
+      .toMatchObject({ purpose: 'الماكينات', chart: { title: 'عدد' } })
   })
 
   it('never runs a tool call cut off at max_tokens: asks again once with more room, without editing the history', async () => {

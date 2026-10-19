@@ -22,6 +22,7 @@
 // ============================================================================
 
 import type Anthropic from '@anthropic-ai/sdk'
+import { readableModelText } from '@qc/shared/ai'
 import type { AiCell, AiChartSpec, AiConversation, AiConversationScope, AiKpi, AiMessage, AiPart, AiQueryPart, AiRunningAnswer, AiStopReason, AiTokenUsage } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
 import { loadProposalParts } from '../automations/proposals'
@@ -257,7 +258,8 @@ export const queryPart = (r: QueryRecord): AiQueryPart => {
   const part: AiQueryPart = {
     type: 'query',
     queryId: r.id,
-    purpose: r.purpose,
+    // Read as meant (readableModelText): kept before the app read the model's escaped letters, a title held the codes.
+    purpose: readableModelText(r.purpose),
     sql: r.sql,
     ok: r.ok,
     columns: r.columns,
@@ -267,7 +269,7 @@ export const queryPart = (r: QueryRecord): AiQueryPart => {
     ms: Math.round(r.ms),
   }
   if (r.error) part.error = r.error
-  if (r.chart) part.chart = r.chart
+  if (r.chart) part.chart = r.chart.title ? { ...r.chart, title: readableModelText(r.chart.title) } : r.chart
   return part
 }
 

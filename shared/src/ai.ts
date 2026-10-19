@@ -1223,3 +1223,32 @@ export interface AiReportExportResponse {
   ranAt: string
 }
 
+
+// A model writing a tool's input now and then escapes its letters twice: "\\u0627\\u0644" where it meant "ال", so the
+// text arrives holding the code itself, and a chart's title reads "ال…". Only letters beyond ASCII are
+// read back — what the slip turns into codes — never a quote, a backslash or a control character, which would change
+// what an SQL string or a pattern says. A pair of surrogates is one character; half of one is left as it was written.
+const ESCAPED_LETTER = /\\u(d[89ab][0-9a-f]{2})\\u(d[c-f][0-9a-f]{2})|\\u([0-9a-f]{4})/gi
+
+/** Text the model wrote with its letters escaped as codes ("ال"), as it meant it ("ال"). */
+export function readableModelText(text: string): string {
+  if (!text.includes('\\u')) return text
+  return text.replace(ESCAPED_LETTER, (whole, high: string | undefined, low: string | undefined, single: string | undefined) => {
+    if (high && low) return String.fromCharCode(parseInt(high, 16), parseInt(low, 16))
+    const code = parseInt(single!, 16)
+    return code < 0x80 || (code >= 0xd800 && code <= 0xdfff) ? whole : String.fromCharCode(code)
+  })
+}
+
+/**
+ * A tool's input with every text in it read as the model meant it — its SQL as well, so a column it names in a chart
+ * is still the one its query calls by that name. The input is not changed; what has no escaped letter comes back as is.
+ */
+export function readableModelInput<T>(value: T): T {
+  if (typeof value === 'string') return readableModelText(value) as T
+  if (Array.isArray(value)) return value.map(readableModelInput) as T
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [readableModelText(k), readableModelInput(v)])) as T
+  }
+  return value
+}

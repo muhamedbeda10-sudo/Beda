@@ -94,22 +94,23 @@ export const AiFigure = memo(function AiFigure({ part, model, question }: { part
   const split = model.measure && model.splitBy ? `${model.measure}, by ${model.splitBy}` : null
   const sub = [title !== part.purpose ? part.purpose : null, split].filter(Boolean).join(' · ')
   // The caption reads as its title does — an Arabic title from the right, its icon beside it there — and the line
-  // under it sits with the title, whatever language its own words are in.
+  // under it sits with the title, whatever language its own words are in. On a narrow screen the switch goes under the
+  // title rather than squeezing it, and a long word breaks rather than running across the switch and off the screen.
   return (
     <figure className="ai-figure my-3 rounded-2xl bg-white p-3 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:ring-slate-800 sm:p-4">
-      <figcaption dir={textDirection(title) ?? 'ltr'} className="mb-2 flex items-start gap-2.5">
+      <figcaption dir={textDirection(title) ?? 'ltr'} className="mb-2 flex flex-wrap items-start gap-x-2.5 gap-y-1.5">
         <span aria-hidden className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">
           <Icon className="h-4 w-4" />
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm font-bold leading-snug text-slate-900 dark:text-white">{title}</span>
+        <span className="min-w-0 flex-1 basis-40">
+          <span className="block text-sm font-bold leading-snug text-slate-900 dark:text-white [overflow-wrap:anywhere]">{title}</span>
           {sub && (
-            <span className="block text-[11px] leading-snug text-muted">
+            <span className="block text-[11px] leading-snug text-muted [overflow-wrap:anywhere]">
               <bdi>{sub}</bdi>
             </span>
           )}
         </span>
-        <ChartTableSwitch value={view} onChange={setView} className="mt-0.5" />
+        <ChartTableSwitch value={view} onChange={setView} className="ms-auto mt-0.5" />
       </figcaption>
       {view === 'chart' ? (
         <>

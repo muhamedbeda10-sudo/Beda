@@ -42,6 +42,7 @@ import {
   describeAiDays,
   describeAiPeriod,
   isAiDay,
+  readableModelText,
   resolveAiPeriod,
   type AiDayRange,
   type AiEffort,
@@ -700,7 +701,7 @@ export async function runReportSections(
     // Every row read (up to AI_REPORT_RUN_ROWS): a report is read on a page, not by the model.
     const preview = reportPreview(run)
     const result: AiReportSectionRun = {
-      title: section.title,
+      title: readableModelText(section.title),
       ok: run.ok,
       columns: preview.columns,
       rows: preview.rows,
@@ -746,7 +747,7 @@ export async function exportReportSections(
     )
     const rows = exportRows(run)
     for (const row of rows) for (const c of row) room -= typeof c === 'string' ? c.length : 8
-    const result: AiReportExportResponse['sections'][number] = { title: section.title, ok: run.ok, columns: run.columns, rows, truncated: run.truncated }
+    const result: AiReportExportResponse['sections'][number] = { title: readableModelText(section.title), ok: run.ok, columns: run.columns, rows, truncated: run.truncated }
     const error = sectionError(run)
     if (error) result.error = error
     out.push(result)

@@ -29,7 +29,7 @@ export const AiPhotoFigure = memo(function AiPhotoFigure({ part, question }: { p
           <Camera className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-bold leading-snug text-slate-900 dark:text-white">{part.purpose}</span>
+          <span className="block text-sm font-bold leading-snug text-slate-900 dark:text-white [overflow-wrap:anywhere]">{part.purpose}</span>
           <span className="block text-[11px] tabular-nums leading-snug text-muted">
             {photoCount(photos.length)}
             {part.truncated && ' (the first found; more matched)'}
