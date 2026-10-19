@@ -20,7 +20,7 @@ import { NOTICE_SEVERITIES, NOTICE_TARGET_KINDS, type NoticeMatchMode, type Noti
 import type { Queryable } from '../db/pool'
 import { describeIssues } from '../automations/draft'
 import { isUuid } from '../automations/people'
-import { factoryDay } from '../ai/prompt'
+import { calendarDay } from '@qc/shared/rules'
 import { NOTICE_SELECT, attachNoticeParts, type NoticeRow } from '../modules/notices'
 import { noticeSaveSchema, type StoredNotice } from '../modules/noticesService'
 import { resolveTargets } from './targets'
@@ -235,7 +235,7 @@ export async function checkCard(q: Queryable, tz: string, action: AiNoticeAction
     return out
   }
   const call = parsed.data
-  const today = factoryDay(now, tz)
+  const today = calendarDay(now, tz)
   const wantsDraft = action === 'create' || action === 'update'
   if (wantsDraft && !call.draft) {
     out.errors.push(action === 'create' ? 'draft: a new notice needs its draft: its title, severity and requiresAck at least.' : 'draft: a change needs what changes (every field left out stays as it is).')

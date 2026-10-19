@@ -4,7 +4,7 @@ import type { AiAccessListResponse, AiMessagesResponse } from '@qc/shared/ai'
 import type { AiNoticeApplyResponse, AiNoticePart } from '@qc/shared/noticeAssistant'
 import type { Notice, NoticeAdminRow, NoticeFile } from '@qc/shared/types'
 import type Anthropic from '@anthropic-ai/sdk'
-import { TestApp, factoryDay, type Session } from './harness'
+import { TestApp, calendarDay, type Session } from './harness'
 import { text } from './aiFake'
 import { ask, grant } from './automationsKit'
 import { noticeToolHandlers } from '../src/noticeAssistant/tools'
@@ -111,7 +111,7 @@ const noticeCount = async (title: string) => (await app.db.query(`SELECT 1 FROM 
 beforeAll(async () => {
   await app.start()
   p = await setUpNotices(app)
-  today = factoryDay()
+  today = calendarDay()
 })
 afterAll(() => app.stop())
 beforeEach(() => {
@@ -295,7 +295,7 @@ describe('§23 a card applied writes the notice exactly as the Notices page does
   })
 
   it('applies a change field by field, as the page saves it', async () => {
-    const change = { title: 'Check the weld start on every beam, both ends', severity: 'critical' as const, validTo: factoryDay(7) }
+    const change = { title: 'Check the weld start on every beam, both ends', severity: 'critical' as const, validTo: calendarDay(7) }
     const proposed = await proposeInChat(p.boss, { action: 'update', noticeId: viaCard.id, draft: draft({ ...change, targets: [{ kind: 'machine', value: '58' }, { kind: 'role', value: 'inspector' }, { kind: 'order-number', value: '20095-QC1-HYH' }] }) }, conversationId)
     expect(proposed.part).toMatchObject({ ok: true, action: 'update', noticeId: viaCard.id, state: 'proposed', draft: { ...change, validFrom: today }, before: { title: 'Check the weld start on every beam', severity: 'warning', validTo: null } })
     expect(resultJson(proposed.result).note).toMatch(/card with Apply changes and Discard.*never say the notice is changed/)
@@ -497,7 +497,7 @@ describe('§23 a press while the assistant is still writing', () => {
 
 describe('§23 a card checked before it is shown', () => {
   it('names every problem, and keeps the card for the record without a button', async () => {
-    const expired = await pageNotice(app, p.boss, { title: 'Long over', validFrom: factoryDay(-30), validTo: factoryDay(-20) })
+    const expired = await pageNotice(app, p.boss, { title: 'Long over', validFrom: calendarDay(-30), validTo: calendarDay(-20) })
     const unchanged = await pageNotice(app, p.boss, { title: 'Already right', targets: [] })
     const cases: [unknown, RegExp[]][] = [
       [{ action: 'create', draft: draft({ validFrom: '2026-02-30', validTo: '2026-02-01' }) }, [/draft\.validFrom: "2026-02-30" is not a day/, /draft\.validTo: The end is before the start\./]],
@@ -507,7 +507,7 @@ describe('§23 a card checked before it is shown', () => {
       ],
       [{ action: 'create', draft: draft({ targets: [{ kind: 'user', value: 'Ivy' }] }) }, [/draft\.targets\.0\.value: Not a valid user\./]],
       [{ action: 'create', draft: draft({ title: '   ' }) }, [/draft\.title: /]],
-      [{ action: 'create', draft: draft({ validFrom: factoryDay(-10), validTo: factoryDay(-1) }) }, [/the notice would never be shown/]],
+      [{ action: 'create', draft: draft({ validFrom: calendarDay(-10), validTo: calendarDay(-1) }) }, [/the notice would never be shown/]],
       [{ action: 'create', noticeId: unchanged.id, draft: draft() }, [/noticeId: a new notice has none yet/]],
       [{ action: 'update' }, [/draft: a change needs what changes/, /noticeId: name the notice to change/]],
       // Photos and files are the Notices page's: a draft cannot carry any.
@@ -631,8 +631,8 @@ describe('§23 a change changes only what it names', () => {
     const notice = await pageNotice(app, p.boss, {
       title: 'Coil change on 58',
       body: 'Keep this text',
-      validFrom: factoryDay(-3),
-      validTo: factoryDay(10),
+      validFrom: calendarDay(-3),
+      validTo: calendarDay(10),
       targets: [
         { kind: 'machine', value: '58', label: '58-A. Welding Line-LM4' },
         { kind: 'role', value: 'inspector', label: 'Inspector' },
@@ -647,19 +647,19 @@ describe('§23 a change changes only what it names', () => {
         severity: 'critical',
         requiresAck: true,
         matchMode: 'all',
-        validFrom: factoryDay(-3),
-        validTo: factoryDay(10),
+        validFrom: calendarDay(-3),
+        validTo: calendarDay(10),
         targets: notice.targets,
       },
       reach: { everyone: false, people: null, placeBound: true },
     })
-    expect(resultJson(result)).toMatchObject({ notice: { days: `${factoryDay(-3)} to ${factoryDay(10)}`, audience: ['Machine: 58-A. Welding Line-LM4', 'Role: Inspector'] } })
+    expect(resultJson(result)).toMatchObject({ notice: { days: `${calendarDay(-3)} to ${calendarDay(10)}`, audience: ['Machine: 58-A. Welding Line-LM4', 'Role: Inspector'] } })
     await applied(p.boss, part!.proposalId)
     expect((await auditOf(notice.id)).filter((r) => r.action === 'update').map((r) => r.field)).toEqual(['title', 'severity'])
 
     // null is "until withdrawn": the end goes only when the draft says so.
     const open = await proposeInChat(p.boss, { action: 'update', noticeId: notice.id, draft: { validTo: null } })
-    expect(open.part).toMatchObject({ ok: true, draft: { validTo: null, validFrom: factoryDay(-3), body: 'Keep this text', title: 'Coil change on 58, both ends' } })
+    expect(open.part).toMatchObject({ ok: true, draft: { validTo: null, validFrom: calendarDay(-3), body: 'Keep this text', title: 'Coil change on 58, both ends' } })
     // A new notice still needs its title, severity and acknowledgement.
     const bare = await proposeInChat(p.boss, { action: 'create', draft: { body: 'No title' } })
     expect(bare.part).toMatchObject({ ok: false })

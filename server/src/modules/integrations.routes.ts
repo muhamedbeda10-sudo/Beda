@@ -260,7 +260,8 @@ export function orderSyncAgentRoutes(ctx: AppContext): Router {
       const valid: { at: number; row: OrderImportRow }[] = []
       rows.forEach((raw, i) => {
         const at = run.rowsReceived + i + 1
-        const mapped = mapOrderRow(raw, match)
+        // The agent writes Access's moments without an offset: they are factory time, as the browser importer reads them.
+        const mapped = mapOrderRow(raw, match, ctx.config.FACTORY_TIMEZONE)
         const lineKey = typeof raw[match.byField.lineKey] === 'string' || typeof raw[match.byField.lineKey] === 'number' ? String(raw[match.byField.lineKey]).trim() : undefined
         if ('error' in mapped) {
           errors.push({ row: at, lineKey, message: mapped.error })

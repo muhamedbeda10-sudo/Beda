@@ -22,7 +22,7 @@ import { normaliseMachineCode } from '@qc/shared/rules'
 import type { Permission } from '@qc/shared/permissions'
 import { NOTICE_TARGET_KINDS, type NoticeAcknowledgement, type NoticeTarget, type NoticeTargetKind, type Role } from '@qc/shared/types'
 import type { Queryable } from '../db/pool'
-import { factoryDay } from '../ai/prompt'
+import { calendarDay } from '@qc/shared/rules'
 import { NOTICE_SELECT, attachNoticeParts, isPlaceBound, loadInbox, noticeApplies, type NoticeRow } from '../modules/notices'
 import type { StoredNotice } from '../modules/noticesService'
 import { isUuid } from '../automations/people'
@@ -85,7 +85,7 @@ function matches(n: ReadNotice, q: ListNoticesQuery, today: string, timeZone: st
   if (status !== 'all' && noticeStatus(n, today) !== status) return false
   if (q.text && !lower(`${n.title}\n${n.body}`).includes(lower(q.text))) return false
   if (q.targetKind && !namesTarget(n.targets, q.targetKind, q.targetValue)) return false
-  const created = factoryDay(new Date(n.createdAt), timeZone)
+  const created = calendarDay(new Date(n.createdAt), timeZone)
   if (q.createdFrom && created < q.createdFrom) return false
   if (q.createdTo && created > q.createdTo) return false
   return true
@@ -173,7 +173,7 @@ const NO_NOTICES = (_role: Role) =>
  * person who is sent no notices (a viewer) is told why there are none.
  */
 export async function listNotices(q: Queryable, timeZone: string, asker: NoticeAsker, query: ListNoticesQuery, now: Date): Promise<string> {
-  const today = factoryDay(now, timeZone)
+  const today = calendarDay(now, timeZone)
   const admin = readsEveryNotice(asker)
   if (!admin && !receivesNotices(asker)) return JSON.stringify({ notices: [], note: NO_NOTICES(asker.role) })
   const limit = query.limit ?? DEFAULT_LIST
@@ -213,7 +213,7 @@ const someNames = (names: string[]) => ({ count: names.length, names: names.slic
  * person may not see it.
  */
 export async function noticeDetails(q: Queryable, timeZone: string, asker: NoticeAsker, id: string, now: Date): Promise<string | null> {
-  const today = factoryDay(now, timeZone)
+  const today = calendarDay(now, timeZone)
   const admin = readsEveryNotice(asker)
   if (!isUuid(id)) return null
   let notice: ReadNotice | undefined

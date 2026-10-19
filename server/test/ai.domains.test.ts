@@ -158,6 +158,12 @@ describe('§20 the data domains', () => {
   it('keep every function in schema ai to its domain, none open to all, and refuse to start while one is', async () => {
     const FUNCTIONS: Record<string, 'base' | AiDomain> = {
       'ai.assert_row_size(integer,integer)': 'base',
+      // The factory day (08:00 to 08:00): every domain's *_day columns are worked out with it.
+      'ai.factory_day(timestamp with time zone)': 'base',
+      'ai.factory_day(timestamp with time zone,text)': 'base',
+      'ai.factory_day_start(date)': 'base',
+      'ai.factory_day_start(date,text)': 'base',
+      'ai.factory_month(timestamp with time zone,text)': 'base',
       'ai.machine_key(text)': 'base',
       'ai.material_kind(text)': 'base',
       'ai.production_between(date,date,text,boolean)': 'inspection',

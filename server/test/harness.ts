@@ -11,6 +11,7 @@ import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import type { AuthResponse, PushPayload } from '@qc/shared/api'
+import { calendarDay as sharedCalendarDay, factoryDay as sharedFactoryDay } from '@qc/shared/rules'
 import { loadConfig, type Config } from '../src/config'
 import { createPool, type Db } from '../src/db/pool'
 import { migrate } from '../src/db/migrate'
@@ -157,15 +158,28 @@ export class TestApp {
 }
 
 /**
- * The factory's calendar day, whole days away from today. The API counts days
- * in the factory's time zone (Africa/Cairo unless FACTORY_TIMEZONE says
- * otherwise), so a test naming "today" must name the same day: the UTC date
- * is a day behind it every evening.
+ * The factory day, whole days away from today. The API counts factory days
+ * (08:00 to 08:00) in the factory's time zone (Africa/Cairo unless
+ * FACTORY_TIMEZONE says otherwise), so a test naming "today" must name the
+ * same day: the UTC date is a day behind it every evening, and the calendar
+ * date a day ahead of it every night before 08:00.
  */
 export function factoryDay(offsetDays = 0): string {
   const zone = process.env.FACTORY_TIMEZONE || 'Africa/Cairo'
-  const local = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const local = sharedFactoryDay(new Date(), zone)
   const d = new Date(`${local}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + offsetDays)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * The calendar date where the factory sits, whole days away from today: the
+ * dates people keep (a notice's validity, a task's due date), which do not
+ * follow the factory day.
+ */
+export function calendarDay(offsetDays = 0): string {
+  const zone = process.env.FACTORY_TIMEZONE || 'Africa/Cairo'
+  const d = new Date(`${sharedCalendarDay(new Date(), zone)}T00:00:00Z`)
   d.setUTCDate(d.getUTCDate() + offsetDays)
   return d.toISOString().slice(0, 10)
 }

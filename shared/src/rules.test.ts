@@ -2,7 +2,13 @@ import { describe, it, expect } from 'vitest'
 import {
   deriveShift,
   hourInTimeZone,
-  shiftStartDate,
+  calendarDay,
+  factoryDay,
+  factoryDayStart,
+  factoryMonth,
+  zonedInstant,
+  storedUnits,
+  FACTORY_DAY_START_HOUR,
   dimensionStatus,
   stepsForProcess,
   legacyProcessForCode,
@@ -62,18 +68,83 @@ describe('§8.1 shift derivation', () => {
   // The boundary the spec insists on testing explicitly.
   it('attributes a 02:00 sample to the night shift that began the previous evening', () => {
     expect(deriveShift(at(2, 0, 16))).toBe('C')
-    expect(shiftStartDate(at(2, 0, 16))).toBe('2026-06-15')
+    expect(factoryDay(at(2, 0, 16))).toBe('2026-06-15')
     // ...the same night as a 21:00 sample taken the evening before
-    expect(shiftStartDate(at(21, 0, 15))).toBe('2026-06-15')
+    expect(factoryDay(at(21, 0, 15))).toBe('2026-06-15')
   })
 
   it('keeps day-shift samples on their own calendar date', () => {
-    expect(shiftStartDate(at(9, 0, 16))).toBe('2026-06-16')
-    expect(shiftStartDate(at(23, 0, 16))).toBe('2026-06-16')
+    expect(factoryDay(at(9, 0, 16))).toBe('2026-06-16')
+    expect(factoryDay(at(23, 0, 16))).toBe('2026-06-16')
   })
 
   it('rolls the month back correctly at a month boundary', () => {
-    expect(shiftStartDate(new Date(2026, 6, 1, 3, 0))).toBe('2026-06-30')
+    expect(factoryDay(new Date(2026, 6, 1, 3, 0))).toBe('2026-06-30')
+    expect(factoryMonth(new Date(2026, 6, 1, 3, 0))).toBe('2026-06')
+    expect(factoryDay(new Date(2027, 0, 1, 7, 59))).toBe('2026-12-31')
+  })
+})
+
+describe('§8.1 the factory day: 08:00 to 08:00 where the factory sits', () => {
+  const cairo = 'Africa/Cairo'
+
+  it('starts at 08:00: a record at 02:00 on the 20th belongs to the 19th', () => {
+    expect(FACTORY_DAY_START_HOUR).toBe(8)
+    // Cairo is UTC+3 in October 2026 (summer time until the last Thursday).
+    expect(factoryDay(new Date('2026-10-19T23:00:00Z'), cairo)).toBe('2026-10-19') // 02:00 on the 20th
+    expect(factoryDay(new Date('2026-10-20T04:59:59Z'), cairo)).toBe('2026-10-19') // 07:59:59
+    expect(factoryDay(new Date('2026-10-20T05:00:00Z'), cairo)).toBe('2026-10-20') // 08:00
+    expect(calendarDay(new Date('2026-10-19T23:00:00Z'), cairo)).toBe('2026-10-20')
+  })
+
+  it('keeps the whole night shift on the day it started', () => {
+    // 19:00 on the 19th to 07:59 on the 20th, Cairo winter time (UTC+2).
+    for (const iso of ['2026-01-19T17:00:00Z', '2026-01-19T21:59:00Z', '2026-01-19T22:00:00Z', '2026-01-20T05:59:00Z']) {
+      expect(deriveShift(new Date(iso), cairo)).toBe('C')
+      expect(factoryDay(new Date(iso), cairo)).toBe('2026-01-19')
+    }
+  })
+
+  it('reads the day in the zone given, never the clock the code runs on', () => {
+    // 03:00 UTC is 05:00 in Cairo: still the factory day before, whatever the server's clock says.
+    const t = new Date('2026-03-10T03:00:00Z')
+    expect(factoryDay(t, cairo)).toBe('2026-03-09')
+    expect(factoryDay(t, 'UTC')).toBe('2026-03-09')
+    expect(factoryDay(new Date('2026-03-10T09:00:00Z'), 'Asia/Tokyo')).toBe('2026-03-10') // 18:00 there
+    expect(factoryDay(new Date('2026-03-09T22:59:00Z'), 'Asia/Tokyo')).toBe('2026-03-09') // 07:59 on the 10th there
+  })
+
+  it('crosses months and years', () => {
+    expect(factoryDay(new Date('2026-10-01T03:00:00Z'), cairo)).toBe('2026-09-30')
+    expect(factoryMonth(new Date('2026-10-01T03:00:00Z'), cairo)).toBe('2026-09')
+    expect(factoryDay(new Date('2027-01-01T05:00:00Z'), cairo)).toBe('2026-12-31') // 07:00 on New Year's Day
+  })
+
+  it('agrees with itself across the summer-time changes', () => {
+    // Egypt: clocks go forward at 00:00 on the last Friday of April, back at 24:00 on the last Thursday of October.
+    expect(factoryDay(new Date('2026-04-24T03:30:00Z'), cairo)).toBe('2026-04-23') // 06:30 summer time
+    expect(factoryDay(new Date('2026-04-24T05:00:00Z'), cairo)).toBe('2026-04-24') // 08:00
+    expect(factoryDay(new Date('2026-10-29T21:30:00Z'), cairo)).toBe('2026-10-29') // 23:30 winter time again, the 29th
+    expect(factoryDay(new Date('2026-10-30T05:59:00Z'), cairo)).toBe('2026-10-29') // 07:59
+  })
+
+  it('starts each factory day at 08:00 factory time, summer or winter', () => {
+    expect(factoryDayStart('2026-01-19', cairo).toISOString()).toBe('2026-01-19T06:00:00.000Z')
+    expect(factoryDayStart('2026-07-19', cairo).toISOString()).toBe('2026-07-19T05:00:00.000Z')
+    expect(factoryDayStart('2026-10-20', 'UTC').toISOString()).toBe('2026-10-20T08:00:00.000Z')
+    // A moment is in the day that starts at or before it and ends at the next start.
+    for (const day of ['2026-04-23', '2026-04-24', '2026-10-29', '2026-10-30', '2026-12-31']) {
+      const start = factoryDayStart(day, cairo)
+      expect(factoryDay(start, cairo)).toBe(day)
+      expect(factoryDay(new Date(start.getTime() - 1000), cairo)).not.toBe(day)
+    }
+  })
+
+  it('turns a wall-clock time in a zone into the moment it happens', () => {
+    expect(zonedInstant(2026, 1, 31, 14, 30, 0, 0, cairo).toISOString()).toBe('2026-01-31T12:30:00.000Z')
+    expect(zonedInstant(2026, 8, 1, 0, 0, 0, 0, cairo).toISOString()).toBe('2026-07-31T21:00:00.000Z')
+    expect(zonedInstant(2026, 8, 1, 9, 15, 30, 250, 'UTC').toISOString()).toBe('2026-08-01T09:15:30.250Z')
+    expect(zonedInstant(2026, 8, 1, 9, 15).getTime()).toBe(new Date(2026, 7, 1, 9, 15).getTime())
   })
 })
 
@@ -117,6 +188,83 @@ describe('§8.2 dimension status', () => {
     const exact = { nominal: 5, tolPlus: 0, tolMinus: 0 }
     expect(dimensionStatus({ ...exact, actual: 5 })).toBe('Pass')
     expect(dimensionStatus({ ...exact, actual: 5.01 })).toBe('Fail')
+  })
+})
+
+describe('§8.2 dimension status is decided in exact decimals', () => {
+  // The cases floating point got wrong: the limit itself, and the edge of the band.
+  it('keeps a reading on the limit inside tolerance', () => {
+    expect(dimensionStatus({ nominal: 50.15, tolPlus: 0.05, tolMinus: 0.05, actual: 50.2 })).toBe('Warning')
+    expect(dimensionStatus({ nominal: 50.15, tolPlus: 0.05, tolMinus: 0.05, actual: 50.1 })).toBe('Warning')
+    expect(dimensionStatus({ nominal: 0.3, tolPlus: 0.1, tolMinus: 0.1, actual: 0.4 })).toBe('Warning')
+    expect(dimensionStatus({ nominal: 1.1, tolPlus: 0.2, tolMinus: 0.2, actual: 1.3 })).toBe('Warning')
+    expect(dimensionStatus({ nominal: 50.15, tolPlus: 0.05, tolMinus: 0.05, actual: 50.2001 })).toBe('Fail')
+  })
+
+  it('puts a reading on the edge of the warning band in the band', () => {
+    expect(dimensionStatus({ nominal: 100, tolPlus: 0.3, tolMinus: 0.3, actual: 100.27 })).toBe('Warning')
+    expect(dimensionStatus({ nominal: 100, tolPlus: 0.3, tolMinus: 0.3, actual: 99.73 })).toBe('Warning')
+    expect(dimensionStatus({ nominal: 100, tolPlus: 0.3, tolMinus: 0.3, actual: 100.2699 })).toBe('Pass')
+    expect(dimensionStatus({ nominal: 100, tolPlus: 0.3, tolMinus: 0.3, actual: 99.7301 })).toBe('Pass')
+  })
+
+  it('reads values at the stored precision, as numeric(14, 4) keeps them', () => {
+    expect(storedUnits(50.15)).toBe(501500)
+    expect(storedUnits(0.00005)).toBe(1)
+    expect(storedUnits(-0.00005)).toBe(-1)
+    expect(storedUnits(1.00004999)).toBe(10000)
+    expect(storedUnits(5e-7)).toBe(0)
+    expect(storedUnits(1234567890.1234)).toBe(12345678901234)
+    expect(storedUnits(-12.3456)).toBe(-123456)
+    // A reading typed with more decimals is judged as it is stored: 50.20004 is kept as 50.2000.
+    expect(dimensionStatus({ nominal: 50.15, tolPlus: 0.05, tolMinus: 0.05, actual: 50.20004 })).toBe('Warning')
+    expect(dimensionStatus({ nominal: 50.15, tolPlus: 0.05, tolMinus: 0.05, actual: 50.20005 })).toBe('Fail')
+  })
+
+  it('takes a tolerance typed negative as its size', () => {
+    expect(dimensionStatus({ nominal: 50.15, tolPlus: 0.05, tolMinus: -0.05, actual: 50.1 })).toBe('Warning')
+    expect(dimensionStatus({ nominal: -2.5, tolPlus: 0.1, tolMinus: 0.1, actual: -2.6 })).toBe('Warning')
+    expect(dimensionStatus({ nominal: -2.5, tolPlus: 0.1, tolMinus: 0.1, actual: -2.6001 })).toBe('Fail')
+  })
+
+  /** The rule in whole units of 1/10⁴, on the units themselves: what the numbers mean, with no arithmetic on doubles. */
+  function exact(n: number, plus: number, minus: number, a: number): string {
+    if (a > n + plus || a < n - minus) return 'Fail'
+    if (a >= n) return plus === 0 ? 'Pass' : (n + plus - a) * 10 <= plus ? 'Warning' : 'Pass'
+    return minus === 0 ? 'Pass' : (a - (n - minus)) * 10 <= minus ? 'Warning' : 'Pass'
+  }
+  /** A whole number of 1/10⁴ units as the decimal a person types, read into a JavaScript number. */
+  const typed = (units: number) => Number(`${units < 0 ? '-' : ''}${Math.floor(Math.abs(units) / 10000)}.${String(Math.abs(units) % 10000).padStart(4, '0')}`)
+
+  it('agrees with the exact rule on every limit and band edge of a wide grid', () => {
+    const nominals = [0, 3, 1500, 2550, 4000, 12345, 50150, 99999, 100000, 250005, 1234567, -25000]
+    const tolerances = [0, 1, 3, 5, 7, 10, 25, 30, 50, 100, 150, 300, 333, 500, 1000, 2500, 10000]
+    let checked = 0
+    for (const n of nominals) {
+      for (const plus of tolerances) {
+        for (const minus of [plus, 5, 1000]) {
+          // Each limit, each band edge (where a tenth of the side is whole), and a unit either side of each.
+          const edges = [n + plus, n - minus, n + plus - plus / 10, n - minus + minus / 10, n].filter(Number.isInteger)
+          for (const e of edges) {
+            for (const a of [e - 1, e, e + 1]) {
+              const got = dimensionStatus({ nominal: typed(n), tolPlus: typed(plus), tolMinus: typed(minus), actual: typed(a) })
+              expect(got, `${typed(n)} +${typed(plus)}/-${typed(minus)} at ${typed(a)}`).toBe(exact(n, plus, minus, a))
+              checked++
+            }
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(2000)
+  })
+
+  it('agrees with the exact rule on every reading across a tolerance band', () => {
+    // 100 ±0.3, 50.15 ±0.05 and an asymmetric 12.345 +0.007/-0.013, reading by reading in steps of 0.0001.
+    for (const [n, plus, minus] of [[1000000, 3000, 3000], [501500, 500, 500], [123450, 70, 130]]) {
+      for (let a = n - minus - 20; a <= n + plus + 20; a++) {
+        expect(dimensionStatus({ nominal: typed(n), tolPlus: typed(plus), tolMinus: typed(minus), actual: typed(a) })).toBe(exact(n, plus, minus, a))
+      }
+    }
   })
 })
 

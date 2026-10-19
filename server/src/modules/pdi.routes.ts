@@ -94,7 +94,8 @@ const PDI_FROM = `FROM pdi_documents d LEFT JOIN production_orders o ON o.id = d
 function pdiColumns(tz: string): SqlColumns {
   const photos = `(SELECT count(*) FROM pdi_images pi WHERE pi.pdi_id = d.id)`
   return {
-    date: { text: `to_char(d.created_at AT TIME ZONE '${tz.replace(/'/g, "''")}', 'YYYY-MM-DD')`, sort: 'd.created_at' },
+    // The factory day (08:00 to 08:00) the PDI was recorded on, as its day filter reads it.
+    date: { text: `to_char(ai.factory_day(d.created_at, '${tz.replace(/'/g, "''")}'), 'YYYY-MM-DD')`, sort: 'd.created_at' },
     order: { text: `COALESCE(btrim(o.order_number), '')` },
     customer: { text: `COALESCE(btrim(o.customer), '')` },
     // Every item the PDI covers, A to Z, as one cell: "contains" finds a PDI by any of them.
@@ -147,10 +148,10 @@ function pdiWhere(q: z.infer<typeof filterSchema>, tz: string, columns = true): 
   if (q.item) clauses.push(lineMatches(p(contains(q.item))))
   if (q.createdById) clauses.push(`d.created_by_id = ${p(q.createdById)}::uuid`)
   if (q.from || q.to) {
-    // Factory days in the factory's zone, both ends inclusive, as History reads a day.
+    // Factory days (08:00 to 08:00) in the factory's zone, both ends inclusive, as History reads a day.
     const zone = p(tz)
-    if (q.from) clauses.push(`d.created_at >= (${p(q.from)}::date)::timestamp AT TIME ZONE ${zone}`)
-    if (q.to) clauses.push(`d.created_at < ((${p(q.to)}::date + 1)::timestamp) AT TIME ZONE ${zone}`)
+    if (q.from) clauses.push(`d.created_at >= ai.factory_day_start(${p(q.from)}::date, ${zone})`)
+    if (q.to) clauses.push(`d.created_at < ai.factory_day_start(${p(q.to)}::date + 1, ${zone})`)
   }
   if (columns) clauses.push(...columnFilterClauses(pdiColumns(tz), q.cf, p))
   return { where: clauses.join(' AND '), params }

@@ -253,10 +253,45 @@ export function cleanMtcText(v: unknown): string | undefined {
   return t === '' ? undefined : t
 }
 
+/**
+ * A number as a certificate or a person writes it, in plain decimal form:
+ * "1,250" and "1,250,000" group thousands with commas, "1,250.5" too (the
+ * dot is the decimal point), "1.250,5" the other way round, and "12,5" or
+ * "0,125" have a decimal comma. A comma is a thousands separator when every
+ * comma is followed by exactly three digits and nothing else could be the
+ * decimal point, or when a dot follows it; then the groups must be whole.
+ * Anything else is not a number (NaN), never a guess.
+ */
+export function readWrittenNumber(text: string): number {
+  const s = text.replace(/\s+/g, '')
+  if (!/^[+-]?[\d.,]+$/.test(s) || !/\d/.test(s)) return Number.NaN
+  const lastComma = s.lastIndexOf(',')
+  const lastDot = s.lastIndexOf('.')
+  // The thousands groups before a decimal separator (or the end): 1 to 3 figures, then groups of exactly three.
+  const grouped = (whole: string, sep: string) => new RegExp(`^[+-]?\\d{1,3}(\\${sep}\\d{3})+$`).test(whole)
+  if (lastComma >= 0 && lastDot >= 0) {
+    // Both: whichever comes last is the decimal point, the other groups thousands.
+    const [decimal, thousands] = lastDot > lastComma ? ['.', ','] : [',', '.']
+    const at = s.lastIndexOf(decimal)
+    const whole = s.slice(0, at)
+    const fraction = s.slice(at + 1)
+    if (!/^\d+$/.test(fraction) || !grouped(whole, thousands)) return Number.NaN
+    return Number(`${whole.split(thousands).join('')}.${fraction}`)
+  }
+  if (lastComma >= 0) {
+    // A leading "0," is never a thousands group: "0,125" is an eighth.
+    if (grouped(s, ',') && !/^[+-]?0,/.test(s)) return Number(s.split(',').join(''))
+    return s.indexOf(',') === lastComma ? Number(s.replace(',', '.')) : Number.NaN
+  }
+  // Dots only: one is the decimal point; several must group thousands ("1.250.000").
+  if (s.indexOf('.') !== lastDot) return grouped(s, '.') ? Number(s.split('.').join('')) : Number.NaN
+  return Number(s)
+}
+
 /** A measurement as a register keeps it: three decimals; nothing for a blank, a non-number or a negative. */
 export function cleanMtcNumber(v: unknown): number | undefined {
   if (v === null || v === undefined || v === '') return undefined
-  const n = typeof v === 'number' ? v : Number(String(v).replace(',', '.').trim())
+  const n = typeof v === 'number' ? v : readWrittenNumber(String(v))
   if (!Number.isFinite(n) || n < 0) return undefined
   return Math.round(n * 1000) / 1000
 }

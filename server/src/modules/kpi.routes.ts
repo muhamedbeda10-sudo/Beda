@@ -34,6 +34,7 @@ import {
 } from '@qc/shared/kpi'
 import type { DashboardLayoutResponse, HiddenInsightRequest, HiddenInsightsResponse, KpiSpanResponse, KpiThresholdsResponse, SaveDashboardLayoutRequest } from '@qc/shared/api'
 import { DISPOSITIONS, PROCESSES, type Disposition, type Process } from '@qc/shared/types'
+import { factoryDay } from '@qc/shared/rules'
 import type { AppContext } from '../context'
 import type { Queryable } from '../db/pool'
 import { withTransaction } from '../db/pool'
@@ -243,9 +244,9 @@ function validDay(s: string): boolean {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s
 }
 
-/** Today's calendar day where the factory sits. */
+/** Today's factory day (08:00 to 08:00 where the factory sits): at 02:00 it is still yesterday's. */
 function factoryToday(tz: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  return factoryDay(new Date(), tz)
 }
 
 /** The YYYY-MM that is `n` months before this one. */
@@ -336,10 +337,10 @@ export function kpiRoutes(ctx: AppContext): Router {
   /** The first day anything was recorded — where the period strip begins. */
   r.get('/span', async (_req, res) => {
     const { rows } = await ctx.db.query<{ firstDay: string | null }>(
-      `SELECT to_char(LEAST(
+      `SELECT to_char(ai.factory_day(LEAST(
                 (SELECT min(started_at) FROM inspection_sessions WHERE deleted_at IS NULL),
                 (SELECT min(created_at) FROM inspection_samples WHERE deleted_at IS NULL)
-              ) AT TIME ZONE $1, 'YYYY-MM-DD') AS "firstDay"`,
+              ), $1), 'YYYY-MM-DD') AS "firstDay"`,
       [ctx.config.FACTORY_TIMEZONE],
     )
     const body: KpiSpanResponse = { firstDay: rows[0]?.firstDay ?? null }
@@ -467,7 +468,7 @@ export function kpiRoutes(ctx: AppContext): Router {
         loadGroups(db, cur, 'shift'),
         loadGroups(db, cur, 'item'),
         loadSuppliers(db, cur),
-        loadHolds(db, cur),
+        loadHolds(db, cur, thresholds),
         loadDiscipline(db, cur),
         loadInspectorRaw(db, cur),
         loadDefectRateBands(db, cur),
@@ -563,6 +564,7 @@ export function kpiRoutes(ctx: AppContext): Router {
       suppliers: suppliers.rows,
       paintByItem: paintByItem.rows,
       holds: holds.rows,
+      holdTotals: holds.totals,
       discipline,
       // The scores are an administrator's; a viewer has the names, for the filter.
       inspectorRanking: userCan(user, 'view-inspector-ranking') ? inspectorRanking : null,

@@ -258,7 +258,7 @@ describe('§20 asking a question', () => {
     const question = p.messages[0]
     expect(question.role).toBe('user')
     const blocks = question.content as { type: string; text: string }[]
-    expect(blocks[0].text).toMatch(/^<context>Today: \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(Africa\/Cairo\)<\/context>$/)
+    expect(blocks[0].text).toMatch(/^<context>Today: \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(Africa\/Cairo\), factory day \d{4}-\d{2}-\d{2}<\/context>$/)
     expect(blocks[1]).toEqual({ type: 'text', text: 'How many machines are there?' })
 
     // The second call: the question, the answer with its tool call verbatim, and every result in one message.

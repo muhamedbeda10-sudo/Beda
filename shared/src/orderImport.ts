@@ -11,6 +11,8 @@
 // file is the truth, so an empty cell clears what was stored.
 // ============================================================================
 
+import { zonedInstant } from './rules'
+
 /** A cell as the importer sends it. `null` only for a field that clears when empty: "the ERP has no value here now". */
 export type OrderCellValue = string | number | null
 
@@ -152,12 +154,52 @@ export function parseDay(value: string | null | undefined): string | null {
 }
 
 /**
+ * A moment as an export writes it, or null. ISO with an offset or "Z" is
+ * that moment. ISO without one ("2026-01-05T14:30:00", the Access agent's
+ * form, or a bare "2026-01-05") and the day-first form Access and Excel
+ * write in Egypt ("05/01/2026", "5-1-2026 14:30") are factory time: read in
+ * `timeZone`, or where the code runs without one (the browser, which sits
+ * in the factory). Never month-first: "05/01/2026" is the 5th of January.
+ * A date spelled with a month name ("Jan 5, 2026") is read as written.
+ */
+export function parseMoment(value: string | null | undefined, timeZone?: string): Date | null {
+  if (!value) return null
+  const s = value.trim()
+  const clock = String.raw`(?:[T ,]\s*(\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?)?`
+  let m = new RegExp(String.raw`^(\d{4})-(\d{1,2})-(\d{1,2})${clock}\s*(Z|[+-]\d{2}(?::?\d{2})?)?$`, 'i').exec(s)
+  let y: number, mo: number, d: number
+  if (m) {
+    ;[y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  } else {
+    m = new RegExp(String.raw`^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})${clock}$`, 'i').exec(s)
+    if (!m) {
+      // A month by name says which number is which; anything else numeric is refused, never guessed.
+      if (!/[a-z]{3}/i.test(s)) return null
+      const t = new Date(s)
+      return Number.isNaN(t.getTime()) ? null : t
+    }
+    ;[d, mo, y] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  }
+  const [h, mi, sec] = [Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0)]
+  const ms = m[7] ? Math.floor(Number(`0.${m[7]}`) * 1000) : 0
+  if (!isRealDay(y, mo, d) || h > 23 || mi > 59 || sec > 59) return null
+  const offset = m[8]
+  if (!offset) return zonedInstant(y, mo, d, h, mi, sec, ms, timeZone)
+  const utc = Date.UTC(y, mo - 1, d, h, mi, sec, ms)
+  if (offset.toUpperCase() === 'Z') return new Date(utc)
+  const o = /^([+-])(\d{2}):?(\d{2})?$/.exec(offset)!
+  const minutes = (Number(o[2]) * 60 + Number(o[3] ?? 0)) * (o[1] === '-' ? -1 : 1)
+  return new Date(utc - minutes * 60_000)
+}
+
+/**
  * One cell's text as the field's value, or why it cannot be. Numbers drop
  * thousands separators; a date becomes an ISO timestamp so the server never
- * guesses a spreadsheet's format; a day becomes YYYY-MM-DD. The one reading
- * shared by the file importer and the Access sync.
+ * guesses a spreadsheet's format (parseMoment: factory time unless it says
+ * otherwise, in `timeZone` when given); a day becomes YYYY-MM-DD. The one
+ * reading shared by the file importer and the Access sync.
  */
-export function readOrderCell(field: OrderImportField, text: string): { value: string | number } | { error: string } {
+export function readOrderCell(field: OrderImportField, text: string, timeZone?: string): { value: string | number } | { error: string } {
   if (field.kind === 'number') {
     const n = Number(text.replace(/,/g, ''))
     if (!Number.isFinite(n)) return { error: `${field.label} is not a number ("${text}")` }
@@ -165,8 +207,8 @@ export function readOrderCell(field: OrderImportField, text: string): { value: s
     return { value: n }
   }
   if (field.kind === 'date') {
-    const d = new Date(text)
-    return Number.isNaN(d.getTime()) ? { error: `${field.label} is not a date ("${text}")` } : { value: d.toISOString() }
+    const d = parseMoment(text, timeZone)
+    return d === null ? { error: `${field.label} is not a date ("${text}")` } : { value: d.toISOString() }
   }
   if (field.kind === 'day') {
     const day = parseDay(text)
@@ -225,9 +267,10 @@ export function matchOrderColumns(columns: readonly string[]): OrderColumnMatch 
  * gives it) as the importer's fields. An empty cell of a core field is left
  * out, so it never overwrites a stored value; an empty cell of an ERP detail
  * is null, which clears it. A column the row does not carry at all is left
- * out either way.
+ * out either way. A moment written without an offset is factory time:
+ * `timeZone` is the factory's (the API runs in UTC).
  */
-export function mapOrderRow(raw: Record<string, unknown>, match: OrderColumnMatch): { values: Record<string, OrderCellValue> } | { error: string } {
+export function mapOrderRow(raw: Record<string, unknown>, match: OrderColumnMatch, timeZone: string): { values: Record<string, OrderCellValue> } | { error: string } {
   const values: Record<string, OrderCellValue> = {}
   for (const f of ORDER_IMPORT_FIELDS) {
     const column = match.byField[f.key]
@@ -238,7 +281,7 @@ export function mapOrderRow(raw: Record<string, unknown>, match: OrderColumnMatc
       if (f.clearsWhenEmpty) values[f.key] = null
       continue
     }
-    const cell = readOrderCell(f, text)
+    const cell = readOrderCell(f, text, timeZone)
     if ('error' in cell) return cell
     values[f.key] = cell.value
   }

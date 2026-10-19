@@ -1,11 +1,13 @@
 // ============================================================================
 // The dashboard's period and what it is compared with (§15.1). Days are
-// calendar days where the user sits, which is the factory: the API turns
-// them into instants in the factory's zone. Everything here is pure so the
-// arithmetic can be tested without a browser.
+// factory days (08:00 to 08:00 where the factory sits, which is where the
+// user sits): the API turns them into instants in the factory's zone, so
+// "today" at 02:00 is still the day the night shift started. Everything here
+// is pure so the arithmetic can be tested without a browser.
 // ============================================================================
 
 import type { KpiRange } from '@qc/shared/kpi'
+import { factoryDay } from '@qc/shared/rules'
 
 export type PeriodPreset = 'this-month' | 'last-month' | 'last-7' | 'last-30' | 'this-quarter' | 'this-year' | 'custom'
 export type ComparePreset = 'previous-period' | 'same-last-year'
@@ -51,11 +53,21 @@ function lastDayOfMonth(y: number, m: number): number {
   return new Date(y, m + 1, 0).getDate()
 }
 
-/** The range a preset means on a given day. */
-export function presetRange(preset: PeriodPreset, today: Date, custom?: KpiRange): KpiRange {
+/** Whether a day is the last of its month. */
+function isMonthEnd(d: Date): boolean {
+  return d.getDate() === lastDayOfMonth(d.getFullYear(), d.getMonth())
+}
+
+/**
+ * The range a preset means at a moment: counted from the factory day it
+ * falls in (shared factoryDay), in the factory's zone when one is given,
+ * else where the browser sits.
+ */
+export function presetRange(preset: PeriodPreset, now: Date, custom?: KpiRange, timeZone?: string): KpiRange {
+  const t = factoryDay(now, timeZone)
+  const today = fromDay(t)
   const y = today.getFullYear()
   const m = today.getMonth()
-  const t = toDay(today)
   switch (preset) {
     case 'this-month':
       return { from: toDay(new Date(y, m, 1)), to: t }
@@ -77,25 +89,38 @@ export function presetRange(preset: PeriodPreset, today: Date, custom?: KpiRange
 }
 
 /**
- * The comparison range. "Previous period" is the same span of calendar
- * days ending the day before; for a month-to-date range it is the same days
- * of the previous month (1st to the same day number, clamped to the month's
- * end), so "this month so far" is compared with "last month at this point".
- * "Same period last year" shifts both ends back a year.
+ * The day of month `month` (a Date on its 1st) that stands for `d`: the same
+ * day number, clamped to the month's end. As the end of a range, a month's
+ * last day stands for the other month's last day, so a whole month is
+ * compared with a whole month.
+ */
+function sameDayIn(month: Date, d: Date, asEnd: boolean): Date {
+  const last = lastDayOfMonth(month.getFullYear(), month.getMonth())
+  return new Date(month.getFullYear(), month.getMonth(), asEnd && isMonthEnd(d) ? last : Math.min(d.getDate(), last))
+}
+
+/**
+ * The comparison range. "Previous period" is the same span of days ending
+ * the day before; for a range starting on the 1st it is the same days of the
+ * months before (1st to the same day number, clamped to the month's end), so
+ * "this month so far" is compared with "last month at this point", and a
+ * range ending on its month's last day ends on the last day of the month it
+ * is compared with: September with all of August, a quarter with the whole
+ * quarter before. "Same period last year" shifts both ends back a year, by
+ * the same rule.
  */
 export function compareRange(range: KpiRange, mode: ComparePreset, monthAligned: boolean): KpiRange {
   if (mode === 'same-last-year') {
     const f = fromDay(range.from)
     const t = fromDay(range.to)
-    return { from: toDay(new Date(f.getFullYear() - 1, f.getMonth(), Math.min(f.getDate(), lastDayOfMonth(f.getFullYear() - 1, f.getMonth())))), to: toDay(new Date(t.getFullYear() - 1, t.getMonth(), Math.min(t.getDate(), lastDayOfMonth(t.getFullYear() - 1, t.getMonth())))) }
+    return { from: toDay(sameDayIn(new Date(f.getFullYear() - 1, f.getMonth(), 1), f, false)), to: toDay(sameDayIn(new Date(t.getFullYear() - 1, t.getMonth(), 1), t, true)) }
   }
   if (monthAligned) {
     const f = fromDay(range.from)
     const t = fromDay(range.to)
     const months = (t.getFullYear() - f.getFullYear()) * 12 + (t.getMonth() - f.getMonth()) + 1
     const pf = new Date(f.getFullYear(), f.getMonth() - months, 1)
-    const ptMonth = new Date(t.getFullYear(), t.getMonth() - months, 1)
-    const pt = new Date(ptMonth.getFullYear(), ptMonth.getMonth(), Math.min(t.getDate(), lastDayOfMonth(ptMonth.getFullYear(), ptMonth.getMonth())))
+    const pt = sameDayIn(new Date(t.getFullYear(), t.getMonth() - months, 1), t, true)
     return { from: toDay(pf), to: toDay(pt) }
   }
   const n = daysInRange(range)

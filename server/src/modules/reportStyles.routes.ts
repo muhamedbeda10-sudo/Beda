@@ -35,7 +35,7 @@ import { parse } from '../lib/validate'
 import { requireUser, userCan, type AuthUser } from '../auth/middleware'
 import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
 import { isGranted, loadAccess } from '../ai/access'
-import { factoryDay } from '../ai/prompt'
+import { calendarDay } from '@qc/shared/rules'
 import { notGranted } from '../ai/refusals'
 import { STYLE_DRAFT_SCHEMA, STYLE_DRAFT_SYSTEM, callForPerson, imageBlock, readStyleDraft, structuredParams } from '../reportStyles/aiDrafts'
 import { logoSchema, styleNameSchema, styleSpecSchema } from '../reportStyles/styleSchema'
@@ -170,7 +170,7 @@ export function reportStylesRoutes(ctx: AppContext): Router {
       if (!current) throw notFound('That style')
       if (!current.mine) throw forbidden('Only the person who made a style changes it. Save a copy of it as your own instead.')
       if (current.version !== body.version) throw new ConflictError(current)
-      const saved = await updateStyle(tx, current, { name: body.name, spec: body.spec, logoDataUrl: body.logoDataUrl }, { id: user.id, name: user.name }, factoryDay(new Date(), tz))
+      const saved = await updateStyle(tx, current, { name: body.name, spec: body.spec, logoDataUrl: body.logoDataUrl }, { id: user.id, name: user.name }, calendarDay(new Date(), tz))
       await auditChanges(tx, audit(user, id), auditSnapshot(current), auditSnapshot(saved))
       return saved
     })

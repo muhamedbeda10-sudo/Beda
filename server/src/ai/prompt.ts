@@ -17,6 +17,7 @@ import { AI_DOMAIN_IDS, AI_PREVIEW_ROWS, isAiDay, type AiDomain } from '@qc/shar
 import { AI_DIAGRAM_MAX_NODES } from '@qc/shared/aiDiagram'
 import { AI_EXCEL_KEEP_DAYS, AI_EXCEL_MAX_ROWS, AI_EXCEL_MAX_SHEETS } from '@qc/shared/aiExcel'
 import { AUTOMATION_MIN_EVERY_MINUTES } from '@qc/shared/automation'
+import { factoryDay as factoryDayOf } from '@qc/shared/rules'
 import type { NoticePromptMode } from '../noticeAssistant/scope'
 import type { PromptPlaybook } from '../playbook/service'
 import type { AttachmentRef, StoredBlock } from './attachments'
@@ -284,9 +285,9 @@ Work like a consultant who knows the factory, not like a search box.
 - If you see a better way to reach what the person wants than the one they asked for, say so briefly; then do what they decide.
 - Carry the conversation on until you agree on something useful: when the person answers, continue from what was settled, without starting over or repeating the options.`)
   sections.push(`# Time
-- The factory's time zone is ${factoryTimeZone}. Every *_day and *_month column is a factory day or month, and literal dates and times in your queries are factory time (the session time zone is set to it).
-- The current date and time are given at the top of each question, in <context>.
-- To narrow a period, filter on the *_at timestamp columns (for example x_at >= '2026-09-01' AND x_at < '2026-10-01') and group by the *_day columns.`)
+- The factory's time zone is ${factoryTimeZone}. Production is counted by factory day: a factory day runs from 08:00 to 08:00 the next morning, so before 08:00 is still the day before and the night shift (19:00-08:00) belongs wholly to the day it started. Every *_day and *_month column is a factory day or month (ai.factory_day), and literal dates and times in your queries are factory time (the session time zone is set to it).
+- The current date and time are given at the top of each question, in <context>, with the factory day they fall in: today, yesterday and this month are counted in factory days (today is ai.factory_day(now()), never current_date).
+- To narrow a period of factory days, filter on the *_at timestamp columns from 08:00 on its first day to 08:00 after its last (for example x_at >= ai.factory_day_start('2026-09-01') AND x_at < ai.factory_day_start('2026-10-01') for September) and group by the *_day columns.`)
   if (meanings.length > 0) sections.push(`# Meanings that are easy to get wrong\n${meanings.join('\n')}`)
   sections.push(`# Answering
 - Answer in the language of the question: an Arabic question in Arabic (Egyptian Arabic is welcome), an English one in English. Keep codes, item names, order numbers and figures exactly as they are in the data.
@@ -608,7 +609,7 @@ This person may set up automations: when they ask to be alerted or notified, to 
 - An automation can only tell people (the app's bell, the chat) and open follow-ups (a task with an assignee and a deadline, which marks its session "Needs review" until it is closed). It never changes any data; if asked for anything else, say so.
 - A watch runs its query by itself every everyMinutes minutes (at least ${AUTOMATION_MIN_EVERY_MINUTES}), around the clock and every day unless the person wants otherwise: hours (from and to, HH:MM factory time; a to at or before from crosses midnight) keeps it to a stretch of the day, such as a shift, and weekdays (0 = Sunday to 6 = Saturday) to some days. Each row the query returns is one case, and each case fires once. keyColumn names a column that is unique per row, never empty, and the same for that case on every run: an id such as defect_id, sample_id or session_id. Write the query to return only the cases that need attention now, usually recent ones (for example since yesterday), with the columns a message needs.
 - titleTemplate and bodyTemplate fill {{column}} with the case's values, for example "Hold on {{machine}}: {{defect}} ({{order_number}})". Use only columns the query returns. Set sessionColumn, sampleColumn or orderColumn to the column holding the case's session id, sample id or order number, so its message links to it.
-- A report runs its sections at a factory-time HH:MM: daily (weekdays limits the days, 0 = Sunday to 6 = Saturday), weekly (weekday) or monthly (monthDay, 1 to 28). With a period (for example yesterday, or last_days with days 7), each section's query takes the period's first and last day as {{from}} and {{to}}, written on their own in date comparisons only, bounding the data on both sides: x_at >= {{from}} AND x_at < {{to}} + 1, or ai.production_between({{from}}, {{to}}, 'day'). Set summary for a short summary on top each time. Give a section a chart, as run_sql takes one (see Charts), whenever its result is a trend, a comparison or a breakdown: the delivered report draws it from each run's rows.
+- A report runs its sections at a factory-time HH:MM: daily (weekdays limits the days, 0 = Sunday to 6 = Saturday), weekly (weekday) or monthly (monthDay, 1 to 28). With a period (for example yesterday, or last_days with days 7), each section's query takes the period's first and last day as {{from}} and {{to}}, written on their own in date comparisons only, bounding the data on both sides: x_at >= ai.factory_day_start({{from}}) AND x_at < ai.factory_day_start({{to}} + 1), x_day BETWEEN {{from}} AND {{to}}, or ai.production_between({{from}}, {{to}}, 'day'). Set summary for a short summary on top each time. Give a section a chart, as run_sql takes one (see Charts), whenever its result is a trend, a comparison or a breakdown: the delivered report draws it from each run's rows.
 - A report can send one of the saved reports instead (My reports: the person's own or a shared one, such as Order tracking or Week tracking): give schedule.report with its reportId and the values its inputs take on every run, and no sections. Find it, and what it asks for, with read_report. A value given is the same on every run (the orders 20332 and 20378); an input left out takes its default on the day of each run (this week's number, this year), which is what a "this week" report wants. The report goes out as it stands at each run, with its figures, trees and charts: a change to the report reaches the next delivery. When the person wants a report that does not exist yet, build it with save_report first, then send it. Say which report it sends and the values it gives in your plan.
 - Recipients: people by user id${readsAccounts ? ' (look them up in ai.users)' : " (only ids your queries return, such as a session's opened_by_id; otherwise propose a role and tell the person they can pick people when they edit the card)"}, every account of a role (viewer, inspector, supervisor, admin), or for a watch a column of the query holding user ids, such as the inspector of each case. Channels: the bell, the chat, or both. A follow-up goes to one assignee (a user, a column of user ids, or the creator) with dueHours.
 - Write the name, the description, the templates and the section titles in the person's language, and set language to match.
@@ -631,20 +632,37 @@ export function factoryClock(at: Date, timeZone: string): string {
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
 }
 
-/** The date line a question carries: the system prompt has none, so its bytes never change. */
+/**
+ * The date line a question carries: the factory's clock, and the factory day
+ * (08:00 to 08:00) it falls in, which "today" means for production. The
+ * system prompt has none, so its bytes never change.
+ */
 export function contextLine(at: Date, timeZone: string): string {
-  return `<context>Today: ${factoryClock(at, timeZone)} (${timeZone})</context>`
+  return `<context>Today: ${factoryClock(at, timeZone)} (${timeZone}), factory day ${factoryDay(at, timeZone)}</context>`
 }
 
-/** The factory day a question was asked on, read back from its date line; null for a line contextLine did not write. */
+/**
+ * The factory day a question was asked on, read back from its date line; null
+ * for a line contextLine did not write. A line written before it named the
+ * factory day gives its clock, whose day is worked out the same way.
+ */
 export function contextDay(line: string): string | null {
-  const m = /^<context>Today: (\d{4}-\d{2}-\d{2}) \d{2}:\d{2} \([^()]*\)<\/context>$/.exec(line)
-  return m && isAiDay(m[1]) ? m[1] : null
+  const m = /^<context>Today: (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) \([^()]*\)(?:, factory day (\d{4}-\d{2}-\d{2}))?<\/context>$/.exec(line)
+  if (!m || !isAiDay(m[1])) return null
+  if (m[3] !== undefined) return isAiDay(m[3]) ? m[3] : null
+  // The clock as written, read on a UTC clock: no zone moves it.
+  return factoryDayOf(new Date(`${m[1]}T${m[2]}:00Z`), 'UTC')
 }
 
-/** The calendar day it is (or was) at `at` where the factory sits, YYYY-MM-DD. */
+/**
+ * The factory day it is (or was) at `at` where the factory sits, YYYY-MM-DD:
+ * 08:00 to 08:00, so at 02:00 it is still yesterday's (shared factoryDay).
+ * What production is counted by, and what "today" means in a question, a
+ * report's period or a delivery. A date people keep (a notice's validity, a
+ * task's due date) is a calendar date: calendarDay.
+ */
 export function factoryDay(at: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at)
+  return factoryDayOf(at, timeZone)
 }
 
 /**
