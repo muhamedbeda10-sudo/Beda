@@ -18,7 +18,8 @@
 --     (auth.routes.ts): two tabs refreshing with the same cookie at once both
 --     get an answer, and neither signs the other out.
 --   • Each table that links a photo to a record is indexed by the photo: who
---     may read a photo is decided by what links to it.
+--     may read a photo is decided by what links to it — a delivered report
+--     included: the photos each delivery shows are recorded as it is stored.
 --   • closed_at of a closed session is indexed: the dashboard's production
 --     and ai.production_sessions read closed sessions by when they closed.
 -- ============================================================================
@@ -82,6 +83,49 @@ CREATE INDEX pdi_images_image_idx ON pdi_images (image_id);
 CREATE INDEX notice_images_image_idx ON notice_images (image_id);
 CREATE INDEX chat_message_images_image_idx ON chat_message_images (image_id);
 CREATE INDEX task_message_images_image_idx ON task_message_images (image_id);
+
+-- ---- The photos a delivered report shows ----------------------------------------
+-- A delivered report (ai_report_deliveries) shows its content to whoever it
+-- went to: a section whose result has a photo_id column is drawn as those
+-- photos. Which photos each delivery holds is written down as it is stored,
+-- so who may see a photo is one indexed look-up, not a read of every
+-- delivery's rows. Deliveries are never changed once stored.
+
+CREATE TABLE ai_report_delivery_images (
+  delivery_id uuid NOT NULL REFERENCES ai_report_deliveries (id),
+  image_id    uuid NOT NULL REFERENCES images (id),
+  PRIMARY KEY (delivery_id, image_id)
+);
+CREATE INDEX ai_report_delivery_images_image_idx ON ai_report_delivery_images (image_id);
+
+-- The stored photos a delivery's sections name: each section's photo_id
+-- column (any case, as the app finds it), each cell that is an image's id.
+CREATE FUNCTION ai_report_delivery_image_ids(sections json) RETURNS SETOF uuid LANGUAGE sql STABLE AS $$
+  SELECT DISTINCT i.id
+    FROM json_array_elements(sections) s
+   CROSS JOIN LATERAL (
+     SELECT (c.ord - 1)::int AS at
+       FROM json_array_elements_text(CASE WHEN json_typeof(s -> 'columns') = 'array' THEN s -> 'columns' ELSE '[]'::json END) WITH ORDINALITY c (name, ord)
+      WHERE lower(btrim(c.name)) = 'photo_id'
+      ORDER BY c.ord LIMIT 1) p
+   CROSS JOIN LATERAL json_array_elements(CASE WHEN json_typeof(s -> 'rows') = 'array' THEN s -> 'rows' ELSE '[]'::json END) r
+    JOIN images i
+      ON i.id = CASE WHEN json_typeof(r) = 'array' AND (r ->> p.at) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                     THEN (r ->> p.at)::uuid END
+$$;
+
+CREATE FUNCTION ai_report_deliveries_record_images() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO ai_report_delivery_images (delivery_id, image_id)
+  SELECT NEW.id, x FROM ai_report_delivery_image_ids(NEW.sections) x;
+  RETURN NULL;
+END $$;
+CREATE TRIGGER ai_report_deliveries_record_images AFTER INSERT ON ai_report_deliveries
+  FOR EACH ROW EXECUTE FUNCTION ai_report_deliveries_record_images();
+
+-- The deliveries already stored.
+INSERT INTO ai_report_delivery_images (delivery_id, image_id)
+SELECT d.id, x FROM ai_report_deliveries d CROSS JOIN LATERAL ai_report_delivery_image_ids(d.sections) x;
 
 -- ---- Closed sessions by when they closed ---------------------------------------
 

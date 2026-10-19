@@ -54,6 +54,12 @@ const fieldsSchema = z.object({
  *   • an inspection's (a defect, paint, PT, a session note) — whoever opens
  *     sessions, or is given the assistant's Inspections;
  *   • a PDI's — History's readers, or whoever is given Orders and PDI;
+ *   • an inspection's or a PDI's that a delivered report shows — whoever
+ *     may open that delivery (it went to them, or they made the automation),
+ *     whatever their screens: a delivered report shows its content to whoever
+ *     it went to. Recorded per delivery as it is stored (migration 0071);
+ *     only the photos the assistant can show (ai.inspection_photos,
+ *     ai.pdi_photos), whatever else a result's photo_id column might hold;
  *   • a chat message's — the members of its conversation, as its files;
  *   • a task message's — the people on the task;
  *   • a notice's — whoever the notice is for, or who manages notices.
@@ -83,6 +89,17 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
                      JOIN chat_conversations c ON c.id = m.conversation_id AND c.deleted_at IS NULL
                     WHERE x.image_id = i.id
                       AND (c.kind = 'general' OR EXISTS (SELECT 1 FROM chat_members cm WHERE cm.conversation_id = c.id AND cm.user_id = $2 AND cm.removed_at IS NULL))))
+             OR (EXISTS (
+                   SELECT 1 FROM ai_report_delivery_images x
+                     JOIN ai_report_deliveries d ON d.id = x.delivery_id
+                     JOIN ai_automations a ON a.id = d.automation_id
+                    WHERE x.image_id = i.id
+                      AND (a.creator_id = $2 OR EXISTS (SELECT 1 FROM ai_report_delivery_recipients r WHERE r.delivery_id = d.id AND r.user_id = $2)))
+                 AND (EXISTS (SELECT 1 FROM defect_images x WHERE x.image_id = i.id)
+                      OR EXISTS (SELECT 1 FROM paint_sample_images x WHERE x.image_id = i.id)
+                      OR EXISTS (SELECT 1 FROM pt_record_images x WHERE x.image_id = i.id)
+                      OR EXISTS (SELECT 1 FROM session_note_images x WHERE x.image_id = i.id)
+                      OR EXISTS (SELECT 1 FROM pdi_images x WHERE x.image_id = i.id)))
              OR EXISTS (
                    SELECT 1 FROM task_message_images x
                      JOIN task_messages m ON m.id = x.message_id
