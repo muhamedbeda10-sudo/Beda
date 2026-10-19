@@ -62,7 +62,6 @@ import { useApp } from '@/store/AppContext'
 import { useAi } from './AiAssistantProvider'
 import { Notice } from './AiNotice'
 import { DeleteReportModal, ReportTitleEditor } from './AiReportList'
-import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figureView'
 import { AiChart } from './AiChart'
 import { AiPhotoGallery } from './AiPhotoGallery'
 import { AiResultModal, PreviewTable } from './AiResultTable'
@@ -547,9 +546,8 @@ const ReportSection = memo(function ReportSection({
   const [table, setTable] = useState(false)
   const [note, setNote] = useState(false)
   const display = layout?.display ?? 'table'
-  // Drawn as the answer drew it, from this run's rows; the switch shows it or the rows themselves.
+  // Drawn as the answer drew it, from this run's rows; Open table shows the rows themselves.
   const chart = useMemo(() => queryChart(part), [part])
-  const [view, setView] = useState<FigureView>('chart')
   const tree = part.ok && display === 'tree' && layout?.tree && part.columns.includes(layout.tree.key) && part.columns.includes(layout.tree.parent)
   // A section of photos is shown as the photos, whatever else it was built as.
   const photos = useMemo(() => queryPhotos(part), [part])
@@ -578,7 +576,6 @@ const ReportSection = memo(function ReportSection({
             <Info className="h-4 w-4" />
           </button>
         )}
-        {chart && part.ok && display === 'table' && !photos && <ChartTableSwitch value={view} onChange={setView} className="ms-auto" />}
       </header>
 
       <div className="space-y-2.5 px-4 pb-4">
@@ -593,7 +590,7 @@ const ReportSection = memo(function ReportSection({
           <SectionFigures columns={part.columns} rows={part.rows} />
         ) : tree ? (
           <SectionTree columns={part.columns} rows={part.rows} tree={layout!.tree!} truncated={part.truncated} />
-        ) : chart && view === 'chart' && display === 'table' ? (
+        ) : chart && display === 'table' ? (
           <AiChart model={chart} />
         ) : part.ok ? (
           <PreviewTable part={part} wrap />
@@ -607,7 +604,7 @@ const ReportSection = memo(function ReportSection({
             <button type="button" onClick={() => setTable(true)} className={SMALL_BTN}>
               <Table2 className="h-3.5 w-3.5" /> Open table
             </button>
-            {chart && view === 'chart' && display === 'table' && !photos && <ChartImageTool model={chart} title={chart.title ?? part.purpose} className="text-xs text-muted" />}
+            {chart && display === 'table' && !photos && <ChartImageTool model={chart} title={chart.title ?? part.purpose} className="text-xs text-muted" />}
           </div>
         )}
       </div>

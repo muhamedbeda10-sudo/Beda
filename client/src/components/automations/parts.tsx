@@ -18,14 +18,13 @@ import { cn } from '@/lib/utils'
 import { downloadWorkbook, sheetName } from '@/lib/xlsxWrite'
 import { useApp } from '@/store/AppContext'
 import { AiChart } from '@/components/ai/AiChart'
-import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figureView'
 import { AiResultModal, PreviewTable } from '@/components/ai/AiResultTable'
-import { queryChart } from '@/components/ai/chartData'
+import { queryChart, type ChartModel } from '@/components/ai/chartData'
 import { AiPhotoGallery } from '@/components/ai/AiPhotoGallery'
 import { queryPhotos } from '@/components/ai/photos'
 import { sectionAsQuery } from '@/components/ai/reports'
 import { SectionFigures, SectionTree, sectionDisplay } from '@/components/ai/AiReportLayouts'
-import { TableTool, aiTableFilename } from '@/components/ai/AiTable'
+import { IconTool, TableTool, aiTableFilename } from '@/components/ai/AiTable'
 import { aiCellValue } from '@/components/ai/exportAiResult'
 import {
   KIND_LABEL,
@@ -226,9 +225,10 @@ export function rowsAsQuery(id: string, title: string, columns: string[], rows: 
  * Some of a run's rows, in the assistant's table, opening large with Excel's
  * filters; Export Excel saves the rows on screen (a run's rows are not run
  * again for it). The id columns come last, on screen and in the workbook
- * alike, so the two read the same.
+ * alike, so the two read the same. With a chart, the chart is shown instead,
+ * and Open table (an icon under it) opens the same rows large.
  */
-export function CasesTable({ title, columns: given, rows: givenRows, more = false }: { title: string; columns: string[]; rows: AiCell[][]; more?: boolean }) {
+export function CasesTable({ title, columns: given, rows: givenRows, more = false, chart }: { title: string; columns: string[]; rows: AiCell[][]; more?: boolean; chart?: ChartModel | null }) {
   const { toast } = useApp()
   const [open, setOpen] = useState(false)
   const { columns, rows } = useMemo(() => {
@@ -242,14 +242,23 @@ export function CasesTable({ title, columns: given, rows: givenRows, more = fals
   }
   return (
     <>
-      <PreviewTable
-        part={part}
-        tools={
-          <TableTool onClick={() => setOpen(true)} disabled={rows.length === 0} icon={<Table2 className="h-3.5 w-3.5" />}>
-            Open table
-          </TableTool>
-        }
-      />
+      {chart ? (
+        <div>
+          <AiChart model={chart} />
+          <div className="mt-1.5 flex justify-end">
+            <IconTool onClick={() => setOpen(true)} disabled={rows.length === 0} label="Open table" tip="The chart's rows, in a large table" icon={<Table2 className="h-3.5 w-3.5" />} />
+          </div>
+        </div>
+      ) : (
+        <PreviewTable
+          part={part}
+          tools={
+            <TableTool onClick={() => setOpen(true)} disabled={rows.length === 0} icon={<Table2 className="h-3.5 w-3.5" />}>
+              Open table
+            </TableTool>
+          }
+        />
+      )}
       {/* The large table holds the same rows; its words on "more matched" are a query's, which these rows are not. */}
       {open && <AiResultModal part={{ ...part, truncated: false }} onClose={() => setOpen(false)} onExport={exportRows} exporting={false} exportTip="Saves the rows shown here as a workbook" />}
     </>
@@ -308,12 +317,11 @@ function SectionPreview({ section, index, initiallyOpen }: { section: AiReportSe
   const [open, setOpen] = useState(initiallyOpen)
   const meta = section.ok ? `${section.rowCount.toLocaleString('en-US')}${section.truncated ? '+' : ''} ${section.rowCount === 1 && !section.truncated ? 'row' : 'rows'}` : 'Failed'
   const shown = section.rows.slice(0, AI_PREVIEW_ROWS)
-  // The chart the delivered report will draw, as this run would draw it; the switch shows it or the rows themselves.
+  // The chart the delivered report will draw, as this run would draw it; Open table under it shows the rows themselves.
   const display = sectionDisplay(section)
   // A section of photos is shown as the photos, whatever else it was built as.
   const photos = useMemo(() => queryPhotos(section), [section])
   const chart = useMemo(() => (section.ok && display === 'table' && !photos ? queryChart(sectionAsQuery(section, '', index)) : null), [section, index, display, photos])
-  const [view, setView] = useState<FigureView>('chart')
   return (
     <section className={cn('overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', section.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-2 px-3 py-2 text-start hover:bg-slate-50 dark:hover:bg-slate-800/60 touch:min-h-[44px]">
@@ -331,21 +339,14 @@ function SectionPreview({ section, index, initiallyOpen }: { section: AiReportSe
               {section.note}
             </p>
           )}
-          {chart && (
-            <div className="flex justify-end">
-              <ChartTableSwitch value={view} onChange={setView} />
-            </div>
-          )}
           {photos ? (
             <AiPhotoGallery photos={photos.slice(0, AI_PREVIEW_ROWS)} />
           ) : display === 'figures' ? (
             <SectionFigures columns={section.columns} rows={section.rows} />
           ) : display === 'tree' && section.tree ? (
             <SectionTree columns={section.columns} rows={shown} tree={section.tree} truncated={section.truncated || section.rows.length > shown.length} />
-          ) : chart && view === 'chart' ? (
-            <AiChart model={chart} />
           ) : section.ok ? (
-            <CasesTable title={section.title} columns={section.columns} rows={shown} more={section.truncated || section.rows.length > shown.length} />
+            <CasesTable title={section.title} columns={section.columns} rows={shown} more={section.truncated || section.rows.length > shown.length} chart={chart} />
           ) : (
             <p dir="auto" className="whitespace-pre-wrap break-words rounded-lg bg-rose-50 px-2.5 py-2 text-xs text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
               {section.error || 'The query failed.'}

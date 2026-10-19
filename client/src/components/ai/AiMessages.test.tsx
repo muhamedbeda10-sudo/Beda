@@ -98,17 +98,19 @@ describe('an answer as it ended', () => {
     expect(html.indexOf('Headline figures')).toBeLessThan(html.indexOf('defect pieces on two machines'))
   })
 
-  it('draws the chart its query asked for after the text, with a switch to the query’s table and its tools under it', () => {
+  it('draws the chart its query asked for after the text, with its tools under it as icons', () => {
     expect(html).toContain('class="ai-figure')
     expect(html).toContain('Defects by machine')
     expect(html).toMatch(/<svg[^>]*role="img"/)
     expect(html.indexOf('defect pieces on two machines')).toBeLessThan(html.indexOf('ai-figure'))
-    // The chart first; its table a press away, Open table and Export Excel under either.
-    const figure = html.slice(html.indexOf('ai-figure'))
-    expect(figure).toMatch(/aria-label="Show as"/)
-    expect(figure).toMatch(/aria-pressed="true"[^>]*>.*?Chart/)
-    expect(figure.indexOf('<svg')).toBeLessThan(figure.indexOf('Open table'))
-    expect(figure).toContain('Excel')
+    // The chart alone, no Chart / Table switch: its rows are Open table away.
+    const figure = html.slice(html.indexOf('ai-figure'), html.indexOf('How I got this'))
+    expect(figure).not.toMatch(/aria-label="Show as"/)
+    // Download image, Open table and Export Excel, in that order, each its icon alone, named for a screen reader and its tooltip.
+    const tools = [...figure.matchAll(/<button[^>]*aria-label="([^"]+)"[^>]*>(.*?)<\/button>/g)].map((m) => ({ name: m[1], inside: m[2] }))
+    expect(tools.map((t) => t.name)).toEqual(['Download image', 'Open table', 'Export Excel'])
+    for (const t of tools) expect(t.inside.replace(/<svg.*?<\/svg>/g, '')).toBe('')
+    expect(figure.indexOf('<svg')).toBeLessThan(figure.indexOf('aria-label="Download image"'))
   })
 
   it('offers no Excel to someone the owner has not allowed it: on the chart, the query cards or the answer’s tables', () => {

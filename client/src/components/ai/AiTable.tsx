@@ -121,6 +121,18 @@ export function TableTool({ onClick, disabled, tip, icon, children }: { onClick:
   )
 }
 
+const ICON_TOOL_BTN =
+  'inline-grid h-7 w-7 place-items-center rounded-md text-slate-600 [&>svg]:h-4 [&>svg]:w-4 transition-colors hover:bg-slate-100 hover:text-brand-700 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white touch:h-10 touch:w-10'
+
+/** A tool shown as its icon alone: its name is what a screen reader says and what its tooltip (or a long press) reads. */
+export function IconTool({ onClick, disabled, label, tip, icon }: { onClick: () => void; disabled?: boolean; label: string; tip?: string; icon: ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} aria-label={label} data-tip={tip ? `${label} — ${tip}` : label} className={ICON_TOOL_BTN}>
+      {icon}
+    </button>
+  )
+}
+
 /** How many rows, at the start of a table's tools. */
 export function RowCount({ count, more = false }: { count: number; more?: boolean }) {
   return (
@@ -150,9 +162,11 @@ export function CopyTableTool({ tsv }: { tsv: () => string }) {
 }
 
 /** Export Excel; `exporting` shows it at work, `wait` says why it cannot run yet. */
-export function ExportTool({ onExport, exporting = false, wait, tip }: { onExport: () => void; exporting?: boolean; wait?: string; tip?: string }) {
+export function ExportTool({ onExport, exporting = false, wait, tip, iconOnly = false }: { onExport: () => void; exporting?: boolean; wait?: string; tip?: string; iconOnly?: boolean }) {
+  const icon = exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />
+  if (iconOnly) return <IconTool onClick={onExport} disabled={exporting || !!wait} label={exporting ? 'Exporting…' : 'Export Excel'} tip={wait ?? tip} icon={icon} />
   return (
-    <TableTool onClick={onExport} disabled={exporting || !!wait} tip={wait ?? tip} icon={exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}>
+    <TableTool onClick={onExport} disabled={exporting || !!wait} tip={wait ?? tip} icon={icon}>
       {exporting ? (
         'Exporting…'
       ) : (
