@@ -256,7 +256,7 @@ describe('§20 a question runs on Sonnet at high, or on Opus at high when the ro
     // The router read the question first, on Sonnet, in a fixed shape.
     const router = routerCalls().slice(routed)
     expect(router).toHaveLength(1)
-    expect(router[0].params).toMatchObject({ model: 'claude-sonnet-5-5', max_tokens: 200, output_config: { format: { type: 'json_schema' } } })
+    expect(router[0].params).toMatchObject({ model: 'claude-sonnet-5-5', max_tokens: 300, thinking: { type: 'between_tools' }, output_config: { format: { type: 'json_schema' } } })
     expect(JSON.stringify(router[0].params.messages)).toContain('How many machines?')
 
     // A standard question: Sonnet 5.5 at high effort, with its server-side fallback.

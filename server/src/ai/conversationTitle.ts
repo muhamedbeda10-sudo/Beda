@@ -17,7 +17,7 @@
 import { AI_CONVERSATION_TITLE_MAX, type AiConversation } from '@qc/shared/ai'
 import type { Queryable } from '../db/pool'
 import { usageOf } from './assistant'
-import type { AiModelClient, ModelMessage } from './model'
+import { noThinking, type AiModelClient, type ModelMessage } from './model'
 import { CONVERSATION_SELECT, recordUsage, toConversation } from './transcript'
 
 /** A title is a few words: this is room enough, and a cap on the call's cost. */
@@ -82,6 +82,7 @@ export async function giveConversationTitle(r: TitleRequest): Promise<AiConversa
       {
         model: r.titleModel,
         max_tokens: TITLE_MAX_TOKENS,
+        ...noThinking(r.titleModel),
         system: TITLE_SYSTEM,
         messages: [{ role: 'user', content: titleRequest(r.question) }],
       },

@@ -14,6 +14,19 @@ export type ModelMessage = Anthropic.Beta.BetaMessage
 export type ModelStreamEvent = Anthropic.Beta.BetaRawMessageStreamEvent
 export type CompleteParams = Anthropic.Beta.MessageCreateParamsNonStreaming
 
+/**
+ * A short call that should answer at once (the router's level, a title), not
+ * think. On Sonnet 5.5 a request that says nothing of thinking thinks
+ * (adaptively), and the thinking counts against the call's small max_tokens:
+ * a question that sets it thinking spends them all and the reply comes back
+ * with no answer. `between_tools` is Sonnet 5.5's way to turn thinking off for
+ * a call without tools (no other field beside it; accepted at effort high or
+ * below, the default). Another model takes its default.
+ */
+export function noThinking(model: string): Pick<CompleteParams, 'thinking'> {
+  return model === 'claude-sonnet-5-5' ? { thinking: { type: 'between_tools' } } : {}
+}
+
 /** What the answer loop reads from one streamed call: the SDK's BetaMessageStream, as much of it as is used. */
 export interface ModelStream {
   /** Every event as it arrives, tool input deltas included. */

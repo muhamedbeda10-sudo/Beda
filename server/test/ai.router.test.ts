@@ -11,8 +11,11 @@ const message = (t: string) => ({ content: [text(t)] }) as unknown as ModelMessa
 describe('§20 the router', () => {
   it('asks Sonnet, without thinking, in a fixed shape, with the files the question carries and the question before for a follow-up', () => {
     const first = routerRequest({ question: '  How many   coils were held?  ' })
-    expect(first).toMatchObject({ model: 'claude-sonnet-5-5', max_tokens: 200, system: ROUTER_SYSTEM, output_config: { format: { type: 'json_schema' } } })
-    expect(first).not.toHaveProperty('thinking')
+    expect(first).toMatchObject({ model: 'claude-sonnet-5-5', max_tokens: 300, system: ROUTER_SYSTEM, output_config: { format: { type: 'json_schema' } } })
+    // Said outright: on Sonnet 5.5 a request silent about thinking thinks, and spends the reply's few tokens on it.
+    expect(first.thinking).toEqual({ type: 'between_tools' })
+    // Structured outputs are generally available: no beta header.
+    expect(first).not.toHaveProperty('betas')
     expect(first.messages).toEqual([{ role: 'user', content: 'The question to sort:\nHow many coils were held?' }])
     const next = routerRequest({ question: 'And last month?', previous: { question: 'Trend of rejects by machine', level: 'chat-analysis' } })
     expect(next.messages[0].content).toBe('The question before it in this conversation (answered as analysis):\nTrend of rejects by machine\n\nThe question to sort:\nAnd last month?')
@@ -49,6 +52,22 @@ describe('§20 the router', () => {
     gone.abort()
     model.completeWith = () => '{"level":"deep","reason":"x"}'
     expect((await chooseLevel({ model, apiKey: 'k', question: 'Why?', signal: gone.signal })).message).toBeNull()
+  })
+
+  it('falls back, and says why in the log, when the reply ran out before it named a level', async () => {
+    // What the router got on a hard question while it thought: all its tokens on thinking, no level written.
+    const model = new ScriptedModel()
+    model.complete = async () =>
+      ({ content: [{ type: 'thinking', thinking: '', signature: 's' }], stop_reason: 'max_tokens', usage: { input_tokens: 400, output_tokens: 300 } }) as unknown as ModelMessage
+    const warnings: string[] = []
+    const warn = console.warn
+    console.warn = (...a: unknown[]) => void warnings.push(a.join(' '))
+    try {
+      expect(await chooseLevel({ model, apiKey: 'k', question: 'Root cause of the welding defects this quarter?' })).toMatchObject({ level: AI_ROUTER_FALLBACK, reason: null })
+    } finally {
+      console.warn = warn
+    }
+    expect(warnings.join('\n')).toContain('stop: max_tokens')
   })
 
   it('names the files by kind', () => {

@@ -13,17 +13,15 @@
 //     caller, with the answer's own calls.
 // ============================================================================
 
-import type Anthropic from '@anthropic-ai/sdk'
 import { AI_JOBS, AI_LEVEL_NAMES, AI_ROUTER_FALLBACK, type AiAttachmentKind, type AiChatLevel, type AiRecordedChatLevel } from '@qc/shared/ai'
-import type { AiModelClient, CompleteParams, ModelMessage } from './model'
+import { noThinking, type AiModelClient, type CompleteParams, type ModelMessage } from './model'
 
 /** How long the router may take before the question goes on at the standard level. */
 export const ROUTER_TIMEOUT_MS = 8_000
 /** A level and a sentence: room enough, and a cap on the call's cost. */
-const ROUTER_MAX_TOKENS = 200
+const ROUTER_MAX_TOKENS = 300
 /** How much of a question the router reads: its start says what it asks. */
 const QUESTION_CHARS = 2_000
-const STRUCTURED_OUTPUTS_BETA: Anthropic.Beta.AnthropicBeta = 'structured-outputs-2025-11-13'
 
 const LEVELS: Record<'standard' | 'deep', AiChatLevel> = { standard: 'chat-standard', deep: 'chat-deep' }
 
@@ -76,7 +74,8 @@ export function routerRequest(input: Pick<RouterInput, 'question' | 'previous' |
   return {
     model: AI_JOBS.router.model,
     max_tokens: ROUTER_MAX_TOKENS,
-    betas: [STRUCTURED_OUTPUTS_BETA],
+    // It answers at once: thinking would spend the reply's few tokens and leave no level (noThinking).
+    ...noThinking(AI_JOBS.router.model),
     system: ROUTER_SYSTEM,
     output_config: { format: { type: 'json_schema', schema: ROUTER_SCHEMA as unknown as Record<string, unknown> } },
     messages: [{ role: 'user', content: `${before}The question to sort:\n${clip(input.question) || '(no words)'}${files}` }],
@@ -122,5 +121,6 @@ export async function chooseLevel(input: RouterInput): Promise<RouterResult> {
     return { level: AI_ROUTER_FALLBACK, reason: null, message: null }
   }
   const read = readRouterReply(message)
+  if (!read) console.warn(`[ai] the router's reply named no level (stop: ${message.stop_reason ?? 'none'}); the question goes on at the standard level`)
   return read ? { ...read, message } : { level: AI_ROUTER_FALLBACK, reason: null, message }
 }

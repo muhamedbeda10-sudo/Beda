@@ -330,7 +330,7 @@ export interface AiJobRun {
   effort: AiEffort
 }
 
-/** Each job's model and effort. The router and the title think not: their effort is not sent. */
+/** Each job's model and effort. The router and the titles do not think (server: noThinking, the request says so), so their effort is not sent. */
 export const AI_JOBS: Readonly<Record<AiJob, AiJobRun>> = {
   'chat-standard': { model: AI_STANDARD_MODEL, effort: AI_EFFORT },
   'chat-deep': { model: AI_DEEP_MODEL, effort: AI_EFFORT },

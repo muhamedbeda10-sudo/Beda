@@ -52,6 +52,8 @@ describe('§20 the title an answer is printed under', () => {
     expect(app.model.completions).toHaveLength(1)
     const call = app.model.completions[0].params
     expect(call.model).toBe(AI_JOBS.title.model)
+    // A title is answered at once: thinking would spend its few tokens (noThinking).
+    expect(call.thinking).toEqual({ type: 'between_tools' })
     expect(call.system).toBe(REPORT_TITLE_SYSTEM)
     expect(call.messages[0].content).toBe(reportTitleRequest('J، histogram مع Cp وCpk', 'العملية مش قادرة تمسك سماحية البعد J على ماكينة Stam Upright 24.'))
     // Its cost is the person's, kept with the answer.

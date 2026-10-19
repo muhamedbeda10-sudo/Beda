@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-19.1',
+    date: '2026-10-19',
+    title: 'Hard questions go to Opus again',
+    items: [
+      { text: 'Fixed: the AI assistant answered every question on Claude Sonnet, even questions that need deep work (root causes, investigations). The quick check that reads each question first ran out of room before it could choose, and so always chose Sonnet. Hard questions now go to Claude Opus, as intended; AI settings → Activity shows each question’s model and why.' },
+      { text: 'Fixed for the same reason: conversation titles and the titles of printed answers are given by the assistant again, instead of the question’s first words or “Quality report”.' },
+    ],
+  },
+  {
     id: '2026-10-18.4',
     date: '2026-10-18',
     title: 'Save any photo on the device',
