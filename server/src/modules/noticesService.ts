@@ -163,7 +163,7 @@ export async function withdrawNotice(tx: Queryable, tz: string, by: NoticeWriter
   return (await loadNotice(tx, tz, id))!
 }
 
-/** Take a notice out of every bell and list, in the caller's transaction. The record stays for the audit. */
+/** Take a notice out of everyone's Notices and every list, in the caller's transaction. The record stays for the audit. */
 export async function deleteNotice(tx: Queryable, by: NoticeWriter, id: string): Promise<void> {
   const { rowCount } = await tx.query(`UPDATE notices SET deleted_at = now(), deleted_by_id = $2 WHERE id = $1 AND deleted_at IS NULL`, [id, by.id])
   if (!rowCount) throw notFound('That notice')

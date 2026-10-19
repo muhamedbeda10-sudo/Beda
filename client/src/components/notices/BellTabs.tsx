@@ -1,9 +1,8 @@
 // ============================================================================
 // The bell's tabs: what it holds side by side — alerts, reports,
 // follow-ups and the person's tasks — each with its icon, its name and how many wait
-// there, red when one of them is overdue. As many columns as there are tabs,
-// so they never scroll out of sight in the bell's narrow drawer; with five,
-// the names a size smaller, so "Follow-ups" still fits a phone's width.
+// there, red when one of them is overdue. As many columns as there are tabs
+// (four at most), so they never scroll out of sight in the bell's narrow drawer.
 // ============================================================================
 
 import type { ReactNode } from 'react'
@@ -33,8 +32,7 @@ export function BellTabs<T extends string>({ tabs, value, onChange, label, class
             aria-selected={on}
             onClick={() => onChange(t.value)}
             className={cn(
-              'relative flex min-h-[52px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 font-semibold transition-colors touch:min-h-[56px]',
-              tabs.length >= 5 ? 'text-[11px] sm:text-xs' : 'text-xs',
+              'relative flex min-h-[52px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-xs font-semibold transition-colors touch:min-h-[56px]',
               on ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300' : 'text-muted hover:text-slate-700 dark:hover:text-slate-200',
             )}
           >

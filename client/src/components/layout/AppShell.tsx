@@ -4,6 +4,7 @@ import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, Info, LogOut, M
 import { WhatsNewPrompt } from '@/components/releases/WhatsNew'
 import { NoticeBell } from '@/components/notices/NoticeBell'
 import { NoticesButton } from '@/components/notices/NoticesButton'
+import { CountBadge } from '@/components/ui/CountBadge'
 import { useChatUnread } from '@/services/queries'
 import { Brand } from '@/components/brand/Brand'
 import { useApp } from '@/store/AppContext'
@@ -69,16 +70,7 @@ function ChatButton() {
       aria-current={inChat ? 'page' : undefined}
     >
       <MessagesSquare className="h-5 w-5" />
-      {unread > 0 && (
-        <span
-          className={cn(
-            'absolute -right-0.5 -top-0.5 grid min-w-[18px] place-items-center rounded-full px-1 text-[10px] font-bold leading-[18px] text-white ring-2 ring-white dark:ring-slate-900',
-            mentions > 0 ? 'bg-accent-500' : 'bg-rose-600',
-          )}
-        >
-          {unread > 99 ? '99+' : unread}
-        </span>
-      )}
+      <CountBadge count={unread} tone={mentions > 0 ? 'accent' : 'rose'} />
     </button>
   )
 }
@@ -249,7 +241,8 @@ function Shell({ children }: { children: ReactNode }) {
           </nav>
 
           {/* Right — chat, notices, the bell, administration, account (the theme is in the account panel / the menu; the assistant floats in the bottom corner) */}
-          <div className="ml-auto flex shrink-0 items-center justify-end gap-1 lg:flex-1">
+          {/* Below 360px (the smallest phones) the four buttons sit side by side with no gap, so the last keeps its margin. */}
+          <div className="ml-auto flex shrink-0 items-center justify-end gap-1 max-[359px]:gap-0 lg:flex-1">
             {can('use-chat') && <ChatButton />}
             {/* §16 — notices on a button of their own, for whoever receives them or writes them; §21 — everyone has the bell for their alerts. */}
             <NoticesButton receives={can('read-notices')} manage={can('manage-notices')} />

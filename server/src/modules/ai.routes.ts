@@ -33,7 +33,7 @@
 // (automations.routes.ts).
 //
 // §23 — every NEW conversation can read notices as the app shows them to the
-// person (their bell; every notice for an administrator). An administrator
+// person (their Notices; every notice for an administrator). An administrator
 // the owner allows (the owner implicitly) also gets the tools to draft a
 // notice, a change, a withdrawal or a deletion as a card, applied or
 // discarded here by the person who asked, while they still may — their role

@@ -1,5 +1,5 @@
 // ============================================================================
-// §16 — targeted notices and the bell.
+// §16 — targeted notices: the Notices button at the top (the megaphone), and before an inspection.
 //
 //   Readers:  GET  /inbox            everything they may see, with their status
 //             POST /match            what is still to be read where they are

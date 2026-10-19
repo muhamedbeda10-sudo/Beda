@@ -3,9 +3,9 @@
 // checked that the person still has the assistant before every tool call;
 // their account and role are read here again on every call too, so an
 // administrator demoted while a conversation goes on reads only their own
-// bell from the next call on, and can no longer have a notice written.
+// Notices from the next call on, and can no longer have a notice written.
 //
-//   • everyone with the assistant reads what the app shows them: their bell;
+//   • everyone with the assistant reads what the app shows them: their Notices (the megaphone at the top);
 //   • an administrator reads every notice and who read it, as the Notices
 //     page shows it;
 //   • an administrator the owner allows (the owner implicitly) may also have
@@ -42,7 +42,7 @@ export async function currentAccount(q: Queryable, userId: string): Promise<Noti
 /** Reads every notice and who saw and acknowledged it, as the Notices page does. */
 export const readsEveryNotice = (who: { permissions: readonly Permission[] }): boolean => can(who.permissions, 'manage-notices')
 
-/** Has a bell at all: a person without one is shown no notices in the app. */
+/** Is sent notices at all: a person who is not is shown none in the app. */
 export const receivesNotices = (who: { permissions: readonly Permission[] }): boolean => can(who.permissions, 'read-notices')
 
 /** The person, when they may have the assistant write notices now (mayManageNotices); null otherwise. */
@@ -57,7 +57,7 @@ export async function noticeManager(q: Queryable, config: Config, userId: string
 
 /**
  * What the prompt of a new conversation says about notices, fixed when it
- * starts like the rest of the prompt: a reader of their own bell, an
+ * starts like the rest of the prompt: a reader of their own Notices, an
  * administrator who reads every notice, or one who may also have notices
  * written. The tools read the person again on every call either way.
  */

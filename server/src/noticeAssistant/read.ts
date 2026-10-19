@@ -1,7 +1,7 @@
 // ============================================================================
 // §23 — reading notices through the assistant, exactly as the app shows them.
 //
-//   • a person reads their bell (modules/notices.ts loadInbox, the very same
+//   • a person reads their Notices (modules/notices.ts loadInbox, the very same
 //     call): the notices aimed at them by name, role or everyone, and one
 //     aimed at a place only after they met it there; with whether they read
 //     and acknowledged each themselves — never anyone else's reading;
@@ -79,7 +79,7 @@ function namesTarget(targets: readonly NoticeTarget[], kind: NoticeTargetKind, v
   })
 }
 
-/** The filters every list applies, the same for the bell and for every notice. */
+/** The filters every list applies, the same for a person's Notices and for every notice. */
 function matches(n: ReadNotice, q: ListNoticesQuery, today: string, timeZone: string): boolean {
   const status = q.status ?? 'active'
   if (status !== 'all' && noticeStatus(n, today) !== status) return false
@@ -165,17 +165,17 @@ function bounded(head: Record<string, unknown>, key: string, rows: unknown[], ta
   return text
 }
 
-const NO_BELL = (_role: Role) =>
+const NO_NOTICES = (_role: Role) =>
   `This person does not receive notices in the app, so there are none for them to see. Tell them so; an administrator manages notices on the Notices page.`
 
 /**
  * list_notices: the notices the person may see, filtered, newest first. A
- * person without a bell (a viewer) is told why there are none.
+ * person who is sent no notices (a viewer) is told why there are none.
  */
 export async function listNotices(q: Queryable, timeZone: string, asker: NoticeAsker, query: ListNoticesQuery, now: Date): Promise<string> {
   const today = factoryDay(now, timeZone)
   const admin = readsEveryNotice(asker)
-  if (!admin && !receivesNotices(asker)) return JSON.stringify({ notices: [], note: NO_BELL(asker.role) })
+  if (!admin && !receivesNotices(asker)) return JSON.stringify({ notices: [], note: NO_NOTICES(asker.role) })
   const limit = query.limit ?? DEFAULT_LIST
   let candidates: ReadNotice[]
   let scanned = false
@@ -274,7 +274,7 @@ export async function noticeDetails(q: Queryable, timeZone: string, asker: Notic
     out.notYet =
       'It is aimed at a place (a machine, an order, a shift…), so it reaches whoever works there when they meet it: the people who should still read it cannot be listed, only those who did.'
   } else {
-    // Aimed only at people: the live accounts it names, as the bell decides it, less those who read it.
+    // Aimed only at people: the live accounts it names, as their Notices decide it, less those who read it.
     const { rows: people } = await q.query<{ id: string; name: string; role: Role }>(
       `SELECT u.id, u.name, u.role FROM users u
         WHERE u.is_active AND u.deleted_at IS NULL AND NOT u.is_system AND user_has_permission(u.id, $1)
