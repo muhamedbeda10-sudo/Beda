@@ -17,6 +17,8 @@ interface RefImageDraft {
   workCenterCode: string
   caption: string
   imageId: string
+  /** The reference photo is still uploading: not saved until it is stored. */
+  uploading?: boolean
 }
 
 export function ReferenceImagesSection() {
@@ -70,7 +72,7 @@ export function ReferenceImagesSection() {
       newDraft={() => ({ itemCode: '', item: '', workCenterCode: '', caption: '', imageId: '' })}
       toDraft={(r) => ({ itemCode: r.itemCode, item: r.item ?? '', workCenterCode: r.workCenterCode ?? '', caption: r.caption ?? '', imageId: r.imageId })}
       validate={(d) =>
-        requireText(d.itemCode, 'Item code') ?? (d.imageId.trim() ? null : 'Choose a reference image.')
+        requireText(d.itemCode, 'Item code') ?? (d.uploading ? 'Wait for the image to finish uploading.' : d.imageId.trim() ? null : 'Choose a reference image.')
       }
       toRecord={(d) => ({
         itemCode: d.itemCode.trim(),
@@ -97,9 +99,14 @@ export function ReferenceImagesSection() {
           </Field>
           <div>
             <span className="label">Reference image</span>
+            {/* One image: the one added last is the reference, so adding another replaces it. */}
             <ImagePicker
               imageIds={d.imageId ? [d.imageId] : []}
-              onChange={(ids) => patch({ imageId: ids[0] ?? '' } as Partial<RefImageDraft>)}
+              onChange={(edit) => {
+                const ids = edit(d.imageId ? [d.imageId] : [])
+                patch({ imageId: ids[ids.length - 1] ?? '' })
+              }}
+              onUploading={(uploading) => patch({ uploading })}
             />
             <p className="mt-1 text-xs text-muted">
               One image per entry — adding another replaces the current reference.

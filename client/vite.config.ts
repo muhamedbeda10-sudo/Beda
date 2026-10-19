@@ -26,8 +26,11 @@ export default defineConfig({
     // icons) is precached so the app opens instantly from the home screen;
     // the API is never cached — every read still goes to the server, and the
     // wizard's own draft store covers a dead network.
+    // A new version waits until the app swaps it in (src/main.tsx), which it
+    // does when nobody has unsaved work open — not the moment it is
+    // installed, which reloaded every window mid-entry on each deploy.
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       includeAssets: ['brand/*.svg', 'icons/*.png'],
       manifest: {
         name: 'LinkMisr Quality Control',
@@ -58,7 +61,6 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//, /^\/agent\//],
         cleanupOutdatedCaches: true,
         clientsClaim: true,
-        skipWaiting: true,
         // §24 — push notifications: shown with the app closed, and opening the app where they point (public/push-sw.js).
         importScripts: ['/push-sw.js'],
       },

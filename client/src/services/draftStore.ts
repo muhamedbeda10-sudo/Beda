@@ -5,15 +5,23 @@
 // offline mid-inspection, the inspector resumes exactly where they were with
 // nothing retyped. Factory WiFi is unreliable; this is functional, not a nicety.
 //
-// Drafts are keyed by session so two sessions never overwrite each other, and
-// carry the submission id so a resumed draft saved twice still lands once.
+// Drafts are keyed by the person and the session: two sessions never
+// overwrite each other, and on a shared tablet the next inspector to open a
+// session starts their own sample — they never resume the previous person's
+// half-entered one and save it under their own name. A draft carries the
+// submission id so a resumed draft saved twice still lands once.
 // ============================================================================
 
 import type { Disposition, PTConsumableKind, PTVerdict, Process, ShiftLetter } from '@qc/shared/types'
 
-// v3: drafts carry the machine's process and the PT record lists tested
-// lengths. Older drafts are ignored rather than half-migrated.
-const PREFIX = 'qc-draft-v3:'
+// v4: drafts belong to the person who typed them (v3: they carry the
+// machine's process and the PT record lists tested lengths). Older drafts are
+// ignored rather than half-migrated — and a v3 draft cannot show whose it is,
+// so it is never handed to whoever happens to open its session next: it is
+// dropped from the device.
+const PREFIX = 'qc-draft-v4:'
+/** Drafts from before they had an owner (v1–v3). */
+const UNOWNED = /^qc-draft(?:-v[123])?:/
 
 export interface DraftCoil {
   /** Set when the coil was picked from the register; absent when typed by hand. */
@@ -72,6 +80,8 @@ export interface DraftNote {
 }
 
 export interface SampleDraft {
+  /** The person who typed it: only they resume it. */
+  userId: string
   sessionId: string
   orderId: string
   workCenterCode: string
@@ -106,8 +116,23 @@ export interface SampleDraft {
   updatedAt: string
 }
 
-function key(sessionId: string, editingSampleId?: string): string {
-  return editingSampleId ? `${PREFIX}${sessionId}:edit:${editingSampleId}` : `${PREFIX}${sessionId}`
+function key(userId: string, sessionId: string, editingSampleId?: string): string {
+  const base = `${PREFIX}${userId}:${sessionId}`
+  return editingSampleId ? `${base}:edit:${editingSampleId}` : base
+}
+
+/** Removes the drafts from before drafts had an owner: whose they are cannot be shown (see PREFIX). */
+export function dropUnownedDrafts(): void {
+  try {
+    const doomed: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k && UNOWNED.test(k)) doomed.push(k)
+    }
+    doomed.forEach((k) => localStorage.removeItem(k))
+  } catch {
+    /* storage unavailable: nothing was kept there either */
+  }
 }
 
 /**
@@ -127,12 +152,15 @@ export function draftIsUntouched(d: SampleDraft): boolean {
   return true
 }
 
-export function loadDraft(sessionId: string, editingSampleId?: string): SampleDraft | null {
+/** This person's draft for the session (or for re-recording the sample), if they left one on this device. */
+export function loadDraft(userId: string, sessionId: string, editingSampleId?: string): SampleDraft | null {
+  if (!userId) return null
+  dropUnownedDrafts()
   try {
-    const raw = localStorage.getItem(key(sessionId, editingSampleId))
+    const raw = localStorage.getItem(key(userId, sessionId, editingSampleId))
     if (!raw) return null
     const parsed = JSON.parse(raw) as SampleDraft
-    if (!parsed?.sessionId) return null
+    if (!parsed?.sessionId || parsed.userId !== userId) return null
     return parsed
   } catch {
     return null
@@ -140,8 +168,10 @@ export function loadDraft(sessionId: string, editingSampleId?: string): SampleDr
 }
 
 export function saveDraft(draft: SampleDraft): void {
+  // A draft with no owner could be resumed by anyone: it is not kept.
+  if (!draft.userId) return
   try {
-    localStorage.setItem(key(draft.sessionId, draft.editingSampleId), JSON.stringify({ ...draft, updatedAt: new Date().toISOString() }))
+    localStorage.setItem(key(draft.userId, draft.sessionId, draft.editingSampleId), JSON.stringify({ ...draft, updatedAt: new Date().toISOString() }))
   } catch {
     // Storage full or unavailable — the inspector keeps working in memory.
     // Losing the draft is bad; blocking data entry over it would be worse.
@@ -149,23 +179,25 @@ export function saveDraft(draft: SampleDraft): void {
   }
 }
 
-export function clearDraft(sessionId: string, editingSampleId?: string): void {
+export function clearDraft(userId: string, sessionId: string, editingSampleId?: string): void {
   try {
-    localStorage.removeItem(key(sessionId, editingSampleId))
+    localStorage.removeItem(key(userId, sessionId, editingSampleId))
   } catch {
     /* nothing to do */
   }
 }
 
-export function listDrafts(): SampleDraft[] {
+/** This person's drafts on this device. */
+export function listDrafts(userId: string): SampleDraft[] {
   const out: SampleDraft[] = []
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)
-      if (!k?.startsWith(PREFIX)) continue
+      if (!k?.startsWith(`${PREFIX}${userId}:`)) continue
       const raw = localStorage.getItem(k)
       if (!raw) continue
-      out.push(JSON.parse(raw) as SampleDraft)
+      const d = JSON.parse(raw) as SampleDraft
+      if (d.userId === userId) out.push(d)
     }
   } catch {
     /* ignore */

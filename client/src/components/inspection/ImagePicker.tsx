@@ -7,7 +7,8 @@ import { useImages } from '@/services/queries'
 import { Lightbox } from '@/components/ui/Lightbox'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { UndoStrip, insertAt, useUndo } from './UndoStrip'
+import { UndoStrip, useUndo } from './UndoStrip'
+import { appendIds, putBackId, removeId, uploadEach, type ImageIdsEdit } from './imageUploads'
 import type { ImageAsset } from '@qc/shared/types'
 
 /**
@@ -23,7 +24,10 @@ const BOX = {
 /**
  * Capture or pick photos. Uploads immediately (§9.5) and hands back the stored
  * image ids, so the record that references them is only ever written after the
- * bytes are safe.
+ * bytes are safe. What it hands back is an edit to apply to the list as it
+ * stands (imageUploads.ts): photos taken one after another, or one removed
+ * while another uploads, all end up as the person left them. `onUploading`
+ * says when uploads start and finish, so the record's Save can wait for them.
  *
  * Lists render the small preview; full resolution is fetched only in the zoom
  * viewer, so a history page with 50 photos does not stall on a phone (§10.7).
@@ -36,13 +40,17 @@ const BOX = {
 export function ImagePicker({
   imageIds,
   onChange,
+  onUploading,
   sessionId,
   orderId,
   readOnly,
   size = 'sm',
 }: {
   imageIds: string[]
-  onChange: (ids: string[]) => void
+  /** Applies the edit to the record's list as it stands then (a functional state update). */
+  onChange: (edit: ImageIdsEdit) => void
+  /** Told true as a batch of uploads starts and false as it ends — once each, even if the picker is gone by then. */
+  onUploading?: (uploading: boolean) => void
   sessionId?: string
   orderId?: string
   readOnly?: boolean
@@ -87,7 +95,7 @@ export function ImagePicker({
   function remove(asset: ImageAsset) {
     const index = imageIds.indexOf(asset.id)
     if (index < 0) return
-    onChange(imageIds.filter((id) => id !== asset.id))
+    onChange(removeId(asset.id))
     undo.offer('Photo removed', asset, index)
   }
 
@@ -95,9 +103,8 @@ export function ImagePicker({
     const r = undo.removed
     if (!r) return
     undo.clear()
-    if (imageIds.includes(r.item.id)) return
     setJustUploaded((m) => ({ ...m, [r.item.id]: r.item }))
-    onChange(insertAt(imageIds, r.item.id, r.index))
+    onChange(putBackId(r.item.id, r.index))
   }
 
   const box = BOX[size]
@@ -105,23 +112,28 @@ export function ImagePicker({
   async function handleFiles(list: FileList | null) {
     if (!list?.length) return
     const files = Array.from(list)
-    setBusy(files.length)
-    const added: string[] = []
-    for (const file of files) {
-      try {
-        const asset = await uploadImage(file, { sessionId, orderId })
-        setJustUploaded((m) => ({ ...m, [asset.id]: asset }))
-        added.push(asset.id)
-      } catch (e) {
-        // Tell the user exactly why this file was rejected (§10.5).
-        toast(e instanceof ImageRejected || e instanceof ApiError ? e.message : `Could not upload ${file.name}.`, 'error')
-      } finally {
-        setBusy((n) => Math.max(0, n - 1))
-      }
-    }
-    if (added.length) {
-      onChange([...imageIds, ...added])
-      toast(`${added.length} photo${added.length === 1 ? '' : 's'} added.`, 'success')
+    // Added to what is already uploading: a second photo taken before the first is stored is a second spinner's worth.
+    setBusy((n) => n + files.length)
+    onUploading?.(true)
+    try {
+      const added = await uploadEach(
+        files,
+        (file) => uploadImage(file, { sessionId, orderId }),
+        (asset) => {
+          setBusy((n) => Math.max(0, n - 1))
+          setJustUploaded((m) => ({ ...m, [asset.id]: asset }))
+          // On the record as soon as its bytes are safe, at the end of the list as it is now.
+          onChange(appendIds([asset.id]))
+        },
+        (file, e) => {
+          setBusy((n) => Math.max(0, n - 1))
+          // Tell the user exactly why this file was rejected (§10.5).
+          toast(e instanceof ImageRejected || e instanceof ApiError ? e.message : `Could not upload ${file.name}.`, 'error')
+        },
+      )
+      if (added) toast(`${added} photo${added === 1 ? '' : 's'} added.`, 'success')
+    } finally {
+      onUploading?.(false)
     }
   }
 

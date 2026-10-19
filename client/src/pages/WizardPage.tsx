@@ -44,7 +44,24 @@ import { useAuth } from '@/store/AuthContext'
 import { cn, uid, newSubmissionId } from '@/lib/utils'
 import { PHONE, isCoarsePointer, matchesMedia, useMediaQuery } from '@/lib/media'
 import { useBottomBarRef } from '@/lib/bottomBar'
-import { SHORT_LANDSCAPE, isBlankLength, keptLengths, keyboardLikelyOpen, opensKeyboard, renumberLengthIssues } from './wizardHelpers'
+import {
+  SHORT_LANDSCAPE,
+  coveringAcknowledgement,
+  dimensionFigures,
+  hasBadFigure,
+  isBlankLength,
+  keptLengths,
+  keyboardLikelyOpen,
+  opensKeyboard,
+  previewStatus,
+  renumberLengthIssues,
+  withCoilRule,
+  wizardLoadState,
+} from './wizardHelpers'
+import { isDecimalOrBlank, normaliseDecimal, parseDecimal } from '@/lib/decimal'
+import { failureMessage, singleFlight } from '@/lib/busyAction'
+import { useHoldUpdates } from '@/lib/appUpdate'
+import { useUploadsInFlight } from '@/components/inspection/imageUploads'
 import {
   DISPOSITIONS,
   type Disposition,
@@ -63,7 +80,6 @@ import {
   stepsForProcess,
   deriveShift,
   shiftName,
-  dimensionStatus,
   resolveDimensions,
   validateSample,
   buildGradeIndex,
@@ -118,7 +134,9 @@ export function WizardPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useApp()
-  const { factoryTimeZone } = useAuth()
+  const { factoryTimeZone, profile } = useAuth()
+  /** Drafts on this device are the person's own: on a shared tablet the next inspector never resumes them. */
+  const userId = profile?.id ?? ''
 
   // §4.4 — "/wizard/new" is a session that does not exist yet: the line and
   // the starting quantity ride in the address, and the session is opened by
@@ -137,7 +155,9 @@ export function WizardPage() {
   // round trip; nothing here reads a whole table.
   const existing = useWizardContext(pending ? '' : sessionId)
   const preview = useWizardPreview(pending)
-  const { data: ctx, isLoading: sessionsLoading, isFetching: ctxFetching, error: loadError } = pending ? preview : existing
+  const { data: ctx, isLoading: sessionsLoading, isFetching: ctxFetching, error: loadError, refetch: reloadContext } = pending ? preview : existing
+  // A refresh that failed in the background keeps what was loaded: the wizard works on from it, offline included.
+  const loadState = wizardLoadState(!!ctx, loadError)
   // Re-recording from History: the existing sample is the draft's starting point.
   const { data: editing, isLoading: editingLoading } = useSampleDetail(editingSampleId ?? null)
   const session = ctx?.session ?? null
@@ -165,6 +185,12 @@ export function WizardPage() {
 
   const [draft, setDraft] = useState<SampleDraft | null>(null)
   const [saving, setSaving] = useState(false)
+  /** One save (or discard) at a time: a second tap before the button greys out finds it taken. */
+  const saveFlight = useRef(singleFlight()).current
+  /** Batches of photos still uploading: Save waits for them, so no photo is left off the sample. */
+  const [uploads, onUploading] = useUploadsInFlight()
+  // A deploy waits while a sample is being entered here (lib/appUpdate.ts).
+  useHoldUpdates(draft !== null)
   /** Leaving a session that has no sample yet: keep it, or discard it. */
   const [leaving, setLeaving] = useState(false)
   const [gradePrompt, setGradePrompt] = useState<null | { mismatches: { coilNumber: string; coilGrade: string }[] }>(null)
@@ -204,13 +230,13 @@ export function WizardPage() {
     // A draft the inspector has recorded something in is resumed; one they
     // only opened is rebuilt, so the nominals and setup the server knows now
     // are what they start from.
-    const stored = loadDraft(draftKey, editingSampleId)
+    const stored = loadDraft(userId, draftKey, editingSampleId)
     if (stored && !draftIsUntouched(stored) && (!editing || stored.editingVersion === editing.sample.version)) {
       setDraft(stored)
       return
     }
     if (editing && session) {
-      setDraft(draftFromSample(editing, session.id, session.workCenterCode, process))
+      setDraft(draftFromSample(editing, userId, session.id, session.workCenterCode, process))
       return
     }
     // The item's dimensions on THIS machine: machine-specific rows override
@@ -253,6 +279,7 @@ export function WizardPage() {
     const carried = previousSetup && steps[0] === 'setup' ? previousSetup : null
     const str = (v: number | null | undefined) => (v === null || v === undefined ? '' : String(v))
     setDraft({
+      userId,
       sessionId: draftKey,
       orderId: order.id,
       workCenterCode: wc,
@@ -282,6 +309,8 @@ export function WizardPage() {
         yield: str(c.yield),
         notes: c.notes ?? '',
       })),
+      // The coils carried with it were acknowledged on the previous sample; it holds only while they stay as they are
+      // (coveringAcknowledgement, on saving).
       gradeAcknowledged: carried?.gradeAcknowledgement
         ? { ...carried.gradeAcknowledgement, at: new Date().toISOString() }
         : undefined,
@@ -295,13 +324,14 @@ export function WizardPage() {
           : undefined,
       updatedAt: new Date().toISOString(),
     })
-  }, [session, pending, draftKey, wc, order, draft, dimOrder, previousDims, process, previousWire, previousConnectorCoil, previousSetup, editing, editingSampleId, ctxFetching])
+  }, [session, pending, draftKey, userId, wc, order, draft, dimOrder, previousDims, process, previousWire, previousConnectorCoil, previousSetup, editing, editingSampleId, ctxFetching])
 
-  // Persist on every change so a reload or a dead network loses nothing (§9.6).
+  // Persist on every change so a reload or a dead network loses nothing (§9.6). A change to the coils lets go of the
+  // grade acknowledgement given for them as they were (§8.4).
   const update = useCallback((patch: Partial<SampleDraft> | ((d: SampleDraft) => SampleDraft)) => {
     setDraft((cur) => {
       if (!cur) return cur
-      const next = typeof patch === 'function' ? patch(cur) : { ...cur, ...patch }
+      const next = withCoilRule(cur, typeof patch === 'function' ? patch(cur) : { ...cur, ...patch })
       saveDraft(next)
       return next
     })
@@ -337,17 +367,14 @@ export function WizardPage() {
         qty: Number(d.qty),
         notes: d.notes,
       })),
-      dimensions: draft.dimensions.map((d) => ({
-        name: d.name,
-        nominal: d.nominal.trim() === '' ? null : Number(d.nominal),
-        actual: d.actual.trim() === '' ? null : Number(d.actual),
-      })),
+      // Read as the save reads them: blank is null, a figure that is not a number is NaN and refused by name.
+      dimensions: draft.dimensions.map((d) => ({ name: d.name, ...dimensionFigures(d) })),
       paint: { imageIds: draft.paint.imageIds },
       pt: draft.pt
         ? {
             consumableLots: draft.pt.consumableLots,
             connectorCoilNumber: draft.pt.connectorCoilNumber,
-            testedLengths: lengths.kept.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict ?? null })),
+            testedLengths: lengths.kept.map((l) => ({ lengthMm: parseDecimal(l.lengthMm) ?? Number.NaN, verdict: l.verdict ?? null })),
           }
         : undefined,
     })
@@ -393,7 +420,25 @@ export function WizardPage() {
   }, [shownStep])
 
   if (sessionsLoading || (editingSampleId && editingLoading)) return <Card className="p-10 text-center text-sm text-muted">Loading…</Card>
-  if (!order || (!session && !pending) || loadError) {
+  // Nothing loaded and the server not reached: that is not "deleted", and trying again may well work.
+  if (loadState === 'failed') {
+    return (
+      <EmptyState
+        icon={<CloudOff className="h-10 w-10" />}
+        title="Could not load this session"
+        hint={failureMessage(loadError, 'The server could not be reached.')}
+        action={
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button variant="primary" onClick={() => void reloadContext()}>
+              Try again
+            </Button>
+            <Button onClick={() => navigate('/')}>Back to inspections</Button>
+          </div>
+        }
+      />
+    )
+  }
+  if (loadState === 'not-found' || !order || (!session && !pending)) {
     return (
       <EmptyState
         title="Session not found"
@@ -419,8 +464,26 @@ export function WizardPage() {
   const now = new Date()
   const shift = deriveShift(now, factoryTimeZone)
 
-  async function performSave(acknowledged?: SampleDraft['gradeAcknowledged']) {
+  /** One save at a time: the Save button and the grade prompt's Acknowledge both come here, and a second tap waits out the first. */
+  function performSave(acknowledged?: SampleDraft['gradeAcknowledged']) {
+    return saveFlight.run(() => save(acknowledged))
+  }
+
+  async function save(acknowledged?: SampleDraft['gradeAcknowledged']) {
     if (!draft || !order || (!session && !pending)) return
+    // The figures as the checks read them. A nominal, tolerance or actual that is not a number would go as null — a
+    // blank the record would keep for good — so the save is refused instead (validateSample names the row; this is
+    // the last word, whatever path reached it).
+    const measured = draft.dimensions
+      .map((d) => ({ d, figures: dimensionFigures(d) }))
+      .filter(({ d }) => d.actual.trim() !== '' || d.nominal.trim() !== '')
+    const unreadable = measured.find(({ figures }) => hasBadFigure(figures))
+    if (unreadable) {
+      goto(steps.includes('dimensions') ? 'dimensions' : 'paintThickness')
+      toast(`"${unreadable.d.name}" has a figure that is not a number. Type digits only, e.g. 12.5.`, 'error')
+      setGradePrompt(null)
+      return
+    }
     setSaving(true)
     try {
       const index = priorSamples.length + 1
@@ -433,18 +496,13 @@ export function WizardPage() {
         drawingAlt: draft.drawingAlt || undefined,
         issue: draft.issue || undefined,
         sampleQty: Number(draft.sampleQty),
-        dimensions: draft.dimensions
-          .filter((d) => d.actual.trim() !== '' || d.nominal.trim() !== '')
-          .map((d) => ({
-            name: d.name,
-            sequence: d.sequence,
-            nominal: d.nominal.trim() === '' ? null : Number(d.nominal),
-            tolPlus: d.tolPlus.trim() === '' ? null : Number(d.tolPlus),
-            tolMinus: d.tolMinus.trim() === '' ? null : Number(d.tolMinus),
-            actual: d.actual.trim() === '' ? null : Number(d.actual),
-            unit: d.unit,
-            source: d.source,
-          })),
+        dimensions: measured.map(({ d, figures }) => ({
+          name: d.name,
+          sequence: d.sequence,
+          ...figures,
+          unit: d.unit,
+          source: d.source,
+        })),
         defects: draft.defects.map((d) => ({
           defectName: d.defectName,
           qty: Number(d.qty),
@@ -477,7 +535,7 @@ export function WizardPage() {
                 // validateSample has already refused a missing connector coil number.
                 connectorCoilNumber: draft.pt.connectorCoilNumber?.trim() || undefined,
                 // validateSample has already refused a missing verdict or length; a blank row is not saved.
-                testedLengths: keptLengths(draft.pt.testedLengths).kept.map((l) => ({ lengthMm: Number(l.lengthMm), verdict: l.verdict as PTVerdict })),
+                testedLengths: keptLengths(draft.pt.testedLengths).kept.map((l) => ({ lengthMm: parseDecimal(l.lengthMm) ?? Number.NaN, verdict: l.verdict as PTVerdict })),
                 notes: draft.pt.notes || undefined,
                 imageIds: draft.pt.imageIds,
               }
@@ -501,7 +559,7 @@ export function WizardPage() {
         // §4.4 — the first sample opens the session (or joins the one already
         // open on this line), in one transaction with the sample itself.
         const res = await startSessionWithSample(queryClient, { start: pending, sample: body })
-        clearDraft(draftKey)
+        clearDraft(userId, draftKey)
         setDraft(null)
         toast(
           res.sample.deduped
@@ -520,7 +578,7 @@ export function WizardPage() {
         // Re-recording: the whole sample is replaced as one unit; History shows the result.
         const { submissionId: _drop, ...rest } = body
         const result = await reRecordSample(queryClient, session.id, draft.editingSampleId, { ...rest, version: draft.editingVersion ?? 0 })
-        clearDraft(session.id, draft.editingSampleId)
+        clearDraft(userId, session.id, draft.editingSampleId)
         setDraft(null)
         toast(`Sample ${session.seq}-${result.index} re-recorded.`, 'success')
         navigate('/history')
@@ -531,7 +589,7 @@ export function WizardPage() {
 
       // The sample is on record: leave the wizard. The session stays open on
       // the board, and "Continue" starts the next sample from a fresh draft.
-      clearDraft(session.id)
+      clearDraft(userId, session.id)
       setDraft(null)
       toast(
         result.deduped ? 'That sample was already saved — no duplicate was created.' : `Sample ${session.seq}-${result.index || index} saved.`,
@@ -548,7 +606,9 @@ export function WizardPage() {
   }
 
   function attemptSave() {
-    if (!draft || !order) return
+    if (!draft || !order || saveFlight.running) return
+    // A photo still uploading is not on the sample yet; the button says so and waits.
+    if (uploads > 0) return
     if (issues.length > 0) {
       goto(issues[0].step)
       toast(issues[0].message, 'error')
@@ -560,13 +620,15 @@ export function WizardPage() {
       if (issues[0].ref === 'connectorCoil') setFocusConnector(true)
       return
     }
-    // §8.4 — block on a grade mismatch unless it was explicitly acknowledged.
+    // §8.4 — block on a grade mismatch unless these very mismatches were explicitly acknowledged; with none, no
+    // acknowledgement goes with the sample.
     const mismatches = findGradeMismatches(order.expectedGrade, draft.coils, gradeIndex)
-    if (mismatches.length > 0 && !draft.gradeAcknowledged) {
+    const acknowledged = coveringAcknowledgement(draft.gradeAcknowledged, order.expectedGrade, draft.coils, gradeIndex)
+    if (mismatches.length > 0 && !acknowledged) {
       setGradePrompt({ mismatches })
       return
     }
-    void performSave(draft.gradeAcknowledged)
+    void performSave(acknowledged)
   }
 
   const StepIcon = STEP_META[current].icon
@@ -585,6 +647,12 @@ export function WizardPage() {
       <Badge tone="violet">New session · opens with this sample</Badge>
     )
   const itemLine = `${order.itemCode}${order.item ? ` · ${order.item}` : ''} · Order ID ${order.lineKey}`
+  // A refresh of the session failed (the network dropped): the wizard carries on from what was loaded, and says so quietly.
+  const staleBadge = (
+    <Badge tone="amber" icon={<CloudOff className="h-3 w-3" />} tip="Showing the session as it was loaded. Your entries are saved on this device.">
+      Could not refresh
+    </Badge>
+  )
   const navHeight = keyboard ? 'min-h-[44px]' : short ? 'min-h-[48px]' : 'min-h-[52px]'
 
   return (
@@ -626,26 +694,28 @@ export function WizardPage() {
             <Button
               variant="danger"
               disabled={saving}
-              onClick={async () => {
-                if (!session) {
-                  // Nothing exists on the server yet: only the entries on this device go.
-                  clearDraft(draftKey)
-                  toast('Entries discarded. No session was opened.', 'success')
-                  navigate('/')
-                  return
-                }
-                setSaving(true)
-                try {
-                  await discardSession(queryClient, session.id)
-                  clearDraft(session.id)
-                  toast('Session discarded. Nothing was recorded in it.', 'success')
-                  navigate('/')
-                } catch (e) {
-                  toast(e instanceof Error ? e.message : 'Could not discard the session.', 'error')
-                } finally {
-                  setSaving(false)
-                }
-              }}
+              onClick={() =>
+                saveFlight.run(async () => {
+                  if (!session) {
+                    // Nothing exists on the server yet: only the entries on this device go.
+                    clearDraft(userId, draftKey)
+                    toast('Entries discarded. No session was opened.', 'success')
+                    navigate('/')
+                    return
+                  }
+                  setSaving(true)
+                  try {
+                    await discardSession(queryClient, session.id)
+                    clearDraft(userId, session.id)
+                    toast('Session discarded. Nothing was recorded in it.', 'success')
+                    navigate('/')
+                  } catch (e) {
+                    toast(e instanceof Error ? e.message : 'Could not discard the session.', 'error')
+                  } finally {
+                    setSaving(false)
+                  }
+                })
+              }
             >
               {session ? 'Discard session' : 'Discard entries'}
             </Button>
@@ -678,6 +748,7 @@ export function WizardPage() {
                   Offline
                 </Badge>
               )}
+              {online && loadState === 'stale' && staleBadge}
             </div>
             <p className="mt-0.5 truncate text-xs text-muted">{itemLine}</p>
           </div>
@@ -702,6 +773,7 @@ export function WizardPage() {
                   Offline — your work is saved on this device
                 </Badge>
               )}
+              {online && loadState === 'stale' && staleBadge}
             </div>
             <p className="mt-1 text-sm text-muted">{itemLine}</p>
           </Card>
@@ -754,13 +826,13 @@ export function WizardPage() {
         {current === 'defects' && (
           <>
             {!short && <WorkInstructionLinks instructions={instructions} step="defects" />}
-            <DefectsStep draft={draft} update={update} options={defectOptions} sessionId={session?.id} orderId={order.id} />
+            <DefectsStep draft={draft} update={update} options={defectOptions} sessionId={session?.id} orderId={order.id} onUploading={onUploading} />
           </>
         )}
         {current === 'paint' && (
           <>
             {!short && <WorkInstructionLinks instructions={instructions} step="paint" />}
-            <PaintStep draft={draft} update={update} sessionId={session?.id} orderId={order.id} />
+            <PaintStep draft={draft} update={update} sessionId={session?.id} orderId={order.id} onUploading={onUploading} />
           </>
         )}
         {current === 'paintThickness' && (
@@ -772,7 +844,7 @@ export function WizardPage() {
         {current === 'pt' && (
           <>
             {!short && <WorkInstructionLinks instructions={instructions} step="pt" />}
-            <PTStep draft={draft} update={update} consumables={consumables} sessionId={session?.id} orderId={order.id} short={short} />
+            <PTStep draft={draft} update={update} consumables={consumables} sessionId={session?.id} orderId={order.id} short={short} onUploading={onUploading} />
           </>
         )}
         {current === 'review' && (
@@ -786,6 +858,7 @@ export function WizardPage() {
             orderId={order.id}
             focusQty={focusQty}
             onQtyFocused={() => setFocusQty(false)}
+            onUploading={onUploading}
           />
         )}
       </Card>
@@ -798,10 +871,13 @@ export function WizardPage() {
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>
           {current === 'review' ? (
-            <Button variant="primary" className={cn(navHeight, 'flex-1')} disabled={saving} onClick={attemptSave}>
-              {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
+            <Button variant="primary" className={cn(navHeight, 'flex-1')} disabled={saving || uploads > 0} onClick={attemptSave}>
+              {saving || uploads > 0 ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
               {saving ? (
                 'Saving…'
+              ) : uploads > 0 ? (
+                // Said on the button itself: a disabled button's tooltip never shows to a finger.
+                'Waiting for photos…'
               ) : (
                 <>
                   <span className="sm:hidden">Save</span>
@@ -825,11 +901,12 @@ export function WizardPage() {
           icon={<AlertTriangle className="h-5 w-5" />}
           footer={
             <>
-              <Button variant="secondary" onClick={() => setGradePrompt(null)}>
+              <Button variant="secondary" disabled={saving} onClick={() => setGradePrompt(null)}>
                 Go back and fix
               </Button>
               <Button
                 variant="danger"
+                disabled={saving}
                 onClick={() => {
                   const ack = {
                     coilNumbers: gradePrompt.mismatches.map((m) => m.coilNumber),
@@ -1583,21 +1660,37 @@ function DimensionsStep({
     )
   }
 
-  const statusOf = (d: DraftDimension) =>
-    dimensionStatus({
-      nominal: Number(d.nominal),
-      tolPlus: Number(d.tolPlus),
-      tolMinus: Number(d.tolMinus),
-      actual: d.actual.trim() === '' ? null : Number(d.actual),
-    })
+  // As the server will store it: a blank figure is Pending, and one that is not a number is never a pass.
+  const statusOf = previewStatus
+  /** A figure typed as the phone's keypad gives it (a comma, Arabic digits) is kept as the number it is. */
+  const setFigure = (i: number, field: FigureField, text: string) => setRow(i, { [field]: normaliseDecimal(text) })
+  /** The red edge a box takes when what is in it is not a number. */
+  const badEdge = (text: string) => (isDecimalOrBlank(text) ? '' : '!border-rose-500 focus:!ring-rose-400/40')
+  /** What the row's verdict says: its status, or that a figure in it cannot be read. */
+  const verdict = (d: DraftDimension) =>
+    hasBadFigure(dimensionFigures(d)) ? (
+      <Badge tone="red" tip="A figure in this row is not a number. Type digits only, e.g. 12.5.">
+        Not a number
+      </Badge>
+    ) : (
+      <Badge tone={resultTone(statusOf(d))}>{statusOf(d)}</Badge>
+    )
 
   /** The phone card: one per dimension, with the measurement the inspector types made the biggest thing on it. */
   const cards = draft.dimensions.map((d, i) => {
     const status = statusOf(d)
+    const unreadable = unreadableFigures(d)
     const nominal = (
       <label className="block">
         <span className="label">Nominal</span>
-        <input value={d.nominal} onChange={(e) => setRow(i, { nominal: e.target.value })} inputMode="decimal" className="input min-h-[48px] text-right tabular-nums" />
+        <input
+          value={d.nominal}
+          onChange={(e) => setFigure(i, 'nominal', e.target.value)}
+          inputMode="decimal"
+          autoComplete="off"
+          aria-invalid={!isDecimalOrBlank(d.nominal) || undefined}
+          className={cn('input min-h-[48px] text-right tabular-nums', badEdge(d.nominal))}
+        />
       </label>
     )
     const actual = (
@@ -1605,12 +1698,16 @@ function DimensionsStep({
         <span className="label">Actual</span>
         <input
           value={d.actual}
-          onChange={(e) => setRow(i, { actual: e.target.value })}
+          onChange={(e) => setFigure(i, 'actual', e.target.value)}
           inputMode="decimal"
-          type="number"
-          step="any"
+          autoComplete="off"
           placeholder="—"
-          className={cn('input min-h-[52px] text-center text-lg font-bold tabular-nums', status === 'Fail' ? 'border-rose-400' : status === 'Warning' ? 'border-amber-400' : '')}
+          aria-invalid={!isDecimalOrBlank(d.actual) || undefined}
+          className={cn(
+            'input min-h-[52px] text-center text-lg font-bold tabular-nums',
+            status === 'Fail' ? 'border-rose-400' : status === 'Warning' ? 'border-amber-400' : '',
+            badEdge(d.actual),
+          )}
         />
       </label>
     )
@@ -1619,7 +1716,7 @@ function DimensionsStep({
         key={`${d.name}-${i}`}
         className={cn(
           'rounded-2xl border p-3',
-          status === 'Fail'
+          status === 'Fail' || unreadable.length > 0
             ? 'border-rose-300 bg-rose-50/60 dark:border-rose-500/40 dark:bg-rose-500/5'
             : status === 'Warning'
               ? 'border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-500/5'
@@ -1631,7 +1728,7 @@ function DimensionsStep({
             {d.name}
           </p>
           <span className="flex shrink-0 items-center gap-1">
-            <Badge tone={resultTone(status)}>{status}</Badge>
+            {verdict(d)}
             <button type="button" onClick={() => removeRow(i)} className={cn(REMOVE, '-my-2 -me-2')} aria-label={`Remove ${d.name}`}>
               <Trash2 className="h-4 w-4" />
             </button>
@@ -1656,35 +1753,62 @@ function DimensionsStep({
             <div className="mt-2 grid grid-cols-2 gap-2">
               <label className="block">
                 <span className="label">+ tolerance</span>
-                <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" placeholder="0" className="input min-h-[44px] text-right tabular-nums" />
+                <input
+                  value={d.tolPlus}
+                  onChange={(e) => setFigure(i, 'tolPlus', e.target.value)}
+                  inputMode="decimal"
+                  autoComplete="off"
+                  placeholder="0"
+                  aria-invalid={!isDecimalOrBlank(d.tolPlus) || undefined}
+                  className={cn('input min-h-[44px] text-right tabular-nums', badEdge(d.tolPlus))}
+                />
               </label>
               <label className="block">
                 <span className="label">− tolerance</span>
-                <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" placeholder={d.tolPlus || '0'} className="input min-h-[44px] text-right tabular-nums" />
+                <input
+                  value={d.tolMinus}
+                  onChange={(e) => setFigure(i, 'tolMinus', e.target.value)}
+                  inputMode="decimal"
+                  autoComplete="off"
+                  placeholder={d.tolPlus || '0'}
+                  aria-invalid={!isDecimalOrBlank(d.tolMinus) || undefined}
+                  className={cn('input min-h-[44px] text-right tabular-nums', badEdge(d.tolMinus))}
+                />
               </label>
             </div>
           </>
         )}
+        {unreadable.length > 0 && <BadFigureNote named={unreadable.map((f) => FIGURE_LABEL[f])} />}
       </div>
     )
   })
 
   const rows = draft.dimensions.map((d, i) => {
     const status = statusOf(d)
+    const unreadable = unreadableFigures(d)
     return (
       <tr
         key={`${d.name}-${i}`}
         className={cn(
-          status === 'Fail' && 'bg-rose-50/60 dark:bg-rose-500/5',
+          (status === 'Fail' || unreadable.length > 0) && 'bg-rose-50/60 dark:bg-rose-500/5',
           status === 'Warning' && 'bg-amber-50/60 dark:bg-amber-500/5',
         )}
       >
         {/* Arabic keeps its own word order and wrapping; the column keeps its header's alignment. */}
         <td dir="auto" className="px-2 py-2 text-left font-semibold">
           {d.name}
+          {unreadable.length > 0 && <BadFigureNote named={unreadable.map((f) => FIGURE_LABEL[f])} />}
         </td>
         <td className="px-2 py-2 text-right tabular-nums">
-          <input value={d.nominal} onChange={(e) => setRow(i, { nominal: e.target.value })} inputMode="decimal" className="input-cell w-20 px-2 py-2 text-right touch:min-h-[44px]" />
+          <input
+            value={d.nominal}
+            onChange={(e) => setFigure(i, 'nominal', e.target.value)}
+            inputMode="decimal"
+            autoComplete="off"
+            aria-label="Nominal"
+            aria-invalid={!isDecimalOrBlank(d.nominal) || undefined}
+            className={cn('input-cell w-20 px-2 py-2 text-right touch:min-h-[44px]', badEdge(d.nominal))}
+          />
         </td>
         <td className="whitespace-nowrap px-2 py-2 text-center text-xs text-muted">
           {d.source === 'item-order' ? (
@@ -1694,29 +1818,45 @@ function DimensionsStep({
           ) : (
             <span className="inline-flex items-center gap-1">
               +
-              <input value={d.tolPlus} onChange={(e) => setRow(i, { tolPlus: e.target.value })} inputMode="decimal" aria-label="Plus tolerance" className="input-cell w-14 px-1.5 py-2 text-right text-sm touch:min-h-[44px]" />
+              <input
+                value={d.tolPlus}
+                onChange={(e) => setFigure(i, 'tolPlus', e.target.value)}
+                inputMode="decimal"
+                autoComplete="off"
+                aria-label="Plus tolerance"
+                aria-invalid={!isDecimalOrBlank(d.tolPlus) || undefined}
+                className={cn('input-cell w-14 px-1.5 py-2 text-right text-sm touch:min-h-[44px]', badEdge(d.tolPlus))}
+              />
               / -
-              <input value={d.tolMinus} onChange={(e) => setRow(i, { tolMinus: e.target.value })} inputMode="decimal" aria-label="Minus tolerance" className="input-cell w-14 px-1.5 py-2 text-right text-sm touch:min-h-[44px]" />
+              <input
+                value={d.tolMinus}
+                onChange={(e) => setFigure(i, 'tolMinus', e.target.value)}
+                inputMode="decimal"
+                autoComplete="off"
+                aria-label="Minus tolerance"
+                aria-invalid={!isDecimalOrBlank(d.tolMinus) || undefined}
+                className={cn('input-cell w-14 px-1.5 py-2 text-right text-sm touch:min-h-[44px]', badEdge(d.tolMinus))}
+              />
             </span>
           )}
         </td>
         <td className="px-2 py-2 text-center">
           <input
             value={d.actual}
-            onChange={(e) => setRow(i, { actual: e.target.value })}
+            onChange={(e) => setFigure(i, 'actual', e.target.value)}
             inputMode="decimal"
-            type="number"
-            step="any"
+            autoComplete="off"
             placeholder="—"
+            aria-label="Actual"
+            aria-invalid={!isDecimalOrBlank(d.actual) || undefined}
             className={cn(
               'input-cell w-24 px-2 py-3 text-center text-base font-semibold',
               status === 'Fail' ? 'border-rose-400 focus:ring-rose-400/40 dark:border-rose-400' : status === 'Warning' ? 'border-amber-400 focus:ring-amber-400/40 dark:border-amber-400' : '',
+              badEdge(d.actual),
             )}
           />
         </td>
-        <td className="px-2 py-2 text-center">
-          <Badge tone={resultTone(status)}>{status}</Badge>
-        </td>
+        <td className="px-2 py-2 text-center">{verdict(d)}</td>
         <td className="px-1 py-1">
           <button type="button" onClick={() => removeRow(i)} className={REMOVE} aria-label={`Remove ${d.name}`}>
             <Trash2 className="h-4 w-4" />
@@ -1766,6 +1906,26 @@ function DimensionsStep({
   )
 }
 
+/** A dimension's figures the inspector types. */
+type FigureField = 'nominal' | 'tolPlus' | 'tolMinus' | 'actual'
+const FIGURE_LABEL: Record<FigureField, string> = { nominal: 'Nominal', tolPlus: '+ tolerance', tolMinus: '− tolerance', actual: 'Actual' }
+
+/** The figures of a row typed but not a number — a unit typed after it, a stray letter. */
+function unreadableFigures(d: DraftDimension): FigureField[] {
+  return (['nominal', 'tolPlus', 'tolMinus', 'actual'] as const).filter((f) => !isDecimalOrBlank(d[f]))
+}
+
+/** Said under a row whose figure cannot be read: which one, and what to type instead. The save is refused until it is. */
+function BadFigureNote({ named }: { named: string[] }) {
+  const subject = named.length === 1 ? `${named[0]} is not a number` : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1].toLowerCase()} are not numbers`
+  return (
+    <p className="mt-2 flex items-start gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">
+      <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+      {subject}. Type digits only, e.g. 12.5.
+    </p>
+  )
+}
+
 /**
  * A dimension the configuration does not know: the inspector names it and
  * gives its nominal and tolerance on the first sample. The next sample of
@@ -1779,7 +1939,8 @@ function AddDimensionButton({ update, label = 'Add a dimension not in the config
   const [tolPlus, setTolPlus] = useState('')
   const [tolMinus, setTolMinus] = useState('')
   const [unit, setUnit] = useState('mm')
-  const valid = name.trim() !== '' && nominal.trim() !== '' && Number.isFinite(Number(nominal))
+  const parsedNominal = parseDecimal(nominal)
+  const valid = name.trim() !== '' && parsedNominal !== null && Number.isFinite(parsedNominal) && isDecimalOrBlank(tolPlus) && isDecimalOrBlank(tolMinus)
 
   function add() {
     update((d) => ({
@@ -1822,15 +1983,15 @@ function AddDimensionButton({ update, label = 'Add a dimension not in the config
         </label>
         <label className="block">
           <span className="label">Nominal</span>
-          <Input value={nominal} onChange={(e) => setNominal(e.target.value)} inputMode="decimal" type="number" step="any" className="min-h-[48px] text-right tabular-nums" />
+          <Input value={nominal} onChange={(e) => setNominal(normaliseDecimal(e.target.value))} inputMode="decimal" autoComplete="off" aria-invalid={!isDecimalOrBlank(nominal) || undefined} className={cn('min-h-[48px] text-right tabular-nums', !isDecimalOrBlank(nominal) && '!border-rose-500')} />
         </label>
         <label className="block">
           <span className="label">+ tol</span>
-          <Input value={tolPlus} onChange={(e) => setTolPlus(e.target.value)} inputMode="decimal" type="number" step="any" placeholder="0" className="min-h-[48px] text-right tabular-nums" />
+          <Input value={tolPlus} onChange={(e) => setTolPlus(normaliseDecimal(e.target.value))} inputMode="decimal" autoComplete="off" placeholder="0" aria-invalid={!isDecimalOrBlank(tolPlus) || undefined} className={cn('min-h-[48px] text-right tabular-nums', !isDecimalOrBlank(tolPlus) && '!border-rose-500')} />
         </label>
         <label className="block">
           <span className="label">- tol</span>
-          <Input value={tolMinus} onChange={(e) => setTolMinus(e.target.value)} inputMode="decimal" type="number" step="any" placeholder={tolPlus || '0'} className="min-h-[48px] text-right tabular-nums" />
+          <Input value={tolMinus} onChange={(e) => setTolMinus(normaliseDecimal(e.target.value))} inputMode="decimal" autoComplete="off" placeholder={tolPlus || '0'} aria-invalid={!isDecimalOrBlank(tolMinus) || undefined} className={cn('min-h-[48px] text-right tabular-nums', !isDecimalOrBlank(tolMinus) && '!border-rose-500')} />
         </label>
         <label className="block">
           <span className="label">Unit</span>
@@ -1856,12 +2017,14 @@ function DefectsStep({
   options,
   sessionId,
   orderId,
+  onUploading,
 }: {
   draft: SampleDraft
   update: Updater
   options: string[]
   sessionId?: string
   orderId: string
+  onUploading: (uploading: boolean) => void
 }) {
   const [search, setSearch] = useState('')
   const typed = search.trim()
@@ -1977,7 +2140,9 @@ function DefectsStep({
         <span className="label">Photos</span>
         <ImagePicker
           imageIds={d.imageIds}
-          onChange={(ids) => setDefect(d.key, { imageIds: ids })}
+          // Applied to the defect as it is when the upload lands, not as it was when the photo was taken.
+          onChange={(edit) => update((dd) => ({ ...dd, defects: dd.defects.map((x) => (x.key === d.key ? { ...x, imageIds: edit(x.imageIds) } : x)) }))}
+          onUploading={onUploading}
           sessionId={sessionId}
           orderId={orderId}
         />
@@ -2061,10 +2226,11 @@ function DefectsStep({
 }
 
 /** The draft that re-records an existing sample: every row as it stands, ready to be changed. */
-function draftFromSample(detail: SampleDetail, sessionId: string, workCenterCode: string, process: Process): SampleDraft {
+function draftFromSample(detail: SampleDetail, userId: string, sessionId: string, workCenterCode: string, process: Process): SampleDraft {
   const { sample, dimensions, defects, coils, paint, pt } = detail
   const str = (v: number | null | undefined) => (v === null || v === undefined ? '' : String(v))
   return {
+    userId,
     sessionId,
     orderId: sample.orderId,
     workCenterCode,
@@ -2133,11 +2299,13 @@ function PaintStep({
   update,
   sessionId,
   orderId,
+  onUploading,
 }: {
   draft: SampleDraft
   update: Updater
   sessionId?: string
   orderId: string
+  onUploading: (uploading: boolean) => void
 }) {
   return (
     <div className="space-y-4">
@@ -2150,7 +2318,8 @@ function PaintStep({
         <span className="label">Paint sample photos</span>
         <ImagePicker
           imageIds={draft.paint.imageIds}
-          onChange={(ids) => update((d) => ({ ...d, paint: { ...d.paint, imageIds: ids } }))}
+          onChange={(edit) => update((d) => ({ ...d, paint: { ...d.paint, imageIds: edit(d.paint.imageIds) } }))}
+          onUploading={onUploading}
           sessionId={sessionId}
           orderId={orderId}
         />
@@ -2251,13 +2420,14 @@ function PaintThicknessStep({ draft, update }: { draft: SampleDraft; update: Upd
         <input
           id={`${idBase}-${i}`}
           value={d.actual}
-          onChange={(e) => setActual(i, e.target.value)}
+          onChange={(e) => setActual(i, normaliseDecimal(e.target.value))}
           inputMode="decimal"
-          type="number"
-          step="any"
+          autoComplete="off"
           placeholder="—"
-          className="input mt-2 min-h-[52px] text-center text-xl font-bold tabular-nums"
+          aria-invalid={!isDecimalOrBlank(d.actual) || undefined}
+          className={cn('input mt-2 min-h-[52px] text-center text-xl font-bold tabular-nums', !isDecimalOrBlank(d.actual) && '!border-rose-500')}
         />
+        {!isDecimalOrBlank(d.actual) && <BadFigureNote named={['The reading']} />}
         {/* Two readings share a phone's row: the state goes under the number, where the card has room for it. */}
         <span className="mt-2 flex sm:hidden">{badge}</span>
       </label>
@@ -2303,6 +2473,7 @@ function PTStep({
   sessionId,
   orderId,
   short,
+  onUploading,
 }: {
   draft: SampleDraft
   update: Updater
@@ -2311,6 +2482,7 @@ function PTStep({
   orderId: string
   /** A short landscape screen: the explanation folds to one line, so the materials are on the first screen. */
   short: boolean
+  onUploading: (uploading: boolean) => void
 }) {
   const pt = draft.pt ?? emptyPT()
   const setPT = (patch: Partial<DraftPT>) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), ...patch } }))
@@ -2356,7 +2528,8 @@ function PTStep({
   )
 
   const rows = pt.testedLengths.map((l, n) => {
-    const bad = l.lengthMm.trim() !== '' && !(Number(l.lengthMm) > 0)
+    const length = parseDecimal(l.lengthMm)
+    const bad = length !== null && !(length > 0)
     return (
       // On a phone the remove button takes the free cell beside the length, so the verdict keeps a whole row; from
       // sm everything is one row.
@@ -2367,11 +2540,11 @@ function PTStep({
           <div className="relative">
             <input
               value={l.lengthMm}
-              onChange={(e) => setLength(l.key, { lengthMm: e.target.value })}
+              onChange={(e) => setLength(l.key, { lengthMm: normaliseDecimal(e.target.value) })}
               inputMode="decimal"
-              type="number"
-              step="any"
+              autoComplete="off"
               placeholder="Length"
+              aria-invalid={bad || undefined}
               className={cn('input min-h-[48px] pr-12 text-lg font-bold tabular-nums', bad && 'border-rose-400')}
             />
             <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted">mm</span>
@@ -2499,7 +2672,13 @@ function PTStep({
 
       <div>
         <span className="label">Photos</span>
-        <ImagePicker imageIds={pt.imageIds} onChange={(ids) => setPT({ imageIds: ids })} sessionId={sessionId} orderId={orderId} />
+        <ImagePicker
+          imageIds={pt.imageIds}
+          onChange={(edit) => update((d) => ({ ...d, pt: { ...(d.pt ?? emptyPT()), imageIds: edit(d.pt?.imageIds ?? []) } }))}
+          onUploading={onUploading}
+          sessionId={sessionId}
+          orderId={orderId}
+        />
       </div>
     </div>
   )
@@ -2515,6 +2694,7 @@ function ReviewStep({
   orderId,
   focusQty,
   onQtyFocused,
+  onUploading,
 }: {
   draft: SampleDraft
   order: ProductionOrder
@@ -2527,6 +2707,7 @@ function ReviewStep({
   /** A save was refused for the quantity: put the cursor in it. */
   focusQty: boolean
   onQtyFocused: () => void
+  onUploading: (uploading: boolean) => void
 }) {
   const measured = draft.dimensions.filter((d) => d.actual.trim() !== '')
   const qty = Number(draft.sampleQty)
@@ -2549,13 +2730,8 @@ function ReviewStep({
   }, [focusQty, onQtyFocused])
 
   const spec = (d: DraftDimension) => (d.nominal.trim() === '' ? '— (no nominal)' : `${d.nominal} +${d.tolPlus || 0}/-${d.tolMinus || 0}`)
-  const statusOf = (d: DraftDimension) =>
-    dimensionStatus({
-      nominal: Number(d.nominal),
-      tolPlus: Number(d.tolPlus),
-      tolMinus: Number(d.tolMinus),
-      actual: Number(d.actual),
-    })
+  // As the server will store it: a blank nominal or tolerance is Pending, not a Fail against 0.
+  const statusOf = previewStatus
 
   return (
     <div className="space-y-4">
@@ -2752,7 +2928,13 @@ function ReviewStep({
             />
           </Field>
           <Field label="Photos" hint="Photos of the order in general, not of a defect.">
-            <ImagePicker imageIds={note.imageIds} onChange={(ids) => setNote({ imageIds: ids })} sessionId={sessionId} orderId={orderId} />
+            <ImagePicker
+              imageIds={note.imageIds}
+              onChange={(edit) => update((d) => ({ ...d, note: { ...(d.note ?? { text: '', imageIds: [] }), imageIds: edit(d.note?.imageIds ?? []) } }))}
+              onUploading={onUploading}
+              sessionId={sessionId}
+              orderId={orderId}
+            />
           </Field>
         </div>
         <div className="mt-3">

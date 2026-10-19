@@ -15,17 +15,28 @@ import '@fontsource/inter/latin-700.css'
 import '@fontsource/inter/latin-800.css'
 import './index.css'
 import { registerSW } from 'virtual:pwa-register'
+import { appUpdates } from './lib/appUpdate'
 
 // The service worker that makes the app installable and keeps its shell
-// ready. A new deploy is picked up on the next load without asking.
+// ready. A new deploy is picked up without asking — but never under someone
+// typing: it is swapped in and the page reloaded at once when nothing unsaved
+// is open, and otherwise as soon as the person saves or leaves (lib/appUpdate.ts).
 // A tablet on the floor stays open for a whole shift: besides the check on
 // each load, ask for a new build every hour so a deploy reaches it without
-// anyone reloading. autoUpdate then swaps it in and reloads.
+// anyone reloading.
 // A sleeping tablet pauses that timer, so it also asks when the screen comes
 // back on and when the network returns — at most every five minutes.
 const UPDATE_CHECK_GAP = 5 * 60 * 1000
-registerSW({
+const updateSW = registerSW({
   immediate: true,
+  // A new version is installed and waiting: swap it in (this page then reloads into it).
+  onNeedRefresh() {
+    appUpdates.whenFree(() => void updateSW(true))
+  },
+  // The new version took over — swapped in here, or by another tab: reload into it.
+  onNeedReload() {
+    appUpdates.whenFree(() => window.location.reload())
+  },
   onRegisteredSW(_url, registration) {
     if (!registration) return
     let lastCheck = Date.now()
