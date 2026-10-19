@@ -79,10 +79,20 @@ beforeAll(async () => {
   // The buried one first, an hour back; the recent ones a minute apart after it.
   buried = (await app.api<{ id: string }>('POST', '/api/sessions', { token: two.token, body: { orderId: panel.id, startQty: 0 } })).body.id
   await app.db.query(`UPDATE inspection_sessions SET started_at = now() - interval '60 minutes' WHERE id = $1`, [buried])
+  // The recent ones open side by side on one line, as a record from before
+  // one session per line may hold them: each is opened through the API with
+  // the one before it set aside as closed, and they are opened again
+  // together with the guard switched off. The filters under test are reads.
   for (let i = 0; i < RECENT; i++) {
     const made = await app.api<{ id: string }>('POST', '/api/sessions', { token: one.token, body: { orderId: beam.id, startQty: i } })
-    await app.db.query(`UPDATE inspection_sessions SET started_at = now() - make_interval(mins => $2) WHERE id = $1`, [made.body.id, RECENT - i])
+    await app.db.query(`UPDATE inspection_sessions SET started_at = now() - make_interval(mins => $2), status = 'Closed', closed_at = now() WHERE id = $1`, [
+      made.body.id,
+      RECENT - i,
+    ])
   }
+  await app.db.query('ALTER TABLE inspection_sessions DISABLE TRIGGER inspection_sessions_one_open_per_line')
+  await app.db.query(`UPDATE inspection_sessions SET status = 'Open', closed_at = NULL WHERE order_id = $1`, [beam.id])
+  await app.db.query('ALTER TABLE inspection_sessions ENABLE TRIGGER inspection_sessions_one_open_per_line')
   // One closed session, so the status filter has something to find. Closing
   // through the API needs a recorded sample; the filter under test is a read.
   await app.db.query(`UPDATE inspection_sessions SET status = 'Closed', closed_at = now(), closed_by_id = $2 WHERE order_id = $1 AND seq = 2`, [

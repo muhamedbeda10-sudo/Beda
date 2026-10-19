@@ -8,8 +8,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { DISPOSITIONS, type CoilRegisterDetails, type DefectResult, type DimensionResult, type PTRecord, type PTTestedLength, type PaintSampleRecord, type SampleCoil } from '@qc/shared/types'
 import { OTHER_DEFECT_NAME, dimensionStatus, isOtherDefect } from '@qc/shared/rules'
-import type {
-  SessionDefectsResponse, SampleDetail } from '@qc/shared/api'
+import type { SessionDefectsResponse, SampleDetail, SessionWithOrder } from '@qc/shared/api'
 import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
 import { ConflictError, badRequest, forbidden, notFound } from '../lib/errors'
@@ -126,6 +125,26 @@ async function loadSampleDetail(q: Queryable, id: string): Promise<SampleDetail 
   }
 }
 
+/** A row under a sample (`d`) whose sample is live: a deleted sample's rows are not corrected. */
+const LIVE_SAMPLE = `EXISTS (SELECT 1 FROM inspection_samples sm WHERE sm.id = d.sample_id AND sm.deleted_at IS NULL)`
+
+/**
+ * The live session a live sample sits in, locked: every write under a session
+ * locks the session before anything in it (a sample, a measurement, a
+ * defect), as a re-record does, so two such writes never wait on each other
+ * crosswise. Null when the sample or its session is gone or deleted.
+ */
+async function lockSessionOfSample(tx: Queryable, sampleId: string): Promise<SessionWithOrder | null> {
+  const row = (await tx.query<{ sessionId: string }>(`SELECT session_id AS "sessionId" FROM inspection_samples WHERE id = $1 AND deleted_at IS NULL`, [sampleId])).rows[0]
+  return row ? loadSessionWithOrder(tx, row.sessionId, true) : null
+}
+
+/** The same for a live measurement or defect: its sample's session, locked. The row itself is read again, under that lock. */
+async function lockSessionOfChild(tx: Queryable, table: 'dimension_results' | 'defect_results', id: string): Promise<SessionWithOrder | null> {
+  const row = (await tx.query<{ sampleId: string }>(`SELECT sample_id AS "sampleId" FROM ${table} WHERE id = $1 AND deleted_at IS NULL`, [id])).rows[0]
+  return row ? lockSessionOfSample(tx, row.sampleId) : null
+}
+
 /** §14 — an open session may be corrected by anyone who records; a closed one
  *  needs a supervisor. Resolved here so no client can bypass it. */
 function assertMayCorrect(user: AuthUser, status: 'Open' | 'Closed'): void {
@@ -172,12 +191,11 @@ export function samplesRoutes(ctx: AppContext): Router {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     await withTransaction(db, async (tx) => {
-      const row = (
-        await tx.query<{ sessionId: string }>(`SELECT session_id AS "sessionId" FROM inspection_samples WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [id])
-      ).rows[0]
-      if (!row) throw notFound('That sample')
-      const session = await loadSessionWithOrder(tx, row.sessionId, true)
-      if (!session) throw notFound('That session')
+      const session = await lockSessionOfSample(tx, id)
+      if (!session) throw notFound('That sample')
+      // Read again under the session's lock: a delete that went first is not a second one.
+      const live = await tx.query(`SELECT 1 FROM inspection_samples WHERE id = $1 AND session_id = $2 AND deleted_at IS NULL FOR UPDATE`, [id, session.id])
+      if (live.rowCount === 0) throw notFound('That sample')
       await tx.query(`UPDATE inspection_samples SET deleted_at = now(), deleted_by_id = $2 WHERE id = $1`, [id, user.id])
       await auditDelete(tx, auditCtxFor(user, session, 'InspectionSample', id, id))
     })
@@ -189,14 +207,13 @@ export function samplesRoutes(ctx: AppContext): Router {
     const id = parse(uuid, req.params.id)
     const body = parse(z.object({ actual: z.union([z.number().finite(), z.null()]), version: z.number().int().min(0) }), req.body)
     const updated = await withTransaction(db, async (tx) => {
-      const before = (await tx.query<DimensionResult & { sessionId: string }>(
-        `SELECT ${DIMENSION_SELECT}, (SELECT session_id FROM inspection_samples sm WHERE sm.id = d.sample_id) AS "sessionId"
-           FROM dimension_results d WHERE d.id = $1 AND d.deleted_at IS NULL FOR UPDATE OF d`,
+      const session = await lockSessionOfChild(tx, 'dimension_results', id)
+      if (!session) throw notFound('That measurement')
+      const before = (await tx.query<DimensionResult>(
+        `SELECT ${DIMENSION_SELECT} FROM dimension_results d WHERE d.id = $1 AND d.deleted_at IS NULL AND ${LIVE_SAMPLE} FOR UPDATE OF d`,
         [id],
       )).rows[0]
       if (!before) throw notFound('That measurement')
-      const session = await loadSessionWithOrder(tx, before.sessionId)
-      if (!session) throw notFound('That session')
       assertMayCorrect(user, session.status)
       if (before.version !== body.version) throw new ConflictError(dropNulls(before))
 
@@ -238,14 +255,13 @@ export function samplesRoutes(ctx: AppContext): Router {
       req.body,
     )
     const updated = await withTransaction(db, async (tx) => {
-      const before = (await tx.query<DefectResult & { sessionId: string }>(
-        `SELECT ${DEFECT_SELECT}, (SELECT session_id FROM inspection_samples sm WHERE sm.id = d.sample_id) AS "sessionId"
-           FROM defect_results d WHERE d.id = $1 AND d.deleted_at IS NULL FOR UPDATE OF d`,
+      const session = await lockSessionOfChild(tx, 'defect_results', id)
+      if (!session) throw notFound('That defect')
+      const before = (await tx.query<DefectResult>(
+        `SELECT ${DEFECT_SELECT} FROM defect_results d WHERE d.id = $1 AND d.deleted_at IS NULL AND ${LIVE_SAMPLE} FOR UPDATE OF d`,
         [id],
       )).rows[0]
       if (!before) throw notFound('That defect')
-      const session = await loadSessionWithOrder(tx, before.sessionId)
-      if (!session) throw notFound('That session')
       assertMayCorrect(user, session.status)
       if (before.version !== body.version) throw new ConflictError(dropNulls(before))
 

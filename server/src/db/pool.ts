@@ -62,6 +62,10 @@ export const PG = {
   FOREIGN_KEY_VIOLATION: '23503',
   CHECK_VIOLATION: '23514',
   RESTRICT_VIOLATION: '23001',
+  /** Two transactions waited on each other; the database rolled one back. Sent again, it goes through. */
+  DEADLOCK_DETECTED: '40P01',
+  /** A transaction could not go on as written (a serializable conflict, or a guard that asks for another isolation). */
+  SERIALIZATION_FAILURE: '40001',
 } as const
 
 export function pgCode(e: unknown): string | undefined {

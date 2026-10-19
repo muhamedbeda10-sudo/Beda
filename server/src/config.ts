@@ -74,9 +74,11 @@ const schema = z
       .transform((v) => (v && v.trim() ? v.trim() : undefined)),
     /**
      * §20 — the username of the one account that controls the AI assistant
-     * (its key, switch, caps, who may use it, what it costs). Read once, when
-     * no owner is pinned yet: the live, active account of that name is pinned
-     * for good, and a later change here only logs a warning.
+     * (its key, switch, caps, who may use it, what it costs). Read at start
+     * while no owner is pinned yet: the live, active account of that name is
+     * pinned for good, and a later change here only logs a warning. Until then
+     * the name is reserved in the app; `npm run ai:pin-owner -w server --
+     * <username>` pins an existing account instead (ai/owner.ts).
      */
     AI_OWNER_USERNAME: z
       .string()

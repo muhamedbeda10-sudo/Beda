@@ -52,7 +52,10 @@ beforeAll(async () => {
 })
 afterAll(() => app.stop())
 
+/** A fresh session on the line: one line holds one open session at a time, so the one a previous test left open is deleted first. */
 async function open(startQty: number): Promise<SessionWithOrder> {
+  const { rows } = await app.db.query<{ id: string }>(`SELECT id FROM inspection_sessions WHERE order_id = $1 AND status = 'Open' AND deleted_at IS NULL`, [order.id])
+  for (const r of rows) expect((await app.api('DELETE', `/api/sessions/${r.id}`, { token: admin.token })).status).toBe(204)
   return (await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: order.id, startQty } })).body
 }
 

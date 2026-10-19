@@ -15,7 +15,7 @@ import { seedWorkInstructionsIfEmpty } from './db/seedWorkInstructions'
 import type { AppContext } from './context'
 import { AnthropicModelClient } from './ai/model'
 import { AiReader } from './ai/reader'
-import { aiOwner } from './ai/owner'
+import { pinAiOwner } from './ai/owner'
 import { AnswerRunner } from './ai/answerRunner'
 import { AutomationEngine } from './automations/engine'
 import { SavedTableRefresher } from './ai/savedTables'
@@ -44,16 +44,17 @@ if (config.RUN_MIGRATIONS_ON_START) {
 // §20 — the AI assistant's database readers. Idempotent, so it runs at every
 // start whether or not migrations did; a failure leaves the assistant
 // unavailable and everything else running. Then its owner, if not pinned yet
-// and the account exists (otherwise the first request after it does pins it).
+// and the account exists. Nothing else pins it but the operator's command
+// (ai/owner.ts): no request does.
 const aiReader = new AiReader()
 await aiReader.provision(db, config)
 try {
-  if (!(await aiOwner(db, config))) {
+  if (!(await pinAiOwner(db, config))) {
     const pinned = await db.query(`SELECT 1 FROM ai_owner`)
     console.warn(
       pinned.rowCount
         ? "[ai] the assistant's owner account is deactivated or removed: nobody controls the assistant until it is back (a database operation)"
-        : `[ai] no active account "${config.AI_OWNER_USERNAME}" to own the assistant yet; nobody controls it until there is one`,
+        : `[ai] no active account "${config.AI_OWNER_USERNAME}" to own the assistant; nobody controls it until one is pinned: npm run ai:pin-owner -w server -- <username>`,
     )
   }
 } catch (e) {

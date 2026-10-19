@@ -1,13 +1,23 @@
+import { execFile } from 'node:child_process'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
-import { AI_DEFAULT_MONTHLY_CAP_USD, AI_MODEL, type AiMeResponse, type AiSettingsResponse } from '@qc/shared/ai'
+import { AI_DEFAULT_MONTHLY_CAP_USD, type AiMeResponse, type AiSettingsResponse } from '@qc/shared/ai'
 import type { ApiErrorBody } from '@qc/shared/api'
+import type { UserProfile } from '@qc/shared/types'
 import { TestApp, type Session } from './harness'
 import { aiOwner, currentAiOwner, pinAiOwner } from '../src/ai/owner'
+import { hashPassword } from '../src/auth/password'
 
-// §20 — the one owner of the assistant: the live, active account named by
-// AI_OWNER_USERNAME (any case), pinned once, at start or on first need, and
-// never moved through the app afterwards — not by a rename, not by a new
-// account taking the name, not by a changed setting.
+// §20 — the one owner of the assistant: pinned once, and only deliberately —
+// at the API's start (the live, active account named by AI_OWNER_USERNAME,
+// any case), by the server's operator (`npm run ai:pin-owner`), or as the
+// first account of an empty installation taking that name. No request pins
+// anyone, and until a pin exists nobody may take the name through the app.
+// Once pinned it never moves — not by a rename, not by a new account taking
+// the name, not by a changed setting.
 
 const app = new TestApp()
 let admin: Session
@@ -19,35 +29,83 @@ const createUser = async (username: string, name: string, role = 'admin') => {
   expect(res.status).toBe(201)
   return res.body.id
 }
+/** An account written in the database, as an operator would: the app itself refuses the owner's name while nobody is pinned. */
+const insertUser = async (username: string, name: string, role = 'admin') =>
+  (
+    await app.db.query<{ id: string }>(`INSERT INTO users (username, name, role, password_hash) VALUES ($1, $2, $3, $4) RETURNING id`, [
+      username,
+      name,
+      role,
+      await hashPassword('Password#1'),
+    ])
+  ).rows[0].id
+
+/** The operator's command, run as the server's operator runs it. */
+async function pinCommand(...args: string[]): Promise<{ code: number; out: string }> {
+  const server = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const tsx = createRequire(import.meta.url).resolve('tsx/cli')
+  try {
+    const { stdout, stderr } = await promisify(execFile)(process.execPath, [tsx, 'src/db/pin-ai-owner-cli.ts', ...args], {
+      cwd: server,
+      env: { ...process.env, DATABASE_URL: app.config.DATABASE_URL, JWT_SECRET: app.config.JWT_SECRET, AI_OWNER_USERNAME: app.config.AI_OWNER_USERNAME, NODE_ENV: 'test' },
+    })
+    return { code: 0, out: stdout + stderr }
+  } catch (e) {
+    const failed = e as { code: number; stdout: string; stderr: string }
+    return { code: failed.code, out: failed.stdout + failed.stderr }
+  }
+}
 
 beforeAll(async () => {
-  await app.start({ AI_OWNER_USERNAME: 'Mo.Beda' })
+  await app.start({ AI_OWNER_USERNAME: 'Mo.Beda', AUTH_ALLOW_SELF_REGISTRATION: 'true' })
 })
 afterAll(() => app.stop())
 
 describe('§20 pinning the owner', () => {
-  it('pins nobody while no live, active account has the name, then the one that does, whatever its case', async () => {
+  it('keeps the owner’s name reserved while nobody is pinned: nobody registers it, is given it, or renames to it', async () => {
     await app.resetDatabase()
-    // Nobody to pin at start: no account at all.
-    expect(await pinAiOwner(app.db, app.config)).toBeNull()
     admin = await app.register('admin', 'Admin')
-    expect(await aiOwner(app.db, app.config)).toBeNull()
+    expect(await ownerRow()).toBeNull()
+    for (const username of ['mo.beda', 'MO.BEDA']) {
+      const created = await app.api<ApiErrorBody>('POST', '/api/users', { token: admin.token, body: { username, password: 'Password#1', name: 'Mo', role: 'inspector' } })
+      expect(created.status, username).toBe(409)
+      expect(created.body.error.message).toBe('This username is reserved. Choose another.')
+      const registered = await app.api<ApiErrorBody>('POST', '/api/auth/register', { body: { username, password: 'Password#1', name: 'Mo' } })
+      expect(registered.status, username).toBe(409)
+      expect(registered.body.error.message).toBe('This username is reserved. Choose another.')
+    }
+    // Not by renaming oneself, nor anyone else.
+    const renamedSelf = await app.api<ApiErrorBody>('PATCH', `/api/users/${admin.user.id}`, { token: admin.token, body: { username: 'Mo.Beda' } })
+    expect(renamedSelf.status).toBe(409)
+    const someone = await createUser('someone', 'Some One', 'inspector')
+    expect((await app.api('PATCH', `/api/users/${someone}`, { token: admin.token, body: { username: 'mo.beda' } })).status).toBe(409)
+    expect((await app.db.query(`SELECT 1 FROM users WHERE lower(username) = 'mo.beda'`)).rowCount).toBe(0)
+    expect(await ownerRow()).toBeNull()
+  })
 
-    // An inactive account of that name is not pinned, nor a removed one (both put so in the database: through the app it would be pinned first).
-    const inactive = await createUser('mo.beda', 'Mohamed Beda')
+  it('pins nothing on a request: only at start, the live, active account of the name, whatever its case', async () => {
+    // An inactive account of that name is not pinned, nor a removed one.
+    const inactive = await insertUser('mo.beda', 'Mohamed Beda')
     await app.db.query(`UPDATE users SET is_active = false WHERE id = $1`, [inactive])
-    expect(await aiOwner(app.db, app.config)).toBeNull()
+    expect(await pinAiOwner(app.db, app.config)).toBeNull()
     await app.db.query(`UPDATE users SET deleted_at = now() WHERE id = $1`, [inactive])
+    expect(await pinAiOwner(app.db, app.config)).toBeNull()
+    expect(await ownerRow()).toBeNull()
+
+    // A live one: requests — signing in, the assistant's status, the accounts list, a change to the account — pin nothing.
+    const owner = await insertUser('mo.beda', 'Mohamed Beda')
+    const mo = await app.login('mo.beda')
+    expect((await app.api<AiMeResponse>('GET', '/api/ai/me', { token: mo.token })).body).toMatchObject({ owner: false })
+    expect((await app.api('GET', '/api/users', { token: admin.token })).status).toBe(200)
+    expect((await app.api('GET', '/api/auth/me', { token: mo.token })).body).toMatchObject({ adminPlus: false })
     expect(await aiOwner(app.db, app.config)).toBeNull()
     expect(await ownerRow()).toBeNull()
 
-    // A live one, named in another case: pinned on first need, by any request.
-    const owner = await createUser('mo.beda', 'Mohamed Beda')
-    const mo = await app.login('mo.beda')
-    const me = await app.api<AiMeResponse>('GET', '/api/ai/me', { token: admin.token })
-    expect(me.body).toEqual({ granted: false, owner: false, available: false, reason: 'not-granted', automations: false, excel: false, notices: false, mtc: false })
+    // The API's start pins it.
+    expect(await pinAiOwner(app.db, app.config)).toBe(owner)
     expect(await ownerRow()).toBe(owner)
     expect((await app.api<AiMeResponse>('GET', '/api/ai/me', { token: mo.token })).body).toMatchObject({ granted: true, owner: true })
+    expect((await app.api<UserProfile>('GET', '/api/auth/me', { token: mo.token })).body.adminPlus).toBe(true)
   })
 
   it('gives the owner their own access when pinned, and records the pin for the owner alone', async () => {
@@ -85,7 +143,7 @@ describe('§20 pinning the owner', () => {
       expect(warnings).toHaveLength(1)
       expect(String(warnings[0][0])).toMatch(/stays the account pinned first \(now "beda\.m"\)/)
 
-      // A new account takes the name: it owns nothing.
+      // A new account takes the name — free now that an owner is pinned: it owns nothing.
       await createUser('mo.beda', 'Someone Else')
       const newcomer = await app.login('mo.beda')
       expect((await app.api('GET', '/api/ai/settings', { token: newcomer.token })).status).toBe(404)
@@ -119,6 +177,7 @@ describe('§20 pinning the owner', () => {
     try {
       expect(await currentAiOwner(app.db, app.config)).toBeNull()
       expect(await aiOwner(app.db, config('admin'))).toBeNull()
+      expect(await pinAiOwner(app.db, config('admin'))).toBeNull()
       expect((await app.api('GET', '/api/ai/settings', { token: admin.token })).status).toBe(404)
       expect(await ownerRow()).toBe(owner)
     } finally {
@@ -148,16 +207,16 @@ describe('§20 pinning the owner', () => {
     expect((await app.api('PATCH', `/api/users/${owner}`, { token: mo.token, body: { password: 'Owners#Own12' } })).status).toBe(200)
     await app.login('beda.m', 'Owners#Own12')
     expect((await app.api('PATCH', `/api/users/${owner}`, { token: mo.token, body: { role: 'viewer' } })).status).toBe(400)
-    const someone = await createUser('someone', 'Some One', 'inspector')
+    const someone = (await app.db.query<{ id: string }>(`SELECT id FROM users WHERE username = 'someone'`)).rows[0].id
     expect((await app.api('PATCH', `/api/users/${someone}`, { token: admin.token, body: hijack })).status).toBe(200)
     await app.login('someone', hijack.password)
   })
 
-  it('pins once when many ask at the same moment', async () => {
+  it('pins once when many pin at the same moment', async () => {
     await app.resetDatabase()
     admin = await app.register('admin', 'Admin')
-    const owner = await createUser('mo.beda', 'Mohamed Beda', 'inspector')
-    const pinned = await Promise.all(Array.from({ length: 6 }, () => aiOwner(app.db, app.config)))
+    const owner = await insertUser('mo.beda', 'Mohamed Beda', 'inspector')
+    const pinned = await Promise.all(Array.from({ length: 6 }, () => pinAiOwner(app.db, app.config)))
     expect(new Set(pinned)).toEqual(new Set([owner]))
     expect((await app.db.query(`SELECT 1 FROM ai_access WHERE user_id = $1`, [owner])).rowCount).toBe(1)
     expect((await app.db.query(`SELECT 1 FROM audit_log WHERE entity = 'AiAssistant' AND entity_id = 'owner'`)).rowCount).toBe(1)
@@ -169,15 +228,36 @@ describe('§20 pinning the owner', () => {
     expect(refused.body.error).toEqual({ code: 'not_found', message: 'No such endpoint.' })
   })
 
-  it('pins the owner before anyone else may change the account named', async () => {
+  it('lets whoever runs the server pin an existing account by its username, once', async () => {
     await app.resetDatabase()
     admin = await app.register('admin', 'Admin')
-    const owner = await createUser('mo.beda', 'Mohamed Beda', 'inspector')
-    // Any change to an account pins the owner first: the account named is ADMIN+ before anyone else can touch it.
+    // Nobody of that name: nothing pinned, and the command says so.
+    const none = await pinCommand('nobody')
+    expect(none.code).toBe(1)
+    expect(none.out).toMatch(/No active account "nobody" to pin/)
     expect(await ownerRow()).toBeNull()
-    expect((await app.api('PATCH', `/api/users/${owner}`, { token: admin.token, body: { password: 'Hijacked#12345' } })).status).toBe(403)
-    expect(await ownerRow()).toBe(owner)
-    const other = await createUser('other', 'Other', 'inspector')
-    expect((await app.api('PATCH', `/api/users/${other}`, { token: admin.token, body: { password: 'Reset#123456' } })).status).toBe(200)
+
+    const someone = await createUser('someone', 'Some One', 'supervisor')
+    const done = await pinCommand('SomeOne')
+    expect(done.code).toBe(0)
+    expect(done.out).toMatch(/owner is now SomeOne/)
+    expect(await ownerRow()).toBe(someone)
+    const me = await app.api<UserProfile>('GET', '/api/auth/me', { token: (await app.login('someone')).token })
+    expect(me.body.adminPlus).toBe(true)
+
+    // Asked again, it names who it is; another name moves nothing.
+    expect(await pinCommand('someone')).toMatchObject({ code: 0 })
+    const other = await pinCommand('admin')
+    expect(other.code).toBe(1)
+    expect(other.out).toMatch(/already pinned: someone\. The pin never moves\./)
+    expect(await ownerRow()).toBe(someone)
+  })
+
+  it('pins the first account of an empty installation when it takes the owner’s name', async () => {
+    await app.resetDatabase()
+    const mo = await app.register('Mo.Beda', 'Mohamed Beda')
+    expect(mo.user.role).toBe('admin')
+    expect(mo.user.adminPlus).toBe(true)
+    expect(await ownerRow()).toBe(mo.user.id)
   })
 })
