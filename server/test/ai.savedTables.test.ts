@@ -137,7 +137,7 @@ describe('what a query reads', () => {
     ]
     for (const sql of byName) {
       expect(precheckSql(sql), sql).toMatchObject({ error: expect.stringMatching(/cannot be used in the assistant's queries/) })
-      expect(await domainsRead(app.aiReader, sql), sql).toMatchObject({ error: expect.stringMatching(/permission denied/) })
+      expect(await domainsRead(app.aiReader, sql), sql).toMatchObject({ error: expect.stringMatching(/cannot be used in the assistant's queries/) })
     }
     // Every one of them, as PostgreSQL lists them: taken from every role (migration 0072).
     const { rows: listed } = await app.db.query<{ fn: string }>(

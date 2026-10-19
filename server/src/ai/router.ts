@@ -10,11 +10,19 @@
 //     failure (no answer in time, an unreadable reply) gives the standard
 //     level, with no reason.
 //   • Its cost is the question's: recorded on the question's turn by the
-//     caller, with the answer's own calls.
+//     caller, with the answer's own calls, settling the hold its worst case
+//     was made under (access.ts, holdUnderCaps): like every call, it is never
+//     the one that passes a cap. Without room for it the router is not asked,
+//     and the question meets its own check, which needs more.
 // ============================================================================
 
 import { AI_JOBS, AI_LEVEL_NAMES, AI_ROUTER_FALLBACK, type AiAttachmentKind, type AiChatLevel, type AiRecordedChatLevel } from '@qc/shared/ai'
+import type { Db } from '../db/pool'
+import { capPassed, holdUnderCaps, loadAccess, releaseHold } from './access'
+import { keepFailedCallCost } from './conversationTitle'
 import { noThinking, type AiModelClient, type CompleteParams, type ModelMessage } from './model'
+import { worstCaseUsd } from './models'
+import { loadAiSettings } from './settings'
 
 /** How long the router may take before the question goes on at the standard level. */
 export const ROUTER_TIMEOUT_MS = 8_000
@@ -54,6 +62,8 @@ export interface RouterInput {
   files?: readonly AiAttachmentKind[]
   /** The asker leaving stops the call with the rest. */
   signal?: AbortSignal
+  /** Whose call it is: its worst case is held against both caps while it is under way. */
+  asker: { db: Db; userId: string }
 }
 
 export interface RouterResult {
@@ -62,6 +72,8 @@ export interface RouterResult {
   reason: string | null
   /** The call's reply, for its usage (null when no call came back). */
   message: ModelMessage | null
+  /** The hold the reply's cost settles (UsageRecord.holdId): the caller keeps that cost with it. Null with no reply. */
+  holdId: string | null
 }
 
 /** What the router reads: the question, and the one before it for a follow-up. */
@@ -109,18 +121,35 @@ export function readRouterReply(message: ModelMessage): { level: AiChatLevel; re
   }
 }
 
-/** The question's level: the router's, or the standard one when it cannot be had in time. */
+/**
+ * The question's level: the router's, or the standard one when it cannot be had in time — or when there is no room
+ * under the caps for its call, which is then not made.
+ */
 export async function chooseLevel(input: RouterInput): Promise<RouterResult> {
+  const fallback: RouterResult = { level: AI_ROUTER_FALLBACK, reason: null, message: null, holdId: null }
+  const params = routerRequest(input)
+  const { db, userId } = input.asker
+  const worst = worstCaseUsd(params)
+  const held = await holdUnderCaps(db, userId, worst, async (tx) => {
+    // One after another: `tx` is a transaction's single connection.
+    const access = await loadAccess(tx, userId)
+    const { settings } = await loadAiSettings(tx)
+    return capPassed(tx, userId, worst, { appUsd: settings.monthlyCapUsd, personalUsd: access ? access.monthlyCapUsd : null })
+  })
+  if ('refused' in held) return fallback
   const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(ROUTER_TIMEOUT_MS)]) : AbortSignal.timeout(ROUTER_TIMEOUT_MS)
   let message: ModelMessage
   try {
-    message = await input.model.complete(input.apiKey, routerRequest(input), { signal })
+    message = await input.model.complete(input.apiKey, params, { signal })
   } catch (e) {
     // The message only: an error's request details are never logged.
     console.warn('[ai] no level from the router; the question goes on at the standard level:', e instanceof Error ? e.message : String(e))
-    return { level: AI_ROUTER_FALLBACK, reason: null, message: null }
+    // Out of time once sent, it may have been billed: kept at its worst, with the hold. Otherwise nothing was spent.
+    const kept = await keepFailedCallCost(db, { userId, conversationId: null, turnId: null, holdId: held.holdId }, params, e)
+    if (kept === 'nothing') await releaseHold(db, held.holdId).catch((err: unknown) => console.warn("[ai] a call's hold could not be let go; it lapses on its own:", err instanceof Error ? err.message : String(err)))
+    return fallback
   }
   const read = readRouterReply(message)
   if (!read) console.warn(`[ai] the router's reply named no level (stop: ${message.stop_reason ?? 'none'}); the question goes on at the standard level`)
-  return read ? { ...read, message } : { level: AI_ROUTER_FALLBACK, reason: null, message }
+  return read ? { ...read, message, holdId: held.holdId } : { ...fallback, message, holdId: held.holdId }
 }

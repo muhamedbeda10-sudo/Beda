@@ -55,7 +55,7 @@ import { auditEvent } from '@qc/shared/audit'
 import { auditCreate, auditDelete, writeAudit } from '../audit/service'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
 import { AI_DOMAIN_COMBINATIONS, canonicalDomains, combinationRole, domainRole, storedDomains } from './domains'
-import { AI_QUERY_TIMEOUT_MS, codeOnly, precheckSql, runReadOnlyQuery } from './runQuery'
+import { AI_QUERY_TIMEOUT_MS, codeOnly, precheckSql, refusedByName, refusedByNameOn, runReadOnlyQuery } from './runQuery'
 import { RUN_SQL_TOOL_NAME } from './prompt'
 import { withQueryOrigin } from './slowQueries'
 
@@ -291,7 +291,9 @@ async function plans(pool: pg.Pool, sql: string): Promise<Planned> {
 export async function domainsRead(readers: SavedTableReaders, sql: string): Promise<{ domains: AiDomain[] } | { error: string }> {
   const all = readers.poolFor(AI_DOMAIN_IDS)
   if (!readers.ready || !all) return { error: 'The assistant cannot read the database right now. Try again later.' }
-  const whole = await plans(all, sql)
+  // Planning may evaluate a function with constant arguments: never one the runner refuses, however it is written.
+  const refused = await refusedByNameOn(all, sql)
+  const whole: Planned = refused ? { ok: false, code: refused.code, message: refused.error } : await plans(all, sql)
   if (!whole.ok) {
     const outside = whole.code === '42501' || whole.code === '3F000'
     return { error: `${whole.message}${outside ? ' Only the views and functions in schema ai, and the saved tables in schema ai_saved, can be read.' : ''}` }
@@ -336,6 +338,22 @@ async function planEach(pool: pg.Pool, sqls: readonly string[], untilRefused = f
   } finally {
     // The connection goes, as the runner's do: nothing the plans left in its session outlives it.
     await client.query('ROLLBACK').catch(() => undefined)
+    client.release(true)
+  }
+  return out
+}
+
+/** The queries PostgreSQL's own reading of which calls nothing the runner refuses (refusedByName), on one connection thrown away after. */
+async function notRefused(pool: pg.Pool, sqls: readonly string[]): Promise<string[]> {
+  const client = await pool.connect()
+  const out: string[] = []
+  try {
+    for (const sql of sqls) {
+      // One it cannot read at all is kept: planning it says no more.
+      const refused = await refusedByName(client, sql).catch(() => null)
+      if (!refused) out.push(sql)
+    }
+  } finally {
     client.release(true)
   }
   return out
@@ -392,13 +410,16 @@ async function domainsNamed(q: Queryable, sqls: readonly string[]): Promise<AiDo
 /** The domains a set of queries reads together: each planned as domainsRead plans one, or read from its text when it cannot be planned. */
 async function domainsReadByAll(deps: SavedTableDeps, texts: Iterable<string>): Promise<{ domains: AiDomain[] } | { error: string }> {
   // Only what could have run: a query the runner refuses never read anything.
-  const sqls = [...new Set(texts)].flatMap((t) => {
+  const texted = [...new Set(texts)].flatMap((t) => {
     const checked = precheckSql(t)
     return 'sql' in checked ? [checked.sql] : []
   })
-  if (sqls.length === 0) return { domains: [] }
+  if (texted.length === 0) return { domains: [] }
   const all = deps.readers.poolFor(AI_DOMAIN_IDS)
   if (!deps.readers.ready || !all) return { error: 'The assistant cannot read the database right now. Try again later.' }
+  // Planning may evaluate a function with constant arguments: a query calling one the runner refuses never ran, and is not planned.
+  const sqls = await notRefused(all, texted)
+  if (sqls.length === 0) return { domains: [] }
   const whole = await planEach(all, sqls)
   const planned = sqls.filter((_, i) => whole[i].ok)
   const needed = new Set<AiDomain>(await domainsNamed(deps.db, sqls.filter((_, i) => !whole[i].ok)))

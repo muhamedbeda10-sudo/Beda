@@ -187,6 +187,10 @@ export class AiReader {
         client.release()
       }
 
+      // The runner reads every query into a temporary view first (runQuery.ts, refusedByName): the readers need TEMP on the
+      // database, which PUBLIC holds unless it was taken away. Given to the base role then, or the assistant stays off.
+      await ensureTemporary(db, database)
+
       // One sign-in proves the passwords and the server's authentication take them.
       this.database = database
       this.config = config
@@ -236,6 +240,15 @@ async function openToEveryone(db: Db): Promise<string | null> {
       ORDER BY name LIMIT 1`,
   )
   return rows[0]?.name ?? null
+}
+
+/** Every reader may make temporary views (TEMP on the database): given to the base role when PUBLIC no longer holds it. Throws when it cannot be had. */
+async function ensureTemporary(db: Db, database: string): Promise<void> {
+  const base = domainRole(database, 'base')
+  const may = async () => (await db.query<{ may: boolean }>(`SELECT has_database_privilege($1, current_database(), 'TEMPORARY') AS may`, [base])).rows[0].may
+  if (await may()) return
+  await db.query(`GRANT TEMPORARY ON DATABASE ${pg.escapeIdentifier(database)} TO ${pg.escapeIdentifier(base)}`).catch(() => undefined)
+  if (!(await may())) throw new Error(`role ${base} may not make temporary views (TEMPORARY on database ${database}), which every query is read into before it runs; grant it`)
 }
 
 /**

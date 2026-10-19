@@ -219,6 +219,7 @@ import {
   findConversation,
   listConversations,
   loadDisplayMessages,
+  keepUsage,
   loadReplay,
   recordUsage,
   repairDanglingToolUse,
@@ -830,19 +831,17 @@ export function aiRoutes(ctx: AppContext): Router {
     let routed: RouterResult | null = null
     if (!isTopLevel(previous?.level)) {
       const files = await attachmentKinds(db, user.id, body.attachmentIds)
-      routed = await chooseLevel({ model: ctx.ai, apiKey: avail.app.apiKey, question: body.message, previous, files, signal: ac.signal })
+      routed = await chooseLevel({ model: ctx.ai, apiKey: avail.app.apiKey, question: body.message, previous, files, signal: ac.signal, asker: { db, userId: user.id } })
     }
     const level: AiChatLevel = stickyLevel(previous?.level, routed?.level ?? 'chat-deep')
     // Why, for Activity: the router's reason, or that the conversation is deep already (the router not asked).
     const levelReason = routed ? routed.reason : `Kept at ${AI_LEVEL_NAMES[level]}: the conversation is there already, and keeps its cache.`
     const chosen = AI_JOBS[level]
-    /** The router's call when no question is kept to carry it (refused, or the asker gone): billed all the same, to the asker. */
+    /** The router's call when no question is kept to carry it (refused, or the asker gone): billed all the same, to the asker, settling its hold. */
     const keepRouterCost = async () => {
       if (!routed?.message) return
       const usage = usageOf(routed.message, AI_JOBS.router.model)
-      await recordUsage(db, { userId: user.id, conversationId: null, turnId: null, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd }).catch((err: unknown) =>
-        console.error('[ai] could not record the router call of a question not kept', err),
-      )
+      await keepUsage(db, { userId: user.id, conversationId: null, turnId: null, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd, holdId: routed.holdId })
     }
     if (ac.signal.aborted) {
       await keepRouterCost()
@@ -884,10 +883,10 @@ export function aiRoutes(ctx: AppContext): Router {
         [conversation.id, user.id, body.clientId, body.message, chosen.model, chosen.effort, ctx.answers.id, level, levelReason],
       )
       const turnId = rows[0].id
-      // The router's call is the question's cost, with the answer's.
+      // The router's call is the question's cost, with the answer's; its hold goes with it (back, should this not be kept).
       if (routed?.message) {
         const usage = usageOf(routed.message, AI_JOBS.router.model)
-        await recordUsage(tx, { userId: user.id, conversationId: conversation.id, turnId, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd })
+        await recordUsage(tx, { userId: user.id, conversationId: conversation.id, turnId, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd, holdId: routed.holdId })
       }
       await repairDanglingToolUse(tx, conversation.id, turnId)
       // The question's files, taken for it in order: each the asker's, attached and not yet sent.

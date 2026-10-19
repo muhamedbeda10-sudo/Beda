@@ -279,6 +279,46 @@ describe('report styles', () => {
     expect(app.model.calls).toHaveLength(1)
   })
 
+  it('holds a proposal’s worst case against the assistant’s cap while it is made, so two at once cannot pass it', async () => {
+    app.aiLimiter.reset(inspector.user.id)
+    app.model.reset()
+    const holds = async () => (await app.db.query<{ usd: number }>(`SELECT usd::float8 AS usd FROM ai_usage_holds WHERE user_id = $1`, [inspector.user.id])).rows.map((r) => r.usd)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    app.model.reply({ content: [text(JSON.stringify({ name: 'Held', spec: spec(), logoBox: null, notes: '' }))], hold: gate })
+    const draft = () => app.api<ReportStyleDraftResponse & ApiErrorBody>('POST', '/api/report-styles/draft', { token: inspector.token, body: { instruction: 'Make it blue' } })
+    const first = draft()
+    for (const started = Date.now(); (await holds()).length !== 1; ) {
+      if (Date.now() - started > 5000) throw new Error('No hold.')
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    let filler: number | null = null
+    try {
+      const [held] = await holds()
+      // Someone else's spending leaves the assistant room for one such call and a half: the one under way is counted.
+      const status = (await app.api<{ spentUsd: number; capUsd: number }>('GET', '/api/ai/status', { token: p.owner.token })).body
+      const { rows } = await app.db.query<{ id: number }>(`INSERT INTO ai_usage (user_id, model, output_tokens, cost_usd) VALUES ($1, 'claude-haiku-5-5', 0, $2) RETURNING id`, [
+        p.owner.user.id,
+        status.capUsd - status.spentUsd - held * 1.5,
+      ])
+      filler = Number(rows[0].id)
+      const second = await draft()
+      expect(second.status).toBe(402)
+      expect(second.body.error.code).toBe('ai_budget_reached')
+      expect(app.model.calls).toHaveLength(1)
+      release()
+      expect((await first).status).toBe(200)
+      // Settled to what it cost.
+      expect(await holds()).toEqual([])
+    } finally {
+      release()
+      await first
+      if (filler !== null) await app.db.query(`ALTER TABLE ai_usage DISABLE TRIGGER ai_usage_no_delete; DELETE FROM ai_usage WHERE id = ${filler}; ALTER TABLE ai_usage ENABLE TRIGGER ai_usage_no_delete;`)
+    }
+  })
+
   it('a report prints in the style its owner chose, else the default', async () => {
     const report = await madeReport(inspector)
     const style = await create(inspector, { name: 'For the register', spec: spec({ figures: 'boxed' }), logoDataUrl: null })

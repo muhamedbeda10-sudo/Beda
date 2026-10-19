@@ -84,15 +84,19 @@ export function failedCallUsage(params: Pick<CompleteParams, 'model' | 'max_toke
   return { tokens, costUsd: aiCostUsd(params.model, tokens) }
 }
 
-/** Keep the cost a short call that failed may have had (failedCallUsage), as a partial call; nothing when it had none. Never throws. */
+/**
+ * Keep the cost a short call that failed may have had (failedCallUsage), as a partial call, settling its hold when it
+ * has one. What became of it: kept, nothing to keep, or lost (the log says so). Never throws.
+ */
 export async function keepFailedCallCost(
   db: Queryable,
-  owner: Pick<UsageRecord, 'userId' | 'conversationId' | 'turnId'>,
+  owner: Pick<UsageRecord, 'userId' | 'conversationId' | 'turnId' | 'holdId'>,
   params: Pick<CompleteParams, 'model' | 'max_tokens' | 'system' | 'messages'>,
   e: unknown,
-): Promise<void> {
+): Promise<'kept' | 'nothing' | 'lost'> {
   const usage = failedCallUsage(params, e)
-  if (usage) await keepUsage(db, { ...owner, model: params.model, tokens: usage.tokens, costUsd: usage.costUsd, partial: true })
+  if (!usage) return 'nothing'
+  return (await keepUsage(db, { ...owner, model: params.model, tokens: usage.tokens, costUsd: usage.costUsd, partial: true })) ? 'kept' : 'lost'
 }
 
 export interface TitleRequest {

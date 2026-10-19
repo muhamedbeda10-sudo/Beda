@@ -6,6 +6,11 @@
 // are only there to answer the model with a clear sentence.
 //
 //   1. one SELECT (or WITH … SELECT); a trailing semicolon is dropped
+//   1b. what it calls and reads, as PostgreSQL itself resolves it
+//      (refusedByName): the query is made into a temporary view, never run
+//      or planned, in a transaction of its own that is rolled back, and the
+//      view's definition as PostgreSQL writes it back is read for the
+//      functions and views the runner refuses — however the query named them
 //   2. BEGIN REPEATABLE READ, READ ONLY; the factory's time zone; a timeout;
 //      `SELECT 1` takes the snapshot, after which the transaction can no
 //      longer be made read-write
@@ -225,10 +230,12 @@ function dollarTagAt(sql: string, i: number): string | null {
  * they read is checked only as they run, so planning the query cannot see it,
  * and planning is how a saved table learns which domains it reads
  * (savedTables.ts). Migration 0072 takes them from every role where the
- * migration may (a superuser); on a managed server it may not, and this is
- * all that stops them.
+ * migration may (a superuser); on a managed server it may not, and the
+ * runner is all that stops them: here by the text, then by PostgreSQL's own
+ * resolution of it (refusedByName), which no spelling, quoting, comment or
+ * nesting changes.
  */
-const DENIED: { pattern: RegExp; what: string }[] = [
+const DENIED: { pattern: RegExp; what: string; /** Matched on the text only: not a name PostgreSQL resolves. */ textOnly?: true }[] = [
   { pattern: /\bpg_(try_)?advisory\w*/i, what: 'Advisory locks' },
   { pattern: /\bpg_sleep\w*/i, what: 'pg_sleep' },
   { pattern: /\bset_config\b/i, what: 'set_config' },
@@ -240,10 +247,12 @@ const DENIED: { pattern: RegExp; what: string }[] = [
   { pattern: /\b(query|cursor|table|schema|database)_to_xml\w*|\bts_(stat|rewrite)\b/i, what: 'Running SQL from text, or reading a table by its name,' },
   { pattern: /\bpg_stat(s|istic)\w*/i, what: "PostgreSQL's statistics of tables" },
   { pattern: /\bpg_notify\b/i, what: 'pg_notify' },
-  { pattern: /\bcopy\b/i, what: 'COPY' },
+  { pattern: /\bcopy\b/i, what: 'COPY', textOnly: true },
   // codeOnly blanks a quoted name with escapes in it, so U&"pg\005fsleep" would hide what it names.
-  { pattern: /\bu&""/i, what: 'Unicode-escaped names' },
+  { pattern: /\bu&""/i, what: 'Unicode-escaped names', textOnly: true },
 ]
+
+const refusal = (what: string) => `${what} cannot be used in the assistant's queries. Send a plain SELECT over the views in schema ai.`
 
 /**
  * The query as it will run, or why it will not. Trims, drops one trailing
@@ -263,9 +272,81 @@ export function precheckSql(raw: string): { sql: string } | { error: string } {
     return { error: 'Only a single statement is allowed: remove the semicolons and send one SELECT.' }
   }
   for (const d of DENIED) {
-    if (d.pattern.test(code)) return { error: `${d.what} cannot be used in the assistant's queries. Send a plain SELECT over the views in schema ai.` }
+    if (d.pattern.test(code)) return { error: refusal(d.what) }
   }
   return { sql }
+}
+
+// ---- What PostgreSQL reads the query as ---------------------------------------------
+
+/** The query parsed alone first, so that what PostgreSQL says of it is in its own terms, and nothing can close the view's parenthesis. */
+const NAMES_PREPARE = 'PREPARE ai_names_q AS '
+/** The temporary view a query is read into, and the wrapper that makes any query its body. */
+const NAMES_VIEW = 'ai_names'
+const NAMES_PREFIX = `CREATE TEMPORARY VIEW ${NAMES_VIEW} AS SELECT 1 AS one FROM (\n`
+/** The line break keeps a trailing -- comment from swallowing the end. Its own columns stay inside: two may share a name. */
+const NAMES_SUFFIX = '\n) ai_q'
+/** How long making the view and reading it back may take. */
+const NAMES_TIMEOUT_MS = 5_000
+
+/**
+ * Whether PostgreSQL's own reading of the query calls or reads anything the
+ * runner refuses (DENIED): the sentence for the model, or null. The text is
+ * made into a temporary view — parsed and every name resolved by PostgreSQL,
+ * as the reader, with the reader's search path, but neither planned nor run,
+ * so nothing in it is evaluated — and the definition PostgreSQL writes back
+ * (pg_get_viewdef) names each function and view it resolved, in one spelling:
+ * schema-qualified only when it must be, quoted only when it must be, with no
+ * comments. However the query wrote a name — qualified, quoted, in capitals,
+ * split by a comment, deep in a CTE, a LATERAL, a LIMIT or a window — it is
+ * there as PostgreSQL resolved it. (No operator, cast, type or aggregate of
+ * PostgreSQL's reaches a function the runner refuses: a test holds the
+ * catalog to that.) In a transaction of its own, always rolled back, on a
+ * connection outside any: nothing is kept, and the query itself runs after
+ * in a read-only one. Throws what PostgreSQL says of a query it cannot read;
+ * `at.prefix` is then where the query's text starts in the statement that
+ * failed. The query is parsed alone first (PREPARE, through the extended
+ * protocol: one statement), so a query that would close the view's
+ * parenthesis and carry on outside it is refused as the text it is.
+ */
+export async function refusedByName(client: pg.ClientBase, sql: string, at: { prefix: number } = { prefix: 0 }): Promise<string | null> {
+  at.prefix = NAMES_PREPARE.length
+  const alone: pg.QueryConfig & { queryMode: 'extended' } = { text: NAMES_PREPARE + sql, queryMode: 'extended' }
+  await client.query(alone)
+  await client.query('DEALLOCATE ai_names_q')
+  at.prefix = NAMES_PREFIX.length
+  await client.query('BEGIN READ WRITE')
+  try {
+    await client.query(`SET LOCAL statement_timeout = '${NAMES_TIMEOUT_MS}ms'`)
+    // The extended protocol: one statement only, so nothing can follow the view in this transaction.
+    const make: pg.QueryConfig & { queryMode: 'extended' } = { text: NAMES_PREFIX + sql + NAMES_SUFFIX, queryMode: 'extended' }
+    await client.query(make)
+    const { rows } = await client.query<{ def: string }>(`SELECT pg_get_viewdef('pg_temp.${NAMES_VIEW}'::regclass) AS def`)
+    const code = codeOnly(rows[0]?.def ?? '')
+    const denied = DENIED.find((d) => !d.textOnly && d.pattern.test(code))
+    return denied ? refusal(denied.what) : null
+  } finally {
+    await client.query('ROLLBACK').catch(() => undefined)
+  }
+}
+
+/**
+ * refusedByName on a connection of its own from `pool`, thrown away after: for
+ * the paths that plan a query before it runs (a saved table's domains, a slow
+ * query's plan), whose planning may already evaluate a function it calls. The
+ * refusal, or PostgreSQL's own words when it cannot read the query, or null.
+ */
+export async function refusedByNameOn(pool: pg.Pool, sql: string): Promise<{ error: string; code?: string } | null> {
+  const client = await pool.connect()
+  try {
+    const refused = await refusedByName(client, sql)
+    return refused ? { error: refused } : null
+  } catch (e) {
+    const err = e as { message?: string; code?: string }
+    return { error: err.message ?? 'The query could not be read.', ...(err.code ? { code: err.code } : {}) }
+  } finally {
+    client.release(true)
+  }
 }
 
 // ---- Running ---------------------------------------------------------------------
@@ -541,6 +622,9 @@ async function runOnce(pool: pg.Pool | null, rawSql: string, opts: RunOptions): 
     unwatch = watchMessageSizes(client, wireLimit, (type) =>
       interrupt(type === 'D' ? { error: rowTooLarge(maxRowBytes), failure: 'row-too-large' } : { error: replyTooLarge(wireLimit), failure: 'reply-too-large' }),
     )
+    // What it calls and reads, as PostgreSQL resolves it: refused before anything of it is planned or run.
+    const named = await refusedByName(client, sql, at)
+    if (named) return fail({ error: named, failure: 'rejected' })
     await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
     await client.query(`SET LOCAL TIME ZONE ${pg.escapeLiteral(opts.timeZone)}`)
     await client.query(`SET LOCAL statement_timeout = ${pg.escapeLiteral(`${Math.max(1, Math.round(opts.timeoutMs))}ms`)}`)
@@ -651,6 +735,8 @@ export async function planSummary(pool: pg.Pool | null, rawSql: string, opts: { 
   if (client === 'stopped' || client instanceof Error) return null
   let plan: PlanNode | undefined
   try {
+    // Planning may evaluate a function with constant arguments: never one the runner refuses.
+    if (await refusedByName(client, checked.sql)) return null
     await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
     await client.query(`SET LOCAL TIME ZONE ${pg.escapeLiteral(opts.timeZone)}`)
     await client.query(`SET LOCAL statement_timeout = '5s'`)
