@@ -34,6 +34,14 @@ const judged = (name: string, actual: number): Dim => ({ name, sequence: 1, nomi
 /** A reading with no specification to judge it by, as paint thickness is saved: Pending. */
 const unjudged = (sequence: number, actual: number): Dim => ({ name: 'Paint thickness', sequence, nominal: null, tolPlus: null, tolMinus: null, actual, unit: 'µm', source: 'item-order' })
 
+/**
+ * Close what an earlier test left open on a line: one session per line is open at a time, and these tests each open
+ * their own. Closed as it stands (no samples are added), so no figure a test reads changes by it.
+ */
+async function freeLine(order: ProductionOrder): Promise<void> {
+  await app.db.query(`UPDATE inspection_sessions SET status = 'Closed', closed_at = now() WHERE order_id = $1 AND status = 'Open' AND deleted_at IS NULL`, [order.id])
+}
+
 async function start(who: Session, order: ProductionOrder): Promise<string> {
   const res = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: who.token, body: { orderId: order.id, startQty: 0 } })
   if (res.status !== 201) throw new Error(`session failed ${res.status} ${JSON.stringify(res.body)}`)
@@ -134,6 +142,7 @@ describe('§15 shifts compared on what they inspected', () => {
 
 describe('§15 Holds: counted and summed whole', () => {
   it('counts every Hold and its pieces, not the fifty listed', async () => {
+    await freeLine(line('L1'))
     const s = await start(other, line('L1'))
     for (let i = 0; i < 3; i++) {
       await record(other, s, { qty: 100, defects: Array.from({ length: 20 }, () => ({ name: 'Bad edge', qty: 2, disposition: 'Hold' as const })) })
@@ -152,6 +161,8 @@ describe('§15 Holds: counted and summed whole', () => {
 
 describe('§16 the ranking’s empty sessions', () => {
   it('counts sessions discarded, and sessions in a factory where no sample was recorded', async () => {
+    await freeLine(line('L2'))
+    await freeLine(line('P1'))
     const before = (await overview()).inspectorRanking!
     const row = (r: KpiOverview['inspectorRanking']) => [...r!.overall.ranked, ...r!.overall.unranked].find((x) => x.inspectorId === insp.user.id)!
     const was = row(before)
