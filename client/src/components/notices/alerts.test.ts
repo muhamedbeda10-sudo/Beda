@@ -20,7 +20,7 @@ const pages = (...ps: { list: UserNotification[]; unread: number; hasMore?: bool
 })
 
 describe('the bell’s count', () => {
-  it('adds the notices to read and the alerts not opened', () => {
+  it('adds the alerts and the reports not opened (notices count on their own button)', () => {
     expect(bellCount(2, 3)).toBe(5)
     expect(bellCount(0, 0)).toBe(0)
     expect(bellCount(-1, 4)).toBe(4)

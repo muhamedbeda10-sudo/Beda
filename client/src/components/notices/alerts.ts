@@ -26,8 +26,8 @@ export const ALERT_KIND_LABEL: Record<UserNotificationKind, string> = {
   'ai-answer': 'AI assistant',
 }
 
-/** The number on the bell: notices still to read and alerts not opened yet. */
-export const bellCount = (pendingNotices: number, unreadAlerts: number): number => Math.max(0, pendingNotices) + Math.max(0, unreadAlerts)
+/** The number on the bell: alerts and reports not opened yet. Notices count on their own button (NoticesButton). */
+export const bellCount = (unreadAlerts: number, unreadReports: number): number => Math.max(0, unreadAlerts) + Math.max(0, unreadReports)
 
 /** A count as a badge holds it. */
 export const badgeText = (n: number): string => (n > 99 ? '99+' : String(n))

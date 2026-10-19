@@ -3,7 +3,7 @@
 // it (§14: their role's permissions with their own overrides — the server
 // refuses the screen's data to anyone else), or, for the AI assistant's
 // settings, to the one person who owns the assistant. Automations (§21) open from the assistant's header, and
-// follow-ups (§21) from the bell, beside the notices: neither is a tab here.
+// follow-ups (§21) from the bell, and notices (§16) from their own button beside it: none is a tab here.
 
 import { ClipboardCheck, FileCheck2, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
 import { can, type Permission } from '@qc/shared/permissions'

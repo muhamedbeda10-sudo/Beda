@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-19.4',
+    date: '2026-10-19',
+    title: 'Notices have their own button; write one by hand again',
+    items: [
+      { text: 'Notices are no longer inside the bell: they have their own button at the top, the megaphone beside the bell, with how many wait to be read. The bell keeps alerts, reports, follow-ups and tasks.' },
+      { text: 'Whoever may manage notices writes one from the megaphone: New notice opens the form to write it by hand, as before (title, text, severity, acknowledgement, days, whom or where it is for, photos and files); With the assistant drafts it with the AI. The Notices page has both buttons too.' },
+    ],
+  },
+  {
     id: '2026-10-19.3',
     date: '2026-10-19',
     title: 'Charts without the Chart/Table switch',

@@ -1,5 +1,5 @@
 // ============================================================================
-// The bell's tabs: what it holds side by side — notices, alerts, reports,
+// The bell's tabs: what it holds side by side — alerts, reports,
 // follow-ups and the person's tasks — each with its icon, its name and how many wait
 // there, red when one of them is overdue. As many columns as there are tabs,
 // so they never scroll out of sight in the bell's narrow drawer; with five,
