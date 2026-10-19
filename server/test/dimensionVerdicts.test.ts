@@ -16,6 +16,7 @@ import type { SampleDetail, SaveSampleRequest, SaveSampleResponse, SessionWithOr
 import type { ProductionOrder } from '@qc/shared/types'
 import type { KpiOverview } from '@qc/shared/kpi'
 import { TestApp, type Session, factoryDay } from './harness'
+import { insertAutomation, reportDraft } from './automationsKit'
 
 const app = new TestApp()
 let admin: Session
@@ -194,5 +195,37 @@ describe('migration 0073 bounds a saved report’s timestamps at 08:00', () => {
       sections[1],
     ])
     expect(after[0].updatedAt).toBe(made[0].updatedAt)
+  })
+
+  it('does the same to a scheduled report and to a proposal not yet activated', async () => {
+    const midnight = 'SELECT count(*) AS n FROM ai.defects WHERE recorded_at >= {{from}} AND recorded_at < {{to}} + 1'
+    const eight = 'SELECT count(*) AS n FROM ai.defects WHERE recorded_at >= ai.factory_day_start({{from}}) AND recorded_at < ai.factory_day_start({{to}} + 1)'
+    const schedule = reportDraft({}, { period: { kind: 'yesterday' }, sections: [{ title: 'Defects', sql: midnight }] }).schedule!
+    const automation = await insertAutomation(app.db, { creatorId: admin.user.id, schedule })
+    const conversation = (
+      await app.db.query<{ id: string }>(`INSERT INTO ai_conversations (user_id, title, model, system_prompt, tools) VALUES ($1, 'Reports', 'claude-sonnet-5-5', '', '[]') RETURNING id`, [admin.user.id])
+    ).rows[0].id
+    const turn = (
+      await app.db.query<{ id: string }>(`INSERT INTO ai_turns (conversation_id, user_id, client_id, question) VALUES ($1, $2, $3, 'Every morning, yesterday''s defects') RETURNING id`, [conversation, admin.user.id, randomUUID()])
+    ).rows[0].id
+    const draft = reportDraft({}, { period: { kind: 'yesterday' }, sections: [{ title: 'Defects', sql: midnight }] })
+    const proposal = (
+      await app.db.query<{ id: string; updatedAt: string }>(
+        `INSERT INTO ai_automation_proposals (user_id, conversation_id, turn_id, tool_use_id, ok, draft, updated_at)
+         VALUES ($1, $2, $3, 'toolu_1', true, $4::json, '2026-01-01T00:00:00Z') RETURNING id, updated_at::text AS "updatedAt"`,
+        [admin.user.id, conversation, turn, JSON.stringify(draft)],
+      )
+    ).rows[0]
+
+    await app.db.query(await readFile(MIGRATION, 'utf8'))
+
+    const live = await app.db.query<{ schedule: { sections: { sql: string }[] } }>(`SELECT schedule FROM ai_automations WHERE id = $1`, [automation])
+    expect(live.rows[0].schedule.sections[0].sql).toBe(eight)
+    const proposed = await app.db.query<{ draft: { schedule: { sections: { sql: string }[] } }; state: string; updatedAt: string }>(
+      `SELECT draft, state, updated_at::text AS "updatedAt" FROM ai_automation_proposals WHERE id = $1`,
+      [proposal.id],
+    )
+    expect(proposed.rows[0]).toMatchObject({ state: 'proposed', updatedAt: proposal.updatedAt })
+    expect(proposed.rows[0].draft.schedule.sections[0].sql).toBe(eight)
   })
 })

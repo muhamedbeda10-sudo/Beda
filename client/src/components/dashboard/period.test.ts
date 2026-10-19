@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareRange, daysInRange, describeRange, isMonthAligned, presetRange } from './period'
+import { compareRange, daysInRange, describeRange, factoryToday, isMonthAligned, presetRange } from './period'
 
 const today = new Date(2026, 8, 8, 12) // noon, 8 Sep 2026, where the browser sits
 
@@ -23,6 +23,9 @@ describe('dashboard periods', () => {
     // In the factory's zone when it is given: 05:30 UTC is 07:30 in Cairo in January, 08:30 in summer.
     expect(presetRange('last-7', new Date('2026-01-01T05:30:00Z'), undefined, 'Africa/Cairo')).toEqual({ from: '2025-12-25', to: '2025-12-31' })
     expect(presetRange('this-year', new Date('2026-07-01T05:30:00Z'), undefined, 'Africa/Cairo')).toEqual({ from: '2026-01-01', to: '2026-07-01' })
+    // The strip's today, in the factory's zone whatever the browser's.
+    expect(factoryToday('Africa/Cairo', new Date('2026-10-19T23:00:00Z'))).toBe('2026-10-19')
+    expect(factoryToday('Asia/Tokyo', new Date('2026-10-19T23:00:00Z'))).toBe('2026-10-20')
   })
 
   it('compares month-to-date with the same days of the previous month', () => {

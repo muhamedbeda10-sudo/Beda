@@ -59,7 +59,8 @@ import { DrillModal, type DrillSpec } from '@/components/dashboard/DrillModal'
 import { FilterNote, FilterTh, FloatingPanel, MultiSelectMenu, byName, useColumnFilters } from '@/components/dashboard/filters'
 import { kpiSheets } from '@/components/dashboard/exportKpi'
 import { dataSpan, runsOf } from '@/components/dashboard/labels'
-import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, fromDay, isMonthAligned, monthLabel, presetRange, shortDay, shortRange, toDay, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
+import { COMPARE_PRESETS, PERIOD_PRESETS, addDays, compareRange, describeRange, fromDay, isMonthAligned, monthLabel, presetRange, shortDay, shortRange, type ComparePreset, type PeriodPreset } from '@/components/dashboard/period'
+import { holdTile } from '@/components/dashboard/holdTile'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn } from '@/lib/utils'
@@ -2225,17 +2226,17 @@ function showing(shown: number, total: number, rank: 'largest' | 'oldest' = 'lar
 }
 
 export function DashboardPage() {
-  const { role, can } = useAuth()
+  const { role, can, factoryTimeZone } = useAuth()
   const navigate = useNavigate()
   const allowed = can('view-dashboard')
   const [f, setF] = usePersistedState<DashFilters>('qc-dash:filters', DEFAULT_FILTERS)
   const patch = (p: Partial<DashFilters>) => setF((prev) => ({ ...DEFAULT_FILTERS, ...prev, ...p }))
 
-  const today = toDay(new Date())
+  // The presets count factory days (08:00 to 08:00) in the factory's zone: at 02:00 "today" is still the night shift's day.
   const range = useMemo(() => {
     const custom = f.customFrom && f.customTo && f.customFrom <= f.customTo ? { from: f.customFrom, to: f.customTo } : undefined
-    return presetRange(f.preset, new Date(), custom)
-  }, [f.preset, f.customFrom, f.customTo])
+    return presetRange(f.preset, new Date(), custom, factoryTimeZone)
+  }, [f.preset, f.customFrom, f.customTo, factoryTimeZone])
   const prev = useMemo(() => compareRange(range, f.compare, isMonthAligned(range)), [range, f.compare])
   /** The comparison period on a KPI card: "▲ 2.10% vs Sep 1 – Sep 30". */
   const prevShort = shortRange(prev)
@@ -2481,7 +2482,8 @@ export function DashboardPage() {
   }, [data])
   const cur = data?.current
   const prevT = data?.previous
-  const holdPieces = data?.holds.reduce((n, h) => n + h.qty, 0) ?? 0
+  // Every Hold behind the filters, as the server counts them: the Holds list is only the oldest fifty.
+  const onHold = data ? holdTile(data.holdTotals) : null
   const attention = visibleInsights.filter((i) => i.severity === 'critical' || i.severity === 'warning').length
   // What the page reads, said once behind the (i) and printed on paper.
   const about =
@@ -2836,7 +2838,7 @@ export function DashboardPage() {
             <KpiTile vs={prevShort} label="Dimensions out of tolerance" value={pctStr(cur.dimFailPct)} current={cur.dimFailPct} previous={prevT.dimFailPct} goodWhen="down" tone={toneLowIsGood(cur.dimFailPct, t.dimFailGreen, t.dimFailAmber)} sub={`${num(cur.dimensionsFail)} fail · ${num(cur.dimensionsWarning)} warning of ${num(cur.dimensionsMeasured)} measured`} icon={<Ruler className="h-4 w-4" />} />
             <KpiTile vs={prevShort} label="Pieces inspected" value={num(cur.pieces)} current={cur.pieces} previous={prevT.pieces} goodWhen="up" sub={`${num(cur.samples)} samples · ${num(cur.samplesPerSession, 1)} per session · ${pctStr(cur.inspectedDefectPct)} defective of inspected`} icon={<ClipboardList className="h-4 w-4" />} />
             <KpiTile vs={prevShort} label="Sessions" value={num(cur.sessions)} current={cur.sessions} previous={prevT.sessions} goodWhen="none" sub={`${num(cur.sessionsClosed)} closed · ${num(cur.machinesInspected)} machines · ${num(cur.activeInspectors)} inspectors`} icon={<Users className="h-4 w-4" />} />
-            <KpiTile period="Now" label="On Hold now" value={num(data.holds.length)} current={null} previous={null} goodWhen="down" tone={data.holds.some((h) => h.ageDays >= t.holdAgeRedDays) ? 'red' : data.holds.some((h) => h.ageDays >= t.holdAgeAmberDays) ? 'amber' : data.holds.length ? 'neutral' : 'green'} sub={`${num(holdPieces)} pieces waiting for a disposition`} icon={<PauseCircle className="h-4 w-4" />} />
+            <KpiTile period="Now" label="On Hold now" value={num(onHold?.defects ?? 0)} current={null} previous={null} goodWhen="down" tone={onHold?.tone ?? 'green'} sub={`${num(onHold?.pieces ?? 0)} pieces waiting for a disposition`} icon={<PauseCircle className="h-4 w-4" />} />
           </div>
 </WidgetBody>
               ) },

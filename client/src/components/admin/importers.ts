@@ -68,10 +68,12 @@ export function normaliseKeyPart(v: unknown): string {
  * A cell's value as the API receives it, or the reason it cannot be sent.
  * Numbers drop thousands separators; dates become ISO timestamps so the
  * server never has to guess a spreadsheet's date format; days stay days
- * (YYYY-MM-DD). The same reading the Access sync applies.
+ * (YYYY-MM-DD). The same reading the Access sync applies: a time written
+ * without an offset is factory time, read in `timeZone` (the factory's, from
+ * the API), whatever zone the browser is in.
  */
-export function coerceCell(field: ImportField, raw: string): { value: CellValue } | { error: string } {
-  return readOrderCell(field, raw)
+export function coerceCell(field: ImportField, raw: string, timeZone: string): { value: CellValue } | { error: string } {
+  return readOrderCell(field, raw, timeZone)
 }
 
 export function csvCell(v: string): string {

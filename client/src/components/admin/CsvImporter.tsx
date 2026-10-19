@@ -16,6 +16,7 @@ import { useApp } from '@/store/AppContext'
 import { PHONE, useMediaQuery } from '@/lib/media'
 import { cn, downloadText, parseCSV } from '@/lib/utils'
 import { isLegacyExcelFile, isZipFile, readWorkbook, WorkbookReadError, type WorkbookSheet } from '@/lib/xlsx'
+import { useAuth } from '@/store/AuthContext'
 import { BATCH_SIZE, coerceCell, csvCell, normaliseHeader, normaliseKeyPart, type CellValue, type ImportField, type Importer } from '@/components/admin/importers'
 
 interface PlannedRow {
@@ -61,6 +62,7 @@ type RunStatus = 'idle' | 'running' | 'paused' | 'done'
 export function CsvImporter({ importer }: { importer: Importer }) {
   const queryClient = useQueryClient()
   const { toast } = useApp()
+  const { factoryTimeZone } = useAuth()
   const fileRef = useRef<HTMLInputElement>(null)
 
   const [dragging, setDragging] = useState(false)
@@ -290,7 +292,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
           if (f.clearsWhenEmpty) values[f.key] = null
           continue
         }
-        const cell = coerceCell(f, raw)
+        const cell = coerceCell(f, raw, factoryTimeZone)
         if ('error' in cell) problems.push(cell.error)
         else values[f.key] = cell.value
       }
@@ -315,7 +317,7 @@ export function CsvImporter({ importer }: { importer: Importer }) {
     })
 
     return { valid, errors, newCount, updateCount }
-  }, [headers, dataRows, mapping, missingKeys, importer, keyParts, existing, resolvedFor, lookupSignature])
+  }, [headers, dataRows, mapping, missingKeys, importer, keyParts, existing, resolvedFor, lookupSignature, factoryTimeZone])
 
   // Where the API compares: the plan's rows sent to /import/compare in batches (nothing is written), so the preview
   // knows which rows change nothing. A new plan (another file, sheet or mapping) starts again.

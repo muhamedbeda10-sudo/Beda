@@ -59,6 +59,15 @@ function isMonthEnd(d: Date): boolean {
 }
 
 /**
+ * Today's factory day, YYYY-MM-DD: at 02:00 it is still yesterday's, the
+ * night shift's. In the factory's zone (AuthContext's factoryTimeZone), so a
+ * browser elsewhere still reads the factory's day.
+ */
+export function factoryToday(timeZone?: string, now: Date = new Date()): string {
+  return factoryDay(now, timeZone)
+}
+
+/**
  * The range a preset means at a moment: counted from the factory day it
  * falls in (shared factoryDay), in the factory's zone when one is given,
  * else where the browser sits.

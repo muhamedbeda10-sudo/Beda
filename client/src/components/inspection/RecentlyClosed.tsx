@@ -1,8 +1,9 @@
 // ============================================================================
 // The sessions closed today, under the board: what the floor finished since
-// the factory's day began, so a quiet board still says what was done. Read
-// from History (closed sessions started or sampled since yesterday), kept to
-// those whose close falls on today in the factory's time zone.
+// the factory's day began (08:00, so the night shift's closes stay with the
+// day it started), so a quiet board still says what was done. Read from
+// History (closed sessions started or sampled since yesterday's factory day),
+// kept to those whose close falls on today's factory day.
 // ============================================================================
 
 import { useMemo } from 'react'
@@ -14,10 +15,11 @@ import { useHistory } from '@/services/queries'
 import { useAuth } from '@/store/AuthContext'
 import { isStockOrder, sessionTone } from '@/domain'
 import { sessionDetailPath } from '@/lib/links'
-import { cn, dayInTimeZone, formatFullTimestamp, formatTime } from '@/lib/utils'
+import { cn, formatFullTimestamp, formatTime } from '@/lib/utils'
+import { factoryDay } from '@qc/shared/rules'
 import { useTableView, ViewNote, ViewTh, type TableView } from '@/components/ui/ColumnFilter'
 import { ScrollX } from '@/components/ui/ScrollX'
-import type { HistoryFilters } from '@qc/shared/api'
+import type { HistoryFilters, SessionWithOrder } from '@qc/shared/api'
 
 /** The most the panel lists; the rest are a click away in History. */
 const SHOWN = 8
@@ -25,22 +27,24 @@ const SHOWN = 8
 const FETCH = 200
 const DAY_MS = 86_400_000
 
+/** Today's and yesterday's factory days at `now`, in the factory's zone. */
+export function closedPanelDays(now: number, timeZone: string): { today: string; yesterday: string } {
+  return { today: factoryDay(new Date(now), timeZone), yesterday: factoryDay(new Date(now - DAY_MS), timeZone) }
+}
+
+/** The sessions closed on a factory day, the latest first. */
+export function closedOn<T extends Pick<SessionWithOrder, 'closedAt'>>(sessions: readonly T[], day: string, timeZone: string): T[] {
+  return sessions.filter((s) => s.closedAt && factoryDay(new Date(s.closedAt), timeZone) === day).sort((a, b) => ((a.closedAt ?? '') < (b.closedAt ?? '') ? 1 : -1))
+}
+
 export function RecentlyClosed({ machineName }: { machineName: (code: string) => string }) {
   const navigate = useNavigate()
   const { factoryTimeZone } = useAuth()
-  const now = Date.now()
-  const today = dayInTimeZone(new Date(now), factoryTimeZone)
-  const yesterday = dayInTimeZone(new Date(now - DAY_MS), factoryTimeZone)
+  const { today, yesterday } = closedPanelDays(Date.now(), factoryTimeZone)
   const filters = useMemo<HistoryFilters>(() => ({ status: 'Closed', from: yesterday, to: today }), [yesterday, today])
   const { data, isLoading, isError } = useHistory(filters, FETCH)
 
-  const closed = useMemo(
-    () =>
-      (data?.sessions ?? [])
-        .filter((s) => s.closedAt && dayInTimeZone(new Date(s.closedAt), factoryTimeZone) === today)
-        .sort((a, b) => ((a.closedAt ?? '') < (b.closedAt ?? '') ? 1 : -1)),
-    [data, factoryTimeZone, today],
-  )
+  const closed = useMemo(() => closedOn(data?.sessions ?? [], today, factoryTimeZone), [data, factoryTimeZone, today])
   // Excel's sort and filter on every column; while one is set the whole day shows, not only the latest.
   const view = useTableView(closed, [
     { key: 'closed', value: (r) => formatTime(r.closedAt), sortValue: (r) => (r.closedAt ? Date.parse(r.closedAt) : null), numeric: true },

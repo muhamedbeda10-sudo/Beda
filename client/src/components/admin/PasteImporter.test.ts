@@ -26,7 +26,7 @@ describe('pasting from Excel', () => {
       ['', '', '', '', '', ''],
     ]
     const existing = new Set(['dc.dr.fr.bd.||d1(left)||'])
-    const plan = planRows(rows, PRODUCTION_IMPORTER, ['itemCode', 'dimensionName', 'workCenterCode'], existing)
+    const plan = planRows(rows, PRODUCTION_IMPORTER, ['itemCode', 'dimensionName', 'workCenterCode'], existing, 'Africa/Cairo')
     expect(plan.valid.map((r) => [r.key, r.mode])).toEqual([
       ['dc.dr.fr.bd.||d1(left)||', 'update'],
       ['dc.dr.fr.bd.||f||48', 'new'],
@@ -39,7 +39,7 @@ describe('pasting from Excel', () => {
   })
 
   it('treats a repeated key inside one paste as an update of the earlier row', () => {
-    const plan = planRows([['58', 'Weld crack'], ['58', 'weld crack']], DEFECTS_IMPORTER, ['workCenterCode', 'defectName'], new Set())
+    const plan = planRows([['58', 'Weld crack'], ['58', 'weld crack']], DEFECTS_IMPORTER, ['workCenterCode', 'defectName'], new Set(), 'Africa/Cairo')
     expect(plan.valid.map((r) => r.mode)).toEqual(['new', 'update'])
   })
 })

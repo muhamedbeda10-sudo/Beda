@@ -19,8 +19,9 @@
 --     audit_log.day (when a person acted) stay calendar dates.
 --   • The API's own queries (the dashboard, History, PDI) call the same
 --     functions with FACTORY_TIMEZONE.
---   • Saved and scheduled reports: a timestamp their period bounds with
---     {{from}} / {{to}} is bounded at 08:00 on those days from now on.
+--   • Saved reports, scheduled reports and automation proposals: a
+--     timestamp their period bounds with {{from}} / {{to}} is bounded at
+--     08:00 on those days from now on.
 --
 -- Dimension verdicts. dimensionStatus compared limits worked out in floating
 -- point: 50.15 +0.05 put the upper limit at 50.199999999999996, so a reading
@@ -812,6 +813,14 @@ ALTER TABLE ai_automations DISABLE TRIGGER ai_automations_updated_at;
 UPDATE ai_automations SET schedule = pg_temp.factory_bounds(schedule::text)::json
  WHERE schedule IS NOT NULL AND pg_temp.factory_bounds(schedule::text) IS DISTINCT FROM schedule::text;
 ALTER TABLE ai_automations ENABLE TRIGGER ai_automations_updated_at;
+
+-- Proposals too, whatever their state: one still proposed is activated as its
+-- draft stands, and a change the assistant proposes later starts from an
+-- earlier proposal's draft.
+ALTER TABLE ai_automation_proposals DISABLE TRIGGER ai_automation_proposals_updated_at;
+UPDATE ai_automation_proposals SET draft = pg_temp.factory_bounds(draft::text)::json
+ WHERE draft IS NOT NULL AND pg_temp.factory_bounds(draft::text) IS DISTINCT FROM draft::text;
+ALTER TABLE ai_automation_proposals ENABLE TRIGGER ai_automation_proposals_updated_at;
 
 -- ---- Dimension verdicts, decided again in exact decimals -----------------------------
 -- dimensionStatus (shared/src/rules.ts) over the stored numerics: Fail
