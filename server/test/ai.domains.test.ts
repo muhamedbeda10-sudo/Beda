@@ -170,7 +170,7 @@ describe('§20 the data domains', () => {
     }
     const { rows } = await app.db.query<{ name: string; open: boolean }>(
       `SELECT p.oid::regprocedure::text AS name, has_function_privilege('public', p.oid, 'EXECUTE') AS open
-         FROM pg_proc p WHERE p.pronamespace = 'ai'::regnamespace ORDER BY 1`,
+         FROM pg_proc p WHERE p.pronamespace = 'ai'::regnamespace ORDER BY p.oid::regprocedure::text COLLATE "C"`,
     )
     expect(rows.map((r) => r.name)).toEqual(Object.keys(FUNCTIONS).sort())
     for (const { name, open } of rows) {
