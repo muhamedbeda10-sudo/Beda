@@ -21,7 +21,6 @@ import { Badge, Button, Card } from '@/components/ui'
 import { AiMarkdown } from '@/components/ai/AiMarkdown'
 import { Notice } from '@/components/ai/AiNotice'
 import { AiChart } from '@/components/ai/AiChart'
-import { ChartTableSwitch, type FigureView } from '@/components/dashboard/figureView'
 import { AiResultModal, PreviewTable } from '@/components/ai/AiResultTable'
 import { queryChart } from '@/components/ai/chartData'
 import { ChartImageTool } from '@/components/ai/chartImage'
@@ -216,11 +215,10 @@ const DeliveredSection = memo(function DeliveredSection({ part, section, onExpor
   const preview = useMemo(() => (part.rows.length > AI_PREVIEW_ROWS ? { ...part, rows: part.rows.slice(0, AI_PREVIEW_ROWS), truncated: true } : part), [part])
   // A saved report's section shows its rows as it was built to: headline figures, or a tree.
   const display = sectionDisplay(section)
-  // The chart the section was given, drawn from every row it delivered; the switch shows it or the rows themselves.
+  // The chart the section was given, drawn from every row it delivered; Open table shows the rows themselves.
   // A section of photos is shown as the photos, whatever else it was built as.
   const photos = useMemo(() => queryPhotos(part), [part])
   const chart = useMemo(() => (display === 'table' && !photos ? queryChart(part) : null), [part, display, photos])
-  const [view, setView] = useState<FigureView>('chart')
   const meta = part.ok ? `${part.rowCount.toLocaleString('en-US')}${part.truncated ? '+' : ''} ${part.rowCount === 1 && !part.truncated ? 'row' : 'rows'}` : 'Failed'
   return (
     <section className={cn('overflow-hidden rounded-xl bg-white ring-1 dark:bg-slate-900', part.ok ? 'ring-slate-200 dark:ring-slate-800' : 'ring-rose-200 dark:ring-rose-500/30')}>
@@ -239,7 +237,6 @@ const DeliveredSection = memo(function DeliveredSection({ part, section, onExpor
             )}
           </p>
         </div>
-        {chart && part.ok && <ChartTableSwitch value={view} onChange={setView} className="mt-0.5" />}
       </header>
       <div className="space-y-2 border-t border-slate-100 px-3 pb-3 pt-2 dark:border-slate-800">
         {section.note && (
@@ -253,7 +250,7 @@ const DeliveredSection = memo(function DeliveredSection({ part, section, onExpor
           <SectionFigures columns={part.columns} rows={part.rows} />
         ) : display === 'tree' ? (
           <SectionTree columns={part.columns} rows={part.rows} tree={section.tree!} truncated={part.truncated} />
-        ) : chart && view === 'chart' ? (
+        ) : chart ? (
           <AiChart model={chart} />
         ) : part.ok ? (
           <PreviewTable part={preview} />
@@ -267,7 +264,7 @@ const DeliveredSection = memo(function DeliveredSection({ part, section, onExpor
             <button type="button" onClick={() => setTable(true)} className={SMALL_BTN} disabled={part.rows.length === 0}>
               <Table2 className="h-3.5 w-3.5" /> Open table{part.rows.length > preview.rows.length ? ` (all ${part.rows.length.toLocaleString('en-US')} rows)` : ''}
             </button>
-            {chart && view === 'chart' && <ChartImageTool model={chart} title={chart.title ?? part.purpose} className="text-xs text-muted" />}
+            {chart && <ChartImageTool model={chart} title={chart.title ?? part.purpose} className="text-xs text-muted" />}
           </div>
         )}
       </div>

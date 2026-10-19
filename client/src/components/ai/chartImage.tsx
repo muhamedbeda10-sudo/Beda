@@ -19,7 +19,7 @@ import { ImageDown, Loader2 } from 'lucide-react'
 import { useApp } from '@/store/AppContext'
 import { embeddedFaces, imageFileName, saveImageFile, svgToPng, withFaces } from '@/lib/imageExport'
 import { AiChart } from './AiChart'
-import { TableTool } from './AiTable'
+import { IconTool, TableTool } from './AiTable'
 import type { ChartModel } from './chartData'
 import { textDirection } from './tables'
 
@@ -215,7 +215,7 @@ export async function downloadChartImage(model: ChartModel, title: string): Prom
 }
 
 /** Download image under a chart: the chart saved on the device as a PNG, under its title. */
-export function ChartImageTool({ model, title, className }: { model: ChartModel; title: string; className?: string }) {
+export function ChartImageTool({ model, title, className, iconOnly = false }: { model: ChartModel; title: string; className?: string; iconOnly?: boolean }) {
   const { toast } = useApp()
   const [busy, setBusy] = useState(false)
   const save = async () => {
@@ -229,9 +229,12 @@ export function ChartImageTool({ model, title, className }: { model: ChartModel;
       setBusy(false)
     }
   }
+  const icon = busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageDown className="h-3.5 w-3.5" />
+  const tip = 'Save the chart on this device as an image (PNG)'
+  if (iconOnly) return <IconTool onClick={() => void save()} disabled={busy} label="Download image" tip={tip} icon={icon} />
   return (
     <span className={className}>
-      <TableTool onClick={() => void save()} disabled={busy} icon={busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageDown className="h-3.5 w-3.5" />} tip="Save the chart on this device as an image (PNG)">
+      <TableTool onClick={() => void save()} disabled={busy} icon={icon} tip={tip}>
         Download image
       </TableTool>
     </span>
