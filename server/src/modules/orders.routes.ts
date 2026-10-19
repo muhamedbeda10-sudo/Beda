@@ -25,16 +25,18 @@ import {
   type SessionNotesResponse,
 } from '@qc/shared/api'
 import type { InspectionSession, ProductionOrder } from '@qc/shared/types'
+import type { Permission } from '@qc/shared/permissions'
+import { STOCK_ORDER_NUMBER } from '@qc/shared/rules'
 import type { AppContext } from '../context'
 import { withTransaction, type Queryable } from '../db/pool'
 import { badRequest, notFound } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { columnFilterClauses, columnOrderBy, columnQuerySchema, columnValues, type SqlColumns } from '../lib/columnFilters'
-import { requirePermission, requireUser } from '../auth/middleware'
+import { requireAnyPermission, requirePermission, requireUser } from '../auth/middleware'
 import { writeAudit } from '../audit/service'
 import { dropNulls, normaliseKey } from '../lib/rows'
 import { SAMPLE_SUMMARY_SELECT, SESSION_SELECT } from './sessions.sql'
-import { NORMALISED_CODE } from './sessions.routes'
+import { NORMALISED_CODE, SESSION_READERS } from './sessions.routes'
 import { loadOrderNotes } from './notes'
 import { itemFilterSql } from '../lib/itemMatch'
 import { cancelledSql } from '../lib/orderStatus'
@@ -235,8 +237,19 @@ export async function upsertOrderLines(tx: Queryable, rows: OrderImportRow[], sy
   return { inserted: added, updated: changed, unchanged: Math.max(0, unique.length - added - changed) }
 }
 
+/**
+ * §14 — who looks order lines up, by the screens that do: the new inspection
+ * and the new PDI (recording), the order panel on the Inspections board, a
+ * chat's order chips, a notice's targets; and the Access sheet, which shows
+ * every line anyway.
+ */
+export const ORDER_READERS = ['record-inspection', 'view-inspections', 'use-chat', 'manage-notices', 'view-order-sheet'] as const satisfies readonly Permission[]
+
 export function ordersRoutes(ctx: AppContext): Router {
   const r = Router()
+  const orderReader = requireAnyPermission(...ORDER_READERS)
+  // A line's sessions and notes are the inspection record's: read by whoever opens sessions (§14).
+  const sessionReader = requireAnyPermission(...SESSION_READERS)
 
   /**
    * Order lines. Three ways in, all bounded:
@@ -246,7 +259,7 @@ export function ordersRoutes(ctx: AppContext): Router {
    *     code and the line key.
    *   • neither — the first page, for screens that browse.
    */
-  r.get('/', async (req, res) => {
+  r.get('/', orderReader, async (req, res) => {
     const q = parse(
       z.object({
         search: z.string().trim().max(120).default(''),
@@ -452,7 +465,7 @@ export function ordersRoutes(ctx: AppContext): Router {
    * orders with a line in a factory, on a machine, or of an item (any part of
    * its name, code or drawing). `lineCount` is then every line of the order.
    */
-  r.get('/numbers', async (req, res) => {
+  r.get('/numbers', orderReader, async (req, res) => {
     const q = parse(
       z.object({
         search: z.string().trim().max(120).default(''),
@@ -526,7 +539,7 @@ export function ordersRoutes(ctx: AppContext): Router {
    * item list: narrowed to a factory or a machine, and searched by any part of
    * the name or code. A page, largest first by lines.
    */
-  r.get('/items', async (req, res) => {
+  r.get('/items', orderReader, async (req, res) => {
     const q = parse(
       z.object({
         factory: z.string().trim().max(120).default(''),
@@ -560,13 +573,13 @@ export function ordersRoutes(ctx: AppContext): Router {
     res.json(rows)
   })
 
-  r.get('/by-ids', async (req, res) => {
+  r.get('/by-ids', orderReader, async (req, res) => {
     const ids = parse(z.string().default(''), req.query.ids).split(',').filter(Boolean)
     parse(z.array(z.string().uuid()).max(200), ids)
     res.json(await fetchOrdersByIds(ctx.db, ids))
   })
 
-  r.get('/:id', async (req, res) => {
+  r.get('/:id', orderReader, async (req, res) => {
     const id = parse(z.string().uuid(), req.params.id)
     const [order] = await fetchOrdersByIds(ctx.db, [id])
     if (!order) throw notFound('That order')
@@ -574,7 +587,7 @@ export function ordersRoutes(ctx: AppContext): Router {
   })
 
   /** Sessions and samples already recorded against one order (§4). */
-  r.get('/:id/history', async (req, res) => {
+  r.get('/:id/history', sessionReader, async (req, res) => {
     const id = parse(z.string().uuid(), req.params.id)
     const [sessions, samples] = await Promise.all([
       ctx.db.query<InspectionSession>(
@@ -591,7 +604,7 @@ export function ordersRoutes(ctx: AppContext): Router {
   })
 
   /** §5.8 — every note written on this order line, across its sessions, newest first. */
-  r.get('/:id/notes', async (req, res) => {
+  r.get('/:id/notes', sessionReader, async (req, res) => {
     const id = parse(z.string().uuid(), req.params.id)
     const [order] = await fetchOrdersByIds(ctx.db, [id])
     if (!order) throw notFound('That order')
@@ -603,14 +616,18 @@ export function ordersRoutes(ctx: AppContext): Router {
    * Retire the whole catalogue before a fresh ERP export is loaded. Lines are
    * marked deleted, never erased (§10): sessions recorded against them keep
    * their order, and a line the new export still carries comes back through
-   * the import's upsert. Only an administrator, and the count is audited.
+   * the import's upsert. The make-to-stock machines' STOCK lines are the
+   * app's own, not the ERP's, and stay — as the Access sync's retiring leaves
+   * them — so a session open on one is still found there. Only an
+   * administrator, and the count is audited.
    */
   r.post('/clear', requirePermission('import-data'), async (req, res) => {
     const user = requireUser(req)
     const result = await withTransaction(ctx.db, async (tx) => {
       const { rowCount } = await tx.query(
-        `UPDATE production_orders SET deleted_at = now(), deleted_by_id = $1 WHERE deleted_at IS NULL`,
-        [user.id],
+        `UPDATE production_orders SET deleted_at = now(), deleted_by_id = $1
+          WHERE deleted_at IS NULL AND upper(btrim(order_number)) <> $2`,
+        [user.id, STOCK_ORDER_NUMBER],
       )
       await writeAudit(tx, [
         {

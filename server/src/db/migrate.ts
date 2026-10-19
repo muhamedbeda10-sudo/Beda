@@ -29,20 +29,38 @@ export function defaultMigrationsDir(): string {
   return candidates.find((c) => existsSync(c)) ?? candidates[0]
 }
 
-async function listMigrationFiles(dir: string): Promise<{ version: string; name: string; file: string }[]> {
+/**
+ * The migration files, in order. A version is a file's four-digit prefix and
+ * names one migration: two files with the same prefix (two branches that each
+ * took the next number) would make one of them never run where the other
+ * already had, and fail a fresh database on its key — so they stop the start
+ * here, before anything is applied, naming both files.
+ */
+export async function listMigrationFiles(dir: string): Promise<{ version: string; name: string; file: string }[]> {
   let entries: string[]
   try {
     entries = await readdir(dir)
   } catch (e) {
     throw new Error(`Migrations directory not found: ${dir}`)
   }
-  return entries
+  const files = entries
     .filter((f) => /^\d{4}_.+\.sql$/.test(f))
     .sort()
     .map((f) => ({ version: f.slice(0, 4), name: f.slice(5, -4), file: path.join(dir, f) }))
+  const seen = new Map<string, string>()
+  for (const f of files) {
+    const other = seen.get(f.version)
+    if (other) {
+      throw new Error(`Two migrations share version ${f.version}: ${path.basename(other)} and ${path.basename(f.file)}. Give one of them the next free number.`)
+    }
+    seen.set(f.version, f.file)
+  }
+  return files
 }
 
 export async function migrate(db: Db, dir = defaultMigrationsDir()): Promise<AppliedMigration[]> {
+  // Read (and checked) before the database is touched.
+  const files = await listMigrationFiles(dir)
   const client = await db.connect()
   const applied: AppliedMigration[] = []
   try {
@@ -56,7 +74,7 @@ export async function migrate(db: Db, dir = defaultMigrationsDir()): Promise<App
     const done = new Set(
       (await client.query<{ version: string }>('SELECT version FROM schema_migrations')).rows.map((r) => r.version),
     )
-    for (const m of await listMigrationFiles(dir)) {
+    for (const m of files) {
       if (done.has(m.version)) continue
       const sql = await readFile(m.file, 'utf8')
       await client.query('BEGIN')

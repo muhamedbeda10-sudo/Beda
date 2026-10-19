@@ -168,12 +168,27 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   } else if (isZodError(err)) {
     status = 400
     body = { error: { code: 'validation', message: err.issues[0]?.message ?? 'Invalid request.', details: err.issues } }
-  } else if (isBodyParseError(err)) {
-    status = 400
-    body = { error: { code: 'validation', message: 'The request body is not valid JSON.' } }
-  } else if (isMulterLimit(err)) {
-    status = 413
-    body = { error: { code: 'payload_too_large', message: 'That photo is too large. Retry — it is compressed on the device first.' } }
+  } else if (bodyErrorType(err) !== null) {
+    // The JSON body parser refused the request before any route saw it.
+    const type = bodyErrorType(err)
+    status = type === 'entity.too.large' ? 413 : 400
+    body =
+      type === 'entity.too.large'
+        ? { error: { code: 'payload_too_large', message: 'The request is too large to accept.' } }
+        : { error: { code: 'validation', message: type === 'entity.parse.failed' ? 'The request body is not valid JSON.' : 'The request body could not be read.' } }
+  } else if (isMulterError(err)) {
+    // An upload (a photo, a PDF, a spreadsheet) the multipart parser refused.
+    const refused = multerRefusal(err.code)
+    status = refused.status
+    body = { error: { code: refused.status === 413 ? 'payload_too_large' : 'validation', message: refused.message } }
+  } else if (pgCode(err) === PG.DEADLOCK_DETECTED || pgCode(err) === PG.SERIALIZATION_FAILURE) {
+    // Two changes to the same records crossed and the database undid this one: sent again, it goes through.
+    status = 409
+    res.setHeader('Retry-After', '1')
+    body = { error: { code: 'conflict', message: 'Someone else was changing the same records at the same moment. Nothing was saved: try again.' } }
+  } else if (pgCode(err) === PG.UNIQUE_VIOLATION && pgConstraint(err) === 'inspection_sessions_one_open_per_line') {
+    status = 409
+    body = { error: { code: 'duplicate', message: 'Another session is already open on this order line. One session per line is open at a time.' } }
   } else if (pgCode(err) === PG.UNIQUE_VIOLATION) {
     status = 409
     body = { error: { code: 'duplicate', message: 'A record with the same key already exists.' } }
@@ -191,10 +206,36 @@ function isZodError(e: unknown): e is ZodError {
   return typeof e === 'object' && e !== null && (e as { name?: string }).name === 'ZodError' && Array.isArray((e as ZodError).issues)
 }
 
-function isBodyParseError(e: unknown): boolean {
-  return typeof e === 'object' && e !== null && (e as { type?: string }).type === 'entity.parse.failed'
+/** A body-parser error's type ('entity.too.large', 'entity.parse.failed', …): a client error it raised itself, or null. */
+function bodyErrorType(e: unknown): string | null {
+  if (typeof e !== 'object' || e === null) return null
+  const { type, status } = e as { type?: unknown; status?: unknown }
+  return typeof type === 'string' && typeof status === 'number' && status >= 400 && status < 500 ? type : null
 }
 
-function isMulterLimit(e: unknown): boolean {
-  return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'LIMIT_FILE_SIZE'
+function isMulterError(e: unknown): e is { code: string } {
+  return typeof e === 'object' && e !== null && (e as { name?: string }).name === 'MulterError' && typeof (e as { code?: unknown }).code === 'string'
+}
+
+/** What an upload multer refused is told: too large or too many is a 413, a malformed form a 400. Any file, not only a photo. */
+function multerRefusal(code: string): { status: 400 | 413; message: string } {
+  switch (code) {
+    case 'LIMIT_FILE_SIZE':
+      return { status: 413, message: 'That file is too large to upload.' }
+    case 'LIMIT_FILE_COUNT':
+      return { status: 413, message: 'Too many files in one upload: send them one at a time.' }
+    case 'LIMIT_PART_COUNT':
+    case 'LIMIT_FIELD_COUNT':
+    case 'LIMIT_FIELD_KEY':
+    case 'LIMIT_FIELD_VALUE':
+      return { status: 413, message: 'The upload carries more than it may: send the file with its usual details only.' }
+    case 'LIMIT_UNEXPECTED_FILE':
+      return { status: 400, message: 'The upload has a file where none is expected: attach it as the "file" field.' }
+    default:
+      return { status: 400, message: 'The upload could not be read. Try again.' }
+  }
+}
+
+function pgConstraint(e: unknown): string | undefined {
+  return typeof e === 'object' && e !== null && 'constraint' in e ? String((e as { constraint: unknown }).constraint) : undefined
 }

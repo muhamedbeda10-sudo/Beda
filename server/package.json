@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:migrate": "tsx --env-file-if-exists=.env src/db/migrate-cli.ts",
-    "db:seed": "tsx --env-file-if-exists=.env src/db/seed-cli.ts"
+    "db:seed": "tsx --env-file-if-exists=.env src/db/seed-cli.ts",
+    "ai:pin-owner": "tsx --env-file-if-exists=.env src/db/pin-ai-owner-cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",

@@ -31,10 +31,16 @@ beforeAll(async () => {
   })
   order = (await app.api<ProductionOrder[]>('GET', '/api/orders', { token: admin.token })).body[0]
 
-  // Sessions a minute apart, oldest first, so their order is certain.
+  // Sessions a minute apart, oldest first, so their order is certain. One line
+  // holds one open session at a time: each is closed before the next opens
+  // (in the database: closing through the API needs a recorded sample, and
+  // what is under test is a read).
   for (let i = 0; i < TOTAL; i++) {
     const created = await app.api<{ id: string }>('POST', '/api/sessions', { token: inspector.token, body: { orderId: order.id, startQty: i } })
-    await app.db.query(`UPDATE inspection_sessions SET started_at = now() - make_interval(mins => $2) WHERE id = $1`, [created.body.id, TOTAL - i])
+    await app.db.query(
+      `UPDATE inspection_sessions SET started_at = now() - make_interval(mins => $2), status = 'Closed', closed_at = now() - make_interval(mins => $2) + interval '30 seconds' WHERE id = $1`,
+      [created.body.id, TOTAL - i],
+    )
   }
 })
 afterAll(() => app.stop())

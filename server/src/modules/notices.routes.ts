@@ -28,7 +28,7 @@ import { requirePermission, requireUser } from '../auth/middleware'
 import { dropNulls } from '../lib/rows'
 import { NOTICE_FILE_TYPES, buildNoticeFileStorageKey } from '../images/storage'
 import { isPdf } from './workInstructions.routes'
-import { NOTICE_SELECT, attachNoticeParts, loadInbox, loadPending, type NoticeContext, type NoticeRow } from './notices'
+import { NOTICE_SELECT, attachNoticeParts, loadInbox, loadPending, noticeApplies, type NoticeContext, type NoticeRow } from './notices'
 import { createNotice, deleteNotice, noticeSaveSchema, updateNotice, withdrawNotice } from './noticesService'
 
 const uuid = z.string().uuid()
@@ -116,8 +116,13 @@ export function noticesRoutes(ctx: AppContext): Router {
     const user = requireUser(req)
     const id = parse(uuid, req.params.id)
     const body = parse(z.object({ context: contextSchema }), req.body ?? {}) as AcknowledgeNoticeRequest
-    const { rowCount } = await ctx.db.query(`SELECT 1 FROM notices WHERE id = $1 AND deleted_at IS NULL`, [id])
-    if (!rowCount) throw notFound('That notice')
+    // Only a notice meant for this reader — by the rule their Notices and the
+    // gate are drawn by — and only while it is in force: another's notice is
+    // "not found", never a hint that it exists.
+    const { rows } = await ctx.db.query<NoticeRow>(`SELECT ${NOTICE_SELECT} FROM notices n WHERE n.id = $2 AND n.deleted_at IS NULL`, [tz, id])
+    const [notice] = await attachNoticeParts(ctx.db, rows)
+    if (!notice || !noticeApplies(notice.targets, { userId: user.id, role: user.role }, null, notice.matchMode)) throw notFound('That notice')
+    if (!notice.active) throw badRequest(notice.withdrawnAt ? 'This notice was withdrawn.' : 'This notice is not in force.')
     await ctx.db.query(
       `INSERT INTO notice_acknowledgements (notice_id, user_id, user_name, seen_at, acknowledged_at, context)
        VALUES ($1, $2, $3, now(), CASE WHEN $4::boolean THEN now() END, $5::jsonb)

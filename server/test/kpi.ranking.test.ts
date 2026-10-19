@@ -69,23 +69,23 @@ beforeAll(async () => {
   await app.api('POST', '/api/orders/import', {
     token: admin.token,
     body: {
-      rows: [
-        {
-          lineKey: 'L-1',
-          orderNumber: '20095-QC1-HYH',
-          item: 'XL Light Beam',
-          itemCode: '125185TA3',
-          workCenterCode: '31',
-          requiredQty: 5000,
-          finishedQty: 0,
-          customer: 'Beta Storage',
-          expectedGrade: '',
-          drawing: 'BS9059/31',
-        },
-      ],
+      // One line each: a line holds one open session at a time, and each inspector works in their own.
+      rows: ['L-1', 'L-2', 'L-3'].map((lineKey) => ({
+        lineKey,
+        orderNumber: '20095-QC1-HYH',
+        item: 'XL Light Beam',
+        itemCode: '125185TA3',
+        workCenterCode: '31',
+        requiredQty: 5000,
+        finishedQty: 0,
+        customer: 'Beta Storage',
+        expectedGrade: '',
+        drawing: 'BS9059/31',
+      })),
     },
   })
-  const order = (await app.api<ProductionOrder[]>('GET', '/api/orders', { token: admin.token })).body[0]
+  const lines = (await app.api<ProductionOrder[]>('GET', '/api/orders', { token: admin.token })).body
+  const line = (key: string) => lines.find((o) => o.lineKey === key)!
 
   const { thresholds } = (await app.api<KpiThresholdsResponse>('GET', '/api/kpi/thresholds', { token: admin.token })).body
   const saved = await app.api('PUT', '/api/kpi/thresholds', { token: admin.token, body: { ...thresholds, minSamplesForRanking: MIN_TO_RANK } })
@@ -93,10 +93,10 @@ beforeAll(async () => {
 
   // Same machine, same item, same day: one measures everything and finds
   // defects; one leaves the measurements blank and finds none.
-  await record(careful, order, true, 1, SAMPLES)
-  await record(hasty, order, false, 0, SAMPLES)
+  await record(careful, line('L-1'), true, 1, SAMPLES)
+  await record(hasty, line('L-2'), false, 0, SAMPLES)
   // And one who only just started.
-  await record(newcomer, order, true, 0, 2)
+  await record(newcomer, line('L-3'), true, 0, 2)
 
   overview = (await app.api<KpiOverview>('GET', `/api/kpi/overview?${period()}`, { token: admin.token })).body
 })

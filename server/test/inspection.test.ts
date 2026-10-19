@@ -45,6 +45,12 @@ async function uploadImage(s: Session, seed: number, extra: Record<string, strin
   return res.body
 }
 
+/** The session open on a line now: one line holds one open session at a time. */
+async function openOn(orderId: string): Promise<SessionWithOrder> {
+  const board = await app.api<OpenSessionsResponse>('GET', '/api/sessions/open', { token: admin.token })
+  return board.body.sessions.find((s) => s.orderId === orderId && s.status === 'Open')!
+}
+
 function weldSample(submissionId: string, overrides: Partial<SaveSampleRequest> = {}): SaveSampleRequest {
   return {
     submissionId,
@@ -128,16 +134,13 @@ describe('sessions', () => {
     expect(session.version).toBe(0)
   })
 
-  it('gives the next session on the same order seq 2', async () => {
-    const res = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrder.id, startQty: 10 } })
-    expect(res.body.seq).toBe(2)
-    // Marked deleted by an administrator — it must stop appearing, but stay stored.
-    expect((await app.api('DELETE', `/api/sessions/${res.body.id}`, { token: inspector.token })).status).toBe(403)
-    expect((await app.api('DELETE', `/api/sessions/${res.body.id}`, { token: supervisor.token })).status).toBe(403)
-    expect((await app.api('DELETE', `/api/sessions/${res.body.id}`, { token: admin.token })).status).toBe(204)
-    expect((await app.api('GET', `/api/sessions/${res.body.id}`, { token: inspector.token })).status).toBe(404)
-    const { rows } = await app.db.query('SELECT deleted_at FROM inspection_sessions WHERE id = $1', [res.body.id])
-    expect(rows[0].deleted_at).not.toBeNull()
+  it('opens no second session on the line while the first is open', async () => {
+    const res = await app.api<ApiErrorBody>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: weldOrder.id, startQty: 10 } })
+    expect(res.status).toBe(409)
+    expect(res.body.error.message).toBe(
+      'Session #1 is already open on this line, started by Inspector One. One session per line is open at a time: record in it, or close it before opening another.',
+    )
+    expect(res.body.error.details).toEqual({ sessionId: session.id })
   })
 
   it('lists it on the open board with the Hold badge at zero', async () => {
@@ -410,12 +413,7 @@ describe('the atomic sample save', () => {
     const other = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: paintBeamOrder.id, startQty: 5 } })
     expect(other.body.priorDefectsElsewhere).toBe(false)
     expect((await app.api('DELETE', `/api/sessions/${other.body.id}`, { token: admin.token })).status).toBe(204)
-
-    // The same order line, a later session on the same machine: grey too.
-    const later = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrder.id, startQty: 5 } })
-    expect(later.body.defectCount).toBe(0)
-    expect(later.body.priorDefectsElsewhere).toBe(true)
-    expect((await app.api('DELETE', `/api/sessions/${later.body.id}`, { token: admin.token })).status).toBe(204)
+    // A later session on the same line is grey too: once this one is closed (corrections, below).
   })
 
   it('wrote create and acknowledge audit entries with the order context', async () => {
@@ -497,6 +495,21 @@ describe('corrections (§9.4, §14)', () => {
     expect(ok.body.version).toBe(1)
     const again = await app.api<ApiErrorBody>('POST', `/api/sessions/${sessionId}/close`, { token: inspector.token, body: { finalQty: 1, version: 1 } })
     expect(again.status).toBe(400)
+  })
+
+  it('opens the next session on the line, seq 2, once the first is closed: grey by the first one’s defects, deleted by an administrator only', async () => {
+    const later = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrder.id, startQty: 10 } })
+    expect(later.status).toBe(201)
+    expect(later.body.seq).toBe(2)
+    expect(later.body.defectCount).toBe(0)
+    expect(later.body.priorDefectsElsewhere).toBe(true)
+    // Marked deleted by an administrator — it must stop appearing, but stay stored.
+    expect((await app.api('DELETE', `/api/sessions/${later.body.id}`, { token: inspector.token })).status).toBe(403)
+    expect((await app.api('DELETE', `/api/sessions/${later.body.id}`, { token: supervisor.token })).status).toBe(403)
+    expect((await app.api('DELETE', `/api/sessions/${later.body.id}`, { token: admin.token })).status).toBe(204)
+    expect((await app.api('GET', `/api/sessions/${later.body.id}`, { token: inspector.token })).status).toBe(404)
+    const { rows } = await app.db.query('SELECT deleted_at FROM inspection_sessions WHERE id = $1', [later.body.id])
+    expect(rows[0].deleted_at).not.toBeNull()
   })
 
   it('keeps a closed session on the board while a defect of it is on Hold', async () => {
@@ -722,7 +735,10 @@ describe('notes about the order (§5.8)', () => {
   })
 
   it('shows the note to a later session on the same line, but not on another machine of the same order', async () => {
-    // The same line again: the note is there, with where it was written.
+    // The same line again, once this session is closed: the note is there, with where it was written.
+    const open = await app.api<SessionWithOrder>('GET', `/api/sessions/${sid}`, { token: inspector.token })
+    const closed = await app.api<SessionWithOrder>('POST', `/api/sessions/${sid}/close`, { token: inspector.token, body: { finalQty: 20, version: open.body.version } })
+    expect(closed.status).toBe(200)
     const sameLine = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: supervisor.token, body: { orderId: weldOrder.id, startQty: 0 } })
     const ctx = await app.api<WizardContext>('GET', `/api/sessions/${sameLine.body.id}/wizard`, { token: supervisor.token })
     expect(ctx.status).toBe(200)
@@ -739,6 +755,8 @@ describe('notes about the order (§5.8)', () => {
     expect(viaOther.body.notes.some((n) => n.id === noteId)).toBe(false)
     await app.api('DELETE', `/api/sessions/${sameLine.body.id}`, { token: admin.token })
     await app.api('DELETE', `/api/sessions/${otherMachine.body.id}`, { token: admin.token })
+    // Open again, for the tests below.
+    expect((await app.api('POST', `/api/sessions/${sid}/reopen`, { token: supervisor.token, body: { version: closed.body.version } })).status).toBe(200)
   })
 
   it('lets only an administrator mark a note deleted, and audits it', async () => {
@@ -755,7 +773,7 @@ describe('notes about the order (§5.8)', () => {
 
 describe('a session with no sample', () => {
   it('cannot be closed, but its inspector can discard it', async () => {
-    const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrder.id, startQty: 5 } })
+    const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: paintBeamOrder.id, startQty: 5 } })
     const sid = started.body.id
     const close = await app.api<ApiErrorBody>('POST', `/api/sessions/${sid}/close`, { token: inspector.token, body: { finalQty: 5, version: 0 } })
     expect(close.status).toBe(400)
@@ -805,11 +823,10 @@ describe('a make-to-stock machine', () => {
     expect(res.body.order?.itemCode).toBe('CONNECTOR-RL')
     stockOrderId = res.body.orderId
 
-    // The next session lands on the same line with the next seq.
-    const again = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '21', producedQty: 80 } })
-    expect(again.body.orderId).toBe(stockOrderId)
-    expect(again.body.seq).toBe(2)
-    await app.api('DELETE', `/api/sessions/${again.body.id}`, { token: admin.token })
+    // One open session per line, the STOCK line's included.
+    const again = await app.api<ApiErrorBody>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '21', producedQty: 80 } })
+    expect(again.status).toBe(409)
+    expect(again.body.error.details).toEqual({ sessionId: sid })
   })
 
   it('refuses a stock start on a machine that works to order', async () => {
@@ -854,12 +871,15 @@ describe('a make-to-stock machine', () => {
     expect(mine?.producedQty).toBe(120)
   })
 
-  it('brings the STOCK line back after a catalogue clear retired it', async () => {
-    // What POST /orders/clear does to every line, applied to this one only.
+  it('brings the STOCK line back after it was retired, and lands the next session on it with the next seq', async () => {
+    const open = await app.api<SessionWithOrder>('GET', `/api/sessions/${sid}`, { token: inspector.token })
+    expect((await app.api('POST', `/api/sessions/${sid}/close`, { token: inspector.token, body: { finalQty: 120, version: open.body.version } })).status).toBe(200)
+    // Retired in the database (a catalogue clear leaves the STOCK lines alone).
     await app.db.query(`UPDATE production_orders SET deleted_at = now() WHERE id = $1`, [stockOrderId])
     const res = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { workCenterCode: '21', producedQty: 10 } })
     expect(res.status).toBe(201)
     expect(res.body.orderId).toBe(stockOrderId)
+    expect(res.body.seq).toBe(2)
     await app.api('DELETE', `/api/sessions/${res.body.id}`, { token: admin.token })
   })
 })
@@ -869,8 +889,8 @@ describe('a machine that takes dimensions from the inspector', () => {
     const machines = await app.api<Machine[]>('GET', '/api/master/machines', { token: admin.token })
     const weld = machines.body.find((m) => m.code === '58')!
     expect(weld.usesItemDimensions).toBe(true)
-    const started = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrder.id, startQty: 0 } })
-    const sid = started.body.id
+    // The session open on the weld line.
+    const sid = (await openOn(weldOrder.id)).id
     const before = await app.api<WizardContext>('GET', `/api/sessions/${sid}/wizard`, { token: inspector.token })
     expect(before.body.dimensionOrder.length).toBeGreaterThan(0)
 
@@ -886,7 +906,6 @@ describe('a machine that takes dimensions from the inspector', () => {
     await app.api('PUT', `/api/master/machines/${weld.id}`, { token: admin.token, body: { ...fields, usesItemDimensions: true } })
     const again = await app.api<WizardContext>('GET', `/api/sessions/${sid}/wizard`, { token: inspector.token })
     expect(again.body.dimensionOrder.length).toBeGreaterThan(0)
-    await app.api('DELETE', `/api/sessions/${sid}`, { token: admin.token })
   })
 })
 
@@ -918,16 +937,13 @@ describe('work instructions', () => {
     const content = await app.api<string>('GET', `/api/work-instructions/${firstId}/content`, { token: inspector.token })
     expect(content.status).toBe(200)
     expect(content.headers.get('content-type')).toBe('application/pdf')
-    const weldSession = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: weldOrder.id, startQty: 1 } })
-    const ctx = await app.api<WizardContext>('GET', `/api/sessions/${weldSession.body.id}/wizard`, { token: inspector.token })
+    // The sessions open on the weld line and on the paint line.
+    const ctx = await app.api<WizardContext>('GET', `/api/sessions/${(await openOn(weldOrder.id)).id}/wizard`, { token: inspector.token })
     expect(ctx.body.process).toBe('welding')
     expect(ctx.body.workInstructions.map((w) => [w.code, w.step])).toEqual([['WI-PD-03-04', 'defects']])
-    await app.api('DELETE', `/api/sessions/${weldSession.body.id}`, { token: admin.token })
     // A paint machine does not see a welding document.
-    const paintSession = await app.api<SessionWithOrder>('POST', '/api/sessions', { token: inspector.token, body: { orderId: paintOrder.id, startQty: 1 } })
-    const paintCtx = await app.api<WizardContext>('GET', `/api/sessions/${paintSession.body.id}/wizard`, { token: inspector.token })
+    const paintCtx = await app.api<WizardContext>('GET', `/api/sessions/${(await openOn(paintOrder.id)).id}/wizard`, { token: inspector.token })
     expect(paintCtx.body.workInstructions).toEqual([])
-    await app.api('DELETE', `/api/sessions/${paintSession.body.id}`, { token: admin.token })
   })
 
   it('supersedes the issue in force when a new issue of the same code is uploaded', async () => {

@@ -67,12 +67,45 @@ describe('sign in, refresh, sign out', () => {
     const rotated = cookieOf(refreshed.cookies)
     expect(rotated).not.toBe(s.cookie)
 
-    // The old refresh token is spent.
+    // The old refresh token is spent once its short grace is over (a second tab's refresh at the same moment, below).
+    await app.db.query(`UPDATE auth_sessions SET rotated_at = now() - interval '1 minute' WHERE previous_token_hash IS NOT NULL`)
     const replay = await app.api<ApiErrorBody>('POST', '/api/auth/refresh', { cookie: s.cookie })
     expect(replay.status).toBe(401)
+    // The browser holds the newer cookie by then: a stale request does not erase it.
+    expect(replay.cookies).toEqual([])
     // The new one works.
     const again = await app.api<AuthResponse>('POST', '/api/auth/refresh', { cookie: rotated })
     expect(again.status).toBe(200)
+    // A token no device holds signs the browser out.
+    const forged = await app.api<ApiErrorBody>('POST', '/api/auth/refresh', { cookie: 'qc_refresh=not-a-token' })
+    expect(forged.status).toBe(401)
+    expect(forged.cookies.some((c) => /^qc_refresh=;/.test(c))).toBe(true)
+  })
+
+  it('answers two tabs refreshing with one cookie at the same moment, signing neither out', async () => {
+    const s = await app.login('admin')
+    // Every window reloads after a deploy, each with the same cookie.
+    const both = await Promise.all([1, 2, 3].map(() => app.api<AuthResponse>('POST', '/api/auth/refresh', { cookie: s.cookie })))
+    expect(both.map((r) => r.status)).toEqual([200, 200, 200])
+    for (const r of both) expect((await app.api('GET', '/api/auth/me', { token: r.body.accessToken })).status).toBe(200)
+    // One rotated the token and set the new cookie; the others left the cookie alone — none cleared it.
+    const set = both.flatMap((r) => r.cookies.filter((c) => c.startsWith('qc_refresh=')))
+    expect(set).toHaveLength(1)
+    expect(set[0]).not.toMatch(/^qc_refresh=;/)
+    const current = cookieOf(set)
+    // That cookie is the device's token: it keeps working, the same device throughout.
+    const next = await app.api<AuthResponse>('POST', '/api/auth/refresh', { cookie: current })
+    expect(next.status).toBe(200)
+    const device = (token: string) => (JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()) as { sid: string }).sid
+    expect(new Set([...both, next].map((r) => device(r.body.accessToken))).size).toBe(1)
+
+    // A tab that arrives moments later with the replaced cookie is still answered, for the same device.
+    const late = await app.api<AuthResponse>('POST', '/api/auth/refresh', { cookie: cookieOf(set) })
+    expect(late.status).toBe(200)
+    expect(late.cookies.filter((c) => c.startsWith('qc_refresh='))).toEqual([])
+    // Signing out with it signs the device out.
+    expect((await app.api('POST', '/api/auth/logout', { cookie: current })).status).toBe(204)
+    expect((await app.api('GET', '/api/auth/me', { token: late.body.accessToken })).status).toBe(401)
   })
 
   it('revokes the device on logout so its access token stops working', async () => {

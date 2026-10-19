@@ -7,10 +7,10 @@ import { withTransaction, PG, pgCode, type Queryable } from '../db/pool'
 import { HttpError, badRequest, duplicate, forbidden, unauthenticated } from '../lib/errors'
 import { parse } from '../lib/validate'
 import { hashPassword, verifyPassword, MIN_PASSWORD_LENGTH } from '../auth/password'
-import { REFRESH_COOKIE, SESSION_MARKER_COOKIE, hashRefreshToken, newRefreshToken, signAccessToken } from '../auth/tokens'
+import { REFRESH_COOKIE, REFRESH_REUSE_GRACE_SECONDS, SESSION_MARKER_COOKIE, hashRefreshToken, newRefreshToken, signAccessToken } from '../auth/tokens'
 import { authenticate, requireUser } from '../auth/middleware'
 import { loadProfile } from '../auth/profile'
-import { aiOwner } from '../ai/owner'
+import { RESERVED_OWNER_NAME, isReservedForAiOwner, pinAiOwnerIn } from '../ai/owner'
 import { seedDemoDataIfEmpty } from '../db/seed'
 import { sniffImageMime } from '../images/storage'
 
@@ -86,13 +86,8 @@ export function authRoutes(ctx: AppContext): Router {
     res.clearCookie(SESSION_MARKER_COOKIE, { path: '/' })
   }
 
-  /**
-   * The person signing in, permissions and all (§14). The AI assistant's
-   * owner is pinned first if their account has just come to exist, so ADMIN+
-   * is known from their first sign-in.
-   */
+  /** The person signing in, permissions and all (§14). */
   async function signedInProfile(userId: string): Promise<UserProfile> {
-    await aiOwner(db, config)
     const profile = await loadProfile(db, userId)
     if (!profile) throw unauthenticated()
     return profile
@@ -129,6 +124,11 @@ export function authRoutes(ctx: AppContext): Router {
    * The very first account becomes the admin — otherwise nobody could reach
    * Admin to promote anyone. The check and the insert share a transaction and
    * an advisory lock, so two first sign-ups cannot both become admin.
+   *
+   * §20 — the AI assistant's owner's name (AI_OWNER_USERNAME) is not for
+   * anyone to register while no owner is pinned: only the first account of an
+   * empty installation — the person setting it up — may take it, and is
+   * pinned as the owner with it.
    */
   r.post('/register', async (req, res) => {
     const body = parse(registerSchema, req.body)
@@ -140,17 +140,22 @@ export function authRoutes(ctx: AppContext): Router {
       if (!first && !config.AUTH_ALLOW_SELF_REGISTRATION) {
         throw forbidden('Self-registration is closed. Ask an administrator to create your account.')
       }
+      const ownersName = await isReservedForAiOwner(tx, config, body.username)
+      if (ownersName && !first) throw duplicate(RESERVED_OWNER_NAME)
       const role: Role = first ? 'admin' : 'inspector'
+      let created: UserProfile
       try {
         const { rows } = await tx.query<UserProfile>(
           `INSERT INTO users (username, name, role, password_hash) VALUES ($1, $2, $3, $4) RETURNING ${USER_COLUMNS}`,
           [body.username, body.name, role, passwordHash],
         )
-        return rows[0]
+        created = rows[0]
       } catch (e) {
         if (pgCode(e) === PG.UNIQUE_VIOLATION) throw duplicate('This username is already taken.')
         throw e
       }
+      if (ownersName) await pinAiOwnerIn(tx, created.username)
+      return created
     })
 
     if (user.role === 'admin' && config.SEED_DEMO_DATA) {
@@ -186,38 +191,59 @@ export function authRoutes(ctx: AppContext): Router {
     res.json(await issueTokens(req, res, await signedInProfile(row.id)))
   })
 
-  /** Rotate the refresh token and mint a new access token. */
+  /**
+   * Rotate the refresh token and mint a new access token. The token a device
+   * replaced a moment ago (REFRESH_REUSE_GRACE_SECONDS) is answered too, with
+   * a new access token for the same device and its cookie left alone: that is
+   * a second tab that refreshed at the same moment, and the cookie the first
+   * one set is the device's current token. Later, the replaced token is
+   * refused — but its cookie is not cleared, since the browser holds the
+   * newer one by then; only a token that names no live device clears them.
+   */
   r.post('/refresh', async (req, res) => {
     const presented = typeof req.cookies?.[REFRESH_COOKIE] === 'string' ? (req.cookies[REFRESH_COOKIE] as string) : ''
     if (!presented) throw unauthenticated('Sign in to continue.')
 
+    const presentedHash = hashRefreshToken(presented)
     const next = newRefreshToken()
     const expiresAt = new Date(Date.now() + refreshTtlMs)
     const result = await withTransaction(db, async (tx) => {
-      const { rows } = await tx.query<{ sid: string } & UserProfile>(
-        `SELECT s.id AS sid, u.id, u.username, u.name, u.role, u.is_active AS "isActive",
+      // Two refreshes with one cookie wait on this row lock; the second then
+      // reads the row as the first left it: its token is now the previous one.
+      const { rows } = await tx.query<{ sid: string; current: boolean } & UserProfile>(
+        `SELECT s.id AS sid, s.refresh_token_hash = $1 AS current, u.id, u.username, u.name, u.role, u.is_active AS "isActive",
                 u.created_at AS "createdAt", u.last_login_at AS "lastLoginAt"
            FROM auth_sessions s JOIN users u ON u.id = s.user_id
-          WHERE s.refresh_token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
+          WHERE (s.refresh_token_hash = $1 OR (s.previous_token_hash = $1 AND s.rotated_at > now() - make_interval(secs => $2)))
+            AND s.revoked_at IS NULL AND s.expires_at > now()
             AND u.deleted_at IS NULL AND NOT u.is_system
           FOR UPDATE OF s`,
-        [hashRefreshToken(presented)],
+        [presentedHash, REFRESH_REUSE_GRACE_SECONDS],
       )
       const row = rows[0]
-      if (!row) return null
-      if (!row.isActive) return null
+      if (!row || !row.isActive) return null
+      if (!row.current) {
+        await tx.query('UPDATE auth_sessions SET last_used_at = now() WHERE id = $1', [row.sid])
+        return { ...row, rotated: false }
+      }
       await tx.query(
-        'UPDATE auth_sessions SET refresh_token_hash = $2, expires_at = $3, last_used_at = now() WHERE id = $1',
+        `UPDATE auth_sessions SET previous_token_hash = refresh_token_hash, rotated_at = now(), refresh_token_hash = $2, expires_at = $3, last_used_at = now()
+          WHERE id = $1`,
         [row.sid, hashRefreshToken(next), expiresAt],
       )
-      return row
+      return { ...row, rotated: true }
     })
     if (!result) {
-      clearSessionCookies(res)
+      // A token this device replaced earlier: the browser holds the newer one, which clearing would erase.
+      const replaced = await db.query(
+        `SELECT 1 FROM auth_sessions WHERE previous_token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`,
+        [presentedHash],
+      )
+      if (replaced.rowCount === 0) clearSessionCookies(res)
       throw unauthenticated('Your session has expired. Sign in again.')
     }
     const { sid } = result
-    setSessionCookies(res, next, expiresAt)
+    if (result.rotated) setSessionCookies(res, next, expiresAt)
     // The account as it is now, permissions and all (§14): a change made since the last refresh reaches the app here.
     const user = await loadProfile(db, result.id)
     if (!user) throw unauthenticated('Your session has expired. Sign in again.')
@@ -232,7 +258,8 @@ export function authRoutes(ctx: AppContext): Router {
   r.post('/logout', async (req, res) => {
     const presented = typeof req.cookies?.[REFRESH_COOKIE] === 'string' ? (req.cookies[REFRESH_COOKIE] as string) : ''
     if (presented) {
-      await db.query('UPDATE auth_sessions SET revoked_at = now() WHERE refresh_token_hash = $1 AND revoked_at IS NULL', [
+      // The device's token, or the one it replaced in a refresh that crossed this sign-out: either way the device is signed out.
+      await db.query('UPDATE auth_sessions SET revoked_at = now() WHERE (refresh_token_hash = $1 OR previous_token_hash = $1) AND revoked_at IS NULL', [
         hashRefreshToken(presented),
       ])
     }
