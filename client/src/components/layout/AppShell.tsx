@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, Info, LogOut, Menu, MessagesSquare, Settings, X } from 'lucide-react'
 import { WhatsNewPrompt } from '@/components/releases/WhatsNew'
 import { NoticeBell } from '@/components/notices/NoticeBell'
+import { NoticesButton } from '@/components/notices/NoticesButton'
 import { useChatUnread } from '@/services/queries'
 import { Brand } from '@/components/brand/Brand'
 import { useApp } from '@/store/AppContext'
@@ -247,11 +248,12 @@ function Shell({ children }: { children: ReactNode }) {
             })}
           </nav>
 
-          {/* Right — chat, the bell, administration, account (the theme is in the account panel / the menu; the assistant floats in the bottom corner) */}
+          {/* Right — chat, notices, the bell, administration, account (the theme is in the account panel / the menu; the assistant floats in the bottom corner) */}
           <div className="ml-auto flex shrink-0 items-center justify-end gap-1 lg:flex-1">
             {can('use-chat') && <ChatButton />}
-            {/* §21 — everyone has the bell for their alerts; the notices in it are for the roles that receive them. */}
-            <NoticeBell notices={can('read-notices')} />
+            {/* §16 — notices on a button of their own, for whoever receives them or writes them; §21 — everyone has the bell for their alerts. */}
+            <NoticesButton receives={can('read-notices')} manage={can('manage-notices')} />
+            <NoticeBell />
             {/* With the menu button kept at lg, the menu holds administration and the account as well: the bar reads as on a portrait tablet. */}
             {admin.length > 0 && (
               <div className={cn('hidden', !menuAtLg && 'lg:block')}>

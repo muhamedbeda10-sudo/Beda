@@ -215,8 +215,8 @@ function Proposal({ part, notice, writing, onDecided }: { part: AiNoticePart; no
               >
                 <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
                 {action === 'delete'
-                  ? 'Deleting takes it out of every bell and list, the Notices page included. The record stays for the audit.'
-                  : 'Withdrawing stops it showing at once, in the bell and before inspections. The record and every acknowledgement stay.'}
+                  ? 'Deleting takes it out of everyone’s Notices and every list, the Notices page included. The record stays for the audit.'
+                  : 'Withdrawing stops it showing at once, in Notices and before inspections. The record and every acknowledgement stay.'}
               </p>
             )}
             {action === 'update' && part.before && (
@@ -320,7 +320,7 @@ function Proposal({ part, notice, writing, onDecided }: { part: AiNoticePart; no
             <b dir={textDirection(title) ?? 'auto'} className="block break-words">
               {title || 'Untitled notice'}
             </b>
-            It disappears from every bell and list, the Notices page included. The record stays for the audit.
+            It disappears from everyone’s Notices and every list, the Notices page included. The record stays for the audit.
           </p>
         </Modal>
       )}
@@ -338,7 +338,7 @@ function appliedFoldedText(action: AiNoticeAction): string {
     case 'withdraw':
       return 'It no longer shows. The Notices page keeps it, with who has read it.'
     case 'delete':
-      return 'It is gone from every bell and list. The record stays for the audit.'
+      return 'It is gone from everyone’s Notices and every list. The record stays for the audit.'
   }
 }
 

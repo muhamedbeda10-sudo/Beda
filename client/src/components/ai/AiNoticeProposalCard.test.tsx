@@ -116,14 +116,14 @@ describe('the notice card', () => {
   it('shows a withdrawal or a deletion on the notice as it is, under a word on what the button does', () => {
     const w = text(withdraw)
     expect(w).toContain('Withdraw notice Not withdrawn yet')
-    expect(w).toContain('Withdrawing stops it showing at once, in the bell and before inspections. The record and every acknowledgement stay.')
+    expect(w).toContain('Withdrawing stops it showing at once, in Notices and before inspections. The record and every acknowledgement stay.')
     expect(w).toContain('The notice as it is')
     expect(w).toContain('Aimed at Everyone, everywhere')
     expect(w).toContain('Reaches now Everyone (42 people)')
     expect(w).toContain('Withdraw Discard It keeps showing until you press Withdraw.')
     const d = text(remove)
     expect(d).toContain('Delete notice Not deleted yet')
-    expect(d).toContain('Deleting takes it out of every bell and list, the Notices page included. The record stays for the audit.')
+    expect(d).toContain('Deleting takes it out of everyone’s Notices and every list, the Notices page included. The record stays for the audit.')
     expect(d).toContain('Delete Discard Nothing is deleted until you press Delete and confirm.')
     // The second confirmation opens only when Delete is pressed.
     expect(d).not.toContain('Delete this notice?')

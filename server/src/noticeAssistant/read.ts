@@ -183,7 +183,7 @@ export async function listNotices(q: Queryable, timeZone: string, asker: NoticeA
   else candidates = await loadInbox(q, timeZone, { userId: asker.id, role: asker.role })
   const found = candidates.filter((n) => matches(n, query, today, timeZone))
   const head = {
-    scope: admin ? 'every notice that is not deleted (this person is an administrator)' : "the notices in this person's bell",
+    scope: admin ? 'every notice that is not deleted (this person is an administrator)' : "the notices in this person's Notices list (the megaphone at the top of the app)",
     today,
     status: query.status ?? 'active',
     matching: found.length,

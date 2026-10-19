@@ -52,7 +52,7 @@ export const PROPOSE_NOTICE_CHANGE_TOOL_NAME = 'propose_notice_change'
 export const LIST_NOTICES_TOOL: Anthropic.Beta.BetaTool = {
   name: LIST_NOTICES_TOOL_NAME,
   description:
-    'List the notices this person can see in the app, newest first: for most people the ones in their bell; for an administrator every notice, with how many saw and acknowledged each. ' +
+    'List the notices this person can see in the app, newest first: for most people the ones in their Notices (the megaphone at the top of the app); for an administrator every notice, with how many saw and acknowledged each. ' +
     'Call it whenever a question is about notices (the ai.* views do not hold them). Returns compact rows (id, title, severity, requiresAck, days, status, audience, created by and when); ' +
     'read one in full with notice_details.',
   eager_input_streaming: true,
