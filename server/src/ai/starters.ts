@@ -418,6 +418,8 @@ export async function ensureStarters(deps: StarterDeps): Promise<{ reports: stri
       shared: true,
       madeBy: 'starter',
       starterKey: r.key,
+      // The app's own queries: a schedule that sends it reads as its creator may.
+      authorDomains: null,
     })
     made.push(r.key)
   }

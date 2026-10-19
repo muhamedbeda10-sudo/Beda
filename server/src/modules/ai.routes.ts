@@ -124,6 +124,8 @@ import { findForm, formBytes } from '../reportForms/forms'
 import { requireUser, type AuthUser } from '../auth/middleware'
 import { auditChanges, auditCreate, auditDelete, writeAudit } from '../audit/service'
 import {
+  capPassed,
+  holdUnderCaps,
   isGranted,
   listAccess,
   loadAccess,
@@ -132,6 +134,7 @@ import {
   mayUploadMtc,
   mayManageNotices,
   personAvailability,
+  releaseHold,
   removeAccess,
   saveAccess,
   statusFor,
@@ -216,8 +219,8 @@ import {
   findConversation,
   listConversations,
   loadDisplayMessages,
+  keepUsage,
   loadReplay,
-  personalMonthSpend,
   recordUsage,
   repairDanglingToolUse,
   runningAnswer,
@@ -828,19 +831,17 @@ export function aiRoutes(ctx: AppContext): Router {
     let routed: RouterResult | null = null
     if (!isTopLevel(previous?.level)) {
       const files = await attachmentKinds(db, user.id, body.attachmentIds)
-      routed = await chooseLevel({ model: ctx.ai, apiKey: avail.app.apiKey, question: body.message, previous, files, signal: ac.signal })
+      routed = await chooseLevel({ model: ctx.ai, apiKey: avail.app.apiKey, question: body.message, previous, files, signal: ac.signal, asker: { db, userId: user.id } })
     }
     const level: AiChatLevel = stickyLevel(previous?.level, routed?.level ?? 'chat-deep')
     // Why, for Activity: the router's reason, or that the conversation is deep already (the router not asked).
     const levelReason = routed ? routed.reason : `Kept at ${AI_LEVEL_NAMES[level]}: the conversation is there already, and keeps its cache.`
     const chosen = AI_JOBS[level]
-    /** The router's call when no question is kept to carry it (refused, or the asker gone): billed all the same, to the asker. */
+    /** The router's call when no question is kept to carry it (refused, or the asker gone): billed all the same, to the asker, settling its hold. */
     const keepRouterCost = async () => {
       if (!routed?.message) return
       const usage = usageOf(routed.message, AI_JOBS.router.model)
-      await recordUsage(db, { userId: user.id, conversationId: null, turnId: null, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd }).catch((err: unknown) =>
-        console.error('[ai] could not record the router call of a question not kept', err),
-      )
+      await keepUsage(db, { userId: user.id, conversationId: null, turnId: null, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd, holdId: routed.holdId })
     }
     if (ac.signal.aborted) {
       await keepRouterCost()
@@ -882,10 +883,10 @@ export function aiRoutes(ctx: AppContext): Router {
         [conversation.id, user.id, body.clientId, body.message, chosen.model, chosen.effort, ctx.answers.id, level, levelReason],
       )
       const turnId = rows[0].id
-      // The router's call is the question's cost, with the answer's.
+      // The router's call is the question's cost, with the answer's; its hold goes with it (back, should this not be kept).
       if (routed?.message) {
         const usage = usageOf(routed.message, AI_JOBS.router.model)
-        await recordUsage(tx, { userId: user.id, conversationId: conversation.id, turnId, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd })
+        await recordUsage(tx, { userId: user.id, conversationId: conversation.id, turnId, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd, holdId: routed.holdId })
       }
       await repairDanglingToolUse(tx, conversation.id, turnId)
       // The question's files, taken for it in order: each the asker's, attached and not yet sent.
@@ -897,8 +898,9 @@ export function aiRoutes(ctx: AppContext): Router {
       // or streamed: a question it would stop without calling the model is refused here, no turn left behind.
       const worst = minCallWorstCaseUsd(chosen.model, { conversation: asked, messages: replay })
       const hint = body.conversationId ? ' A new conversation costs less to start.' : ''
-      if (avail.app.status.spentUsd + worst > avail.app.status.capUsd) throw tooClose('app', 'Answering this', owner, hint)
-      if ((await personalMonthSpend(tx, user.id)) + worst > access.monthlyCapUsd) throw tooClose('personal', 'Answering this', owner, hint)
+      // As they stand now, with the calls under way at their worst case (their holds); the loop holds its own before each call.
+      const passed = await capPassed(tx, user.id, worst, { appUsd: avail.app.status.capUsd, personalUsd: access.monthlyCapUsd })
+      if (passed) throw tooClose(passed, 'Answering this', owner, hint)
       return { conversation: asked, turnId, questionId: question.id, replay }
     }).catch(async (e: unknown) => {
       await keepRouterCost()
@@ -1118,8 +1120,16 @@ export function aiRoutes(ctx: AppContext): Router {
 
   // ---- Excel ----------------------------------------------------------------------------
 
-  /** A query of an answer, run again now in full (up to AI_EXPORT_MAX_ROWS rows), as the person's current domains; for someone allowed Excel. */
+  /**
+   * A query of an answer, run again now in full (up to AI_EXPORT_MAX_ROWS rows), as the person's current domains; for
+   * someone allowed Excel. It counts against the person's limit of report runs, as a report's export does, and the
+   * browser leaving stops it, inside PostgreSQL too.
+   */
   r.get('/queries/:id/export', async (req, res) => {
+    const ac = new AbortController()
+    res.on('close', () => {
+      if (!res.writableEnded) ac.abort()
+    })
     const { user, access } = await aiUser(req)
     await mayHaveExcel(user, access)
     const id = parse(uuid, req.params.id)
@@ -1130,6 +1140,8 @@ export function aiRoutes(ctx: AppContext): Router {
     )
     const query = rows[0]
     if (!query) throw notFound('That query')
+    const wait = ctx.aiReportLimiter.hit(user.id)
+    if (wait > 0) throw new HttpError(429, 'rate_limited', `Too many exports in a short time. Try again in ${wait} seconds.`)
     if (!ctx.aiReader.ready) throw readerDown()
     const ranAt = new Date().toISOString()
     // The export's own room: longer rows and more of them than a chat query may hold.
@@ -1138,9 +1150,12 @@ export function aiRoutes(ctx: AppContext): Router {
         maxRows: AI_EXPORT_MAX_ROWS,
         timeoutMs: EXPORT_QUERY_TIMEOUT_MS,
         timeZone: tz,
+        signal: ac.signal,
         ...AI_EXPORT_LIMITS,
       }),
     )
+    // Nobody left to send it to.
+    if (ac.signal.aborted) return
     if (!run.ok) throw badRequest(`The query could not be run again: ${run.code === '42501' ? 'you no longer have access to this data.' : run.error}`)
     const body: AiQueryExportResponse = { purpose: query.purpose, sql: query.sql, columns: run.columns, rows: exportRows(run), truncated: run.truncated, ranAt }
     res.json(body)
@@ -1582,12 +1597,17 @@ export function aiRoutes(ctx: AppContext): Router {
         const worst = worstCaseUsd(params)
         const what = "Making this report's period adjustable"
         const instead = ' Save it with its period as asked instead, which needs no call to Claude.'
-        // The loop's own test before a call: refused here, the person can still save the report as it ran.
-        if (app.status.spentUsd + worst > app.status.capUsd) throw tooClose('app', what, avail.me.owner, instead)
-        if ((await personalMonthSpend(db, user.id)) + worst > access.monthlyCapUsd) throw tooClose('personal', what, avail.me.owner, instead)
+        // The loop's own test before a call, its worst case held against both caps while it is under way: refused
+        // here, the person can still save the report as it ran.
+        const held = await holdUnderCaps(db, user.id, worst, (tx) => capPassed(tx, user.id, worst, { appUsd: app.status.capUsd, personalUsd: access.monthlyCapUsd }))
+        if ('refused' in held) throw tooClose(held.refused, what, avail.me.owner, instead)
         const wait = ctx.aiLimiter.hit(user.id)
-        if (wait > 0) throw new HttpError(429, 'rate_limited', `Too many requests to Claude in a short time. Try again in ${wait} seconds.`)
-        const owner = { userId: user.id, conversationId: turn.conversationId, turnId: turn.turnId }
+        if (wait > 0) {
+          await releaseHold(db, held.holdId)
+          throw new HttpError(429, 'rate_limited', `Too many requests to Claude in a short time. Try again in ${wait} seconds.`)
+        }
+        // The hold is settled, or let go, by the call itself.
+        const owner = { userId: user.id, conversationId: turn.conversationId, turnId: turn.turnId, holdId: held.holdId }
         const proposal = await proposeTemplates({ db, model: ctx.ai, apiKey: app.apiKey, owner, params, sectionCount: turn.sections.length })
         // The person's access as it is after the call to Claude, which can take a while: the owner may have changed it.
         const now = await loadAccess(db, user.id)
@@ -1632,6 +1652,8 @@ export function aiRoutes(ctx: AppContext): Router {
           period,
           adjustable,
           sections,
+          // Its queries ran as the asker's domains; as they are now, at most: a schedule of someone else's reads within them.
+          authorDomains: (await loadAccess(tx, user.id))?.domains ?? [],
         })
         // Which report, not its title: a title is personal (by default the question word for word).
         await auditCreate(tx, { userId: user.id, userName: user.name, entity: 'AiReport', entityId: saved.id })

@@ -37,13 +37,13 @@ import {
   type ReportStyleDraftResponse,
   type ReportStyleSpec,
 } from '@qc/shared/reportStyles'
-import type { Queryable } from '../db/pool'
+import type { Db } from '../db/pool'
 import { HttpError } from '../lib/errors'
-import { usageOf } from '../ai/assistant'
+import { recordCutOffUsage, usageOf, watchStream } from '../ai/assistant'
 import type { AiModelClient, ModelMessage, ModelParams } from '../ai/model'
 import { worstCaseUsd } from '../ai/models'
-import { personalMonthSpend, recordUsage } from '../ai/transcript'
-import { isGranted, personAvailability } from '../ai/access'
+import { keepUsage } from '../ai/transcript'
+import { capPassed, holdUnderCaps, isGranted, personAvailability, releaseHold } from '../ai/access'
 import { aiOwner } from '../ai/owner'
 import { notGranted, tooClose, unavailable } from '../ai/refusals'
 import type { AppContext } from '../context'
@@ -168,31 +168,49 @@ export function structuredWorstCaseUsd(params: ModelParams): number {
   return worstCaseUsd({ ...params, messages })
 }
 
-/** One call, its answer read as JSON; counted with the person's questions. A failure is a 502 the person can retry. */
+/**
+ * One call, its answer read as JSON; counted with the person's questions, as far as it got when it fails, settling
+ * the hold it was made under (`holdId`, callForPerson). A failure is a 502 the person can retry.
+ */
 export async function structuredCall(args: {
-  db: Queryable
+  db: Db
   model: AiModelClient
   apiKey: string
   userId: string
   params: ModelParams
   what: string
+  holdId?: string | null
 }): Promise<unknown> {
   const params = args.params
-  const ac = new AbortController()
-  const timer = setTimeout(() => ac.abort(), DRAFT_TIMEOUT_MS)
-  timer.unref()
+  const owner = { userId: args.userId, conversationId: null, turnId: null }
+  // Let go when the call ends with no cost kept under it; null once its cost is kept, or could not be (it then lapses).
+  let holdId = args.holdId ?? null
   let message: ModelMessage
-  const stream = args.model.stream(args.apiKey, params, { signal: ac.signal })
+  let requestId: string | null = null
   try {
-    message = await stream.finalMessage()
-  } catch (e) {
-    console.warn(`[report-styles] ${args.what}: no answer from the assistant:`, e instanceof Error ? e.message : String(e))
-    throw new HttpError(502, 'ai_unavailable', `${args.what} did not work: the assistant did not answer. Try again in a moment.`)
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), DRAFT_TIMEOUT_MS)
+    timer.unref()
+    const stream = args.model.stream(args.apiKey, params, { signal: ac.signal })
+    const watch = watchStream(stream)
+    try {
+      message = await stream.finalMessage()
+    } catch (e) {
+      // A stream that failed on its own may still be reading the response, which would go uncounted: stop it.
+      if (!(e instanceof Anthropic.APIUserAbortError)) stream.abort()
+      if ((await recordCutOffUsage(args.db, { ...owner, holdId }, stream, watch, params)) === 'lost') holdId = null
+      console.warn(`[report-styles] ${args.what}: no answer from the assistant:`, e instanceof Error ? e.message : String(e))
+      throw new HttpError(502, 'ai_unavailable', `${args.what} did not work: the assistant did not answer. Try again in a moment.`)
+    } finally {
+      clearTimeout(timer)
+    }
+    requestId = stream.request_id ?? null
+    const usage = usageOf(message, params.model)
+    await keepUsage(args.db, { ...owner, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd, requestId, holdId })
+    holdId = null
   } finally {
-    clearTimeout(timer)
+    await releaseHold(args.db, holdId).catch((e: unknown) => console.warn("[report-styles] a call's hold could not be let go; it lapses on its own:", e instanceof Error ? e.message : String(e)))
   }
-  const usage = usageOf(message, params.model)
-  await recordUsage(args.db, { userId: args.userId, conversationId: null, turnId: null, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd, requestId: stream.request_id ?? null })
   const text = message.content
     .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
     .map((b) => b.text)
@@ -207,19 +225,24 @@ export async function structuredCall(args: {
 /**
  * A call made for the person, after the checks every call to Claude passes:
  * given the assistant, the assistant able to answer, the call's worst case
- * within both caps, the person's rate. Then the call, counted with their
- * questions.
+ * within both caps — counting the calls under way, one check at a time — the
+ * person's rate. Then the call, its worst case held against both caps while
+ * it is under way (access.ts, holdUnderCaps), counted with their questions.
  */
 export async function callForPerson(ctx: AppContext, userId: string, params: ModelParams, what: string): Promise<unknown> {
   const avail = await personAvailability(ctx.db, ctx.config, ctx.aiReader.ready, userId, await aiOwner(ctx.db, ctx.config))
   if (!isGranted(avail.access)) throw notGranted()
   if (!avail.me.available || !avail.app.apiKey) throw unavailable(avail)
+  const access = avail.access
   const worst = structuredWorstCaseUsd(params)
-  if (avail.app.status.spentUsd + worst > avail.app.status.capUsd) throw tooClose('app', what, avail.me.owner)
-  if ((await personalMonthSpend(ctx.db, userId)) + worst > avail.access.monthlyCapUsd) throw tooClose('personal', what, avail.me.owner)
+  const held = await holdUnderCaps(ctx.db, userId, worst, (tx) => capPassed(tx, userId, worst, { appUsd: avail.app.status.capUsd, personalUsd: access.monthlyCapUsd }))
+  if ('refused' in held) throw tooClose(held.refused, what, avail.me.owner)
   const wait = ctx.aiLimiter.hit(userId)
-  if (wait > 0) throw new HttpError(429, 'rate_limited', `Too many requests to Claude in a short time. Try again in ${wait} seconds.`)
-  return structuredCall({ db: ctx.db, model: ctx.ai, apiKey: avail.app.apiKey, userId, params, what })
+  if (wait > 0) {
+    await releaseHold(ctx.db, held.holdId)
+    throw new HttpError(429, 'rate_limited', `Too many requests to Claude in a short time. Try again in ${wait} seconds.`)
+  }
+  return structuredCall({ db: ctx.db, model: ctx.ai, apiKey: avail.app.apiKey, userId, params, what, holdId: held.holdId })
 }
 
 /** An image the person sent, as the model reads it. */

@@ -331,6 +331,8 @@ async function save(ctx: ReportToolContext, tu: ToolUse, signal: AbortSignal): P
     inputs: draft.inputs,
     shared: draft.shared,
   }
+  // The domains its test run read as: a schedule of someone else's that sends it reads within them.
+  const authorDomains = access.domains
   ctx.emit({ type: 'report', part: reportPart(changeId, { id: reportId, ...kept }, action, 'current') })
   return {
     ...ok(tu, {
@@ -343,7 +345,7 @@ async function save(ctx: ReportToolContext, tu: ToolUse, signal: AbortSignal): P
       note: `The person opens it from the card (Open report) or from My reports${draft.shared ? '; everyone given the assistant can open it, each over the data they may read' : ''}. Check the test run's rows are what was asked; if not, fix the report with save_report (report_id ${reportId}). Say in a few sentences what it shows and what to type in it.`,
     }),
     store: async (tx: Queryable) => {
-      if (before) await changeReport(tx, reportId, ctx.userId, kept)
+      if (before) await changeReport(tx, reportId, ctx.userId, { ...kept, authorDomains })
       else
         await insertReport(tx, {
           id: reportId,
@@ -352,6 +354,7 @@ async function save(ctx: ReportToolContext, tu: ToolUse, signal: AbortSignal): P
           turnId: null,
           question: draft.title,
           madeBy: 'assistant',
+          authorDomains,
           ...kept,
         })
       await tx.query(`INSERT INTO ai_report_changes (id, report_id, conversation_id, turn_id, tool_use_id, user_id, action) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [

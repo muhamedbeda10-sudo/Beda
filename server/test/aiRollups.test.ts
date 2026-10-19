@@ -198,3 +198,125 @@ describe('§20 the samples’ and sessions’ figures, kept as the record is wri
     await expectAsBefore()
   })
 })
+
+describe('§20 a sample’s material, kept right when its grades change while it is saved', () => {
+  /** Whether a statement is still waiting after a moment: it waits for a lock the other connection holds. */
+  const stillWaiting = async (statement: Promise<unknown>) => {
+    const waited = await Promise.race([statement.then(() => false), new Promise<boolean>((done) => setTimeout(() => done(true), 300))])
+    return waited
+  }
+  const materialOf = async (sampleId: string) =>
+    (await app.db.query<{ material: string }>(`SELECT material FROM ai.inspection_samples WHERE sample_id = $1`, [sampleId])).rows[0].material
+
+  /** A sample with no coils of its own, on an order line whose expected grade is a black steel's: its material is black. */
+  async function blackSample(skip: number): Promise<{ sampleId: string; orderId: string }> {
+    const { rows } = await app.db.query<{ sampleId: string; orderId: string }>(
+      `SELECT x.id AS "sampleId", x.order_id AS "orderId" FROM inspection_samples x JOIN inspection_sessions s ON s.id = x.session_id AND s.deleted_at IS NULL
+        WHERE x.deleted_at IS NULL ORDER BY x.id OFFSET $1 LIMIT 1`,
+      [skip],
+    )
+    const [{ sampleId, orderId }] = rows
+    await app.db.query(`UPDATE sample_coils SET deleted_at = now() WHERE sample_id = $1 AND deleted_at IS NULL`, [sampleId])
+    await app.db.query(`UPDATE production_orders SET expected_grade = 'S235JR' WHERE id = $1`, [orderId])
+    expect(await materialOf(sampleId)).toBe('black')
+    return { sampleId, orderId }
+  }
+
+  it('follows a coil’s grade changed in the register while a sample is being saved with that coil', async () => {
+    const { sampleId } = await blackSample(100)
+    await app.db.query(`INSERT INTO coils (coil_number, grade) VALUES ('RACE-REG-1', 'S235JR')`)
+    const register = await app.db.connect()
+    const floor = await app.db.connect()
+    try {
+      await register.query('BEGIN')
+      await register.query(`UPDATE coils SET grade = 'DX51D+Z140' WHERE coil_number = 'RACE-REG-1'`)
+      await floor.query('BEGIN')
+      const saving = floor.query(`INSERT INTO sample_coils (sample_id, coil_number) VALUES ($1, 'race-reg-1')`, [sampleId])
+      // The save waits for the register's change rather than read the grade it replaces.
+      expect(await stillWaiting(saving)).toBe(true)
+      await register.query('COMMIT')
+      await saving
+      await floor.query('COMMIT')
+    } finally {
+      // Gone with its connection, whatever it was left in.
+      register.release(true)
+      floor.release(true)
+    }
+    expect(await materialOf(sampleId)).toBe('galvanized')
+    await expectAsBefore()
+  })
+
+  it('follows an order line’s expected grade changed by the ERP while a sample is moved onto it', async () => {
+    const { sampleId } = await blackSample(101)
+    const { rows } = await app.db.query<{ id: string }>(
+      `SELECT o.id FROM production_orders o WHERE o.deleted_at IS NULL AND o.id <> (SELECT order_id FROM inspection_samples WHERE id = $1) ORDER BY o.id LIMIT 1`,
+      [sampleId],
+    )
+    const target = rows[0].id
+    await app.db.query(`UPDATE production_orders SET expected_grade = 'S275JR' WHERE id = $1`, [target])
+    const erp = await app.db.connect()
+    const floor = await app.db.connect()
+    try {
+      await erp.query('BEGIN')
+      await erp.query(`UPDATE production_orders SET expected_grade = 'S350GD+Z275' WHERE id = $1`, [target])
+      await floor.query('BEGIN')
+      const moving = floor.query(`UPDATE inspection_samples SET order_id = $2 WHERE id = $1`, [sampleId, target])
+      expect(await stillWaiting(moving)).toBe(true)
+      await erp.query('COMMIT')
+      await moving
+      await floor.query('COMMIT')
+    } finally {
+      erp.release(true)
+      floor.release(true)
+    }
+    expect(await materialOf(sampleId)).toBe('galvanized')
+    await expectAsBefore()
+  })
+
+  it('follows a coil typed on a sample by hand, added to the register while the sample is saved', async () => {
+    const { sampleId } = await blackSample(102)
+    const register = await app.db.connect()
+    const floor = await app.db.connect()
+    try {
+      // The floor first: the number is not in the register yet, so there is no row to wait for.
+      await floor.query('BEGIN')
+      await floor.query(`INSERT INTO sample_coils (sample_id, coil_number) VALUES ($1, 'HAND-TYPED-7')`, [sampleId])
+      await register.query('BEGIN')
+      const adding = register.query(`INSERT INTO coils (coil_number, grade) VALUES ('Hand-Typed-7', 'DX51D+Z100')`)
+      // The register waits for the save, then finds the sample that names the coil.
+      expect(await stillWaiting(adding)).toBe(true)
+      await floor.query('COMMIT')
+      await adding
+      await register.query('COMMIT')
+    } finally {
+      // Gone with its connection, whatever it was left in.
+      register.release(true)
+      floor.release(true)
+    }
+    expect(await materialOf(sampleId)).toBe('galvanized')
+    await expectAsBefore()
+  })
+
+  it('lets two saves of samples with the same coils go together', async () => {
+    const one = await blackSample(103)
+    const two = await blackSample(104)
+    await app.db.query(`INSERT INTO coils (coil_number, grade) VALUES ('SHARED-COIL-1', 'DX51D+Z140')`)
+    const a = await app.db.connect()
+    const b = await app.db.connect()
+    try {
+      await a.query('BEGIN')
+      await b.query('BEGIN')
+      await a.query(`INSERT INTO sample_coils (sample_id, coil_number) VALUES ($1, 'SHARED-COIL-1'), ($1, 'NOT-REGISTERED-1')`, [one.sampleId])
+      // Neither waits for the other: the coils and their numbers are only shared between saves.
+      const other = b.query(`INSERT INTO sample_coils (sample_id, coil_number) VALUES ($1, 'NOT-REGISTERED-1'), ($1, 'SHARED-COIL-1')`, [two.sampleId])
+      expect(await stillWaiting(other)).toBe(false)
+      await a.query('COMMIT')
+      await b.query('COMMIT')
+    } finally {
+      a.release(true)
+      b.release(true)
+    }
+    expect([await materialOf(one.sampleId), await materialOf(two.sampleId)]).toEqual(['galvanized', 'galvanized'])
+    await expectAsBefore()
+  })
+})

@@ -187,12 +187,23 @@ export class AiReader {
         client.release()
       }
 
+      // The runner reads every query into a temporary view first (runQuery.ts, refusedByName): the readers need TEMP on the
+      // database, which PUBLIC holds unless it was taken away. Given to the base role then, or the assistant stays off.
+      await ensureTemporary(db, database)
+
       // One sign-in proves the passwords and the server's authentication take them.
       this.database = database
       this.config = config
       const probe = await this.pool!.connect()
       probe.release(true)
       this.failure = null
+      // Not a reason to stop: the runner refuses them by name. But the database itself should, and the owner of the server should know.
+      const byName = await readersByName(db)
+      if (byName.length > 0) {
+        console.warn(
+          `[ai] every role may still use ${byName.join(', ')}: they read what planning cannot see. Only a superuser can take them from PUBLIC (migration 0072); the assistant's runner refuses them meanwhile.`,
+        )
+      }
       return true
     } catch (e) {
       await this.end()
@@ -230,6 +241,57 @@ async function openToEveryone(db: Db): Promise<string | null> {
   )
   return rows[0]?.name ?? null
 }
+
+/** Every reader may make temporary views (TEMP on the database): given to the base role when PUBLIC no longer holds it. Throws when it cannot be had. */
+async function ensureTemporary(db: Db, database: string): Promise<void> {
+  const base = domainRole(database, 'base')
+  const may = async () => (await db.query<{ may: boolean }>(`SELECT has_database_privilege($1, current_database(), 'TEMPORARY') AS may`, [base])).rows[0].may
+  if (await may()) return
+  await db.query(`GRANT TEMPORARY ON DATABASE ${pg.escapeIdentifier(database)} TO ${pg.escapeIdentifier(base)}`).catch(() => undefined)
+  if (!(await may())) throw new Error(`role ${base} may not make temporary views (TEMPORARY on database ${database}), which every query is read into before it runs; grant it`)
+}
+
+/**
+ * PostgreSQL's own functions and views that read a table named in a string,
+ * or run a query given as text (READS_BY_NAME), that every role may still use;
+ * migration 0072 takes them from PUBLIC where it runs as a superuser.
+ */
+export async function readersByName(db: Db): Promise<string[]> {
+  const { rows } = await db.query<{ name: string }>(
+    `SELECT p.oid::regprocedure::text AS name FROM pg_proc p
+      WHERE p.pronamespace = 'pg_catalog'::regnamespace AND p.proname = ANY($1::text[]) AND has_function_privilege('public', p.oid, 'EXECUTE')
+        AND p.oid <> 'pg_catalog.ts_rewrite(tsquery, tsquery, tsquery)'::regprocedure
+     UNION ALL
+     SELECT c.oid::regclass::text FROM pg_class c
+      WHERE c.relnamespace = 'pg_catalog'::regnamespace AND c.relname = ANY($2::text[]) AND has_table_privilege('public', c.oid, 'SELECT')
+     ORDER BY 1`,
+    [READS_BY_NAME.functions, READS_BY_NAME.views],
+  )
+  return rows.map((r) => r.name)
+}
+
+/** What migration 0072 takes from PUBLIC: the functions by name (ts_rewrite only in its form that runs a query), and the views. */
+export const READS_BY_NAME = {
+  functions: [
+    'table_to_xml',
+    'table_to_xmlschema',
+    'table_to_xml_and_xmlschema',
+    'query_to_xml',
+    'query_to_xmlschema',
+    'query_to_xml_and_xmlschema',
+    'cursor_to_xml',
+    'cursor_to_xmlschema',
+    'schema_to_xml',
+    'schema_to_xmlschema',
+    'schema_to_xml_and_xmlschema',
+    'database_to_xml',
+    'database_to_xmlschema',
+    'database_to_xml_and_xmlschema',
+    'ts_stat',
+    'ts_rewrite',
+  ],
+  views: ['pg_stats', 'pg_stats_ext', 'pg_stats_ext_exprs'],
+} as const
 
 /**
  * One combination role, as it must be. Utility statements take no

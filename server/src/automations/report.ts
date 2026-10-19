@@ -21,13 +21,13 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import type pg from 'pg'
-import { AI_JOBS, type AiCell, type AiEffort, type AiModelId, type AiReportSectionRun } from '@qc/shared/ai'
+import { AI_JOBS, type AiCell, type AiDomain, type AiEffort, type AiModelId, type AiReportSectionRun } from '@qc/shared/ai'
 import { AUTOMATION_DELIVERY_MAX_ROWS, type AutomationBlockedReason, type AutomationLanguage } from '@qc/shared/automation'
 import type { Role } from '@qc/shared/types'
 import type { Config } from '../config'
 import { withTransaction, type Db } from '../db/pool'
 import { checkChart } from '../ai/charts'
-import { checkCall } from '../ai/access'
+import { holdCall, releaseHold } from '../ai/access'
 import { recordCutOffUsage, usageOf, watchStream } from '../ai/assistant'
 import { cutChars } from '../ai/blocks'
 import { resolveApiKey } from '../ai/credentials'
@@ -35,12 +35,12 @@ import type { AiModelClient, ModelMessage, ModelParams } from '../ai/model'
 import { worstCaseUsd } from '../ai/models'
 import { AI_EXPORT_LIMITS, AI_QUERY_TIMEOUT_MS, exportRows, runReadOnlyQuery } from '../ai/runQuery'
 import { withQueryOrigin, withQueryPurpose } from '../ai/slowQueries'
-import { recordUsage } from '../ai/transcript'
+import { keepUsage } from '../ai/transcript'
 import { createNotifications } from './notify'
 import { activeUserIds } from './people'
 import { sendSystemMessages } from './systemChat'
 import { isolate } from './text'
-import { prepareReport, type PreparedSection } from './savedReport'
+import { BEYOND_AUTHOR, NOTHING_IN_COMMON, prepareReport, type PreparedSection } from './savedReport'
 import { queryErrorForPeople } from './validate'
 import { blockedNote, type AutomationRow } from './views'
 import { isStopping, type RunResult } from './watch'
@@ -130,10 +130,13 @@ export function summarySystemPrompt(language: AutomationLanguage, sections: read
 /**
  * Where a report's next section runs: its creator's domains as they are when
  * the section starts (the owner may change them while a report runs, section
- * after section, as with a saved report), null when the readers are down, or
- * why the creator cannot run it any more.
+ * after section, as with a saved report) — within `within` when it is given
+ * (a saved report someone else wrote: its author's domains) — null when the
+ * readers are down, why the creator cannot run it any more, or `outside` when
+ * the creator's domains and `within` share none.
  */
-export type ReportReader = () => Promise<pg.Pool | null | { blocked: AutomationBlockedReason }>
+export type ReportReader = (within?: readonly AiDomain[] | null) => Promise<pg.Pool | null | { blocked: AutomationBlockedReason } | { outside: true }>
+
 
 export interface ReportRunArgs {
   db: Db
@@ -162,13 +165,19 @@ export async function runSections(
   timeZone: string,
   signal: AbortSignal,
   maxRows = AUTOMATION_DELIVERY_MAX_ROWS,
+  /** A saved report someone else wrote: the domains its sections may be read within (PreparedReport.within). */
+  within: readonly AiDomain[] | null = null,
 ): Promise<{ sections: AiReportSectionRun[]; blocked?: AutomationBlockedReason }> {
   const out: AiReportSectionRun[] = []
   let room = DELIVERY_MAX_CHARS
   // One after another: the readers' few connections are shared with everyone asking.
   for (const section of sections) {
-    const pool = await reader()
+    const pool = await reader(within)
     if (pool && 'blocked' in pool) return { sections: out, blocked: pool.blocked }
+    if (pool && 'outside' in pool) {
+      out.push({ title: section.title, ok: false, columns: [], rows: [], rowCount: 0, truncated: false, ms: 0, error: NOTHING_IN_COMMON })
+      continue
+    }
     const run = await withQueryPurpose(section.title, () => runReadOnlyQuery(pool, section.sql, {
       maxRows,
       timeoutMs: SECTION_TIMEOUT_MS,
@@ -181,7 +190,7 @@ export async function runSections(
     for (const row of rows) for (const c of row) room -= typeof c === 'string' ? c.length : 8
     const result: AiReportSectionRun = { title: section.title, ok: run.ok, columns: run.columns, rows, rowCount: rows.length, truncated: run.truncated, ms: Math.round(run.ms) }
     // Read by the people it went to, and in the run's history.
-    if (!run.ok) result.error = queryErrorForPeople(run)
+    if (!run.ok) result.error = within && run.code === '42501' ? BEYOND_AUTHOR : queryErrorForPeople(run)
     // Its chart, drawn from this run's rows when they fit it (a day with one row is told in figures).
     const chart = run.ok ? checkChart(section.chart, { columns: run.columns, rows, rowCount: rows.length, truncated: run.truncated }).chart : undefined
     if (chart) result.chart = chart
@@ -202,7 +211,9 @@ export async function runReport(args: ReportRunArgs): Promise<RunResult> {
   const prepared = await prepareReport(args.db, a.creatorId, s, args.slotAt ?? args.now, tz)
   if ('error' in prepared) return { ...base, error: prepared.error }
   const period = prepared.period
-  const ran = await withQueryOrigin({ source: 'scheduled-report', userId: a.creatorId, purpose: a.name }, () => runSections(args.reader, prepared.sections, tz, args.signal))
+  const ran = await withQueryOrigin({ source: 'scheduled-report', userId: a.creatorId, purpose: a.name }, () =>
+    runSections(args.reader, prepared.sections, tz, args.signal, AUTOMATION_DELIVERY_MAX_ROWS, prepared.within),
+  )
   if (ran.blocked) return { ...base, blocked: ran.blocked, error: blockedNote(ran.blocked) }
   // The server stopping: nothing goes out half done; the run is handed back and runs again in full.
   if (isStopping(args.signal)) return { ...base, interrupted: true, error: INTERRUPTED }
@@ -347,33 +358,41 @@ async function summarize(
   if (!apiKey) return { note: SUMMARY_NOTE.unavailable }
   // On Sonnet at high effort (AI_JOBS).
   const params = summaryRequest(AI_JOBS['report-summary'], a, period, sections, inputs)
-  const stop = await checkCall(args.db, a.creatorId, worstCaseUsd(params))
-  if (stop) return { note: stop.stopReason === 'cap' ? SUMMARY_NOTE.cap : SUMMARY_NOTE.unavailable }
+  // Its worst case held against both caps while it is under way, as an answer's call is.
+  const held = await holdCall(args.db, a.creatorId, worstCaseUsd(params))
+  if (!('holdId' in held)) return { note: held.stopReason === 'cap' ? SUMMARY_NOTE.cap : SUMMARY_NOTE.unavailable }
 
   const ac = new AbortController()
   const onAbort = () => ac.abort()
   args.signal.addEventListener('abort', onAbort, { once: true })
   const timer = setTimeout(() => ac.abort(), SUMMARY_TIMEOUT_MS)
   timer.unref()
+  // Let go when the call ends with no cost kept under it; null once its cost is kept, or could not be (it then lapses).
+  let holdId: string | null = held.holdId
   const owner = { userId: a.creatorId, conversationId: null, turnId: null, automationId: a.id }
   let message: ModelMessage
   const stream = args.model.stream(apiKey, params, { signal: ac.signal })
   const watch = watchStream(stream)
   try {
-    message = await stream.finalMessage()
-  } catch (err) {
-    // A stream that failed on its own may still be reading the response, which would go uncounted: stop it.
-    if (!(err instanceof Anthropic.APIUserAbortError)) stream.abort()
-    await recordCutOffUsage(args.db, owner, stream, watch, params)
-    const detail = err instanceof Anthropic.APIError ? `${err.constructor.name}${err.requestID ? ` (request ${err.requestID})` : ''}: ${err.message}` : err instanceof Error ? err.message : String(err)
-    console.warn(`[automations] report ${a.id}: no summary (${detail})`)
-    return { note: SUMMARY_NOTE.failed }
+    try {
+      message = await stream.finalMessage()
+    } catch (err) {
+      // A stream that failed on its own may still be reading the response, which would go uncounted: stop it.
+      if (!(err instanceof Anthropic.APIUserAbortError)) stream.abort()
+      if ((await recordCutOffUsage(args.db, { ...owner, holdId }, stream, watch, params)) === 'lost') holdId = null
+      const detail = err instanceof Anthropic.APIError ? `${err.constructor.name}${err.requestID ? ` (request ${err.requestID})` : ''}: ${err.message}` : err instanceof Error ? err.message : String(err)
+      console.warn(`[automations] report ${a.id}: no summary (${detail})`)
+      return { note: SUMMARY_NOTE.failed }
+    } finally {
+      clearTimeout(timer)
+      args.signal.removeEventListener('abort', onAbort)
+    }
+    const usage = usageOf(message, params.model)
+    await keepUsage(args.db, { ...owner, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd, requestId: stream.request_id ?? null, holdId })
+    holdId = null
   } finally {
-    clearTimeout(timer)
-    args.signal.removeEventListener('abort', onAbort)
+    await releaseHold(args.db, holdId).catch((e: unknown) => console.warn(`[automations] report ${a.id}: a call's hold could not be let go; it lapses on its own:`, e instanceof Error ? e.message : String(e)))
   }
-  const usage = usageOf(message, params.model)
-  await recordUsage(args.db, { ...owner, model: usage.model, tokens: usage.tokens, costUsd: usage.costUsd, requestId: stream.request_id ?? null })
   const text = message.content
     .map((b) => (b.type === 'text' ? b.text : ''))
     .join('')

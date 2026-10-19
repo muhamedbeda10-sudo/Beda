@@ -13,7 +13,11 @@
 //     call the month's spend plus the most that call could cost must stay
 //     within both caps, the assistant's and the asker's own; the asker's
 //     access is read again then too, so a person the owner stops (or an
-//     account deactivated) gets no further call.
+//     account deactivated) gets no further call. That most is held against
+//     both caps while the call is under way (access.ts, holdCall) and settled
+//     to the real cost as it is written: answers at once cannot pass a cap
+//     together. A cost that cannot be written is tried again, then logged
+//     loudly; the answer goes on.
 //   • each query the model asks for runs as the asker's domains as they are
 //     when it runs, read again right before it: a domain the owner takes away
 //     while the model was writing is gone for that query already, and a
@@ -62,7 +66,7 @@ import {
 import type { ApiErrorCode } from '@qc/shared/api'
 import type { Config } from '../config'
 import { withTransaction, type Db, type Queryable } from '../db/pool'
-import { ACCESS_NOTICE, checkCall, isGranted, loadAccess } from './access'
+import { ACCESS_NOTICE, holdCall, isGranted, loadAccess, releaseHold } from './access'
 import { isAttachmentRef, type AttachmentExpander, type StoredBlock, type StoredMessage } from './attachments'
 import { checkChart } from './charts'
 import type { AiModelClient, ModelMessage, ModelParams, ModelStream } from './model'
@@ -71,7 +75,7 @@ import { MAX_STEPS_PER_ANSWER, RUN_SQL_TOOL_NAME, RunSqlInput, TURN_DEADLINE_MIN
 import { AI_LONG_QUERY_TIMEOUT_MS, AI_QUERY_STOPPED, AI_QUERY_TIMEOUT_MS, planSummary, previewJson, previewOf, runReadOnlyQuery } from './runQuery'
 import { withQueryOrigin } from './slowQueries'
 import { checkingLine, writingLine } from './toolProgress'
-import { appendMessages, insertQueries, queryPart, recordUsage, settleStep, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
+import { appendMessages, insertQueries, keepUsage, queryPart, settleStep, type NewMessage, type QueryRecord, type UsageRecord } from './transcript'
 
 type ContentBlock = Anthropic.Beta.BetaContentBlock
 type ContentBlockParam = Anthropic.Beta.BetaContentBlockParam
@@ -447,51 +451,63 @@ async function loop(qn: Question, signal: AbortSignal, cause: () => Cause, deadl
     if (calls >= MAX_CALLS) return { stopReason: 'limit', notice: NOTICE.steps }
     const params = requestParams(qn, messages, maxTokens)
     // The asker's access and both caps, as they stand now: the owner may have changed them since the answer began.
-    const stop = await checkCall(qn.db, qn.userId, worstCaseUsd(params))
-    if (stop) return stop
-    const wire = await wireParams(qn, params)
-    if (signal.aborted) return stopped()
-    if (qn.control) {
-      // Counted before it is made, so a call cut off with its instance still counts; and Stop, pressed on any instance, is seen here.
-      const turn = await qn.control.beforeCall()
-      if (!turn) return HANDED_OVER_OUTCOME
-      if (turn.stopRequested) return { stopReason: 'stopped', notice: NOTICE.stopped }
-      calls = turn.calls
-    } else {
-      calls++
-    }
-
-    const stream = qn.model.stream(qn.apiKey, wire, { signal })
-    const watch = watchStream(stream, qn.emit)
+    // The call's worst case is held against both caps until its cost is kept, so answers running at once cannot pass one together.
+    const held = await holdCall(qn.db, qn.userId, worstCaseUsd(params))
+    if (!('holdId' in held)) return held
+    // Let go when the call ends with no cost kept under it; null once its cost is kept (which settles it), or when the
+    // cost could not be kept, so that the hold keeps counting until it lapses.
+    let holdId: string | null = held.holdId
     let message: ModelMessage
     try {
-      message = await stream.finalMessage()
-    } catch (err) {
-      // A stream that failed on its own may still be reading the response, which would go uncounted: stop it.
-      if (!(err instanceof Anthropic.APIUserAbortError)) stream.abort()
-      await recordCutOffUsage(qn.db, { userId: qn.userId, conversationId: qn.conversation.id, turnId: qn.turnId }, stream, watch, params)
-      if (err instanceof Anthropic.APIUserAbortError || signal.aborted) return stopped()
-      if (err instanceof Anthropic.APIError) {
-        // An error event inside an open stream (no status) is not retried by the SDK: once here.
-        if (err.status === undefined && err.type === 'overloaded_error' && streamRetries++ < 1) continue
+      const wire = await wireParams(qn, params)
+      if (signal.aborted) return stopped()
+      if (qn.control) {
+        // Counted before it is made, so a call cut off with its instance still counts; and Stop, pressed on any instance, is seen here.
+        const turn = await qn.control.beforeCall()
+        if (!turn) return HANDED_OVER_OUTCOME
+        if (turn.stopRequested) return { stopReason: 'stopped', notice: NOTICE.stopped }
+        calls = turn.calls
+      } else {
+        calls++
+      }
+
+      const stream = qn.model.stream(qn.apiKey, wire, { signal })
+      const watch = watchStream(stream, qn.emit)
+      try {
+        message = await stream.finalMessage()
+      } catch (err) {
+        // A stream that failed on its own may still be reading the response, which would go uncounted: stop it.
+        if (!(err instanceof Anthropic.APIUserAbortError)) stream.abort()
+        const kept = await recordCutOffUsage(qn.db, { userId: qn.userId, conversationId: qn.conversation.id, turnId: qn.turnId, holdId }, stream, watch, params)
+        if (kept === 'lost') holdId = null
+        if (err instanceof Anthropic.APIUserAbortError || signal.aborted) return stopped()
+        if (err instanceof Anthropic.APIError) {
+          // An error event inside an open stream (no status) is not retried by the SDK: once here.
+          if (err.status === undefined && err.type === 'overloaded_error' && streamRetries++ < 1) continue
+          throw err
+        }
+        // Anything else is tool input the SDK could not parse at all: ask again, a few times.
+        if (jsonRetries++ < JSON_RETRIES) continue
         throw err
       }
-      // Anything else is tool input the SDK could not parse at all: ask again, a few times.
-      if (jsonRetries++ < JSON_RETRIES) continue
-      throw err
+      const usage = usageOf(message, params.model)
+      // A cost that cannot be kept never fails the answer: it was made and paid for, and the log says so loudly.
+      await keepUsage(qn.db, {
+        userId: qn.userId,
+        conversationId: qn.conversation.id,
+        turnId: qn.turnId,
+        model: usage.model,
+        tokens: usage.tokens,
+        costUsd: usage.costUsd,
+        requestId: stream.request_id ?? null,
+        holdId,
+      })
+      holdId = null
+    } finally {
+      await releaseHold(qn.db, holdId).catch((e: unknown) => console.warn("[ai] a call's hold could not be let go; it lapses on its own:", e instanceof Error ? e.message : String(e)))
     }
     jsonRetries = 0
     streamRetries = 0
-    const usage = usageOf(message, params.model)
-    await recordUsage(qn.db, {
-      userId: qn.userId,
-      conversationId: qn.conversation.id,
-      turnId: qn.turnId,
-      model: usage.model,
-      tokens: usage.tokens,
-      costUsd: usage.costUsd,
-      requestId: stream.request_id ?? null,
-    })
     noteDroppedThinking(qn, message)
 
     const replay = toReplayContent(message.content)
@@ -828,17 +844,20 @@ export function watchStream(stream: ModelStream, emit?: (e: AiStreamEvent) => vo
  * input is known from the stream's start; the output only at its end, so it
  * is taken as the largest of what was reported, half a token per streamed
  * character, and the time it ran at more than the model writes — never more
- * than the call was allowed. The cap must err on the dear side.
+ * than the call was allowed. The cap must err on the dear side. What became
+ * of it: kept (settling the call's hold, when it has one), nothing to keep
+ * (no response had begun), or lost (the log says so; a hold stays until it
+ * lapses).
  */
 export async function recordCutOffUsage(
   db: Db,
-  owner: Pick<UsageRecord, 'userId' | 'conversationId' | 'turnId' | 'automationId'>,
+  owner: Pick<UsageRecord, 'userId' | 'conversationId' | 'turnId' | 'automationId' | 'holdId'>,
   stream: ModelStream,
   watch: StreamWatch,
   request: Pick<ModelParams, 'model' | 'max_tokens'>,
-): Promise<void> {
+): Promise<'kept' | 'nothing' | 'lost'> {
   const current = stream.currentMessage
-  if (!current) return
+  if (!current) return 'nothing'
   const maxTokens = request.max_tokens
   const model = current.model || request.model
   const reported = tokensOf(current.usage)
@@ -846,18 +865,15 @@ export async function recordCutOffUsage(
   const seconds = started === null ? 0 : (Date.now() - started) / 1000
   const estimate = Math.max(reported.outputTokens, Math.ceil(watch.chars() / 2), Math.ceil(seconds * CUT_OFF_TOKENS_PER_SECOND))
   const tokens = { ...reported, outputTokens: Math.min(maxTokens, estimate) }
-  try {
-    await recordUsage(db, {
-      ...owner,
-      model,
-      tokens,
-      costUsd: aiCostUsd(model, tokens),
-      requestId: stream.request_id ?? null,
-      partial: true,
-    })
-  } catch (e) {
-    console.error('[ai] could not record the usage of a cut-off call', e)
-  }
+  const kept = await keepUsage(db, {
+    ...owner,
+    model,
+    tokens,
+    costUsd: aiCostUsd(model, tokens),
+    requestId: stream.request_id ?? null,
+    partial: true,
+  })
+  return kept ? 'kept' : 'lost'
 }
 
 /** Thinking the API dropped because the history it was bound to changed: a bug here, worth a line in the log. */

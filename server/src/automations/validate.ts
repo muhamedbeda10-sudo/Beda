@@ -69,7 +69,7 @@ import { checkTemplate, fillTemplate, periodProblem } from '../ai/reportTemplate
 import { precheckSql, previewOf, runReadOnlyQuery, type QueryRun } from '../ai/runQuery'
 import { withQueryOrigin, withQueryPurpose } from '../ai/slowQueries'
 import { clipText } from './notify'
-import { checkLinkedReport, prepareReport, type PreparedSection } from './savedReport'
+import { BEYOND_AUTHOR, NOTHING_IN_COMMON, checkLinkedReport, prepareReport, type PreparedSection } from './savedReport'
 import { fillCaseTemplate } from './text'
 
 /** A query an automation runs may take this long, as a query in the chat. */
@@ -197,7 +197,8 @@ export async function validateDraft(ctx: ValidationContext, input: AutomationDra
         ran.runs.forEach((run, i) => {
           if (run.ok) return
           const title = quoted(ran.backtest.sections![i].title)
-          errors.push(linked ? `schedule.report: its section ${title}: ${failedQuery(run)}` : `schedule.sections[${i}] (${title}): ${failedQuery(run)}`)
+          const why = ran.bounded && run.code === '42501' ? BEYOND_AUTHOR : failedQuery(run)
+          errors.push(linked ? `schedule.report: its section ${title}: ${why}` : `schedule.sections[${i}] (${title}): ${why}`)
         })
         errors.push(...ran.chartProblems)
       }
@@ -601,9 +602,18 @@ async function reportBacktest(
   pool: pg.Pool,
   s: AutomationScheduleSpec,
   ctx: ValidationContext,
-): Promise<{ backtest: AutomationBacktest; runs: QueryRun[]; chartProblems: string[] } | { error: string }> {
+): Promise<{ backtest: AutomationBacktest; runs: QueryRun[]; chartProblems: string[]; bounded: boolean } | { error: string }> {
   const prepared = await prepareReport(ctx.db, ctx.creatorId, s, ctx.now, ctx.timeZone)
   if ('error' in prepared) return { error: prepared.error }
+  // Someone else's saved report runs within its author's domains, as each delivery will run it.
+  const within = prepared.within
+  if (within) {
+    const domains = ctx.domains.filter((d) => within.includes(d))
+    if (domains.length === 0) return { error: NOTHING_IN_COMMON }
+    const bounded = ctx.readers.poolFor(domains)
+    if (!bounded) return { error: "The assistant cannot reach the factory's data right now, so the automation could not be tried. Try again later." }
+    pool = bounded
+  }
   const period = prepared.period
   const sections: AiReportSectionRun[] = []
   const runs: QueryRun[] = []
@@ -631,7 +641,7 @@ async function reportBacktest(
       ms: Math.round(run.ms),
     }
     // On the card of the person who asked for it.
-    if (!run.ok) out.error = queryErrorForPeople(run, 'asker')
+    if (!run.ok) out.error = within && run.code === '42501' ? BEYOND_AUTHOR : queryErrorForPeople(run, 'asker')
     if (ready.display) out.display = ready.display
     if (ready.tree) out.tree = ready.tree
     if (ready.note) out.note = ready.note
@@ -653,5 +663,5 @@ async function reportBacktest(
   }
   const bt: AutomationBacktest = { ranAt: ctx.now.toISOString(), ok: sections.every((x) => x.ok), sections }
   if (period) bt.period = period
-  return { backtest: bt, runs, chartProblems }
+  return { backtest: bt, runs, chartProblems, bounded: within !== null }
 }

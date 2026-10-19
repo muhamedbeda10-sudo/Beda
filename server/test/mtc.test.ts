@@ -323,6 +323,36 @@ describe('reading a certificate', () => {
     expect(app.model.calls).toHaveLength(0)
   })
 
+  it('reads one certificate of a person at a time, however quickly the next is sent, its worst case held against the caps meanwhile', async () => {
+    const holds = async () => (await app.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ai_usage_holds WHERE user_id = $1`, [uploader.user.id])).rows[0].n
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    app.model.reply({ content: [reply('coils', [{ coilNumber: 'Q1', grade: 'S350GD', smType: 'HR', supplier: 'Baosteel', thickness: 2, width: 1000, yield: 380 }])], hold: gate })
+    // Two uploads sent together: the second is refused at once, before its file is taken in or anything is read.
+    const both = [extract(PDF, 'one.pdf'), extract(PDF, 'two.pdf')]
+    const first = await Promise.race(both)
+    expect(first.res.status).toBe(429)
+    expect((first.res.body as ApiErrorBody).error.message).toMatch(/still being read/)
+    // The reading under way holds its worst case against the caps.
+    for (const started = Date.now(); (await holds()) !== 1; ) {
+      if (Date.now() - started > 5000) throw new Error('No hold.')
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    release()
+    const done = await Promise.all(both)
+    expect(done.map((d) => d.res.status).sort()).toEqual([200, 429])
+    expect(done.find((d) => d.res.status === 200)!.result!.rows).toHaveLength(1)
+    expect(app.model.calls).toHaveLength(1)
+    // Settled to what it cost.
+    expect(await holds()).toBe(0)
+    // An upload refused on its way in lets go of the person at once.
+    expect((await extract(Buffer.from('hello'), 'cert.pdf')).res.status).toBe(400)
+    app.model.reply({ content: [reply('coils', [{ coilNumber: 'Q2', grade: 'S350GD', smType: 'HR', supplier: 'Baosteel', thickness: 2, width: 1000, yield: 380 }])] })
+    expect((await extract(PDF, 'three.pdf')).res.status).toBe(200)
+  })
+
   it('refuses what is not a PDF, and a PDF Claude cannot read, before anything is billed', async () => {
     expect((await extract(Buffer.from('hello'), 'cert.pdf')).res.status).toBe(400)
     app.model.tokenCount = () => {

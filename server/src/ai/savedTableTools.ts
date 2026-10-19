@@ -13,7 +13,13 @@
 // A change is made at once and shown as a card; the Saved tables page lists
 // them all. Each call reads the person's access again: their domains decide
 // what a table may read, and only someone still given the assistant may
-// change one.
+// change one. A table someone else made (the owner may change anyone's) is
+// replaced, changed or removed only at the person's own word: the call quotes
+// their words asking for it from their message of this question
+// (confirmation, automations/confirmation.ts), so nothing the assistant
+// reads can change other people's tables. Rows written out are read only by
+// those who may read everything the conversation's queries read
+// (savedTables.ts, conversationDomains): they may have been copied from it.
 // ============================================================================
 
 import type Anthropic from '@anthropic-ai/sdk'
@@ -39,12 +45,15 @@ import type { ToolHandler, ToolOutcome } from './assistant'
 import { isGranted, loadAccess } from './access'
 import { isAiOwner } from './owner'
 import { AI_MAX_SQL_CHARS } from './runQuery'
+import { personsOwnWords } from '../automations/confirmation'
 import {
+  conversationDomains,
   findSavedTable,
   listSavedTables,
   refreshTable,
   removeTable,
   saveTable,
+  tableMaker,
   updateTable,
   type SavedTableActor,
   type SavedTableChanges,
@@ -62,6 +71,11 @@ export const REFRESH_SAVED_TABLE_TOOL_NAME = 'refresh_saved_table'
 export const REMOVE_SAVED_TABLE_TOOL_NAME = 'remove_saved_table'
 
 const NAME_PROPERTY = { type: 'string', description: 'The table\'s name, as in ai_saved.<name>.' }
+const CONFIRMATION_PROPERTY = {
+  type: 'string',
+  description:
+    "Only for a table someone else made (madeBy in list_saved_tables): the person's own words in their latest message asking for this, copied exactly as they wrote them. Leave it out for a table this person made.",
+}
 
 export const LIST_SAVED_TABLES_TOOL: Anthropic.Beta.BetaTool = {
   name: LIST_SAVED_TABLES_TOOL_NAME,
@@ -75,7 +89,7 @@ export const SAVE_TABLE_TOOL: Anthropic.Beta.BetaTool = {
   name: SAVE_TABLE_TOOL_NAME,
   description:
     'Save a table to build on: the result of a query over the ai.* views and other saved tables, stored and computed again by the database on a schedule (source query), or rows you write out, such as a mapping or a list of targets (source rows). ' +
-    'It is computed at once and read afterwards like a view, as ai_saved.<name>, in questions, reports and automations; anyone who may read everything its query reads may read it. ' +
+    'It is computed at once and read afterwards like a view, as ai_saved.<name>, in questions, reports and automations; anyone who may read everything its query reads may read it (rows written out: everything the queries of this conversation read, which they may have been copied from). ' +
     `A query's table holds at most ${SAVED_TABLE_MAX_ROWS.toLocaleString('en-US')} rows; rows written out at most ${SAVED_TABLE_MAX_LITERAL_ROWS.toLocaleString('en-US')}. ` +
     'Returns what was saved (its columns, its row count and who may read it), or why nothing was. The person sees it as a card.',
   eager_input_streaming: true,
@@ -128,6 +142,7 @@ export const SAVE_TABLE_TOOL: Anthropic.Beta.BetaTool = {
         description:
           'true to replace the table of this name with a whole new definition (one this person made, or any for the assistant\'s owner); otherwise a name already used is refused. To change part of a table — its words, notes, schedule, query or rows — use update_saved_table instead.',
       },
+      confirmation: { ...CONFIRMATION_PROPERTY, description: `With replace, ${CONFIRMATION_PROPERTY.description}` },
     },
     required: ['name', 'title', 'summary', 'description', 'source'],
     additionalProperties: false,
@@ -173,6 +188,7 @@ export const UPDATE_SAVED_TABLE_TOOL: Anthropic.Beta.BetaTool = {
       },
       rows: { type: 'array', description: 'For rows written out: every row, in place of the table\'s (each an array in the order of the columns).', items: { type: 'array', items: {} } },
       addRows: { type: 'array', description: 'For rows written out: rows to add after the table\'s.', items: { type: 'array', items: {} } },
+      confirmation: CONFIRMATION_PROPERTY,
     },
     required: ['name'],
     additionalProperties: false,
@@ -189,12 +205,12 @@ export const REMOVE_SAVED_TABLE_TOOL: Anthropic.Beta.BetaTool = {
   name: REMOVE_SAVED_TABLE_TOOL_NAME,
   description:
     'Remove a saved table, only when the person asks for it: whoever made it, or the assistant\'s owner, may. A table other saved tables are built on cannot be removed until they are. Automations or reports that read it fail from then on: check my_automations first when the person has any.',
-  input_schema: { type: 'object', properties: { name: NAME_PROPERTY }, required: ['name'], additionalProperties: false },
+  input_schema: { type: 'object', properties: { name: NAME_PROPERTY, confirmation: CONFIRMATION_PROPERTY }, required: ['name'], additionalProperties: false },
 }
 
 export const SAVED_TABLE_TOOLS: readonly Anthropic.Beta.BetaTool[] = [LIST_SAVED_TABLES_TOOL, SAVE_TABLE_TOOL, UPDATE_SAVED_TABLE_TOOL, REFRESH_SAVED_TABLE_TOOL, REMOVE_SAVED_TABLE_TOOL]
 
-const NameInput = z.object({ name: z.string().trim().min(1).max(64) }).passthrough()
+const NameInput = z.object({ name: z.string().trim().min(1).max(64), confirmation: z.string().nullish() }).passthrough()
 const ListInput = z.object({ name: z.string().trim().min(1).max(64).nullish() }).passthrough()
 const SaveInput = z
   .object({
@@ -211,6 +227,7 @@ const SaveInput = z
       .nullish(),
     rows: z.array(z.array(z.unknown())).nullish(),
     replace: z.boolean().nullish(),
+    confirmation: z.string().nullish(),
   })
   .passthrough()
 
@@ -227,6 +244,7 @@ const UpdateInput = z
     columns: z.array(LiteralColumnInput).nullish(),
     rows: z.array(z.array(z.unknown())).nullish(),
     addRows: z.array(z.array(z.unknown())).nullish(),
+    confirmation: z.string().nullish(),
   })
   .passthrough()
 
@@ -331,12 +349,20 @@ async function save(ctx: SavedTableToolContext, tu: ToolUse): Promise<ToolOutcom
   const actor = await actorOf(ctx)
   if (!actor) return failed(tu, NOT_GRANTED)
   const name = bareName(i.name) ?? ''
+  if (i.replace) {
+    const refusal = await othersTable(ctx, actor, { name }, i.confirmation, `Replacing the saved table ${name}, made by someone else,`, SAVE_TABLE_TOOL_NAME)
+    if (refusal) return failed(tu, refusal)
+  }
   const base = { name, title: i.title, summary: i.summary, description: i.description }
-  const def: SavedTableDefinition =
-    i.source === 'query'
-      ? { ...base, source: 'query', sql: i.sql!, refresh: i.refresh!, notes: i.columnNotes ?? {} }
-      : { ...base, source: 'rows', columns: i.columns!.map((c) => ({ name: c.name, type: c.type, note: c.note ?? undefined })), rows: i.rows! }
-  const outcome = await saveTable({ db: ctx.db, readers: ctx.readers, timeZone: ctx.config.FACTORY_TIMEZONE }, actor, def, !!i.replace, origin(ctx, tu))
+  let def: SavedTableDefinition
+  if (i.source === 'query') def = { ...base, source: 'query', sql: i.sql!, refresh: i.refresh!, notes: i.columnNotes ?? {} }
+  else {
+    // The rows may be copied from anything the conversation read: they are read as that is.
+    const read = await conversationDomains(deps(ctx), ctx.conversationId, actor)
+    if ('error' in read) return failed(tu, `Nothing was saved: ${read.error}`)
+    def = { ...base, source: 'rows', columns: i.columns!.map((c) => ({ name: c.name, type: c.type, note: c.note ?? undefined })), rows: i.rows!, domains: read.domains }
+  }
+  const outcome = await saveTable(deps(ctx), actor, def, !!i.replace, origin(ctx, tu))
   if (!outcome.ok) return failed(tu, outcome.error)
   const t = outcome.table
   emitCard(ctx, outcome, t.version > 1 ? 'replace' : 'create')
@@ -359,6 +385,8 @@ async function update(ctx: SavedTableToolContext, tu: ToolUse): Promise<ToolOutc
   const name = bareName(i.name)!
   const table = await findSavedTable(ctx.db, actor, { name })
   if (!table) return failed(tu, `There is no saved table named ${name} that this person may read.`)
+  const refusal = await othersTable(ctx, actor, { id: table.id }, i.confirmation, `Changing the saved table ${name}, made by ${table.createdByName},`, UPDATE_SAVED_TABLE_TOOL_NAME)
+  if (refusal) return failed(tu, refusal)
   const given = <T>(v: T | null | undefined): T | undefined => (v === null ? undefined : v)
   const changes: SavedTableChanges = {
     title: given(i.title),
@@ -371,7 +399,13 @@ async function update(ctx: SavedTableToolContext, tu: ToolUse): Promise<ToolOutc
     rows: given(i.rows),
     addRows: given(i.addRows),
   }
-  const outcome = await updateTable({ db: ctx.db, readers: ctx.readers, timeZone: ctx.config.FACTORY_TIMEZONE }, actor, table.id, changes, origin(ctx, tu))
+  if (table.source === 'rows' && (changes.rows || changes.addRows || changes.columns)) {
+    // New rows may be copied from anything the conversation read: the table is read as that is too.
+    const read = await conversationDomains(deps(ctx), ctx.conversationId, actor)
+    if ('error' in read) return failed(tu, `Nothing was changed: ${read.error}`)
+    changes.readFrom = read.domains
+  }
+  const outcome = await updateTable(deps(ctx), actor, table.id, changes, origin(ctx, tu))
   if (!outcome.ok) return failed(tu, `Nothing was changed: ${outcome.error}`)
   emitCard(ctx, outcome, outcome.dataChanged ? 'replace' : 'update')
   const t = outcome.table
@@ -393,7 +427,7 @@ async function refresh(ctx: SavedTableToolContext, tu: ToolUse): Promise<ToolOut
   const name = bareName(parsed.data.name)!
   const table = await findSavedTable(ctx.db, actor, { name })
   if (!table) return failed(tu, `There is no saved table named ${name} that this person may read.`)
-  const outcome = await refreshTable({ db: ctx.db, readers: ctx.readers, timeZone: ctx.config.FACTORY_TIMEZONE }, table.id, { id: actor.id, name: actor.name }, origin(ctx, tu))
+  const outcome = await refreshTable(deps(ctx), table.id, { id: actor.id, name: actor.name }, origin(ctx, tu))
   if (!outcome.ok) return failed(tu, outcome.error)
   emitCard(ctx, outcome, 'refresh')
   return answered(tu, { computed: true, name: `ai_saved.${name}`, rowCount: outcome.table.rowCount, refreshedAt: outcome.table.refreshedAt })
@@ -407,13 +441,36 @@ async function remove(ctx: SavedTableToolContext, tu: ToolUse): Promise<ToolOutc
   const name = bareName(parsed.data.name)!
   const table = await findSavedTable(ctx.db, actor, { name })
   if (!table) return failed(tu, `There is no saved table named ${name} that this person may read.`)
-  const outcome = await removeTable({ db: ctx.db, readers: ctx.readers, timeZone: ctx.config.FACTORY_TIMEZONE }, actor, table.id, origin(ctx, tu))
+  const refusal = await othersTable(ctx, actor, { id: table.id }, parsed.data.confirmation, `Removing the saved table ${name}, made by ${table.createdByName},`, REMOVE_SAVED_TABLE_TOOL_NAME)
+  if (refusal) return failed(tu, refusal)
+  const outcome = await removeTable(deps(ctx), actor, table.id, origin(ctx, tu))
   if (!outcome.ok) return failed(tu, outcome.error)
   emitCard(ctx, outcome, 'remove')
   return answered(tu, { removed: true, name: `ai_saved.${name}`, note: 'Removed: queries, reports and automations that read it fail from now on. The person sees it as a card.' })
 }
 
 const origin = (ctx: SavedTableToolContext, tu: ToolUse) => ({ conversationId: ctx.conversationId, turnId: ctx.turnId, toolUseId: tu.id })
+const deps = (ctx: SavedTableToolContext) => ({ db: ctx.db, readers: ctx.readers, timeZone: ctx.config.FACTORY_TIMEZONE })
+
+/**
+ * Why a change to a table someone else made is not made now, or null: a table of the person's own (or none by that
+ * name) goes on, someone else's only at the person's own word in this question (personsOwnWords). Whether they may
+ * change it at all is savedTables.ts's to say.
+ */
+async function othersTable(
+  ctx: SavedTableToolContext,
+  actor: SavedTableActor,
+  table: { id?: string; name?: string },
+  confirmation: string | null | undefined,
+  what: string,
+  tool: string,
+): Promise<string | null> {
+  // Only the owner may change another's table at all; anyone else is told so by savedTables.ts.
+  if (!actor.owner) return null
+  const maker = await tableMaker(ctx.db, table)
+  if (maker === null || maker === actor.id) return null
+  return personsOwnWords(ctx.db, ctx.turnId, confirmation ?? null, what, tool)
+}
 
 function emitCard(ctx: SavedTableToolContext, outcome: Extract<SavedTableOutcome, { ok: true }>, action: AiSavedTablePart['action']): void {
   const t = outcome.table
