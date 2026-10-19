@@ -114,7 +114,7 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
   { id: 'view-all-follow-ups', group: 'records', kind: 'action', name: 'Everyone’s follow-ups', help: 'See and reassign every follow-up, not only one’s own.' },
   { id: 'purge-audit-logs', group: 'records', kind: 'action', name: 'Purge the audit log', help: 'Remove old entries from the audit log.', needs: 'view-audit-log' },
 
-  { id: 'read-notices', group: 'communication', kind: 'action', name: 'Receive notices', help: 'Notices in the bell, and those shown on the way into an inspection.' },
+  { id: 'read-notices', group: 'communication', kind: 'action', name: 'Receive notices', help: 'Notices under the megaphone at the top, and those shown on the way into an inspection.' },
   { id: 'manage-chat', group: 'communication', kind: 'action', name: 'Chat groups', help: 'Create chat groups, rename or remove conversations, and remove messages in groups.', needs: 'use-chat' },
 ]
 

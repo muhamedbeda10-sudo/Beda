@@ -27,7 +27,8 @@ import { AlertList } from './AlertList'
 import { BellFollowUps } from './BellFollowUps'
 import { BellTasks } from './BellTasks'
 import { BellTabs, type BellTabItem } from './BellTabs'
-import { badgeText, bellCount, unreadAlerts } from './alerts'
+import { CountBadge } from '@/components/ui/CountBadge'
+import { unreadAlerts } from './alerts'
 
 type BellTab = 'alerts' | 'reports' | 'follow-ups' | 'tasks'
 
@@ -42,7 +43,7 @@ export function NoticeBell({ className }: { className?: string }) {
   const [tab, setTab] = useState<BellTab>('alerts')
   const unread = unreadAlerts(alertPages)
   const unreadReports = unreadAlerts(reportPages)
-  const total = bellCount(unread, unreadReports)
+  const total = unread + unreadReports
   const hasFollowUps = followUps?.visible ?? false
   // Tasks are sent to everyone but read-only viewers; a viewer who may send them has them too.
   const hasTasks = role !== 'viewer' || (tasks?.canCreate ?? false)
@@ -77,7 +78,7 @@ export function NoticeBell({ className }: { className?: string }) {
     trimNotifications(qc)
   }
 
-  const label = 'Alerts'
+  const label = 'Alerts and reports'
   const open_ = followUps?.mineOpen ?? 0
   const overdue = followUps?.mineOverdue ?? 0
   const listUnread = shown === 'reports' ? unreadReports : unread
@@ -109,11 +110,7 @@ export function NoticeBell({ className }: { className?: string }) {
     <>
       <button type="button" onClick={openBell} className={cn('icon-btn relative', className)} aria-label={total > 0 ? `${label}, ${total} not opened` : label} data-tip="Alerts">
         <Bell className={cn('h-5 w-5', total > 0 && 'animate-[wiggle_1.2s_ease-in-out_1]')} />
-        {total > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 grid min-w-[18px] place-items-center rounded-full bg-rose-600 px-1 text-[10px] font-bold leading-[18px] text-white ring-2 ring-white dark:ring-slate-900">
-            {badgeText(total)}
-          </span>
-        )}
+        <CountBadge count={total} />
       </button>
       <Drawer open={open} onClose={close} title={title} subtitle={subtitle} icon={icon}>
         {tabs.length > 1 && <BellTabs label="What the bell holds" tabs={tabs} value={shown} onChange={setTab} className="mb-4" />}

@@ -67,7 +67,7 @@ export async function noticeReaderRoles(q: Queryable): Promise<Role[]> {
   return ROLES.filter((r) => rows.some((x) => x.role === r))
 }
 
-/** An account that is told: live, not the system sender, with a bell ($1 is 'read-notices'). Requires the alias `u` for users. */
+/** An account that is told: live, not the system sender, sent notices ($1 is 'read-notices'). Requires the alias `u` for users. */
 const READER_ACCOUNT = `u.is_active AND u.deleted_at IS NULL AND NOT u.is_system AND user_has_permission(u.id, $1)`
 
 /**

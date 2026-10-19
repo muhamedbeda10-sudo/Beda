@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { InfiniteData } from '@tanstack/react-query'
 import type { UserNotification, UserNotificationsResponse } from '@qc/shared/automation'
-import { ALERT_KIND_LABEL, alertTarget, alertsOf, badgeText, bellCount, firstAlertPage, splitAlerts, unreadAlerts, withAlertRead, withAllAlertsRead } from './alerts'
+import { ALERT_KIND_LABEL, alertTarget, alertsOf, badgeText, firstAlertPage, splitAlerts, unreadAlerts, withAlertRead, withAllAlertsRead } from './alerts'
 
 const alert = (id: string, createdAt: string, readAt: string | null = null, link: string | null = `/follow-ups/${id}`): UserNotification => ({
   id,
@@ -19,13 +19,7 @@ const pages = (...ps: { list: UserNotification[]; unread: number; hasMore?: bool
   pageParams: ps.map((_, i) => (i === 0 ? null : `p${i}`)),
 })
 
-describe('the bell’s count', () => {
-  it('adds the alerts and the reports not opened (notices count on their own button)', () => {
-    expect(bellCount(2, 3)).toBe(5)
-    expect(bellCount(0, 0)).toBe(0)
-    expect(bellCount(-1, 4)).toBe(4)
-  })
-
+describe('a count on a badge', () => {
   it('caps what the badge shows', () => {
     expect(badgeText(7)).toBe('7')
     expect(badgeText(99)).toBe('99')

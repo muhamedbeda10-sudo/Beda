@@ -99,12 +99,12 @@ function kindHits(kind: NoticeTargetKind, values: string[], reader: NoticeReader
 
 /**
  * Whether a notice applies to a reader. With a context every kind is
- * checked; without one (the bell) only the kinds about the reader are, so
+ * checked; without one (the Notices list) only the kinds about the reader are, so
  * the list shows everything the reader could meet.
  *
  * `all`: every kind present has to hit (values of one kind being
  * alternatives). `any`: one hit of any kind is enough; without a context a
- * place kind counts as "could be met", so the bell can list it once seen.
+ * place kind counts as "could be met", so the Notices list can list it once seen.
  */
 export function noticeApplies(targets: NoticeTarget[], reader: NoticeReader, context: NoticeContext | null, mode: NoticeMatchMode = 'all'): boolean {
   if (targets.length === 0) return true
@@ -143,7 +143,7 @@ const READER_KINDS: readonly NoticeTargetKind[] = ['user', 'role']
 
 /**
  * Whether a notice reaches this reader only through a place (a machine, an
- * order…), so the bell must wait until they meet it there. Under `any`, a
+ * order…), so the Notices list must wait until they meet it there. Under `any`, a
  * notice that also names the reader (their user or role) is theirs at once.
  */
 export function isPlaceBound(targets: NoticeTarget[], reader?: NoticeReader, mode: NoticeMatchMode = 'all'): boolean {
@@ -157,7 +157,7 @@ export function isPlaceBound(targets: NoticeTarget[], reader?: NoticeReader, mod
 }
 
 /**
- * The bell: newest first, active ones and the archive. A notice aimed only
+ * A reader's Notices (the megaphone at the top): newest first, active ones and the archive. A notice aimed only
  * at people (a user, a role, or everyone) is listed at once. One aimed at a
  * place is listed only after this reader has met it there — the gate is
  * where it is shown — so nobody sees a notice that was not for them.

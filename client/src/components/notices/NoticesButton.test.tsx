@@ -86,7 +86,7 @@ describe('what the Notices button holds', () => {
   const noop = () => undefined
 
   it('lists the notices waiting first, then the earlier ones', () => {
-    const panel = html(<NoticesPanel receives manage={false} onWrite={noop} onLeave={noop} />, inbox)
+    const panel = html(<NoticesPanel receives manage={false} notices={inbox.notices} loading={false} onWrite={noop} onLeave={noop} />)
     expect(panel.indexOf('Needs your attention')).toBeLessThan(panel.indexOf('Line 58: new die from today'))
     expect(panel.indexOf('Line 58: new die from today')).toBeLessThan(panel.indexOf('Earlier'))
     expect(panel.indexOf('Earlier')).toBeLessThan(panel.indexOf('Shift B: helmets on the floor'))
@@ -95,18 +95,18 @@ describe('what the Notices button holds', () => {
     expect(panel).not.toContain('Manage notices')
   })
 
-  it('offers whoever writes notices New notice by hand, With the assistant when it may write them, and the Notices page', () => {
-    const both = html(<NoticesPanel receives manage onWrite={noop} onAssistant={noop} onLeave={noop} />, inbox)
+  it('offers whoever writes notices New notice by hand, New in the assistant when it may write them, and the Notices page', () => {
+    const both = html(<NoticesPanel receives manage notices={inbox.notices} loading={false} onWrite={noop} onAssistant={noop} onLeave={noop} />)
     expect(both).toContain('New notice')
-    expect(both).toContain('With the assistant')
+    expect(both).toContain('New in the assistant')
     expect(both).toContain('href="/notices"')
     expect(both.indexOf('New notice')).toBeLessThan(both.indexOf('Needs your attention'))
     // Without the assistant for notices, by hand only.
-    const byHand = html(<NoticesPanel receives manage onWrite={noop} onLeave={noop} />, inbox)
+    const byHand = html(<NoticesPanel receives manage notices={inbox.notices} loading={false} onWrite={noop} onLeave={noop} />)
     expect(byHand).toContain('New notice')
-    expect(byHand).not.toContain('With the assistant')
+    expect(byHand).not.toContain('New in the assistant')
     // A writer who receives none has the buttons and no list.
-    const writerOnly = html(<NoticesPanel receives={false} manage onWrite={noop} onLeave={noop} />)
+    const writerOnly = html(<NoticesPanel receives={false} manage notices={[]} loading={false} onWrite={noop} onLeave={noop} />)
     expect(writerOnly).toContain('New notice')
     expect(writerOnly).not.toContain('No notices')
   })

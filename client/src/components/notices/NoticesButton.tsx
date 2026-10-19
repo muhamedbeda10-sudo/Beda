@@ -6,7 +6,7 @@
 // with its button.
 //
 // Whoever may manage notices writes one from here as well: New notice opens
-// the form (NoticeForm, by hand), With the assistant opens it on a new
+// the form (NoticeForm, by hand), New in the assistant opens it on a new
 // conversation to draft one as a card (§23, for those it may write notices
 // for), and Manage notices opens the Notices page (who read them, a change,
 // withdrawing or removing one).
@@ -26,7 +26,7 @@ import { cn, timeAgo } from '@/lib/utils'
 import { textDirection } from '@/lib/direction'
 import { NoticeCard, SEVERITY_META, validityText } from './NoticeCard'
 import { NEW_NOTICE_TEXT, NoticeForm, newNoticeDraft } from './NoticeForm'
-import { badgeText } from './alerts'
+import { CountBadge } from '@/components/ui/CountBadge'
 
 function InboxRow({ notice, open, onToggle }: { notice: NoticeForUser; open: boolean; onToggle: () => void }) {
   const qc = useQueryClient()
@@ -99,7 +99,7 @@ function InboxRow({ notice, open, onToggle }: { notice: NoticeForUser; open: boo
  */
 export function NoticesButton({ receives, manage, className }: { receives: boolean; manage: boolean; className?: string }) {
   const ai = useAi()
-  const { data } = useNoticeInbox(receives)
+  const { data, isLoading } = useNoticeInbox(receives)
   const [open, setOpen] = useState(false)
   const [writing, setWriting] = useState(false)
   if (!receives && !manage) return null
@@ -120,11 +120,7 @@ export function NoticesButton({ receives, manage, className }: { receives: boole
     <>
       <button type="button" onClick={() => setOpen(true)} className={cn('icon-btn relative', className)} aria-label={label} data-tip="Notices">
         <Megaphone className={cn('h-5 w-5', pending > 0 && 'animate-[wiggle_1.2s_ease-in-out_1]')} />
-        {pending > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 grid min-w-[18px] place-items-center rounded-full bg-rose-600 px-1 text-[10px] font-bold leading-[18px] text-white ring-2 ring-white dark:ring-slate-900">
-            {badgeText(pending)}
-          </span>
-        )}
+        <CountBadge count={pending} />
       </button>
       <Drawer
         open={open}
@@ -133,7 +129,7 @@ export function NoticesButton({ receives, manage, className }: { receives: boole
         subtitle={!receives ? 'Write one, or manage them' : pending > 0 ? `${pending} to read` : 'Nothing waiting for you'}
         icon={<Megaphone className="h-5 w-5" />}
       >
-        <NoticesPanel receives={receives} manage={manage} onWrite={writeByHand} onAssistant={ai.notices ? writeWithAssistant : undefined} onLeave={() => setOpen(false)} />
+        <NoticesPanel receives={receives} manage={manage} notices={receives ? (data?.notices ?? []) : []} loading={receives && isLoading} onWrite={writeByHand} onAssistant={ai.notices ? writeWithAssistant : undefined} onLeave={() => setOpen(false)} />
       </Drawer>
       {writing && <NoticeForm id={null} initial={newNoticeDraft()} onClose={() => setWriting(false)} />}
     </>
@@ -141,15 +137,29 @@ export function NoticesButton({ receives, manage, className }: { receives: boole
 }
 
 /**
- * What the Notices button holds: for whoever writes notices, New notice, With the assistant (`onAssistant`, when it
- * may write them for this person) and the way to the Notices page; then the person's own notices, the ones waiting
- * first. `onLeave` closes it when a link takes them elsewhere.
+ * What the Notices button holds: for whoever writes notices, New notice, New in the assistant (`onAssistant`, when it
+ * may write them for this person) and the way to the Notices page; then the person's own notices (`notices`, as the
+ * button fetched them), the ones waiting first. `onLeave` closes it when a link takes them elsewhere.
  */
-export function NoticesPanel({ receives, manage, onWrite, onAssistant, onLeave }: { receives: boolean; manage: boolean; onWrite: () => void; onAssistant?: () => void; onLeave: () => void }) {
+export function NoticesPanel({
+  receives,
+  manage,
+  notices,
+  loading,
+  onWrite,
+  onAssistant,
+  onLeave,
+}: {
+  receives: boolean
+  manage: boolean
+  notices: readonly NoticeForUser[]
+  loading: boolean
+  onWrite: () => void
+  onAssistant?: () => void
+  onLeave: () => void
+}) {
   const qc = useQueryClient()
-  const { data, isLoading } = useNoticeInbox(receives)
   const [expanded, setExpanded] = useState<string | null>(null)
-  const notices = receives ? (data?.notices ?? []) : []
   const attention = notices.filter((n) => n.pending)
   const earlier = notices.filter((n) => !n.pending)
 
@@ -170,7 +180,7 @@ export function NoticesPanel({ receives, manage, onWrite, onAssistant, onLeave }
             </Button>
             {onAssistant && (
               <Button onClick={onAssistant} className="min-h-[44px]" data-tip="Opens the assistant in a new conversation: say what to tell whom, and for how long">
-                <Sparkles className="h-4 w-4" /> With the assistant
+                <Sparkles className="h-4 w-4" /> New in the assistant
               </Button>
             )}
           </div>
@@ -181,12 +191,12 @@ export function NoticesPanel({ receives, manage, onWrite, onAssistant, onLeave }
       )}
       {receives && (
         <>
-          {isLoading && (
+          {loading && (
             <p className="flex items-center gap-2 py-8 text-sm text-muted">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </p>
           )}
-          {!isLoading && notices.length === 0 && <EmptyState icon={<Megaphone className="h-10 w-10" />} title="No notices" hint="Notices from the quality office will show here." />}
+          {!loading && notices.length === 0 && <EmptyState icon={<Megaphone className="h-10 w-10" />} title="No notices" hint="Notices from the quality office will show here." />}
           {attention.length > 0 && (
             <section className="space-y-2">
               <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Needs your attention</p>
