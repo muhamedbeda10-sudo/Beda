@@ -27,7 +27,7 @@ import {
   useSetRate,
   useSettings,
 } from '@/services/planning'
-import { ErrorNote, Loading, Meter, SectionCard } from './common'
+import { ErrorNote, Loading, Meter, OBJECTIVE_NAME, SectionCard } from './common'
 import { dayLabel, hoursLabel, processName } from './format'
 
 const sourceBadge = (s: 'set' | 'inferred' | 'default') =>
@@ -582,6 +582,26 @@ export function SettingsSection() {
           'Default hours a day',
           'For a machine with no hours set or learnt.',
           <Input type="number" min={0} max={24} step={0.5} value={e.defaultHoursPerDay} onChange={(x) => set({ defaultHoursPerDay: Number(x.target.value) })} className="min-h-[44px]" />,
+        )}
+        {row(
+          'The optimiser',
+          'After the priority order, it tries moving late lines ahead on their machines and keeps what makes the objective smaller. Light tries a few dozen plans; full a few hundred; a big record gets fewer. Same data, same plan, every time.',
+          <Select value={e.optimise} onChange={(x) => set({ optimise: x.target.value as PlanSettings['optimise'] })} className="min-h-[44px]">
+            <option value="off">Off: the priority order</option>
+            <option value="light">Light</option>
+            <option value="full">Full</option>
+          </Select>,
+        )}
+        {row(
+          'What it makes smaller',
+          'Tonne-days late weighs a heavy order’s delay more than a light one’s (a line with no weight counts as a tonne); late lines counts each line once; days late adds the days.',
+          <Select value={e.objective} onChange={(x) => set({ objective: x.target.value as PlanSettings['objective'] })} className="min-h-[44px]">
+            {(Object.keys(OBJECTIVE_NAME) as PlanSettings['objective'][]).map((k) => (
+              <option key={k} value={k}>
+                {OBJECTIVE_NAME[k]}
+              </option>
+            ))}
+          </Select>,
         )}
         {row(
           'Default hours of a line',

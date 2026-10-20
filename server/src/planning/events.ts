@@ -7,7 +7,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { PLANNING_PROCESSES, isDay, parseWall, type PlanEvent, type PlanSettings } from '@qc/shared/planning'
+import { OPTIMISE_EFFORTS, PLANNING_PROCESSES, PLAN_OBJECTIVES, isDay, parseWall, type PlanEvent, type PlanSettings } from '@qc/shared/planning'
 import type { Queryable } from '../db/pool'
 
 /** The most events one plan holds. */
@@ -80,6 +80,8 @@ export const settingsSchema = z
     dependencies: z.object({ parent: z.boolean(), sameItem: z.boolean(), orderProcess: z.boolean() }).partial().strict(),
     processRank,
     horizonDays: z.number().int().min(7).max(1095),
+    optimise: z.enum(OPTIMISE_EFFORTS as [string, ...string[]]),
+    objective: z.enum(PLAN_OBJECTIVES as [string, ...string[]]),
   })
   .partial()
   .strict()

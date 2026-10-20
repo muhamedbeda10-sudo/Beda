@@ -5,6 +5,7 @@
 // ============================================================================
 
 import type { ReactNode } from 'react'
+import type { PlanOptimisation } from '@qc/shared/planning'
 import { AlertTriangle, Loader2, RotateCcw } from 'lucide-react'
 import { AUTO_PLAN_ID, type PlanHeader } from '@qc/shared/planning'
 import { Button, Select } from '@/components/ui'
@@ -111,6 +112,36 @@ export function Figure({ label, value, tone, sub }: { label: string; value: Reac
       </p>
       {sub && <p className="mt-0.5 truncate text-xs text-muted">{sub}</p>}
     </div>
+  )
+}
+
+export const OBJECTIVE_NAME: Record<PlanOptimisation['objective'], string> = {
+  'late-weight-days': 'tonne-days late',
+  'late-lines': 'late lines',
+  'late-days': 'days late',
+}
+
+const figure = (n: number) => (Number.isInteger(n) ? n.toLocaleString() : (Math.round(n * 10) / 10).toLocaleString())
+
+/** What the optimiser did to a plan, in a line: the objective's figure for the priority order against the plan's. */
+export function OptimiserNote({ o, late }: { o: PlanOptimisation | undefined; late: number }) {
+  if (!o) return null
+  if (o.effort === 'off') return <p className="text-13 text-muted">The optimiser is off: the plan is the priority order.</p>
+  if (o.evaluations === 0) return <p className="text-13 text-muted">The optimiser was not run on a record this size: the plan is the priority order.</p>
+  const name = OBJECTIVE_NAME[o.objective]
+  return (
+    <p className="text-13 text-muted">
+      {o.improved ? (
+        <>
+          The optimiser bettered the priority order: <span className="font-semibold text-slate-900 dark:text-white">{figure(o.baselineScore)} → {figure(o.score)} {name}</span>
+          {o.objective !== 'late-lines' && ` (${o.baseline.late} → ${late} late lines)`}, {o.moves} move{o.moves === 1 ? '' : 's'} kept of {o.evaluations} tried.
+        </>
+      ) : (
+        <>
+          The optimiser found nothing better than the priority order ({figure(o.score)} {name}, {o.evaluations} plans tried).
+        </>
+      )}
+    </p>
   )
 }
 

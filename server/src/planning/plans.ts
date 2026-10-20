@@ -22,8 +22,8 @@ import {
   AUTO_PLAN_ID,
   capacityOf,
   comparePlans,
+  optimisePlan,
   instantOfWall,
-  runPlan,
   wallOfInstant,
   type ComparisonResponse,
   type CreatePlanRequest,
@@ -160,17 +160,34 @@ export function machineInfos(base: PlanningBase, settings: PlanSettings, keys?: 
     })
 }
 
-/** A plan worked out now from the data: the automatic one, or one with these events and settings. */
+/** Plans worked out, kept as long as the inputs they were worked out from (a minute, data.ts): the optimiser is not run again for every request of the same plan. */
+const worked = new Map<string, PlanResult>()
+let workedFor = 0
+
+/**
+ * A plan worked out now from the data: the automatic one, or one with these events and settings; started from another
+ * plan's order when given (a scenario from its base), so the two differ by the scenario's changes alone.
+ */
 export async function workOut(
   db: Queryable,
   config: Config,
   events: readonly PlanEvent[] = [],
   own: Partial<PlanSettings> = {},
   now = new Date(),
+  startFrom?: readonly string[],
 ): Promise<{ base: PlanningBase; settings: PlanSettings; result: PlanResult }> {
   const base = await loadPlanningBase(db, config.FACTORY_TIMEZONE)
   const settings = effectiveSettings(base, own)
-  const result = runPlan(planInputs(base, now, config.FACTORY_TIMEZONE, settings, events))
+  if (workedFor !== base.readAt) {
+    worked.clear()
+    workedFor = base.readAt
+  }
+  const key = JSON.stringify([settings, events, startFrom ?? null])
+  let result = worked.get(key)
+  if (!result) {
+    result = optimisePlan(planInputs(base, now, config.FACTORY_TIMEZONE, settings, events), { startFrom })
+    worked.set(key, result)
+  }
   return { base, settings, result }
 }
 
@@ -349,6 +366,7 @@ export async function planDetail(db: Db, config: Config, planner: Planner, id: s
       excluded: result.excluded,
       warnings: result.warnings,
       machines: machineInfos(base, settings, new Set([...result.operations.map((o) => o.machineKey), ...base.machines.filter((m) => m.known).map((m) => m.key)])),
+      optimisation: result.optimisation,
     }
   }
   const base = await loadPlanningBase(db, tz)
@@ -390,7 +408,7 @@ export async function comparePlanWith(db: Db, config: Config, _planner: Planner,
   if (withId && withId !== AUTO_PLAN_ID && !base) throw notFound('The plan to compare with')
   const now = new Date()
   const a = await workOut(db, config, base?.events ?? [], base?.settings ?? {}, now)
-  const b = await workOut(db, config, row.events, row.settings, now)
+  const b = await workOut(db, config, row.events, row.settings, now, a.result.order)
   return { ...comparePlans(a.result, b.result), baseName: base?.name ?? AUTO_PLAN_NAME, scenarioName: row.name }
 }
 

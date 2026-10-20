@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-20.5',
+    date: '2026-10-20',
+    title: 'Planning: the optimiser',
+    items: [
+      { text: 'The plan is no longer only the priority order: an optimiser tries moving late lines ahead on their machines and keeps what makes the objective smaller — tonne-days late by default, or late lines or days late (Planning → Settings). The same data gives the same plan every time; the Overview and the Simulator say what it bettered.' },
+      { text: 'A scenario can turn the optimiser off or on, or change its objective, for itself alone.' },
+    ],
+  },
+  {
     id: '2026-10-20.4',
     date: '2026-10-20',
     title: 'Planning, a trial',
