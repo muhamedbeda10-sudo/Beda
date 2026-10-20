@@ -103,6 +103,8 @@ const DOMAIN_LINES: Record<AiDomain, string> = {
   materials: 'the coil register, suppliers and master data: item dimensions, defect lists, PT products, work instructions',
   audit: 'the audit trail of changes and the list of accounts',
   production: "the ERP's production task record: what each machine made per day, by whom and in which shift, with hours, weights and lengths",
+  planning:
+    'the planning module (a trial): the automatic plan, the published plan and the scenarios with each order line placed on its machine, the planning calendar, each machine\'s hours and pace, and the items\' routes',
 }
 
 /**
@@ -173,6 +175,19 @@ const MEANINGS: { domains: AiDomain[]; all?: boolean; text: string }[] = [
   {
     domains: ['production'],
     text: '- The record is imported by hand from the ERP, so imported_at says how fresh a row is. Periods of the task record are work_day (work_day >= \'2026-09-01\' AND work_day < \'2026-10-01\'), never imported_at. Machine codes map to the register where known (machine, factory, process); where not, resource names the ERP\'s line.',
+  },
+  {
+    domains: ['planning'],
+    text: '- Planning (ai.planning_plans, ai.planning_operations) is a projection, not a record: the automatic plan (kind auto) is the engine on the order sheet, the production record and the open inspections as they were at its computed_at; the published plan (status published) is what the planners committed to, kept as it was published. "When will order X be made / is it late": use the published plan when there is one, else the automatic plan, and say which and as of when. Never present a plan\'s finish as something that happened.',
+  },
+  {
+    domains: ['planning'],
+    text: '- A plan line\'s hours (hours, duration_source) are machine hours; it runs from start_at to end_at only in the machine\'s working time (its hours a day from 08:00, Fridays and holidays off: ai.planning_machines, ai.planning_calendar), so end_at - start_at is not its hours. late_days counts whole days past the due day\'s end (08:00 the next morning). Load = sum(hours) against hours_per_day × working days.',
+  },
+  {
+    domains: ['planning', 'orders'],
+    all: true,
+    text: '- The ERP\'s own plan of a line is ai.order_lines.planned_start / planned_finish (days); the planning module\'s is ai.planning_operations.start_at / end_at. They are different plans: say which one a date comes from, and compare them when asked about delays.',
   },
   {
     domains: ['inspection', 'production'],
@@ -273,6 +288,11 @@ Queries run on the live database the floor saves to, and a query stops after 60 
 - A sample's and a session's figures are columns of their own, kept as the record is saved: in inspection_samples (dimensions_pass, dimensions_fail, defect_pieces, coils, coil_material, material…) and inspection_sessions (samples, pieces_inspected, defect_pieces, hold_pieces, dimension_fails…). Read them there; never count dimension_measurements or defects again to get them.
 - To split figures by material (black or galvanized), use the material column of inspection_samples or dimension_measurements: no join to sample_coils.`
       : ''
+  }${
+    has('planning')
+      ? `
+- ai.planning_operations holds every plan's lines: filter plan_id (or plan_kind = 'auto' / plan_status = 'published') before anything else, then the machine or the period on start_at / end_at.`
+      : ''
   }
 - When a query is stopped for time, its error says where the time went: narrow it there and run it again. A question that truly needs the whole record (every machine over years, every dimension) and cannot be narrowed or aggregated first: run it with long: true, up to 10 minutes, one at a time across the app; say so in a line, as the person may leave and is told when the answer is ready. Or split it into a few queries (by year, by machine) and put their results together.`)
   sections.push(`# When a request is unclear or cannot be met as asked
@@ -355,6 +375,7 @@ When your answer asks the person something (to choose an option, to answer a que
   sections.push(ATTACHMENTS_SECTION)
   if (options.notices) sections.push(noticesSection(options.notices))
   if (options.tasks) sections.push(TASKS_SECTION)
+  if (has('planning')) sections.push(PLANNING_SECTION)
   if (options.excel) sections.push(EXCEL_SECTION)
   if (options.playbook) sections.push(playbookSection(options.playbook))
   if (options.savedTables) sections.push(SAVED_TABLES_SECTION)
@@ -467,6 +488,14 @@ The person can send tasks to the app's people: what is to be done, to whom, how 
 - The title says what is to be done, as an action, in one line; the details say where, what to check or do, and what to send back (photos, figures). Write both in the person's language. priority: normal, unless the person says otherwise or it is a safety or quality risk that cannot wait (urgent). A deadline only when the person gave one or agreed to one, on the factory's clock.
 - When what you found calls for someone to act (a machine to check, a hold to clear), you may offer a task in a sentence or a suggestion; propose it once the person agrees.
 - Questions about tasks (who has not done it yet, what is overdue, what waits for their confirmation, what was sent to them) are answered from my_tasks, never from run_sql: the ai.* views do not hold tasks. Link a task as [T-12](/tasks/<id>), with the link my_tasks gives. Confirming a done, sending it back, replying and marking one's own part are done on the task's page.`
+
+/** §25 — the planning module: reading its plans, trying what-ifs, and keeping one for the planners at the person's word. */
+const PLANNING_SECTION = `# Planning (a trial module)
+The planning module plans every open order line on its machine: the automatic plan from the data as it is, plans the planners make and publish, and what-if scenarios. Its plans are in ai.planning_plans and their lines in ai.planning_operations; the calendar, each machine's hours and pace and the items' routes in ai.planning_calendar, ai.planning_machines, ai.planning_rates and ai.planning_item_routes.
+- For "what if" questions (a machine stops, a rush order comes in, a Friday is worked, a shift is added, a line moves to another machine, material arrives late), call planning_simulate with the events (find it with the tool search): it works the plan out with them and compares it with the automatic plan (or the published one) line by line. Read the machines' codes and the lines' Order IDs with run_sql first when the person names them loosely. Try several scenarios when the question asks which is better, and compare them in a short table: late lines, on-time %, late weight, the customers hit.
+- planning_save_scenario keeps one as a draft for the planners, only when the person asks to keep or propose it: give them the link it returns. It is the one thing in planning you may change. You never publish a plan: a planner reviews and publishes it in the app (Planning → Simulator).
+- To suggest better settings or setup (a machine's hours, a pace, the sequence rule), show their effect with planning_simulate (capacity, speed or settings) and say where a planner changes them for good: Planning → Capacity, Routes & paces or Settings.
+- The plan rests on the data: where it assumed hours, lacks due dates or a machine's capacity is the default, say so (the flags and duration_source columns), and what data would make it better.`
 
 /**
  * Excel files: when to make one with make_excel, what to ask first, and how

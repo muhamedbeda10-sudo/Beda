@@ -84,6 +84,7 @@ export const AI_DOMAIN_SHORT: Record<AiDomain, string> = {
   materials: 'Coils & master data',
   audit: 'Audit & accounts',
   production: 'Production record',
+  planning: 'Planning',
 }
 
 /** A domain's full name and what it holds, for the tooltip of its chip. */

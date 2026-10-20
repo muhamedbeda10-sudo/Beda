@@ -6,7 +6,7 @@
 // follow-ups (§21) from the bell, and notices (§16) from their own button beside it: none is a tab here. Reports —
 // the saved reports shared with a person — is a tab for whoever has one shared with them, whatever their role.
 
-import { ClipboardCheck, FileChartColumn, FileCheck2, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
+import { ChartGantt, ClipboardCheck, FileChartColumn, FileCheck2, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
 import { can, type Permission } from '@qc/shared/permissions'
 
 export interface NavItem {
@@ -29,6 +29,8 @@ export const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true, needs: 'view-inspections' },
   { to: '/history', label: 'History', icon: History, needs: 'view-history' },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
+  // §25 — planning, a trial: its parts are icons inside the tab.
+  { to: '/planning', label: 'Planning', icon: ChartGantt, needs: 'view-planning' },
   // The material registers; uploading a mill test certificate into them is set in the AI settings (ai_access.mtc).
   { to: '/mtc', label: 'MTC', icon: FileCheck2, needs: 'view-mtc' },
   // The saved reports shared with the person: there once one is, gone once none is.

@@ -45,6 +45,8 @@ const SavedTablesPage = lazy(() => import('@/pages/SavedTablesPage').then((m) =>
 const ReportStylesPage = lazy(() => import('@/pages/ReportStylesPage').then((m) => ({ default: m.ReportStylesPage })))
 // The saved reports shared with a person, the assistant or not: the server says which, and answers 404 for any other.
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })))
+// §25 — planning, a trial: its own bundle, for the people given the screen.
+const PlanningPage = lazy(() => import('@/pages/PlanningPage').then((m) => ({ default: m.PlanningPage })))
 
 /** A page the person may not open (§14) sends them home; the API refuses its data anyway. */
 function Only({ cap, children }: { cap: Permission; children: ReactElement }) {
@@ -195,6 +197,7 @@ export default function App() {
         <Route path="/access" element={<Only cap="view-order-sheet"><AccessPage /></Only>} />
         <Route path="/dashboard" element={<Only cap="view-dashboard"><DashboardPage /></Only>} />
         <Route path="/mtc" element={<Only cap="view-mtc"><MtcPage /></Only>} />
+        <Route path="/planning/:section?" element={<Only cap="view-planning"><LazyPage what="Planning"><PlanningPage /></LazyPage></Only>} />
         <Route path="/chat/:conversationId?" element={<Only cap="use-chat"><ChatPage /></Only>} />
         {/* §20 — the assistant's addresses (/ai?c=<conversation>, /ai/reports/<id>) open its popup, large, on that place. */}
         <Route path="/ai/*" element={<OnlyAiGranted><AiAddress /></OnlyAiGranted>} />

@@ -21,8 +21,9 @@ const run = (sql: string, opts: Partial<RunOptions> = {}) => runReadOnlyQuery(ap
 beforeAll(async () => {
   await app.start()
   database = new URL(app.config.DATABASE_URL).pathname.slice(1)
-  // Two of the four-bit combination roles of the four-domain days, as a database that ran then would still hold them.
-  for (const bits of ['0101', '1111']) {
+  // Two of the four-bit combination roles of the four-domain days and one of the five-bit ones of the five-domain days,
+  // as a database that ran then would still hold them.
+  for (const bits of ['0101', '1111', '10101']) {
     await app.db.query(`DROP ROLE IF EXISTS ${pg.escapeIdentifier(`${database}_ai_r_${bits}`)}`)
     await app.db.query(`CREATE ROLE ${pg.escapeIdentifier(`${database}_ai_r_${bits}`)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS`)
   }
@@ -39,15 +40,16 @@ afterAll(() => app.stop())
 describe('§20 the reader roles', () => {
   it('are per database and per combination of domains, provisioned with LOGIN, a SCRAM verifier and the factory time zone', async () => {
     expect(app.aiReader.ready).toBe(true)
-    expect(role).toBe(`${database}_ai_r_11111`)
+    expect(role).toBe(`${database}_ai_r_111111`)
     const { rows } = await app.db.query<{ rolname: string; rolcanlogin: boolean; rolsuper: boolean; rolcreaterole: boolean; rolcreatedb: boolean; rolinherit: boolean; rolconnlimit: number; rolconfig: string[] }>(
       `SELECT rolname, rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolinherit, rolconnlimit, rolconfig FROM pg_roles WHERE rolname LIKE $1 ORDER BY rolname`,
       [`${database}\\_ai\\_r\\_%`],
     )
-    // Five bits, one per domain, every combination but none: the four-bit roles of the four-domain days (0041) are gone.
-    expect(AI_DOMAIN_COMBINATIONS).toHaveLength(31)
+    // Six bits, one per domain, every combination but none: the four-bit roles of the four-domain days (0041) and the
+    // five-bit ones of the five-domain days (0075) are gone.
+    expect(AI_DOMAIN_COMBINATIONS).toHaveLength(63)
     expect(rows.map((r) => r.rolname.slice(`${database}_ai_r_`.length))).toEqual([...AI_DOMAIN_COMBINATIONS])
-    expect(rows.map((r) => r.rolname)).toEqual(expect.arrayContaining([`${database}_ai_r_00001`, `${database}_ai_r_10101`, `${database}_ai_r_11111`]))
+    expect(rows.map((r) => r.rolname)).toEqual(expect.arrayContaining([`${database}_ai_r_000001`, `${database}_ai_r_101010`, `${database}_ai_r_111111`]))
     for (const r of rows) {
       expect(r, r.rolname).toMatchObject({ rolcanlogin: true, rolsuper: false, rolcreaterole: false, rolcreatedb: false, rolinherit: true, rolconnlimit: 3 })
       expect(r.rolconfig).toEqual(
@@ -110,7 +112,7 @@ describe('§20 the reader roles', () => {
 
   it('can read every view and run every function in schema ai', async () => {
     const { rows } = await app.db.query<{ name: string }>(`SELECT viewname AS name FROM pg_views WHERE schemaname = 'ai' ORDER BY 1`)
-    expect(rows.length).toBe(26)
+    expect(rows.length).toBe(32)
     for (const { name } of rows) {
       const res = await run(`SELECT * FROM ai.${name} LIMIT 5`)
       expect(res.ok, `${name}: ${res.error}`).toBe(true)
@@ -154,7 +156,7 @@ describe('§20 the reader roles', () => {
     expect(doc).not.toContain('assert_row_size')
     const views = [...doc.matchAll(/^### ai\.(\w+)$/gm)].map((m) => m[1])
     expect(views).toEqual([...views].sort())
-    expect(views).toHaveLength(26)
+    expect(views).toHaveLength(32)
   })
 })
 

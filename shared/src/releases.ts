@@ -28,6 +28,19 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-20.4',
+    date: '2026-10-20',
+    title: 'Planning, a trial',
+    items: [
+      { text: 'A new Planning tab, for the people given it (Users → permissions: Planning). Its parts are icons: Overview, Factory map, Late lines, Material, Schedule, Load, Simulator, Plans, Plan vs actual, Capacity, Routes & paces, Calendar, Settings and Data gaps.' },
+      { text: 'The automatic plan places every open order line on its machine from the data as it is: the order sheet, the production record and the open inspections. Each machine’s hours a day and pace, and each item’s route through forming, welding and painting, are learnt from the production record; Friday and the holidays are days off.' },
+      { text: 'The Factory map shows each factory’s machines where they stand, what each is making now by its open inspection, since when and who opened it, its last production day, and what the plan has it make next.' },
+      { text: 'The Simulator answers “what if”: a machine down, a rush order, a Friday worked, a shift added, a line moved, material late. It compares the result with the plan line by line. A plan or scenario can be published as the factory’s plan, and Plan vs actual then measures each machine against it.' },
+      { text: 'The AI assistant can read planning and try what-ifs for people the owner gives the new Planning domain, and keep a scenario for a planner to review. It never publishes a plan.' },
+      { text: 'A trial: planning writes only its own tables. Nothing in the order sheet, the production record or the inspections is changed by it.' },
+    ],
+  },
+  {
     id: '2026-10-20.3',
     date: '2026-10-20',
     title: 'Everyone moved to the newest version',

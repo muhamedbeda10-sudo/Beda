@@ -26,7 +26,8 @@
     "./mtc": "./src/mtc.ts",
     "./permissions": "./src/permissions.ts",
     "./reportStyles": "./src/reportStyles.ts",
-    "./reportShares": "./src/reportShares.ts"
+    "./reportShares": "./src/reportShares.ts",
+    "./planning": "./src/planning/index.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit -p tsconfig.json",
