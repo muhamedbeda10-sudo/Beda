@@ -26,11 +26,14 @@ export default defineConfig({
     // icons) is precached so the app opens instantly from the home screen;
     // the API is never cached — every read still goes to the server, and the
     // wizard's own draft store covers a dead network.
-    // A new version waits until the app swaps it in (src/main.tsx), which it
-    // does when nobody has unsaved work open — not the moment it is
-    // installed, which reloaded every window mid-entry on each deploy.
+    // A new version takes over as soon as it is installed (skipWaiting): a
+    // version that waited for the page to swap it in left every device still
+    // running an older page — one that never asks — on that older version
+    // until the app was closed outright. What waits instead is the reload
+    // into it (src/main.tsx, lib/appUpdate.ts): never while unsaved work is
+    // open, which used to be lost to it on each deploy.
     VitePWA({
-      registerType: 'prompt',
+      registerType: 'autoUpdate',
       includeAssets: ['brand/*.svg', 'icons/*.png'],
       manifest: {
         name: 'LinkMisr Quality Control',

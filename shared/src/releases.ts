@@ -28,6 +28,15 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-20.2',
+    date: '2026-10-20',
+    title: 'The app updates itself again on every device',
+    items: [
+      { text: 'Fixed: on a phone or tablet that had kept the app open since before yesterday’s update, the app stayed on its older version, so opening a shared report from the bell showed nothing. The app now takes each new version by itself again, still waiting while a sample or a form with something typed in it is open.' },
+      { text: 'A link to a page the app on the device does not have yet (from the bell or a notification) now fetches the newest version and opens the page there, instead of going back to the start.' },
+    ],
+  },
+  {
     id: '2026-10-20.1',
     date: '2026-10-20',
     title: 'Share a saved report with people and roles',
