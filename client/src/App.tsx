@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
+import { NEWER_VERSION_WAIT_MS, lookForNewerVersion } from '@/lib/unknownRoute'
 import { Brand } from '@/components/brand/Brand'
 import { InspectionsPage } from '@/pages/InspectionsPage'
 import { WizardPage } from '@/pages/WizardPage'
@@ -142,6 +144,38 @@ function Splash() {
   )
 }
 
+/**
+ * An address this version does not know (lib/unknownRoute.ts): the newest version is asked for first — a link from
+ * the bell or a push may name a page it added — and the page reloads into it when it takes over (main.tsx); with
+ * none, or after waiting long enough, home.
+ */
+function UnknownAddress() {
+  const [home, setHome] = useState(false)
+  useEffect(() => {
+    let gone = false
+    let timer: number | undefined
+    void (async () => {
+      const registration = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration().catch(() => undefined) : undefined
+      const found = await lookForNewerVersion(registration)
+      if (gone) return
+      if (found === 'none') setHome(true)
+      else timer = window.setTimeout(() => setHome(true), NEWER_VERSION_WAIT_MS)
+    })()
+    return () => {
+      gone = true
+      window.clearTimeout(timer)
+    }
+  }, [])
+  if (home) return <Navigate to="/" replace />
+  return (
+    <div className="grid min-h-[50vh] place-items-center">
+      <p className="flex items-center gap-2 text-sm text-muted">
+        <Loader2 className="h-4 w-4 animate-spin" /> Opening…
+      </p>
+    </div>
+  )
+}
+
 export default function App() {
   const { ready, profile } = useAuth()
 
@@ -189,7 +223,7 @@ export default function App() {
         {/* §20 — the assistant's settings live in its popup (the gear): this address opens them there, large. */}
         <Route path="/admin/ai" element={<OnlyAiOwner><AiAddress /></OnlyAiOwner>} />
         <Route path="/audit" element={<Navigate to="/admin/audit" replace />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<UnknownAddress />} />
       </Routes>
     </AppShell>
   )
