@@ -29,13 +29,17 @@ export const NAV: NavItem[] = [
   { to: '/', label: 'Inspections', icon: ClipboardCheck, end: true, needs: 'view-inspections' },
   { to: '/history', label: 'History', icon: History, needs: 'view-history' },
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
-  // §25 — planning, a trial: its parts are icons inside the tab.
-  { to: '/planning', label: 'Planning', icon: ChartGantt, needs: 'view-planning' },
   // The material registers; uploading a mill test certificate into them is set in the AI settings (ai_access.mtc).
   { to: '/mtc', label: 'MTC', icon: FileCheck2, needs: 'view-mtc' },
   // The saved reports shared with the person: there once one is, gone once none is.
   { to: '/reports', label: 'Reports', icon: FileChartColumn, sharedReports: true },
 ]
+
+/**
+ * §25 — Planning, a trial: a pill of its own beside the tabs (and its own entry in the menu), marked Trial, so it
+ * reads as the module on trial it is rather than one of the work's tabs. Its parts are icons inside it.
+ */
+export const PLANNING_NAV: NavItem = { to: '/planning', label: 'Planning', icon: ChartGantt, needs: 'view-planning' }
 
 /**
  * The tools an inspector opens from the board (its Coil search and New PDI

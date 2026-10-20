@@ -103,6 +103,8 @@ export async function overview(db: Db, config: Config, planner: Planner, now = n
     `SELECT count(DISTINCT ai.machine_key(work_center_code))::int AS n FROM inspection_sessions WHERE status = 'Open' AND deleted_at IS NULL`,
   )
   const gaps = await dataGaps(db, config, now, result)
+  const excludedByReason: OverviewResponse['excludedByReason'] = {}
+  for (const x of result.excluded) excludedByReason[x.reason] = (excludedByReason[x.reason] ?? 0) + 1
   return {
     now: result.now,
     auto: result.summary,
@@ -121,6 +123,7 @@ export async function overview(db: Db, config: Config, planner: Planner, now = n
     machinesTotal: base.machines.filter((m) => m.known).length,
     freshness: gaps.freshness,
     gaps: gaps.gaps.filter((g) => g.severity !== 'low').length,
+    excludedByReason,
   }
 }
 

@@ -46,6 +46,18 @@ export function inDays(wall: number | null, now: number): string {
 
 export const processName = (p: PlanningProcess | null | undefined) => (p ? PROCESS_NAMES[p] : 'Not in the register')
 
+// ---- The factory filter, shared by the map, the schedule and the load (one remembered choice) -----------------
+
+/** What stands for the machines with no factory set in a picker's value and in the remembered choice: never a name. */
+export const NO_FACTORY = '—'
+export const factoryName = (f: string) => (f === '' ? 'No factory set' : f)
+/** A factory as a picker's value. */
+export const factoryKey = (f: string) => (f === '' ? NO_FACTORY : f)
+/** The factory a picker's value names. */
+export const factoryOf = (key: string) => (key === NO_FACTORY ? '' : key)
+/** The remembered choice when it is one of `factories`, else null (every factory). */
+export const chosenFactory = (key: string, factories: readonly string[]): string | null => (key !== '' && factories.includes(factoryOf(key)) ? factoryOf(key) : null)
+
 // ---- States, one colour each ---------------------------------------------------------------
 
 export type OpState = 'running' | 'late' | 'material' | 'hypothetical' | 'unplaced' | 'planned'

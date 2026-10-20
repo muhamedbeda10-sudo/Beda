@@ -1,17 +1,18 @@
 // ============================================================================
 // §25 — Late lines: the lines a plan finishes after their due day, the most
 // late first, with their customer and machine, and the lines it could not
-// place at all; filtered by customer or machine, taken to Excel.
+// place at all. Every column sorts and filters from its header; the rows are
+// taken to Excel as filtered.
 // ============================================================================
 
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { AlarmClock, Download, Search } from 'lucide-react'
-import { Button, EmptyState, Input } from '@/components/ui'
+import { AlarmClock, Download } from 'lucide-react'
+import { Button, EmptyState } from '@/components/ui'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
-import { formatWall } from '@qc/shared/planning'
+import { formatWall, type PlanOperation } from '@qc/shared/planning'
 import { usePlan } from '@/services/planning'
-import { ErrorNote, Loading, PlanPicker, SectionCard, usePreferredPlanId } from './common'
+import { DataGrid, ErrorNote, Loading, PartFrame, PlanPicker, SearchBox, useGrid, usePreferredPlanId, type GridColumn } from './common'
 import { FLAG_NAME, dayLabel, qtyLabel, tonnes, wallLabel } from './format'
 
 export function LateSection() {
@@ -21,6 +22,7 @@ export function LateSection() {
   const { data, error, isLoading, refetch } = usePlan(planId)
   const [q, setQ] = useState('')
   const machines = useMemo(() => new Map((data?.machines ?? []).map((m) => [m.key, m])), [data])
+  const machineName = (o: PlanOperation) => machines.get(o.machineKey)?.name ?? o.machineKey
   const needle = q.trim().toLowerCase()
   const rows = useMemo(
     () =>
@@ -30,19 +32,125 @@ export function LateSection() {
         .sort((a, b) => (b.start === null ? 1e9 : b.lateDays) - (a.start === null ? 1e9 : a.lateDays)),
     [data, needle, machines],
   )
+  const columns = useMemo<GridColumn<PlanOperation>[]>(
+    () => [
+      {
+        key: 'order',
+        label: 'Order',
+        value: (o) => o.orderNumber,
+        cell: (o) => <span className="font-semibold">{o.orderNumber}</span>,
+      },
+      {
+        key: 'item',
+        label: 'Item',
+        value: (o) => o.item,
+        noValues: true,
+        cell: (o) => (
+          <span className="block max-w-[260px] truncate" title={o.item}>
+            {o.item}
+          </span>
+        ),
+      },
+      {
+        key: 'line',
+        label: 'Order ID',
+        value: (o) => o.lineKey,
+        noValues: true,
+        cell: (o) => <span className="text-muted">{o.lineKey}</span>,
+      },
+      {
+        key: 'customer',
+        label: 'Customer',
+        value: (o) => o.customer,
+        cell: (o) => o.customer || '—',
+      },
+      {
+        key: 'machine',
+        label: 'Machine',
+        value: machineName,
+        cell: machineName,
+      },
+      {
+        key: 'due',
+        label: 'Due',
+        value: (o) => dayLabel(o.dueDate),
+        sortValue: (o) => o.dueDate,
+        cell: (o) => dayLabel(o.dueDate),
+        className: 'whitespace-nowrap',
+      },
+      {
+        key: 'finish',
+        label: 'Finishes',
+        value: (o) => (o.end === null ? 'Not placed' : dayLabel(formatWall(o.end).slice(0, 10))),
+        sortValue: (o) => o.end,
+        cell: (o) => (o.end === null ? <span className="font-semibold text-danger-700 dark:text-danger-400">Not placed</span> : wallLabel(o.end)),
+        className: 'whitespace-nowrap',
+      },
+      {
+        key: 'late',
+        label: 'Days late',
+        numeric: true,
+        right: true,
+        value: (o) => (o.start === null ? '' : String(o.lateDays)),
+        sortValue: (o) => (o.start === null ? null : o.lateDays),
+        cell: (o) => (o.start === null ? '—' : <span className="font-semibold text-danger-700 dark:text-danger-400">{o.lateDays} d</span>),
+      },
+      {
+        key: 'qty',
+        label: 'Pieces left',
+        numeric: true,
+        right: true,
+        value: (o) => String(Math.round(o.qty)),
+        sortValue: (o) => o.qty,
+        cell: (o) => qtyLabel(o.qty),
+      },
+      {
+        key: 'weight',
+        label: 'Weight',
+        numeric: true,
+        right: true,
+        value: (o) => (o.weightKg === null ? '' : String(Math.round(o.weightKg))),
+        sortValue: (o) => o.weightKg,
+        cell: (o) => tonnes(o.weightKg),
+      },
+      {
+        key: 'why',
+        label: 'Why',
+        value: (o) => o.flags.map((f) => FLAG_NAME[f]).join('; '),
+        noValues: true,
+        cell: (o) => (
+          <span className="block max-w-[280px] truncate text-xs text-muted" title={o.flags.map((f) => FLAG_NAME[f]).join('; ')}>
+            {o.flags.map((f) => FLAG_NAME[f]).join('; ')}
+          </span>
+        ),
+      },
+    ],
+    [machines],
+  )
+  const view = useGrid(rows, columns)
   const exportIt = () =>
     downloadWorkbook('Late lines.xlsx', [
       {
         name: 'Late lines',
         header: ['Order ID', 'Order', 'Item', 'Customer', 'Machine', 'Due', 'Finishes', 'Days late', 'Pieces left', 'Weight kg', 'Why'],
-        rows: rows.map((o) => [o.lineKey, o.orderNumber, o.item, o.customer, machines.get(o.machineKey)?.name ?? o.machineKey, o.dueDate, o.end === null ? 'Not placed' : formatWall(o.end), o.lateDays, o.qty, o.weightKg, o.flags.map((f) => FLAG_NAME[f]).join('; ')]),
+        rows: view.rows.map((o) => [
+          o.lineKey,
+          o.orderNumber,
+          o.item,
+          o.customer,
+          machineName(o),
+          o.dueDate,
+          o.end === null ? 'Not placed' : formatWall(o.end),
+          o.lateDays,
+          o.qty,
+          o.weightKg,
+          o.flags.map((f) => FLAG_NAME[f]).join('; '),
+        ]),
       },
     ])
   return (
-    <SectionCard
-      title="Late lines"
-      hint="The lines this plan finishes after their due day ends (08:00 the next morning), the latest first; and the lines it could not place."
-      actions={
+    <PartFrame
+      toolbar={
         <>
           <PlanPicker
             value={planId}
@@ -52,58 +160,38 @@ export function LateSection() {
               setParams(next, { replace: true })
             }}
           />
-          <Button className="min-h-[44px]" onClick={exportIt} disabled={rows.length === 0}>
+          <SearchBox value={q} onChange={setQ} placeholder="Customer, order, item, machine" label="Find a customer, order, item or machine" />
+          <span className="hidden text-13 text-muted lg:inline">Finishing after the due day ends (08:00 the next morning), the latest first; and the lines the plan could not place.</span>
+          <span className="flex-1" />
+          <Button className="min-h-[40px]" onClick={exportIt} disabled={view.rows.length === 0}>
             <Download className="h-4 w-4" /> Excel
           </Button>
         </>
       }
     >
-      <label className="relative mb-3 block max-w-sm">
-        <span className="sr-only">Find a customer, order, item or machine</span>
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden />
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Customer, order, item, machine" className="min-h-[44px] pl-9" />
-      </label>
-      {isLoading && <Loading />}
-      {error && <ErrorNote error={error} retry={() => void refetch()} />}
-      {data && rows.length === 0 && <EmptyState icon={<AlarmClock className="h-10 w-10" />} title="No late line" hint={needle ? 'None matches the search.' : 'Every line of this plan finishes by its due day.'} />}
-      {rows.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead className="text-left text-xs text-muted">
-              <tr className="border-b border-slate-200 dark:border-slate-700">
-                <th scope="col" className="py-2 pr-3 font-semibold">Line</th>
-                <th scope="col" className="py-2 pr-3 font-semibold">Customer</th>
-                <th scope="col" className="py-2 pr-3 font-semibold">Machine</th>
-                <th scope="col" className="py-2 pr-3 font-semibold">Due</th>
-                <th scope="col" className="py-2 pr-3 font-semibold">Finishes</th>
-                <th scope="col" className="py-2 pr-3 font-semibold">Late</th>
-                <th scope="col" className="py-2 font-semibold">Left</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {rows.slice(0, 500).map((o) => (
-                <tr key={o.lineId} className="align-top">
-                  <td className="py-2 pr-3">
-                    <span className="block font-semibold">{o.orderNumber}</span>
-                    <span className="block max-w-[260px] truncate text-xs text-muted">
-                      {o.item} · {o.lineKey}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-3">{o.customer || '—'}</td>
-                  <td className="py-2 pr-3">{machines.get(o.machineKey)?.name ?? o.machineKey}</td>
-                  <td className="whitespace-nowrap py-2 pr-3">{dayLabel(o.dueDate)}</td>
-                  <td className="whitespace-nowrap py-2 pr-3">{o.end === null ? <span className="font-semibold text-danger-700 dark:text-danger-400">Not placed</span> : wallLabel(o.end)}</td>
-                  <td className="whitespace-nowrap py-2 pr-3 font-semibold tabular-nums text-danger-700 dark:text-danger-400">{o.start === null ? '—' : `${o.lateDays} d`}</td>
-                  <td className="whitespace-nowrap py-2 tabular-nums">
-                    {qtyLabel(o.qty)} pcs{o.weightKg ? `, ${tonnes(o.weightKg)}` : ''}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {rows.length > 500 && <p className="mt-2 text-xs text-muted">The first 500 of {rows.length}; Excel has them all.</p>}
+      {isLoading ? (
+        <Loading />
+      ) : error || !data ? (
+        <div className="p-4">
+          <ErrorNote error={error} retry={() => void refetch()} />
         </div>
+      ) : (
+        <DataGrid
+          view={view}
+          columns={columns}
+          rowKey={(o) => o.lineId}
+          total={rows.length}
+          noun="late lines"
+          caption="The late lines of the plan"
+          empty={
+            <EmptyState
+              icon={<AlarmClock className="h-10 w-10" />}
+              title="No late line"
+              hint={needle || view.active > 0 ? 'None matches the search or the filters.' : 'Every line of this plan finishes by its due day.'}
+            />
+          }
+        />
       )}
-    </SectionCard>
+    </PartFrame>
   )
 }

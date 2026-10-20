@@ -170,6 +170,25 @@ describe('§25 the plan', () => {
     expect(runPlan(inputs({ lines: [line({ lineKey: 'hold', erpStatus: 'Hold' })], settings: { includeHold: true } })).operations).toHaveLength(1)
   })
 
+  it('leaves out a line whose due day is older than the settings allow, never the line running now, and nothing when the setting is off', () => {
+    const lines = [
+      line({ lineKey: 'old', dueDate: '2026-07-01' }),
+      line({ lineKey: 'edge', dueDate: '2026-09-24' }),
+      line({ lineKey: 'recent', dueDate: '2026-10-01' }),
+      line({ lineKey: 'nodue', dueDate: null }),
+      line({ lineKey: 'running', dueDate: '2026-01-01', runningSince: at(`${SAT} 07:00`) }),
+      line({ lineKey: 'rushed', dueDate: '2026-01-01' }),
+    ]
+    const events = [{ id: 'r', type: 'priority' as const, lineKey: 'rushed' }]
+    const r = runPlan(inputs({ lines, events, settings: { ignoreDueOlderThanDays: 30 } }))
+    expect(r.operations.map((o) => o.lineKey).sort()).toEqual(['nodue', 'recent', 'running', 'rushed'])
+    expect(r.excluded.map((e) => [e.lineKey, e.reason])).toEqual([
+      ['old', 'stale'],
+      ['edge', 'stale'],
+    ])
+    expect(runPlan(inputs({ lines, events })).excluded).toEqual([])
+  })
+
   it('makes an item’s later process wait for its earlier one in the same order, overlapping as set', () => {
     const forming = line({ orderNumber: 'A', itemCode: 'BEAM', machineKey: '1', erpHours: 10 })
     const welding = line({ orderNumber: 'A', itemCode: 'BEAM', machineKey: '2', erpHours: 2 })

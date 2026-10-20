@@ -82,6 +82,7 @@ export const settingsSchema = z
     horizonDays: z.number().int().min(7).max(1095),
     optimise: z.enum(OPTIMISE_EFFORTS as [string, ...string[]]),
     objective: z.enum(PLAN_OBJECTIVES as [string, ...string[]]),
+    ignoreDueOlderThanDays: z.number().int().min(0).max(3650),
   })
   .partial()
   .strict()

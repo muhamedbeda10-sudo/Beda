@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
 import { ADMIN_PLUS } from '@qc/shared/permissions'
 import { AccountMenu, AvatarEditor, ThemeSwitch } from '@/components/layout/AccountMenu'
 import { NotificationSettings } from '@/components/layout/NotificationSettings'
-import { ADMIN_NAV, NAV, TOOLS_NAV, visibleNav, type NavItem } from '@/components/layout/navItems'
+import { ADMIN_NAV, NAV, PLANNING_NAV, TOOLS_NAV, visibleNav, type NavItem } from '@/components/layout/navItems'
 import { AiAssistantProvider, useAi } from '@/components/ai/AiAssistantProvider'
 import { AiButton } from '@/components/ai/AiButton'
 import { AiPanelHost } from '@/components/ai/AiPanelHost'
@@ -176,12 +176,14 @@ function Shell({ children }: { children: ReactNode }) {
   // while a saved report is shared with the person (asked with the bell's poll, and again when its alert arrives).
   const shared = useSharedReportsStatus(!!profile).data?.any ?? false
   const nav = visibleNav(NAV, permissions, false, shared)
+  // §25 — Planning (a trial) is a pill of its own beside the tabs, for whoever may open it.
+  const planning = visibleNav([PLANNING_NAV], permissions, false)[0] ?? null
   const tools = visibleNav(TOOLS_NAV, permissions, false)
   // The tabs keep their names while those fit beside the brand and the icons; then tighter padding; then icons alone, the
   // names in tooltips. Measured on this bar, for these tabs and this window (navFit), not guessed from how many there are.
   const barRef = useRef<HTMLDivElement>(null)
-  const navRef = useRef<HTMLElement>(null)
-  const fit = useNavFit(barRef, navRef, nav.map((n) => n.to).join(' '))
+  const navRef = useRef<HTMLDivElement>(null)
+  const fit = useNavFit(barRef, navRef, [...nav, ...(planning ? [planning] : [])].map((n) => n.to).join(' '))
   // A finger gets no tooltip, so on a touch screen the tabs never stand as bare icons: where only icons would fit (a
   // landscape tablet, six tabs), the bar keeps the menu button, as on a portrait tablet, and the menu names them. The
   // tabs stay laid out, out of sight and out of the row, so navFit goes on measuring them and the names come back as
@@ -209,39 +211,51 @@ function Shell({ children }: { children: ReactNode }) {
             </button>
           </div>
 
-          {/* The inspector's tabs, centred — desktop only */}
-          <nav
-            ref={navRef}
-            aria-hidden={menuAtLg || undefined}
-            className={cn(
-              'hidden shrink-0 items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 lg:flex dark:bg-slate-800/70 dark:ring-slate-700/70',
-              menuAtLg && 'pointer-events-none invisible absolute',
+          {/* The inspector's tabs, centred, with Planning's pill beside them — desktop only */}
+          <div ref={navRef} aria-hidden={menuAtLg || undefined} className={cn('hidden shrink-0 items-center gap-2 lg:flex', menuAtLg && 'pointer-events-none invisible absolute')}>
+            <nav className="flex shrink-0 items-center gap-1 rounded-2xl bg-slate-100/80 p-1 ring-1 ring-slate-200/70 dark:bg-slate-800/70 dark:ring-slate-700/70" aria-label="Main">
+              {nav.map((n) => {
+                const active = isActive(n)
+                return (
+                  <NavLink
+                    key={n.to}
+                    to={n.to}
+                    end={n.end}
+                    data-tip={fit === 'icons' ? n.label : undefined}
+                    className={cn(
+                      // On one line: a name that wrapped would hide that the tabs no longer fit.
+                      'group relative flex min-h-[40px] items-center gap-2 whitespace-nowrap rounded-xl text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
+                      fit === 'full' ? 'px-4' : 'px-3',
+                      active
+                        ? 'bg-white text-brand-800 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:text-white dark:ring-slate-700'
+                        : 'text-slate-600 hover:text-brand-700 dark:text-slate-300 dark:hover:text-white',
+                    )}
+                  >
+                    <n.icon className={cn('h-4 w-4 transition-transform duration-200 group-hover:-translate-y-0.5', active && 'text-accent-500')} />
+                    <span className={cn(fit === 'icons' && 'sr-only')}>{n.label}</span>
+                  </NavLink>
+                )
+              })}
+            </nav>
+            {planning && (
+              <NavLink
+                to={planning.to}
+                data-tip={fit === 'icons' ? `${planning.label} (trial)` : undefined}
+                aria-label={fit === 'icons' ? `${planning.label}, a trial` : undefined}
+                className={cn(
+                  'group relative flex min-h-[40px] shrink-0 items-center gap-2 whitespace-nowrap rounded-2xl py-1 pr-1.5 text-sm font-semibold ring-1 transition-[background-color,color,box-shadow] duration-200',
+                  fit === 'full' ? 'pl-4' : 'pl-3',
+                  isActive(planning)
+                    ? 'bg-white text-brand-800 shadow-card ring-brand-200 dark:bg-slate-900 dark:text-white dark:ring-brand-500/40'
+                    : 'bg-slate-100/80 text-slate-600 ring-slate-200/70 hover:text-brand-700 dark:bg-slate-800/70 dark:text-slate-300 dark:ring-slate-700/70 dark:hover:text-white',
+                )}
+              >
+                <planning.icon className={cn('h-4 w-4 transition-transform duration-200 group-hover:-translate-y-0.5', isActive(planning) && 'text-accent-500')} />
+                <span className={cn(fit === 'icons' && 'sr-only')}>{planning.label}</span>
+                <TrialBadge />
+              </NavLink>
             )}
-            aria-label="Main"
-          >
-            {nav.map((n) => {
-              const active = isActive(n)
-              return (
-                <NavLink
-                  key={n.to}
-                  to={n.to}
-                  end={n.end}
-                  data-tip={fit === 'icons' ? n.label : undefined}
-                  className={cn(
-                    // On one line: a name that wrapped would hide that the tabs no longer fit.
-                    'group relative flex min-h-[40px] items-center gap-2 whitespace-nowrap rounded-xl text-sm font-semibold transition-[background-color,color,box-shadow] duration-200',
-                    fit === 'full' ? 'px-4' : 'px-3',
-                    active
-                      ? 'bg-white text-brand-800 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:text-white dark:ring-slate-700'
-                      : 'text-slate-600 hover:text-brand-700 dark:text-slate-300 dark:hover:text-white',
-                  )}
-                >
-                  <n.icon className={cn('h-4 w-4 transition-transform duration-200 group-hover:-translate-y-0.5', active && 'text-accent-500')} />
-                  <span className={cn(fit === 'icons' && 'sr-only')}>{n.label}</span>
-                </NavLink>
-              )
-            })}
-          </nav>
+          </div>
 
           {/* Right — chat, notices, the bell, administration, account (the theme is in the account panel / the menu; the assistant floats in the bottom corner) */}
           {/* Below 360px (the smallest phones) the four buttons sit side by side with no gap, so the last keeps its margin. */}
@@ -287,6 +301,7 @@ function Shell({ children }: { children: ReactNode }) {
               {nav.map((n) => (
                 <DrawerLink key={n.to} item={n} active={isActive(n)} onClick={() => setMenuOpen(false)} />
               ))}
+              {planning && <DrawerLink item={planning} active={isActive(planning)} onClick={() => setMenuOpen(false)} badge={<TrialBadge />} />}
               {tools.length > 0 && (
                 <>
                   <p className="px-4 pb-1 pt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-muted">Tools</p>
@@ -352,8 +367,20 @@ function Shell({ children }: { children: ReactNode }) {
   )
 }
 
-/** `hint`: the entry's line under its name (administration), as the gear's menu shows it. */
-function DrawerLink({ item, active, onClick, hint = false }: { item: NavItem; active: boolean; onClick: () => void; hint?: boolean }) {
+/** §25 — the mark on Planning: a module on trial, reading the record and changing none of it. */
+function TrialBadge() {
+  return (
+    <span
+      className="rounded-lg bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-800 dark:bg-violet-500/25 dark:text-violet-100"
+      data-tip="A trial: it reads the order sheet, the production record and the inspections, and changes none of them"
+    >
+      Trial
+    </span>
+  )
+}
+
+/** `hint`: the entry's line under its name (administration), as the gear's menu shows it; `badge`: a mark after the name. */
+function DrawerLink({ item, active, onClick, hint = false, badge }: { item: NavItem; active: boolean; onClick: () => void; hint?: boolean; badge?: ReactNode }) {
   const sub = hint ? item.hint : undefined
   return (
     <NavLink
@@ -375,6 +402,7 @@ function DrawerLink({ item, active, onClick, hint = false }: { item: NavItem; ac
       ) : (
         <span className="flex-1">{item.label}</span>
       )}
+      {badge}
     </NavLink>
   )
 }

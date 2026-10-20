@@ -4,12 +4,13 @@
 // (the quality record says it is running, on which order, since when, and
 // who opened it), planned to be on a line by the plan, or idle — with its
 // last day on the production record and what the plan has it make next.
-// Planners with Planning setup place the machines (Edit the map); until then
-// they wait in the tray under it. On a phone the list reads better: it is
-// the default there.
+// The map is drawn to fit the window; the machines not yet placed wait in a
+// tray under it. Planners with Planning setup place the machines (Edit the
+// map). The list view is a table with Excel's filters: the default on a
+// phone, where the map is too small to read.
 // ============================================================================
 
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { Factory, LayoutGrid, List, Map as MapIcon, Minus, MoveDiagonal2, Pencil, Plus, Save, Wand2, X } from 'lucide-react'
 import { LAYOUT_COLUMNS, LAYOUT_ROWS, type MachineLayout, type MachineNow } from '@qc/shared/planning'
@@ -20,16 +21,26 @@ import { PHONE, useMediaQuery } from '@/lib/media'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { useAuth } from '@/store/AuthContext'
 import { useFloor, useSaveLayout } from '@/services/planning'
-import { ErrorNote, Loading, SectionCard } from './common'
-import { dayLabel, hoursLabel, processName, wallLabel } from './format'
+import { DataGrid, ErrorNote, Loading, PartFooter, PartFrame, useGrid, type GridColumn } from './common'
+import { NO_FACTORY, dayLabel, factoryName, hoursLabel, processName, wallLabel } from './format'
 
-const NO_FACTORY = '—'
-const factoryName = (f: string) => (f === '' ? 'No factory set' : f)
 
 const STATUS: Record<MachineNow['status'], { name: string; stripe: string; dot: string }> = {
-  running: { name: 'Running (inspection open)', stripe: 'border-l-emerald-600 dark:border-l-emerald-500', dot: 'bg-emerald-600 dark:bg-emerald-500' },
-  planned: { name: 'Planned to run now', stripe: 'border-l-brand-600 dark:border-l-brand-400', dot: 'bg-brand-600 dark:bg-brand-400' },
-  idle: { name: 'Nothing on it now', stripe: 'border-l-slate-300 dark:border-l-slate-600', dot: 'bg-slate-400 dark:bg-slate-500' },
+  running: {
+    name: 'Running (inspection open)',
+    stripe: 'border-l-emerald-600 dark:border-l-emerald-500',
+    dot: 'bg-emerald-600 dark:bg-emerald-500',
+  },
+  planned: {
+    name: 'Planned to run now',
+    stripe: 'border-l-brand-600 dark:border-l-brand-400',
+    dot: 'bg-brand-600 dark:bg-brand-400',
+  },
+  idle: {
+    name: 'Nothing on it now',
+    stripe: 'border-l-slate-300 dark:border-l-slate-600',
+    dot: 'bg-slate-400 dark:bg-slate-500',
+  },
 }
 
 /** Where a machine goes when it is placed without being moved: the first free spot, row by row. */
@@ -46,7 +57,12 @@ export function firstFreeSpot(taken: readonly MachineLayout[], w = 3, h = 2): Ma
 const clampLayout = (l: MachineLayout): MachineLayout => {
   const w = Math.max(1, Math.min(LAYOUT_COLUMNS, l.w))
   const h = Math.max(1, Math.min(LAYOUT_ROWS, l.h))
-  return { w, h, x: Math.max(0, Math.min(LAYOUT_COLUMNS - w, l.x)), y: Math.max(0, Math.min(LAYOUT_ROWS - h, l.y)) }
+  return {
+    w,
+    h,
+    x: Math.max(0, Math.min(LAYOUT_COLUMNS - w, l.x)),
+    y: Math.max(0, Math.min(LAYOUT_ROWS - h, l.y)),
+  }
 }
 
 function nowLine(m: MachineNow): string {
@@ -54,6 +70,28 @@ function nowLine(m: MachineNow): string {
   if (s) return `${s.orderNumber} · ${s.item}`
   if (m.current) return `${m.current.orderNumber} · ${m.current.item}`
   return 'Nothing planned now'
+}
+
+/**
+ * The size a box has, followed as it changes; for the map to fit the room it is given. A callback ref, so the box is
+ * followed from the render that mounts it (the map is not there while the floor loads, nor in the list view).
+ */
+function useSize(): { ref: (el: HTMLDivElement | null) => void; width: number; height: number } {
+  const [node, setNode] = useState<HTMLDivElement | null>(null)
+  const [size, setSize] = useState({ width: 0, height: 0 })
+  useLayoutEffect(() => {
+    if (!node) return
+    const measure = () => setSize({ width: node.clientWidth, height: node.clientHeight })
+    measure()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    ro?.observe(node)
+    window.addEventListener('resize', measure)
+    return () => {
+      ro?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [node])
+  return { ref: setNode, width: size.width, height: size.height }
 }
 
 function MachineTile({ m, layout, selected, editing, onOpen }: { m: MachineNow; layout: MachineLayout; selected: boolean; editing: boolean; onOpen: () => void }) {
@@ -65,7 +103,12 @@ function MachineTile({ m, layout, selected, editing, onOpen }: { m: MachineNow; 
       onClick={onOpen}
       aria-pressed={editing ? selected : undefined}
       aria-label={`${m.name}: ${st.name}. ${nowLine(m)}${m.lateLines > 0 ? `. ${m.lateLines} late lines` : ''}`}
-      style={{ left: `${(layout.x / LAYOUT_COLUMNS) * 100}%`, top: `${(layout.y / LAYOUT_ROWS) * 100}%`, width: `${(layout.w / LAYOUT_COLUMNS) * 100}%`, height: `${(layout.h / LAYOUT_ROWS) * 100}%` }}
+      style={{
+        left: `${(layout.x / LAYOUT_COLUMNS) * 100}%`,
+        top: `${(layout.y / LAYOUT_ROWS) * 100}%`,
+        width: `${(layout.w / LAYOUT_COLUMNS) * 100}%`,
+        height: `${(layout.h / LAYOUT_ROWS) * 100}%`,
+      }}
       className={cn(
         'absolute flex flex-col items-stretch justify-start overflow-hidden rounded-lg border border-l-4 border-slate-300 bg-white p-1.5 text-left shadow-sm transition-shadow hover:shadow-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-slate-600 dark:bg-slate-900',
         st.stripe,
@@ -77,9 +120,21 @@ function MachineTile({ m, layout, selected, editing, onOpen }: { m: MachineNow; 
         <span className="truncate text-[11px] font-bold leading-tight text-slate-900 dark:text-white">{m.name}</span>
       </span>
       <span className="mt-0.5 block truncate text-[10px] leading-tight text-slate-700 dark:text-slate-300">{nowLine(m)}</span>
-      {s && <span className="block truncate text-[10px] leading-tight text-muted">since {formatTime(s.startedAt)}, {s.inspector}</span>}
-      {layout.h >= 3 && m.next && <span className="mt-1 block truncate text-[10px] leading-tight text-slate-700 dark:text-slate-300">Next: {m.next.orderNumber} · {m.next.item}</span>}
-      {layout.h >= 3 && <span className="block truncate text-[10px] leading-tight text-muted">Queue: {m.queueLines} lines, {hoursLabel(m.queueHours)}</span>}
+      {s && (
+        <span className="block truncate text-[10px] leading-tight text-muted">
+          since {formatTime(s.startedAt)}, {s.inspector}
+        </span>
+      )}
+      {layout.h >= 3 && m.next && (
+        <span className="mt-1 block truncate text-[10px] leading-tight text-slate-700 dark:text-slate-300">
+          Next: {m.next.orderNumber} · {m.next.item}
+        </span>
+      )}
+      {layout.h >= 3 && (
+        <span className="block truncate text-[10px] leading-tight text-muted">
+          Queue: {m.queueLines} lines, {hoursLabel(m.queueHours)}
+        </span>
+      )}
       {m.lateLines > 0 && <span className="absolute bottom-1 right-1 rounded bg-rose-600 px-1 text-[10px] font-bold text-white dark:bg-rose-400 dark:text-rose-950">{m.lateLines} late</span>}
     </button>
   )
@@ -89,7 +144,13 @@ function MachineDetail({ m, onClose }: { m: MachineNow | null; onClose: () => vo
   if (!m) return null
   const st = STATUS[m.status]
   return (
-    <Drawer open onClose={onClose} title={m.name} subtitle={`${factoryName(m.factory)} · ${processName(m.process)} · ${hoursLabel(m.hoursPerDay)} a day (${m.capacitySource === 'set' ? 'set' : m.capacitySource === 'inferred' ? 'learnt' : 'default'})`} icon={<Factory className="h-5 w-5" />}>
+    <Drawer
+      open
+      onClose={onClose}
+      title={m.name}
+      subtitle={`${factoryName(m.factory)} · ${processName(m.process)} · ${hoursLabel(m.hoursPerDay)} a day (${m.capacitySource === 'set' ? 'set' : m.capacitySource === 'inferred' ? 'learnt' : 'default'})`}
+      icon={<Factory className="h-5 w-5" />}
+    >
       <div className="space-y-5 text-sm">
         <p className="flex items-center gap-2 font-semibold">
           <span aria-hidden className={cn('h-2.5 w-2.5 rounded-full', st.dot)} /> {st.name}
@@ -169,66 +230,122 @@ function MachineDetail({ m, onClose }: { m: MachineNow | null; onClose: () => vo
 }
 
 function FloorList({ machines, onOpen }: { machines: MachineNow[]; onOpen: (m: MachineNow) => void }) {
+  const columns = useMemo<GridColumn<MachineNow>[]>(
+    () => [
+      {
+        key: 'machine',
+        label: 'Machine',
+        value: (m) => m.name,
+        cell: (m) => (
+          <button type="button" onClick={() => onOpen(m)} className="flex items-center gap-2 text-left font-semibold text-brand-700 underline-offset-4 hover:underline dark:text-brand-300">
+            <span aria-hidden className={cn('h-2.5 w-2.5 shrink-0 rounded-full', STATUS[m.status].dot)} />
+            {m.name}
+          </button>
+        ),
+      },
+      {
+        key: 'process',
+        label: 'Process',
+        value: (m) => processName(m.process),
+        cell: (m) => processName(m.process),
+      },
+      {
+        key: 'status',
+        label: 'State',
+        value: (m) => STATUS[m.status].name,
+        cell: (m) => STATUS[m.status].name,
+      },
+      {
+        key: 'now',
+        label: 'Now',
+        value: (m) => (m.sessions[0] ? nowLine(m) : m.current ? `Planned: ${nowLine(m)}` : 'Idle'),
+        noValues: true,
+        cell: (m) =>
+          m.sessions[0] ? (
+            <>
+              <span className="block">{nowLine(m)}</span>
+              <span className="text-xs text-muted">
+                since {formatTime(m.sessions[0].startedAt)}, {m.sessions[0].inspector}
+              </span>
+            </>
+          ) : (
+            <span className="text-muted">{m.current ? `Planned: ${nowLine(m)}` : 'Idle'}</span>
+          ),
+      },
+      {
+        key: 'inspector',
+        label: 'Inspector',
+        value: (m) => m.sessions[0]?.inspector ?? '',
+        cell: (m) => m.sessions[0]?.inspector ?? '—',
+      },
+      {
+        key: 'last',
+        label: 'Last production day',
+        value: (m) => (m.lastRecord ? dayLabel(m.lastRecord.workDay) : ''),
+        sortValue: (m) => m.lastRecord?.workDay ?? null,
+        className: 'whitespace-nowrap',
+        cell: (m) =>
+          m.lastRecord ? (
+            <>
+              <span className="block">{dayLabel(m.lastRecord.workDay)}</span>
+              <span className="text-xs text-muted">
+                {m.lastRecord.producedQty.toLocaleString()} pcs
+                {m.lastRecord.shift ? `, ${m.lastRecord.shift}` : ''}
+              </span>
+            </>
+          ) : (
+            <span className="text-muted">—</span>
+          ),
+      },
+      {
+        key: 'next',
+        label: 'Next in the plan',
+        value: (m) => (m.next ? `${m.next.orderNumber} · ${m.next.item}` : ''),
+        noValues: true,
+        cell: (m) => (m.next ? `${m.next.orderNumber} · ${m.next.item}` : <span className="text-muted">—</span>),
+      },
+      {
+        key: 'queue',
+        label: 'Queue lines',
+        numeric: true,
+        right: true,
+        value: (m) => String(m.queueLines),
+        sortValue: (m) => m.queueLines,
+        cell: (m) => m.queueLines.toLocaleString(),
+      },
+      {
+        key: 'hours',
+        label: 'Queue hours',
+        numeric: true,
+        right: true,
+        value: (m) => String(Math.round(m.queueHours)),
+        sortValue: (m) => m.queueHours,
+        cell: (m) => hoursLabel(m.queueHours),
+      },
+      {
+        key: 'late',
+        label: 'Late',
+        numeric: true,
+        right: true,
+        value: (m) => String(m.lateLines),
+        sortValue: (m) => m.lateLines,
+        cell: (m) => (m.lateLines > 0 ? <Badge tone="red">{m.lateLines} late</Badge> : '—'),
+      },
+    ],
+    [onOpen],
+  )
+  const view = useGrid(machines, columns)
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] text-sm">
-        <thead className="text-left text-xs text-muted">
-          <tr className="border-b border-slate-200 dark:border-slate-700">
-            <th scope="col" className="py-2 pr-3 font-semibold">Machine</th>
-            <th scope="col" className="py-2 pr-3 font-semibold">Now</th>
-            <th scope="col" className="py-2 pr-3 font-semibold">Last production day</th>
-            <th scope="col" className="py-2 pr-3 font-semibold">Next in the plan</th>
-            <th scope="col" className="py-2 font-semibold">Queue</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-          {machines.map((m) => (
-            <tr key={m.key} className="align-top">
-              <td className="py-2 pr-3">
-                <button type="button" onClick={() => onOpen(m)} className="flex items-center gap-2 text-left font-semibold text-brand-700 underline-offset-4 hover:underline dark:text-brand-300">
-                  <span aria-hidden className={cn('h-2.5 w-2.5 shrink-0 rounded-full', STATUS[m.status].dot)} />
-                  {m.name}
-                </button>
-                <span className="block pl-[18px] text-xs text-muted">{processName(m.process)}</span>
-              </td>
-              <td className="py-2 pr-3">
-                {m.sessions[0] ? (
-                  <>
-                    <span className="block">{nowLine(m)}</span>
-                    <span className="text-xs text-muted">
-                      since {formatTime(m.sessions[0].startedAt)}, {m.sessions[0].inspector}
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-muted">{m.current ? `Planned: ${nowLine(m)}` : 'Idle'}</span>
-                )}
-              </td>
-              <td className="py-2 pr-3">
-                {m.lastRecord ? (
-                  <>
-                    <span className="block">{dayLabel(m.lastRecord.workDay)}</span>
-                    <span className="text-xs text-muted">
-                      {m.lastRecord.producedQty.toLocaleString()} pcs{m.lastRecord.shift ? `, ${m.lastRecord.shift}` : ''}
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-muted">—</span>
-                )}
-              </td>
-              <td className="py-2 pr-3">{m.next ? `${m.next.orderNumber} · ${m.next.item}` : <span className="text-muted">—</span>}</td>
-              <td className="whitespace-nowrap py-2 tabular-nums">
-                {m.queueLines} lines, {hoursLabel(m.queueHours)}
-                {m.lateLines > 0 && (
-                  <Badge tone="red" className="ml-1.5">
-                    {m.lateLines} late
-                  </Badge>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      view={view}
+      columns={columns}
+      rowKey={(m) => m.key}
+      total={machines.length}
+      noun="machines"
+      caption="The machines of the factory, now"
+      empty={<EmptyState icon={<Factory className="h-10 w-10" />} title="No machine" hint="None matches the filters." />}
+      footer={<span>What each machine is on now, by the open inspections; its last production day; what the plan has it make next. Read again every minute.</span>}
+    />
   )
 }
 
@@ -244,6 +361,7 @@ export function FloorSection() {
   const [draft, setDraft] = useState<Map<string, MachineLayout>>(new Map())
   const [selected, setSelected] = useState<string | null>(null)
   const save = useSaveLayout()
+  const size = useSize()
 
   const factories = data?.factories ?? []
   const current = factories.includes(factory === NO_FACTORY ? '' : factory) ? (factory === NO_FACTORY ? '' : factory) : (factories[0] ?? '')
@@ -253,8 +371,14 @@ export function FloorSection() {
   }, [machines, editing])
 
   if (isLoading) return <Loading what="Reading the floor" />
-  if (error || !data) return <ErrorNote error={error} retry={() => void refetch()} />
-  if (data.machines.length === 0) return <EmptyState icon={<Factory className="h-10 w-10" />} title="No machines in the register" hint="Add them under Configuration → Machines, with their factory and process." />
+  if (error || !data)
+    return (
+      <div className="p-4">
+        <ErrorNote error={error} retry={() => void refetch()} />
+      </div>
+    )
+  if (data.machines.length === 0)
+    return <EmptyState icon={<Factory className="h-10 w-10" />} title="No machines in the register" hint="Add them under Configuration → Machines, with their factory and process." />
 
   const placed = machines.filter((m) => draft.has(m.key))
   const unplaced = machines.filter((m) => !draft.has(m.key))
@@ -289,7 +413,12 @@ export function FloorSection() {
     if (!editing || selected !== key) return
     const at = draft.get(key)
     if (!at) return
-    const step: Record<string, Partial<MachineLayout>> = { ArrowLeft: { x: at.x - 1 }, ArrowRight: { x: at.x + 1 }, ArrowUp: { y: at.y - 1 }, ArrowDown: { y: at.y + 1 } }
+    const step: Record<string, Partial<MachineLayout>> = {
+      ArrowLeft: { x: at.x - 1 },
+      ArrowRight: { x: at.x + 1 },
+      ArrowUp: { y: at.y - 1 },
+      ArrowDown: { y: at.y + 1 },
+    }
     const change = step[e.key]
     if (change) {
       e.preventDefault()
@@ -297,76 +426,105 @@ export function FloorSection() {
     }
   }
   const finish = async () => {
-    await save.mutateAsync({ positions: placed.map((m) => ({ machineKey: m.key, ...draft.get(m.key)! })) })
+    await save.mutateAsync({
+      positions: placed.map((m) => ({
+        machineKey: m.key,
+        ...draft.get(m.key)!,
+      })),
+    })
     setEditing(false)
     setSelected(null)
   }
   const sel = selected ? draft.get(selected) : undefined
+  // The map, as large as the room allows while keeping the grid's shape (at least a readable minimum, then it scrolls).
+  const ratio = LAYOUT_COLUMNS / LAYOUT_ROWS
+  const room = {
+    w: Math.max(0, size.width - 24),
+    h: Math.max(0, size.height - 24),
+  }
+  const mapW = Math.max(640, Math.min(room.w, room.h * ratio))
+  const mapH = mapW / ratio
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {factories.length > 1 && (
-          <Segmented label="Factory" value={current === '' ? NO_FACTORY : current} options={factories.map((f) => ({ value: f === '' ? NO_FACTORY : f, label: factoryName(f) }))} onChange={(v) => !editing && setFactory(v)} />
-        )}
-        <Segmented
-          label="View"
-          value={view}
-          onChange={setView}
-          options={[
-            { value: 'map', label: 'Map', icon: <MapIcon className="h-4 w-4" /> },
-            { value: 'list', label: 'List', icon: <List className="h-4 w-4" /> },
-          ]}
-        />
-        <p className="text-13 text-muted">
-          {running} of {machines.length} running now · queues from {data.planName}
-        </p>
-        <span className="flex-1" />
-        {mayEdit && view === 'map' && !editing && (
-          <Button className="min-h-[44px]" onClick={() => setEditing(true)}>
-            <Pencil className="h-4 w-4" /> Edit the map
-          </Button>
-        )}
-      </div>
-
+    <PartFrame
+      toolbar={
+        <>
+          {factories.length > 1 && (
+            <Segmented
+              label="Factory"
+              value={current === '' ? NO_FACTORY : current}
+              options={factories.map((f) => ({
+                value: f === '' ? NO_FACTORY : f,
+                label: factoryName(f),
+              }))}
+              onChange={(v) => !editing && setFactory(v)}
+            />
+          )}
+          <Segmented
+            label="View"
+            value={view}
+            onChange={setView}
+            options={[
+              {
+                value: 'map',
+                label: 'Map',
+                icon: <MapIcon className="h-4 w-4" />,
+              },
+              {
+                value: 'list',
+                label: 'List',
+                icon: <List className="h-4 w-4" />,
+              },
+            ]}
+          />
+          <p className="text-13 text-muted">
+            {running} of {machines.length} running now · queues from {data.planName}
+          </p>
+          <span className="flex-1" />
+          {mayEdit && view === 'map' && !editing && (
+            <Button className="min-h-[40px]" onClick={() => setEditing(true)}>
+              <Pencil className="h-4 w-4" /> Edit the map
+            </Button>
+          )}
+          {editing && (
+            <>
+              {unplaced.length > 0 && (
+                <Button className="min-h-[40px]" onClick={placeAll}>
+                  <Wand2 className="h-4 w-4" /> Place the rest
+                </Button>
+              )}
+              <Button
+                className="min-h-[40px]"
+                onClick={() => {
+                  setEditing(false)
+                  setSelected(null)
+                }}
+              >
+                <X className="h-4 w-4" /> Cancel
+              </Button>
+              <Button variant="primary" className="min-h-[40px]" disabled={save.isPending} onClick={() => void finish()}>
+                <Save className="h-4 w-4" /> Save the map
+              </Button>
+            </>
+          )}
+        </>
+      }
+    >
       {view === 'list' ? (
-        <SectionCard title={factoryName(current)} hint="What each machine is on now, by the open inspections; its last production day; what the plan has it make next.">
-          <FloorList machines={machines} onOpen={(m) => setOpen(m.key)} />
-        </SectionCard>
+        <FloorList machines={machines} onOpen={(m) => setOpen(m.key)} />
       ) : (
-        <SectionCard
-          title={factoryName(current)}
-          hint={editing ? 'Choose a machine, then move it with the arrows below it (or the arrow keys; Shift with an arrow resizes it). Save when it looks like the floor.' : 'Each machine where it stands on the floor. Choose one for what it is on, its last production day and its queue.'}
-          actions={
-            editing ? (
-              <>
-                {unplaced.length > 0 && (
-                  <Button className="min-h-[44px]" onClick={placeAll}>
-                    <Wand2 className="h-4 w-4" /> Place the rest
-                  </Button>
-                )}
-                <Button
-                  className="min-h-[44px]"
-                  onClick={() => {
-                    setEditing(false)
-                    setSelected(null)
-                  }}
-                >
-                  <X className="h-4 w-4" /> Cancel
-                </Button>
-                <Button variant="primary" className="min-h-[44px]" disabled={save.isPending} onClick={() => void finish()}>
-                  <Save className="h-4 w-4" /> Save the map
-                </Button>
-              </>
-            ) : undefined
-          }
-        >
-          {save.error && <ErrorNote error={save.error} />}
-          <div className="overflow-x-auto">
+        <>
+          {save.error && (
+            <div className="p-3">
+              <ErrorNote error={save.error} />
+            </div>
+          )}
+          <div ref={size.ref} className="grid-scroll min-h-0 flex-1 p-3">
             <div
-              className="relative min-w-[720px] rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950"
+              className="relative mx-auto rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950"
               style={{
-                aspectRatio: `${LAYOUT_COLUMNS} / ${LAYOUT_ROWS}`,
+                width: mapW,
+                height: mapH,
                 backgroundImage: 'linear-gradient(to right, rgb(148 163 184 / 0.18) 1px, transparent 1px), linear-gradient(to bottom, rgb(148 163 184 / 0.18) 1px, transparent 1px)',
                 backgroundSize: `${100 / LAYOUT_COLUMNS}% ${100 / LAYOUT_ROWS}%`,
               }}
@@ -386,7 +544,7 @@ export function FloorSection() {
             </div>
           </div>
           {editing && sel && selected && (
-            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-brand-50 p-3 text-sm dark:bg-brand-500/10" aria-live="polite">
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-slate-200 bg-brand-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-brand-500/10" aria-live="polite">
               <span className="font-semibold">{machines.find((m) => m.key === selected)?.name}</span>
               <span className="text-muted">
                 at {sel.x + 1},{sel.y + 1}, {sel.w}×{sel.h} cells
@@ -400,24 +558,24 @@ export function FloorSection() {
                   ['Down', { y: sel.y + 1 }],
                 ] as const
               ).map(([label, change]) => (
-                <Button key={label} className="min-h-[40px] px-3" onClick={() => move(selected, change)}>
+                <Button key={label} className="min-h-[36px] px-2.5" onClick={() => move(selected, change)}>
                   {label}
                 </Button>
               ))}
-              <Button className="min-h-[40px] px-3" aria-label="Narrower" onClick={() => move(selected, { w: sel.w - 1 })}>
+              <Button className="min-h-[36px] px-2.5" aria-label="Narrower" onClick={() => move(selected, { w: sel.w - 1 })}>
                 <Minus className="h-4 w-4" /> W
               </Button>
-              <Button className="min-h-[40px] px-3" aria-label="Wider" onClick={() => move(selected, { w: sel.w + 1 })}>
+              <Button className="min-h-[36px] px-2.5" aria-label="Wider" onClick={() => move(selected, { w: sel.w + 1 })}>
                 <Plus className="h-4 w-4" /> W
               </Button>
-              <Button className="min-h-[40px] px-3" aria-label="Shorter" onClick={() => move(selected, { h: sel.h - 1 })}>
+              <Button className="min-h-[36px] px-2.5" aria-label="Shorter" onClick={() => move(selected, { h: sel.h - 1 })}>
                 <Minus className="h-4 w-4" /> H
               </Button>
-              <Button className="min-h-[40px] px-3" aria-label="Taller" onClick={() => move(selected, { h: sel.h + 1 })}>
+              <Button className="min-h-[36px] px-2.5" aria-label="Taller" onClick={() => move(selected, { h: sel.h + 1 })}>
                 <Plus className="h-4 w-4" /> H
               </Button>
               <Button
-                className="min-h-[40px] px-3"
+                className="min-h-[36px] px-2.5"
                 onClick={() => {
                   setDraft((d) => {
                     const next = new Map(d)
@@ -432,17 +590,17 @@ export function FloorSection() {
             </div>
           )}
           {unplaced.length > 0 && (
-            <div className="mt-4">
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-bold">
+            <div className="flex max-h-24 shrink-0 items-start gap-2 overflow-auto border-t border-slate-200 px-3 py-2 dark:border-slate-700">
+              <h3 className="flex shrink-0 items-center gap-1.5 pt-2 text-xs font-bold">
                 <LayoutGrid className="h-4 w-4" aria-hidden /> Not on the map yet ({unplaced.length})
               </h3>
-              <ul className="flex flex-wrap gap-2">
+              <ul className="flex flex-wrap gap-1.5">
                 {unplaced.map((m) => (
                   <li key={m.key}>
                     <button
                       type="button"
                       onClick={() => (editing ? place(m.key) : setOpen(m.key))}
-                      className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-white px-3 text-13 font-semibold ring-1 ring-inset ring-slate-200 hover:ring-brand-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:bg-slate-900 dark:ring-slate-700"
+                      className="inline-flex min-h-[36px] items-center gap-2 rounded-lg bg-white px-2.5 text-13 font-semibold ring-1 ring-inset ring-slate-200 hover:ring-brand-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:bg-slate-900 dark:ring-slate-700"
                     >
                       <span aria-hidden className={cn('h-2 w-2 rounded-full', STATUS[m.status].dot)} />
                       {m.name}
@@ -453,19 +611,24 @@ export function FloorSection() {
               </ul>
             </div>
           )}
-          <ul className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted" aria-label="What the colours mean">
-            {(Object.keys(STATUS) as MachineNow['status'][]).map((s) => (
-              <li key={s} className="inline-flex items-center gap-1.5">
-                <span aria-hidden className={cn('h-2.5 w-2.5 rounded-full', STATUS[s].dot)} />
-                {STATUS[s].name}
-              </li>
-            ))}
-            <li>Read again every minute; machines with an inspection open count as running.</li>
-          </ul>
-        </SectionCard>
+          <PartFooter>
+            <ul className="flex flex-wrap gap-x-4 gap-y-1" aria-label="What the colours mean">
+              {(Object.keys(STATUS) as MachineNow['status'][]).map((s) => (
+                <li key={s} className="inline-flex items-center gap-1.5">
+                  <span aria-hidden className={cn('h-2.5 w-2.5 rounded-full', STATUS[s].dot)} />
+                  {STATUS[s].name}
+                </li>
+              ))}
+            </ul>
+            <span>
+              {editing
+                ? 'Choose a machine, then move it with the arrows (or the arrow keys; Shift with an arrow resizes it). Save when it looks like the floor.'
+                : 'Each machine where it stands on the floor. Choose one for what it is on, its last production day and its queue. Read again every minute.'}
+            </span>
+          </PartFooter>
+        </>
       )}
       <MachineDetail m={openMachine} onClose={() => setOpen(null)} />
-    </div>
+    </PartFrame>
   )
 }
-
