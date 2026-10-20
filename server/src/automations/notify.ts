@@ -46,6 +46,7 @@ const FALLBACK_TITLES: Record<UserNotificationKind, string> = {
   'task-done': 'A task was marked done',
   'task-reopened': 'A task was sent back to you',
   'ai-answer': 'Your answer is ready',
+  'report-shared': 'A report was shared with you',
 }
 
 const KINDS = new Set(Object.keys(FALLBACK_TITLES))

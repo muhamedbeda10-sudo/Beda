@@ -100,7 +100,7 @@ const WORDING: Record<UserNotificationCategory, { icon: ReactNode; loadFailed: s
     icon: <FileChartColumn className="h-10 w-10" />,
     loadFailed: 'The reports could not be loaded',
     empty: 'No reports',
-    emptyHint: 'Scheduled reports sent to you show here.',
+    emptyHint: 'Scheduled reports sent to you, and reports shared with you, show here.',
     markFailed: 'Could not mark the reports as read.',
   },
 }

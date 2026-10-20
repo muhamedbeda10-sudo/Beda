@@ -737,7 +737,8 @@ export interface AiTaskProposalResponse {
  * An answer's pieces in order. An automation proposal (§21), a notice card (§23) and a task card are cards the person
  * applies or discards; a playbook card says what the assistant saved, with Remove; an Excel card is a file to download;
  * a saved-table card says what table the assistant made, changed, computed again or removed; a diagram card is a
- * diagram it drew (aiDiagram.ts); a report card opens a report it built or changed.
+ * diagram it drew (aiDiagram.ts); a report card opens a report it built or changed; a share card says whom one of the
+ * person's reports is shared with.
  */
 export type AiPart =
   | { type: 'text'; text: string }
@@ -750,6 +751,7 @@ export type AiPart =
   | AiSavedTablePart
   | AiDiagramPart
   | AiReportPart
+  | AiReportSharePart
 
 /** A report the assistant built or changed (save_report), as a card in its answer, with Open report. */
 export interface AiReportPart {
@@ -765,6 +767,24 @@ export interface AiReportPart {
   sectionCount: number
   /** As this card left it, changed since, or deleted. */
   state: 'current' | 'changed' | 'removed'
+}
+
+/**
+ * Whom one of the person's reports is shared with, as the assistant's share_report left it: whom the call added and
+ * removed, and whom it is shared with now, as a card with Open sharing (the report's Share panel).
+ */
+export interface AiReportSharePart {
+  type: 'report-share'
+  cardId: string
+  reportId: string
+  title: string
+  /** Whom this call added and removed, as they were named then. */
+  added: string[]
+  removed: string[]
+  /** Whom the report is shared with now. */
+  sharedWith: string[]
+  /** The report is still there, or was deleted since. */
+  state: 'current' | 'removed'
 }
 
 /** How an answer ended. */
@@ -873,6 +893,8 @@ export type AiStreamEvent =
   | { type: 'diagram'; part: AiDiagramPart }
   /** A report the assistant built or changed. */
   | { type: 'report'; part: AiReportPart }
+  /** Whom a report is shared with, after the assistant shared or unshared it, or as it read it. */
+  | { type: 'report-share'; part: AiReportSharePart }
   /** A new conversation's title, as the assistant gave it: a few words on what it is about. */
   | { type: 'title'; conversation: AiConversation }
   | { type: 'done'; message: AiMessage; status: AiStatusResponse }
@@ -1165,6 +1187,8 @@ export interface AiReport extends AiReportSummary {
   inputs: AiReportInput[]
   /** The style its owner chose for it (reportStyles); absent: the company's default. */
   styleId?: string
+  /** For its maker alone: how many people and roles it is shared with (reportShares); absent for none. */
+  shareCount?: number
 }
 
 export interface AiReportsResponse {

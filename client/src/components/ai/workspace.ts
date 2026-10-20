@@ -14,6 +14,13 @@ export const AI_WORKSPACE_PATH = '/ai'
 export interface AiOpenReport {
   id: string
   known?: AiReportSummary
+  /** Open on its Share panel. */
+  share?: boolean
+}
+
+/** How a report is opened from an answer's card: on its Share panel (a share card), or as it opens. */
+export interface AiOpenReportOptions {
+  share?: boolean
 }
 
 /** Which list the page's side column shows. */
@@ -23,6 +30,8 @@ export type AiWorkspaceList = 'conversations' | 'reports'
 export interface AiWorkspaceState {
   known?: AiReportSummary
   list?: AiWorkspaceList
+  /** The report opens on its Share panel. */
+  share?: boolean
 }
 
 /** Whether an address is the workspace's: /ai and anything under it — not /admin/ai, the owner's settings. */

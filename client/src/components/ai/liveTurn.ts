@@ -122,6 +122,12 @@ export function applyEvent(t: LiveTurn, e: AiStreamEvent): LiveTurn {
       const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
       return { ...t, phase: 'streaming', progress: null, parts }
     }
+    case 'report-share': {
+      // Whom a report is shared with, where it came; the same card again (sent twice) takes its place.
+      const at = t.parts.findIndex((p) => p.type === 'report-share' && p.cardId === e.part.cardId)
+      const parts = at >= 0 ? t.parts.map((p, i) => (i === at ? e.part : p)) : [...t.parts, e.part]
+      return { ...t, phase: 'streaming', progress: null, parts }
+    }
     case 'diagram': {
       // A diagram, where it came; the same card again (sent twice) takes its place.
       const at = t.parts.findIndex((p) => p.type === 'diagram' && p.diagramId === e.part.diagramId)
@@ -208,7 +214,7 @@ export function parseStreamEvent(event: string, data: string): AiStreamEvent | n
   return value as AiStreamEvent
 }
 
-const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'automation', 'notice', 'task', 'playbook', 'excel', 'saved-table', 'diagram', 'report', 'title', 'done', 'error'])
+const KNOWN = new Set<string>(['start', 'text', 'progress', 'query_start', 'query_end', 'automation', 'notice', 'task', 'playbook', 'excel', 'saved-table', 'diagram', 'report', 'report-share', 'title', 'done', 'error'])
 
 /**
  * What a question is sent after (LiveTurn.after): the last message this device

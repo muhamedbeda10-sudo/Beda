@@ -21,6 +21,7 @@ import { answerText, latestAnswerKey, letGoOf, liveView, threadAnnouncement, thr
 import { noticeCardsWait } from './noticeProposal'
 import { taskCardsWait } from './taskProposal'
 import { AI_STARTER_QUESTIONS } from './suggestions'
+import type { AiOpenReportOptions } from './workspace'
 
 const NONE: AiMessage[] = []
 
@@ -35,7 +36,7 @@ export function AiThread({
   onExample: (question: string) => void
   /** A follow-up question tapped under the latest answer: into the box, not sent. */
   onSuggestion: (question: string) => void
-  onOpenReport: (reportId: string) => void
+  onOpenReport: (reportId: string, opts?: AiOpenReportOptions) => void
   /** The full page: a centred column of at most 1100 px. */
   wide?: boolean
 }) {

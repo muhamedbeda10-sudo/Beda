@@ -76,8 +76,15 @@ describe('the bell’s alerts', () => {
     expect(h).toContain('Mark all as read')
   })
 
+  it('lists a report shared with the person on the Reports tab, leading to it on the Reports page', () => {
+    const h = html([alert({ id: 'r2', kind: 'report-shared', title: 'Cara Creator shared a report with you: Weekly scrap', link: '/reports/r9' })], 'reports')
+    expect(h).toContain('href="/reports/r9"')
+    expect(h).toContain('Report shared with you')
+    expect(h).toContain('Weekly scrap')
+  })
+
   it('says so when no report was sent yet', () => {
-    expect(html([], 'reports')).toContain('Scheduled reports sent to you show here.')
+    expect(html([], 'reports')).toContain('Scheduled reports sent to you, and reports shared with you, show here.')
     expect(html([], 'alerts')).toContain('No alerts')
   })
 
