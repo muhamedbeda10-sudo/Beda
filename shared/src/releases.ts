@@ -28,6 +28,14 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-20.3',
+    date: '2026-10-20',
+    title: 'Everyone moved to the newest version',
+    items: [
+      { text: 'The app reloaded itself once on every phone, tablet and computer that had it open, so everyone now has the newest version — the Reports page and shared reports included. A sample that was being recorded was kept as its draft and is there to continue.' },
+    ],
+  },
+  {
     id: '2026-10-20.2',
     date: '2026-10-20',
     title: 'The app updates itself again on every device',

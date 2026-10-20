@@ -64,8 +64,9 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//, /^\/agent\//],
         cleanupOutdatedCaches: true,
         clientsClaim: true,
-        // §24 — push notifications: shown with the app closed, and opening the app where they point (public/push-sw.js).
-        importScripts: ['/push-sw.js'],
+        // §24 — push notifications: shown with the app closed, and opening the app where they point (public/push-sw.js);
+        // and a version that must reach every open window at once reloads them (public/reach-all-sw.js).
+        importScripts: ['/push-sw.js', '/reach-all-sw.js'],
       },
     }),
   ],
