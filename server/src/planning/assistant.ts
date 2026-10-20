@@ -154,7 +154,7 @@ async function simulate(ctx: PlanningToolContext, tu: ToolUse): Promise<ToolOutc
     }
   }
   const { result: base } = await workOut(ctx.db, ctx.config, baseEvents, baseSettings, now)
-  const { result } = await workOut(ctx.db, ctx.config, appendEvents(baseEvents, events.events), mergeSettings(baseSettings, settings.settings), now)
+  const { result } = await workOut(ctx.db, ctx.config, appendEvents(baseEvents, events.events), mergeSettings(baseSettings, settings.settings), now, base.order)
   const cmp = comparePlans(base, result, MAX_CHANGES)
   const at = (w: number | null) => (w === null ? null : formatWall(w))
   return answered(tu, {

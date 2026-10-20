@@ -14,6 +14,7 @@ import type {
   PlanEvent,
   PlanExclusion,
   PlanOperation,
+  PlanOptimisation,
   PlanSettings,
   PlanSummary,
   PlanningProcess,
@@ -72,6 +73,8 @@ export interface PlanDetail {
   excluded: PlanExclusion[]
   warnings: string[]
   machines: PlanMachineInfo[]
+  /** What the optimiser did, when the plan was worked out now (not kept with a published plan). */
+  optimisation?: PlanOptimisation
 }
 
 export interface PlansResponse {
@@ -175,6 +178,8 @@ export interface SaveLayoutRequest {
 export interface OverviewResponse {
   now: number
   auto: PlanSummary
+  /** What the optimiser did to the automatic plan. */
+  optimisation?: PlanOptimisation
   published: { plan: PlanHeader; summary: PlanSummary } | null
   byProcess: { process: PlanningProcess; lines: number; hours: number; late: number }[]
   lateByCustomer: { customer: string; late: number; lines: number; maxLateDays: number }[]

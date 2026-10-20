@@ -9,7 +9,7 @@ import { DatabaseZap } from 'lucide-react'
 import type { OverviewResponse, PlanSummary } from '@qc/shared/planning'
 import { cn, formatDateTime } from '@/lib/utils'
 import { useOverview } from '@/services/planning'
-import { ErrorNote, Figure, Loading, SectionCard } from './common'
+import { ErrorNote, Figure, Loading, OptimiserNote, SectionCard } from './common'
 import { dayLabel, loadCell, pctLabel, processName, tonnes, wallLabel } from './format'
 
 function Totals({ s, now }: { s: PlanSummary; now: number }) {
@@ -77,6 +77,9 @@ export function OverviewSection() {
     <div className="space-y-4">
       <SectionCard title="The automatic plan" hint="Every open order line placed on its machine from the data as it is now: the order sheet, the production record and the open inspections.">
         <Totals s={data.auto} now={data.now} />
+        <div className="mt-3">
+          <OptimiserNote o={data.optimisation} late={data.auto.late} />
+        </div>
         <p className="mt-3 text-13 text-muted">
           {data.machinesRunning} of {data.machinesTotal} machines have an inspection open now.{' '}
           <Link to="/planning/floor" className="font-semibold text-brand-700 underline-offset-4 hover:underline dark:text-brand-300">

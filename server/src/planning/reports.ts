@@ -106,6 +106,7 @@ export async function overview(db: Db, config: Config, planner: Planner, now = n
   return {
     now: result.now,
     auto: result.summary,
+    optimisation: result.optimisation,
     published: published && published.summary ? { plan: published, summary: published.summary } : null,
     byProcess: PLANNING_PROCESSES.filter((p) => byProcess.has(p)).map((p) => ({ process: p, ...byProcess.get(p)!, hours: Math.round(byProcess.get(p)!.hours) })),
     lateByCustomer: [...byCustomer.entries()]

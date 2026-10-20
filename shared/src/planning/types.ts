@@ -138,7 +138,17 @@ export interface PlanSettings {
   processRank: Record<PlanningProcess, number>
   /** The day after which nothing is placed: a machine with no capacity in it leaves its lines unplaced. */
   horizonDays: number
+  /** How hard the optimiser tries to better the priority order (optimise.ts): not at all, lightly, or in full. */
+  optimise: OptimiseEffort
+  /** What the optimiser makes smaller. */
+  objective: PlanObjective
 }
+
+export type OptimiseEffort = 'off' | 'light' | 'full'
+/** late-weight-days: days late × tonnes, then late lines; late-lines: late lines, then days late; late-days: days late, then late lines. */
+export type PlanObjective = 'late-weight-days' | 'late-lines' | 'late-days'
+export const PLAN_OBJECTIVES: readonly PlanObjective[] = ['late-weight-days', 'late-lines', 'late-days']
+export const OPTIMISE_EFFORTS: readonly OptimiseEffort[] = ['off', 'light', 'full']
 
 export const DEFAULT_PROCESS_RANK: Record<PlanningProcess, number> = { forming: 1, universal: 1, mast: 1, welding: 2, other: 2, paint: 3 }
 
@@ -156,6 +166,8 @@ export const DEFAULT_PLAN_SETTINGS: PlanSettings = {
   dependencies: { parent: true, sameItem: true, orderProcess: false },
   processRank: DEFAULT_PROCESS_RANK,
   horizonDays: 540,
+  optimise: 'light',
+  objective: 'late-weight-days',
 }
 
 // ---- Scenario events ----------------------------------------------------------------
@@ -278,4 +290,23 @@ export interface PlanResult {
   summary: PlanSummary
   /** Things the engine could not use, in plain words (an event naming a line it does not know…). */
   warnings: string[]
+  /** The line ids in the order the engine took them (the priority order, or the optimiser's). */
+  order?: string[]
+  /** When the optimiser ran: what the plain priority order gave, and what it did. */
+  optimisation?: PlanOptimisation
+}
+
+export interface PlanOptimisation {
+  objective: PlanObjective
+  effort: OptimiseEffort
+  /** The priority order's totals, before the optimiser. */
+  baseline: PlanSummary
+  /** The objective's figure (tonne-days late, late lines or days late) of the priority order, and of the plan. */
+  baselineScore: number
+  score: number
+  /** Plans worked out while searching. */
+  evaluations: number
+  /** Moves kept (a line may move more than once). */
+  moves: number
+  improved: boolean
 }

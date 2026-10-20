@@ -57,6 +57,8 @@ export interface PlanInputs {
   calendar: readonly CalendarException[]
   settings?: Partial<PlanSettings>
   events?: readonly PlanEvent[]
+  /** An order the lines are taken in (line id → rank, lower first), after the running and the rushed; lines not named come after every named one, in the sequence rule's order. */
+  priority?: ReadonlyMap<string, number>
 }
 
 /** The settings in force: the given ones over the defaults, nested ones merged. */
@@ -374,7 +376,7 @@ export function runPlan(inputs: PlanInputs): PlanResult {
     return {
       line,
       process: machine?.process ?? 'other',
-      key: [running ? 0 : 1, rushed.has(line.id) ? 0 : 1, keyDay, line.dueDate ?? FAR, norm(line.orderNumber), norm(line.lineKey)],
+      key: [running ? 0 : 1, rushed.has(line.id) ? 0 : 1, inputs.priority?.get(line.id) ?? Infinity, keyDay, line.dueDate ?? FAR, norm(line.orderNumber), norm(line.lineKey)],
       release: running ? now : release,
       preds: [],
       succs: [],
@@ -537,7 +539,8 @@ export function runPlan(inputs: PlanInputs): PlanResult {
     }
   }
   operations.sort((a, b) => a.machineKey.localeCompare(b.machineKey) || a.seq - b.seq)
-  return { now, operations, excluded, summary: summarise(operations, excluded.length), warnings: [...new Set(warnings)] }
+  const order = [...works].sort((a, b) => (before(a, b) ? -1 : before(b, a) ? 1 : 0)).map((w) => w.line.id)
+  return { now, operations, excluded, summary: summarise(operations, excluded.length), warnings: [...new Set(warnings)], order }
 }
 
 /** The line's raw material is in: received at least what it needs, or something received when the need is not known. */

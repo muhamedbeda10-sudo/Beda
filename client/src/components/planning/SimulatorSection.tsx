@@ -17,7 +17,7 @@ import { useAi } from '@/components/ai/AiAssistantProvider'
 import { cn, formatDateTime } from '@/lib/utils'
 import { useAuth } from '@/store/AuthContext'
 import { useCompare, useCreatePlan, usePlan, usePlanAction, usePlans, useUpdatePlan } from '@/services/planning'
-import { ErrorNote, Figure, Loading, PlanPicker, SectionCard } from './common'
+import { ErrorNote, Figure, Loading, OBJECTIVE_NAME, OptimiserNote, PlanPicker, SectionCard } from './common'
 import { EventForm, describeEvent } from './events'
 import { dayLabel, pctLabel, tonnes, wallLabel } from './format'
 
@@ -139,6 +139,22 @@ function ScenarioSettings({ detail, onSave, pending }: { detail: PlanDetail; onS
         <Select disabled={disabled} value={e.includeHold ? 'yes' : 'no'} onChange={(x) => set({ includeHold: x.target.value === 'yes' })} className="min-h-[44px]">
           <option value="no">Left out</option>
           <option value="yes">Planned too</option>
+        </Select>
+      </Field>
+      <Field label="Optimiser">
+        <Select disabled={disabled} value={e.optimise} onChange={(x) => set({ optimise: x.target.value as PlanSettings['optimise'] })} className="min-h-[44px]">
+          <option value="off">Off: the priority order</option>
+          <option value="light">Light</option>
+          <option value="full">Full</option>
+        </Select>
+      </Field>
+      <Field label="It makes smaller">
+        <Select disabled={disabled} value={e.objective} onChange={(x) => set({ objective: x.target.value as PlanSettings['objective'] })} className="min-h-[44px]">
+          {(Object.keys(OBJECTIVE_NAME) as PlanSettings['objective'][]).map((k) => (
+            <option key={k} value={k}>
+              {OBJECTIVE_NAME[k]}
+            </option>
+          ))}
         </Select>
       </Field>
     </div>
@@ -302,6 +318,9 @@ function ScenarioView({ id, addType, onGone }: { id: string; addType: PlanEventT
             ))}
           </ol>
         )}
+        <div className="mt-3">
+          <OptimiserNote o={detail.optimisation} late={detail.plan.summary?.late ?? 0} />
+        </div>
         {detail.warnings.length > 0 && (
           <ul className="mt-2 list-disc space-y-1 pl-5 text-13 text-warning-800 dark:text-warning-400">
             {detail.warnings.map((w) => (
