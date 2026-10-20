@@ -97,7 +97,7 @@ describe('§20 — what the owner can give a person', () => {
     expect(isAiEffort('xhigh')).toBe(true)
     expect(isAiEffort('extreme')).toBe(false)
     // The order is fixed: a set of domains is stored as bits in it, so a new domain goes last.
-    expect([...AI_DOMAIN_IDS]).toEqual(['inspection', 'orders', 'materials', 'audit', 'production'])
+    expect([...AI_DOMAIN_IDS]).toEqual(['inspection', 'orders', 'materials', 'audit', 'production', 'planning'])
     expect(isAiDomain('chat')).toBe(false)
   })
 })

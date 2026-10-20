@@ -16,6 +16,7 @@ import { DIAGRAM_TOOLS } from '../src/ai/diagram'
 import { REPORT_TOOLS } from '../src/ai/reportTools'
 import { EXCEL_TOOLS } from '../src/ai/excel'
 import { SAVED_TABLE_TOOLS } from '../src/ai/savedTableTools'
+import { PLANNING_TOOLS } from '../src/planning/assistant'
 import type { QueryPreview } from '../src/ai/runQuery'
 import { SUGGESTIONS_BLOCK } from '../src/ai/suggestions'
 
@@ -381,7 +382,7 @@ describe('§20 a professional answer in a conversation', () => {
     expect(system.indexOf('# Headline figures')).toBeLessThan(system.indexOf('# Follow-up questions'))
     // The owner asks here, who may create automations (§21): the automations' tools follow run_sql; then the
     // notices' (§23), the owner being an administrator who may have them written; then the tasks'.
-    expect(p.tools).toEqual([RUN_SQL_TOOL, TOOL_SEARCH_TOOL, ...[...AUTOMATION_TOOLS, ...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS, ...TASK_TOOLS, ...PLAYBOOK_TOOLS, ...DIAGRAM_TOOLS, ...REPORT_TOOLS, ...EXCEL_TOOLS, ...SAVED_TABLE_TOOLS].map(deferred)])
+    expect(p.tools).toEqual([RUN_SQL_TOOL, TOOL_SEARCH_TOOL, ...[...AUTOMATION_TOOLS, ...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS, ...TASK_TOOLS, ...PLAYBOOK_TOOLS, ...DIAGRAM_TOOLS, ...REPORT_TOOLS, ...EXCEL_TOOLS, ...PLANNING_TOOLS, ...SAVED_TABLE_TOOLS].map(deferred)])
   })
 
   it('draws the charts that fit their results, live and in the history, and tells the model about the rest', async () => {

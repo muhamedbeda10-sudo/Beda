@@ -22,6 +22,7 @@ import { SavedTableRefresher } from './ai/savedTables'
 import { ensureStarters } from './ai/starters'
 import { PushDispatcher } from './push/dispatcher'
 import { ExcelFileSweeper } from './ai/excel'
+import { PlanningRefresher } from './planning/refresher'
 
 function readVersion(): string {
   try {
@@ -127,6 +128,11 @@ excelFiles?.start()
 // every night), on every instance: a lease keeps each computation to one.
 const savedTables = config.NODE_ENV !== 'test' ? new SavedTableRefresher({ db, readers: aiReader, timeZone: config.FACTORY_TIMEZONE }) : null
 savedTables?.start()
+
+// §25 — planning: what the record says learnt every six hours, the automatic plan kept every half hour (for the
+// assistant), on every instance; a lock keeps each learning to one. Never in tests, which drive it themselves.
+const planning = config.NODE_ENV !== 'test' ? new PlanningRefresher({ db, config }) : null
+planning?.start()
 
 // §20 — what the assistant starts with (Order tracking, Week tracking, the standard times), made once as its
 // owner's when there is one; a failure leaves everything else running, and the next start tries again.

@@ -219,6 +219,11 @@ export const AI_DOMAINS = [
   { id: 'audit', name: 'Audit log and accounts', note: 'Who changed what and when; the list of accounts and roles.' },
   // Last on purpose: a set of domains is stored as bits in this order (the reader roles are named by them), so a new domain is appended.
   { id: 'production', name: 'Production record', note: "The ERP's production task record: what each machine made per day, by whom and in which shift, with hours, weights and lengths." },
+  {
+    id: 'planning',
+    name: 'Planning (trial)',
+    note: 'The planning module: the automatic plan, the published plan and the scenarios with their lines on each machine, the calendar, each machine’s hours and pace, and the items’ routes. With it the assistant also runs what-if scenarios and, for someone who may make plans, saves them for a planner to review.',
+  },
 ] as const
 
 export type AiDomain = (typeof AI_DOMAINS)[number]['id']

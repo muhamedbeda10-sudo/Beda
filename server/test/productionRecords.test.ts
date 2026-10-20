@@ -300,14 +300,14 @@ describe('§24 what the assistant reads', () => {
 
 describe('§24 the production domain', () => {
   it('is its own role, reading its view and the machines and nothing else, through the runner and by its grants', async () => {
-    const only = combinationRole(database, '00001')
+    const only = combinationRole(database, '000010')
     expect(app.aiReader.roleFor(['production'])).toBe(only)
     const { rows } = await app.db.query<{ name: string; can: boolean }>(
       `SELECT viewname AS name, has_table_privilege($1, 'ai.' || viewname, 'SELECT') AS can FROM pg_views WHERE schemaname = 'ai' ORDER BY 1`,
       [only],
     )
     expect(rows.filter((r) => r.can).map((r) => r.name)).toEqual(['machines', 'production_task_records'])
-    expect(rows).toHaveLength(26)
+    expect(rows).toHaveLength(32)
     expect(await read(`SELECT count(*) FROM ai.production_task_records`, ['production'])).toEqual([[1]])
     expect(await read(`SELECT count(*) FROM ai.machines`, ['production'])).toEqual([[2]])
     for (const view of ['inspection_sessions', 'order_lines', 'coils', 'audit_log', 'users']) {

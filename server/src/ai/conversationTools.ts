@@ -17,6 +17,7 @@ import { PROPOSE_AUTOMATION_TOOL_NAME, automationToolHandlers } from '../automat
 import { noticeToolHandlers } from '../noticeAssistant/tools'
 import { playbookToolHandlers } from '../playbook/assistant'
 import { taskToolHandlers } from '../tasks/assistant'
+import { planningToolHandlers } from '../planning/assistant'
 import type { ToolHandler } from './assistant'
 import { diagramToolHandlers } from './diagram'
 import { reportToolHandlers } from './reportTools'
@@ -62,5 +63,8 @@ export function turnToolHandlers(c: TurnToolsContext): Record<string, ToolHandle
     // Reports it builds: test-run as the person's domains are now; a report runs as whoever opens it reads. Sharing one
     // with people and roles is the same change as its Share panel makes, at the person's own word.
     ...reportToolHandlers({ ...base, readers: c.readers, userName: c.userName }),
+    // §25 — planning's what-ifs, for a person given the planning domain (read again at each call); keeping one also needs
+    // the app permission to make plans.
+    ...planningToolHandlers({ db: c.db, config: c.config, userId: c.userId, userName: c.userName, conversationId: c.conversation.id }),
   }
 }

@@ -3,7 +3,7 @@
 // against (aiViewsPerf.test.ts, and by hand: scripts in this folder). One
 // session in five per order, five samples a session, a dozen dimensions a
 // sample; defects, coils, PT, notes, stages, paint, production tasks, PDI,
-// photos and the audit log in the proportions the floor writes them. `sessions` scales
+// photos, the audit log and planning's plans in the proportions the floor writes them. `sessions` scales
 // it all: 30 000 is a few years of a busy factory.
 //
 // Written straight into the tables through their triggers, so the samples'
@@ -83,5 +83,30 @@ DROP TABLE perf_photo_owner;
 INSERT INTO audit_log (user_id, user_name, action, entity, entity_id, field, old_value, new_value, at)
 SELECT u.id, u.name, 'update', 'InspectionSample', g::text, 'qty', '1', '2', timestamptz '2024-01-01' + (random() * 1000 || ' days')::interval
   FROM generate_series(1, ${sessions * 4}) g, (SELECT id, name FROM users WHERE username = 'perf1') u;
+-- §25 planning: the automatic plan, the published one, one superseded and three scenarios, each with every order line placed;
+-- what was learnt of each machine, its paces by item and family, the items' routes; set capacities, paces and the map.
+INSERT INTO planning_plans (kind, name, status, created_by_name, published_at, events, computed_at, lines, placed, late)
+SELECT k, n, st, 'perf', CASE WHEN st IN ('published', 'superseded') THEN now() - (g || ' days')::interval END,
+       CASE WHEN k = 'scenario' THEN '[{"id":"d","type":"machine-down","machineKey":"3","from":"2026-10-24 08:00","to":"2026-10-26 08:00"}]'::jsonb ELSE '[]' END,
+       now(), ${orders}, ${orders}, ${Math.round(orders / 10)}
+  FROM (VALUES (1, 'auto', 'Automatic plan', 'draft'), (2, 'plan', 'Week plan', 'published'), (9, 'plan', 'Last week', 'superseded'),
+               (3, 'scenario', 'Press down', 'draft'), (4, 'scenario', 'Friday worked', 'draft'), (5, 'scenario', 'Rush order', 'archived')) AS v(g, k, n, st);
+INSERT INTO planning_operations (plan_id, line_id, order_line_id, line_key, order_number, item_code, item, customer, machine_key, seq, qty, hours,
+                                 duration_source, start_at, end_at, due_date, late_days, depends_on, weight_kg, flags)
+SELECT p.id, o.id::text, o.id, o.line_key, o.order_number, o.item_code, o.item, o.customer, o.work_center_code, row_number() OVER (PARTITION BY p.id, o.work_center_code ORDER BY o.id)::int,
+       o.required_qty, 4 + abs(hashtext(o.id::text)) % 20, CASE WHEN abs(hashtext(o.id::text)) % 4 = 0 THEN 'assumed' ELSE 'erp' END,
+       now() + (abs(hashtext(o.id::text)) % 2000 || ' hours')::interval, now() + (abs(hashtext(o.id::text)) % 2000 + 24 || ' hours')::interval,
+       (now() + (abs(hashtext(o.line_key)) % 90 || ' days')::interval)::date, abs(hashtext(o.id::text)) % 7, '{}', 500, '{}'
+  FROM planning_plans p CROSS JOIN production_orders o;
+INSERT INTO planning_learnt_machines (machine_key, hours_per_day, hours_from, days_observed, efficiency, efficiency_samples, works_fridays, fridays_worked, last_work_day, shifts, learnt_at)
+SELECT g::text, 16, 'actual', 100, 0.9, 400, false, 0, current_date, ARRAY['صباحي', 'مسائي'], now() FROM generate_series(1, 30) g;
+INSERT INTO planning_learnt_rates (machine_key, item_code, item_family, pieces_per_hour, samples, learnt_at)
+SELECT ((g % 30) + 1)::text, 'ic' || g, '', 40, 5, now() FROM generate_series(1, 300) g
+UNION ALL SELECT g::text, '', '', 30, 50, now() FROM generate_series(1, 30) g;
+INSERT INTO planning_learnt_routes (item_code, item, processes, steps, orders_seen, confidence_pct, learnt_at)
+SELECT 'ic' || g, 'Beam ' || g, ARRAY['forming', 'welding', 'paint'], '[{"process":"forming","machines":[{"machineKey":"1","lines":4}]}]', 4, 75, now() FROM generate_series(1, 300) g;
+INSERT INTO planning_machine_capacity (machine_key, hours_per_day, works_fridays) SELECT g::text, 22, g % 2 = 0 FROM generate_series(1, 10) g;
+INSERT INTO planning_rates (machine_key, item_family, pieces_per_hour) SELECT g::text, 'xl', 25 FROM generate_series(1, 10) g;
+INSERT INTO planning_machine_layout (machine_key, x, y, w, h) SELECT g::text, (g * 2) % 22, (g / 11) * 3, 2, 2 FROM generate_series(1, 30) g;
 `
 }

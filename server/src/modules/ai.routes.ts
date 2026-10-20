@@ -211,6 +211,7 @@ import { applyNoticeProposal, discardNoticeProposal } from '../noticeAssistant/l
 import { noticeManager, noticePromptMode } from '../noticeAssistant/scope'
 import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS } from '../noticeAssistant/tools'
 import { TASK_TOOLS, discardTaskProposal, sendTaskProposal } from '../tasks/assistant'
+import { PLANNING_TOOLS } from '../planning/assistant'
 import { PLAYBOOK_TOOLS } from '../playbook/assistant'
 import { EXCEL_TOOLS, XLSX_CONTENT_TYPE, findExcelFile, logExcelDownload } from '../ai/excel'
 import { DIAGRAM_TOOLS } from '../ai/diagram'
@@ -849,7 +850,7 @@ export function aiRoutes(ctx: AppContext): Router {
           tools: conversationTools(
             automations ? AUTOMATION_TOOLS : null,
             managesNotices ? [...NOTICE_READ_TOOLS, ...NOTICE_MANAGE_TOOLS] : NOTICE_READ_TOOLS,
-            [...TASK_TOOLS, ...PLAYBOOK_TOOLS, ...DIAGRAM_TOOLS, ...REPORT_TOOLS, ...(excel ? EXCEL_TOOLS : [])],
+            [...TASK_TOOLS, ...PLAYBOOK_TOOLS, ...DIAGRAM_TOOLS, ...REPORT_TOOLS, ...(excel ? EXCEL_TOOLS : []), ...(access.domains.includes('planning') ? PLANNING_TOOLS : [])],
             SAVED_TABLE_TOOLS,
           ),
         })

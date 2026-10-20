@@ -28,6 +28,7 @@ export const PERMISSION_IDS = [
   'view-history',
   'view-order-sheet',
   'view-dashboard',
+  'view-planning',
   'view-mtc',
   'view-coil-search',
   'use-chat',
@@ -53,19 +54,24 @@ export const PERMISSION_IDS = [
   // ---- Communication -------------------------------------------------------------
   'read-notices',
   'manage-chat',
+  // ---- Planning (§25) --------------------------------------------------------------
+  'edit-planning',
+  'publish-plan',
+  'manage-planning-setup',
 ] as const
 
 export type Permission = (typeof PERMISSION_IDS)[number]
 
 export const isPermission = (v: unknown): v is Permission => typeof v === 'string' && (PERMISSION_IDS as readonly string[]).includes(v)
 
-export type PermissionGroup = 'screens' | 'inspections' | 'records' | 'communication'
+export type PermissionGroup = 'screens' | 'inspections' | 'records' | 'communication' | 'planning'
 
 export const PERMISSION_GROUPS: readonly { id: PermissionGroup; name: string }[] = [
   { id: 'screens', name: 'Screens' },
   { id: 'inspections', name: 'Inspections' },
   { id: 'records', name: 'Records and reports' },
   { id: 'communication', name: 'Communication' },
+  { id: 'planning', name: 'Planning' },
 ]
 
 export interface PermissionInfo {
@@ -85,6 +91,13 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
   { id: 'view-history', group: 'screens', kind: 'screen', name: 'History', help: 'Every session and PDI, with their samples, measurements, defects and photos.' },
   { id: 'view-order-sheet', group: 'screens', kind: 'screen', name: 'Access', help: 'The ERP’s order sheet as a table.' },
   { id: 'view-dashboard', group: 'screens', kind: 'screen', name: 'Dashboard', help: 'The quality KPIs, trends and insights.' },
+  {
+    id: 'view-planning',
+    group: 'screens',
+    kind: 'screen',
+    name: 'Planning',
+    help: 'The planning tab (a trial): the factories’ map, the automatic plan, the plans and scenarios, load, lateness, material, plan against actual and what the data lacks. Read only.',
+  },
   { id: 'view-mtc', group: 'screens', kind: 'screen', name: 'MTC', help: 'The coil, welding wire and mesh wire registers. Uploading certificates is set in the AI settings.' },
   { id: 'view-coil-search', group: 'screens', kind: 'screen', name: 'Coil search', help: 'A coil’s samples, orders and customers.' },
   { id: 'use-chat', group: 'screens', kind: 'screen', name: 'Chat', help: 'Read and write in the team chat.' },
@@ -116,6 +129,17 @@ export const PERMISSIONS: readonly PermissionInfo[] = [
 
   { id: 'read-notices', group: 'communication', kind: 'action', name: 'Receive notices', help: 'Notices under the megaphone at the top, and those shown on the way into an inspection.' },
   { id: 'manage-chat', group: 'communication', kind: 'action', name: 'Chat groups', help: 'Create chat groups, rename or remove conversations, and remove messages in groups.', needs: 'use-chat' },
+
+  { id: 'edit-planning', group: 'planning', kind: 'action', name: 'Make plans and scenarios', help: 'Make, change, archive and delete draft plans and what-if scenarios (one’s own, and others’).', needs: 'view-planning' },
+  { id: 'publish-plan', group: 'planning', kind: 'action', name: 'Publish the plan', help: 'Make a plan or a scenario the factory’s published plan, the one the floor and plan-against-actual follow.', needs: 'view-planning' },
+  {
+    id: 'manage-planning-setup',
+    group: 'planning',
+    kind: 'action',
+    name: 'Planning setup',
+    help: 'The calendar’s holidays, each machine’s hours and pace, the planning settings and the factories’ map.',
+    needs: 'view-planning',
+  },
 ]
 
 export const PERMISSION_INFO: Record<Permission, PermissionInfo> = Object.fromEntries(PERMISSIONS.map((p) => [p.id, p])) as Record<Permission, PermissionInfo>
@@ -200,6 +224,7 @@ export const SCREEN_PATHS: readonly { permission: Permission; path: string }[] =
   { permission: 'view-history', path: '/history' },
   { permission: 'view-order-sheet', path: '/access' },
   { permission: 'view-dashboard', path: '/dashboard' },
+  { permission: 'view-planning', path: '/planning' },
   { permission: 'view-mtc', path: '/mtc' },
   { permission: 'view-coil-search', path: '/coils' },
   { permission: 'use-chat', path: '/chat' },
