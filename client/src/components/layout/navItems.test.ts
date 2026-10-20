@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_ROLE_PERMISSIONS, PERMISSION_IDS, type Permission } from '@qc/shared/permissions'
-import { ADMIN_NAV, NAV, TOOLS_NAV, visibleNav } from './navItems'
+import { ADMIN_NAV, NAV, PLANNING_NAV, TOOLS_NAV, visibleNav } from './navItems'
 
 const paths = (items: { to: string }[]) => items.map((n) => n.to)
 const role = DEFAULT_ROLE_PERMISSIONS
@@ -18,6 +18,10 @@ describe('the sections each person sees', () => {
     expect(paths(visibleNav(ADMIN_NAV, PERMISSION_IDS, false))).toEqual(['/admin/configuration', '/admin/import', '/admin/users', '/admin/audit', '/admin/whats-new'])
     expect(paths(visibleNav(ADMIN_NAV, role.supervisor, false))).toEqual(['/admin/audit'])
     expect(paths(visibleNav(NAV, role.inspector, false))).toEqual(['/', '/history', '/mtc'])
+    // §25 — Planning is a pill of its own, never among the tabs, and only for whoever may open it.
+    expect(paths(NAV)).not.toContain('/planning')
+    expect(paths(visibleNav([PLANNING_NAV], PERMISSION_IDS, false))).toEqual(['/planning'])
+    expect(visibleNav([PLANNING_NAV], role.inspector, false)).toEqual([])
     expect(paths(visibleNav(NAV, role.viewer, false))).toEqual(['/access', '/', '/history', '/dashboard', '/mtc'])
     expect(visibleNav(NAV, [], false)).toEqual([])
   })

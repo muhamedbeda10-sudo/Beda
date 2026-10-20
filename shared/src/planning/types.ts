@@ -142,6 +142,11 @@ export interface PlanSettings {
   optimise: OptimiseEffort
   /** What the optimiser makes smaller. */
   objective: PlanObjective
+  /**
+   * Leave out a line whose due day is this many days or more in the past (an order the ERP never closed): 0 = plan
+   * every open line, however old its due day. The line running now is never left out.
+   */
+  ignoreDueOlderThanDays: number
 }
 
 export type OptimiseEffort = 'off' | 'light' | 'full'
@@ -168,6 +173,7 @@ export const DEFAULT_PLAN_SETTINGS: PlanSettings = {
   horizonDays: 540,
   optimise: 'light',
   objective: 'late-weight-days',
+  ignoreDueOlderThanDays: 0,
 }
 
 // ---- Scenario events ----------------------------------------------------------------
@@ -264,8 +270,16 @@ export interface PlanExclusion {
   orderNumber: string
   item: string
   machineKey: string
-  reason: 'done' | 'cancelled' | 'hold' | 'stock' | 'no-machine' | 'excluded'
+  reason: ExclusionReason
 }
+
+/**
+ * Why a line is left out: made in full (done), cancelled, held by the ERP (hold, unless the settings plan them), a
+ * stock order, no machine on the line, left out by a scenario's event (excluded), or a due day older than the
+ * settings allow (stale).
+ */
+export type ExclusionReason = 'done' | 'cancelled' | 'hold' | 'stock' | 'no-machine' | 'excluded' | 'stale'
+export const EXCLUSION_REASONS: readonly ExclusionReason[] = ['done', 'cancelled', 'hold', 'stock', 'no-machine', 'excluded', 'stale']
 
 export interface PlanSummary {
   lines: number

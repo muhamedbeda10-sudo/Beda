@@ -45,7 +45,7 @@ import {
   type PlanSummary,
   type PlanningProcess,
 } from './types'
-import { MINUTES_PER_DAY, addDays, dayStartWall, isDay, parseWall } from './time'
+import { MINUTES_PER_DAY, addDays, dayNumber, dayStartWall, factoryDayOfWall, isDay, parseWall } from './time'
 
 export interface PlanInputs {
   /** Wall minutes the plan starts from. */
@@ -326,6 +326,7 @@ export function runPlan(inputs: PlanInputs): PlanResult {
   // ---- What is left out ----
   const excluded: PlanExclusion[] = []
   const planned: PlanLine[] = []
+  const todayNumber = dayNumber(factoryDayOfWall(now))
   for (const l of lines) {
     const out = (reason: PlanExclusion['reason']) => excluded.push({ lineKey: l.lineKey, orderNumber: l.orderNumber, item: l.item, machineKey: l.machineKey, reason })
     if (excludedByEvent.has(l.id)) out('excluded')
@@ -334,6 +335,8 @@ export function runPlan(inputs: PlanInputs): PlanResult {
     else if (l.remainingQty <= 0) out('done')
     else if (!l.machineKey) out('no-machine')
     else if ((l.hold || isHoldLine(l.erpStatus)) && !settings.includeHold) out('hold')
+    // Stale: a due day long past (an order the ERP never closed); never the line running now, nor one an event rushes or holds back.
+    else if (settings.ignoreDueOlderThanDays > 0 && l.runningSince === null && !rushed.has(l.id) && !forced.has(l.id) && l.dueDate && isDay(l.dueDate) && dayNumber(l.dueDate) <= todayNumber - settings.ignoreDueOlderThanDays) out('stale')
     else planned.push(l)
   }
 

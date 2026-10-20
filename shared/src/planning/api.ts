@@ -9,6 +9,7 @@ import type { DurationMeaningResult, ItemRoute, MachineStats, ProcessOrderResult
 import type { LineChange, PlanComparison, WeekLoad } from './analysis'
 import type {
   CalendarException,
+  ExclusionReason,
   MachineCapacity,
   MachineRate,
   PlanEvent,
@@ -190,6 +191,8 @@ export interface OverviewResponse {
   freshness: Freshness
   /** How many of the data checks found something missing. */
   gaps: number
+  /** The lines the automatic plan left out, by why (types.ts ExclusionReason); a reason with none is absent. */
+  excludedByReason: Partial<Record<ExclusionReason, number>>
 }
 
 export interface Freshness {

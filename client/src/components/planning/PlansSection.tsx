@@ -6,93 +6,84 @@
 // plan against actual measures; publishing another keeps it as superseded.
 // ============================================================================
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Archive, Bot, CalendarClock, FlaskConical, Plus, Send, Trash2 } from 'lucide-react'
+import { Archive, Bot, CalendarClock, ClipboardList, FlaskConical, Plus, Send, Trash2 } from 'lucide-react'
 import { AUTO_PLAN_ID, type PlanHeader } from '@qc/shared/planning'
-import { Badge, Button, Field, Input } from '@/components/ui'
+import { Badge, Button, EmptyState, Input } from '@/components/ui'
 import { formatDateTime } from '@/lib/utils'
 import { useAuth } from '@/store/AuthContext'
 import { useCreatePlan, usePlanAction, usePlans } from '@/services/planning'
-import { ErrorNote, Loading, PlanPicker, SectionCard } from './common'
+import { DataGrid, ErrorNote, Loading, PartFrame, PlanPicker, useGrid, type GridColumn } from './common'
 import { pctLabel, tonnes } from './format'
 
-const STATUS_TONE = { draft: 'blue', published: 'green', superseded: 'neutral', archived: 'neutral' } as const
+const STATUS_TONE = {
+  draft: 'blue',
+  published: 'green',
+  superseded: 'neutral',
+  archived: 'neutral',
+} as const
+const kindName = (p: PlanHeader) => (p.id === AUTO_PLAN_ID ? 'Automatic' : p.kind === 'scenario' ? 'Scenario' : 'Plan')
 
-function PlanRow({ p }: { p: PlanHeader }) {
+function PlanActions({ p }: { p: PlanHeader }) {
   const { can } = useAuth()
   const action = usePlanAction(p.id)
   const navigate = useNavigate()
   const isAuto = p.id === AUTO_PLAN_ID
   return (
-    <tr className="align-top">
-      <td className="py-2.5 pr-3">
-        <span className="flex flex-wrap items-center gap-1.5">
-          <span className="font-semibold">{p.name}</span>
-          {p.createdVia === 'assistant' && (
-            <Badge tone="violet" icon={<Bot className="h-3 w-3" />}>
-              Assistant
-            </Badge>
-          )}
-        </span>
-        <span className="block text-xs text-muted">
-          {isAuto ? 'Always the data as it is now' : `${p.kind === 'scenario' ? 'Scenario' : 'Plan'} by ${p.createdByName}, ${formatDateTime(p.updatedAt)}`}
-        </span>
-        {action.error && <span className="mt-1 block text-xs font-semibold text-danger-700 dark:text-danger-400">{action.error instanceof Error ? action.error.message : 'Failed.'}</span>}
-      </td>
-      <td className="py-2.5 pr-3">{isAuto ? <Badge tone="blue">live</Badge> : <Badge tone={STATUS_TONE[p.status]}>{p.status}</Badge>}</td>
-      <td className="py-2.5 pr-3 tabular-nums">{p.summary ? p.summary.lines.toLocaleString() : '—'}</td>
-      <td className="py-2.5 pr-3 tabular-nums">{p.summary ? <span className={p.summary.late > 0 ? 'font-semibold text-danger-700 dark:text-danger-400' : ''}>{p.summary.late.toLocaleString()}</span> : '—'}</td>
-      <td className="py-2.5 pr-3 tabular-nums">{p.summary ? pctLabel(p.summary.onTimePct) : '—'}</td>
-      <td className="py-2.5 pr-3 tabular-nums">{p.summary ? tonnes(p.summary.lateWeightKg) : '—'}</td>
-      <td className="py-2.5">
-        <div className="flex flex-wrap gap-1.5">
-          <Link to={`/planning/schedule?plan=${encodeURIComponent(p.id)}`} className="btn-secondary min-h-[40px] px-3" aria-label={`Schedule of ${p.name}`}>
-            <CalendarClock className="h-4 w-4" />
-          </Link>
-          {!isAuto && (
-            <Link to={`/planning/simulator?plan=${encodeURIComponent(p.id)}`} className="btn-secondary min-h-[40px] px-3" aria-label={`Compare ${p.name}`}>
-              <FlaskConical className="h-4 w-4" />
-            </Link>
-          )}
-          {!isAuto && can('publish-plan') && p.status === 'draft' && (
-            <Button
-              variant="primary"
-              className="min-h-[40px] px-3"
-              disabled={action.isPending}
-              onClick={() => window.confirm(`Publish “${p.name}” as the factory’s plan?`) && action.mutate({ action: 'publish', version: p.version })}
-            >
-              <Send className="h-4 w-4" /> Publish
-            </Button>
-          )}
-          {!isAuto && (p.status === 'draft' ? can('edit-planning') : p.status === 'published' && can('publish-plan')) && (
-            <Button
-              className="min-h-[40px] px-3"
-              disabled={action.isPending}
-              aria-label={`Archive ${p.name}`}
-              onClick={() => (p.status !== 'published' || window.confirm('Archive the published plan? The factory then has no published plan.')) && action.mutate({ action: 'archive', version: p.version })}
-            >
-              <Archive className="h-4 w-4" />
-            </Button>
-          )}
-          {!isAuto && can('edit-planning') && (p.status === 'draft' || p.status === 'archived') && (
-            <Button
-              variant="ghost"
-              className="min-h-[40px] px-3 text-danger-700 dark:text-danger-400"
-              disabled={action.isPending}
-              aria-label={`Delete ${p.name}`}
-              onClick={async () => {
-                if (!window.confirm(`Delete “${p.name}”?`)) return
-                await action.mutateAsync({ action: 'delete', version: p.version })
-                navigate('/planning/plans', { replace: true })
-              }}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      </td>
-    </tr>
+    <div className="flex flex-wrap gap-1.5">
+      <Link to={`/planning/schedule?plan=${encodeURIComponent(p.id)}`} className="btn-secondary min-h-[36px] px-2.5" aria-label={`Schedule of ${p.name}`} data-tip="Its schedule">
+        <CalendarClock className="h-4 w-4" />
+      </Link>
+      {!isAuto && (
+        <Link to={`/planning/simulator?plan=${encodeURIComponent(p.id)}`} className="btn-secondary min-h-[36px] px-2.5" aria-label={`Compare ${p.name}`} data-tip="Open it in the simulator">
+          <FlaskConical className="h-4 w-4" />
+        </Link>
+      )}
+      {!isAuto && can('publish-plan') && p.status === 'draft' && (
+        <Button
+          variant="primary"
+          className="min-h-[36px] px-2.5"
+          disabled={action.isPending}
+          onClick={() => window.confirm(`Publish “${p.name}” as the factory’s plan?`) && action.mutate({ action: 'publish', version: p.version })}
+        >
+          <Send className="h-4 w-4" /> Publish
+        </Button>
+      )}
+      {!isAuto && (p.status === 'draft' ? can('edit-planning') : p.status === 'published' && can('publish-plan')) && (
+        <Button
+          className="min-h-[36px] px-2.5"
+          disabled={action.isPending}
+          aria-label={`Archive ${p.name}`}
+          data-tip="Archive it"
+          onClick={() =>
+            (p.status !== 'published' || window.confirm('Archive the published plan? The factory then has no published plan.')) && action.mutate({ action: 'archive', version: p.version })
+          }
+        >
+          <Archive className="h-4 w-4" />
+        </Button>
+      )}
+      {!isAuto && can('edit-planning') && (p.status === 'draft' || p.status === 'archived') && (
+        <Button
+          variant="ghost"
+          className="min-h-[36px] px-2.5 text-danger-700 dark:text-danger-400"
+          disabled={action.isPending}
+          aria-label={`Delete ${p.name}`}
+          data-tip="Delete it"
+          onClick={async () => {
+            if (!window.confirm(`Delete “${p.name}”?`)) return
+            await action.mutateAsync({
+              action: 'delete',
+              version: p.version,
+            })
+            navigate('/planning/plans', { replace: true })
+          }}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      )}
+      {action.error && <span className="basis-full text-xs font-semibold text-danger-700 dark:text-danger-400">{action.error instanceof Error ? action.error.message : 'Failed.'}</span>}
+    </div>
   )
 }
 
@@ -103,70 +94,167 @@ export function PlansSection() {
   const [name, setName] = useState('')
   const [from, setFrom] = useState(AUTO_PLAN_ID)
   const [showArchived, setShowArchived] = useState(false)
-  const plans = (data?.plans ?? []).filter((p) => showArchived || p.status !== 'archived')
+  const plans = useMemo(() => (data?.plans ?? []).filter((p) => showArchived || p.status !== 'archived'), [data, showArchived])
+  const columns = useMemo<GridColumn<PlanHeader>[]>(
+    () => [
+      {
+        key: 'name',
+        label: 'Plan',
+        value: (p) => p.name,
+        noValues: true,
+        cell: (p) => (
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="font-semibold">{p.name}</span>
+            {p.createdVia === 'assistant' && (
+              <Badge tone="violet" icon={<Bot className="h-3 w-3" />} tip="Kept by the AI assistant for a planner to review">
+                Assistant
+              </Badge>
+            )}
+          </span>
+        ),
+      },
+      { key: 'kind', label: 'Kind', value: kindName, cell: kindName },
+      {
+        key: 'status',
+        label: 'State',
+        value: (p) => (p.id === AUTO_PLAN_ID ? 'live' : p.status),
+        cell: (p) => (p.id === AUTO_PLAN_ID ? <Badge tone="blue">live</Badge> : <Badge tone={STATUS_TONE[p.status]}>{p.status}</Badge>),
+      },
+      {
+        key: 'by',
+        label: 'By',
+        value: (p) => (p.id === AUTO_PLAN_ID ? '' : p.createdByName),
+        cell: (p) => (p.id === AUTO_PLAN_ID ? <span className="text-muted">The data as it is now</span> : p.createdByName),
+      },
+      {
+        key: 'updated',
+        label: 'Updated',
+        value: (p) => (p.id === AUTO_PLAN_ID ? '' : formatDateTime(p.updatedAt)),
+        sortValue: (p) => (p.id === AUTO_PLAN_ID ? null : p.updatedAt),
+        noValues: true,
+        cell: (p) => (p.id === AUTO_PLAN_ID ? '—' : formatDateTime(p.updatedAt)),
+        className: 'whitespace-nowrap',
+      },
+      {
+        key: 'changes',
+        label: 'Changes',
+        numeric: true,
+        right: true,
+        value: (p) => String(p.eventCount),
+        sortValue: (p) => p.eventCount,
+        cell: (p) => p.eventCount.toLocaleString(),
+      },
+      {
+        key: 'lines',
+        label: 'Lines',
+        numeric: true,
+        right: true,
+        value: (p) => (p.summary ? String(p.summary.lines) : ''),
+        sortValue: (p) => p.summary?.lines ?? null,
+        cell: (p) => (p.summary ? p.summary.lines.toLocaleString() : '—'),
+      },
+      {
+        key: 'late',
+        label: 'Late',
+        numeric: true,
+        right: true,
+        value: (p) => (p.summary ? String(p.summary.late) : ''),
+        sortValue: (p) => p.summary?.late ?? null,
+        cell: (p) => (p.summary ? <span className={p.summary.late > 0 ? 'font-semibold text-danger-700 dark:text-danger-400' : ''}>{p.summary.late.toLocaleString()}</span> : '—'),
+      },
+      {
+        key: 'ontime',
+        label: 'On time',
+        numeric: true,
+        right: true,
+        value: (p) => (p.summary?.onTimePct === null || p.summary?.onTimePct === undefined ? '' : String(p.summary.onTimePct)),
+        sortValue: (p) => p.summary?.onTimePct ?? null,
+        cell: (p) => (p.summary ? pctLabel(p.summary.onTimePct) : '—'),
+      },
+      {
+        key: 'weight',
+        label: 'Late weight',
+        numeric: true,
+        right: true,
+        value: (p) => (p.summary ? String(p.summary.lateWeightKg) : ''),
+        sortValue: (p) => p.summary?.lateWeightKg ?? null,
+        cell: (p) => (p.summary ? tonnes(p.summary.lateWeightKg) : '—'),
+      },
+      {
+        key: 'actions',
+        label: '',
+        plain: true,
+        value: () => '',
+        cell: (p) => <PlanActions p={p} />,
+      },
+    ],
+    [],
+  )
+  const view = useGrid(plans, columns)
   return (
-    <div className="space-y-4">
-      {can('edit-planning') && (
-        <SectionCard title="Make a plan" hint="A plan starts as a copy of the automatic plan (or of another plan): change it in the Simulator, then publish it.">
-          <form
-            className="flex flex-wrap items-end gap-3"
-            onSubmit={async (e) => {
-              e.preventDefault()
-              await create.mutateAsync({ kind: 'plan', name: name.trim(), fromId: from })
-              setName('')
-            }}
-          >
-            <div className="min-w-[220px] flex-1">
-              <Field label="Name">
-                <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} required placeholder="Week 44 plan" className="min-h-[44px]" />
-              </Field>
-            </div>
-            <Field label="From">
-              <PlanPicker value={from} onChange={setFrom} label="Make it from" />
-            </Field>
-            <Button type="submit" variant="primary" className="min-h-[44px]" disabled={create.isPending || name.trim() === ''}>
-              <Plus className="h-4 w-4" /> Make the plan
-            </Button>
-          </form>
-          {create.error && <ErrorNote error={create.error} />}
-        </SectionCard>
-      )}
-      <SectionCard
-        title="Plans and scenarios"
-        hint="Totals as each was last worked out. A published plan keeps its lines as they were published."
-        actions={
+    <PartFrame
+      toolbar={
+        <>
+          {can('edit-planning') && (
+            <form
+              className="flex flex-wrap items-center gap-2"
+              onSubmit={async (e) => {
+                e.preventDefault()
+                await create.mutateAsync({
+                  kind: 'plan',
+                  name: name.trim(),
+                  fromId: from,
+                })
+                setName('')
+              }}
+            >
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={120}
+                required
+                placeholder="Name a new plan: Week 44"
+                aria-label="Name of the new plan"
+                className="h-10 w-56 py-0 text-sm touch:h-11"
+              />
+              <PlanPicker value={from} onChange={setFrom} label="Make it from" className="min-h-[40px]" />
+              <Button
+                type="submit"
+                variant="primary"
+                className="min-h-[40px]"
+                disabled={create.isPending || name.trim() === ''}
+                data-tip="A plan starts as a copy of the plan chosen: change it in the Simulator, then publish it"
+              >
+                <Plus className="h-4 w-4" /> Make the plan
+              </Button>
+              {create.error && <ErrorNote error={create.error} />}
+            </form>
+          )}
+          <span className="flex-1" />
           <label className="flex items-center gap-2 text-13 text-muted">
             <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="h-4 w-4" /> Archived too
           </label>
-        }
-      >
-        {isLoading && <Loading what="Reading the plans" />}
-        {error && <ErrorNote error={error} retry={() => void refetch()} />}
-        {data && (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] text-sm">
-              <thead className="text-left text-xs text-muted">
-                <tr className="border-b border-slate-200 dark:border-slate-700">
-                  <th scope="col" className="py-2 pr-3 font-semibold">Plan</th>
-                  <th scope="col" className="py-2 pr-3 font-semibold">State</th>
-                  <th scope="col" className="py-2 pr-3 font-semibold">Lines</th>
-                  <th scope="col" className="py-2 pr-3 font-semibold">Late</th>
-                  <th scope="col" className="py-2 pr-3 font-semibold">On time</th>
-                  <th scope="col" className="py-2 pr-3 font-semibold">Late weight</th>
-                  <th scope="col" className="py-2 font-semibold">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {plans.map((p) => (
-                  <PlanRow key={p.id} p={p} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </SectionCard>
-    </div>
+        </>
+      }
+    >
+      {isLoading ? (
+        <Loading what="Reading the plans" />
+      ) : error || !data ? (
+        <div className="p-4">
+          <ErrorNote error={error} retry={() => void refetch()} />
+        </div>
+      ) : (
+        <DataGrid
+          view={view}
+          columns={columns}
+          rowKey={(p) => p.id}
+          total={plans.length}
+          noun="plans"
+          caption="Plans and scenarios"
+          empty={<EmptyState icon={<ClipboardList className="h-10 w-10" />} title="No plan" hint="None matches the filters." />}
+          footer={<span>Totals as each was last worked out; a published plan keeps its lines as they were published.</span>}
+        />
+      )}
+    </PartFrame>
   )
 }

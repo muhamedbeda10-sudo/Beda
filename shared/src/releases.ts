@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-20.6',
+    date: '2026-10-20',
+    title: 'Planning: every part on one screen',
+    items: [
+      { text: 'Planning is a pill of its own beside the tabs, marked Trial, and opens on the Overview. The page no longer scrolls: each part’s toolbar stays put and its table, timeline or map scrolls inside its card, with Excel’s sort and filter on every column header.' },
+      { text: 'The Overview says why the lines left out of the plan are left out. A new setting, “Leave out lines with a due day older than N days” (off until set), drops orders the ERP never closed.' },
+      { text: 'The schedule’s days are wider, so a month or a quarter scrolls sideways inside the card instead of squeezing the days into the window.' },
+    ],
+  },
+  {
     id: '2026-10-20.5',
     date: '2026-10-20',
     title: 'Planning: the optimiser',
