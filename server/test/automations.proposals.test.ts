@@ -705,7 +705,7 @@ describe('§21 checking a draft', () => {
         period: { kind: 'last_days', days: 7 },
         sections: [
           { title: 'Machines', sql: 'SELECT count(*)::int AS machines FROM ai.machines' },
-          { title: 'Registered this week', sql: 'SELECT machine_code FROM ai.machines WHERE registered_at >= {{from}} AND registered_at < {{to}} + 1 ORDER BY machine_code' },
+          { title: 'Registered this week', sql: 'SELECT machine_code FROM ai.machines WHERE registered_at >= ai.factory_day_start({{from}}) AND registered_at < ai.factory_day_start({{to}} + 1) ORDER BY machine_code' },
         ],
       }),
     )

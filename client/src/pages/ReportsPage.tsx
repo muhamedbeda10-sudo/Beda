@@ -108,7 +108,7 @@ function SharedReportList() {
                     {r.title}
                   </span>
                   {r.description && (
-                    <span dir="auto" className="mt-0.5 line-clamp-2 block text-13 text-muted">
+                    <span dir="auto" className="mt-0.5 line-clamp-2 text-13 text-muted">
                       {r.description}
                     </span>
                   )}

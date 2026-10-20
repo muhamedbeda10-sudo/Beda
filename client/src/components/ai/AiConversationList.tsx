@@ -541,7 +541,7 @@ export function HitLine({ hit }: { hit: AiConversationSearchHit }) {
         {hit.conversation.archivedAt && <Badge tone="neutral">Archived</Badge>}
       </span>
       {snippet && (
-        <span dir="auto" className="mt-0.5 line-clamp-2 block break-words text-xs text-slate-600 dark:text-slate-300">
+        <span dir="auto" className="mt-0.5 line-clamp-2 break-words text-xs text-slate-600 dark:text-slate-300">
           {match ? (
             <>
               {snippet.slice(0, match.start)}
