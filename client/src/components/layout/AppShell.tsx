@@ -19,6 +19,7 @@ import { AiButton } from '@/components/ai/AiButton'
 import { AiPanelHost } from '@/components/ai/AiPanelHost'
 import { useNavFit } from '@/components/layout/navFit'
 import { useCoarsePointer } from '@/lib/media'
+import { useSharedReportsStatus } from '@/services/reportShares'
 
 function ToastHost() {
   const { toasts, dismissToast } = useApp()
@@ -171,8 +172,10 @@ function Shell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
 
-  // §21 — Automations open from the assistant's header and Follow-ups from the bell: neither is a tab.
-  const nav = visibleNav(NAV, permissions, false)
+  // §21 — Automations open from the assistant's header and Follow-ups from the bell: neither is a tab. Reports is one
+  // while a saved report is shared with the person (asked with the bell's poll, and again when its alert arrives).
+  const shared = useSharedReportsStatus(!!profile).data?.any ?? false
+  const nav = visibleNav(NAV, permissions, false, shared)
   const tools = visibleNav(TOOLS_NAV, permissions, false)
   // The tabs keep their names while those fit beside the brand and the icons; then tighter padding; then icons alone, the
   // names in tooltips. Measured on this bar, for these tabs and this window (navFit), not guessed from how many there are.

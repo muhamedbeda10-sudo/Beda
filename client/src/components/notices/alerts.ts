@@ -24,6 +24,7 @@ export const ALERT_KIND_LABEL: Record<UserNotificationKind, string> = {
   'task-done': 'Task done: confirm it',
   'task-reopened': 'Task sent back',
   'ai-answer': 'AI assistant',
+  'report-shared': 'Report shared with you',
 }
 
 export { badgeText } from '@/components/ui/CountBadge'

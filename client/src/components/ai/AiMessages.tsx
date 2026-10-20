@@ -39,6 +39,8 @@ import { AiPlaybookCard } from './AiPlaybookCard'
 import { AiExcelCard } from './AiExcelCard'
 import { AiSavedTableCard } from './AiSavedTableCard'
 import { AiReportCard } from './AiReportCard'
+import { AiReportShareCard } from './AiReportShareCard'
+import type { AiOpenReportOptions } from './workspace'
 import { AiDiagramCard } from './AiDiagramCard'
 import { AiTableExcel } from './AiTable'
 import { useQueryClient } from '@tanstack/react-query'
@@ -259,7 +261,7 @@ export const Answer = memo(function Answer({
   onAskAgain?: (q: string) => void
   latest?: boolean
   onSuggestion?: (q: string) => void
-  onOpenReport?: (reportId: string) => void
+  onOpenReport?: (reportId: string, opts?: AiOpenReportOptions) => void
   noticesWait?: boolean
   tasksWait?: boolean
 }) {
@@ -368,6 +370,8 @@ export const Answer = memo(function Answer({
             return <AiDiagramCard key={b.key} part={b.part} />
           case 'report':
             return <AiReportCard key={b.key} part={b.part} onOpen={onOpenReport} />
+          case 'report-share':
+            return <AiReportShareCard key={b.key} part={b.part} onOpen={onOpenReport} />
         }
       })}
       {working && <Working text={working} />}

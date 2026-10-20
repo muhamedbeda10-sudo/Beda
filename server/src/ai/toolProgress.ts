@@ -36,6 +36,7 @@ const CHECKING: Readonly<Record<string, string>> = {
   make_diagram: 'Checking the diagram and its figures',
   save_report: 'Running every section of the report once to check it',
   read_report: 'Reading the reports',
+  share_report: 'Sharing the report',
   find_people: 'Looking people up',
   find_notice_targets: 'Looking up who can be told',
   list_notices: 'Reading the notices',

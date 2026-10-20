@@ -143,7 +143,8 @@ describe('§20 calls under way, held against the caps', () => {
     })
     app.model.reply({ content: [text('The first answer.')], hold: gate })
     const first = ask(insp, 'First question')
-    await until(async () => (await holdsOf(insp.user.id)).length === 1)
+    // The router's own hold comes and goes first: wait for the answer's call itself, under way and held alone.
+    await until(async () => app.model.calls.length === 1 && (await holdsOf(insp.user.id)).length === 1)
     const [held] = await holdsOf(insp.user.id)
     // The person's room is now one call's worst case and a half: the hold leaves less than a second call could cost.
     await grant(insp, (await spentBy(insp.user.id)) + held * 1.5)

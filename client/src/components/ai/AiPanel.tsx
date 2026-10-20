@@ -22,7 +22,7 @@ import { BotMark } from './AiMessages'
 import { AiReportList } from './AiReportList'
 import { AiReportView } from './AiReportView'
 import { AiThread } from './AiThread'
-import { AI_WORKSPACE_PATH, aiWorkspaceHref, workspaceReportId, type AiOpenReport, type AiWorkspaceState } from './workspace'
+import { AI_WORKSPACE_PATH, aiWorkspaceHref, workspaceReportId, type AiOpenReport, type AiOpenReportOptions, type AiWorkspaceState } from './workspace'
 
 type View = 'thread' | 'history' | 'reports'
 
@@ -37,7 +37,8 @@ export default function AiPanel() {
   // The report open is the popup's place (/ai/reports/<id>), so it stays open across Expand and back.
   const reportId = workspaceReportId(location.pathname)
   const known = (location.state as AiWorkspaceState | null)?.known
-  const report: AiOpenReport | null = reportId ? { id: reportId, known: known?.id === reportId ? known : undefined } : null
+  const arrivedShare = (location.state as AiWorkspaceState | null)?.share === true
+  const report: AiOpenReport | null = reportId ? { id: reportId, known: known?.id === reportId ? known : undefined, share: arrivedShare } : null
   const [view, setView] = useState<View>(reportId ? 'reports' : 'thread')
   // A link that opens a report here (an answer's, the Playbook's) shows it, from whichever view was on screen.
   useEffect(() => {
@@ -45,7 +46,7 @@ export default function AiPanel() {
   }, [reportId])
   const setReport = useCallback(
     (next: AiOpenReport | null) => {
-      if (next) navigate(aiWorkspaceHref({ reportId: next.id }), { state: { known: next.known } satisfies AiWorkspaceState })
+      if (next) navigate(aiWorkspaceHref({ reportId: next.id }), { state: { known: next.known, share: next.share } satisfies AiWorkspaceState })
       else if (reportId) navigate(AI_WORKSPACE_PATH)
     },
     [navigate, reportId],
@@ -79,6 +80,14 @@ export default function AiPanel() {
   const openReport = useCallback(
     (id: string, summary?: AiOpenReport['known']) => {
       setReport({ id, known: summary })
+      setView('reports')
+    },
+    [setReport],
+  )
+  // From an answer's card: the report, on its Share panel when the card was a share card.
+  const openReportFromAnswer = useCallback(
+    (id: string, opts?: AiOpenReportOptions) => {
+      setReport({ id, share: opts?.share })
       setView('reports')
     },
     [setReport],
@@ -144,13 +153,13 @@ export default function AiPanel() {
         <AiConversationList onPicked={() => setView('thread')} onNew={newChat} />
       ) : view === 'reports' ? (
         report ? (
-          <AiReportView key={report.id} id={report.id} known={report.known} onBack={() => setReport(null)} onOpenConversation={openFrom} />
+          <AiReportView key={`${report.id}:${report.share ? 'share' : ''}`} id={report.id} known={report.known} sharing={report.share} onBack={() => setReport(null)} onOpenConversation={openFrom} />
         ) : (
           <AiReportList onOpen={(r) => openReport(r.id, r)} />
         )
       ) : (
         <>
-          <AiThread onAskAgain={fill} onExample={fill} onSuggestion={suggest} onOpenReport={openReport} />
+          <AiThread onAskAgain={fill} onExample={fill} onSuggestion={suggest} onOpenReport={openReportFromAnswer} />
           <AiComposer value={draft} onChange={setDraft} focus={focus} onFocusUsed={focusUsed} />
         </>
       )}

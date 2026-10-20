@@ -23,7 +23,9 @@
 // conversations, run again on demand through the same sandbox, as the
 // person's current domains, its creation, renaming and removal in the audit
 // log (which report and what was done to it: never its title, which is
-// personal, nor its SQL).
+// personal, nor its SQL). Its maker may share it with people and roles from
+// here (ai/reportShares.ts; each change audited with whom it named), who run
+// it on the Reports page (sharedReports.routes.ts) without the assistant.
 //
 // §21 — a person the owner allows to create automations (and the owner) gets
 // two more tools in each NEW conversation, and the system prompt says how to
@@ -70,7 +72,6 @@ import {
   aiMinCapUsd,
   isTopLevel,
   stickyLevel,
-  isAiDay,
   isAiDomain,
   type AiAccessListResponse,
   type AiAccessRequest,
@@ -112,6 +113,8 @@ import type { AiNoticeApplyResponse, AiNoticeDiscardResponse } from '@qc/shared/
 import { PLAYBOOK_BASIS_MAX, PLAYBOOK_TEXT_MAX, type PlaybookEntry, type PlaybookResponse } from '@qc/shared/playbook'
 import type { SavedTableRowsResponse, SavedTablesResponse } from '@qc/shared/savedTables'
 import { BUILTIN_RESOLVED_STYLE } from '@qc/shared/reportStyles'
+import { REPORT_SHARE_MAX_TARGETS, type ReportSharesResponse } from '@qc/shared/reportShares'
+import { ROLES, type Role } from '@qc/shared/types'
 import type { AppContext } from '../context'
 import { PG, pgCode, withTransaction, type Queryable } from '../db/pool'
 import { HttpError, badRequest, notFound } from '../lib/errors'
@@ -171,7 +174,8 @@ import { conversationTitleProblem, createGroup, groupNameProblem, listGroups, on
 import { searchConversations } from '../ai/conversationSearch'
 import { giveConversationTitle } from '../ai/conversationTitle'
 import { answerReportTitle } from '../ai/answerReportTitle'
-import { rangeProblem } from '../ai/reportTemplate'
+import { readRunRequest, runOf } from '../ai/reportRequest'
+import { ownReport, shareReport, sharesResponse } from '../ai/reportShares'
 import {
   AI_REPORT_TITLE_CHARS,
   FIXED_NOTICE,
@@ -209,7 +213,6 @@ import { NOTICE_MANAGE_TOOLS, NOTICE_READ_TOOLS } from '../noticeAssistant/tools
 import { TASK_TOOLS, discardTaskProposal, sendTaskProposal } from '../tasks/assistant'
 import { PLAYBOOK_TOOLS } from '../playbook/assistant'
 import { EXCEL_TOOLS, XLSX_CONTENT_TYPE, findExcelFile, logExcelDownload } from '../ai/excel'
-import { readInputValues } from '@qc/shared/aiReportInputs'
 import { DIAGRAM_TOOLS } from '../ai/diagram'
 import { REPORT_TOOLS } from '../ai/reportTools'
 import { addEntry, changeEntry, listPlaybook, mayUsePlaybook, promptPlaybook, removeEntry } from '../playbook/service'
@@ -396,6 +399,18 @@ const saveReportSchema = z
   .strict()
 
 const renameReportSchema = z.object({ title: reportTitleSchema }).strict()
+
+/** A person or a role a report is shared with (ai/reportShares.ts). */
+const shareTargetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('user'), userId: uuid }).strict(),
+  z.object({ kind: z.literal('role'), role: z.enum(ROLES as unknown as [Role, ...Role[]]) }).strict(),
+])
+const shareSchema = z
+  .object({
+    add: z.array(shareTargetSchema).max(REPORT_SHARE_MAX_TARGETS).default([]),
+    remove: z.array(shareTargetSchema).max(REPORT_SHARE_MAX_TARGETS).default([]),
+  })
+  .strict()
 const reportStyleSchema = z.object({ styleId: uuid.nullable() }).strict()
 
 const reportsQuery = z.object({
@@ -405,42 +420,6 @@ const reportsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   q: z.string().trim().max(200).optional(),
 })
-
-/**
- * The days a person runs a report over, both or neither. Only real calendar
- * days in YYYY-MM-DD pass: they become SQL date literals.
- */
-const reportDay = z.string().refine(isAiDay, 'A day is YYYY-MM-DD, and a real date.')
-/** A run's input values, as the query string carries them: one JSON object, by input name (checked against the report's inputs). */
-const reportInputsQuery = z.object({
-  inputs: z
-    .string()
-    .max(8_000)
-    .optional()
-    .transform((v, issue) => {
-      if (v === undefined || v === '') return null
-      try {
-        const parsed: unknown = JSON.parse(v)
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
-      } catch {
-        /* told below */
-      }
-      issue.addIssue({ code: z.ZodIssueCode.custom, message: 'inputs: a JSON object of the values, by input name.' })
-      return z.NEVER
-    }),
-})
-
-const reportRunQuery = z
-  .object({ from: reportDay.optional(), to: reportDay.optional() })
-  .superRefine((v, issue) => {
-    if ((v.from === undefined) !== (v.to === undefined)) {
-      issue.addIssue({ code: z.ZodIssueCode.custom, message: 'Give both the first and the last day, or neither.' })
-      return
-    }
-    const problem = v.from && v.to ? rangeProblem({ from: v.from, to: v.to }) : null
-    if (problem) issue.addIssue({ code: z.ZodIssueCode.custom, message: problem })
-  })
-  .transform((v) => (v.from && v.to ? { from: v.from, to: v.to } : null))
 
 /**
  * The owner's routes, by path: every request under them, whatever its method,
@@ -1715,6 +1694,31 @@ export function aiRoutes(ctx: AppContext): Router {
   })
 
   /**
+   * Whom one of the person's own reports is shared with (people and roles, ai/reportShares.ts), who of them ran it
+   * and when, and whom it may be shared with. Its owner's alone, while they have the assistant: 404 to anyone else.
+   */
+  r.get('/reports/:id/shares', async (req, res) => {
+    const { user } = await aiUser(req)
+    const report = await ownReport(db, parse(uuid, req.params.id).toLowerCase(), user.id)
+    if (!report) throw notFound('That report')
+    const body: ReportSharesResponse = await sharesResponse(db, report.id, user.id)
+    res.json(body)
+  })
+
+  /** Share it with people and roles, and stop sharing it with others: one change, audited; whoever it newly reaches is told once. */
+  r.put('/reports/:id/shares', async (req, res) => {
+    const { user } = await aiUser(req)
+    const id = parse(uuid, req.params.id).toLowerCase()
+    const body = parse(shareSchema, req.body)
+    const outcome = await withTransaction(db, (tx) => shareReport(tx, { reportId: id, by: { id: user.id, name: user.name }, add: body.add, remove: body.remove }))
+    if (outcome.kind === 'not-found') throw notFound('That report')
+    if (outcome.kind === 'not-allowed') throw notGranted()
+    if (outcome.kind === 'problems') throw badRequest(outcome.problems.join(' '))
+    const reply: ReportSharesResponse = await sharesResponse(db, id, user.id)
+    res.json(reply)
+  })
+
+  /**
    * A report, its period resolved (or the days asked for), the queries it
    * runs before they run: a person asking for days the report cannot take is
    * told so, and runs count against the person's limit. Each section runs as
@@ -1728,21 +1732,14 @@ export function aiRoutes(ctx: AppContext): Router {
     })
     const { user } = await aiUser(req)
     const id = parse(uuid, req.params.id)
-    const { inputs: sent, ...days } = req.query as Record<string, unknown>
-    const range = parse(reportRunQuery, days)
-    const { inputs: typed } = parse(reportInputsQuery, { inputs: sent })
+    const request = readRunRequest(req.query as Record<string, unknown>)
     const report = await findReport(db, id, user.id)
     if (!report) throw notFound('That report')
-    if (range && !report.adjustable) throw badRequest("This report's period cannot be changed: it runs over the days its queries name.")
     // What the person typed, checked against each input's kind; what they left alone is its default as of today.
-    const read = readInputValues(report.inputs, typed, factoryDay(new Date(), tz))
-    if ('problems' in read) throw badRequest(read.problems.join(' '))
-    const values = read.values
+    const { period, values } = runOf(report, request, tz)
     const wait = ctx.aiReportLimiter.hit(user.id)
     if (wait > 0) throw new HttpError(429, 'rate_limited', `Too many report runs in a short time. Try again in ${wait} seconds.`)
     if (!ctx.aiReader.ready) throw readerDown()
-    // Today where the factory sits, at the moment of the run: "the last 30 days" ends today.
-    const period = runPeriod(report, range, factoryDay(new Date(), tz))
     // Read again before every section: sections run one after another, an export's for up to 30 s each.
     const reader: SectionReader = async () => {
       const now = await loadAccess(db, user.id)

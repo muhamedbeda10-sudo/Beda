@@ -20,6 +20,7 @@ import { requirePermission, requireUser, userCan, type AuthUser } from '../auth/
 import { dropNulls } from '../lib/rows'
 import { buildStorageKey, sniffImageMime } from '../images/storage'
 import { isGranted, loadAccess } from '../ai/access'
+import { SHARED_RUN_PHOTO } from '../ai/reportShares'
 import { noticeApplies } from './notices'
 import { SESSION_READERS } from './sessions.routes'
 
@@ -60,6 +61,10 @@ const fieldsSchema = z.object({
  *     it went to. Recorded per delivery as it is stored (migration 0071);
  *     only the photos the assistant can show (ai.inspection_photos,
  *     ai.pdi_photos), whatever else a result's photo_id column might hold;
+ *   • an inspection's or a PDI's that a run of a saved report shared with
+ *     them showed them, for a day after that run, while the report is still
+ *     shared with them (ai/reportShares.ts) — whatever their screens, as for
+ *     a delivered report;
  *   • a chat message's — the members of its conversation, as its files;
  *   • a task message's — the people on the task;
  *   • a notice's — whoever the notice is for, or who manages notices.
@@ -100,6 +105,7 @@ export async function readableImageIds(q: Queryable, user: AuthUser, ids: readon
                       OR EXISTS (SELECT 1 FROM pt_record_images x WHERE x.image_id = i.id)
                       OR EXISTS (SELECT 1 FROM session_note_images x WHERE x.image_id = i.id)
                       OR EXISTS (SELECT 1 FROM pdi_images x WHERE x.image_id = i.id)))
+             OR ${SHARED_RUN_PHOTO('i', '$2')}
              OR EXISTS (
                    SELECT 1 FROM task_message_images x
                      JOIN task_messages m ON m.id = x.message_id

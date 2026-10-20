@@ -26,7 +26,7 @@ import { BotMark } from './AiMessages'
 import { AiReportList } from './AiReportList'
 import { AiReportView } from './AiReportView'
 import { AiThread } from './AiThread'
-import { AI_WORKSPACE_PATH, aiWorkspaceHref, workspaceConversationId, workspaceReportId, type AiWorkspaceList, type AiWorkspaceState } from './workspace'
+import { AI_WORKSPACE_PATH, aiWorkspaceHref, workspaceConversationId, workspaceReportId, type AiOpenReportOptions, type AiWorkspaceList, type AiWorkspaceState } from './workspace'
 
 const HEAD_BTN = 'icon-btn h-10 w-10 touch:h-11 touch:w-11'
 const HEAD_ON = 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
@@ -93,13 +93,15 @@ export function AiWorkspace() {
     [setDraft, toThread, focusComposer],
   )
   const openReport = useCallback(
-    (id: string, known?: AiWorkspaceState['known']) => {
-      navigate(aiWorkspaceHref({ reportId: id }), { state: { known } satisfies AiWorkspaceState })
+    (id: string, known?: AiWorkspaceState['known'], share?: boolean) => {
+      navigate(aiWorkspaceHref({ reportId: id }), { state: { known, share } satisfies AiWorkspaceState })
       setList('reports')
       setPane('main')
     },
     [navigate],
   )
+  // From an answer's card: the report, on its Share panel when the card was a share card.
+  const openReportFromAnswer = useCallback((id: string, opts?: AiOpenReportOptions) => openReport(id, undefined, opts?.share), [openReport])
   const openFromReport = useCallback(
     (id: string) => {
       openConversation(id)
@@ -170,10 +172,10 @@ export function AiWorkspace() {
 
         <section aria-label={reportId ? 'Saved report' : 'Conversation'} className={cn('min-h-0 min-w-0 flex-1 flex-col md:flex', pane === 'main' ? 'flex' : 'hidden')}>
           {reportId ? (
-            <AiReportView key={reportId} id={reportId} known={arrived.known?.id === reportId ? arrived.known : undefined} onBack={backFromReport} onOpenConversation={openFromReport} wide />
+            <AiReportView key={`${reportId}:${arrived.share ? 'share' : ''}`} id={reportId} known={arrived.known?.id === reportId ? arrived.known : undefined} sharing={arrived.share} onBack={backFromReport} onOpenConversation={openFromReport} wide />
           ) : (
             <>
-              <AiThread onAskAgain={fill} onExample={fill} onSuggestion={suggest} onOpenReport={openReport} wide />
+              <AiThread onAskAgain={fill} onExample={fill} onSuggestion={suggest} onOpenReport={openReportFromAnswer} wide />
               <AiComposer value={draft} onChange={setDraft} focus={focus} onFocusUsed={focusUsed} wide />
             </>
           )}

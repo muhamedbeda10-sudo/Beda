@@ -59,7 +59,8 @@ export function turnToolHandlers(c: TurnToolsContext): Record<string, ToolHandle
     ...savedTableToolHandlers({ ...base, readers: c.readers, userName: c.userName }),
     // Diagrams: for everyone given the assistant; their figures read what the person may, as their domains are now.
     ...diagramToolHandlers({ ...base, readers: c.readers }),
-    // Reports it builds: test-run as the person's domains are now; a report runs as whoever opens it reads.
-    ...reportToolHandlers({ ...base, readers: c.readers }),
+    // Reports it builds: test-run as the person's domains are now; a report runs as whoever opens it reads. Sharing one
+    // with people and roles is the same change as its Share panel makes, at the person's own word.
+    ...reportToolHandlers({ ...base, readers: c.readers, userName: c.userName }),
   }
 }

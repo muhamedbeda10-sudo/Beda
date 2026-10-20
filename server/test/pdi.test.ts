@@ -6,7 +6,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import type { ColumnValuesResponse, OrderItemOption, OrderNumberSummary, PDIListResponse, PDIOptionsResponse, PDIWithOrder } from '@qc/shared/api'
 import type { ProductionOrder } from '@qc/shared/types'
-import { TestApp, type Session } from './harness'
+import { TestApp, factoryDay, type Session } from './harness'
 
 const app = new TestApp()
 let admin: Session
@@ -184,8 +184,9 @@ describe('§4 — the PDI list', () => {
     expect(byItem.body.documents.map((d) => d.notes)).toEqual(['Second delivery'])
     const byWho = await app.api<PDIListResponse>('GET', `/api/pdi?createdById=${admin.user.id}`, { token: viewer.token })
     expect(byWho.body.documents.map((d) => d.notes)).toEqual(['Second delivery'])
-    const today = new Date().toISOString().slice(0, 10)
-    const tomorrow = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10)
+    // Days as the PDI list reads them: factory days (08:00 to 08:00).
+    const today = factoryDay()
+    const tomorrow = factoryDay(2)
     expect((await app.api<PDIListResponse>('GET', `/api/pdi?from=${today}&to=${tomorrow}`, { token: viewer.token })).body.total).toBe(4)
     expect((await app.api<PDIListResponse>('GET', `/api/pdi?from=${tomorrow}&to=${tomorrow}`, { token: viewer.token })).body.total).toBe(0)
     expect((await app.api('GET', `/api/pdi?from=${tomorrow}&to=${today}`, { token: viewer.token })).status).toBe(400)

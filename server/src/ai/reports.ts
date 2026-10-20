@@ -62,6 +62,7 @@ import type { Db, Queryable } from '../db/pool'
 import { CHAT_QUERY_TIMEOUT_MS, recordCutOffUsage, usageOf, watchStream } from './assistant'
 import { releaseHold } from './access'
 import { checkChart } from './charts'
+import { storedDomains } from './domains'
 import type { AiModelClient, ModelMessage, ModelParams } from './model'
 import { contextDay, conversationTitle, factoryDay } from './prompt'
 import { fillInputs } from './reportInputs'
@@ -97,6 +98,7 @@ interface ReportRow {
   sections?: AiReportSection[]
   inputs?: AiReportInput[]
   styleId?: string | null
+  shareCount?: number | null
 }
 
 /** A report's columns as one person reads them ($2: who asks). */
@@ -104,7 +106,9 @@ const SUMMARY_COLUMNS = `r.id, r.title, r.question, r.period, r.adjustable, json
        r.created_at AS "createdAt", r.updated_at AS "updatedAt", r.last_run_at AS "lastRunAt",
        r.description, r.shared, (r.user_id = $2) AS mine, COALESCE(u.name, '') AS "ownerName", r.made_by AS "madeBy",
        json_array_length(r.inputs) AS "inputCount"`
-const REPORT_COLUMNS = `${SUMMARY_COLUMNS}, r.conversation_id AS "conversationId", r.sections, r.inputs, r.style_id AS "styleId"`
+// Whom it is shared with, by name (./reportShares), is its maker's to know: a count for them alone, one indexed look-up.
+const REPORT_COLUMNS = `${SUMMARY_COLUMNS}, r.conversation_id AS "conversationId", r.sections, r.inputs, r.style_id AS "styleId",
+       CASE WHEN r.user_id = $2 THEN (SELECT count(*)::int FROM ai_report_shares s WHERE s.report_id = r.id) END AS "shareCount"`
 /** The reports a person may open: their own, and the shared ones. */
 const VISIBLE = `r.deleted_at IS NULL AND (r.user_id = $2 OR r.shared)`
 const FROM = `ai_reports r LEFT JOIN users u ON u.id = r.user_id`
@@ -144,6 +148,7 @@ function toReport(r: ReportRow): AiReport {
   const report: AiReport = { ...toSummary(r), sections: (r.sections ?? []).map(toSection), inputs: r.inputs ?? [] }
   if (r.conversationId) report.conversationId = r.conversationId
   if (r.styleId) report.styleId = r.styleId
+  if (r.shareCount) report.shareCount = r.shareCount
   return report
 }
 
@@ -151,6 +156,26 @@ function toReport(r: ReportRow): AiReport {
 export async function findReport(q: Queryable, id: string, userId: string): Promise<AiReport | null> {
   const { rows } = await q.query<ReportRow>(`SELECT ${REPORT_COLUMNS} FROM ${FROM} WHERE r.id = $1 AND ${VISIBLE}`, [id, userId])
   return rows[0] ? toReport(rows[0]) : null
+}
+
+/**
+ * A report as someone who is not its maker opens it when `open` (a condition on r, $2 the person) says they may — a
+ * report shared with them (./reportShares) — with whose it is and the domains its queries were written under; null
+ * when they may not, or it was deleted.
+ */
+export async function findReportOpenTo(
+  q: Queryable,
+  id: string,
+  userId: string,
+  open: string,
+): Promise<(AiReport & { ownerId: string; authorDomains: AiDomain[] | null }) | null> {
+  const { rows } = await q.query<ReportRow & { ownerId: string; authorDomains: string[] | null }>(
+    `SELECT ${REPORT_COLUMNS}, r.user_id AS "ownerId", r.author_domains AS "authorDomains" FROM ${FROM} WHERE r.id = $1 AND r.deleted_at IS NULL AND ${open}`,
+    [id, userId],
+  )
+  const row = rows[0]
+  if (!row) return null
+  return { ...toReport(row), ownerId: row.ownerId, authorDomains: row.authorDomains === null ? null : storedDomains(row.authorDomains) }
 }
 
 /** The report an answer was already saved as, if it was. */
@@ -680,7 +705,7 @@ export type RunPeriod = AiDayRange & { label: string; overridden: boolean }
  * The days a run covers: those asked for, else the saved period counted from
  * `today` (a factory day). Null for a report whose period cannot change.
  */
-export function runPeriod(report: AiReport, override: AiDayRange | null, today: string): RunPeriod | null {
+export function runPeriod(report: Pick<AiReport, 'adjustable' | 'period'>, override: AiDayRange | null, today: string): RunPeriod | null {
   if (!report.adjustable || !report.period) return null
   if (override) return { from: override.from, to: override.to, label: describeAiDays(override), overridden: true }
   return { ...resolveAiPeriod(report.period, today), label: describeAiPeriod(report.period), overridden: false }
@@ -698,14 +723,25 @@ export const NO_ACCESS = 'You no longer have access to this data.'
 export type SectionReader = () => Promise<pg.Pool | null | 'withdrawn'>
 
 /** Run one section's SQL as the person's domains as they are now; a person stopped meanwhile reads nothing. */
-async function runSection(reader: SectionReader, sql: string, opts: RunOptions): Promise<QueryRun> {
+async function runSection(reader: SectionReader, sql: string, opts: RunOptions, noAccess: string): Promise<QueryRun> {
   const pool = await reader()
-  if (pool === 'withdrawn') return { ok: false, columns: [], rows: [], truncated: false, ms: 0, error: NO_ACCESS }
+  if (pool === 'withdrawn') return { ok: false, columns: [], rows: [], truncated: false, ms: 0, error: noAccess }
   return runReadOnlyQuery(pool, sql, opts)
 }
 
-/** A run's error as the report shows it: refused for want of a grant, it is the person's access that changed. */
-const sectionError = (run: { error?: string; code?: string }): string | undefined => (run.code === '42501' ? NO_ACCESS : run.error)
+/** A run's error as the report shows it: refused for want of a grant, it is the access it runs as that changed. */
+const sectionError = (run: { error?: string; code?: string }, noAccess: string): string | undefined => (run.code === '42501' ? noAccess : run.error)
+
+/**
+ * How a run is told: the factory's time zone, its abort, the inputs' values, and what a section over data the
+ * reader may no longer read says (NO_ACCESS for one's own run; a shared report's recipient is told it is its owner's).
+ */
+export interface ReportRunOptions {
+  timeZone: string
+  signal?: AbortSignal
+  values?: AiReportInputValues
+  noAccess?: string
+}
 
 /**
  * A section's SQL for one run: a template filled with the run's days, or the query as it ran; then its inputs, from
@@ -721,19 +757,24 @@ export async function runReportSections(
   reader: SectionReader,
   report: AiReport,
   period: AiDayRange | null,
-  opts: { timeZone: string; signal?: AbortSignal; values?: AiReportInputValues },
+  opts: ReportRunOptions,
 ): Promise<AiReportSectionRun[]> {
   const out: AiReportSectionRun[] = []
   // One after another: the reader's few connections are shared with every answer being written.
   for (const section of report.sections) {
     const run = await withQueryPurpose(section.title, () =>
-      runSection(reader, sectionSql(report, section, period, opts.values), {
-        maxRows: AI_REPORT_RUN_ROWS,
-        maxChars: AI_REPORT_RUN_CHARS,
-        timeoutMs: CHAT_QUERY_TIMEOUT_MS,
-        timeZone: opts.timeZone,
-        signal: opts.signal,
-      }),
+      runSection(
+        reader,
+        sectionSql(report, section, period, opts.values),
+        {
+          maxRows: AI_REPORT_RUN_ROWS,
+          maxChars: AI_REPORT_RUN_CHARS,
+          timeoutMs: CHAT_QUERY_TIMEOUT_MS,
+          timeZone: opts.timeZone,
+          signal: opts.signal,
+        },
+        opts.noAccess ?? NO_ACCESS,
+      ),
     )
     // Every row read (up to AI_REPORT_RUN_ROWS): a report is read on a page, not by the model.
     const preview = reportPreview(run)
@@ -749,7 +790,7 @@ export async function runReportSections(
     if (section.display && section.display !== 'table') result.display = section.display
     if (section.tree) result.tree = section.tree
     if (section.note) result.note = section.note
-    const error = sectionError(run)
+    const error = sectionError(run, opts.noAccess ?? NO_ACCESS)
     if (error) result.error = error
     // Drawn again from this run's rows, when they still fit the chart (another period may hold one row, or none).
     const chart = run.ok ? checkChart(section.chart, preview).chart : undefined
@@ -767,25 +808,30 @@ export async function exportReportSections(
   reader: SectionReader,
   report: AiReport,
   period: AiDayRange | null,
-  opts: { timeZone: string; signal?: AbortSignal; values?: AiReportInputValues },
+  opts: ReportRunOptions,
 ): Promise<AiReportExportResponse['sections']> {
   const out: AiReportExportResponse['sections'] = []
   let room = AI_EXPORT_LIMITS.maxChars
   for (const section of report.sections) {
     const run = await withQueryPurpose(section.title, () =>
-      runSection(reader, sectionSql(report, section, period, opts.values), {
-        maxRows: AI_EXPORT_MAX_ROWS,
-        timeoutMs: REPORT_EXPORT_TIMEOUT_MS,
-        timeZone: opts.timeZone,
-        maxRowBytes: AI_EXPORT_LIMITS.maxRowBytes,
-        maxChars: Math.max(1, room),
-        signal: opts.signal,
-      }),
+      runSection(
+        reader,
+        sectionSql(report, section, period, opts.values),
+        {
+          maxRows: AI_EXPORT_MAX_ROWS,
+          timeoutMs: REPORT_EXPORT_TIMEOUT_MS,
+          timeZone: opts.timeZone,
+          maxRowBytes: AI_EXPORT_LIMITS.maxRowBytes,
+          maxChars: Math.max(1, room),
+          signal: opts.signal,
+        },
+        opts.noAccess ?? NO_ACCESS,
+      ),
     )
     const rows = exportRows(run)
     for (const row of rows) for (const c of row) room -= typeof c === 'string' ? c.length : 8
     const result: AiReportExportResponse['sections'][number] = { title: readableModelText(section.title), ok: run.ok, columns: run.columns, rows, truncated: run.truncated }
-    const error = sectionError(run)
+    const error = sectionError(run, opts.noAccess ?? NO_ACCESS)
     if (error) result.error = error
     out.push(result)
   }

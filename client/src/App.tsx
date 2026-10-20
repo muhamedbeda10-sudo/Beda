@@ -26,6 +26,7 @@ import { AiAddress } from '@/components/ai/AiAddress'
 import { homePath, type Permission } from '@qc/shared/permissions'
 import { lazy, Suspense, type ReactElement } from 'react'
 import { usePushBridge } from '@/lib/push'
+import { useSharedReportsStatus } from '@/services/reportShares'
 
 // §20 — the assistant's settings are its owner's alone: fetched when first opened, in nobody else's bundle.
 // §20 — the assistant's full page, for the people given it: fetched when first opened, like its panel.
@@ -40,6 +41,8 @@ const TaskPage = lazy(() => import('@/pages/TaskPage').then((m) => ({ default: m
 const PlaybookPage = lazy(() => import('@/pages/PlaybookPage').then((m) => ({ default: m.PlaybookPage })))
 const SavedTablesPage = lazy(() => import('@/pages/SavedTablesPage').then((m) => ({ default: m.SavedTablesPage })))
 const ReportStylesPage = lazy(() => import('@/pages/ReportStylesPage').then((m) => ({ default: m.ReportStylesPage })))
+// The saved reports shared with a person, the assistant or not: the server says which, and answers 404 for any other.
+const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })))
 
 /** A page the person may not open (§14) sends them home; the API refuses its data anyway. */
 function Only({ cap, children }: { cap: Permission; children: ReactElement }) {
@@ -49,13 +52,18 @@ function Only({ cap, children }: { cap: Permission; children: ReactElement }) {
 
 /**
  * Home: the Inspections board for those who may open it; anyone else, to the
- * first screen they may open (§14); and someone allowed none is told so.
+ * first screen they may open (§14), or to the reports shared with them; and
+ * someone with none of those is told so.
  */
 function Home() {
   const { can, permissions } = useAuth()
+  // Asked by the shell for its menu already: read here, not asked twice.
+  const shared = useSharedReportsStatus(true)
   if (can('view-inspections')) return <InspectionsPage />
   const home = homePath(permissions)
   if (home && home !== '/') return <Navigate to={home} replace />
+  if (shared.data?.any) return <Navigate to="/reports" replace />
+  if (shared.isPending) return <PageLoading />
   return (
     <p className="mx-auto max-w-md py-16 text-center text-sm text-muted">
       You have no screens to open yet. Ask an administrator to give you the ones you need.
@@ -166,6 +174,8 @@ export default function App() {
         <Route path="/playbook" element={<OnlyAiGranted><LazyPage what="The playbook"><PlaybookPage /></LazyPage></OnlyAiGranted>} />
         <Route path="/saved-tables" element={<OnlyAiGranted><LazyPage what="The saved tables"><SavedTablesPage /></LazyPage></OnlyAiGranted>} />
         <Route path="/report-styles" element={<OnlyAiGranted><LazyPage what="The report styles"><ReportStylesPage /></LazyPage></OnlyAiGranted>} />
+        {/* The saved reports shared with the person (the bell's alert opens one): for anyone signed in, the server decides which. */}
+        <Route path="/reports/:id?" element={<LazyPage what="Reports"><ReportsPage /></LazyPage>} />
         {/* Administration lives behind the gear; every section keeps its own address. */}
         <Route path="/admin" element={<Navigate to="/admin/configuration" replace />} />
         <Route path="/admin/configuration/:section?" element={<Only cap="manage-configuration"><ConfigurationPage /></Only>} />

@@ -562,6 +562,8 @@ export type UserNotificationKind =
   | 'task-reopened'
   /** An answer of the AI assistant finished while its asker was not watching it. */
   | 'ai-answer'
+  /** A saved report was shared with the person (directly, or with their role): it opens on the Reports page. */
+  | 'report-shared'
 
 export interface UserNotification {
   id: string
@@ -582,8 +584,8 @@ export interface UserNotificationsResponse {
 }
 
 /**
- * The bell's two lists of these: Reports, the scheduled reports delivered, and
- * Alerts, everything else (a report that stopped is an alert: someone has to
+ * The bell's two lists of these: Reports, the scheduled reports delivered and
+ * the saved reports shared with the person, and Alerts, everything else (a report that stopped is an alert: someone has to
  * act on it). Each lists, counts and is read in full on its own.
  */
 export type UserNotificationCategory = 'alerts' | 'reports'
@@ -591,7 +593,7 @@ export type UserNotificationCategory = 'alerts' | 'reports'
 export const USER_NOTIFICATION_CATEGORIES = ['alerts', 'reports'] as const satisfies readonly UserNotificationCategory[]
 
 /** The kinds the Reports list holds; every other kind is an alert. */
-export const REPORT_NOTIFICATION_KINDS: readonly UserNotificationKind[] = ['automation-report']
+export const REPORT_NOTIFICATION_KINDS: readonly UserNotificationKind[] = ['automation-report', 'report-shared']
 
 export const notificationCategory = (kind: UserNotificationKind): UserNotificationCategory => (REPORT_NOTIFICATION_KINDS.includes(kind) ? 'reports' : 'alerts')
 

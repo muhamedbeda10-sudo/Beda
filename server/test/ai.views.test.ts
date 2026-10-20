@@ -169,7 +169,7 @@ describe('§20 the ai views read like the screens', () => {
     const [row] = await read(
       `SELECT session_no, status, machine, process, opened_by, closed_by, rejected_before_release, first_part_clean,
               final_qty, samples, pieces_inspected, defect_pieces, hold_records, hold_pieces, defect_rate_pct,
-              inspected_defect_pct, pt_lengths_required, counts_on_dashboard, started_day = (now() AT TIME ZONE 'Africa/Cairo')::date
+              inspected_defect_pct, pt_lengths_required, counts_on_dashboard, started_day = ai.factory_day(now(), 'Africa/Cairo')
          FROM ai.inspection_sessions WHERE session_id = '${ids.welding}'`,
     )
     expect(row).toEqual([1, 'Closed', '58-Welding-LM4', 'welding', 'Inspector One', 'Inspector One', 2, false, 101, 1, 10, 4, 1, 4, 4, 40, 6, true, true])

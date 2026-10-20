@@ -18,7 +18,7 @@ let p: People
 
 const SECTIONS = [
   { title: 'Machines', sql: 'SELECT count(*)::int AS machines FROM ai.machines' },
-  { title: 'Registered in the period', sql: 'SELECT machine_code FROM ai.machines WHERE registered_at >= {{from}} AND registered_at < {{to}} + 1 ORDER BY machine_code' },
+  { title: 'Registered in the period', sql: 'SELECT machine_code FROM ai.machines WHERE registered_at >= ai.factory_day_start({{from}}) AND registered_at < ai.factory_day_start({{to}} + 1) ORDER BY machine_code' },
 ]
 const schedule = (over: Partial<ReturnType<typeof reportDraft>['schedule']> = {}) => ({ ...reportDraft().schedule!, period: { kind: 'last_days' as const, days: 7 }, sections: SECTIONS, summary: true, ...over })
 

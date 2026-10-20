@@ -3,9 +3,10 @@
 // it (§14: their role's permissions with their own overrides — the server
 // refuses the screen's data to anyone else), or, for the AI assistant's
 // settings, to the one person who owns the assistant. Automations (§21) open from the assistant's header, and
-// follow-ups (§21) from the bell, and notices (§16) from their own button beside it: none is a tab here.
+// follow-ups (§21) from the bell, and notices (§16) from their own button beside it: none is a tab here. Reports —
+// the saved reports shared with a person — is a tab for whoever has one shared with them, whatever their role.
 
-import { ClipboardCheck, FileCheck2, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
+import { ClipboardCheck, FileChartColumn, FileCheck2, FileText, History, LayoutDashboard, ScrollText, Search, SlidersHorizontal, Sparkles, Table2, UploadCloud, Users } from 'lucide-react'
 import { can, type Permission } from '@qc/shared/permissions'
 
 export interface NavItem {
@@ -18,6 +19,8 @@ export interface NavItem {
   aiOwner?: boolean
   /** One line shown under the label in the administration menu. */
   hint?: string
+  /** For whoever has a saved report shared with them, whatever their permissions (shared/reportShares.ts). */
+  sharedReports?: boolean
 }
 
 /** The work an inspector does: centred in the bar on a desktop, in the menu on a tablet or phone. */
@@ -28,6 +31,8 @@ export const NAV: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, needs: 'view-dashboard' },
   // The material registers; uploading a mill test certificate into them is set in the AI settings (ai_access.mtc).
   { to: '/mtc', label: 'MTC', icon: FileCheck2, needs: 'view-mtc' },
+  // The saved reports shared with the person: there once one is, gone once none is.
+  { to: '/reports', label: 'Reports', icon: FileChartColumn, sharedReports: true },
 ]
 
 /**
@@ -49,7 +54,10 @@ export const ADMIN_NAV: NavItem[] = [
   { to: '/admin/whats-new', label: "What's new", icon: Sparkles, needs: 'view-release-notes', hint: 'Every update, newest first' },
 ]
 
-/** The entries this person sees: by their permissions, and the AI assistant's settings only for its owner. */
-export function visibleNav(items: readonly NavItem[], permissions: readonly Permission[], aiOwner: boolean): NavItem[] {
-  return items.filter((n) => (n.aiOwner ? aiOwner : !n.needs || can(permissions, n.needs)))
+/**
+ * The entries this person sees: by their permissions, the AI assistant's settings only for its owner, and Reports
+ * only while a report is shared with them.
+ */
+export function visibleNav(items: readonly NavItem[], permissions: readonly Permission[], aiOwner: boolean, sharedReports = false): NavItem[] {
+  return items.filter((n) => (n.aiOwner ? aiOwner : n.sharedReports ? sharedReports : !n.needs || can(permissions, n.needs)))
 }
