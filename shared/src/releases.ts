@@ -28,6 +28,16 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-20.1',
+    date: '2026-10-20',
+    title: 'Share a saved report with people and roles',
+    items: [
+      { text: 'The owner of a saved report can share it with chosen people and with everyone in a role — also people who do not have the AI assistant. Open the report in My reports and press Share, beside Rename: add people and roles, take them off, and see who ran it and when. Or ask the assistant: “share the weekly scrap report with Ahmed and the supervisors”.' },
+      { text: 'Whoever it is shared with gets a note in the bell (Reports tab) and a new Reports page in the menu. There they open the report, fill in what it asks for (and the days, when its period can change), press Run, and Print it or save it as a PDF; people allowed to export records also take it to Excel. They cannot see its queries or change it.' },
+      { text: 'A shared report reads the data its owner may read. If the owner no longer has the assistant, the report does not run and says so.' },
+    ],
+  },
+  {
     id: '2026-10-19.4',
     date: '2026-10-19',
     title: 'Notices have their own button; write one by hand again',

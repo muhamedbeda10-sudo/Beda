@@ -11,7 +11,9 @@
 //
 // The scheduled reports delivered have their own tab, Reports, apart from the
 // alerts: a report is read at leisure, an alert acted on, and a day's reports
-// would bury the alerts. Its unread ones count on the bell like any alert.
+// would bury the alerts. A saved report shared with the person is told there
+// too, and opens on the Reports page. Its unread ones count on the bell like
+// any alert.
 // ============================================================================
 
 import { useEffect, useRef, useState } from 'react'
@@ -29,6 +31,7 @@ import { BellTasks } from './BellTasks'
 import { BellTabs, type BellTabItem } from './BellTabs'
 import { CountBadge } from '@/components/ui/CountBadge'
 import { unreadAlerts } from './alerts'
+import { sharedReportKeys } from '@/services/reportShares'
 
 type BellTab = 'alerts' | 'reports' | 'follow-ups' | 'tasks'
 
@@ -55,6 +58,17 @@ export function NoticeBell({ className }: { className?: string }) {
     ...(hasTasks ? [{ value: 'tasks' as const, label: 'Tasks', icon: <ListTodo className="h-4 w-4" />, count: tasksWaiting, urgent: (tasks?.assignedOverdue ?? 0) > 0 }] : []),
   ]
   const shown: BellTab = tabs.some((t) => t.value === tab) ? tab : tabs[0].value
+
+  // A new report alert may be a report just shared with this person: whether the Reports page is theirs is asked again,
+  // so its tab appears without a reload.
+  const lastUnreadReports = useRef(unreadReports)
+  useEffect(() => {
+    if (unreadReports > lastUnreadReports.current) {
+      void qc.invalidateQueries({ queryKey: sharedReportKeys.status })
+      void qc.invalidateQueries({ queryKey: sharedReportKeys.lists })
+    }
+    lastUnreadReports.current = unreadReports
+  }, [unreadReports, qc])
 
   // A new alert is often a follow-up or a task just given to this person: their counts are asked again with it.
   const lastUnread = useRef(unread)

@@ -33,6 +33,14 @@ describe('the sections each person sees', () => {
     expect(paths(visibleNav(NAV, PERMISSION_IDS, true))).not.toContain('/follow-ups')
   })
 
+  it('has Reports for whoever has a saved report shared with them, whatever their permissions, and for nobody else', () => {
+    for (const held of [[], role.viewer, PERMISSION_IDS] as const) {
+      expect(paths(visibleNav(NAV, held, false, true))).toContain('/reports')
+      expect(paths(visibleNav(NAV, held, true))).not.toContain('/reports')
+    }
+    expect(paths(visibleNav(NAV, [], false, true))).toEqual(['/reports'])
+  })
+
   it('lists Coil search and New PDI in the menu for whoever may use them, and for nobody else', () => {
     expect(TOOLS_NAV.map((n) => n.label)).toEqual(['Coil search', 'New PDI'])
     for (const r of ['inspector', 'supervisor', 'admin'] as const) expect(paths(visibleNav(TOOLS_NAV, role[r], false)), r).toEqual(['/coils', '/pdi'])

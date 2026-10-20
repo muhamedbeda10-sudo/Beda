@@ -68,16 +68,21 @@ export function reportFormData(f: ReportRunFile): FormData {
   }
 }
 
-export function reportWorkbookDoc(f: ReportRunFile): WorkbookDoc {
+/**
+ * A run's workbook. `withSql` false — someone the report is shared with (ai/reportShares.ts) — leaves out each
+ * section's SQL and the question it came from: they see what it shows, not how it is asked.
+ */
+export function reportWorkbookDoc(f: ReportRunFile, opts: { withSql?: boolean } = {}): WorkbookDoc {
+  const withSql = opts.withSql ?? true
   const about: WorkbookDoc['about'] = [
-    f.report.description ? ['Shows', f.report.description] : ['Question', f.report.question],
+    ...(f.report.description ? [['Shows', f.report.description] as [string, string]] : withSql ? [['Question', f.report.question] as [string, string]] : []),
     ...f.report.inputs.map((i): [string, string] => [i.label, inputValueText(f.values[i.name] ?? null)]),
     ['Period', f.period ? `${periodWords(f.period)}${f.period.overridden ? ', chosen for this file' : ''}` : 'As the queries were asked'],
     ['Run at', factoryStamp(f.ranAt, f.timeZone)],
   ]
   const sections: WorkbookSection[] = f.sections.map((s, i) => {
     const saved = f.report.sections[i]
-    return { ...s, ...(saved?.sql ? { sql: sectionSql(f.report, saved, f.period, f.values) } : {}) }
+    return { ...s, ...(withSql && saved?.sql ? { sql: sectionSql(f.report, saved, f.period, f.values) } : {}) }
   })
   return {
     kind: 'Saved report',

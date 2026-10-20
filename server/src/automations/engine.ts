@@ -52,6 +52,7 @@ import { previewOf, runReadOnlyQuery } from '../ai/runQuery'
 import { withQueryOrigin } from '../ai/slowQueries'
 import { escalateOverdue } from './followUps'
 import { createNotifications, purgeNotifications } from './notify'
+import { purgeSharePhotos } from '../ai/reportShares'
 import { activeUserIds, distinctIds } from './people'
 import { runReport, runSections, sectionError, type ReportReader } from './report'
 import { INTERRUPTED_ERROR, beginRun, closeLostRuns, findRun, skippedRun } from './runs'
@@ -640,6 +641,8 @@ export class AutomationEngine {
     if (now.getTime() - this.lastPurge < PURGE_EVERY_MS) return
     try {
       await purgeNotifications(this.deps.db, now)
+      // The photos a shared report's run showed its recipients, whose day is over (ai/reportShares.ts).
+      await purgeSharePhotos(this.deps.db, now)
       this.lastPurge = now.getTime()
     } catch (e) {
       console.error('[automations] could not remove old alerts', e)

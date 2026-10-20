@@ -40,6 +40,7 @@ import { productionRecordsRoutes } from './modules/productionRecords.routes'
 import { pushRoutes } from './modules/push.routes'
 import { reportStylesRoutes } from './modules/reportStyles.routes'
 import { reportFormsRoutes } from './modules/reportForms.routes'
+import { sharedReportsRoutes } from './modules/sharedReports.routes'
 import { keepSlowQueries } from './ai/slowQueries'
 
 export function createApp(ctx: AppContext): Express {
@@ -123,6 +124,8 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/push', guard, pushRoutes(ctx))
   app.use('/api/report-styles', guard, reportStylesRoutes(ctx))
   app.use('/api/report-forms', guard, reportFormsRoutes(ctx))
+  // The saved reports shared with a person: signed in is enough, the assistant or not (ai/reportShares.ts).
+  app.use('/api/reports/shared', guard, sharedReportsRoutes(ctx))
 
   app.all('/api/{*rest}', (_req, res) => {
     const body: ApiErrorBody = { error: { code: 'not_found', message: 'No such endpoint.' } }

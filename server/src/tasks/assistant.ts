@@ -3,7 +3,9 @@
 // when a question needs them, through the tool search), and the cards they
 // leave.
 //
-//   • find_people — the people a task can be sent to, by name: their ids.
+//   • find_people — the people a task can be sent to, by name: their ids;
+//     with include_viewers, the viewers too, for a report shared with people
+//     (share_report, ai/reportTools.ts): a viewer reads a report, never a task.
 //   • propose_task — a task drafted as a card: what is to be done, to whom,
 //     how urgent, by when (factory time). Checked as sending would check it;
 //     nothing is sent until the person presses Send task on the card (then
@@ -42,12 +44,15 @@ export const MAX_PEOPLE_FOUND = 30
 export const FIND_PEOPLE_TOOL: Anthropic.Beta.BetaTool = {
   name: FIND_PEOPLE_TOOL_NAME,
   description:
-    'Find the people a task can be sent to (active accounts of the app, not viewers), by part of their name or their role (inspector, supervisor, admin). ' +
-    `Returns at most ${MAX_PEOPLE_FOUND}, each with its id, name and role: use these ids, exactly, as propose_task's assigneeIds.`,
+    'Find the people a task can be sent to (active accounts of the app, not viewers), by part of their name or their role (inspector, supervisor, admin), or with include_viewers the people a report can be shared with (viewers too). ' +
+    `Returns at most ${MAX_PEOPLE_FOUND}, each with its id, name and role: use these ids, exactly, as propose_task's assigneeIds or share_report's people.`,
   eager_input_streaming: true,
   input_schema: {
     type: 'object',
-    properties: { query: { type: 'string', description: "Part of a person's name, or a role. Empty: everyone (the first ones)." } },
+    properties: {
+      query: { type: 'string', description: "Part of a person's name, or a role. Empty: everyone (the first ones)." },
+      include_viewers: { type: 'boolean', description: 'True when looking for people to share a report with: viewers may read a shared report, never receive a task.' },
+    },
     additionalProperties: false,
   },
 }
@@ -106,7 +111,7 @@ const ProposeInput = z
     revisesProposalId: z.string().nullish(),
   })
   .passthrough()
-const FindInput = z.object({ query: z.string().nullish() }).passthrough()
+const FindInput = z.object({ query: z.string().nullish(), include_viewers: z.boolean().nullish() }).passthrough()
 const MyTasksInput = z.object({ box: z.enum(['sent', 'received', 'both']).nullish(), status: z.enum(['active', 'closed', 'all']).nullish() }).passthrough()
 
 // ---- Factory time --------------------------------------------------------------------------
@@ -265,10 +270,10 @@ async function findPeople(ctx: TaskToolContext, tu: ToolUse): Promise<ToolOutcom
   const pattern = `%${query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
   const { rows } = await ctx.db.query<{ id: string; name: string; role: string }>(
     `SELECT u.id, u.name, u.role FROM users u
-      WHERE u.is_active AND u.deleted_at IS NULL AND NOT u.is_system AND u.role <> 'viewer'
+      WHERE u.is_active AND u.deleted_at IS NULL AND NOT u.is_system AND ($4 OR u.role <> 'viewer')
         AND ($1 = '' OR lower(u.name) LIKE $2 OR u.role::text = $1 OR lower(u.username) LIKE $2)
       ORDER BY u.name, u.id LIMIT $3`,
-    [query, pattern, MAX_PEOPLE_FOUND + 1],
+    [query, pattern, MAX_PEOPLE_FOUND + 1, input.data.include_viewers === true],
   )
   return answered(tu, JSON.stringify({ query, people: rows.slice(0, MAX_PEOPLE_FOUND), truncated: rows.length > MAX_PEOPLE_FOUND }))
 }

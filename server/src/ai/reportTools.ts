@@ -16,9 +16,18 @@
 //     shown as a card in the answer with Open report.
 //   • read_report lists the reports the person may open, or gives one in
 //     full (its inputs and its sections' SQL), so the model can change it.
+//   • share_report shares one of the person's own reports with people and
+//     roles, stops sharing it, or says whom it is shared with
+//     (./reportShares, the same change as the report's Share panel makes).
+//     Its recipients run it as the person's domains, so a change is made at
+//     once only at the person's own word: the call quotes, as confirmation,
+//     their words of this question asking for it (personsOwnWords) — nothing
+//     the assistant reads can share a report. Shown as a card with whom it is
+//     shared with, and Open sharing.
 //
-// A report runs as whoever opens it reads: sharing one shares its queries,
-// never data its reader may not see.
+// A report shared with everyone given the assistant (shared) runs as whoever
+// opens it reads: sharing one so shares its queries, never data its reader
+// may not see.
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'
@@ -32,11 +41,17 @@ import {
   type AiReportPeriod,
   type AiReportSection,
   type AiReportSectionDisplay,
+  type AiReportSharePart,
   type AiStreamEvent,
 } from '@qc/shared/ai'
+import type { ReportShareTarget } from '@qc/shared/reportShares'
+import { ROLES, type Role } from '@qc/shared/types'
+import { z } from 'zod'
 import { AI_REPORT_DYNAMIC_DEFAULTS, AI_REPORT_INPUT_KINDS, AI_REPORT_MAX_INPUTS, readInputValues, type AiReportInput } from '@qc/shared/aiReportInputs'
 import type { Config } from '../config'
-import type { Db, Queryable } from '../db/pool'
+import { withTransaction, type Db, type Queryable } from '../db/pool'
+import { personsOwnWords } from '../automations/confirmation'
+import { describeIssues } from '../automations/draft'
 import { isGranted, loadAccess } from './access'
 import type { Readers, ToolHandler, ToolOutcome } from './assistant'
 import { CHART_INPUT_SCHEMA, checkChart } from './charts'
@@ -45,12 +60,14 @@ import { readInputDefinitions, placeholderProblems } from './reportInputs'
 import { AI_REPORT_TITLE_CHARS, PERIOD_KINDS, WEEK_STARTS, changeReport, findReport, insertReport, listReports, sectionSql, toPeriod, type ModelPeriod } from './reports'
 import { AI_MAX_SQL_CHARS, AI_QUERY_TIMEOUT_MS, previewOf, runReadOnlyQuery } from './runQuery'
 import { withQueryOrigin, withQueryPurpose } from './slowQueries'
-import { reportPart } from './reportParts'
+import { loadReportShareParts, reportPart, reportSharePart } from './reportParts'
+import { shareReport } from './reportShares'
 
 type ToolUse = Anthropic.Beta.BetaToolUseBlock
 
 export const SAVE_REPORT_TOOL_NAME = 'save_report'
 export const READ_REPORT_TOOL_NAME = 'read_report'
+export const SHARE_REPORT_TOOL_NAME = 'share_report'
 
 /** Sections a report holds at most; how long a description and a note may be; rows of each section the model is shown after a test run. */
 export const AI_REPORT_MAX_SECTIONS = 20
@@ -158,7 +175,33 @@ export const READ_REPORT_TOOL: Anthropic.Beta.BetaTool = {
   },
 }
 
-export const REPORT_TOOLS: readonly Anthropic.Beta.BetaTool[] = [SAVE_REPORT_TOOL, READ_REPORT_TOOL]
+const ROLE_ITEMS = { type: 'string', enum: [...ROLES] }
+
+export const SHARE_REPORT_TOOL: Anthropic.Beta.BetaTool = {
+  name: SHARE_REPORT_TOOL_NAME,
+  description:
+    "Share one of the person's own reports with people and roles — anyone in the app, with or without the assistant: they open it on their Reports page, fill in its inputs and run it, over the data the person may read — or stop sharing it, or (with nothing to add or remove) say whom it is shared with. " +
+    'Find the report with read_report (one of theirs: mine true), the people with find_people (include_viewers true). A change is made at once, only when the person asks for it in their own words: pass those words as confirmation. ' +
+    'Returns whom it is shared with now, shown to the person as a card.',
+  eager_input_streaming: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      report_id: text("The report: one of the person's own, as read_report gives its id."),
+      add_people: { type: 'array', items: { type: 'string' }, description: 'People to share it with: their ids, exactly as find_people gives them.' },
+      add_roles: { type: 'array', items: ROLE_ITEMS, description: 'Roles to share it with: everyone who holds the role, now and later.' },
+      remove_people: { type: 'array', items: { type: 'string' }, description: 'People to stop sharing it with: their ids.' },
+      remove_roles: { type: 'array', items: ROLE_ITEMS, description: 'Roles to stop sharing it with.' },
+      confirmation: text(
+        "For a change (anything to add or remove): the person's own words in their latest message asking for it, copied exactly as they wrote them. Leave it out to read whom it is shared with.",
+      ),
+    },
+    required: ['report_id'],
+    additionalProperties: false,
+  },
+}
+
+export const REPORT_TOOLS: readonly Anthropic.Beta.BetaTool[] = [SAVE_REPORT_TOOL, READ_REPORT_TOOL, SHARE_REPORT_TOOL]
 
 // ---- Checking what the model sent ------------------------------------------------------
 
@@ -258,6 +301,7 @@ export interface ReportToolContext {
   config: Config
   readers: Readers
   userId: string
+  userName: string
   conversationId: string
   turnId: string
   emit: (event: AiStreamEvent) => void
@@ -396,9 +440,78 @@ async function readReports(ctx: ReportToolContext, tu: ToolUse): Promise<ToolOut
   })
 }
 
+const ShareInput = z
+  .object({
+    report_id: z.string(),
+    add_people: z.array(z.string()).nullish(),
+    add_roles: z.array(z.enum(ROLES as unknown as [Role, ...Role[]])).nullish(),
+    remove_people: z.array(z.string()).nullish(),
+    remove_roles: z.array(z.enum(ROLES as unknown as [Role, ...Role[]])).nullish(),
+    confirmation: z.string().nullish(),
+  })
+  .passthrough()
+
+/** What the model reads of a share card: the report, whom this call added and removed, and whom it is shared with now. */
+const shareContent = (part: AiReportSharePart, note: string) => ({
+  reportId: part.reportId,
+  title: part.title,
+  added: part.added,
+  removed: part.removed,
+  sharedWith: part.sharedWith,
+  note,
+})
+
+async function share(ctx: ReportToolContext, tu: ToolUse): Promise<ToolOutcome> {
+  // A step finished after the answer was cut short runs its calls again: a change already made is not made twice.
+  const made = (await loadReportShareParts(ctx.db, ctx.conversationId, ctx.turnId)).get(tu.id)
+  if (made) return ok(tu, shareContent(made, 'Done before the answer was interrupted; the person sees it as a card.'))
+  const parsed = ShareInput.safeParse(tu.input ?? {})
+  if (!parsed.success) return failed(tu, describeIssues(parsed.error).join('\n'))
+  const i = parsed.data
+  const people = (ids: string[] | null | undefined) => (ids ?? []).map((userId): ReportShareTarget => ({ kind: 'user', userId: userId.trim() }))
+  const roles = (list: Role[] | null | undefined) => (list ?? []).map((role): ReportShareTarget => ({ kind: 'role', role }))
+  const add = [...people(i.add_people), ...roles(i.add_roles)]
+  const remove = [...people(i.remove_people), ...roles(i.remove_roles)]
+  // Its recipients run it as this person's domains: a change only at their own word, never because something read says so.
+  if (add.length > 0 || remove.length > 0) {
+    const refusal = await personsOwnWords(ctx.db, ctx.turnId, i.confirmation ?? null, 'Sharing a report, or no longer sharing it,', SHARE_REPORT_TOOL_NAME)
+    if (refusal) return failed(tu, refusal)
+  }
+  const card = { conversationId: ctx.conversationId, turnId: ctx.turnId, toolUseId: tu.id }
+  const outcome = await withTransaction(ctx.db, (tx) => shareReport(tx, { reportId: i.report_id.trim().toLowerCase(), by: { id: ctx.userId, name: ctx.userName }, add, remove, card }))
+  if (outcome.kind === 'not-found') return failed(tu, `No report ${i.report_id} of this person's own: only whoever made a report shares it. read_report lists theirs (mine: true).`)
+  if (outcome.kind === 'not-allowed') return failed(tu, 'Not allowed: this person no longer has the assistant.')
+  if (outcome.kind === 'problems') return failed(tu, ['Nothing was changed. Fix these and call share_report again:', ...outcome.problems.map((p) => `- ${p}`)].join('\n'))
+
+  const part = reportSharePart({
+    cardId: outcome.cardId!,
+    reportId: outcome.report.id,
+    title: outcome.report.title,
+    added: outcome.added,
+    removed: outcome.removed,
+    sharedWith: outcome.shares.map((s) => ({ label: s.label, role: s.kind === 'role' ? s.role : null })),
+  })
+  ctx.emit({ type: 'report-share', part })
+  const asked = add.length > 0 || remove.length > 0
+  const changed = outcome.added.length > 0 || outcome.removed.length > 0
+  const told = outcome.notified > 0 ? `${outcome.notified} ${outcome.notified === 1 ? 'person was' : 'people were'} told in their bell. ` : ''
+  return ok(
+    tu,
+    shareContent(
+      part,
+      changed
+        ? `Done. ${told}They open it on their Reports page and run it over the data this person may read; they never see its SQL. The person sees whom it is shared with as a card. Say in a sentence what changed.`
+        : asked
+          ? 'Nothing changed: it was shared with them already, or not with those to remove. The person sees whom it is shared with as a card.'
+          : 'Whom it is shared with now. The person sees it as a card.',
+    ),
+  )
+}
+
 export function reportToolHandlers(ctx: ReportToolContext): Record<string, ToolHandler> {
   return {
     [SAVE_REPORT_TOOL_NAME]: { run: (tu, signal) => save(ctx, tu, signal) },
     [READ_REPORT_TOOL_NAME]: { run: (tu) => readReports(ctx, tu) },
+    [SHARE_REPORT_TOOL_NAME]: { run: (tu) => share(ctx, tu) },
   }
 }

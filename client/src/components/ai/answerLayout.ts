@@ -20,14 +20,14 @@ import type { AiNoticePart } from '@qc/shared/noticeAssistant'
 import type { AiPlaybookPart } from '@qc/shared/playbook'
 import type { AiSavedTablePart } from '@qc/shared/savedTables'
 import type { AiDiagramPart } from '@qc/shared/aiDiagram'
-import type { AiReportPart } from '@qc/shared/ai'
+import type { AiReportPart, AiReportSharePart } from '@qc/shared/ai'
 import type { LivePart } from './liveTurn'
 
 type QueryLike = Extract<LivePart, { type: 'query' | 'pending-query' }>
 
 const isQuery = (p: LivePart): p is QueryLike => p.type === 'query' || p.type === 'pending-query'
 
-type InlinePart = Extract<LivePart, { type: 'text' | 'automation' | 'notice' | 'task' | 'playbook' | 'excel' | 'saved-table' | 'diagram' | 'report' }>
+type InlinePart = Extract<LivePart, { type: 'text' | 'automation' | 'notice' | 'task' | 'playbook' | 'excel' | 'saved-table' | 'diagram' | 'report' | 'report-share' }>
 
 /** What reads in its place among the text: the text itself and the cards. */
 const isInline = (p: LivePart): p is InlinePart =>
@@ -39,7 +39,8 @@ const isInline = (p: LivePart): p is InlinePart =>
   p.type === 'excel' ||
   p.type === 'saved-table' ||
   p.type === 'diagram' ||
-  p.type === 'report'
+  p.type === 'report' ||
+  p.type === 'report-share'
 
 export type AnswerBlock =
   | { kind: 'text'; key: string; text: string }
@@ -55,6 +56,7 @@ export type AnswerBlock =
   | { kind: 'saved-table'; key: string; part: AiSavedTablePart }
   | { kind: 'diagram'; key: string; part: AiDiagramPart }
   | { kind: 'report'; key: string; part: AiReportPart }
+  | { kind: 'report-share'; key: string; part: AiReportSharePart }
 
 const QUERIES = 'queries' as const
 const KPIS = 'kpis' as const
@@ -83,6 +85,7 @@ export function answerBlocks(
   const savedTable = (p: AiSavedTablePart): AnswerBlock => ({ kind: 'saved-table', key: `saved-table:${p.changeId}`, part: p })
   const diagram = (p: AiDiagramPart): AnswerBlock => ({ kind: 'diagram', key: `diagram:${p.diagramId}`, part: p })
   const report = (p: AiReportPart): AnswerBlock => ({ kind: 'report', key: `report:${p.changeId}`, part: p })
+  const reportShare = (p: AiReportSharePart): AnswerBlock => ({ kind: 'report-share', key: `report-share:${p.cardId}`, part: p })
   const inline = (p: InlinePart): AnswerBlock => {
     switch (p.type) {
       case 'text':
@@ -103,6 +106,8 @@ export function answerBlocks(
         return diagram(p)
       case 'report':
         return report(p)
+      case 'report-share':
+        return reportShare(p)
     }
   }
 
