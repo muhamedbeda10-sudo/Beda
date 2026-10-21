@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { HANDLES_QUERY, LEAN_QUERY, TABLE_QUERY, TableFooter, sanitise, shownByDefault, spaceAfter, visibleWith, type ColumnDef } from './ResizableColumns'
+import { HANDLES_QUERY, LEAN_QUERY, TABLE_QUERY, TableFooter, roomBelow, sanitise, shownByDefault, spaceAfter, visibleWith, type ColumnDef } from './ResizableColumns'
 
 /** A table shaped like History's: an everyday set, extras, a lean set for a narrower screen, and the fixed chevron. */
 const COLUMNS: ColumnDef[] = [
@@ -112,6 +112,36 @@ describe('the room a table frame leaves under it', () => {
     vi.stubGlobal('document', { body })
     vi.stubGlobal('getComputedStyle', (el: FakeBox) => el.style)
     expect(spaceAfter(frame as unknown as Element)).toBe(12 + 60 + 20 + 34)
+  })
+
+  it('stops at the box the page scrolls in, as it does at main: the assistant’s popup draws a page without a main', () => {
+    const body = box('BODY', 0, 1000)
+    const section = box('SECTION', 0, 1000, { padding: 50 })
+    const scroller = box('DIV', 64, 600, { padding: 20 })
+    const frame = box('DIV', 84, 560)
+    nest(body, [section])
+    nest(section, [scroller])
+    nest(scroller, [frame])
+    ;(scroller as unknown as { hasAttribute: (n: string) => boolean }).hasAttribute = (n) => n === 'data-app-scroll'
+    vi.stubGlobal('document', { body })
+    vi.stubGlobal('getComputedStyle', (el: FakeBox) => el.style)
+    expect(spaceAfter(frame as unknown as Element)).toBe(20)
+  })
+
+  it('measures the room a frame has against the box it scrolls in, as that box is scrolled, not against the window', () => {
+    const body = box('BODY', 0, 1000)
+    // The shell's main: 700 px tall from 64, scrolled down 100 px, so the frame (laid out 20 px into it) shows at -16.
+    const main = box('MAIN', 64, 700, { padding: 20 })
+    const frame = box('DIV', -16, 560)
+    nest(body, [main])
+    nest(main, [frame])
+    Object.assign(main, { hasAttribute: (n: string) => n === 'data-app-scroll', clientHeight: 700, clientTop: 0, scrollTop: 100 })
+    Object.assign(frame, { closest: (q: string) => (q === '[data-app-scroll]' ? main : null) })
+    vi.stubGlobal('document', { body })
+    vi.stubGlobal('window', { innerHeight: 9999, scrollY: 0 })
+    vi.stubGlobal('getComputedStyle', (el: FakeBox) => el.style)
+    // 700 − (where it starts in the box: −16 − 64 + 100 = 20) − main's bottom padding.
+    expect(roomBelow(frame as unknown as HTMLElement)).toBe(700 - 20 - 20)
   })
 
   it('is only the padding that closes the page when nothing follows the frame', () => {

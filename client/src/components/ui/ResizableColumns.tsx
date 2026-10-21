@@ -15,6 +15,7 @@ import { Check, Columns3, RotateCcw, Scaling } from 'lucide-react'
 import { useMediaQuery } from '@/lib/media'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { cn } from '@/lib/utils'
+import { scrollerOf } from '@/lib/appScroll'
 
 export interface ColumnDef {
   key: string
@@ -331,10 +332,25 @@ export function spaceAfter(el: Element): number {
     }
     const box = getComputedStyle(parent)
     total += to - from + (parseFloat(box.paddingBottom) || 0) + (parseFloat(box.borderBottomWidth) || 0)
-    if (parent.tagName === 'MAIN') break
+    if (parent.tagName === 'MAIN' || parent.hasAttribute?.('data-app-scroll')) break
     node = parent
   }
   return total
+}
+
+/**
+ * The room `el` may take to fill the window: from where it starts (as the page is laid out, whatever it is scrolled
+ * to now) down to the bottom of the box the page scrolls in — the shell's <main> (lib/appScroll), or the window where
+ * there is none — less what follows it on the page (spaceAfter).
+ */
+export function roomBelow(el: HTMLElement): number {
+  const top = el.getBoundingClientRect().top
+  const scroller = scrollerOf(el)
+  if (scroller) {
+    const box = scroller.getBoundingClientRect()
+    return scroller.clientHeight - (top - box.top - scroller.clientTop + scroller.scrollTop) - spaceAfter(el)
+  }
+  return window.innerHeight - (top + window.scrollY) - spaceAfter(el)
 }
 
 /**
@@ -350,17 +366,13 @@ export function GridFrame({ children, className }: { children: ReactNode; classN
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    const measure = () => {
-      // Where the frame starts when the page is at its top, whatever the page is scrolled to now.
-      const top = el.getBoundingClientRect().top + window.scrollY
-      setMaxHeight(Math.max(256, Math.floor(window.innerHeight - top - spaceAfter(el))))
-    }
+    const measure = () => setMaxHeight(Math.max(256, Math.floor(roomBelow(el))))
     measure()
     window.addEventListener('resize', measure)
     // The page's content, not the window: a row of filter chips above the frame, or a footer that wraps below it,
     // moves the room the frame has.
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
-    ro?.observe(el.closest('main') ?? document.body)
+    ro?.observe(scrollerOf(el) ?? el.closest('main') ?? document.body)
     return () => {
       window.removeEventListener('resize', measure)
       ro?.disconnect()

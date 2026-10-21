@@ -50,7 +50,7 @@ export function AdminLayout({
       {switcher && (
         <nav
           aria-label="Administration sections"
-          className="sticky top-[calc(5rem+env(safe-area-inset-top))] hidden w-56 shrink-0 flex-col gap-0.5 rounded-2xl bg-white p-2 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:ring-slate-800 lg:flex"
+          className="sticky top-4 hidden w-56 shrink-0 flex-col gap-0.5 rounded-2xl bg-white p-2 shadow-card ring-1 ring-slate-200/80 dark:bg-slate-900 dark:ring-slate-800 lg:flex"
         >
           <p className="px-3 pb-1.5 pt-2 text-[11px] font-bold uppercase tracking-[0.18em] text-muted">Administration</p>
           {sections.map((s) => (

@@ -174,20 +174,24 @@ export function chunk<T>(items: readonly T[], size: number): T[][] {
 }
 
 let scrollLocks = 0
-let scrollBefore = ''
+/** The boxes locked by the first lock and what their overflow was, to put back when the last lock goes. */
+let scrollLocked: { el: HTMLElement; before: string }[] = []
 
 /**
  * Stops the page scrolling under an overlay (a modal, a drawer, the
- * assistant's sheet) until the returned release is called. Counted, so
- * overlays opened over one another, and closed in any order, give the page
- * its scrolling back only when the last one closes — as it was before the
- * first one opened.
+ * assistant's sheet) until the returned release is called: the document's
+ * body, and the boxes the app's pages scroll in (the shell's main, the
+ * assistant's popup — lib/appScroll). Counted, so overlays opened over one
+ * another, and closed in any order, give the page its scrolling back only
+ * when the last one closes — as it was before the first one opened.
  */
 export function lockBodyScroll(): () => void {
-  const style = document.body.style
   if (scrollLocks === 0) {
-    scrollBefore = style.overflow
-    style.overflow = 'hidden'
+    scrollLocked = [document.body, ...Array.from(document.querySelectorAll?.<HTMLElement>('[data-app-scroll]') ?? [])].map((el) => {
+      const before = el.style.overflow
+      el.style.overflow = 'hidden'
+      return { el, before }
+    })
   }
   scrollLocks += 1
   let released = false
@@ -196,6 +200,9 @@ export function lockBodyScroll(): () => void {
     if (released) return
     released = true
     scrollLocks -= 1
-    if (scrollLocks === 0) style.overflow = scrollBefore
+    if (scrollLocks === 0) {
+      for (const { el, before } of scrollLocked) el.style.overflow = before
+      scrollLocked = []
+    }
   }
 }

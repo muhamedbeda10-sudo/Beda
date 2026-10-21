@@ -44,6 +44,7 @@ import { useAuth } from '@/store/AuthContext'
 import { cn, uid, newSubmissionId } from '@/lib/utils'
 import { PHONE, isCoarsePointer, matchesMedia, useMediaQuery } from '@/lib/media'
 import { useBottomBarRef } from '@/lib/bottomBar'
+import { appScroller } from '@/lib/appScroll'
 import {
   SHORT_LANDSCAPE,
   coveringAcknowledgement,
@@ -128,7 +129,7 @@ const STEP_CARD_ID = 'wizard-step'
  * stuck it takes the page's colour and a hairline like the header's, so the
  * step being filled in scrolls away beneath it; at rest it is part of the page.
  */
-const STICKY = 'top-[calc(4rem+1px+env(safe-area-inset-top))] z-20 py-2 transition-[background-color,box-shadow] duration-150'
+const STICKY = 'top-0 z-20 py-2 transition-[background-color,box-shadow] duration-150'
 const STUCK = 'bg-slate-100/95 shadow-[0_1px_0_theme(colors.slate.200)] backdrop-blur dark:bg-slate-950/95 dark:shadow-[0_1px_0_theme(colors.slate.800)]'
 
 /** A row's delete control: a 44 px target, grey until it is pointed at (AA against white and the tinted rows). */
@@ -421,7 +422,9 @@ export function WizardPage() {
     lastStep.current = shownStep
     if (previous === undefined || previous === shownStep) return
     const card = document.getElementById(STEP_CARD_ID)
-    const clear = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0
+    // Under the top of the box the page scrolls in (the shell's main, below the header), plus its scroll padding.
+    const box = appScroller()
+    const clear = (box === document.documentElement ? 0 : box.getBoundingClientRect().top) + (parseFloat(getComputedStyle(box).scrollPaddingTop) || 0)
     if (card && card.getBoundingClientRect().top < clear) card.scrollIntoView({ block: 'start' })
   }, [shownStep])
 
@@ -786,7 +789,7 @@ export function WizardPage() {
 
           {/* The rail stays under the header while a long step scrolls, so another step is a tap away from anywhere. It
               spans the page's side margins, so nothing of the step shows beside it as it passes underneath. */}
-          <div ref={stickyRef} className={cn(STICKY, '!mt-2 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8', keyboard ? 'static' : 'sticky', stuck && STUCK)}>
+          <div ref={stickyRef} className={cn(STICKY, '!mt-2 -mx-3 px-3 sm:-mx-4 sm:px-4', keyboard ? 'static' : 'sticky', stuck && STUCK)}>
             <StepRail steps={steps} stepIndex={stepIndex} onGo={goto} />
           </div>
         </>
@@ -1130,11 +1133,12 @@ function useStuck(ref: RefObject<HTMLElement>, layout: string): boolean {
       if (!frame) frame = requestAnimationFrame(check)
     }
     check()
-    window.addEventListener('scroll', schedule, { passive: true })
+    // Captured: the page scrolls in the shell's main (lib/appScroll), not the window.
+    window.addEventListener('scroll', schedule, { passive: true, capture: true })
     window.addEventListener('resize', schedule)
     return () => {
       if (frame) cancelAnimationFrame(frame)
-      window.removeEventListener('scroll', schedule)
+      window.removeEventListener('scroll', schedule, { capture: true })
       window.removeEventListener('resize', schedule)
     }
   }, [ref, layout])
@@ -1146,34 +1150,36 @@ const SCROLL_GAP = 8
 
 /**
  * Keeps a field the browser brings into view — on focus, or with the keyboard
- * coming up — clear of what is fixed over the page: the header and the stuck
- * rail above it, the Back / Next bar below. Focus scrolling and scrollIntoView
- * honour the document's scroll padding, so it is set from their measured
- * heights while the wizard is open and put back as it was on leaving. With the
- * keyboard up the rail no longer sticks, and the focused field is brought back
- * into view above the shrunken bar.
+ * coming up — clear of what is fixed over the page: the stuck rail above it,
+ * the Back / Next bar below. Focus scrolling and scrollIntoView honour the
+ * scroll padding of the box the page scrolls in (the shell's main,
+ * lib/appScroll), so it is set from their measured heights while the wizard
+ * is open and put back as it was on leaving. With the keyboard up the rail no
+ * longer sticks, and the focused field is brought back into view above the
+ * shrunken bar.
  */
 function useScrollPadding(sticky: RefObject<HTMLElement>, bar: RefObject<HTMLElement>, layout: string, keyboard: boolean) {
   useEffect(() => {
-    const html = document.documentElement
-    const before = { top: html.style.scrollPaddingTop, bottom: html.style.scrollPaddingBottom }
+    const box = appScroller()
+    const before = { top: box.style.scrollPaddingTop, bottom: box.style.scrollPaddingBottom }
     return () => {
-      html.style.scrollPaddingTop = before.top
-      html.style.scrollPaddingBottom = before.bottom
+      box.style.scrollPaddingTop = before.top
+      box.style.scrollPaddingBottom = before.bottom
     }
   }, [])
 
   useEffect(() => {
-    const html = document.documentElement
     const measure = () => {
       const s = sticky.current
       if (!s) return
-      // The rail's `top` is the header's height, safe area included (it resolves to pixels even while the rail does
-      // not stick); while it sticks, the rail's own height is added.
-      const header = parseFloat(getComputedStyle(s).top) || 0
-      const top = header + (getComputedStyle(s).position === 'sticky' ? s.offsetHeight : 0)
-      html.style.scrollPaddingTop = `${Math.round(top + SCROLL_GAP)}px`
-      html.style.scrollPaddingBottom = `${Math.round((bar.current?.offsetHeight ?? 0) + SCROLL_GAP)}px`
+      const box = appScroller()
+      // The rail's `top` is where it sticks in the box (it resolves to pixels even while the rail does not stick);
+      // while it sticks, the rail's own height is added. The Back / Next bar is fixed over the window; the box
+      // reaches the window's bottom edge, so its height counts in full.
+      const rail = parseFloat(getComputedStyle(s).top) || 0
+      const top = rail + (getComputedStyle(s).position === 'sticky' ? s.offsetHeight : 0)
+      box.style.scrollPaddingTop = `${Math.round(top + SCROLL_GAP)}px`
+      box.style.scrollPaddingBottom = `${Math.round((bar.current?.offsetHeight ?? 0) + SCROLL_GAP)}px`
     }
     measure()
     const resize = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null

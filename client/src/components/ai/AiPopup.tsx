@@ -29,6 +29,7 @@ import { BotMark } from './AiMessages'
 import AiPanel from './AiPanel'
 import { AiWorkspace } from './AiWorkspace'
 import { AI_WORKSPACE_PATH, workspaceConversationId } from './workspace'
+import { APP_SCROLL_ATTR } from '@/lib/appScroll'
 
 const AutomationsPage = lazy(() => import('@/pages/AutomationsPage').then((m) => ({ default: m.AutomationsPage })))
 const AutomationPage = lazy(() => import('@/pages/AutomationPage').then((m) => ({ default: m.AutomationPage })))
@@ -113,8 +114,9 @@ function PopupPage({ title, page }: { title: string; page: ReactElement }) {
         </button>
       </header>
       {/* As <main> draws a page: its background and margins, so a page's bars that reach to its edges fit here too;
-          and nothing above it here, so a bar that sticks under the app's header (--page-sticky-top) sticks at the top. */}
-      <div ref={body} className="ai-popup-page min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100 px-4 py-5 dark:bg-slate-950 sm:px-6 lg:px-8">
+          and the box the page scrolls in (lib/appScroll), so a frame that fills the window fills this instead and a
+          bar that sticks at the top of the page sticks at the top of this. */}
+      <div ref={body} {...{ [APP_SCROLL_ATTR]: '' }} className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100 px-3 py-4 dark:bg-slate-950 sm:px-4">
         <ErrorBoundary resetKey={location.pathname} fallback={(error) => <LoadFailed what={`The ${title} page`} error={error} />}>
           <Suspense
             fallback={
