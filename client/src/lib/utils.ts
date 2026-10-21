@@ -181,13 +181,16 @@ let scrollLocked: { el: HTMLElement; before: string }[] = []
  * Stops the page scrolling under an overlay (a modal, a drawer, the
  * assistant's sheet) until the returned release is called: the document's
  * body, and the boxes the app's pages scroll in (the shell's main, the
- * assistant's popup — lib/appScroll). Counted, so overlays opened over one
- * another, and closed in any order, give the page its scrolling back only
- * when the last one closes — as it was before the first one opened.
+ * assistant's popup — lib/appScroll) — except those inside `overlay`, the
+ * overlay's own (the popup's page must go on scrolling while it covers the
+ * app). Counted, so overlays opened over one another, and closed in any
+ * order, give the page its scrolling back only when the last one closes — as
+ * it was before the first one opened.
  */
-export function lockBodyScroll(): () => void {
+export function lockBodyScroll(overlay?: Element | null): () => void {
   if (scrollLocks === 0) {
-    scrollLocked = [document.body, ...Array.from(document.querySelectorAll?.<HTMLElement>('[data-app-scroll]') ?? [])].map((el) => {
+    const boxes = Array.from(document.querySelectorAll?.<HTMLElement>('[data-app-scroll]') ?? []).filter((el) => !overlay?.contains(el))
+    scrollLocked = [document.body, ...boxes].map((el) => {
       const before = el.style.overflow
       el.style.overflow = 'hidden'
       return { el, before }

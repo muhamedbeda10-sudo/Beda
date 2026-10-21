@@ -232,6 +232,25 @@ describe('saving a table from a query', () => {
   })
 })
 
+describe('the roles built again at a start', () => {
+  it('read every saved table as before: the grants follow the roles, so a new domain (new role names) takes no table away', async () => {
+    // Production, the planning deploy: migration 0075 dropped the five-bit combination roles and the grants with
+    // them; the six-bit roles made at the next start could read no saved table until it was computed again.
+    const t = saved(await saveTable(deps(), actor(insp, ['inspection']), queryTable('sessions_by_machine', 'SELECT count(*)::int AS n FROM ai.inspection_sessions')))
+    expect(t.domains).toEqual(['inspection'])
+    expect((await readAs(['inspection'], 'SELECT * FROM ai_saved.sessions_by_machine')).ok).toBe(true)
+    const { rows: roles } = await app.db.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE $1`, [`${'qc_test'}_ai_r_%`])
+    for (const r of roles) await app.db.query(`REVOKE SELECT ON ai_saved.sessions_by_machine FROM "${r.rolname}"`)
+    expect(await readAs(['inspection'], 'SELECT * FROM ai_saved.sessions_by_machine')).toMatchObject({ ok: false, code: '42501' })
+
+    expect(await app.aiReader.provision(app.db, app.config)).toBe(true)
+    expect((await readAs(['inspection'], 'SELECT * FROM ai_saved.sessions_by_machine')).ok).toBe(true)
+    // Still its domains' alone.
+    expect(await readAs(['materials'], 'SELECT * FROM ai_saved.sessions_by_machine')).toMatchObject({ ok: false, code: '42501' })
+    await removeTable(deps(), ownerActor(), t.id)
+  })
+})
+
 describe('tables built on tables', () => {
   it('follow what they read when computed again: a table that reads a narrower one narrows too', async () => {
     const base = saved(await saveTable(deps(), ownerActor(), queryTable('machine_codes', 'SELECT machine_code AS code FROM ai.machines ORDER BY 1')))
