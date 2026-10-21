@@ -43,7 +43,7 @@ function Totals({ s, now }: { s: PlanSummary; now: number }) {
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
       <Figure label="Lines to make" value={s.lines.toLocaleString()} sub={`${s.excluded.toLocaleString()} left out`} />
-      <Figure label="Late lines" value={s.late.toLocaleString()} tone={s.late > 0 ? 'danger' : 'success'} sub={s.maxLateDays > 0 ? `up to ${s.maxLateDays} days late` : 'none late'} />
+      <Figure label="Late lines" value={s.late.toLocaleString()} tone={s.late > 0 ? 'danger' : 'success'} sub={s.maxLateDays > 0 ? `up to ${s.maxLateDays} days late${s.lateOrders !== undefined ? ` · ${s.lateOrders.toLocaleString()} of ${(s.orders ?? 0).toLocaleString()} orders` : ''}` : 'none late'} />
       <Figure label="On time" value={pctLabel(s.onTimePct)} tone={s.onTimePct !== null && s.onTimePct < 85 ? 'warning' : undefined} sub="of lines with a due day" />
       <Figure label="Late weight" value={tonnes(s.lateWeightKg)} tone={s.lateWeightKg > 0 ? 'danger' : undefined} />
       <Figure label="Machine hours" value={Math.round(s.hours).toLocaleString()} sub={s.assumedHours > 0 ? `${Math.round(s.assumedHours).toLocaleString()} h assumed` : 'all from data'} />

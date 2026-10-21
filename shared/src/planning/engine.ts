@@ -702,6 +702,14 @@ export function summarise(operations: readonly PlanOperation[], excluded: number
       } else onTime++
     }
   }
+  // Each order as one delivery: late when its last line is.
+  const orders = new Map<string, boolean>()
+  for (const op of operations) {
+    const k = norm(op.orderNumber)
+    orders.set(k, (orders.get(k) ?? false) || op.lateDays > 0)
+  }
+  let lateOrders = 0
+  for (const isLate of orders.values()) if (isLate) lateOrders++
   return {
     lines: operations.length,
     placed,
@@ -714,5 +722,7 @@ export function summarise(operations: readonly PlanOperation[], excluded: number
     assumedHours: Math.round(assumedHours * 10) / 10,
     lastFinish,
     excluded,
+    orders: orders.size,
+    lateOrders,
   }
 }

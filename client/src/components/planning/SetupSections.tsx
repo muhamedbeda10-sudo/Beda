@@ -950,7 +950,7 @@ export function SettingsSection() {
           )}
           {row(
             'What it makes smaller',
-            'Tonne-days late weighs a heavy order’s delay more than a light one’s (a line with no weight counts as a tonne); late lines counts each line once; days late adds the days.',
+            'Tonne-days late weighs a heavy order’s delay more than a light one’s (a line with no weight counts as a tonne); late lines counts each line once; days late adds the days. Orders delivered whole: an order is as late as its last line, weighed by its whole weight, and its lines are moved together — for a factory that ships an order in one go.',
             <Select value={e.objective} onChange={(x) => set({ objective: x.target.value as PlanSettings['objective'] })} className="min-h-[44px]">
               {(Object.keys(OBJECTIVE_NAME) as PlanSettings['objective'][]).map((k) => (
                 <option key={k} value={k}>

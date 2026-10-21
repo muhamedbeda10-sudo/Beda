@@ -320,6 +320,7 @@ export function Figure({ label, value, tone, sub }: { label: string; value: Reac
 
 export const OBJECTIVE_NAME: Record<PlanOptimisation['objective'], string> = {
   'late-weight-days': 'tonne-days late',
+  'order-complete': 'orders delivered whole (tonne-days late by order)',
   'late-lines': 'late lines',
   'late-days': 'days late',
 }

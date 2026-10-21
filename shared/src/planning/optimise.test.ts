@@ -112,6 +112,24 @@ describe('§25 the optimiser', () => {
     expect(score(r, 'late-weight-days')).toEqual([0, 0, 1, 1, 1])
     expect(score(r, 'late-lines')).toEqual([0, 0, 1, 1, 1])
     expect(score(r, 'late-days')[2]).toBe(1)
+    expect(score(r, 'order-complete')).toEqual([0, 0, 1, 1, 1])
+    expect(r.summary).toMatchObject({ orders: 2, lateOrders: 1 })
+  })
+
+  it('delivers an order whole: its lateness is its last line’s, weighed by the whole order, and its lines move together', () => {
+    // Order X: two lines, one on each machine, 10 t and 1 t, due today; order Y: a light line ahead of each, due in a week.
+    // One line of X moved alone gains nothing (the other still finishes late); both moved, X is on time and only Y's 2 t is late.
+    const x1 = line({ orderNumber: 'X', lineKey: 'X1', machineKey: '1', plannedStart: '2026-10-05', dueDate: '2026-10-24', erpHours: 6, weightKg: 10_000 })
+    const x2 = line({ orderNumber: 'X', lineKey: 'X2', machineKey: '2', plannedStart: '2026-10-05', dueDate: '2026-10-24', erpHours: 6, weightKg: 1_000 })
+    const y1 = line({ orderNumber: 'Y', lineKey: 'Y1', machineKey: '1', plannedStart: '2026-10-01', dueDate: '2026-10-24', erpHours: 6, weightKg: 1_000 })
+    const y2 = line({ orderNumber: 'Y', lineKey: 'Y2', machineKey: '2', plannedStart: '2026-10-01', dueDate: '2026-10-24', erpHours: 6, weightKg: 1_000 })
+    const plain = runPlan(inputs({ lines: [x1, x2, y1, y2], settings: { dependencies: { sameItem: false, parent: false, orderProcess: false } } }))
+    expect(plain.summary).toMatchObject({ late: 2, lateOrders: 1 })
+    expect(score(plain, 'order-complete')[2]).toBe(11)
+    const r = optimisePlan(inputs({ lines: [x1, x2, y1, y2], settings: { objective: 'order-complete', optimise: 'full', dependencies: { sameItem: false, parent: false, orderProcess: false } } }))
+    expect(r.optimisation).toMatchObject({ objective: 'order-complete', improved: true, baselineScore: 11, score: 2 })
+    expect(r.operations.filter((o) => o.orderNumber === 'X').every((o) => o.lateDays === 0)).toBe(true)
+    expect(r.summary.lateOrders).toBe(1)
   })
 
   it('spends a budget that shrinks with the record, and stays under a few seconds at a factory’s size', () => {

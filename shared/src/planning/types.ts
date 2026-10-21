@@ -159,9 +159,13 @@ export interface PlanSettings {
 }
 
 export type OptimiseEffort = 'off' | 'light' | 'full'
-/** late-weight-days: days late × tonnes, then late lines; late-lines: late lines, then days late; late-days: days late, then late lines. */
-export type PlanObjective = 'late-weight-days' | 'late-lines' | 'late-days'
-export const PLAN_OBJECTIVES: readonly PlanObjective[] = ['late-weight-days', 'late-lines', 'late-days']
+/**
+ * late-weight-days: days late × tonnes, then late lines; late-lines: late lines, then days late; late-days: days late,
+ * then late lines; order-complete: each order as one delivery, late by its last line and weighed by its whole weight
+ * (days late × the order's tonnes), then late orders — for a factory that ships an order whole.
+ */
+export type PlanObjective = 'late-weight-days' | 'late-lines' | 'late-days' | 'order-complete'
+export const PLAN_OBJECTIVES: readonly PlanObjective[] = ['late-weight-days', 'late-lines', 'late-days', 'order-complete']
 export const OPTIMISE_EFFORTS: readonly OptimiseEffort[] = ['off', 'light', 'full']
 
 export const DEFAULT_PROCESS_RANK: Record<PlanningProcess, number> = { forming: 1, universal: 1, mast: 1, welding: 2, other: 2, paint: 3 }
@@ -333,6 +337,9 @@ export interface PlanSummary {
   /** Wall minutes of the last finish; null when nothing was placed. */
   lastFinish: number | null
   excluded: number
+  /** Orders in the plan, and those late as one delivery (their last line late); absent on a summary kept before they were counted. */
+  orders?: number
+  lateOrders?: number
 }
 
 export interface PlanResult {
