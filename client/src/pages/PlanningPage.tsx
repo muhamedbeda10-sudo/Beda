@@ -12,7 +12,7 @@
 
 import { useEffect, useRef } from 'react'
 import { NavLink, Navigate, useNavigate, useParams } from 'react-router-dom'
-import { AlarmClock, CalendarDays, ChartGantt, ClipboardList, DatabaseZap, Factory, FlaskConical, Gauge, Grid3x3, LayoutDashboard, Package, Route, SlidersHorizontal, Target } from 'lucide-react'
+import { AlarmClock, CalendarCheck, CalendarDays, ChartGantt, ClipboardList, DatabaseZap, Factory, FlaskConical, Gauge, Grid3x3, LayoutDashboard, Package, Route, SlidersHorizontal, Target } from 'lucide-react'
 import { Badge, Select } from '@/components/ui'
 import { EdgeShadows, useScrollEdges } from '@/components/ui/ScrollX'
 import { cn } from '@/lib/utils'
@@ -26,6 +26,7 @@ import { PlansSection } from '@/components/planning/PlansSection'
 import { LateSection } from '@/components/planning/LateSection'
 import { ActualSection } from '@/components/planning/ActualSection'
 import { MaterialsSection } from '@/components/planning/MaterialsSection'
+import { QuoteSection } from '@/components/planning/QuoteSection'
 import { CalendarSection, CapacitySection, GapsSection, RoutesSection, SettingsSection } from '@/components/planning/SetupSections'
 
 type Group = 'now' | 'plan' | 'setup'
@@ -48,6 +49,14 @@ export const PLANNING_PARTS: readonly Part[] = [
     hint: 'Late lines, on-time share, load by process, the data’s freshness',
     group: 'now',
     render: () => <OverviewSection />,
+  },
+  {
+    key: 'quote',
+    label: 'Delivery date',
+    icon: CalendarCheck,
+    hint: 'When a new order could be delivered, and how to have an order done by a day',
+    group: 'now',
+    render: () => <QuoteSection />,
   },
   {
     key: 'floor',

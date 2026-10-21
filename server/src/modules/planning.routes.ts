@@ -25,6 +25,12 @@ import {
   type PlanDetail,
   type PlanVsActualResponse,
   type PlansResponse,
+  type QuoteResponse,
+  type AdviseResponse,
+  type BalanceResponse,
+  type MaintenanceResponse,
+  type SetupTimesResponse,
+  PLANNING_PROCESSES,
   type RatesResponse,
   type RoutesResponse,
   type SettingsResponse,
@@ -36,8 +42,29 @@ import { parse } from '../lib/validate'
 import { clearLayout, floorNow, saveLayout } from '../planning/floor'
 import { learnFromRecord } from '../planning/learn'
 import { archivePlan, comparePlanWith, createPlan, deletePlan, keepAutoPlan, listPlans, planDetail, publishPlan, updatePlan, type Planner } from '../planning/plans'
+import { advise, quote } from '../planning/quote'
 import { dataGaps, materials, overview, planLoad, planVsActual } from '../planning/reports'
-import { calendarBetween, capacities, clearCalendarDay, clearCapacity, clearRate, rates, routes, saveSettings, setCalendarDay, setCapacity, setRate, settings } from '../planning/setup'
+import {
+  calendarBetween,
+  capacities,
+  clearCalendarDay,
+  clearCapacity,
+  clearMaintenance,
+  clearRate,
+  clearSetupTime,
+  maintenance,
+  rates,
+  routes,
+  saveSettings,
+  setCalendarDay,
+  setCapacity,
+  setMaintenance,
+  setRate,
+  setSetupTime,
+  settings,
+  setupTimes,
+} from '../planning/setup'
+import { balance } from '../planning/balance'
 
 const planId = z.union([z.literal(AUTO_PLAN_ID), z.string().uuid()])
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a day, YYYY-MM-DD')
@@ -86,6 +113,45 @@ const rateSchema = z
   .strict()
 
 const calendarSchema = z.object({ working: z.boolean(), name: z.string().trim().min(1).max(120) }).strict()
+const quoteItem = z
+  .object({
+    itemCode: z.string().trim().min(1).max(120),
+    qty: z.number().finite().positive().max(1e9),
+    item: z.string().trim().min(1).max(300).optional(),
+    weightKg: z.number().finite().min(0).max(1e9).nullable().optional(),
+    steps: z.array(z.object({ machineKey: z.string().trim().min(1).max(60), hours: z.number().finite().positive().max(10_000).optional() }).strict()).min(1).max(12).optional(),
+  })
+  .strict()
+const basePlan = z.union([z.literal('auto'), z.literal('published'), z.string().uuid()]).optional()
+const setupTimeSchema = z
+  .object({
+    machineKey: z.string().trim().min(1).max(60).nullable(),
+    process: z.enum(PLANNING_PROCESSES as [string, ...string[]]).nullable(),
+    fromFamily: z.string().max(60),
+    toFamily: z.string().max(60),
+    minutes: z.number().int().min(0).max(1440),
+    note: z.string().max(500).optional(),
+  })
+  .strict()
+const maintenanceSchema = z
+  .object({
+    machineKey: z.string().trim().min(1).max(60),
+    name: z.string().trim().min(1).max(120),
+    everyDays: z.number().int().min(1).max(3650).nullable(),
+    everyRunHours: z.number().finite().positive().max(1e6).nullable(),
+    durationHours: z.number().finite().positive().max(240),
+    lastDone: day.nullable(),
+    startTime: z.string().regex(/^[0-2][0-9]:[0-5][0-9]$/).nullable().optional(),
+    note: z.string().max(500).optional(),
+  })
+  .strict()
+const balanceSchema = z.object({ basePlan, weeks: z.number().int().min(1).max(13).optional(), maxMoves: z.number().int().min(1).max(50).optional() }).strict()
+const quoteSchema = z
+  .object({ orderNumber: z.string().trim().max(120).optional(), customer: z.string().trim().max(200).optional(), dueDate: day.nullable().optional(), items: z.array(quoteItem).min(1).max(50), basePlan })
+  .strict()
+const adviseSchema = z
+  .object({ orderNumber: z.string().trim().min(1).max(120).optional(), newOrder: quoteSchema.omit({ basePlan: true }).optional(), dueDate: day, basePlan })
+  .strict()
 const settingsSchema = z.object({ settings: z.record(z.unknown()), version: z.number().int().min(0) }).strict()
 
 export function planningRoutes(ctx: AppContext): Router {
@@ -125,6 +191,23 @@ export function planningRoutes(ctx: AppContext): Router {
     const planner = setupBy(req)
     await clearLayout(db, planner, [String(req.params.machineKey)])
     res.status(204).end()
+  })
+
+  // ---- A delivery date for a customer, and advice to meet one (nothing kept) ----
+
+  r.post('/quote', async (req, res) => {
+    const body: QuoteResponse = await quote(db, config, plannerOf(req), parse(quoteSchema, req.body))
+    res.json(body)
+  })
+
+  r.post('/advise', async (req, res) => {
+    const body: AdviseResponse = await advise(db, config, plannerOf(req), parse(adviseSchema, req.body))
+    res.json(body)
+  })
+
+  r.post('/balance', async (req, res) => {
+    const body: BalanceResponse = await balance(db, config, plannerOf(req), parse(balanceSchema, req.body ?? {}))
+    res.json(body)
   })
 
   // ---- Plans and scenarios ----
@@ -283,6 +366,46 @@ export function planningRoutes(ctx: AppContext): Router {
     const q = parse(z.object({ q: z.string().max(120).optional(), process: z.string().max(20).optional(), limit: z.coerce.number().int().min(1).max(1000).optional() }), req.query)
     const body: RoutesResponse = await routes(db, q)
     res.json(body)
+  })
+
+  r.get('/setup/changeovers', async (_req, res) => {
+    const body: SetupTimesResponse = await setupTimes(db)
+    res.json(body)
+  })
+
+  r.put('/setup/changeovers', async (req, res) => {
+    const planner = setupBy(req)
+    const id = await setSetupTime(db, planner, parse(setupTimeSchema, req.body) as never)
+    res.status(200).json({ id })
+  })
+
+  r.delete('/setup/changeovers/:id', async (req, res) => {
+    const planner = setupBy(req)
+    await clearSetupTime(db, planner, parse(z.string().uuid(), req.params.id))
+    res.status(204).end()
+  })
+
+  r.get('/setup/maintenance', async (_req, res) => {
+    const body: MaintenanceResponse = await maintenance(db)
+    res.json(body)
+  })
+
+  r.post('/setup/maintenance', async (req, res) => {
+    const planner = setupBy(req)
+    const id = await setMaintenance(db, planner, parse(maintenanceSchema, req.body) as never)
+    res.status(201).json({ id })
+  })
+
+  r.put('/setup/maintenance/:id', async (req, res) => {
+    const planner = setupBy(req)
+    await setMaintenance(db, planner, parse(maintenanceSchema, req.body) as never, parse(z.string().uuid(), req.params.id))
+    res.status(204).end()
+  })
+
+  r.delete('/setup/maintenance/:id', async (req, res) => {
+    const planner = setupBy(req)
+    await clearMaintenance(db, planner, parse(z.string().uuid(), req.params.id))
+    res.status(204).end()
   })
 
   /** Learn again from the record now (it is also learnt every six hours), then keep the automatic plan. */

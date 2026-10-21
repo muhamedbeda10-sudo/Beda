@@ -21,6 +21,19 @@ export interface WeekLoad {
 
 const round1 = (x: number) => Math.round(x * 10) / 10
 
+/** Each machine's load over the weeks, the weeks added up: planned hours, the hours it has, and the share (unrounded; Infinity when planned with no hours). */
+export function machineLoad(operations: readonly PlanOperation[], calendars: ReadonlyMap<string, MachineCalendar>, fromDay: string, weeks: number): Map<string, { plannedHours: number; capacityHours: number; pct: number }> {
+  const out = new Map<string, { plannedHours: number; capacityHours: number; pct: number }>()
+  for (const w of weeklyLoad(operations, calendars, fromDay, weeks)) {
+    const a = out.get(w.machineKey) ?? { plannedHours: 0, capacityHours: 0, pct: 0 }
+    a.plannedHours += w.plannedHours
+    a.capacityHours += w.capacityHours
+    out.set(w.machineKey, a)
+  }
+  for (const a of out.values()) a.pct = a.capacityHours > 0 ? (a.plannedHours / a.capacityHours) * 100 : a.plannedHours > 0 ? Infinity : 0
+  return out
+}
+
 /** Each machine's planned hours and its working hours, for `weeks` weeks from the week of `fromDay`. */
 export function weeklyLoad(operations: readonly PlanOperation[], calendars: ReadonlyMap<string, MachineCalendar>, fromDay: string, weeks: number): WeekLoad[] {
   const first = weekStart(fromDay)

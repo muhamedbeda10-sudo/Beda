@@ -30,6 +30,8 @@ const SUBQUERIES_PER_ROW: Record<string, { allowed: number; why: string }> = {
   item_dimension_specs: { allowed: 0, why: '' },
   machine_defect_list: { allowed: 0, why: '' },
   machines: { allowed: 0, why: '' },
+  planning_setup_times: { allowed: 0, why: '' },
+  planning_maintenance: { allowed: 0, why: '' },
   order_lines: { allowed: 8, why: 'the order line’s own sessions, samples, PDI lines, sync run and machine, each by its id (indexed); defect pieces from sample_rollups' },
   order_sync_runs: { allowed: 0, why: '' },
   pdi_documents: { allowed: 4, why: 'the document’s own photos and lines, by its id' },

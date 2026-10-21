@@ -15,6 +15,11 @@ import {
   type PlanDetail,
   type PlanVsActualResponse,
   type PlansResponse,
+  type QuoteResponse,
+  type AdviseResponse,
+  type BalanceResponse,
+  type MaintenanceResponse,
+  type SetupTimesResponse,
   type RatesResponse,
   type RoutesResponse,
   type SettingsResponse,
@@ -166,6 +171,90 @@ describe('§25 planning', () => {
     expect(load.body.rows.some((r) => r.machineKey === '24')).toBe(true)
   })
 
+  it('quotes a delivery day for an order not on the sheet, through the items’ learnt routes, and advises how to meet a day', async () => {
+    // BEAM's learnt route: former 24 → welder 30 → paint 40 (learnt from order A), 10 kg a piece.
+    const q = await send<QuoteResponse>('POST', '/quote', { customer: 'New Co', dueDate: calendarDay(2), items: [{ itemCode: 'beam', qty: 40 }] })
+    expect(q.status, JSON.stringify(q.body)).toBe(200)
+    expect(q.body.orderNumber).toBe('NEW')
+    expect(q.body.asIs.lines.map((l) => l.machineKey)).toEqual(['24', '30', '40'])
+    expect(q.body.asIs.lines[0]).toMatchObject({ itemCode: 'beam', item: 'Beam 2000', qty: 40, durationSource: 'rate-item' })
+    expect(q.body.asIs.completes).not.toBeNull()
+    expect(q.body.rushed.completes!).toBeLessThanOrEqual(q.body.asIs.completes!)
+    expect(q.body.unknownItems).toEqual([])
+    expect(q.body.events[0]).toMatchObject({ type: 'new-order', items: [{ itemCode: 'beam', qty: 40 }] })
+    // An item the record does not know is not planned, and said so; given its steps, it is.
+    const unknown = await send<QuoteResponse>('POST', '/quote', { items: [{ itemCode: 'ZZZ', qty: 5 }, { itemCode: 'beam', qty: 1 }] })
+    expect(unknown.body.unknownItems).toEqual(['ZZZ'])
+    const stepped = await send<QuoteResponse>('POST', '/quote', { items: [{ itemCode: 'ZZZ', qty: 5, item: 'New thing', steps: [{ machineKey: '0024', hours: 2 }] }] })
+    expect(stepped.body.asIs.lines.map((l) => [l.machineKey, l.hours, l.durationSource])).toEqual([['24', 2, 'event']])
+    expect((await send('POST', '/quote', { items: [] })).status).toBe(400)
+    // Advice for order A by tomorrow: the options are worked out, each with what it does to the others; one is best.
+    const a = await send<AdviseResponse>('POST', '/advise', { orderNumber: 'A', dueDate: calendarDay(1) })
+    expect(a.status, JSON.stringify(a.body)).toBe(200)
+    expect(a.body.target).toMatchObject({ orderNumber: 'A', lines: 3, isNew: false })
+    expect(a.body.options.map((o) => o.id)).toEqual(expect.arrayContaining(['rush', 'rush-hours-2', 'rush-hours-4', 'all']))
+    expect(a.body.bestId).not.toBeNull()
+    expect(a.body.priced).toBe(false)
+    for (const o of a.body.options) expect(typeof o.meetsDue).toBe('boolean')
+    // For a new order too, and never for an order the plan does not have or a day gone by.
+    const n = await send<AdviseResponse>('POST', '/advise', { newOrder: { items: [{ itemCode: 'beam', qty: 40 }] }, dueDate: calendarDay(3) })
+    expect(n.status, JSON.stringify(n.body)).toBe(200)
+    expect(n.body.target.isNew).toBe(true)
+    expect(n.body.asIs.events[0]).toMatchObject({ type: 'new-order' })
+    expect((await send('POST', '/advise', { orderNumber: 'NOPE', dueDate: calendarDay(3) })).status).toBe(400)
+    expect((await send('POST', '/advise', { orderNumber: 'A', dueDate: calendarDay(-1) })).status).toBe(400)
+  })
+
+  it('counts changeovers and maintenance stops in the plan, balances the machines, and tells the planners by the bell', async () => {
+    // A changeover of 90 minutes on every former between any two families: A1 (BEAM) runs after B1 (UPR, running now) on the former.
+    const before = (await get<PlanDetail>(`/plans/${AUTO_PLAN_ID}`)).body
+    const a1Before = before.operations.find((o) => o.lineKey === 'A1')!
+    const made = await send<{ id: string }>('PUT', '/setup/changeovers', { machineKey: null, process: 'forming', fromFamily: '', toFamily: '', minutes: 90 })
+    expect(made.status, JSON.stringify(made.body)).toBe(200)
+    const after = (await get<PlanDetail>(`/plans/${AUTO_PLAN_ID}`)).body
+    const a1 = after.operations.find((o) => o.lineKey === 'A1')!
+    expect(a1.setupMinutes).toBe(90)
+    expect(a1.flags).toContain('changeover')
+    expect(a1.end! - a1.start!).toBeGreaterThan(a1Before.end! - a1Before.start!)
+    const list = await get<SetupTimesResponse>('/setup/changeovers')
+    expect(list.body.rules).toHaveLength(1)
+    expect((await send('PUT', '/setup/changeovers', { machineKey: '24', process: 'forming', fromFamily: '', toFamily: '', minutes: 5 })).status).toBe(400)
+    expect((await send('PUT', '/setup/changeovers', { machineKey: null, process: null, fromFamily: '', toFamily: '', minutes: 10 }, viewer)).status).toBe(403)
+    expect((await send('DELETE', `/setup/changeovers/${list.body.rules[0].id}`, undefined)).status).toBe(204)
+    expect((await get<SetupTimesResponse>('/setup/changeovers')).body.rules).toHaveLength(0)
+    // Maintenance: the welder stops 8 hours every 7 days from yesterday: a stop lands in the plan as a machine-down the welder's lines run around.
+    const m = await send<{ id: string }>('POST', '/setup/maintenance', { machineKey: '30', name: 'Oil change', everyDays: 7, everyRunHours: null, durationHours: 8, lastDone: calendarDay(-1) })
+    expect(m.status, JSON.stringify(m.body)).toBe(201)
+    const planned = (await get<PlanDetail>(`/plans/${AUTO_PLAN_ID}`)).body
+    expect(planned.plan.events).toEqual([]) // the stops are the setup's, not the plan's events
+    const rules = await get<MaintenanceResponse>('/setup/maintenance')
+    expect(rules.body.rules.map((r) => r.name)).toEqual(['Oil change'])
+    expect((await send('PUT', `/setup/maintenance/${m.body.id}`, { machineKey: '30', name: 'Oil and belts', everyDays: 14, everyRunHours: null, durationHours: 8, lastDone: null })).status).toBe(204)
+    expect((await get<MaintenanceResponse>('/setup/maintenance')).body.rules[0]).toMatchObject({ name: 'Oil and belts', everyDays: 14 })
+    expect((await send('DELETE', `/setup/maintenance/${m.body.id}`, undefined)).status).toBe(204)
+    // Balancing: with no machine loaded past its hours, nothing moves and it says so.
+    const bal = await send<BalanceResponse>('POST', '/balance', { weeks: 2 })
+    expect(bal.status, JSON.stringify(bal.body)).toBe(200)
+    expect(bal.body.moves).toEqual([])
+    expect(bal.body.warnings[0]).toMatch(/No machine is loaded past its hours/)
+    // Alerts: the first run only takes note; a rise of as many late lines as the settings say is told to everyone with Planning, once.
+    const s = (await get<SettingsResponse>('/setup/settings')).body
+    expect((await send('PUT', '/setup/settings', { settings: { ...s.set, alertLateRise: 1, alertOverloadPct: 0 }, version: s.version })).status).toBe(200)
+    const { keepAutoPlan } = await import('../src/planning/plans')
+    const { planningAlerts } = await import('../src/planning/alerts')
+    const first = await planningAlerts(app.db, app.config, await keepAutoPlan(app.db, app.config))
+    expect(first).toBe(0)
+    await app.db.query(`UPDATE planning_learnt SET alerts_state = jsonb_set(alerts_state, '{lateTold}', '0')`)
+    const told = await planningAlerts(app.db, app.config, await keepAutoPlan(app.db, app.config))
+    expect(told).toBeGreaterThan(0)
+    const bell = await app.db.query<{ kind: string; title: string; link: string }>(`SELECT kind, title, link FROM user_notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`, [admin.user.id])
+    expect(bell.rows[0]).toMatchObject({ kind: 'planning-alert', link: '/planning/late' })
+    expect(bell.rows[0].title).toMatch(/more lines run late/)
+    // Told once: the same state again writes nothing.
+    expect(await planningAlerts(app.db, app.config, await keepAutoPlan(app.db, app.config))).toBe(0)
+    await send('PUT', '/setup/settings', { settings: s.set, version: s.version + 1 })
+  })
+
   it('publishes one plan at a time, keeps a published one as it was, and never deletes one that was published', async () => {
     const a = (await send<PlanDetail>('POST', '/plans', { kind: 'plan', name: 'Week plan' })).body.plan
     const pub = await send<PlanDetail>('POST', `/plans/${a.id}/publish`, { version: a.version })
@@ -257,6 +346,12 @@ describe('§25 planning', () => {
     expect(sim.result.is_error, String(sim.result.content)).toBeFalsy()
     const body = JSON.parse(String(sim.result.content))
     expect(body).toMatchObject({ comparedWith: 'Automatic plan', base: { lines: 4 }, scenario: { lines: 4 } })
+    const quoted = await handlers.planning_quote.run(tool('planning_quote', { items: [{ itemCode: 'beam', qty: 10 }], customer: 'New Co' }), new AbortController().signal)
+    expect(quoted.result.is_error, String(quoted.result.content)).toBeFalsy()
+    expect(JSON.parse(String(quoted.result.content))).toMatchObject({ order: 'NEW', inItsTurn: { lines: [{ machine: '24. Roll former' }, { machine: '30. Welder' }, { machine: '40. Paint' }] } })
+    const advised = await handlers.planning_advise.run(tool('planning_advise', { orderNumber: 'A', dueDate: calendarDay(2) }), new AbortController().signal)
+    expect(advised.result.is_error, String(advised.result.content)).toBeFalsy()
+    expect(JSON.parse(String(advised.result.content)).options.length).toBeGreaterThan(2)
     const bad = await handlers.planning_simulate.run(tool('planning_simulate', { events: [{ type: 'speed', machineKey: '24' }] }), new AbortController().signal)
     expect(bad.result.is_error).toBe(true)
     expect(String(bad.result.content)).toMatch(/speedPct/)

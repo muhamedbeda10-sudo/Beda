@@ -5,9 +5,9 @@
 // filter from the header; the weeks stay in view while the rows scroll.
 // ============================================================================
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Download, Grid3x3 } from 'lucide-react'
+import { ArrowRightLeft, Download, Grid3x3 } from 'lucide-react'
 import { PLANNING_PROCESSES, PROCESS_NAMES, type LoadResponse, type PlanMachineInfo, type WeekLoad } from '@qc/shared/planning'
 import { Button, EmptyState } from '@/components/ui'
 import { FilterSelect, Segmented } from '@/components/ui/PageShell'
@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils'
 import { usePersistedState } from '@/lib/usePersistedState'
 import { downloadWorkbook } from '@/lib/xlsxWrite'
 import { useLoad } from '@/services/planning'
+import { BalanceDrawer } from './BalanceDrawer'
 import { ErrorNote, Loading, PartFooter, PartFrame, PlanPicker, Scroller, usePreferredPlanId } from './common'
 import { chosenFactory, dayLabel, factoryKey, factoryName, loadCell, processName } from './format'
 
@@ -55,6 +56,11 @@ export function LoadSection() {
   const chosen = chosenFactory(factory, factories)
   const rows = useMemo(() => all.filter((r) => (chosen === null || r.m.factory === chosen) && (!process || r.m.process === process)), [all, chosen, process])
   const view = useTableView(rows, COLUMNS)
+  const [balancing, setBalancing] = useState(false)
+  const nameOf = useMemo(() => {
+    const names = new Map((data?.machines ?? []).map((m) => [m.key, m.name]))
+    return (k: string) => names.get(k) ?? `Machine ${k}`
+  }, [data])
   const exportIt = () => {
     if (!data) return
     downloadWorkbook('Machine load.xlsx', [
@@ -105,12 +111,16 @@ export function LoadSection() {
             ))}
           </FilterSelect>
           <span className="flex-1" />
+          <Button className="min-h-[40px]" onClick={() => setBalancing(true)} disabled={!data} title="Move lines off the machines loaded past their hours to machines of the same process with room">
+            <ArrowRightLeft className="h-4 w-4" /> Suggest moves
+          </Button>
           <Button className="min-h-[40px]" onClick={exportIt} disabled={!data || view.rows.length === 0}>
             <Download className="h-4 w-4" /> Excel
           </Button>
         </>
       }
     >
+      {balancing && <BalanceDrawer weeks={Number(weeks)} nameOf={nameOf} onClose={() => setBalancing(false)} />}
       {isLoading ? (
         <Loading />
       ) : error || !data ? (

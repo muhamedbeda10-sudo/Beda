@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { inferErpDurationMeaning, inferMachineStats, inferProcessOrder, inferRates, inferRoutes, type RecordRow } from './inference'
+import { inferErpDurationMeaning, inferMachineStats, inferProcessOrder, inferRates, inferRoutes, inferSpeed, type RecordRow } from './inference'
 import { DEFAULT_PROCESS_RANK } from './types'
 import { addDays } from './time'
 
@@ -63,11 +63,14 @@ describe('§25 learning from the production record', () => {
         { orderNumber: 'A', itemCode: 'B1', item: 'Beam', machineKey: '1', process: 'forming' },
         { orderNumber: 'A', itemCode: 'B1', item: 'Beam', machineKey: '9', process: 'paint' },
         { orderNumber: 'A', itemCode: 'B1', item: 'Beam', machineKey: '5', process: 'welding' },
-        { orderNumber: 'B', itemCode: 'b1', item: 'Beam', machineKey: '2', process: 'forming' },
+        { orderNumber: 'B', itemCode: 'b1', item: 'Beam', machineKey: '2', process: 'forming', weightKg: 1000, requiredQty: 100 },
+        { orderNumber: 'B', itemCode: 'b1', item: 'Beam', machineKey: '2', process: 'forming', weightKg: 2400, requiredQty: 200 },
       ],
       DEFAULT_PROCESS_RANK,
     )
     expect(routes).toHaveLength(1)
+    // The kg a piece: the median over the lines that carry a weight (10 and 12).
+    expect(routes[0].kgPerPiece).toBe(11)
     expect(routes[0].steps.map((s) => s.process)).toEqual(['forming', 'welding', 'paint'])
     expect(routes[0].steps[0].machines.map((m) => m.machineKey).sort()).toEqual(['1', '2'])
     expect(routes[0]).toMatchObject({ orders: 2, confidencePct: 50 })
@@ -79,5 +82,20 @@ describe('§25 learning from the production record', () => {
     const asPiece = Array.from({ length: 6 }, () => ({ erpHours: 0.1, requiredQty: 200, taskDurationHours: null, actualHours: 22 }))
     expect(inferErpDurationMeaning(asPiece)).toMatchObject({ meaning: 'piece', pieceVotes: 6 })
     expect(inferErpDurationMeaning(asLine.slice(0, 2)).meaning).toBeNull()
+  })
+
+  it('marks a machine running slower than usual of late', () => {
+    const rows: RecordRow[] = []
+    // A month at 100 pieces an hour, then the last ten days at 70 on machine 1; machine 2 steady; machine 3 too few recent days.
+    for (let i = 40; i >= 0; i--) {
+      const day = addDays('2026-10-24', -i)
+      rows.push(row({ machineKey: '1', workDay: day, producedQty: i < 10 ? 70 : 100, actualHours: 1 }))
+      rows.push(row({ machineKey: '2', workDay: day, producedQty: 50, actualHours: 1 }))
+      if (i > 20 || i === 0) rows.push(row({ machineKey: '3', workDay: day, producedQty: 10, actualHours: 1 }))
+    }
+    const speed = inferSpeed(rows, '2026-10-24')
+    expect(speed.find((s) => s.machineKey === '1')).toMatchObject({ recentDays: 15, speedPct: 70 })
+    expect(speed.find((s) => s.machineKey === '2')).toMatchObject({ speedPct: 100 })
+    expect(speed.find((s) => s.machineKey === '3')).toMatchObject({ recentDays: 1, speedPct: null, recentPiecesPerHour: null })
   })
 })

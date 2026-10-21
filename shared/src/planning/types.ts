@@ -69,6 +69,8 @@ export interface PlanLine {
   rmPromiseDate: string | null
   /** An inspection session is open on the line now: when it started (wall minutes). */
   runningSince: number | null
+  /** The Order ID of the line this one waits for whatever the settings say: the step before it of a new order. */
+  after?: string | null
   /** Added by a scenario, not on the order sheet. */
   hypothetical?: boolean
 }
@@ -147,12 +149,29 @@ export interface PlanSettings {
    * every open line, however old its due day. The line running now is never left out.
    */
   ignoreDueOlderThanDays: number
+  /**
+   * What the advice (advise.ts) prices its options with, in the factory's currency: a machine working a Friday (a day),
+   * a machine working an hour beyond its day, and a tonne of an order a day late. 0 = not priced.
+   */
+  costFridayMachineDay: number
+  costExtraMachineHour: number
+  costLateTonneDay: number
+  /** Plan with each machine's pace of the last two weeks when it is slower than usual (speed events from speed_pct under 100). */
+  useRecentSpeed: boolean
+  /** The bell tells the planners when the automatic plan's late lines rise by this many since last told; 0 = never. */
+  alertLateRise: number
+  /** …and when a machine's load over the next two weeks reaches this share of its hours; 0 = never. */
+  alertOverloadPct: number
 }
 
 export type OptimiseEffort = 'off' | 'light' | 'full'
-/** late-weight-days: days late × tonnes, then late lines; late-lines: late lines, then days late; late-days: days late, then late lines. */
-export type PlanObjective = 'late-weight-days' | 'late-lines' | 'late-days'
-export const PLAN_OBJECTIVES: readonly PlanObjective[] = ['late-weight-days', 'late-lines', 'late-days']
+/**
+ * late-weight-days: days late × tonnes, then late lines; late-lines: late lines, then days late; late-days: days late,
+ * then late lines; order-complete: each order as one delivery, late by its last line and weighed by its whole weight
+ * (days late × the order's tonnes), then late orders — for a factory that ships an order whole.
+ */
+export type PlanObjective = 'late-weight-days' | 'late-lines' | 'late-days' | 'order-complete'
+export const PLAN_OBJECTIVES: readonly PlanObjective[] = ['late-weight-days', 'late-lines', 'late-days', 'order-complete']
 export const OPTIMISE_EFFORTS: readonly OptimiseEffort[] = ['off', 'light', 'full']
 
 export const DEFAULT_PROCESS_RANK: Record<PlanningProcess, number> = { forming: 1, universal: 1, mast: 1, welding: 2, other: 2, paint: 3 }
@@ -174,6 +193,12 @@ export const DEFAULT_PLAN_SETTINGS: PlanSettings = {
   optimise: 'light',
   objective: 'late-weight-days',
   ignoreDueOlderThanDays: 0,
+  costFridayMachineDay: 0,
+  costExtraMachineHour: 0,
+  costLateTonneDay: 0,
+  useRecentSpeed: false,
+  alertLateRise: 5,
+  alertOverloadPct: 110,
 }
 
 // ---- Scenario events ----------------------------------------------------------------
@@ -201,7 +226,33 @@ export type PlanEvent = EventBase &
     | { type: 'due'; lineKey?: string; orderNumber?: string; dueDate: string }
     | { type: 'quantity'; lineKey: string; remainingQty: number }
     | { type: 'add-order'; orderNumber: string; item: string; customer: string; machineKey: string; qty: number; hours: number; dueDate: string | null; notBefore?: string }
+    | {
+        /**
+         * An order not on the sheet yet, by its items: each is planned through the item's learnt route (its processes,
+         * each on the machine with the shortest queue among those seen making it), with the machine's learnt pace and
+         * the item's learnt weight — or on the steps given (a machine, its hours) for an item the record does not know.
+         */
+        type: 'new-order'
+        orderNumber: string
+        customer: string
+        dueDate: string | null
+        items: NewOrderItem[]
+        /** Ahead of everything else on its machines, as a priority event. */
+        rush?: boolean
+        notBefore?: string
+      }
   )
+
+export interface NewOrderItem {
+  itemCode: string
+  /** Its name; the learnt route's when left out. */
+  item?: string
+  qty: number
+  /** The whole item's weight in kg; learnt (kg a piece × qty) when left out. */
+  weightKg?: number | null
+  /** Its way through the factory when the learnt route is not to be used: each step's machine and, if known, its hours. */
+  steps?: { machineKey: string; hours?: number }[]
+}
 
 export type PlanEventType = PlanEvent['type']
 
@@ -218,6 +269,7 @@ export const PLAN_EVENT_TYPES: readonly { type: PlanEventType; name: string; hel
   { type: 'due', name: 'Due date', help: 'A line or an order is due on another day.' },
   { type: 'quantity', name: 'Quantity', help: 'A line has another quantity left to make.' },
   { type: 'add-order', name: 'New order', help: 'An order that is not on the sheet yet: its machine, quantity, hours and due day.' },
+  { type: 'new-order', name: 'New order by item', help: 'An order not on the sheet yet, by its items: planned through each item’s learnt route and pace (Planning → Delivery date).' },
 ]
 
 // ---- What the engine writes ------------------------------------------------------------
@@ -236,6 +288,8 @@ export type OperationFlag =
   | 'rushed'
   | 'hypothetical'
   | 'running'
+  /** A changeover from the family before it on the machine is counted in front of it (setupMinutes). */
+  | 'changeover'
 
 /** One order line placed on a machine. */
 export interface PlanOperation {
@@ -262,6 +316,8 @@ export interface PlanOperation {
   /** The kg it carries (the line's weight in proportion to what is left). */
   weightKg: number | null
   flags: OperationFlag[]
+  /** Minutes of changeover before it on the machine (inside start–end, before the work); 0 when none. */
+  setupMinutes?: number
 }
 
 /** One line the engine left out, with why. */
@@ -294,6 +350,11 @@ export interface PlanSummary {
   /** Wall minutes of the last finish; null when nothing was placed. */
   lastFinish: number | null
   excluded: number
+  /** Orders in the plan, and those late as one delivery (their last line late); absent on a summary kept before they were counted. */
+  orders?: number
+  lateOrders?: number
+  /** Hours of changeovers the plan counts; absent on a summary kept before they were. */
+  setupHours?: number
 }
 
 export interface PlanResult {

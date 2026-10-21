@@ -28,6 +28,29 @@ export const RELEASE_NOTES_BASELINE = '2026-09-15.1'
 /** Newest first. Add a new entry at the top with a fresh id. */
 export const RELEASES: readonly Release[] = [
   {
+    id: '2026-10-21.2',
+    date: '2026-10-21',
+    title: 'Planning: orders delivered whole, changeovers, maintenance, and a bell that watches the plan',
+    items: [
+      { text: 'A new objective under Settings, “orders delivered whole”: an order ships when its last line is done, so the optimiser moves an order’s lines together and weighs its delay by its whole weight. Late lines gains an “Orders delivered whole” view: each order, when it completes, how late, and on which machine its last line ends.' },
+      { text: 'Routes & paces → Changeovers: the minutes a machine (or every machine of a process) stops between two item families. Every plan counts them in front of the line and shows them on it; the plan’s total is in its figures.' },
+      { text: 'Calendar → Maintenance: a machine stops every so many days, or running hours, for so many hours. Every plan works around the stops, and so do the load, the alerts and the moves suggested.' },
+      { text: 'A machine running slower than usual over the last two weeks is marked on the floor, the list and the overview; “Plan with each machine’s pace of late” under Settings plans it at that pace.' },
+      { text: 'Load → Suggest moves: lines moved off the machines loaded past their hours to machines of the same process with room, by the items’ learnt routes, kept as a scenario in one press. The AI assistant does the same with planning_balance.' },
+      { text: 'The bell tells everyone with Planning when the automatic plan’s late lines rise by as many as Settings say, or a machine is loaded past the share set, once per state.' },
+    ],
+  },
+  {
+    id: '2026-10-21.1',
+    date: '2026-10-21',
+    title: 'Planning: a delivery date for a customer',
+    items: [
+      { text: 'Planning → Delivery date: name a new order’s items and quantities and the plan says the day it would be done — in its turn, and rushed ahead of everything — each item through its learnt route and pace, with what it does to the orders already planned. Keep it as a scenario in one press.' },
+      { text: 'For an order that must be done by a day (new, or on the sheet), the advice tries what a planner would — rush it, work the Fridays, add hours a day on its machines, move its steps to freer machines, all together — and says which options meet the day and what each costs, by the prices under Settings.' },
+      { text: 'The AI assistant answers “when can we deliver” and “how do we get order X done by day D” with the same two tools (planning_quote, planning_advise). Each item’s weight a piece is now learnt beside its route.' },
+    ],
+  },
+  {
     id: '2026-10-20.6',
     date: '2026-10-20',
     title: 'Planning: every part on one screen',

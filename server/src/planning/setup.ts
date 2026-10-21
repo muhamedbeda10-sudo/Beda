@@ -23,6 +23,11 @@ import {
   type SetRateRequest,
   type SettingsResponse,
   type PlanningProcess,
+  type MachineSpeed,
+  type SetupTimesResponse,
+  type SetSetupTimeRequest,
+  type MaintenanceResponse,
+  type SetMaintenanceRequest,
 } from '@qc/shared/planning'
 import type { Config } from '../config'
 import { withTransaction, type Db } from '../db/pool'
@@ -88,10 +93,11 @@ export async function clearCalendarDay(db: Db, planner: Planner, day: string): P
 export async function capacities(db: Db, config: Config): Promise<CapacityResponse> {
   const base = await loadPlanningBase(db, config.FACTORY_TIMEZONE)
   const settings = effectiveSettings(base)
-  const stats = await db.query<MachineStats & { learntAt: string }>(
+  const stats = await db.query<MachineStats & { learntAt: string; recentPiecesPerHour: number | null; recentDays: number; speedPct: number | null }>(
     `SELECT machine_key AS "machineKey", hours_per_day::float8 AS "hoursPerDay", hours_from AS "hoursFrom", days_observed AS "daysObserved",
             efficiency::float8 AS efficiency, efficiency_samples AS "efficiencySamples", works_fridays AS "worksFridays", fridays_worked AS "fridaysWorked",
-            last_work_day::text AS "lastWorkDay", shifts, learnt_at AS "learntAt"
+            last_work_day::text AS "lastWorkDay", shifts, learnt_at AS "learntAt",
+            recent_pieces_per_hour::float8 AS "recentPiecesPerHour", recent_days AS "recentDays", speed_pct AS "speedPct"
        FROM planning_learnt_machines`,
   )
   const set = await db.query<{ key: string; hoursPerDay: number; efficiency: number | null; worksFridays: boolean; note: string; updatedByName: string; updatedAt: string }>(
@@ -108,13 +114,16 @@ export async function capacities(db: Db, config: Config): Promise<CapacityRespon
       const found = statsBy.get(m.key)
       const s = setBy.get(m.key)
       let stats: MachineStats | null = null
+      let speed: MachineSpeed | null = null
       if (found) {
-        const { learntAt: _at, ...rest } = found
+        const { learntAt: _at, recentPiecesPerHour, recentDays, speedPct, ...rest } = found
         stats = rest
+        speed = { machineKey: m.key, recentPiecesPerHour, recentDays, speedPct }
       }
       return {
         machine: m,
         stats,
+        speed,
         set: s ? { hoursPerDay: s.hoursPerDay, efficiency: s.efficiency, worksFridays: s.worksFridays, note: s.note, updatedByName: s.updatedByName, updatedAt: s.updatedAt } : null,
         effective: capacityOf(caps, m.key, settings),
       }
@@ -206,7 +215,7 @@ export async function routes(db: Db, query: { q?: string; process?: string; limi
   const limit = Math.min(Math.max(query.limit ?? 200, 1), 1000)
   const pattern = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
   const { rows } = await db.query<ItemRoute & { total: number; learntAt: string }>(
-    `SELECT item_code AS "itemCode", item, steps, orders_seen AS orders, confidence_pct AS "confidencePct", learnt_at AS "learntAt", count(*) OVER ()::int AS total
+    `SELECT item_code AS "itemCode", item, steps, orders_seen AS orders, confidence_pct AS "confidencePct", kg_per_piece::float8 AS "kgPerPiece", learnt_at AS "learntAt", count(*) OVER ()::int AS total
        FROM planning_learnt_routes
       WHERE ($1 = '' OR item_code LIKE $2 OR lower(item) LIKE $2) AND ($3::text IS NULL OR processes @> ARRAY[$3::text])
       ORDER BY orders_seen DESC, item_code LIMIT $4`,
@@ -219,6 +228,113 @@ export async function routes(db: Db, query: { q?: string; process?: string; limi
     processOrder: learnt.processOrder ?? { rank: effectiveSettings({ setSettings: {}, learnt }).processRank, votes: [], learnt: false },
     learntAt: learnt.learntAt,
   }
+}
+
+// ---- Changeovers ------------------------------------------------------------------------------------
+
+export async function setupTimes(db: Db): Promise<SetupTimesResponse> {
+  const { rows } = await db.query<SetupTimesResponse['rules'][number]>(
+    `SELECT id, machine_key AS "machineKey", process, from_family AS "fromFamily", to_family AS "toFamily", minutes, note, updated_by_name AS "updatedByName", updated_at AS "updatedAt"
+       FROM planning_setup_times ORDER BY machine_key NULLS LAST, process NULLS LAST, from_family, to_family`,
+  )
+  return { rules: rows }
+}
+
+const family = (s: string) => s.trim().slice(0, 60)
+
+/** A changeover rule set or replaced (the same scope and families replace the rule they had). */
+export async function setSetupTime(db: Db, planner: Planner, req: SetSetupTimeRequest): Promise<string> {
+  if (req.machineKey !== null && req.process !== null) throw badRequest('A rule is one machine’s, one process’s, or everyone’s: not a machine and a process.')
+  if (req.process !== null && !PLANNING_PROCESSES.includes(req.process)) throw badRequest(`process: one of ${PLANNING_PROCESSES.join(', ')}.`)
+  if (!(Number.isInteger(req.minutes) && req.minutes >= 0 && req.minutes <= 1440)) throw badRequest('minutes: 0 to 1440.')
+  const key = req.machineKey === null ? null : ((await machineKeys(db, [req.machineKey])).get(req.machineKey) ?? req.machineKey)
+  const from = family(req.fromFamily)
+  const to = family(req.toFamily)
+  const note = (req.note ?? '').trim().slice(0, 500)
+  const scope = key ?? req.process ?? 'all'
+  let id = ''
+  await audited(db, planner, [{ entityId: `changeover:${scope}:${from || '*'}>${to || '*'}`, field: 'minutes', newValue: `${req.minutes} min${note ? ` (${note})` : ''}` }], async (tx) => {
+    const { rows } = await tx.query<{ id: string }>(
+      `INSERT INTO planning_setup_times (machine_key, process, from_family, to_family, minutes, note, updated_by_id, updated_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (COALESCE(machine_key, ''), COALESCE(process, ''), lower(from_family), lower(to_family))
+       DO UPDATE SET minutes = EXCLUDED.minutes, note = EXCLUDED.note, updated_by_id = EXCLUDED.updated_by_id, updated_by_name = EXCLUDED.updated_by_name, updated_at = now()
+       RETURNING id`,
+      [key, req.process, from, to, req.minutes, note, planner.id, planner.name],
+    )
+    id = rows[0].id
+  })
+  return id
+}
+
+export async function clearSetupTime(db: Db, planner: Planner, id: string): Promise<void> {
+  const { rows } = await db.query<{ machineKey: string | null; process: string | null; fromFamily: string; toFamily: string; minutes: number }>(
+    `SELECT machine_key AS "machineKey", process, from_family AS "fromFamily", to_family AS "toFamily", minutes FROM planning_setup_times WHERE id = $1`,
+    [id],
+  )
+  const old = rows[0]
+  if (!old) return
+  await audited(db, planner, [{ entityId: `changeover:${old.machineKey ?? old.process ?? 'all'}:${old.fromFamily || '*'}>${old.toFamily || '*'}`, field: 'minutes', oldValue: `${old.minutes} min` }], async (tx) => {
+    await tx.query(`DELETE FROM planning_setup_times WHERE id = $1`, [id])
+  })
+}
+
+// ---- Maintenance -------------------------------------------------------------------------------------
+
+export async function maintenance(db: Db): Promise<MaintenanceResponse> {
+  const { rows } = await db.query<MaintenanceResponse['rules'][number]>(
+    `SELECT id, machine_key AS "machineKey", name, every_days AS "everyDays", every_run_hours::float8 AS "everyRunHours", duration_hours::float8 AS "durationHours",
+            last_done::text AS "lastDone", start_time AS "startTime", note, updated_by_name AS "updatedByName", updated_at AS "updatedAt"
+       FROM planning_maintenance ORDER BY machine_key, name`,
+  )
+  return { rules: rows }
+}
+
+const describeMaintenance = (r: SetMaintenanceRequest) =>
+  `${r.name}: every ${r.everyDays !== null ? `${r.everyDays} days` : `${r.everyRunHours} running hours`}, ${r.durationHours} h${r.lastDone ? `, last ${r.lastDone}` : ''}`
+
+/** A maintenance rule added, or replaced by its id. */
+export async function setMaintenance(db: Db, planner: Planner, req: SetMaintenanceRequest, id?: string): Promise<string> {
+  const name = req.name.trim()
+  if (name === '' || name.length > 120) throw badRequest('name: what the maintenance is, in at most 120 characters.')
+  if (req.everyDays === null && req.everyRunHours === null) throw badRequest('Say every how many days, or every how many running hours.')
+  if (req.everyDays !== null && !(Number.isInteger(req.everyDays) && req.everyDays >= 1 && req.everyDays <= 3650)) throw badRequest('everyDays: 1 to 3650.')
+  if (req.everyRunHours !== null && !(req.everyRunHours > 0 && req.everyRunHours <= 1e6)) throw badRequest('everyRunHours: more than 0.')
+  if (!(req.durationHours > 0 && req.durationHours <= 240)) throw badRequest('durationHours: up to 240.')
+  if (req.lastDone !== null && !isDay(req.lastDone)) throw badRequest('lastDone: a day, YYYY-MM-DD, or empty.')
+  const startTime = req.startTime ? req.startTime.trim() : null
+  if (startTime !== null && !/^[0-2][0-9]:[0-5][0-9]$/.test(startTime)) throw badRequest('startTime: HH:MM, or empty for 08:00.')
+  const key = (await machineKeys(db, [req.machineKey])).get(req.machineKey) ?? req.machineKey
+  const note = (req.note ?? '').trim().slice(0, 500)
+  const old = id ? (await db.query<{ machineKey: string; name: string }>(`SELECT machine_key AS "machineKey", name FROM planning_maintenance WHERE id = $1`, [id])).rows[0] : undefined
+  if (id && !old) throw badRequest('No maintenance rule has that id.')
+  let out = id ?? ''
+  await audited(db, planner, [{ entityId: `maintenance:${key}:${name}`, field: 'rule', oldValue: old ? `${old.name} on ${old.machineKey}` : undefined, newValue: describeMaintenance({ ...req, name }) }], async (tx) => {
+    if (id) {
+      await tx.query(
+        `UPDATE planning_maintenance SET machine_key = $2, name = $3, every_days = $4, every_run_hours = $5, duration_hours = $6, last_done = $7, start_time = $8, note = $9,
+                updated_by_id = $10, updated_by_name = $11, updated_at = now() WHERE id = $1`,
+        [id, key, name, req.everyDays, req.everyRunHours, req.durationHours, req.lastDone, startTime, note, planner.id, planner.name],
+      )
+    } else {
+      const { rows } = await tx.query<{ id: string }>(
+        `INSERT INTO planning_maintenance (machine_key, name, every_days, every_run_hours, duration_hours, last_done, start_time, note, updated_by_id, updated_by_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+        [key, name, req.everyDays, req.everyRunHours, req.durationHours, req.lastDone, startTime, note, planner.id, planner.name],
+      )
+      out = rows[0].id
+    }
+  })
+  return out
+}
+
+export async function clearMaintenance(db: Db, planner: Planner, id: string): Promise<void> {
+  const { rows } = await db.query<{ machineKey: string; name: string }>(`SELECT machine_key AS "machineKey", name FROM planning_maintenance WHERE id = $1`, [id])
+  const old = rows[0]
+  if (!old) return
+  await audited(db, planner, [{ entityId: `maintenance:${old.machineKey}:${old.name}`, field: 'rule', oldValue: `${old.name} on ${old.machineKey}` }], async (tx) => {
+    await tx.query(`DELETE FROM planning_maintenance WHERE id = $1`, [id])
+  })
 }
 
 // ---- Settings ----------------------------------------------------------------------------------------

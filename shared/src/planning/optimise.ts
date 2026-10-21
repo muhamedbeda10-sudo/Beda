@@ -8,6 +8,12 @@
 // works the plan out again — the same engine, every constraint kept — and
 // keeps the move when the objective gets smaller.
 //
+// The objective "order-complete" sees an order as one delivery: its
+// lateness is its last line's, weighed by the order's whole weight, and the
+// moves tried are the order's lines together (each ahead of the line before
+// it on its machine), since one line of an order delivered whole gains
+// nothing by itself.
+//
 // Deterministic on purpose: the moves are tried in a fixed order and the
 // budget is a number of plans worked out, scaled by the size of the record
 // rather than by the clock, so the same inputs give the same plan on any
@@ -15,7 +21,7 @@
 // record gets fewer tries; it says how many it got.
 // ============================================================================
 
-import { resolveSettings, runPlan, type PlanInputs } from './engine'
+import { type OrderLateness, type PlanInputs, ordersOf, resolveSettings, runPlan, tonnesOf } from './engine'
 import type { OptimiseEffort, PlanObjective, PlanOperation, PlanResult } from './types'
 
 /** Plans worked out at most, and the "plans × lines" the budget is spread over, per effort. */
@@ -31,8 +37,7 @@ export function evaluationBudget(effort: OptimiseEffort, lines: number): number 
   return Math.min(b.maxEvaluations, Math.floor(b.lineEvaluations / lines))
 }
 
-/** A line's weight in tonnes for the objective; a line with no weight counts as one tonne, so it still counts. */
-const tonnesOf = (op: PlanOperation) => (op.weightKg !== null && op.weightKg > 0 ? op.weightKg / 1000 : 1)
+const norm = (s: string) => s.trim().toLowerCase()
 
 /**
  * The objective as a tuple compared element by element: unplaced lines first (never worth more), then the tonnes left
@@ -61,12 +66,24 @@ export function score(result: PlanResult, objective: PlanObjective): number[] {
       return [unplaced, unplacedTonnes, lateLines, lateDays, lateTonneDays]
     case 'late-days':
       return [unplaced, unplacedTonnes, lateDays, lateLines, lateTonneDays]
+    case 'order-complete': {
+      // Each order late by its last line, weighed by its whole weight; then how many orders are late, then lines.
+      let orderTonneDays = 0
+      let lateOrders = 0
+      for (const o of ordersOf(result.operations).values()) {
+        if (o.lateDays === null || o.lateDays <= 0) continue
+        lateOrders++
+        orderTonneDays += o.lateDays * o.tonnes
+      }
+      return [unplaced, unplacedTonnes, Math.round(orderTonneDays * 1000) / 1000, lateOrders, lateLines]
+    }
     default:
       return [unplaced, unplacedTonnes, lateTonneDays, lateLines, lateDays]
   }
 }
 
-const better = (a: number[], b: number[]): boolean => {
+/** Whether score a beats score b: the tuples compared element by element, the first that differs deciding. */
+export const better = (a: number[], b: number[]): boolean => {
   for (let i = 0; i < a.length; i++) {
     if (a[i] < b[i]) return true
     if (a[i] > b[i]) return false
@@ -74,25 +91,34 @@ const better = (a: number[], b: number[]): boolean => {
   return false
 }
 
-interface Move {
-  /** The late (or unplaced) line moved earlier. */
+/** One line moved just ahead of another on its machine. */
+interface Step {
   lineId: string
-  /** The line it goes ahead of. */
   beforeId: string
 }
 
+/** A move: one line's step, or an order's lines stepped together. */
+interface Move {
+  steps: Step[]
+}
+
 /** How much a line's lateness weighs when choosing what to try first: the objective's own measure; an unplaced line weighs most. */
-function urgency(op: PlanOperation, objective: PlanObjective): number {
+function urgency(op: PlanOperation, objective: PlanObjective, orders: ReadonlyMap<string, OrderLateness>): number {
   if (op.end === null) return Number.MAX_SAFE_INTEGER
   if (objective === 'late-lines') return 1 + op.lateDays / 1e6
   if (objective === 'late-days') return op.lateDays
+  if (objective === 'order-complete') {
+    const o = orders.get(norm(op.orderNumber))
+    return o ? (o.lateDays === null ? Number.MAX_SAFE_INTEGER / 2 : o.lateDays * o.tonnes) + op.lateDays / 1e6 : op.lateDays
+  }
   return op.lateDays * tonnesOf(op)
 }
 
 /**
  * The moves worth trying on a plan, in the objective's order of urgency: each late or unplaced line ahead of the one
  * before it on its machine, then to the front of its queue. Never past the line running now, a rushed line, or a
- * line it waits for.
+ * line it waits for. For orders delivered whole, a late order's lines are tried together first (each ahead of the
+ * line before it on its machine), then one by one.
  */
 function candidateMoves(result: PlanResult, objective: PlanObjective): Move[] {
   const byMachine = new Map<string, PlanOperation[]>()
@@ -103,17 +129,37 @@ function candidateMoves(result: PlanResult, objective: PlanObjective): Move[] {
   }
   for (const l of byMachine.values()) l.sort((a, b) => a.seq - b.seq)
   const fixed = (op: PlanOperation) => op.flags.includes('running') || op.flags.includes('rushed')
-  const late = result.operations
-    .filter((op) => (op.lateDays > 0 || op.end === null) && !fixed(op))
-    .sort((a, b) => urgency(b, objective) - urgency(a, objective) || b.lateDays - a.lateDays || a.lineId.localeCompare(b.lineId))
-  const moves: Move[] = []
-  for (const op of late) {
+  const orders = ordersOf(result.operations)
+  const stepsOf = (op: PlanOperation): { prev: Step | null; front: Step | null } => {
     const queue = byMachine.get(op.machineKey)!
     const i = queue.findIndex((o) => o.lineId === op.lineId)
     const prev = i > 0 ? queue[i - 1] : null
-    if (prev && !fixed(prev) && !op.dependsOn.includes(prev.lineKey)) moves.push({ lineId: op.lineId, beforeId: prev.lineId })
     const first = queue.find((o) => !fixed(o))
-    if (first && first !== op && first !== prev && !op.dependsOn.includes(first.lineKey)) moves.push({ lineId: op.lineId, beforeId: first.lineId })
+    return {
+      prev: prev && !fixed(prev) && !op.dependsOn.includes(prev.lineKey) ? { lineId: op.lineId, beforeId: prev.lineId } : null,
+      front: first && first !== op && first !== prev && !op.dependsOn.includes(first.lineKey) ? { lineId: op.lineId, beforeId: first.lineId } : null,
+    }
+  }
+  const moves: Move[] = []
+  if (objective === 'order-complete') {
+    const lateOrders = [...orders.values()]
+      .filter((o) => (o.lateDays === null || o.lateDays > 0) && o.lines.some((l) => !fixed(l)))
+      .sort((a, b) => (b.lateDays === null ? Infinity : b.lateDays * b.tonnes) - (a.lateDays === null ? Infinity : a.lateDays * a.tonnes) || a.orderNumber.localeCompare(b.orderNumber))
+    for (const o of lateOrders) {
+      const together = o.lines.filter((l) => !fixed(l)).flatMap((l) => {
+        const { prev } = stepsOf(l)
+        return prev ? [prev] : []
+      })
+      if (together.length > 1) moves.push({ steps: together })
+    }
+  }
+  const late = result.operations
+    .filter((op) => (op.lateDays > 0 || op.end === null || (objective === 'order-complete' && (orders.get(norm(op.orderNumber))?.lateDays ?? 0) !== 0)) && !fixed(op))
+    .sort((a, b) => urgency(b, objective, orders) - urgency(a, objective, orders) || b.lateDays - a.lateDays || a.lineId.localeCompare(b.lineId))
+  for (const op of late) {
+    const { prev, front } = stepsOf(op)
+    if (prev) moves.push({ steps: [prev] })
+    if (front) moves.push({ steps: [front] })
   }
   return moves
 }
@@ -168,11 +214,16 @@ export function optimisePlan(inputs: PlanInputs, options: { startFrom?: readonly
     let accepted = false
     for (const m of candidateMoves(best, objective)) {
       if (evaluations >= budget) break
-      const was = rank.get(m.lineId)
-      const target = rank.get(m.beforeId)
-      if (was === undefined || target === undefined || was <= target) continue
-      // Just ahead of the line it passes; nothing else moves.
-      rank.set(m.lineId, target - 0.5)
+      // Each step just ahead of the line it passes; nothing else moves. A step that would not move is left out.
+      const was: [string, number][] = []
+      for (const st of m.steps) {
+        const from = rank.get(st.lineId)
+        const target = rank.get(st.beforeId)
+        if (from === undefined || target === undefined || from <= target) continue
+        was.push([st.lineId, from])
+        rank.set(st.lineId, target - 0.5)
+      }
+      if (was.length === 0) continue
       const trial = runPlan({ ...inputs, priority: rank })
       evaluations++
       const s = score(trial, objective)
@@ -183,7 +234,7 @@ export function optimisePlan(inputs: PlanInputs, options: { startFrom?: readonly
         accepted = true
         break
       }
-      rank.set(m.lineId, was)
+      for (const [id, r] of was) rank.set(id, r)
     }
     if (!accepted) break
   }

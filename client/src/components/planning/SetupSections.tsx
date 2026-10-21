@@ -10,7 +10,7 @@
 // ============================================================================
 
 import { useEffect, useMemo, useState } from 'react'
-import { CalendarDays, Check, DatabaseZap, Gauge, RefreshCw, RotateCcw, Route as RouteIcon, Save, Trash2 } from 'lucide-react'
+import { ArrowRightLeft, CalendarDays, Check, DatabaseZap, Gauge, RefreshCw, RotateCcw, Route as RouteIcon, Save, Trash2, Wrench } from 'lucide-react'
 import { PLANNING_PROCESSES, PROCESS_NAMES, addDays, type CalendarResponse, type CapacityRow, type ItemRoute, type MachineRate, type PlanSettings } from '@qc/shared/planning'
 import { calendarDay } from '@qc/shared/rules'
 import { Badge, Button, EmptyState, Field, Input, Select, type BadgeTone } from '@/components/ui'
@@ -21,6 +21,7 @@ import { useAuth } from '@/store/AuthContext'
 import { useCalendar, useCapacity, useGaps, useLearnNow, useRates, useRoutes, useSaveSettings, useSetCalendarDay, useSetCapacity, useSetRate, useSettings } from '@/services/planning'
 import { DataGrid, ErrorNote, Loading, Meter, OBJECTIVE_NAME, PartFrame, Scroller, SearchBox, useGrid, type GridColumn } from './common'
 import { dayLabel, hoursLabel, processName } from './format'
+import { ChangeoverForm, ChangeoverGrid, MaintenanceForm, MaintenanceGrid } from './SetupMore'
 
 const sourceName = (s: 'set' | 'inferred' | 'default') => (s === 'set' ? 'set' : s === 'inferred' ? 'learnt' : 'default')
 const sourceBadge = (s: 'set' | 'inferred' | 'default') => <Badge tone={s === 'set' ? 'blue' : s === 'inferred' ? 'green' : 'amber'}>{sourceName(s)}</Badge>
@@ -318,7 +319,7 @@ type RateRow = MachineRate & {
 }
 
 export function RoutesSection() {
-  const [tab, setTab] = usePersistedState<'routes' | 'paces'>('qc-planning:routes-tab', 'routes')
+  const [tab, setTab] = usePersistedState<'routes' | 'paces' | 'changeovers'>('qc-planning:routes-tab', 'routes')
   const [q, setQ] = useState('')
   const [process, setProcess] = useState('')
   const [machine, setMachine] = useState('')
@@ -405,6 +406,15 @@ export function RoutesSection() {
         value: (r) => String(r.confidencePct),
         sortValue: (r) => r.confidencePct,
         cell: (r) => `${r.confidencePct}%`,
+      },
+      {
+        key: 'kg',
+        label: 'Kg a piece',
+        numeric: true,
+        right: true,
+        value: (r) => (r.kgPerPiece === null ? '' : String(r.kgPerPiece)),
+        sortValue: (r) => r.kgPerPiece,
+        cell: (r) => (r.kgPerPiece === null ? <span className="text-muted">—</span> : r.kgPerPiece.toLocaleString()),
       },
     ],
     [nameOf],
@@ -501,7 +511,7 @@ export function RoutesSection() {
       toolbar={
         <>
           <Segmented
-            label="Routes or paces"
+            label="Routes, paces or changeovers"
             value={tab}
             onChange={setTab}
             options={[
@@ -515,9 +525,16 @@ export function RoutesSection() {
                 label: 'Machines’ paces',
                 icon: <Gauge className="h-4 w-4" />,
               },
+              {
+                value: 'changeovers',
+                label: 'Changeovers',
+                icon: <ArrowRightLeft className="h-4 w-4" />,
+              },
             ]}
           />
-          {tab === 'routes' ? (
+          {tab === 'changeovers' ? (
+            <>{mayEdit && machines.length > 0 && <ChangeoverForm machines={machines} />}</>
+          ) : tab === 'routes' ? (
             <>
               <SearchBox value={q} onChange={setQ} placeholder="Item code or name" label="Find an item" />
               <FilterSelect label="Process" value={process} onChange={setProcess}>
@@ -547,7 +564,9 @@ export function RoutesSection() {
         </>
       }
     >
-      {tab === 'routes' ? (
+      {tab === 'changeovers' ? (
+        <ChangeoverGrid machines={machines} />
+      ) : tab === 'routes' ? (
         routes.isLoading ? (
           <Loading what="Reading the routes" />
         ) : routes.error || !routes.data ? (
@@ -620,6 +639,9 @@ export function CalendarSection() {
   const from = addDays(today, -31)
   const to = addDays(today, 400)
   const { data, error, isLoading, refetch } = useCalendar(from, to)
+  const [tab, setTab] = usePersistedState<'days' | 'maintenance'>('qc-planning:calendar-tab', 'days')
+  const capacity = useCapacity()
+  const machines = useMemo(() => (capacity.data?.rows ?? []).map((r) => ({ key: r.machine.key, name: r.machine.name })), [capacity.data])
   const set = useSetCalendarDay()
   const [day, setDay] = useState(today)
   const [working, setWorking] = useState(false)
@@ -675,7 +697,17 @@ export function CalendarSection() {
     <PartFrame
       toolbar={
         <>
-          {mayEdit && (
+          <Segmented
+            label="Days or maintenance"
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: 'days', label: 'Holidays and worked Fridays', icon: <CalendarDays className="h-4 w-4" /> },
+              { value: 'maintenance', label: 'Maintenance', icon: <Wrench className="h-4 w-4" /> },
+            ]}
+          />
+          {tab === 'maintenance' && mayEdit && machines.length > 0 && <MaintenanceForm machines={machines} />}
+          {tab === 'days' && mayEdit && (
             <form
               className="flex flex-wrap items-center gap-2"
               onSubmit={async (e) => {
@@ -707,11 +739,13 @@ export function CalendarSection() {
               {set.error && <ErrorNote error={set.error} />}
             </form>
           )}
-          <span className="text-13 text-muted">Friday is the day off; every other day is worked unless it is listed here.</span>
+          {tab === 'days' && <span className="text-13 text-muted">Friday is the day off; every other day is worked unless it is listed here.</span>}
         </>
       }
     >
-      {isLoading ? (
+      {tab === 'maintenance' ? (
+        <MaintenanceGrid machines={machines} />
+      ) : isLoading ? (
         <Loading what="Reading the calendar" />
       ) : error || !data ? (
         <Fail error={error} retry={() => void refetch()} />
@@ -840,6 +874,24 @@ export function SettingsSection() {
             </Select>,
           )}
           {row(
+            'Plan with each machine’s pace of late',
+            'A machine running slower than usual over the last two weeks (Capacity shows it) is planned at that pace, not its usual one.',
+            <Select value={e.useRecentSpeed ? 'yes' : 'no'} onChange={(x) => set({ useRecentSpeed: x.target.value === 'yes' })} className="min-h-[44px]">
+              <option value="no">No: its usual pace</option>
+              <option value="yes">Yes: its pace of late</option>
+            </Select>,
+          )}
+          {row(
+            'Tell the planners when late lines rise by',
+            'The bell tells everyone with Planning when the automatic plan’s late lines rise by this many since they were last told (read every half hour). 0 = never.',
+            <Input type="number" min={0} step={1} value={e.alertLateRise} onChange={(x) => set({ alertLateRise: Math.max(0, Math.floor(Number(x.target.value) || 0)) })} className="min-h-[44px]" />,
+          )}
+          {row(
+            'Tell the planners when a machine’s load reaches',
+            'Per cent of its working hours over the next two weeks; told once until it is under again. 0 = never.',
+            <Input type="number" min={0} step={5} value={e.alertOverloadPct} onChange={(x) => set({ alertOverloadPct: Math.max(0, Math.floor(Number(x.target.value) || 0)) })} className="min-h-[44px]" />,
+          )}
+          {row(
             'Use each machine’s efficiency',
             'Divide the ERP’s hours by the machine’s learnt efficiency (planned ÷ actual).',
             <Select value={e.applyEfficiency ? 'yes' : 'no'} onChange={(x) => set({ applyEfficiency: x.target.value === 'yes' })} className="min-h-[44px]">
@@ -941,7 +993,7 @@ export function SettingsSection() {
           )}
           {row(
             'What it makes smaller',
-            'Tonne-days late weighs a heavy order’s delay more than a light one’s (a line with no weight counts as a tonne); late lines counts each line once; days late adds the days.',
+            'Tonne-days late weighs a heavy order’s delay more than a light one’s (a line with no weight counts as a tonne); late lines counts each line once; days late adds the days. Orders delivered whole: an order ships when its last line is done, so it is late by that day against its lines’ due days, weighed by its whole weight, and its lines are moved together — for a factory that ships an order in one go.',
             <Select value={e.objective} onChange={(x) => set({ objective: x.target.value as PlanSettings['objective'] })} className="min-h-[44px]">
               {(Object.keys(OBJECTIVE_NAME) as PlanSettings['objective'][]).map((k) => (
                 <option key={k} value={k}>
@@ -949,6 +1001,21 @@ export function SettingsSection() {
                 </option>
               ))}
             </Select>,
+          )}
+          {row(
+            'Price of a machine working a Friday',
+            'For the advice under Delivery date: what a machine working a day off costs, in the factory’s currency. 0 = not priced.',
+            <Input type="number" min={0} step={1} value={e.costFridayMachineDay} onChange={(x) => set({ costFridayMachineDay: Math.max(0, Number(x.target.value) || 0) })} className="min-h-[44px]" />,
+          )}
+          {row(
+            'Price of an extra machine hour',
+            'What an hour beyond a machine’s day costs (overtime, a longer shift). 0 = not priced.',
+            <Input type="number" min={0} step={1} value={e.costExtraMachineHour} onChange={(x) => set({ costExtraMachineHour: Math.max(0, Number(x.target.value) || 0) })} className="min-h-[44px]" />,
+          )}
+          {row(
+            'Price of a tonne a day late',
+            'What a tonne of another order delayed a day costs (penalties, goodwill): the advice weighs its options against the other orders with it. 0 = not priced.',
+            <Input type="number" min={0} step={1} value={e.costLateTonneDay} onChange={(x) => set({ costLateTonneDay: Math.max(0, Number(x.target.value) || 0) })} className="min-h-[44px]" />,
           )}
           {row(
             'Default hours of a line',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MachineCalendar } from './calendar'
-import { buildCalendars, lineHours, resolveSettings, runPlan, RateBook, type PlanInputs } from './engine'
+import { type PlanInputs, RateBook, buildCalendars, lateDaysAt, lineHours, ordersOf, resolveSettings, runPlan } from './engine'
 import { comparePlans, dailyPlan, weeklyLoad } from './analysis'
 import { formatWall, parseWall, wallOfInstant, instantOfWall, weekStart, factoryDayOfWall } from './time'
 import type { MachineCapacity, PlanLine, PlanMachine } from './types'
@@ -187,6 +187,89 @@ describe('§25 the plan', () => {
       ['edge', 'stale'],
     ])
     expect(runPlan(inputs({ lines, events })).excluded).toEqual([])
+  })
+
+  it('plans a new order by its items through their learnt routes, on the freest machine of each step, with the learnt weight and pace', () => {
+    // Two roll formers: 1 has 30 h queued, 3 has 2 h; a welder 2. BEAM's route: forming (seen on 1 and 3) → welding (2).
+    const queued = [line({ machineKey: '1', erpHours: 30, itemCode: 'OTHER', dueDate: '2026-12-01' }), line({ machineKey: '3', erpHours: 2, itemCode: 'OTHER', dueDate: '2026-12-01' })]
+    const routes = [{ itemCode: 'beam', item: 'Beam 2000', steps: [{ process: 'forming' as const, machines: [{ machineKey: '1', lines: 9 }, { machineKey: '3', lines: 2 }] }, { process: 'welding' as const, machines: [{ machineKey: '2', lines: 9 }] }], orders: 9, confidencePct: 100, kgPerPiece: 12.5 }]
+    const rates = [
+      { machineKey: '3', itemCode: 'beam', itemFamily: '', piecesPerHour: 50, samples: 9, source: 'inferred' as const },
+      { machineKey: '2', itemCode: '', itemFamily: '', piecesPerHour: 100, samples: 9, source: 'inferred' as const },
+    ]
+    const ev = { id: 'q', type: 'new-order' as const, orderNumber: 'Q1', customer: 'New Co', dueDate: '2026-10-28', items: [{ itemCode: 'BEAM', qty: 200 }] }
+    const r = runPlan(inputs({ lines: queued, machines: [machine('1'), machine('2', 'welding'), machine('3')], capacities: [cap('1'), cap('2'), cap('3')], rates, routes, events: [ev], settings: { overlapPct: 0, finishLagMinutes: 0 } }))
+    const ops = r.operations.filter((o) => o.orderNumber === 'Q1').sort((a, b) => a.start! - b.start!)
+    expect(ops.map((o) => [o.machineKey, o.hours, o.durationSource, o.weightKg, o.item])).toEqual([
+      ['3', 4, 'rate-item', 2500, 'Beam 2000'],
+      ['2', 2, 'rate-machine', 2500, 'Beam 2000'],
+    ])
+    // Welding waits for forming; both carry the scenario's flag and the due day.
+    expect(ops[1].start!).toBeGreaterThanOrEqual(ops[0].end!)
+    expect(ops.every((o) => o.flags.includes('hypothetical') && o.dueDate === '2026-10-28')).toBe(true)
+    expect(r.warnings).toEqual([])
+    // Rushed: ahead of the queued line on 3. An item the record does not know is planned on the steps given, or not at all, with a warning.
+    const rushed = runPlan(inputs({ lines: queued, machines: [machine('1'), machine('2', 'welding'), machine('3')], capacities: [cap('1'), cap('2'), cap('3')], rates, routes, events: [{ ...ev, rush: true }] }))
+    expect(rushed.operations.find((o) => o.orderNumber === 'Q1')!.seq).toBe(1)
+    const unknown = runPlan(inputs({ lines: queued, routes, events: [{ ...ev, id: 'u', items: [{ itemCode: 'NEW', qty: 10 }, { itemCode: 'NEW2', qty: 10, steps: [{ machineKey: '1', hours: 3 }] }] }] }))
+    expect(unknown.warnings).toEqual(['Event new-order (u): no route is learnt for the item "NEW" — give its steps (each a machine and its hours) to plan it.'])
+    expect(unknown.operations.filter((o) => o.orderNumber === 'Q1').map((o) => [o.itemCode, o.hours, o.durationSource])).toEqual([['NEW2', 3, 'event']])
+    // Steps given run one after the other even on machines of the same process, with the same-item rule off.
+    const two = runPlan(
+      inputs({
+        lines: [],
+        machines: [machine('1'), machine('3')],
+        capacities: [cap('1'), cap('3')],
+        settings: { dependencies: { sameItem: false, parent: false, orderProcess: false }, overlapPct: 0, finishLagMinutes: 0 },
+        events: [{ ...ev, id: 's', items: [{ itemCode: 'X', qty: 1, steps: [{ machineKey: '1', hours: 8 }, { machineKey: '3', hours: 8 }] }] }],
+      }),
+    )
+    const [first, second] = two.operations.filter((o) => o.orderNumber === 'Q1').sort((a, b) => a.lineKey.localeCompare(b.lineKey))
+    expect(second.start!).toBeGreaterThanOrEqual(first.end!)
+    expect(second.dependsOn).toEqual([first.lineKey])
+  })
+
+  it('counts a changeover between families on a machine, in front of the line, never before the line running now', () => {
+    const a = line({ lineKey: 'A', itemFamily: 'XL', plannedStart: '2026-10-01', erpHours: 4 })
+    const b = line({ lineKey: 'B', itemFamily: 'S', plannedStart: '2026-10-02', erpHours: 4 })
+    const c = line({ lineKey: 'C', itemFamily: 'S', plannedStart: '2026-10-03', erpHours: 2 })
+    const rules = [{ id: 'r', machineKey: null, process: null, fromFamily: '', toFamily: '', minutes: 60 }]
+    const r = runPlan(inputs({ lines: [a, b, c], setupTimes: rules }))
+    const op = (k: string) => r.operations.find((o) => o.lineKey === k)!
+    // A: 08:00–12:00. B changes from XL to S: an hour's changeover, then its 4 h: 12:00–17:00. C, the same family: 17:00–19:00 (10 h a day).
+    expect([wall(op('A').end), wall(op('B').start), wall(op('B').end), wall(op('C').start)]).toEqual(['2026-10-24 12:00', '2026-10-24 12:00', '2026-10-24 17:00', '2026-10-24 17:00'])
+    expect(op('B')).toMatchObject({ setupMinutes: 60, hours: 4 })
+    expect(op('B').flags).toContain('changeover')
+    expect(op('C').setupMinutes).toBeUndefined()
+    expect(r.summary.setupHours).toBe(1)
+    expect(runPlan(inputs({ lines: [a, b, c] })).summary.setupHours).toBe(0)
+  })
+
+  it('reads a changeover from the work that runs before the slot a line lands in, not from the latest placed', () => {
+    // P (XL) waits for its material a week and is placed first; Q (S) then fills the gap before it: nothing runs before Q,
+    // so Q has no changeover, while P now follows Q and changes over from S to XL.
+    const p = line({ lineKey: 'P', itemFamily: 'XL', plannedStart: '2026-10-01', erpHours: 4, rmPromiseDate: '2026-10-27', rawMaterialQty: 10, rmReceivedQty: 0 })
+    const q = line({ lineKey: 'Q', itemFamily: 'S', plannedStart: '2026-10-02', erpHours: 4 })
+    const rules = [{ id: 'r', machineKey: null, process: null, fromFamily: '', toFamily: '', minutes: 60 }]
+    const r = runPlan(inputs({ lines: [p, q], setupTimes: rules, settings: { materialGate: true } }))
+    const op = (k: string) => r.operations.find((o) => o.lineKey === k)!
+    expect(op('Q').start).toBeLessThan(op('P').start!)
+    expect(op('Q').setupMinutes).toBeUndefined()
+    expect(op('Q').flags).not.toContain('changeover')
+    expect(op('P')).toMatchObject({ setupMinutes: 60 })
+    expect(r.summary.setupHours).toBe(1)
+  })
+
+  it('counts an order as one delivery: late by the day its last line is done against its lines’ due days', () => {
+    // X1 is due early and done in time; X2 is due later and finishes late: delivered whole with X2, X1 is late too.
+    const x1 = line({ lineKey: 'X1', orderNumber: 'X', itemCode: 'A', dueDate: '2026-10-24', erpHours: 2 })
+    const x2 = line({ lineKey: 'X2', orderNumber: 'X', itemCode: 'B', machineKey: '2', dueDate: '2026-10-26', erpHours: 40 })
+    const r = runPlan(inputs({ lines: [x1, x2], settings: { dependencies: { sameItem: false, parent: false, orderProcess: false } } }))
+    const o = ordersOf(r.operations).get('x')!
+    expect(o.completes).toBe(r.operations.find((x) => x.lineKey === 'X2')!.end)
+    expect(lateDaysAt(o.completes, '2026-10-24')).toBeGreaterThan(lateDaysAt(o.completes, '2026-10-26'))
+    expect(o.lateDays).toBe(lateDaysAt(o.completes, '2026-10-24'))
+    expect(r.summary).toMatchObject({ orders: 1, lateOrders: 1 })
   })
 
   it('makes an item’s later process wait for its earlier one in the same order, overlapping as set', () => {

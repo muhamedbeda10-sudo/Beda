@@ -8,6 +8,15 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
+  BalanceResponse,
+  MaintenanceResponse,
+  SetMaintenanceRequest,
+  SetSetupTimeRequest,
+  SetupTimesResponse,
+  AdviseRequest,
+  AdviseResponse,
+  QuoteRequest,
+  QuoteResponse,
   CalendarResponse,
   CapacityResponse,
   ComparisonResponse,
@@ -48,6 +57,8 @@ export const planningKeys = {
   capacity: ['planning', 'setup', 'capacity'] as const,
   rates: (machine?: string) => ['planning', 'setup', 'rates', machine ?? ''] as const,
   routes: (q: string, process: string) => ['planning', 'setup', 'routes', q, process] as const,
+  changeovers: ['planning', 'setup', 'changeovers'] as const,
+  maintenance: ['planning', 'setup', 'maintenance'] as const,
 }
 
 const P = '/planning'
@@ -99,6 +110,14 @@ export const useRoutes = (q: string, process: string) =>
 function plansMoved(qc: ReturnType<typeof useQueryClient>) {
   for (const key of [planningKeys.plans, ['planning', 'compare'], ['planning', 'load'], planningKeys.overview, planningKeys.floor]) void qc.invalidateQueries({ queryKey: key })
 }
+
+/** What the planners set besides hours and paces: changeovers and maintenance. */
+export const useSetupTimes = () => useQuery({ queryKey: planningKeys.changeovers, queryFn: () => api<SetupTimesResponse>(`${P}/setup/changeovers`) })
+export const useMaintenance = () => useQuery({ queryKey: planningKeys.maintenance, queryFn: () => api<MaintenanceResponse>(`${P}/setup/maintenance`) })
+/** Moves off the machines loaded past their hours, a delivery day for an order not on the sheet, and advice to meet a day: worked out on request, nothing kept. */
+export const useBalance = () => useMutation({ mutationFn: (req: { weeks?: number; maxMoves?: number; basePlan?: string }) => api<BalanceResponse>(`${P}/balance`, { method: 'POST', body: req }) })
+export const useQuote = () => useMutation({ mutationFn: (req: QuoteRequest) => api<QuoteResponse>(`${P}/quote`, { method: 'POST', body: req }) })
+export const useAdvise = () => useMutation({ mutationFn: (req: AdviseRequest) => api<AdviseResponse>(`${P}/advise`, { method: 'POST', body: req }) })
 
 export function useCreatePlan() {
   const qc = useQueryClient()
@@ -158,6 +177,29 @@ export function useClearLayout() {
   return useMutation({
     mutationFn: (machineKey: string) => api<void>(`${P}/layout/${enc(machineKey)}`, { method: 'DELETE' }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: planningKeys.floor }),
+  })
+}
+
+export function useSetSetupTime() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ req, id }: { req: SetSetupTimeRequest | null; id?: string }): Promise<void> => {
+      if (req) await api<{ id: string }>(`${P}/setup/changeovers`, { method: 'PUT', body: req })
+      else await api<void>(`${P}/setup/changeovers/${enc(id!)}`, { method: 'DELETE' })
+    },
+    onSuccess: () => setupMoved(qc),
+  })
+}
+
+export function useSetMaintenance() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ req, id }: { req: SetMaintenanceRequest | null; id?: string }): Promise<void> => {
+      if (!req) await api<void>(`${P}/setup/maintenance/${enc(id!)}`, { method: 'DELETE' })
+      else if (id) await api<void>(`${P}/setup/maintenance/${enc(id)}`, { method: 'PUT', body: req })
+      else await api<{ id: string }>(`${P}/setup/maintenance`, { method: 'POST', body: req })
+    },
+    onSuccess: () => setupMoved(qc),
   })
 }
 

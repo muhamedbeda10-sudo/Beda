@@ -564,6 +564,8 @@ export type UserNotificationKind =
   | 'ai-answer'
   /** A saved report was shared with the person (directly, or with their role): it opens on the Reports page. */
   | 'report-shared'
+  /** §25 — planning: the automatic plan's late lines rose, or a machine is loaded past its hours (Planning → Settings says when). */
+  | 'planning-alert'
 
 export interface UserNotification {
   id: string

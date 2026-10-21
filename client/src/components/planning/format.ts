@@ -112,6 +112,7 @@ export const FLAG_NAME: Record<OperationFlag, string> = {
   rushed: 'Rushed',
   hypothetical: 'Added by the scenario',
   running: 'Running now (inspection open)',
+  changeover: 'Set-up time added: another family ran before it',
 }
 
 export const DURATION_NAME: Record<PlanOperation['durationSource'], string> = {

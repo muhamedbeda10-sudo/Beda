@@ -13,6 +13,7 @@ import {
   inferProcessOrder,
   inferRates,
   inferRoutes,
+  inferSpeed,
   isPlanningProcess,
   type DurationPair,
   type PlanningProcess,
@@ -89,7 +90,8 @@ async function learnLocked(db: PoolClient, timeZone: string, now: Date): Promise
   const routeLines = await db.query<RouteLine & { process: string | null }>(
     `WITH ${MACHINE_KEYS_CTE}
      SELECT btrim(o.order_number) AS "orderNumber", btrim(o.item_code) AS "itemCode", btrim(o.item) AS item,
-            ai.machine_key(o.work_center_code) AS "machineKey", m.process
+            ai.machine_key(o.work_center_code) AS "machineKey", m.process,
+            o.weight_kg::float8 AS "weightKg", o.required_qty::float8 AS "requiredQty"
        FROM production_orders o
        LEFT JOIN mk m ON m.key = ai.machine_key(o.work_center_code)
       WHERE o.deleted_at IS NULL AND btrim(o.item_code) <> '' AND btrim(o.work_center_code) <> '' AND upper(btrim(o.order_number)) <> 'STOCK'
@@ -108,6 +110,7 @@ async function learnLocked(db: PoolClient, timeZone: string, now: Date): Promise
 
   const asProcess = (p: string | null): PlanningProcess | null => (p && isPlanningProcess(p) ? p : null)
   const stats = inferMachineStats(records.rows, today, CAPACITY_DAYS)
+  const speeds = new Map(inferSpeed(records.rows, today).map((s) => [s.machineKey, s]))
   const rates = inferRates(records.rows)
   const processOrder = inferProcessOrder(firstDays.rows.flatMap((d) => (asProcess(d.process) ? [{ ...d, process: asProcess(d.process)! }] : [])))
   const routes = inferRoutes(
@@ -125,10 +128,10 @@ async function learnLocked(db: PoolClient, timeZone: string, now: Date): Promise
     await tx.query(`DELETE FROM planning_learnt_routes`)
     if (stats.length > 0) {
       await tx.query(
-        `INSERT INTO planning_learnt_machines (machine_key, hours_per_day, hours_from, days_observed, efficiency, efficiency_samples, works_fridays, fridays_worked, last_work_day, shifts, learnt_at)
-         SELECT k, h, f, d, e, es, wf, fw, lw::date, COALESCE(ARRAY(SELECT jsonb_array_elements_text(sh)), '{}'), $11
-           FROM unnest($1::text[], $2::numeric[], $3::text[], $4::int[], $5::numeric[], $6::int[], $7::bool[], $8::int[], $9::text[], $10::jsonb[])
-             AS t(k, h, f, d, e, es, wf, fw, lw, sh)`,
+        `INSERT INTO planning_learnt_machines (machine_key, hours_per_day, hours_from, days_observed, efficiency, efficiency_samples, works_fridays, fridays_worked, last_work_day, shifts, learnt_at, recent_pieces_per_hour, recent_days, speed_pct)
+         SELECT k, h, f, d, e, es, wf, fw, lw::date, COALESCE(ARRAY(SELECT jsonb_array_elements_text(sh)), '{}'), $11, rp, rd, sp
+           FROM unnest($1::text[], $2::numeric[], $3::text[], $4::int[], $5::numeric[], $6::int[], $7::bool[], $8::int[], $9::text[], $10::jsonb[], $12::numeric[], $13::int[], $14::int[])
+             AS t(k, h, f, d, e, es, wf, fw, lw, sh, rp, rd, sp)`,
         [
           stats.map((s) => s.machineKey),
           stats.map((s) => s.hoursPerDay),
@@ -141,6 +144,9 @@ async function learnLocked(db: PoolClient, timeZone: string, now: Date): Promise
           stats.map((s) => s.lastWorkDay),
           stats.map((s) => JSON.stringify(s.shifts)),
           at,
+          stats.map((s) => speeds.get(s.machineKey)?.recentPiecesPerHour ?? null),
+          stats.map((s) => speeds.get(s.machineKey)?.recentDays ?? 0),
+          stats.map((s) => speeds.get(s.machineKey)?.speedPct ?? null),
         ],
       )
     }
@@ -153,9 +159,9 @@ async function learnLocked(db: PoolClient, timeZone: string, now: Date): Promise
     }
     if (routes.length > 0) {
       await tx.query(
-        `INSERT INTO planning_learnt_routes (item_code, item, processes, steps, orders_seen, confidence_pct, learnt_at)
-         SELECT c, i, ARRAY(SELECT jsonb_array_elements_text(p)), s, o, cp, $7
-           FROM unnest($1::text[], $2::text[], $3::jsonb[], $4::jsonb[], $5::int[], $6::int[]) AS t(c, i, p, s, o, cp)`,
+        `INSERT INTO planning_learnt_routes (item_code, item, processes, steps, orders_seen, confidence_pct, kg_per_piece, learnt_at)
+         SELECT c, i, ARRAY(SELECT jsonb_array_elements_text(p)), s, o, cp, kg, $8
+           FROM unnest($1::text[], $2::text[], $3::jsonb[], $4::jsonb[], $5::int[], $6::int[], $7::numeric[]) AS t(c, i, p, s, o, cp, kg)`,
         [
           routes.map((r) => r.itemCode),
           routes.map((r) => r.item),
@@ -163,6 +169,7 @@ async function learnLocked(db: PoolClient, timeZone: string, now: Date): Promise
           routes.map((r) => JSON.stringify(r.steps)),
           routes.map((r) => r.orders),
           routes.map((r) => r.confidencePct),
+          routes.map((r) => r.kgPerPiece),
           at,
         ],
       )

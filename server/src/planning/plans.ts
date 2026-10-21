@@ -92,6 +92,9 @@ interface PlanRow {
   assumedHours: number | null
   excludedCount: number | null
   lastFinishAt: string | null
+  orders: number | null
+  lateOrders: number | null
+  setupHours: number | null
   excluded: PlanExclusion[]
   warnings: string[]
   publishedAt: string | null
@@ -103,7 +106,7 @@ const PLAN_COLUMNS = `p.id, p.kind, p.name, p.description, p.status, p.base_id A
   p.created_by_id AS "createdById", p.created_by_name AS "createdByName", p.created_via AS "createdVia", p.created_at AS "createdAt", p.updated_at AS "updatedAt",
   p.computed_at AS "computedAt", p.computed_from AS "computedFrom", p.lines, p.placed, p.late, p.on_time_pct::float8 AS "onTimePct",
   p.late_weight_kg::float8 AS "lateWeightKg", p.max_late_days AS "maxLateDays", p.hours::float8 AS hours, p.assumed_hours::float8 AS "assumedHours",
-  p.excluded_count AS "excludedCount", p.last_finish_at AS "lastFinishAt", p.excluded, p.warnings,
+  p.excluded_count AS "excludedCount", p.last_finish_at AS "lastFinishAt", p.orders, p.late_orders AS "lateOrders", p.setup_hours::float8 AS "setupHours", p.excluded, p.warnings,
   p.published_at AS "publishedAt", p.published_by_name AS "publishedByName", p.version`
 
 const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
@@ -123,6 +126,9 @@ function storedSummary(r: PlanRow, timeZone: string): PlanSummary | null {
     assumedHours: r.assumedHours ?? 0,
     lastFinish: r.lastFinishAt ? wallOfInstant(r.lastFinishAt, timeZone) : null,
     excluded: r.excludedCount ?? 0,
+    orders: r.orders ?? undefined,
+    lateOrders: r.lateOrders ?? undefined,
+    setupHours: r.setupHours ?? undefined,
   }
 }
 
@@ -146,6 +152,18 @@ function header(r: PlanRow, planner: Planner, timeZone: string, summary?: PlanSu
     summary: summary !== undefined ? summary : storedSummary(r, timeZone),
     editable: r.kind !== 'auto' && r.status === 'draft' && planner.canEdit,
   }
+}
+
+/** A plan's events, settings and name, to lay something on it: the automatic plan's (nothing), the published one's, or a kept plan's. */
+export async function planBasis(q: Queryable, which: 'auto' | 'published' | string): Promise<{ id: string; name: string; events: PlanEvent[]; settings: Partial<PlanSettings> }> {
+  if (which === AUTO_PLAN_ID) return { id: AUTO_PLAN_ID, name: AUTO_PLAN_NAME, events: [], settings: {} }
+  const id = which === 'published' ? (await publishedPlanId(q))?.id : which
+  const row = id ? await planRow(q, id) : null
+  if (!row) {
+    if (which === 'published') return { id: AUTO_PLAN_ID, name: AUTO_PLAN_NAME, events: [], settings: {} }
+    throw notFound('That plan')
+  }
+  return { id: row.id, name: row.name, events: row.events, settings: row.settings }
 }
 
 /** The machines a plan names, with the capacity it gave each. */
@@ -199,12 +217,12 @@ export async function keepResult(tx: Queryable, planId: string, result: PlanResu
   if (ops.length > 0) {
     await tx.query(
       `INSERT INTO planning_operations (plan_id, line_id, order_line_id, line_key, order_number, item_code, item, customer, machine_key, seq, qty, hours,
-                                        duration_source, start_at, end_at, due_date, late_days, depends_on, weight_kg, flags)
+                                        duration_source, start_at, end_at, due_date, late_days, depends_on, weight_kg, flags, setup_minutes)
        SELECT $1, li, CASE WHEN li ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN li::uuid END, lk, onum, ic, it, cu, mk, sq, q, h, ds, sa, ea, dd::date, ld,
-              ARRAY(SELECT jsonb_array_elements_text(dep)), w, ARRAY(SELECT jsonb_array_elements_text(fl))
+              ARRAY(SELECT jsonb_array_elements_text(dep)), w, ARRAY(SELECT jsonb_array_elements_text(fl)), su
          FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::int[], $10::numeric[], $11::numeric[],
-                     $12::text[], $13::timestamptz[], $14::timestamptz[], $15::text[], $16::int[], $17::jsonb[], $18::numeric[], $19::jsonb[])
-           AS t(li, lk, onum, ic, it, cu, mk, sq, q, h, ds, sa, ea, dd, ld, dep, w, fl)`,
+                     $12::text[], $13::timestamptz[], $14::timestamptz[], $15::text[], $16::int[], $17::jsonb[], $18::numeric[], $19::jsonb[], $20::int[])
+           AS t(li, lk, onum, ic, it, cu, mk, sq, q, h, ds, sa, ea, dd, ld, dep, w, fl, su)`,
       [
         planId,
         ops.map((o) => o.lineId),
@@ -225,15 +243,17 @@ export async function keepResult(tx: Queryable, planId: string, result: PlanResu
         ops.map((o) => JSON.stringify(o.dependsOn)),
         ops.map((o) => o.weightKg),
         ops.map((o) => JSON.stringify(o.flags)),
+        ops.map((o) => o.setupMinutes ?? null),
       ],
     )
   }
   const s = result.summary
   await tx.query(
     `UPDATE planning_plans SET computed_at = now(), computed_from = $2, lines = $3, placed = $4, late = $5, on_time_pct = $6, late_weight_kg = $7,
-            max_late_days = $8, hours = $9, assumed_hours = $10, excluded_count = $11, last_finish_at = $12, excluded = $13, warnings = $14
+            max_late_days = $8, hours = $9, assumed_hours = $10, excluded_count = $11, last_finish_at = $12, excluded = $13, warnings = $14,
+            orders = $15, late_orders = $16, setup_hours = $17
       WHERE id = $1`,
-    [planId, from, s.lines, s.placed, s.late, s.onTimePct, s.lateWeightKg, s.maxLateDays, s.hours, s.assumedHours, s.excluded, at(s.lastFinish), JSON.stringify(result.excluded), JSON.stringify(result.warnings)],
+    [planId, from, s.lines, s.placed, s.late, s.onTimePct, s.lateWeightKg, s.maxLateDays, s.hours, s.assumedHours, s.excluded, at(s.lastFinish), JSON.stringify(result.excluded), JSON.stringify(result.warnings), s.orders ?? null, s.lateOrders ?? null, s.setupHours ?? null],
   )
 }
 
@@ -258,10 +278,11 @@ export async function keptOperations(q: Queryable, planId: string, timeZone: str
     dependsOn: string[]
     weightKg: number | null
     flags: OperationFlag[]
+    setupMinutes: number | null
   }>(
     `SELECT line_id AS "lineId", line_key AS "lineKey", order_number AS "orderNumber", item_code AS "itemCode", item, customer, machine_key AS "machineKey",
             seq, qty::float8 AS qty, hours::float8 AS hours, duration_source AS "durationSource", start_at AS "startAt", end_at AS "endAt",
-            due_date::text AS "dueDate", late_days AS "lateDays", depends_on AS "dependsOn", weight_kg::float8 AS "weightKg", flags
+            due_date::text AS "dueDate", late_days AS "lateDays", depends_on AS "dependsOn", weight_kg::float8 AS "weightKg", flags, setup_minutes AS "setupMinutes"
        FROM planning_operations WHERE plan_id = $1 ORDER BY machine_key, seq`,
     [planId],
   )
@@ -284,6 +305,7 @@ export async function keptOperations(q: Queryable, planId: string, timeZone: str
     dependsOn: r.dependsOn,
     weightKg: r.weightKg,
     flags: r.flags,
+    ...(r.setupMinutes !== null ? { setupMinutes: r.setupMinutes } : {}),
   }))
 }
 
@@ -310,7 +332,7 @@ async function autoRow(db: Db): Promise<PlanRow> {
 }
 
 /** Keep the automatic plan as it works out now (the assistant reads it). */
-export async function keepAutoPlan(db: Db, config: Config, now = new Date()): Promise<void> {
+export async function keepAutoPlan(db: Db, config: Config, now = new Date()): Promise<PlanResult> {
   const row = await autoRow(db)
   const { result } = await workOut(db, config, [], {}, now)
   await withTransaction(db, async (tx) => {
@@ -318,6 +340,7 @@ export async function keepAutoPlan(db: Db, config: Config, now = new Date()): Pr
     if (!rows[0]) return // another request is keeping it now
     await keepResult(tx, row.id, result, now, config.FACTORY_TIMEZONE)
   })
+  return result
 }
 
 const audit = (planner: { id: string; name: string }, id: string) => ({ userId: planner.id, userName: planner.name, entity: 'planning-plan', entityId: id })

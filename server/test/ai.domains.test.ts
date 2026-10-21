@@ -51,6 +51,8 @@ const VIEWS: Record<string, 'base' | AiDomain> = {
   planning_machines: 'planning',
   planning_rates: 'planning',
   planning_item_routes: 'planning',
+  planning_setup_times: 'planning',
+  planning_maintenance: 'planning',
 }
 
 const readable = (view: string, domains: AiDomain[]) => VIEWS[view] === 'base' || domains.includes(VIEWS[view] as AiDomain)

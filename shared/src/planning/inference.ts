@@ -76,6 +76,62 @@ export function inferRates(rows: readonly RecordRow[]): MachineRate[] {
   return out.sort((a, b) => a.machineKey.localeCompare(b.machineKey) || a.itemFamily.localeCompare(b.itemFamily) || a.itemCode.localeCompare(b.itemCode))
 }
 
+/** A machine's pace of late against its usual one. */
+export interface MachineSpeed {
+  machineKey: string
+  /** Median pieces an hour over its rows of the last `recentDays` days (any item); null with too few. */
+  recentPiecesPerHour: number | null
+  /** Days of those it worked. */
+  recentDays: number
+  /** Recent ÷ usual × 100; null without both, or with fewer than 3 recent days. */
+  speedPct: number | null
+}
+
+/** Days a machine's recent pace is read over, and the days it needs to say anything. */
+export const SPEED_RECENT_DAYS = 14
+const SPEED_MIN_DAYS = 3
+
+/**
+ * Each machine's pace over the last two weeks against its pace over the
+ * whole record given, any item: a machine running a fifth slower than usual
+ * says 80. The pace of a day is its rows' pieces an hour, median over days.
+ */
+export function inferSpeed(rows: readonly RecordRow[], today: string, recentDays = SPEED_RECENT_DAYS): MachineSpeed[] {
+  const since = addDays(today, -recentDays)
+  const all = new Map<string, number[]>()
+  const recent = new Map<string, Map<string, number[]>>()
+  for (const r of rows) {
+    if (!r.machineKey || r.stageNo !== null) continue
+    if (!(r.producedQty !== null && r.producedQty > 0 && r.actualHours !== null && r.actualHours >= MIN_ROW_HOURS)) continue
+    const pace = r.producedQty / r.actualHours
+    if (!Number.isFinite(pace)) continue
+    const a = all.get(r.machineKey)
+    if (a) a.push(pace)
+    else all.set(r.machineKey, [pace])
+    if (r.workDay && r.workDay >= since && r.workDay <= today) {
+      let byDay = recent.get(r.machineKey)
+      if (!byDay) recent.set(r.machineKey, (byDay = new Map()))
+      const d = byDay.get(r.workDay)
+      if (d) d.push(pace)
+      else byDay.set(r.workDay, [pace])
+    }
+  }
+  const out: MachineSpeed[] = []
+  for (const [machineKey, paces] of all) {
+    const byDay = recent.get(machineKey)
+    const days = byDay ? [...byDay.values()].map((p) => median(p)) : []
+    const recentPace = days.length >= SPEED_MIN_DAYS ? round(median(days), 3) : null
+    const usual = paces.length >= RATE_MIN_SAMPLES.machine ? median(paces) : null
+    out.push({
+      machineKey,
+      recentPiecesPerHour: recentPace,
+      recentDays: days.length,
+      speedPct: recentPace !== null && usual !== null && usual > 0 ? Math.round((recentPace / usual) * 100) : null,
+    })
+  }
+  return out.sort((a, b) => a.machineKey.localeCompare(b.machineKey))
+}
+
 /** What a machine's record says about its working days. */
 export interface MachineStats {
   machineKey: string
@@ -243,6 +299,9 @@ export interface RouteLine {
   item: string
   machineKey: string
   process: PlanningProcess | null
+  /** The line's weight and quantity, when the sheet has them: the item's weight a piece is learnt from them. */
+  weightKg?: number | null
+  requiredQty?: number | null
 }
 
 export interface ItemRoute {
@@ -254,6 +313,8 @@ export interface ItemRoute {
   orders: number
   /** Share of those orders on which it took its usual processes (0–100). */
   confidencePct: number
+  /** The median kg a piece over its lines that carry a weight; null when none does. */
+  kgPerPiece: number | null
 }
 
 /**
@@ -262,13 +323,14 @@ export interface ItemRoute {
  * through them), in the processes' order, the machines seen at each.
  */
 export function inferRoutes(lines: readonly RouteLine[], rank: Record<PlanningProcess, number>): ItemRoute[] {
-  const items = new Map<string, { item: string; orders: Map<string, Set<PlanningProcess>>; machines: Map<PlanningProcess, Map<string, number>> }>()
+  const items = new Map<string, { item: string; orders: Map<string, Set<PlanningProcess>>; machines: Map<PlanningProcess, Map<string, number>>; kgPerPiece: number[] }>()
   for (const l of lines) {
     const code = l.itemCode.trim()
     if (!code || !l.machineKey) continue
     const key = norm(code)
     let it = items.get(key)
-    if (!it) items.set(key, (it = { item: l.item, orders: new Map(), machines: new Map() }))
+    if (!it) items.set(key, (it = { item: l.item, orders: new Map(), machines: new Map(), kgPerPiece: [] }))
+    if (l.weightKg !== null && l.weightKg !== undefined && l.weightKg > 0 && l.requiredQty !== null && l.requiredQty !== undefined && l.requiredQty > 0) it.kgPerPiece.push(l.weightKg / l.requiredQty)
     const process = l.process ?? 'other'
     const order = norm(l.orderNumber)
     let set = it.orders.get(order)
@@ -289,7 +351,7 @@ export function inferRoutes(lines: readonly RouteLine[], rank: Record<PlanningPr
     const steps = [...it.machines.entries()]
       .sort((a, b) => (rank[a[0]] ?? 2) - (rank[b[0]] ?? 2) || a[0].localeCompare(b[0]))
       .map(([process, ms]) => ({ process, machines: [...ms.entries()].sort((a, b) => b[1] - a[1]).map(([machineKey, n]) => ({ machineKey, lines: n })) }))
-    out.push({ itemCode: key, item: it.item, steps, orders: it.orders.size, confidencePct: Math.round((usual[1] / it.orders.size) * 100) })
+    out.push({ itemCode: key, item: it.item, steps, orders: it.orders.size, confidencePct: Math.round((usual[1] / it.orders.size) * 100), kgPerPiece: it.kgPerPiece.length > 0 ? Math.round(median(it.kgPerPiece) * 1000) / 1000 : null })
   }
   return out.sort((a, b) => a.itemCode.localeCompare(b.itemCode))
 }
