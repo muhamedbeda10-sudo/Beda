@@ -26,7 +26,7 @@ import type {
   SharedReportsStatus,
 } from '@qc/shared/reportShares'
 import { changeReport, deleteReport, findReport, insertReport } from '../src/ai/reports'
-import { SHARED_NO_ACCESS, anySharedReports, purgeSharePhotos, runPhotoIds } from '../src/ai/reportShares'
+import { SHARED_NO_ACCESS, anySharedReports, purgeSharePhotos, runPhotoIds, sharedNoAccessTo } from '../src/ai/reportShares'
 import { reportWorkbookDoc } from '../src/reportStyles/documents'
 import { BUILTIN_RESOLVED_STYLE } from '@qc/shared/reportStyles'
 import { TestApp, factoryDay, tinyJpeg, type Session } from './harness'
@@ -280,15 +280,16 @@ describe('the Reports page of someone it is shared with', () => {
     await share(id, p.creator, { add: [user(p.owner), user(viewer)] })
     for (const s of [p.owner, viewer]) {
       const res = await run(id, s)
+      // The order sheet, refused by the database: named, so the recipient knows what the owner lacks.
       expect(res.body.sections.map((x) => [x.ok, x.error ?? null])).toEqual([
         [true, null],
-        [false, SHARED_NO_ACCESS],
+        [false, sharedNoAccessTo('Orders and PDI')],
       ])
     }
     // Given the orders since, Cara's report reads them for everyone — within what its queries were written under.
     await grant(app, p.owner, p.creator, { domains: ['inspection', 'orders'] })
     const bounded = await run(id, viewer)
-    expect(bounded.body.sections[1]).toMatchObject({ ok: false, error: SHARED_NO_ACCESS })
+    expect(bounded.body.sections[1]).toMatchObject({ ok: false, error: sharedNoAccessTo('Orders and PDI') })
     const written = await newReport({ title: 'Orders, written with them', inputs: [], sections: [ORDER_LINES] }, p.creator, ['inspection', 'orders'])
     await share(written, p.creator, { add: [user(viewer)] })
     expect((await run(written, viewer)).body.sections[0]).toMatchObject({ ok: true, rows: [[0]] })
@@ -305,7 +306,7 @@ describe('the Reports page of someone it is shared with', () => {
     expect(res.body.sections.map((x) => [x.ok, x.error ?? null])).toEqual([
       [true, null],
       [true, null],
-      [false, SHARED_NO_ACCESS],
+      [false, sharedNoAccessTo('Orders and PDI')],
     ])
     // A save never writes an empty set either: given none, the maker's domains as they are now are kept instead.
     const written = await newReport({ title: 'Given no domains', inputs: [], sections: [{ title: 'One', sql: 'SELECT 1 AS one' }] }, p.creator, [])

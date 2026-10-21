@@ -63,6 +63,7 @@ import { CHAT_QUERY_TIMEOUT_MS, recordCutOffUsage, usageOf, watchStream } from '
 import { releaseHold } from './access'
 import { checkChart } from './charts'
 import { authorDomainsOf } from './domains'
+import { domainNames, domainsRefused, objectDomains } from './objectDomains'
 import type { AiModelClient, ModelMessage, ModelParams } from './model'
 import { contextDay, conversationTitle, factoryDay } from './prompt'
 import { fillInputs } from './reportInputs'
@@ -717,6 +718,8 @@ export function runPeriod(report: Pick<AiReport, 'adjustable' | 'period'>, overr
 
 /** What a section over data the person can no longer read shows instead of its rows. */
 export const NO_ACCESS = 'You no longer have access to this data.'
+/** The same, when the refusal says what the section reads: the domain's name, for the person to ask for. */
+export const noAccessTo = (what: string): string => `This section reads ${what}, which your assistant access does not include now. Ask the assistant's owner for it.`
 
 /**
  * Where a report's next section runs: the pool of the person's domains as
@@ -733,18 +736,34 @@ async function runSection(reader: SectionReader, sql: string, opts: RunOptions, 
   return runReadOnlyQuery(pool, sql, opts)
 }
 
-/** A run's error as the report shows it: refused for want of a grant, it is the access it runs as that changed. */
-const sectionError = (run: { error?: string; code?: string }, noAccess: string): string | undefined => (run.code === '42501' ? noAccess : run.error)
+/**
+ * A run's error as the report shows it: refused for want of a grant (42501), it is the access it runs as that lacks
+ * what the section reads — named by its domain when the refusal says which view or function it was after, else in
+ * the plain words. The objects' domains are read once per run, and only once a section is refused.
+ */
+async function sectionError(run: { error?: string; code?: string; dbMessage?: string }, opts: ReportRunOptions, owned: { map?: Map<string, AiDomain[]> }): Promise<string | undefined> {
+  if (run.code !== '42501') return run.error
+  if (opts.db) {
+    owned.map ??= await objectDomains(opts.db).catch(() => new Map<string, AiDomain[]>())
+    const domains = domainsRefused(owned.map, run.dbMessage)
+    if (domains.length > 0) return (opts.noAccessTo ?? noAccessTo)(domainNames(domains))
+  }
+  return opts.noAccess ?? NO_ACCESS
+}
 
 /**
  * How a run is told: the factory's time zone, its abort, the inputs' values, and what a section over data the
- * reader may no longer read says (NO_ACCESS for one's own run; a shared report's recipient is told it is its owner's).
+ * reader may no longer read says (NO_ACCESS for one's own run; a shared report's recipient is told it is its owner's)
+ * — in the data's own name, where the refusal says what it was (noAccessTo, with `db` to read the domains from).
  */
 export interface ReportRunOptions {
   timeZone: string
   signal?: AbortSignal
   values?: AiReportInputValues
   noAccess?: string
+  noAccessTo?: (what: string) => string
+  /** The app's own connection, to name the domain a refused section reads; left out, the refusal is told in plain words. */
+  db?: Queryable
 }
 
 /**
@@ -764,6 +783,7 @@ export async function runReportSections(
   opts: ReportRunOptions,
 ): Promise<AiReportSectionRun[]> {
   const out: AiReportSectionRun[] = []
+  const owned: { map?: Map<string, AiDomain[]> } = {}
   // One after another: the reader's few connections are shared with every answer being written.
   for (const section of report.sections) {
     const run = await withQueryPurpose(section.title, () =>
@@ -794,7 +814,7 @@ export async function runReportSections(
     if (section.display && section.display !== 'table') result.display = section.display
     if (section.tree) result.tree = section.tree
     if (section.note) result.note = section.note
-    const error = sectionError(run, opts.noAccess ?? NO_ACCESS)
+    const error = await sectionError(run, opts, owned)
     if (error) result.error = error
     // Drawn again from this run's rows, when they still fit the chart (another period may hold one row, or none).
     const chart = run.ok ? checkChart(section.chart, preview).chart : undefined
@@ -816,6 +836,7 @@ export async function exportReportSections(
 ): Promise<AiReportExportResponse['sections']> {
   const out: AiReportExportResponse['sections'] = []
   let room = AI_EXPORT_LIMITS.maxChars
+  const owned: { map?: Map<string, AiDomain[]> } = {}
   for (const section of report.sections) {
     const run = await withQueryPurpose(section.title, () =>
       runSection(
@@ -835,7 +856,7 @@ export async function exportReportSections(
     const rows = exportRows(run)
     for (const row of rows) for (const c of row) room -= typeof c === 'string' ? c.length : 8
     const result: AiReportExportResponse['sections'][number] = { title: readableModelText(section.title), ok: run.ok, columns: run.columns, rows, truncated: run.truncated }
-    const error = sectionError(run, opts.noAccess ?? NO_ACCESS)
+    const error = await sectionError(run, opts, owned)
     if (error) result.error = error
     out.push(result)
   }
