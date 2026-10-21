@@ -1,10 +1,11 @@
 // ============================================================================
 // §17 — Chat. Two panes from a portrait tablet (md) up; on a phone the list
 // and then the conversation, each full screen. The route carries the open
-// conversation. The page fills the window under the header — its 1px rule
-// and the safe area above it too, as the assistant's page does — and its foot
-// runs to the screen's bottom edge, where the composer keeps clear of the
-// home indicator itself.
+// conversation. The page fills the room the shell gives it under the header
+// (AppShell's main, with its padding undone here; contain: size, so a long
+// thread never grows it past that room) and its foot runs to the
+// screen's bottom edge — the shell keeps no safe area under the chat — where
+// the composer keeps clear of the home indicator itself.
 // ============================================================================
 
 import { useEffect, useState } from 'react'
@@ -50,7 +51,7 @@ export function ChatPage() {
   }
 
   return (
-    <div className="-mx-4 -mt-5 mb-[calc(-1.25rem-env(safe-area-inset-bottom))] h-[calc(100dvh-4rem-1px-env(safe-area-inset-top))] sm:-mx-6 md:p-4 lg:-mx-8 lg:px-8">
+    <div className="-mx-3 -mb-3 -mt-3 h-[calc(100%+1.5rem)] [contain:size] sm:-mx-4 md:p-3">
       <Card className="grid h-full min-h-0 grid-cols-1 overflow-hidden rounded-none md:grid-cols-[18rem_1fr] md:rounded-2xl lg:grid-cols-[22rem_1fr]">
         <aside className={cn('min-h-0 border-r border-slate-200 dark:border-slate-800', conversationId ? 'hidden md:block' : 'block')}>
           {isLoading ? (

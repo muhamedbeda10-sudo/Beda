@@ -1,11 +1,13 @@
 // ============================================================================
 // §25 — Planning (a trial): one tab, its parts as icons across the top,
 // grouped by what a planner does — see the floor now, plan, set up — and the
-// part itself filling the rest of the window. The page never scrolls: each
-// part's toolbar stays put and what is long (a table, a timeline, a map's
-// tray) scrolls inside its card. Opened bare, it shows the overview. The
-// module reads the order sheet, the production record and the inspections,
-// and changes none of them.
+// part itself filling the rest of the window, to its bottom edge and its full
+// width. The page never scrolls: the shell gives it the whole room under the
+// header (AppShell's main: h-full here, and contain: size so that nothing in
+// it asks for more), each part's toolbar stays put and what is long (a table,
+// a timeline, a map's tray) scrolls inside its card.
+// Opened bare, it shows the overview. The module reads the order sheet, the
+// production record and the inspections, and changes none of them.
 // ============================================================================
 
 import { useEffect, useRef } from 'react'
@@ -15,7 +17,6 @@ import { Badge, Select } from '@/components/ui'
 import { EdgeShadows, useScrollEdges } from '@/components/ui/ScrollX'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/store/AuthContext'
-import { useFillHeight } from '@/components/planning/common'
 import { OverviewSection } from '@/components/planning/OverviewSection'
 import { FloorSection } from '@/components/planning/FloorSection'
 import { ScheduleSection } from '@/components/planning/ScheduleSection'
@@ -163,6 +164,12 @@ const GROUPS: { id: Group; name: string }[] = [
 /** The overview is the tab opened bare; every other part has its own address. */
 const pathOf = (key: string) => (key === 'overview' ? '/planning' : `/planning/${key}`)
 
+/**
+ * The parts: a select on a phone; from a tablet up the strip of icons and names. Under a mouse the strip stays on
+ * one row and scrolls sideways when the window is narrower than it (the open part brought into view, the ends
+ * shaded); on a touch screen, where there is no wheel to scroll it with and a cut-off name reads as broken, it
+ * wraps onto a second row instead, every part in sight.
+ */
 function PartSwitch({ current, trailing }: { current: Part; trailing?: JSX.Element | false }) {
   const navigate = useNavigate()
   const strip = useRef<HTMLDivElement>(null)
@@ -184,7 +191,7 @@ function PartSwitch({ current, trailing }: { current: Part; trailing?: JSX.Eleme
         ))}
       </Select>
       <nav aria-label="Planning parts" className="relative hidden min-w-0 flex-1 sm:block">
-        <div ref={strip} className="scrollbar-none flex gap-0.5 overflow-x-auto rounded-xl bg-slate-200/70 p-0.5 dark:bg-slate-800">
+        <div ref={strip} className="scrollbar-none flex gap-0.5 overflow-x-auto rounded-xl bg-slate-200/70 p-0.5 dark:bg-slate-800 touch:flex-wrap">
           {PLANNING_PARTS.map((p, i) => (
             <span key={p.key} className="flex shrink-0 items-center">
               {i > 0 && PLANNING_PARTS[i - 1].group !== p.group && <span aria-hidden className="mx-1 h-6 w-px bg-slate-300 dark:bg-slate-700" />}
@@ -215,13 +222,12 @@ function PartSwitch({ current, trailing }: { current: Part; trailing?: JSX.Eleme
 export function PlanningPage() {
   const { section } = useParams()
   const { can } = useAuth()
-  const frame = useFillHeight()
   const current = PLANNING_PARTS.find((p) => p.key === (section ?? 'overview'))
   // The overview lives at the bare address; an unknown part goes there too.
   if (!current || section === 'overview') return <Navigate to="/planning" replace />
   const readOnly = !can('edit-planning') && ['simulator', 'plans'].includes(current.key)
   return (
-    <div ref={frame.ref} className="mx-auto flex w-full max-w-[1600px] flex-col gap-3" style={{ height: frame.height }}>
+    <div className="flex h-full min-h-0 w-full flex-col gap-3 [contain:size]">
       <PartSwitch current={current} trailing={readOnly && <Badge tone="neutral">Read only</Badge>} />
       <div key={current.key} className="flex min-h-0 flex-1 flex-col animate-page-in">
         {current.render()}

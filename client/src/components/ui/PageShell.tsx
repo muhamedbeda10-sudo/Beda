@@ -4,8 +4,9 @@
 // search, the two or three filters used most, "More filters" holding the
 // rest, Reset, and the page's actions at the right end, the exports gathered
 // in one Export control. A row of removable chips names the filters in
-// force, and only while any is. The row stays in view as the page scrolls;
-// the page's figures sit under its list, beside the count.
+// force, and only while any is. The row stays in view (at the top of the box
+// the page scrolls in — the shell's main, or the assistant's popup) should the
+// page scroll; the page's figures sit under its list, beside the count.
 // ============================================================================
 
 import { useRef, useState, type ReactNode } from 'react'
@@ -238,7 +239,7 @@ export function FilterBar({
   const anchor = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   return (
-    <div className="z-30 -mx-4 space-y-1.5 bg-slate-100/90 px-4 py-1 backdrop-blur sm:-mx-6 sm:px-6 md:sticky md:top-[var(--page-sticky-top,4rem)] lg:-mx-8 lg:px-8 dark:bg-slate-950/90">
+    <div className="z-30 -mx-3 space-y-1.5 bg-slate-100/90 px-3 py-1 backdrop-blur sm:-mx-4 sm:px-4 md:sticky md:top-0 dark:bg-slate-950/90">
       <div className={cn('flex flex-wrap items-center gap-2', singleRow && 'xl:flex-nowrap')}>
         {leading && actionsInline ? <div className="flex min-w-0 items-center gap-2 max-md:order-first">{leading}</div> : leading}
         {search && (

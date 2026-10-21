@@ -442,7 +442,7 @@ function StyleEditor({ initial, startWithSample, onClose }: { initial: Draft; st
   }
 
   return (
-    <div ref={top} className="mx-auto w-full max-w-6xl scroll-mt-20 space-y-4">
+    <div ref={top} className="mx-auto w-full max-w-6xl scroll-mt-4 space-y-4">
       <header className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={onClose} className="icon-btn h-10 w-10 touch:h-11 touch:w-11" aria-label="Back to the styles">
           <ArrowLeft className="h-5 w-5 rtl:rotate-180" />
