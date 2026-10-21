@@ -44,7 +44,7 @@ export function AiSettings() {
 
   if (!owner) return null
   return (
-    <div className="mx-auto max-w-[88rem] space-y-4">
+    <div className="space-y-4">
       <SettingsHeading data={data} />
 
       {isLoading && (

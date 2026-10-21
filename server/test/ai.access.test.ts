@@ -22,7 +22,7 @@ import { runSql, text, type FakeReply } from './aiFake'
 import { ACCESS_NOTICE } from '../src/ai/access'
 import { ROUTER_SYSTEM } from '../src/ai/router'
 import { WITHDRAWN_NOT_RUN } from '../src/ai/assistant'
-import { NO_ACCESS, findReport, runReportSections, type SectionReader } from '../src/ai/reports'
+import { NO_ACCESS, findReport, runReportSections, type SectionReader, noAccessTo } from '../src/ai/reports'
 import { runReadOnlyQuery } from '../src/ai/runQuery'
 
 // §20 — who may use the assistant, as its owner sets it, person by person:
@@ -425,13 +425,14 @@ describe('§20 when the owner changes a person’s data', () => {
   it('runs a saved report as the person’s current domains: a section on revoked data says so, the rest runs', async () => {
     const run = await app.api<AiReportRunResponse>('GET', `/api/ai/reports/${reportId}/run`, { token: insp.token })
     expect(run.status).toBe(200)
+    // Refused by the database for want of the inspections: said in the domain's name, for the person to ask for it.
     expect(run.body.sections.map((s) => [s.title, s.ok, s.error ?? null])).toEqual([
-      ['Sessions', false, NO_ACCESS],
+      ['Sessions', false, noAccessTo('Inspections')],
       ['Order lines', true, null],
     ])
     const exported = await app.api<AiReportExportResponse>('GET', `/api/ai/reports/${reportId}/export`, { token: insp.token })
     expect(exported.body.sections.map((s) => [s.ok, s.error ?? null])).toEqual([
-      [false, NO_ACCESS],
+      [false, noAccessTo('Inspections')],
       [true, null],
     ])
     const query = await app.api<ApiErrorBody>('GET', `/api/ai/queries/${inspectionQueryId}/export`, { token: insp.token })

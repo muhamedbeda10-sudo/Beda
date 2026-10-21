@@ -28,7 +28,7 @@ import { describeAiPeriod, resolveAiPeriod, type AiChartSpec, type AiDomain, typ
 import { inputValueText, readInputValue, readInputValues, type AiReportInputValues } from '@qc/shared/aiReportInputs'
 import type { AutomationLinkedReport, AutomationScheduleSpec } from '@qc/shared/automation'
 import type { Queryable } from '../db/pool'
-import { storedDomains } from '../ai/domains'
+import { authorDomainsOf } from '../ai/domains'
 import { factoryDay } from '../ai/prompt'
 import { findReport, runPeriod, sectionSql as savedSectionSql } from '../ai/reports'
 import { reportPeriodAt, sectionSql } from './validate'
@@ -71,8 +71,8 @@ export const MISSING_REPORT = 'The saved report it sends was deleted, or is no l
 export async function authorDomains(db: Queryable, report: Pick<AiReport, 'id' | 'mine'>): Promise<AiDomain[] | null> {
   if (report.mine) return null
   const { rows } = await db.query<{ domains: string[] | null }>(`SELECT author_domains AS domains FROM ai_reports WHERE id = $1`, [report.id])
-  const domains = rows[0]?.domains
-  return domains === null || domains === undefined ? null : storedDomains(domains)
+  // Not known (null, or an empty set left by an older save): the creator's own domains alone bound it.
+  return authorDomainsOf(rows[0]?.domains)
 }
 
 /** The saved report a schedule names, as its creator may open it now; null when they may not (or it is gone). */

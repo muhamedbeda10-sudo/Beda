@@ -256,8 +256,11 @@ describe('§21 a schedule that sends a saved report', () => {
       const none = (await deliver(linkedSchedule(reportId))).run
       expect(none).toMatchObject({ ok: false, error: `No section ran. “Machines”: ${NOTHING_IN_COMMON}` })
 
-      // The app's own report, and the creator's own, run as the creator's domains.
+      // The app's own report, and the creator's own, run as the creator's domains; so does one whose author's
+      // domains are not known (an empty set, left by a save before they were kept) — never "under no domain".
       await app.db.query(`UPDATE ai_reports SET author_domains = NULL WHERE id = $1`, [reportId])
+      expect((await deliver(linkedSchedule(reportId))).run).toMatchObject({ ok: true })
+      await app.db.query(`UPDATE ai_reports SET author_domains = '{}' WHERE id = $1`, [reportId])
       expect((await deliver(linkedSchedule(reportId))).run).toMatchObject({ ok: true })
       await app.db.query(`UPDATE ai_reports SET author_domains = '{inspection}', user_id = $2 WHERE id = $1`, [reportId, p.creator.user.id])
       expect((await deliver(linkedSchedule(reportId))).run).toMatchObject({ ok: true })

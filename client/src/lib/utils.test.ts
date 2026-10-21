@@ -64,6 +64,17 @@ describe('the page under an overlay', () => {
     expect(body.style.overflow).toBe('')
   })
 
+  it('locks the boxes the pages scroll in — the shell’s main, the assistant’s popup — along with the body', () => {
+    const body = { style: { overflow: '' } }
+    const main = { style: { overflow: 'auto' } }
+    const popup = { style: { overflow: '' } }
+    vi.stubGlobal('document', { body, querySelectorAll: (q: string) => (q === '[data-app-scroll]' ? [main, popup] : []) })
+    const release = lockBodyScroll()
+    expect([body.style.overflow, main.style.overflow, popup.style.overflow]).toEqual(['hidden', 'hidden', 'hidden'])
+    release()
+    expect([body.style.overflow, main.style.overflow, popup.style.overflow]).toEqual(['', 'auto', ''])
+  })
+
   it('gives back what the page had before the first lock, not what the second one saw', () => {
     const body = stubBody('auto')
     // A modal open while the panel turns from docked to a sheet (a rotation), then both close.

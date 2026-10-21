@@ -2618,7 +2618,7 @@ export function DashboardPage() {
     <PeriodBadgeContext.Provider value={shortRange(range)}>
       {canArrange && editingLayout && <ChartGallery open={galleryOpen} onClose={() => setGalleryOpen(false)} />}
       <DrillModal spec={detailDrill} onClose={() => setDetailDrill(null)} />
-    <div ref={pageRef} className="mx-auto max-w-[110rem] space-y-5">
+    <div ref={pageRef} className="space-y-5">
       {editingLayout && (
         <div className="print-hidden rounded-xl border border-brand-300 bg-brand-50 px-4 py-2 text-sm text-brand-800 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-100">
           {stacked

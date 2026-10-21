@@ -26,7 +26,7 @@ import type {
   SharedReportsStatus,
 } from '@qc/shared/reportShares'
 import { changeReport, deleteReport, findReport, insertReport } from '../src/ai/reports'
-import { SHARED_NO_ACCESS, anySharedReports, purgeSharePhotos, runPhotoIds } from '../src/ai/reportShares'
+import { SHARED_NO_ACCESS, anySharedReports, purgeSharePhotos, runPhotoIds, sharedNoAccessTo } from '../src/ai/reportShares'
 import { reportWorkbookDoc } from '../src/reportStyles/documents'
 import { BUILTIN_RESOLVED_STYLE } from '@qc/shared/reportStyles'
 import { TestApp, factoryDay, tinyJpeg, type Session } from './harness'
@@ -280,18 +280,38 @@ describe('the Reports page of someone it is shared with', () => {
     await share(id, p.creator, { add: [user(p.owner), user(viewer)] })
     for (const s of [p.owner, viewer]) {
       const res = await run(id, s)
+      // The order sheet, refused by the database: named, so the recipient knows what the owner lacks.
       expect(res.body.sections.map((x) => [x.ok, x.error ?? null])).toEqual([
         [true, null],
-        [false, SHARED_NO_ACCESS],
+        [false, sharedNoAccessTo('Orders and PDI')],
       ])
     }
     // Given the orders since, Cara's report reads them for everyone — within what its queries were written under.
     await grant(app, p.owner, p.creator, { domains: ['inspection', 'orders'] })
     const bounded = await run(id, viewer)
-    expect(bounded.body.sections[1]).toMatchObject({ ok: false, error: SHARED_NO_ACCESS })
+    expect(bounded.body.sections[1]).toMatchObject({ ok: false, error: sharedNoAccessTo('Orders and PDI') })
     const written = await newReport({ title: 'Orders, written with them', inputs: [], sections: [ORDER_LINES] }, p.creator, ['inspection', 'orders'])
     await share(written, p.creator, { add: [user(viewer)] })
     expect((await run(written, viewer)).body.sections[0]).toMatchObject({ ok: true, rows: [[0]] })
+  })
+
+  it('reads as its owner may read now when the domains its queries were written under are not known', async () => {
+    // A report kept before author_domains existed, by a maker who had no access row then: the column was filled
+    // with an empty set, which read as a bound stopped every section — even one over nothing — for every recipient.
+    const id = await newReport({ title: 'Kept before', inputs: [], sections: [{ title: 'Machines', sql: 'SELECT count(*)::int AS n FROM ai.machines' }, { title: 'One', sql: 'SELECT 1 AS one' }, ORDER_LINES] })
+    await app.db.query(`UPDATE ai_reports SET author_domains = '{}' WHERE id = $1`, [id])
+    await share(id, p.creator, { add: [user(viewer)] })
+    const res = await run(id, viewer)
+    // Cara's own domains (the inspections) still bound it: the order sheet stays out.
+    expect(res.body.sections.map((x) => [x.ok, x.error ?? null])).toEqual([
+      [true, null],
+      [true, null],
+      [false, sharedNoAccessTo('Orders and PDI')],
+    ])
+    // A save never writes an empty set either: given none, the maker's domains as they are now are kept instead.
+    const written = await newReport({ title: 'Given no domains', inputs: [], sections: [{ title: 'One', sql: 'SELECT 1 AS one' }] }, p.creator, [])
+    const kept = await app.db.query<{ domains: string[] | null }>(`SELECT author_domains AS domains FROM ai_reports WHERE id = $1`, [written])
+    expect(kept.rows[0].domains).toEqual(['inspection'])
   })
 
   it('runs for no one once its owner no longer has the assistant, and says so plainly', async () => {

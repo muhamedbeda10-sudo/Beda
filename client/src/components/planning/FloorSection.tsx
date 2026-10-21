@@ -6,13 +6,15 @@
 // last day on the production record and what the plan has it make next.
 // The map is drawn to fit the window; the machines not yet placed wait in a
 // tray under it. Planners with Planning setup place the machines (Edit the
-// map). The list view is a table with Excel's filters: the default on a
-// phone, where the map is too small to read.
+// map): a machine is dragged where it stands and its corner dragged to size
+// it, snapping to the grid; the arrow keys do the same for a keyboard. The
+// list view is a table with Excel's filters: the default on a phone, where
+// the map is too small to read.
 // ============================================================================
 
-import { useEffect, useLayoutEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { Factory, LayoutGrid, List, Map as MapIcon, Minus, MoveDiagonal2, Pencil, Plus, Save, Wand2, X } from 'lucide-react'
+import { Factory, LayoutGrid, List, Map as MapIcon, Pencil, Plus, Save, Wand2, X } from 'lucide-react'
 import { LAYOUT_COLUMNS, LAYOUT_ROWS, type MachineLayout, type MachineNow } from '@qc/shared/planning'
 import { Badge, Button, Drawer, EmptyState } from '@/components/ui'
 import { Segmented } from '@/components/ui/PageShell'
@@ -98,13 +100,80 @@ function useSize(): { ref: (el: HTMLDivElement | null) => void; width: number; h
   return { ref: setNode, width: size.width, height: size.height }
 }
 
-function MachineTile({ m, layout, selected, editing, onOpen }: { m: MachineNow; layout: MachineLayout; selected: boolean; editing: boolean; onOpen: () => void }) {
+/** What a press on a tile in edit mode does while the pointer is down: moves it, or (from its corner) sizes it. */
+interface TileDrag {
+  mode: 'move' | 'size'
+  id: number
+  x: number
+  y: number
+  from: MachineLayout
+  moved: boolean
+}
+
+function MachineTile({
+  m,
+  layout,
+  selected,
+  editing,
+  cell,
+  onOpen,
+  onChange,
+  onRemove,
+}: {
+  m: MachineNow
+  layout: MachineLayout
+  selected: boolean
+  editing: boolean
+  /** One grid cell's size on screen, px: what a drag snaps to. */
+  cell: { w: number; h: number }
+  onOpen: () => void
+  onChange: (change: Partial<MachineLayout>) => void
+  onRemove: () => void
+}) {
   const st = STATUS[m.status]
   const s = m.sessions[0]
+  const drag = useRef<TileDrag | null>(null)
+  // The click after a drag is the drop, not a press.
+  const dropped = useRef(false)
+  const start = (e: ReactPointerEvent<HTMLElement>, mode: TileDrag['mode']) => {
+    if (!editing || (e.pointerType === 'mouse' && e.button !== 0)) return
+    drag.current = { mode, id: e.pointerId, x: e.clientX, y: e.clientY, from: layout, moved: false }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  const onPointerMove = (e: ReactPointerEvent<HTMLElement>) => {
+    const d = drag.current
+    if (!d || e.pointerId !== d.id || cell.w <= 0 || cell.h <= 0) return
+    const dx = Math.round((e.clientX - d.x) / cell.w)
+    const dy = Math.round((e.clientY - d.y) / cell.h)
+    if (!d.moved && dx === 0 && dy === 0) return
+    d.moved = true
+    onChange(d.mode === 'move' ? { x: d.from.x + dx, y: d.from.y + dy } : { w: d.from.w + dx, h: d.from.h + dy })
+  }
+  const onPointerEnd = (e: ReactPointerEvent<HTMLElement>) => {
+    const d = drag.current
+    if (!d || e.pointerId !== d.id) return
+    drag.current = null
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+    if (d.moved) dropped.current = true
+  }
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={() => {
+        if (dropped.current) {
+          dropped.current = false
+          return
+        }
+        onOpen()
+      }}
+      onPointerDown={(e) => {
+        if (!editing) return
+        onOpen()
+        start(e, 'move')
+      }}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerEnd}
+      onPointerCancel={onPointerEnd}
       aria-pressed={editing ? selected : undefined}
       aria-label={`${m.name}: ${st.name}. ${nowLine(m)}${m.lateLines > 0 ? `. ${m.lateLines} late lines` : ''}${slowLabel(m) ? `. ${slowLabel(m)}` : ''}`}
       style={{
@@ -116,6 +185,7 @@ function MachineTile({ m, layout, selected, editing, onOpen }: { m: MachineNow; 
       className={cn(
         'absolute flex flex-col items-stretch justify-start overflow-hidden rounded-lg border border-l-4 border-slate-300 bg-white p-1.5 text-left shadow-sm transition-shadow hover:shadow-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-slate-600 dark:bg-slate-900',
         st.stripe,
+        editing && 'cursor-grab touch-none select-none active:cursor-grabbing',
         selected && 'ring-2 ring-brand-500 ring-offset-1 ring-offset-white dark:ring-offset-slate-900',
       )}
     >
@@ -139,8 +209,49 @@ function MachineTile({ m, layout, selected, editing, onOpen }: { m: MachineNow; 
           Queue: {m.queueLines} lines, {hoursLabel(m.queueHours)}
         </span>
       )}
-      {m.lateLines > 0 && <span className="absolute bottom-1 right-1 rounded bg-rose-600 px-1 text-[10px] font-bold text-white dark:bg-rose-400 dark:text-rose-950">{m.lateLines} late</span>}
-      {slowLabel(m) && <span className="absolute bottom-1 left-1 rounded bg-amber-500 px-1 text-[10px] font-bold text-amber-950 dark:bg-amber-400">slow {m.speedPct}%</span>}
+      {m.lateLines > 0 && <span className={cn('absolute bottom-1 right-1 rounded bg-rose-600 px-1 text-[10px] font-bold text-white dark:bg-rose-400 dark:text-rose-950', editing && 'right-4')}>{m.lateLines} late</span>}
+      {!editing && slowLabel(m) && <span className="absolute bottom-1 left-1 rounded bg-amber-500 px-1 text-[10px] font-bold text-amber-950 dark:bg-amber-400">slow {m.speedPct}%</span>}
+      {editing && (
+        <>
+          {/* The corner: dragged, it sizes the machine, a cell at a time. */}
+          <span
+            aria-hidden
+            data-tip="Drag to resize"
+            onPointerDown={(e) => {
+              e.stopPropagation()
+              onOpen()
+              start(e, 'size')
+            }}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerEnd}
+            onPointerCancel={onPointerEnd}
+            className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none rounded-tl-md bg-brand-500/80 [clip-path:polygon(100%_0,100%_100%,0_100%)] hover:bg-brand-600"
+          />
+          {selected && (
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label={`Take ${m.name} off the map`}
+              data-tip="Off the map"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                onRemove()
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onRemove()
+                }
+              }}
+              className="absolute right-0.5 top-0.5 grid h-5 w-5 cursor-pointer place-items-center rounded-md bg-white/90 text-slate-600 ring-1 ring-slate-300 hover:bg-rose-50 hover:text-rose-700 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-600"
+            >
+              <X className="h-3.5 w-3.5" />
+            </span>
+          )}
+        </>
+      )}
     </button>
   )
 }
@@ -376,8 +487,11 @@ export function FloorSection() {
   const [view, setView] = usePersistedState<'map' | 'list'>('qc-planning:floor-view', phone ? 'list' : 'map')
   const [factory, setFactory] = usePersistedState<string>('qc-planning:factory', '')
   const [open, setOpen] = useState<string | null>(null)
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState<Map<string, MachineLayout>>(new Map())
+  // The map being edited, from Edit the map to Save or Cancel; otherwise the map is what the floor says, worked out
+  // in the same render as the machines — never a render behind them, which flashed an empty map and a full tray on
+  // every change of factory.
+  const [draft, setDraft] = useState<Map<string, MachineLayout> | null>(null)
+  const editing = draft !== null
   const [selected, setSelected] = useState<string | null>(null)
   const save = useSaveLayout()
   const size = useSize()
@@ -385,9 +499,8 @@ export function FloorSection() {
   const factories = data?.factories ?? []
   const current = factories.includes(factory === NO_FACTORY ? '' : factory) ? (factory === NO_FACTORY ? '' : factory) : (factories[0] ?? '')
   const machines = useMemo(() => (data?.machines ?? []).filter((m) => m.factory === current), [data, current])
-  useEffect(() => {
-    if (!editing) setDraft(new Map(machines.filter((m) => m.layout).map((m) => [m.key, m.layout!])))
-  }, [machines, editing])
+  const saved = useMemo(() => new Map(machines.filter((m) => m.layout).map((m) => [m.key, m.layout!])), [machines])
+  const layouts = draft ?? saved
 
   if (isLoading) return <Loading what="Reading the floor" />
   if (error || !data)
@@ -399,28 +512,37 @@ export function FloorSection() {
   if (data.machines.length === 0)
     return <EmptyState icon={<Factory className="h-10 w-10" />} title="No machines in the register" hint="Add them under Configuration → Machines, with their factory and process." />
 
-  const placed = machines.filter((m) => draft.has(m.key))
-  const unplaced = machines.filter((m) => !draft.has(m.key))
+  const placed = machines.filter((m) => layouts.has(m.key))
+  const unplaced = machines.filter((m) => !layouts.has(m.key))
   const running = machines.filter((m) => m.status === 'running').length
   const openMachine = data.machines.find((m) => m.key === open) ?? null
 
   const move = (key: string, change: Partial<MachineLayout>) => {
     setDraft((d) => {
-      const at = d.get(key)
-      if (!at) return d
+      const at = d?.get(key)
+      if (!d || !at) return d
       const next = new Map(d)
       next.set(key, clampLayout({ ...at, ...change }))
       return next
     })
   }
+  const remove = (key: string) => {
+    setDraft((d) => {
+      if (!d) return d
+      const next = new Map(d)
+      next.delete(key)
+      return next
+    })
+    setSelected((s) => (s === key ? null : s))
+  }
   const place = (key: string) => {
-    const spot = firstFreeSpot([...draft.values()])
+    const spot = firstFreeSpot([...layouts.values()])
     if (!spot) return
-    setDraft((d) => new Map(d).set(key, spot))
+    setDraft((d) => (d ? new Map(d).set(key, spot) : d))
     setSelected(key)
   }
   const placeAll = () => {
-    const next = new Map(draft)
+    const next = new Map(layouts)
     for (const m of unplaced) {
       const spot = firstFreeSpot([...next.values()])
       if (!spot) break
@@ -430,7 +552,7 @@ export function FloorSection() {
   }
   const onTileKey = (e: ReactKeyboardEvent, key: string) => {
     if (!editing || selected !== key) return
-    const at = draft.get(key)
+    const at = layouts.get(key)
     if (!at) return
     const step: Record<string, Partial<MachineLayout>> = {
       ArrowLeft: { x: at.x - 1 },
@@ -448,13 +570,12 @@ export function FloorSection() {
     await save.mutateAsync({
       positions: placed.map((m) => ({
         machineKey: m.key,
-        ...draft.get(m.key)!,
+        ...layouts.get(m.key)!,
       })),
     })
-    setEditing(false)
+    setDraft(null)
     setSelected(null)
   }
-  const sel = selected ? draft.get(selected) : undefined
   // The map, as large as the room allows while keeping the grid's shape (at least a readable minimum, then it scrolls).
   const ratio = LAYOUT_COLUMNS / LAYOUT_ROWS
   const room = {
@@ -463,6 +584,7 @@ export function FloorSection() {
   }
   const mapW = Math.max(640, Math.min(room.w, room.h * ratio))
   const mapH = mapW / ratio
+  const cell = { w: mapW / LAYOUT_COLUMNS, h: mapH / LAYOUT_ROWS }
 
   return (
     <PartFrame
@@ -501,7 +623,7 @@ export function FloorSection() {
           </p>
           <span className="flex-1" />
           {mayEdit && view === 'map' && !editing && (
-            <Button className="min-h-[40px]" onClick={() => setEditing(true)}>
+            <Button className="min-h-[40px]" onClick={() => setDraft(new Map(saved))}>
               <Pencil className="h-4 w-4" /> Edit the map
             </Button>
           )}
@@ -515,7 +637,7 @@ export function FloorSection() {
               <Button
                 className="min-h-[40px]"
                 onClick={() => {
-                  setEditing(false)
+                  setDraft(null)
                   setSelected(null)
                 }}
               >
@@ -557,57 +679,20 @@ export function FloorSection() {
               )}
               {placed.map((m) => (
                 <div key={m.key} onKeyDown={(e) => onTileKey(e, m.key)}>
-                  <MachineTile m={m} layout={draft.get(m.key)!} editing={editing} selected={selected === m.key} onOpen={() => (editing ? setSelected(m.key) : setOpen(m.key))} />
+                  <MachineTile
+                    m={m}
+                    layout={layouts.get(m.key)!}
+                    editing={editing}
+                    selected={selected === m.key}
+                    cell={cell}
+                    onOpen={() => (editing ? setSelected(m.key) : setOpen(m.key))}
+                    onChange={(change) => move(m.key, change)}
+                    onRemove={() => remove(m.key)}
+                  />
                 </div>
               ))}
             </div>
           </div>
-          {editing && sel && selected && (
-            <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-slate-200 bg-brand-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-brand-500/10" aria-live="polite">
-              <span className="font-semibold">{machines.find((m) => m.key === selected)?.name}</span>
-              <span className="text-muted">
-                at {sel.x + 1},{sel.y + 1}, {sel.w}×{sel.h} cells
-              </span>
-              <span className="flex-1" />
-              {(
-                [
-                  ['Left', { x: sel.x - 1 }],
-                  ['Right', { x: sel.x + 1 }],
-                  ['Up', { y: sel.y - 1 }],
-                  ['Down', { y: sel.y + 1 }],
-                ] as const
-              ).map(([label, change]) => (
-                <Button key={label} className="min-h-[36px] px-2.5" onClick={() => move(selected, change)}>
-                  {label}
-                </Button>
-              ))}
-              <Button className="min-h-[36px] px-2.5" aria-label="Narrower" onClick={() => move(selected, { w: sel.w - 1 })}>
-                <Minus className="h-4 w-4" /> W
-              </Button>
-              <Button className="min-h-[36px] px-2.5" aria-label="Wider" onClick={() => move(selected, { w: sel.w + 1 })}>
-                <Plus className="h-4 w-4" /> W
-              </Button>
-              <Button className="min-h-[36px] px-2.5" aria-label="Shorter" onClick={() => move(selected, { h: sel.h - 1 })}>
-                <Minus className="h-4 w-4" /> H
-              </Button>
-              <Button className="min-h-[36px] px-2.5" aria-label="Taller" onClick={() => move(selected, { h: sel.h + 1 })}>
-                <Plus className="h-4 w-4" /> H
-              </Button>
-              <Button
-                className="min-h-[36px] px-2.5"
-                onClick={() => {
-                  setDraft((d) => {
-                    const next = new Map(d)
-                    next.delete(selected)
-                    return next
-                  })
-                  setSelected(null)
-                }}
-              >
-                <MoveDiagonal2 className="h-4 w-4" /> Off the map
-              </Button>
-            </div>
-          )}
           {unplaced.length > 0 && (
             <div className="flex max-h-24 shrink-0 items-start gap-2 overflow-auto border-t border-slate-200 px-3 py-2 dark:border-slate-700">
               <h3 className="flex shrink-0 items-center gap-1.5 pt-2 text-xs font-bold">
@@ -641,7 +726,7 @@ export function FloorSection() {
             </ul>
             <span>
               {editing
-                ? 'Choose a machine, then move it with the arrows (or the arrow keys; Shift with an arrow resizes it). Save when it looks like the floor.'
+                ? 'Drag a machine where it stands; drag its corner to size it; × takes it off the map. The arrow keys move the chosen one, Shift with an arrow sizes it. Save when it looks like the floor.'
                 : 'Each machine where it stands on the floor. Choose one for what it is on, its last production day and its queue. Read again every minute.'}
             </span>
           </PartFooter>

@@ -261,6 +261,17 @@ body {
   background-color: rgb(15 23 42);
 }
 
+/* §25 — the schedule's tracks (components/planning/ScheduleSection.tsx): a hairline at each day, and at each hour
+   tick when the timeline is zoomed in, drawn as a background so a long span costs no elements. */
+.plan-track {
+  --plan-grid: rgb(226 232 240 / 0.9);
+  --plan-grid-fine: rgb(226 232 240 / 0.55);
+}
+.dark .plan-track {
+  --plan-grid: rgb(51 65 85 / 0.9);
+  --plan-grid-fine: rgb(51 65 85 / 0.5);
+}
+
 /* §20 — the AI assistant's surfaces (the panel and the full page). Latin text stays in Inter; an Arabic letter,
    which Inter does not have, is drawn in IBM Plex Sans Arabic (loaded with the assistant, components/ai/fonts.ts). */
 .ai-type {
@@ -287,9 +298,6 @@ body {
 .ai-fab {
   right: calc(1.25rem + env(safe-area-inset-right));
   bottom: calc(1.25rem + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px));
-}
-.ai-popup-page {
-  --page-sticky-top: 0px;
 }
 .ai-popup-compact {
   right: calc(1.25rem + env(safe-area-inset-right));
@@ -458,6 +466,14 @@ fieldset {
   }
   .print-break {
     break-before: page;
+  }
+  /* On paper the shell is no box of a window's height with a scrolling main: the page flows over as many sheets
+     as it takes. */
+  #root,
+  main {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
   }
   main {
     padding: 0 !important;

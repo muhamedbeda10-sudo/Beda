@@ -20,6 +20,7 @@ import { AiPanelHost } from '@/components/ai/AiPanelHost'
 import { useNavFit } from '@/components/layout/navFit'
 import { useCoarsePointer } from '@/lib/media'
 import { useSharedReportsStatus } from '@/services/reportShares'
+import { APP_SCROLL_ATTR } from '@/lib/appScroll'
 
 function ToastHost() {
   const { toasts, dismissToast } = useApp()
@@ -196,14 +197,19 @@ function Shell({ children }: { children: ReactNode }) {
   const isActive = (n: NavItem) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to))
   // §21 — a follow-up opens in a drawer over the list: /follow-ups and /follow-ups/<id> are one page.
   const pageKey = location.pathname.startsWith('/follow-ups') ? '/follow-ups' : location.pathname
+  // §17 — the chat fills the window to its bottom edge and keeps its composer clear of the home indicator itself.
+  const chat = location.pathname.startsWith('/chat')
 
+  // The shell fills the window and the window never scrolls: the header stays, and <main> under it is the one box
+  // that scrolls (lib/appScroll) — only when a page is taller than the room it has. A page built to fill that room
+  // (a list in its GridFrame, Planning, the chat) ends with the window, and what is long scrolls inside its frame.
   return (
-    <div className="min-h-full">
-      <header className="print:hidden sticky top-0 z-40 border-b border-slate-200/80 bg-white/85 shadow-[0_1px_0_rgba(255,255,255,.6)_inset] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/85 safe-top">
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="print:hidden relative z-40 shrink-0 border-b border-slate-200/80 bg-white/85 shadow-[0_1px_0_rgba(255,255,255,.6)_inset] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/85 safe-top">
         {/* A desktop centres the tabs and shows the gear and the account; a tablet or phone keeps all of that behind the menu button.
             From lg the brand and the icons share what the tabs leave, half each, so the tabs sit in the middle while they
             can; when the icons need more than half, the brand's spare room goes to the tabs before they lose their names. */}
-        <div ref={barRef} className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-6 lg:px-8">
+        <div ref={barRef} className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-4">
           {/* Left — brand */}
           <div className="flex shrink-0 lg:flex-1">
             <button type="button" onClick={() => navigate('/')} className="flex min-h-[44px] items-center rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" aria-label="Home">
@@ -348,17 +354,18 @@ function Shell({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {/* Full width; each route change replays the entrance so a page feels placed, not swapped. */}
-      <main className="px-4 py-5 sm:px-6 lg:px-8 safe-bottom">
-        <div key={pageKey} className="animate-page-in">
+      {/* Full width, a slim margin all round, so a list or a board takes the screen; each route change replays the
+          entrance so a page feels placed, not swapped. The page's box takes the whole of main (flex-1): a page fills
+          the room with h-full — sized by that alone ([contain:size], so what is inside never grows the box), what is
+          long in it scrolling inside its own frame — and a page laid out as a document grows the box past the room
+          and scrolls main. */}
+      <main {...{ [APP_SCROLL_ATTR]: '' }} className={cn('flex min-h-0 flex-1 flex-col overflow-auto px-3 pb-3 pt-3 sm:px-4', !chat && 'safe-bottom')}>
+        <div key={pageKey} className="flex-1 animate-page-in">
           {children}
         </div>
-        {/* Room under the last thing on a page (a row's actions, Load more) to scroll it clear of the assistant's
-            floating button. Not on the chat, which fills the window to the pixel and lifts the button over Send instead. */}
-        {(ai.enabled || ai.owner) && !location.pathname.startsWith('/chat') && <div aria-hidden className="h-16" />}
       </main>
-      {/* §20 — the assistant: its floating button in the bottom corner, and its popup. Outside <main>, which remounts
-          on every route: an answer keeps streaming while its asker moves around. */}
+      {/* §20 — the assistant: its floating button, wherever it was dragged to, and its popup. Outside <main>, which
+          remounts on every route: an answer keeps streaming while its asker moves around. */}
       {(ai.enabled || ai.owner) && <AiButton />}
       <AiPanelHost />
       <ToastHost />

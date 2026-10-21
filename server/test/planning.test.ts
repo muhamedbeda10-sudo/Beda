@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type Anthropic from '@anthropic-ai/sdk'
 import {
   AUTO_PLAN_ID,
-  FRIDAY,
+  addDays,
   formatWall,
   weekday,
   type CapacityResponse,
@@ -120,9 +120,11 @@ describe('§25 planning', () => {
     expect(op('A3').start!).toBeGreaterThan(op('A2').start!)
     // A1 waits for its raw material, promised in two days.
     expect(op('A1').flags).toContain('waits-material')
-    // The promise day, or the Saturday after it when it falls on a Friday.
+    // It starts the morning its material is promised — or the next working morning, when that day is a Friday (the
+    // day off): the test runs on every weekday.
     const promised = calendarDay(2)
-    expect(formatWall(op('A1').start!)).toBe(`${weekday(promised) === FRIDAY ? calendarDay(3) : promised} 08:00`)
+    const starts = weekday(promised) === 5 ? addDays(promised, 1) : promised
+    expect(formatWall(op('A1').start!)).toBe(`${starts} 08:00`)
     expect(d.plan).toMatchObject({ id: AUTO_PLAN_ID, kind: 'auto', editable: false })
   })
 
